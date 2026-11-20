@@ -909,7 +909,9 @@ impl<H: Host> Vm<H> {
                 }
                 return self.proxy_get(p, target, handler, receiver, PropertyKey::string(atom));
             }
-            if let Some(attributes) = self.property_attributes(object, PropertyKey::string(atom))
+            // The object's own shape slot is resolved once, for both its accessor flag and its value.
+            let own_slot = self.own_shape_slot(object, atom);
+            if let Some(attributes) = self.property_attributes_at(object, PropertyKey::string(atom), own_slot)
                 && attributes.accessor
             {
                 if private_name && attributes.getter.is_none() {
@@ -956,7 +958,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some(v) = self.own_property(object, atom).or_else(|| self.string_wrapper_unit(object, PropertyKey::string(atom))) {
+            if let Some(v) = self.own_property_at(object, atom, own_slot).or_else(|| self.string_wrapper_unit(object, PropertyKey::string(atom))) {
                 return Ok(v);
             }
             if let Some(data) = self.heap.object_record(object) {

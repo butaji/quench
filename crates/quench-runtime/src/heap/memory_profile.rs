@@ -1,6 +1,6 @@
 use super::{
     ArrayObject, Cell, CellKind, CollectionRecord, CollectionStorage, FreeSlotBitmap, FunctionRecord, Heap,
-    IteratorRecord, Object, PromiseCell, SymbolData,
+    IteratorRecord, Object, PromiseCell, SymbolData, WasmGcRecord,
 };
 use crate::value::Value;
 use rustc_hash::FxHashMap;
@@ -230,6 +230,11 @@ impl MemoryProfile {
             "symbol",
             None,
         );
+    }
+
+    /// A Wasm GC object record: it owns no object slots, and its payload's bytes.
+    pub(super) fn allocated_wasm_gc(&mut self, identity: Value, record: &WasmGcRecord) {
+        self.allocated_record(identity, CellKind::WasmGc as usize, record.allocated_bytes(), "wasm_gc", None);
     }
 
     /// A collected symbol record (`freed_record_cell`, without object slots).
@@ -496,6 +501,7 @@ impl Heap {
         counts[CellKind::AwaitState as usize] = self.await_records.live_count();
         counts[CellKind::Iterator as usize] = self.iterator_records.live_count();
         counts[CellKind::Symbol as usize] = self.symbol_records.live_count();
+        counts[CellKind::WasmGc as usize] = self.wasm_gc_records.live_count();
         self.collection_records.for_each_live(|_, collection| counts[collection.cell_kind() as usize] += 1);
         counts[CellKind::String as usize] = self.string_records.live_count() + self.small_strings.live_count();
         counts[CellKind::WasmV128 as usize] = self.v128_records.live_count();
@@ -554,6 +560,7 @@ impl Heap {
             + self.small_string_bytes()
             + self.v128_records.allocated_bytes()
             + self.symbol_records.allocated_bytes()
+            + self.wasm_gc_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
@@ -573,7 +580,8 @@ impl Heap {
                 + self.await_records.high_water()
                 + self.iterator_records.high_water()
                 + self.collection_records.high_water()
-                + self.v128_records.high_water(),
+                + self.v128_records.high_water()
+                + self.wasm_gc_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
             self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -713,7 +721,6 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
             Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
             Cell::WasmTable { elements, .. } => elements.external_bytes(),
-            Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),

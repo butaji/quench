@@ -72,6 +72,12 @@ impl records::TraceRecord for AwaitState {
     }
 }
 
+impl records::TraceRecord for WasmGcRecord {
+    fn extend_children(&self, _properties: &ValueArena, out: &mut Vec<Value>) {
+        self.trace_children(out);
+    }
+}
+
 impl records::TraceRecord for SymbolData {
     fn extend_children(&self, _properties: &ValueArena, _out: &mut Vec<Value>) {}
 }
@@ -107,6 +113,8 @@ impl Heap {
                 self.iterator_records.get_live(id).extend_children(properties, out);
             } else if let Some(id) = value.direct_collection_index() {
                 self.collection_records.get_live(id).extend_children(properties, out);
+            } else if let Some(id) = value.direct_wasm_gc_index() {
+                self.wasm_gc_records.get_live(id).extend_children(properties, out);
             } else {
                 return false;
             }

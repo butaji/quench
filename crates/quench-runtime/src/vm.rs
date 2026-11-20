@@ -1872,7 +1872,7 @@ impl Shape {
 /// chain of single children (`Vm::predicted_run_capacity`) finds the child without the
 /// transition index. Every shape made from a parent is appended here, so the counts are exact
 /// for the table as it stands.
-fn push_child(shapes: &mut Vec<Shape>, child: Shape) {
+pub(crate) fn push_child(shapes: &mut Vec<Shape>, child: Shape) {
     let id = u32::try_from(shapes.len()).expect("object shape table exhausted");
     if let Some(parent) = child.parent() {
         let entry = &mut shapes[parent as usize];

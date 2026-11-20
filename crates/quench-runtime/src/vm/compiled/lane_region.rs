@@ -378,6 +378,27 @@ pub(super) struct LoweredLane {
     pub(super) clif: Option<String>,
     /// The function's scalar entry (`scalar`), which its direct calls of itself call: compiled beside the body.
     pub(super) scalar: Option<ir::Function>,
+    /// The body's proven entry (`ProvenEntry`): the same body past its parameter guards, and the entry types those guards
+    /// test (`LoweredRegion::entry_types`). Its code must be the body's dependencies (`LoweredRegion::stable`).
+    pub(super) proven: Option<(ir::Function, Box<[Type]>)>,
+}
+
+/// The direct calls whose result a published callee's summary types (`TypeSummary::result`), as the
+/// facts' observed reads: each candidate's summary joins the result, and a candidate without one
+/// types none. A returning call (its result is its activation's) and a construction are not typed: the
+/// first completes the body with a value its completion does not check, and a construction's result is its receiver.
+pub(super) fn call_results(direct: &DirectSites, instructions: &[WideInstruction]) -> Vec<super::facts::ObservedRead> {
+    direct.iter().filter_map(|(&pc, callees)| {
+        let instruction = *instructions.get(pc)?;
+        let Some(crate::staged::Operation::Call(crate::staged::CallOperation::Site(site))) = crate::vm::compiled::decoded(instruction) else { return None };
+        if site.constructs() || site.returns || instruction.returns_from_frame() { return None; }
+        let ty = callees.iter().try_fold(Type::NEVER, |ty, callee| {
+            // SAFETY: the plan owns its direct callees for as long as it lowers (`LoweringJob::direct_sites`).
+            let callee = unsafe { &**callee };
+            callee.summary().map(|summary| ty.join(summary.result))
+        })?;
+        (ty != Type::NEVER && ty != Type::ANY).then_some(super::facts::ObservedRead { pc, ty })
+    }).collect()
 }
 
 /// One typed numeric return edge, materialized after joining all return facts.
@@ -445,12 +466,28 @@ pub(super) struct LoweredRegion {
     /// Whether a loop of the region hoists an array view, so a typed variant may differ.
     pub(super) hoists_arrays: bool,
     pub(super) stable: StableFacts,
+    /// The entry types of the function's parameters, as a proven entry's lowering holds them (`VmFacts::proven_entry`):
+    /// the types its entry guards test, which a caller must prove each argument has. Empty elsewhere.
+    pub(super) entry_types: Box<[Type]>,
+    /// The body's type summary (`TypeSummary`), where it is a whole function's body.
+    pub(super) summary: Option<TypeSummary>,
+}
+
+/// What a published lane body assumes of its arguments and what its activation returns natively,
+/// so a direct caller types the call's result with it (`call_results`). The parameters are the
+/// entry types the body's entry guards admit (`ANY` where the body guards none); the result is the
+/// join of the types its own activation returns, from the facts at each return. A value a leave
+/// returns to the caller is not in the result: the caller guards the result at its completion.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::vm) struct TypeSummary {
+    pub(in crate::vm) params: Vec<Type>,
+    pub(in crate::vm) result: Type,
 }
 
 impl Default for LoweredRegion {
     /// A region that lowered nothing (`LoweredLane`'s default): an empty function.
     fn default() -> Self {
-        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default() }
+        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default(), summary: None, entry_types: Box::default() }
     }
 }
 
@@ -1695,9 +1732,17 @@ pub(super) fn lower_body(
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
     let scalar = abi.and_then(|abi| scalar::lowered(program, RegionSpecializer { generic: &[], facts: VmFacts { scalar: Some(abi), ..vm }, plan: scalar::plan(abi), ..body }));
     let region = RegionSpecializer { facts: VmFacts { scalar: abi.filter(|_| scalar.is_some()), ..vm }, ..body }.specialize(program).ok()?;
+    // The proven entry lowers the same body with its parameters' entry guards taken as proved (`VmFacts::proven_entry`).
+    // It is kept only where it folds exactly the body's Stable facts, which its publication takes once for both.
+    let params = program.function_get(function_id as usize).is_some_and(|function| function.params > 0);
+    let proven = (entry.is_none() && params).then(|| RegionSpecializer { facts: VmFacts { proven_entry: true, ..vm }, ..body }
+        .specialize(program).ok()).flatten()
+        .filter(|proven| proven.stable == region.stable && proven.fault_poll == region.fault_poll && proven.hoists_arrays == region.hoists_arrays
+            && proven.entry_types.iter().any(|ty| *ty != Type::ANY))
+        .map(|proven| (proven.function, proven.entry_types));
     super::residuals::report_clif(function_id, &region.function);
     let clif = native_dump_directory().map(|_| region.function.to_string());
-    Some(LoweredLane { region, clif, scalar })
+    Some(LoweredLane { region, clif, scalar, proven })
 }
 
 /// The position a failed entry contract takes in a lane body's leave set
@@ -1818,6 +1863,14 @@ pub(super) fn lower(
     builder.append_block_param(stop, types::I64);
     builder.set_cold_block(leave);
     builder.set_cold_block(stop);
+    // A numeric region leaves at its calls (`native_calls` is off), so it types none of them.
+    let numeric_reads: Vec<super::facts::ObservedRead>;
+    let number_reads = if numeric {
+        numeric_reads = number_reads.iter().copied()
+            .filter(|read| !unit.instructions.get(read.pc).is_some_and(|instruction| matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Call(_)))))
+            .collect();
+        &numeric_reads[..]
+    } else { number_reads };
     let observed = super::facts::Observed(number_reads);
     let mut lowering = Lowering {
         builder,
@@ -2026,6 +2079,7 @@ pub(super) fn lower(
     }
     lowering.entered.insert(entry_pc);
     lowering.stable.start = entry_pc;
+    let mut proven_types: Box<[Type]> = Box::default();
     {
         let pc = entry_pc;
         let block = lowering.builder.create_block();
@@ -2068,6 +2122,17 @@ pub(super) fn lower(
             let available = lowering.raw_compare_imm(Relation::NotEqual, interrupt, 0);
             emit_js_guard(&mut lowering.builder, available, miss);
         }
+        // A proven entry's caller proved each argument has its parameter's entry type (`call_frames::call_target`), so the
+        // guards those types make are not run: the state holds them, and the entry conform proves them with no test. A
+        // shape is not held this way: its guard runs in every entry.
+        if lowering.vm.proven_entry {
+            let entered: Vec<Type> = lowering.facts.at(pc).map(|types| types.iter().copied().take(usize::from(function.params)).collect()).unwrap_or_default();
+            for (index, ty) in entered.iter().copied().enumerate() {
+                if !lowering.is_live(pc, index as Register) || ty.object_shape().is_some() { continue; }
+                state.values[index] = RegisterFact { tagged: state.values[index].tagged, ..RegisterFact::definition(ty, Representation::Tagged) };
+            }
+            proven_types = entered.into_boxed_slice();
+        }
         lowering.entry_conform(&mut state, pc, coverage);
         // A region whose sole entry is this loop header has no earlier source
         // edge on which to hoist its invariant reads. Admit them on the native
@@ -2081,6 +2146,15 @@ pub(super) fn lower(
         lowering.proving_entry = false;
         lowering.goto(target, &[]);
     }
+    // The parameters' entry types, as the entry block guards them (`entry_conform` conforms each live
+    // register to the entry's fact): a summary's arguments (`TypeSummary::params`).
+    let summary_params = (completion == Completion::Body && matches!(coverage, Coverage::Prefix)).then(|| {
+        let types = lowering.facts.at(entry_pc).unwrap_or(&[]);
+        (0..usize::from(function.params)).map(|register| match types.get(register) {
+            Some(ty) if lowering.is_live(entry_pc, register as Register) => *ty,
+            _ => Type::ANY,
+        }).collect::<Vec<Type>>()
+    });
     let mut census = clif_census::Census::new();
     let emitted = |lowering: &Lowering<'_, '_>| lowering.builder.func.dfg.num_insts();
     let mut mark = emitted(&lowering);
@@ -2180,6 +2254,7 @@ pub(super) fn lower(
         return None;
     }
     let number_result = numeric.then(|| lowering.finish_number_returns());
+    let summary = summary_params.map(|params| TypeSummary { params, result: lowering.returned_type(&instructions, &leaders, &writes) });
     let native_count = lowering.native;
     let hoists_arrays = !lowering.loop_arrays.is_empty();
     let mut polls = std::mem::take(&mut lowering.polls);
@@ -2192,7 +2267,7 @@ pub(super) fn lower(
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
-    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable })
+    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types })
 }
 
 impl Lowering<'_, '_> {
@@ -2413,6 +2488,31 @@ impl Lowering<'_, '_> {
         self.interrupt_check(state, pc);
         let exit = self.guard_exit(state, pc);
         self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Return { source: register });
+    }
+
+    /// The join of the types the body's own activation returns, from the facts at each return
+    /// (`TypeSummary::result`). A return of the function's own record (`Origin::Caller`) returns the
+    /// value its `Return` names, typed before it, or the result an operator flagged to return defines,
+    /// typed after it. A return the facts do not type joins `ANY`; a body that never returns natively is `ANY`.
+    fn returned_type(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+        written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Type {
+        let native_calls = self.native_calls;
+        let mut defined: Vec<Option<Type>> = vec![None; instructions.len()];
+        self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls, 0..=instructions.len().saturating_sub(1), |pc, register, ty| {
+            if register == instructions[pc].result_register() { defined[pc] = Some(ty); }
+        });
+        let mut returned = Type::NEVER;
+        for (pc, instruction) in instructions.iter().enumerate() {
+            if !matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) { continue; }
+            let ty = match crate::vm::compiled::decoded(instruction) {
+                Some(crate::staged::Operation::Return { source }) => self.facts.before(pc, source, instructions,
+                    leaders, &self.program.constants, written, native_calls),
+                _ if instruction.returns_from_frame() => defined[pc].unwrap_or(Type::ANY),
+                _ => continue,
+            };
+            returned = returned.join(ty);
+        }
+        if returned == Type::NEVER { Type::ANY } else { returned }
     }
 
     /// The semantic join selects one ABI format for every successful return.
@@ -3166,7 +3266,7 @@ impl Lowering<'_, '_> {
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
-            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site };
+            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default() };
         super::record_boxed_numbers();
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
@@ -3597,6 +3697,9 @@ impl Lowering<'_, '_> {
         self.reload_property_arena();
         self.reload_result(state, site.result);
         if let Some(ty) = returns { self.conform_declared_result(state, pc, site.result, ty); }
+        // A direct call whose callee's summary types its result (`call_results`): the facts assume that
+        // type after the call, so the completion checks it once, whichever path completed it.
+        if let Some(ty) = self.observed.at(pc) { self.conform_declared_result(state, pc, site.result, ty); }
         true
     }
 
@@ -4125,16 +4228,27 @@ impl Lowering<'_, '_> {
             match array.views {
                 ElementViews::Dense => {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
-                    // Stores through the hoisted view then write the element alone.
-                    if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
-                    // A read-only array no store or append of its loop changes, read only as int32s, is
-                    // proved once here: a backing with others (a non-int32 or a hole) leaves at the entry, so
-                    // its reads need no tag test (`proved_int_element_read`).
-                    if self.int_only_array(array) {
-                        let mut stage = super::object_slots::emit(&mut self.builder);
-                        crate::staged::elements::int_only_backing(&mut stage, view.values, exit)
-                            .expect("the emit stage continues past its guards");
-                        self.int_only.insert((array.header, array.source));
+                    if self.int32_loop(array) {
+                        // An int32 loop keeps the backing's exact count of others, which is zero: guarded here
+                        // before any mark, and kept by its int32 stores (`int32_loop`), so the view marks nothing.
+                        let others = {
+                            let mut stage = super::object_slots::emit(&mut self.builder);
+                            stage.load_u32(crate::staged::region::Region::Elements.mutable(), view.values, crate::heap::OTHERS_FROM_VALUES)
+                        };
+                        let none = self.raw_compare_imm(Relation::Equal, others, 0);
+                        emit_js_guard(&mut self.builder, none, exit);
+                    } else {
+                        // Stores through the hoisted view then write the element alone.
+                        if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
+                        // A read-only array no store or append of its loop changes, read only as int32s, is
+                        // proved once here: a backing with others (a non-int32 or a hole) leaves at the entry, so
+                        // its reads need no tag test (`proved_int_element_read`).
+                        if self.int_only_array(array) {
+                            let mut stage = super::object_slots::emit(&mut self.builder);
+                            crate::staged::elements::int_only_backing(&mut stage, view.values, exit)
+                                .expect("the emit stage continues past its guards");
+                            self.int_only.insert((array.header, array.source));
+                        }
                     }
                     self.builder.def_var(variables.values, view.values);
                     self.builder.def_var(variables.length, view.length);
@@ -4245,8 +4359,9 @@ impl Lowering<'_, '_> {
                 continue;
             }
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
-            // A grown backing may count its values again; stores through the view keep none.
-            if array.writable {
+            // A grown backing may count its values again; stores through the view keep none. An int32
+            // loop's count stays exact (`hoist_arrays`), so its view marks nothing.
+            if array.writable && !self.int32_loop(array) {
                 super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true, uncounted: false, double: None });
             }
             self.builder.def_var(variables.values, values);
@@ -4303,11 +4418,17 @@ impl Lowering<'_, '_> {
         self.goto(helper, &[]);
         self.builder.switch_to_block(helper);
         self.builder.seal_block(helper);
-        let proof = super::EmitProof::IndexSetHelper { miss: exit };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::IndexSetHelper { base, key, value, proof });
-        self.reload_dense_arrays(pc as usize);
-        self.goto(done, &[]);
+        if self.int32_loop(array) {
+            // An int32 loop's store past the end would make a hole, which its reads do not test for
+            // (`int32_loop`): it leaves before any write, and the VM makes the store.
+            self.goto(exit, &[]);
+        } else {
+            let proof = super::EmitProof::IndexSetHelper { miss: exit };
+            self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                crate::staged::Operation::IndexSetHelper { base, key, value, proof });
+            self.reload_dense_arrays(pc as usize);
+            self.goto(done, &[]);
+        }
         self.builder.switch_to_block(done);
         self.builder.seal_block(done);
     }
