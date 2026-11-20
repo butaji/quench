@@ -272,17 +272,24 @@ impl<H: Host> Vm<H> {
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
         let linked_live: &LiveImage = images.linked.as_ref()?;
         let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
-        let unit = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program)))?;
+        let refused = |why: &str| if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: image lane refused, {why}"); };
+        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program))) else {
+            refused("no unit"); return None;
+        };
         // An image has no lowering to ask which registers a leave inside an inlined frame stores.
-        if !unit.frames.is_empty() { return None; }
-        let (linked, roots) = live::link_lane(&images.image, self, linked_live, function)?;
+        if !unit.frames.is_empty() { refused("inlined frames"); return None; }
+        let Some((linked, roots)) = live::link_lane(&images.image, self, linked_live, function) else {
+            refused("link_lane"); return None;
+        };
         // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() }, entry_types: Default::default(), summary: None,
             exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
-        plan.finish(&linked, None, None)
+        let method = plan.finish(&linked, None, None);
+        if method.is_none() { refused("plan.finish"); }
+        method
     }
 
     /// `function`'s base body from `images`, where they are placed (`LiveImage::bases`).
