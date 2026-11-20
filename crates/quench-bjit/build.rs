@@ -328,7 +328,12 @@ impl Shard {
         }
         let Ok(reach) = fs::read_to_string(self.reach_file()) else { return false };
         let reach: std::collections::HashSet<&str> = reach.lines().collect();
-        edited.iter().all(|name| !reach.contains(name.as_str()))
+        // A `module::function` name needs a reach that lists such pairs; an older reach is asked for the bare name.
+        let pairs = reach.contains(reach::PAIRS);
+        edited.iter().all(|name| {
+            let name = if pairs { name.as_str() } else { name.rsplit("::").next().unwrap_or(name) };
+            !reach.contains(name)
+        })
     }
 
     /// Writes the identifiers the shard's rows reach: its unoptimized LLVM IR (the shard's own arguments, no
