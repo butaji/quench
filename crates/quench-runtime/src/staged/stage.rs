@@ -192,6 +192,7 @@ pub(crate) trait Stage {
     /// `then` where `cond` holds, else `otherwise`.
     fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
     /// Whether both `a` and `b` hold.
+    #[inline(always)]
     fn all(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond {
         let (neither_a, neither_b) = (self.not(a), self.not(b));
         let either = self.any(neither_a, neither_b);

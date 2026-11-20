@@ -84,7 +84,8 @@ impl NumericStage for super::super::Concrete {
         let (left, right) = (int32(left), int32(right));
         let checked = operation.apply(&mut CheckedInt32Stage, left, right);
         let overflowed = checked.is_none();
-        let result = checked.unwrap_or_else(#[inline(always)] || operation.apply(&mut WrappingInt32Stage, left, right));
+        // A match rather than `unwrap_or_else`, whose closure instance stays out of line across crates.
+        let result = match checked { Some(result) => result, None => operation.apply(&mut WrappingInt32Stage, left, right) };
         (u64::from(result as u32), overflowed)
     }
     #[inline(always)]
