@@ -16,7 +16,7 @@ pub(super) fn local_field_handler<H: Host>(cx: *mut LaneContext<H>, i: &LaneInst
     }
     plain_local_operand(cx, slot)?.direct_object_index()?;
     match field_site_tier_in_lane(vm, code, i) {
-        FieldSiteTier::Own => Some(generated_row::<H, { crate::staged::GET_FIELD_ROW }, ACC_NONE, LOCAL_FIELD_SITE> as Handler),
+        FieldSiteTier::Own => Some(generated_row!(H, crate::staged::GET_FIELD_ROW, ACC_NONE, LOCAL_FIELD_SITE) as Handler),
         // The local row plans only the own read; a held or inherited read is its miss arm's cached
         // read, entered directly rather than through a row that always misses.
         FieldSiteTier::Holder | FieldSiteTier::Inherited => Some(local_field_miss::<H> as Handler),
@@ -67,5 +67,5 @@ fn bind_local_field_hint<H: Host>(cx: *mut LaneContext<H>, ip: Ip, object: Value
         unsafe { (*cx).binding.object_base = base };
     }
     set_field_hint(ip, vm.form_hint(entry, object));
-    requicken::<H>(ip, generated_row::<H, { crate::staged::GET_FIELD_ROW }, ACC_NONE, LOCAL_FIELD_SITE> as Handler);
+    requicken::<H>(ip, generated_row!(H, crate::staged::GET_FIELD_ROW, ACC_NONE, LOCAL_FIELD_SITE) as Handler);
 }
