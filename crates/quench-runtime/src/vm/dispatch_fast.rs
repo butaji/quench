@@ -1796,6 +1796,14 @@ impl Carried {
         Self { integers: incoming.integers, ..Self::script(cx) }
     }
 
+    /// What a record that writes its result register carries on: `incoming` with no accumulator, since
+    /// no earlier producer's accumulator holds past the write. The memory view stays: a Wasm record
+    /// (`WasmI32AddImmediateJumpNonZero`) runs where later records address linear memory through it.
+    #[inline(always)]
+    fn past_result(incoming: Carried) -> Self {
+        Self { acc: Slot::unset(), ..incoming }
+    }
+
     /// What the general step of `instruction` carries on: `script_in`, with the accumulator its
     /// result register now holds, since the record was selected as an accumulator producer
     /// (`LaneHandler::produces`) and the next record may read the accumulator for it.
