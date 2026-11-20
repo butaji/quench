@@ -165,7 +165,7 @@ impl<H: Host> Vm<H> {
             symbol_registry,
             well_known_symbols,
             bound_parts_layout: _,
-            call_targets: _, frameless: _,
+            call_targets: _, construct_targets: _, frameless: _,
             field_caches: _,
             inherited_field_indices: _,
             accessor_field_indices: _,

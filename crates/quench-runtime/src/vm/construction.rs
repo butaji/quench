@@ -870,7 +870,7 @@ impl<H: Host> Vm<H> {
         frame: usize,
         callee: Value,
     ) -> Option<(ProgramId, u32, Value, Value)> {
-        let (program_id, id, env) = self.in_loop_constructor(p, frame, callee, Self::inline_constructible)?;
+        let (program_id, id, env) = self.in_loop_constructor(p, frame, callee, super::CONSTRUCT_BASE)?;
         Some((program_id, id, env, self.inline_construct_receiver(callee)?))
     }
 
@@ -879,12 +879,12 @@ impl<H: Host> Vm<H> {
     /// receiver: the body binds `this` through `super(...)` (`InitializeThis`), and its pending
     /// call yields that binding or the object the body returns (`CallCompletion::DerivedConstructor`).
     pub(super) fn inline_derived_construct_target(
-        &self,
+        &mut self,
         p: &ResidualProgram,
         frame: usize,
         callee: Value,
     ) -> Option<(ProgramId, u32, Value)> {
-        self.in_loop_constructor(p, frame, callee, Self::inline_derived_constructible)
+        self.in_loop_constructor(p, frame, callee, super::CONSTRUCT_DERIVED)
     }
 
     /// `super(...)` at frame `frame` of `parent`, a user constructor the loop may push in place
@@ -906,10 +906,10 @@ impl<H: Host> Vm<H> {
         let new_target = self
             .dynamic_binding(self.frame_caller(frame), new_target_atom)
             .filter(|value| !value.is_undefined() && self.is_constructable(*value))?;
-        if let Some(target) = self.in_loop_constructor(p, frame, parent, Self::inline_derived_constructible) {
+        if let Some(target) = self.in_loop_constructor(p, frame, parent, super::CONSTRUCT_DERIVED) {
             return Some(SuperConstruction { target, new_target, this: Value::UNDEFINED, completion: CallCompletion::DerivedConstructor });
         }
-        let target = self.in_loop_constructor(p, frame, parent, Self::inline_constructible)?;
+        let target = self.in_loop_constructor(p, frame, parent, super::CONSTRUCT_BASE)?;
         let object = self.inline_construct_template_by(new_target, parent)?;
         let this = self.heap.alloc_object(object);
         Some(SuperConstruction { target, new_target, this, completion: CallCompletion::Constructor(this) })
@@ -926,14 +926,15 @@ impl<H: Host> Vm<H> {
     }
 
     /// The checks `inline_construct_target` makes of the running frame and of `callee`, a user
-    /// function of the running realm whose body `admits` takes: its program, function and
-    /// environment.
+    /// function of the running realm whose body admits the in-place [[Construct]] `admits` names
+    /// (`CONSTRUCT_BASE` or `CONSTRUCT_DERIVED`): its program, function and environment. The callee's
+    /// facts come from the construct target cache, resolved once per callee (`resolve_construct_target`).
     fn in_loop_constructor(
-        &self,
+        &mut self,
         p: &ResidualProgram,
         frame: usize,
         callee: Value,
-        admits: fn(&crate::bytecode::Function) -> bool,
+        admits: u8,
     ) -> Option<(ProgramId, u32, Value)> {
         let caller = &self.frames[frame];
         if frame + 1 != self.frames.len()
@@ -946,28 +947,35 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(record) = self.heap.function(callee) else {
-            return None;
-        };
-        let FunctionKind::User(program_id, id) = record.kind else {
-            return None;
-        };
+        let caller_program = caller.program;
+        let index = callee.heap_index()? as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
+        let cached = self.construct_targets[index];
+        let target = if cached.callee == callee { cached } else { self.resolve_construct_target(p, caller_program, callee, index)? };
+        (target.admits & admits != 0).then_some((target.program, target.function, target.env))
+    }
+
+    /// `callee`'s construct target, cached at `index`: a user function of the running realm, not
+    /// the root, whose owner is no Wasm program. A known closure is call-only, so it is none.
+    #[inline(never)]
+    fn resolve_construct_target(&mut self, p: &ResidualProgram, caller_program: ProgramId, callee: Value, index: usize) -> Option<super::ConstructTarget> {
+        let record = self.heap.function(callee)?;
+        let FunctionKind::User(program, function) = record.kind else { return None };
         let env = record.env;
-        if self.record_realm(record) != self.realm.globals || id == super::ROOT_FUNCTION_ID {
+        if self.record_realm(record) != self.realm.globals || function == super::ROOT_FUNCTION_ID {
             return None;
         }
         // A constructor of another program is pushed in its own, which the pushing loop
         // makes active until the return restores the caller's (`StepResult::PushFrame`).
-        let body = if program_id == caller.program && program_id == self.active_program {
-            p.function_get(id as usize)?
-        } else {
-            let owner = self.programs.residual(program_id)?;
-            if owner.kind == crate::bytecode::ProgramKind::Wasm {
-                return None;
-            }
-            owner.function_get(id as usize)?
-        };
-        admits(body).then_some((program_id, id, env))
+        let owner = if program == caller_program && program == self.active_program { p } else { self.programs.residual(program)? };
+        if owner.kind == crate::bytecode::ProgramKind::Wasm {
+            return None;
+        }
+        let body = owner.function_get(function as usize)?;
+        let admits = if Self::inline_constructible(body) { super::CONSTRUCT_BASE } else { 0 }
+            | if Self::inline_derived_constructible(body) { super::CONSTRUCT_DERIVED } else { 0 };
+        let target = super::ConstructTarget { callee, program, function, env, admits };
+        self.construct_targets[index] = target;
+        Some(target)
     }
 
     /// A body whose [[Construct]] the dispatch loop may push in place: a constructible
