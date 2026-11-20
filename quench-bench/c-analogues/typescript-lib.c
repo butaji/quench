@@ -4,14 +4,22 @@
 // jetstream-driver: class=Async preload=tsconfig=TypeScript/src/gen/immer-tiny/actually-a-type-script-config-please-dont-firewall-me.json preload=files=TypeScript/src/gen/immer-tiny/files.json
 /*
  * C analogue of JetStream's typescript-lib (TypeScript/benchmark.js, compileTest over the immer-tiny
- * project of 118 files). THIS PORT IS NOT THE CHECKER. The checker stage (type checking, emit and
- * diagnostics) is NOT YET PORTED. What is ported and validated here:
+ * project of 118 files). THIS PORT IS ONLY A PART OF THE CHECKER. Ported and validated here:
  *   - Stage 1: the TypeScript 5.9.2 scanner, the parser and the JSDoc parser (support/ts-scanner.h,
  *     support/ts-parser.h, support/ts-jsdoc.h). Every file is parsed in ParseAll mode, the mode that
  *     createProgram uses, and the per-file nodeCount and identifierCount are compared with node's.
  *   - Stage 2, symbols: the binder's symbol part (support/ts-binder.h). Each parsed file is bound and
  *     its symbolCount (file.symbolCount in TypeScript) is compared with node's.
  *   - Stage 2, flow nodes: the control-flow graph of binder.ts, counted per file (createFlowNode calls).
+ *   - Checker, part 1 (support/ts-checker*.h): initializeTypeChecker (global merge, 6200 merge
+ *     diagnostics, symbol count after init matches node's 56307), module resolution (classic),
+ *     name resolution with 2304/2580, import/export member errors, duplicate index signatures (2374),
+ *     redeclared variables and properties (2403/2717/2687), and the identity relation with its cache
+ *     (support/ts-types.h). 45 of the 54 node diagnostics match; the other 9 need class heritage checks
+ *     and base-member instantiation (mapset.ts). NOT PORTED: expression and statement checking
+ *     (checkSourceFile bodies), generic instantiation beyond references, assignability, emit. The
+ *     counts of types, instantiations and relation cache entries therefore stay far below node's; the
+ *     run prints them next to node's numbers and fails validation.
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
