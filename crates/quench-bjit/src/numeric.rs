@@ -162,6 +162,9 @@ pub struct Row {
     pub speculate: bool,
 }
 
+// The lib reads a subset of the shared codes: the generated `PLACE_CODE_COUNT` and the runtime's
+// `TypedArrayKind::width` serve the stencil crate and the runtime only.
+#[allow(dead_code)]
 #[path = "../stencils/library.rs"]
 // The stencils and the build script share these files and each reads its own part: the lib does not read every
 // count, kind method or runtime operator table they mount (`codes.rs`, `supernode_rules.rs`).

@@ -353,7 +353,7 @@ impl Object {
             return None;
         }
         // SAFETY: an extras pointer names the extras this object owns.
-        self.extras_pointer().map(|extras| unsafe { (*extras).arena_start } as usize)
+        self.extras_pointer().map(|extras| unsafe { (*extras).head.arena_start } as usize)
     }
 
     /// `plain_storage_start` of an object outside dictionary storage, whose start bits are

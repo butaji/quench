@@ -362,7 +362,7 @@ impl Object {
     pub(crate) fn store_extended_inline(&mut self, slot: usize, value: Value) {
         let extras = self.extras_pointer().expect("an extended object has extras");
         // SAFETY: owned by this object, and `&mut self` makes the borrow unique.
-        unsafe { (*extras).inline_properties.0[slot] = value };
+        unsafe { (*extras).head.inline_properties.0[slot] = value };
     }
 
     /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.

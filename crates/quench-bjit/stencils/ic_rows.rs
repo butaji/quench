@@ -47,7 +47,7 @@ use crate::staged::object::{Form, direct_object_record, object_record_at};
 use crate::staged::slot_store::{own_flat_known, proved_flat_store, store_admitted};
 use crate::staged::value::direct_object_id;
 use crate::typed_ir::Representation;
-use crate::staged::{Step, Stage, step_property};
+use crate::staged::{Stage, Step, op_kind, step_property_of};
 use crate::words::{hole, hole64};
 
 /// The hole the receiver's frame offset is in: for a get, the upper half of hole 0, whose lower half
@@ -80,10 +80,10 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
     let mut places = Places::<D, MEM, MEM>::new(s);
     let step = if HOLDER {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
-        step_property(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
+        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
     } else {
         let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: Representation::Tagged }];
-        step_property(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
+        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
     };
     finish_chained::<CHAINED>(places.s, step, |s, word| deliver::<D>(s, word))
 }
@@ -95,7 +95,7 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
 fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     let mut places = Places::<MEM, A, MEM>::new(s);
-    let step = step_property(&mut stage, &mut planned_frame(&mut places, [], Callout::FlatStore { int: INT }), receiver_set());
+    let step = step_property_of::<{ op_kind::SET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::FlatStore { int: INT }), receiver_set());
     finish_chained::<CHAINED>(places.s, step, |s, _| Out::Next(s))
 }
 

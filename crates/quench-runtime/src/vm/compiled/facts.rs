@@ -11,7 +11,7 @@
 //! one that cannot leaves at the target, so a fact the analysis gets wrong costs an exit,
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
-use crate::bytecode::{Class, Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
 use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::Type;
 use cranelift_codegen::bitset::CompoundBitSet;
@@ -539,7 +539,7 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 #[path = "facts/lengths.rs"] mod lengths;
 #[path = "facts/run.rs"] mod run;
 pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32};
-pub(in crate::vm) use binary::{generic_operator, heap_operator, heap_primitive_binary};
+pub(in crate::vm) use binary::{heap_operator, heap_primitive_binary};
 pub(super) use lengths::IndexProof;
 pub(super) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text, TypedAccess};
 

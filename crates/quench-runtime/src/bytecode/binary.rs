@@ -511,7 +511,6 @@ pub(super) fn decode_compact_program(
     decode_program(&bytes, encoding, ReadAtoms::Compact(intern), Some(text))
 }
 
-#[cfg(feature = "aot")]
 pub(super) fn encode_native_program(program: &super::ResidualProgram) -> Vec<u8> {
     crate::vm::freeze_call_sites(program);
     sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::Included).0)

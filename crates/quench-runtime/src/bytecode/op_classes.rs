@@ -1,7 +1,7 @@
 //! Named classes of opcodes and control-flow layouts, each decided once and asked by every
 //! analysis that needs it.
 
-use super::{ControlFlowLayout, Decoder, FieldLayout, GenericStep, JsDenotation, Op, Traits};
+use super::{ControlFlowLayout, Decoder, FieldLayout, GenericStep, Op, Traits};
 
 impl Op {
     /// A leaf record that only moves or computes an immediate value.

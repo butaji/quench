@@ -1,7 +1,6 @@
 use super::*;
 use crate::bytecode::Class;
 
-#[cfg(feature = "aot")]
 #[test]
 fn static_hints_keep_numeric_local_indices_out_of_register_rows() {
     // Captured prefix bindings separate the local and register index spaces;
@@ -25,7 +24,6 @@ fn static_hints_keep_numeric_local_indices_out_of_register_rows() {
     }
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn method_hints_follow_definition_records_and_bound_conflicting_bodies() {
     // Each case names how many bodies the call site is hinted with: every distinct
@@ -83,7 +81,6 @@ fn method_hints_follow_definition_records_and_bound_conflicting_bodies() {
     }
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn captured_hints_resolve_lexical_depth_and_bound_conflicting_bodies() {
     for (binding, expected) in [
@@ -105,7 +102,6 @@ fn captured_hints_resolve_lexical_depth_and_bound_conflicting_bodies() {
 }
 
 
-#[cfg(feature = "aot")]
 #[test]
 fn terminal_leaf_uses_the_existing_caller_return_and_strict_calls_residualize() {
     for strict in [false, true] {
@@ -140,7 +136,6 @@ fn terminal_leaf_uses_the_existing_caller_return_and_strict_calls_residualize() 
     }
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn nested_strict_terminal_calls_residualize_in_their_own_caller() {
     for strict in [false, true] {
@@ -165,7 +160,6 @@ fn nested_strict_terminal_calls_residualize_in_their_own_caller() {
     }
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn function_binding_distinguishes_effectful_prefixes_from_pure_numeric_loops() {
     for (body, recovery) in [

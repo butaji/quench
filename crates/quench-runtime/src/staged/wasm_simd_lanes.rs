@@ -10,7 +10,7 @@
 
 use crate::staged::machine::MachineStage;
 use crate::staged::wasm_concrete::ConcreteWasm;
-use crate::staged::wasm_float::{Float, float_binary};
+use crate::staged::wasm_float::{Float, float_binary, opaque};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 
@@ -62,21 +62,11 @@ fn lane_as(bits: u64, width: u32, sign: bool) -> i64 {
     if sign { signed(bits, width) } else { bits as i64 }
 }
 
-/// All ones in a `width`-bit lane where `holds`, zero where not.
+/// All ones in a `width`-bit lane where `holds`, zero where not. Opaque in the stencil build, where
+/// the backend would otherwise gather sixteen byte masks through constant-pool shuffles.
 #[inline(always)]
 fn when(holds: bool, width: u32) -> u64 {
-    let mask = if holds { mask64(width) } else { 0 };
-    // In a stencil the lane's mask passes through a register opaquely: LLVM would otherwise merge the
-    // lanes' masks into one byte shuffle whose control vector lives in a constant pool, which a stencil
-    // cannot reach. The empty template changes no bit, so the lane's value is the same.
-    #[cfg(stencil_build)]
-    let mask = {
-        let mut mask = mask;
-        // SAFETY: an empty template; the value passes through a register unchanged.
-        unsafe { core::arch::asm!("/* {0} */", inout(reg) mask, options(pure, nomem, nostack, preserves_flags)) };
-        mask
-    };
-    mask
+    opaque(if holds { mask64(width) } else { 0 })
 }
 
 /// `value` clamped to the `width`-bit lane's range (signed or unsigned), as the lane's bits.
@@ -126,25 +116,25 @@ fn zip(left: u128, right: u128, width: u32, operation: impl Fn(u64, u64) -> u64)
 /// Each lane pair where `holds` is all ones, the rest zero.
 #[inline(always)]
 fn compare(left: u128, right: u128, width: u32, holds: impl Fn(u64, u64) -> bool) -> u128 {
-    zip(left, right, width, |x, y| when(holds(x, y), width))
+    zip(left, right, width, #[inline(always)] |x, y| when(holds(x, y), width))
 }
 
 /// Every lane set to `value`'s low `width` bits.
 #[inline(always)]
 fn splat(value: u64, width: u32) -> u128 {
-    each(0, width, |_| value)
+    each(0, width, #[inline(always)] |_| value)
 }
 
 /// Each lane negated (wrapping).
 #[inline(always)]
 fn negate(bits: u128, width: u32) -> u128 {
-    each(bits, width, |x| 0u64.wrapping_sub(x))
+    each(bits, width, #[inline(always)] |x| 0u64.wrapping_sub(x))
 }
 
 /// Each lane's magnitude (wrapping at the minimum).
 #[inline(always)]
 fn absolute(bits: u128, width: u32) -> u128 {
-    each(bits, width, |x| if signed(x, width) < 0 { 0u64.wrapping_sub(x) } else { x })
+    each(bits, width, #[inline(always)] |x| if signed(x, width) < 0 { 0u64.wrapping_sub(x) } else { x })
 }
 
 /// 1 where every lane is nonzero.
@@ -174,43 +164,44 @@ fn bitmask(bits: u128, width: u32) -> u128 {
 /// Each byte's population count.
 #[inline(always)]
 fn population_count(bits: u128) -> u128 {
-    each(bits, 8, |x| u64::from(x.count_ones()))
+    each(bits, 8, #[inline(always)] |x| u64::from(x.count_ones()))
 }
 
 /// Each lane shifted left by `count` modulo the lane width.
 #[inline(always)]
 fn shift_left(bits: u128, count: u128, width: u32) -> u128 {
     let amount = (count as u32) & (width - 1);
-    each(bits, width, |x| x << amount)
+    each(bits, width, #[inline(always)] |x| x << amount)
 }
 
 /// Each lane shifted right, zero-filled, by `count` modulo the lane width.
 #[inline(always)]
 fn shift_right_unsigned(bits: u128, count: u128, width: u32) -> u128 {
     let amount = (count as u32) & (width - 1);
-    each(bits, width, |x| x >> amount)
+    each(bits, width, #[inline(always)] |x| x >> amount)
 }
 
 /// Each lane shifted right, sign-filled, by `count` modulo the lane width.
 #[inline(always)]
 fn shift_right_signed(bits: u128, count: u128, width: u32) -> u128 {
     let amount = (count as u32) & (width - 1);
-    each(bits, width, |x| (signed(x, width) >> amount) as u64)
+    each(bits, width, #[inline(always)] |x| (signed(x, width) >> amount) as u64)
 }
 
 /// Each lane's minimum (`greater` false) or maximum (`greater` true) of the pair.
 #[inline(always)]
 fn extrema(left: u128, right: u128, width: u32, sign: bool, greater: bool) -> u128 {
-    zip(left, right, width, |x, y| {
+    zip(left, right, width, #[inline(always)] |x, y| {
         let (a, b) = (lane_as(x, width, sign), lane_as(y, width, sign));
-        if (if greater { a > b } else { a < b }) { x } else { y }
+        let keeps = if greater { a > b } else { a < b };
+        if keeps { x } else { y }
     })
 }
 
 /// Each lane's saturating sum or difference of the pair.
 #[inline(always)]
 fn saturating(left: u128, right: u128, width: u32, sign: bool, subtract: bool) -> u128 {
-    zip(left, right, width, |x, y| {
+    zip(left, right, width, #[inline(always)] |x, y| {
         let (a, b) = (lane_as(x, width, sign), lane_as(y, width, sign));
         saturate(if subtract { a - b } else { a + b }, width, sign)
     })
@@ -219,13 +210,13 @@ fn saturating(left: u128, right: u128, width: u32, sign: bool, subtract: bool) -
 /// Each lane's unsigned rounding average of the pair.
 #[inline(always)]
 fn average(left: u128, right: u128, width: u32) -> u128 {
-    zip(left, right, width, |x, y| (x + y + 1) >> 1)
+    zip(left, right, width, #[inline(always)] |x, y| (x + y + 1) >> 1)
 }
 
 /// Q15 fixed-point multiply with rounding and saturation, per i16 lane.
 #[inline(always)]
 fn q15(left: u128, right: u128) -> u128 {
-    zip(left, right, 16, |x, y| {
+    zip(left, right, 16, #[inline(always)] |x, y| {
         let product = signed(x, 16) * signed(y, 16);
         saturate((product + Q15_ROUNDING) >> 15, 16, true)
     })

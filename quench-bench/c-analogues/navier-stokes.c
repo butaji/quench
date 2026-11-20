@@ -1,3 +1,6 @@
+// jetstream-row: navier-stokes
+// jetstream-files: Octane/navier-stokes.js
+// iterations: 120
 /* C analogue of JetStream's Octane/navier-stokes.js: the same solver over double arrays
  * sized at run time, with the same frame callback, point schedule and checksum. */
 #include <math.h>

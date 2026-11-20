@@ -2,39 +2,50 @@
 //! independent rustc invocations and the merge of their stencil tables. Pure data operations, so
 //! the unit tests (compiled into `quench-bjit`'s test build) can check them without rustc.
 
-/// Target instances per shard. rustc holds every monomorphized row of its crate in memory at
-/// once: one invocation over the ~26k rows peaked near 6 GB (about 0.23 MB per row), so 4096 rows
-/// kept a shard near 1 GB plus the fixed cost of the shared row definitions. The staged rows grew that cost:
-/// one 4096-row shard reached 14 GB on 2026-11-19, so a shard holds 1536.
-pub const ROWS_PER_SHARD: usize = 1024;
+/// The compile weight one shard holds at most, in row units. rustc holds every monomorphized
+/// row of its crate in memory at once, and a row's cost is its kind's (`NUMBER_WEIGHT` and after): a shard of
+/// 4096 number rows peaked near 4.6 GB, 219 typed element rows near 4.3 GB, 256 property, site and IC rows
+/// near 3.1 GB, and 626 such rows (weighed at 2 each) with 88 element rows near 9.6 GB, as did 360
+/// supernodes of an index row (weighed at 2). At this budget a shard stays near 2 to 2.5 GB beside the fixed
+/// cost of the shared row definitions, so `MAX_WORKERS` of them fit together.
+pub const SHARD_WEIGHT: usize = 1536;
 
-/// Most shard compilations running at once: eight shards of about 1 GB fit a 16 GB machine
-/// beside the linker and the other crates cargo builds in parallel.
-pub const MAX_WORKERS: usize = 8;
+/// The weights of a row's kind, in units of a number row's cost: a heap row inlines its staged
+/// step (7 to 11 units measured for the property, site, IC and environment rows; the build weighs a
+/// supernode as its rows together), and an element row (an index read or store, plain or typed) the whole
+/// element family's.
+pub const NUMBER_WEIGHT: usize = 1;
+pub const HEAP_WEIGHT: usize = 8;
+pub const ELEMENT_WEIGHT: usize = 14;
+/// A plain index read or store row (`INDEX_ROW`, `STORE_ROW`) inlines the generic element read and write
+/// over every backing: 109 index rows peaked near 7.2 GB alone (about 66 MB a row), so it weighs 44 units.
+pub const INDEX_WEIGHT: usize = 44;
 
-/// `items` in contiguous slices of at most `ROWS_PER_SHARD` weight each (an item heavier than that alone), at least
-/// one slice. A heap row inlines a staged heap operation, several times a Number row's code and its compile memory,
-/// so the build weighs each row (`HEAP_ROW_WEIGHT`) and no shard's rustc outgrows the box.
-pub fn split_weighted<T>(items: &[T], weight: impl Fn(&T) -> usize) -> Vec<&[T]> {
+/// Most shard compilations running at once: four shards of `SHARD_WEIGHT` (near 10 GB together) fit a
+/// 16 GB, 4-core machine beside the linker and the other crates cargo builds in parallel. LLVM is about 90%
+/// of a shard's time (`-Z time-passes`), so the shards' codegen is what runs in parallel.
+pub const MAX_WORKERS: usize = 4;
+
+/// `items` in contiguous slices, each as long as its weights (`weight`) fit `SHARD_WEIGHT`, and
+/// at least one item a slice; at least one slice, so the fixed rows always have a home.
+pub fn split<T>(items: &[T], weight: impl Fn(&T) -> usize) -> Vec<&[T]> {
     let mut parts = Vec::new();
-    let (mut start, mut load) = (0, 0);
-    for (index, item) in items.iter().enumerate() {
-        let w = weight(item);
-        if load + w > ROWS_PER_SHARD && index > start {
-            parts.push(&items[start..index]);
-            (start, load) = (index, 0);
+    let (mut start, mut held) = (0, 0);
+    for (at, item) in items.iter().enumerate() {
+        let cost = weight(item);
+        if at > start && held + cost > SHARD_WEIGHT {
+            parts.push(&items[start..at]);
+            (start, held) = (at, 0);
         }
-        load += w;
+        held += cost;
     }
-    parts.push(&items[start..]);
+    if start < items.len() || parts.is_empty() {
+        parts.push(&items[start..]);
+    }
     parts
 }
 
-/// The weight of one heap row in `split_weighted`, in Number rows: a 1490-row shard of mostly heap rows reached 8.5 GB
-/// where a Number shard of the same length stays near 2 GB.
-pub const HEAP_ROW_WEIGHT: usize = 8;
-
-/// Concurrent compilations for `shards` shards on a machine with `parallelism` threads.
+/// The rustc processes to run at once over `shards` shards on `parallelism` cores.
 pub fn workers(shards: usize, parallelism: usize) -> usize {
     shards.min(parallelism).min(MAX_WORKERS).max(1)
 }
@@ -56,23 +67,23 @@ mod tests {
 
     #[test]
     fn small_lists_make_one_shard() {
-        assert_eq!(split_weighted::<u8>(&[], |_| 1).len(), 1);
-        assert_eq!(split_weighted(&[0u8; ROWS_PER_SHARD], |_| 1).len(), 1);
-        assert_eq!(split_weighted(&[0u8; ROWS_PER_SHARD + 1], |_| 1).len(), 2);
+        assert_eq!(split::<u8>(&[], |_| NUMBER_WEIGHT).len(), 1);
+        assert_eq!(split(&[0u8; SHARD_WEIGHT], |_| NUMBER_WEIGHT).len(), 1);
+        assert_eq!(split(&[0u8; SHARD_WEIGHT + 1], |_| NUMBER_WEIGHT).len(), 2);
     }
 
     #[test]
-    fn weighted_split_is_contiguous_bounded_and_complete() {
-        let items: Vec<usize> = (0..ROWS_PER_SHARD * 3 + 5).collect();
-        let weight = |item: &usize| if item % 3 == 0 { HEAP_ROW_WEIGHT } else { 1 };
-        let parts = split_weighted(&items, weight);
+    fn split_is_contiguous_within_weight_and_complete() {
+        let items: Vec<usize> = (0..SHARD_WEIGHT * 3 + 5).collect();
+        let weight = |item: &usize| if item % 7 == 0 { ELEMENT_WEIGHT } else { NUMBER_WEIGHT };
+        let parts = split(&items, weight);
         assert_eq!(parts.concat(), items);
-        assert!(parts.iter().all(|part| part.iter().map(weight).sum::<usize>() <= ROWS_PER_SHARD));
+        assert!(parts.iter().all(|part| part.iter().map(weight).sum::<usize>() <= SHARD_WEIGHT));
     }
 
     #[test]
     fn workers_are_bounded() {
-        assert_eq!(workers(3, 64), 3);
+        assert_eq!(workers(2, 64), 2);
         assert_eq!(workers(100, 64), MAX_WORKERS);
         assert_eq!(workers(100, 2), 2);
         assert_eq!(workers(1, 0), 1);

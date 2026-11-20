@@ -6,14 +6,10 @@ mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
-#[cfg(feature = "aot")]
+pub(crate) mod aot_image;
 pub(crate) mod native_object;
-#[cfg(feature = "aot")]
-pub(crate) mod native_graph;
-#[cfg(all(feature = "aot", feature = "jit"))]
-pub(crate) mod native_stencil;
+#[cfg(feature = "jit")]
 mod specializer;
-#[cfg(feature = "aot")]
 pub(crate) mod specialize;
 #[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
@@ -24,6 +20,7 @@ pub use compiled::NativeFaultHandler;
 mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
+pub use jit_backend::{IsaBaseline, NativeTarget};
 mod tier_machine; pub mod tier_events;
 mod shape_stability;
 pub(crate) mod switches;
@@ -2547,7 +2544,7 @@ struct IteratorRealmPrototypes {
 
 impl<H: Host> Vm<H> {
     /// Record a method-cache name, as a call site's first call does (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn name_method_atom(&mut self, atom: crate::bytecode::Atom) {
         self.method_cache_atoms.name(atom);
     }
@@ -4185,4 +4182,4 @@ enum StringConstantKey<'a> {
 }
 
 #[cfg(feature = "native-execution")]
-pub use compiled::{NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
+pub use compiled::{NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};

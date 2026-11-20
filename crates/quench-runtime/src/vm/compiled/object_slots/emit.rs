@@ -318,7 +318,6 @@ impl FlowStage for Emit<'_, '_> {
         let results = self.call_signature(signature, entry, args);
         (results[0], results[1])
     }
-    #[cfg(feature = "aot")]
     fn ret(&mut self, values: &[ir::Value]) { self.leave(values); }
 }
 

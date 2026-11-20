@@ -1,5 +1,5 @@
-use super::{NativeSupport, SourceManifest};
-use quench_runtime::NativeImageSupport;
+use super::{variant, NativeSupport, SourceManifest};
+use quench_runtime::{NativeImageSupport, NativeTarget};
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -14,7 +14,7 @@ const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile release|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration] [--sdk-report FILE] [--support-dir DIR] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -28,9 +28,11 @@ struct Options {
     output: PathBuf,
     report: Option<PathBuf>,
     sdk_report: Option<PathBuf>,
+    support_dir: Option<PathBuf>,
     profile: String,
     strict: bool,
     support: SourceSupport,
+    target: NativeTarget,
 }
 
 impl Options {
@@ -40,12 +42,15 @@ impl Options {
         let mut output = None;
         let mut report = None;
         let mut sdk_report = None;
+        let mut support_dir = None;
         let mut profile = None;
         let mut strict = false;
         let mut support = None;
+        let mut target_cpu = None;
+        let mut target_triple = None;
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
-                "-o" | "--output" | "--report" | "--profile" | "--sdk-report" => {
+                "-o" | "--output" | "--report" | "--profile" | "--sdk-report" | "--support-dir" | "--target-cpu" | "--target" => {
                     let value = arguments
                         .next()
                         .ok_or_else(|| format!("missing value for {argument}"))?;
@@ -65,9 +70,24 @@ impl Options {
                                 return Err("SDK report specified twice".into());
                             }
                         }
+                        "--support-dir" => {
+                            if support_dir.replace(PathBuf::from(value)).is_some() {
+                                return Err("support directory specified twice".into());
+                            }
+                        }
                         "--profile" => {
                             if profile.replace(value).is_some() {
                                 return Err("profile specified twice".into());
+                            }
+                        }
+                        "--target-cpu" => {
+                            if target_cpu.replace(value).is_some() {
+                                return Err("target CPU specified twice".into());
+                            }
+                        }
+                        "--target" => {
+                            if target_triple.replace(value).is_some() {
+                                return Err("target specified twice".into());
                             }
                         }
                         _ => unreachable!(),
@@ -89,17 +109,22 @@ impl Options {
             }
         }
         let profile = profile.unwrap_or_else(|| "release".to_owned());
-        if !matches!(profile.as_str(), "release" | "iteration") {
-            return Err("compile profile must be release or iteration".into());
+        if strict && matches!(support, Some(SourceSupport::Dynamic)) {
+            return Err("--strict-aot excludes --dynamic-source".into());
+        }
+        if !matches!(profile.as_str(), "experiment" | "release" | "iteration") {
+            return Err("compile profile must be experiment, release or iteration".into());
         }
         Ok(Self {
             entry: entry.ok_or(USAGE)?,
             output: output.ok_or("compile requires -o BINARY")?,
             report,
             sdk_report,
+            support_dir,
             profile,
             strict,
             support: support.unwrap_or(SourceSupport::Automatic),
+            target: NativeTarget::from_names(target_cpu.as_deref(), target_triple.as_deref())?,
         })
     }
 }
@@ -144,12 +169,6 @@ fn build_bootstrap(program: &Path, output: &Path) -> Result<(), String> {
 }
 
 fn compile(options: Options) -> Result<(), String> {
-    if options.strict {
-        return Err(format!(
-            "strict AOT is not yet available: retained support: {}",
-            RETAINED_SUPPORT.join(", ")
-        ));
-    }
     let entry = options
         .entry
         .canonicalize()
@@ -169,7 +188,8 @@ fn compile(options: Options) -> Result<(), String> {
         SourceSupport::Static => Some(NativeImageSupport::Static),
         SourceSupport::Automatic => None,
     };
-    let support = NativeImageSupport::select(explicit, graph.requires_dynamic_source);
+    let variant = variant::select(options.strict, explicit, &graph)?;
+    let support = variant.image_support();
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
         return Err("report destination is a directory".into());
@@ -198,7 +218,7 @@ fn compile(options: Options) -> Result<(), String> {
     }
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
-        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile,
+        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
         "source_compilation": support.allows_dynamic_source(),
@@ -213,7 +233,7 @@ fn compile(options: Options) -> Result<(), String> {
         "files": graph.files.keys().collect::<Vec<_>>(),
         "requirements": graph.requirements.iter().map(super::GraphRequirement::report).collect::<Vec<_>>(),
     });
-    if !graph.requirements.is_empty() {
+    if graph.requirements.iter().any(|requirement| variant::blocks(variant, requirement)) {
         report["status"] = json!("unsupported_requirements");
         write_report(report_path.as_deref(), &report)?;
         return Err(format!(
@@ -221,6 +241,7 @@ fn compile(options: Options) -> Result<(), String> {
             report["requirements"]
         ));
     }
+    variant::require_linkable(variant, options.support_dir.as_deref())?;
     let work = BuildDirectory::new(output.parent().ok_or("output has no parent")?)?;
     manifest.extend(SourceManifest::capture_for_graph(&graph)?)?;
     report["source_units"] = json!(manifest.units().len());
@@ -231,7 +252,7 @@ fn compile(options: Options) -> Result<(), String> {
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let inputs = compiled.emit(&images)?;
+    let inputs = compiled.emit(&images, &options.target)?;
     let bootstrap = work.0.join("bootstrap.bin");
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
@@ -258,8 +279,9 @@ fn compile(options: Options) -> Result<(), String> {
         }
         None => {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().map_err(|error| format!("automatic support build requires the compiler checkout: {error}; use --sdk-report with existing support artifacts"))?;
+            // The `experiment` profile takes nightly flags, as the standard build does (`RUSTC_BOOTSTRAP`).
             let mut cargo = Command::new("cargo");
-            cargo.current_dir(&workspace).args([
+            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args([
                 "build",
                 "--locked",
                 "--profile",
@@ -415,6 +437,7 @@ mod tests {
             vec!["entry.js", "other.js", "-o", "a"],
             vec!["entry.js", "-o", "a", "--profile", "unknown"],
             vec!["entry.js", "-o", "a", "--static-source", "--dynamic-source"],
+            vec!["entry.js", "-o", "a", "--strict-aot", "--dynamic-source"],
         ] {
             assert!(Options::parse(args.into_iter().map(str::to_owned).collect()).is_err());
         }
@@ -434,9 +457,11 @@ mod tests {
             output: output.clone(),
             report: Some(report.clone()),
             sdk_report: None,
+            support_dir: None,
             profile: "iteration".into(),
             strict: false,
             support: SourceSupport::Static,
+            target: NativeTarget::default(),
         });
         assert!(result.is_err());
         assert!(!effect.exists());
@@ -463,9 +488,11 @@ mod tests {
                 output: destination,
                 report,
                 sdk_report: None,
+                support_dir: None,
                 profile: "iteration".into(),
                 strict: false,
                 support: SourceSupport::Static,
+                target: NativeTarget::default(),
             })
             .is_err());
         }

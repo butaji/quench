@@ -1,7 +1,7 @@
 use super::*;
 use crate::vm::global_facts::LexicalSlot;
 use crate::staged::property::StoreArm;
-use crate::staged::{BinaryClass, Constant, DecodeContext, NumberOperation, Operation};
+use crate::staged::{BinaryClass, Constant, DecodeContext, Operation};
 mod fields;
 use fields::{field_row, field_store_row};
 pub(super) use fields::{site_read_row, stores_field};

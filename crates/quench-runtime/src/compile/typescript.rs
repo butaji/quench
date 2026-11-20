@@ -7,7 +7,6 @@ use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_syntax::scope::ScopeFlags;
 
-use crate::bytecode::DeclaredTypes;
 use crate::typed_ir::language_bit;
 use crate::staged::value::language as bits;
 
@@ -267,7 +266,8 @@ fn builtin_object(name: &str) -> u16 {
     use crate::ValueType as V;
     match name {
         "Function" => language_bit(V::Function),
-        "Array" | "ReadonlyArray" | "Map" | "Set" | "WeakMap" | "WeakSet" | "Date" | "RegExp" | "Promise"
+        "Array" | "ReadonlyArray" => bits::ARRAY,
+        "Map" | "Set" | "WeakMap" | "WeakSet" | "Date" | "RegExp" | "Promise"
         | "Error" | "Uint8Array" | "Uint8ClampedArray" | "Uint16Array" | "Int16Array" | "Uint32Array"
         | "Int32Array" | "Float32Array" | "Float64Array" | "ArrayBuffer" | "DataView" => language_bit(V::Object),
         _ => DECLARED_ANY,
@@ -920,7 +920,6 @@ mod module_tests {
         assert!(Engine::typescript_has_module_syntax("export interface {").is_none());
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_module_key_keeps_language_in_its_compile_goal() {
         let source = "export const value: number = 1;";

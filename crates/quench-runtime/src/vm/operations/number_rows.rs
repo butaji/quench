@@ -62,6 +62,7 @@ macro_rules! number_relation_rows {
         GreaterEqual => [GreaterEqualThan ">="], greater_equal;
     }};
 }
+#[allow(unused_imports)] // the stencil build's supernode rules (`supernode_rules.rs`) name it
 pub(crate) use number_relation_rows;
 number_relation_rows!(number_relations);
 

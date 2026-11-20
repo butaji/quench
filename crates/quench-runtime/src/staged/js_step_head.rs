@@ -72,6 +72,30 @@ pub(crate) struct JsStepHead<V> {
     /// The word of the storage the running lane body's environment-owned locals live in, which its
     /// environment rows read through (`staged::environment::environment_slot`).
     pub(crate) environment_storage: u64,
+    /// The empty allocations' inputs (`heap_rows::empty_row`, `lane_region::frame_calls`): the object space's
+    /// record cursor and the empty object's captured template (layout, payload and the prototype it was
+    /// captured under), then the same for the array space and the zero-length array. A template word of zero
+    /// means none is captured, and a cursor of zero that the space has none; either sends the allocation to
+    /// its helper.
+    pub(crate) object_cursor: usize,
+    pub(crate) empty_object_layout: u64,
+    pub(crate) empty_object_payload: u64,
+    pub(crate) empty_object_proto: u64,
+    pub(crate) array_cursor: usize,
+    pub(crate) empty_array_layout: u64,
+    pub(crate) empty_array_payload: u64,
+    pub(crate) empty_array_proto: u64,
+    /// The base of the heap's one-unit ASCII strings (`Heap::ascii_unit_strings_base`), which a
+    /// `charAt` row indexes by unit (`staged::builtins::char_at_ascii`); zero where absent.
+    pub(crate) ascii_unit_strings: usize,
+    /// The address of the thread's armed array proofs word (`heap::array_proofs::armed_proofs_address`).
+    /// Its word is nonzero while a lane run's proofs are armed, which a row that shrinks an array's
+    /// backing must miss on: it cannot retire them. Read at every use, so never stale.
+    pub(crate) armed_array_proofs: usize,
+    /// The address of the thread's index-free chain link word (`heap::index_free_chain_link_address`):
+    /// its word is the encoded link of `Array.prototype` while the held index-free chain proof covers
+    /// its chain, else zero. Read at every use, so never stale.
+    pub(crate) array_chain_index_free_address: usize,
     /// The address of the lane run's plain-frame depth word (`PlainFrames`, `frame::PLAIN_DEPTH_AT`); its
     /// registers word is `frame::PLAIN_REGISTERS_AT` past it. Emitted calls bump the depth and set the registers.
     /// (reconciled with u-jit F5 on merge)

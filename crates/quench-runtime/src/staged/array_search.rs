@@ -11,7 +11,7 @@ use std::ops::Range;
 
 use super::numeric::NumericStage;
 use super::region::Region;
-use super::{Concrete, Stage};
+use super::Concrete;
 use crate::Value;
 use crate::heap::ArrayElements;
 

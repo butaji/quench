@@ -70,6 +70,7 @@ mod admission;
 mod delete;
 mod operation;
 pub(crate) use operation::Operation;
+pub(crate) use operation::kind as op_kind;
 mod binary_class;
 pub(crate) use binary_class::BinaryClass;
 mod edge;
@@ -173,7 +174,7 @@ mod guard;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+pub(crate) use steps::{step, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub(crate) mod region;
@@ -183,7 +184,7 @@ pub(crate) mod wasm_access;
 pub(crate) mod wasm_int;
 pub(crate) mod wasm_jump;
 pub(crate) mod wasm_state;
-pub(crate) use wasm_jump::{BranchTable, WasmJump};
+pub(crate) use wasm_jump::BranchTable;
 pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
 pub(crate) mod wasm_exception;
@@ -220,7 +221,7 @@ mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
 /// capture access whose scopes the frame does not hold, the walk over the scopes from the

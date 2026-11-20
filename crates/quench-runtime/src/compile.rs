@@ -1,6 +1,6 @@
 use crate::bytecode::{
     Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
-    LexicalBindingKind, MethodSite, ReceiverPath, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, REGISTER_MOVE, RETURN_OP, Register,
     ResidualProgram, SET_THIS_REGISTER, Superinstruction, Traits, WideInstruction, the_op,
 };
@@ -51,13 +51,12 @@ fn plain_local_form(op: Op) -> Option<Op> {
         None
     }
 }
+pub(crate) mod aot_facts;
 mod annex_b_targets;
 mod arrow;
 mod ast;
 mod atoms;
-#[cfg(feature = "aot")]
 mod native_sources;
-#[cfg(feature = "aot")]
 pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
@@ -323,10 +322,8 @@ impl DynamicFunctionSource {
 }
 
 impl DynamicFunctionKind {
-    #[cfg(feature = "aot")]
     const ALL: [Self; 4] = [Self::Ordinary, Self::Async, Self::Generator, Self::AsyncGenerator];
 
-    #[cfg(feature = "aot")]
     pub(crate) fn from_source_prefix(prefix: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.source_prefix() == prefix)
     }
@@ -1203,7 +1200,6 @@ impl Engine {
             annex_b_targets::Recognize::Flat
         };
         let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing, module_goal));
-        #[cfg(feature = "aot")]
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
         // A first-call chunk's annotations resolve against its program's top-level names.
         let saved_names = match expected_shape {
@@ -1211,7 +1207,7 @@ impl Engine {
             _ => None,
         };
         let mut declared_types = crate::bytecode::DeclaredTypes { type_names: saved_names, ..Default::default() };
-        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, atom_prefix.native_global_script_calls());
         lazy_bodies::release_parsed_free_pages(&allocator);
         let mut facts = facts.into_inner();
         // A first-call chunk's declarations are its program's, for its function (`ChunkWindow::declared`),
@@ -1396,7 +1392,6 @@ impl Engine {
             .collect();
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
-        #[cfg(feature = "aot")]
         let native_requests = atom_prefix.native_source_requests().map(|pending| {
             (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
         });
@@ -1404,7 +1399,6 @@ impl Engine {
         drop(semantic);
         parsed.program.directives.drain(..usize::from(inherited_directive));
         typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut declared_types);
-        #[cfg(feature = "aot")]
         let mut native_requests = native_requests;
         if lazy {
             // The lazily parsed bodies, checked and analyzed one at a time as the parser
@@ -1413,7 +1407,6 @@ impl Engine {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             }
             let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
-            #[cfg(feature = "aot")]
             if let Some((_, requests)) = facts.native_source_requests
                 && let Some((_, pending)) = &mut native_requests { pending.extend(requests); }
             private_name_ids.extend(facts.private_name_ids.into_iter().map(|(span, id)| (span, first_private_id + id)));
@@ -1509,7 +1502,6 @@ impl Engine {
         if !crate::DYNAMIC_EXECUTION_ENABLED {
             crate::vm::freeze_call_sites(&program);
         }
-        #[cfg(feature = "aot")]
         if let Some((pending, requests)) = native_requests { pending.borrow_mut().extend(requests); }
         #[cfg(feature = "verify-replay")]
         replay::verify(&program);

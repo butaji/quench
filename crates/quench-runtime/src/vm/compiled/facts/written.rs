@@ -1,6 +1,6 @@
 //! The registers a lane body's entry finds written (`Facts::written`).
 use super::Facts;
-use crate::bytecode::{Register, WideInstruction};
+use crate::bytecode::WideInstruction;
 use cranelift_codegen::bitset::CompoundBitSet;
 
 impl Facts {

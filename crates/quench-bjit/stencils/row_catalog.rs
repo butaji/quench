@@ -315,6 +315,11 @@ macro_rules! catalog {
     STAGED_LOOSE_NE: uses(Unread, Src, Src, Never),
     STAGED_STRICT_EQ: uses(Unread, Src, Src, Never),
     STAGED_STRICT_NE: uses(Unread, Src, Src, Never),
+    /// An empty object (`EMPTY_OBJECT_ROW`) or zero-length array (`EMPTY_ARRAY_ROW`) bumped from its kind's record cursor
+    /// and template (`heap_rows::empty_row`): the destination (hole 0) takes the new reference. A spent run, a missing
+    /// template or a destination that cannot hold a reference leaves through EXIT0 with nothing written.
+    EMPTY_OBJECT_ROW: uses(Dst, Unread, Unread, Never),
+    EMPTY_ARRAY_ROW: uses(Dst, Unread, Unread, Never),
     ]
     }
     number {

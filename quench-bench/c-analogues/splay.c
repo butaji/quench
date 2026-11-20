@@ -1,3 +1,6 @@
+// jetstream-row: splay
+// jetstream-files: Octane/splay.js
+// iterations: 120
 /* C analogue of JetStream's Octane/splay.js: the same top-down splay tree of heap nodes
  * keyed by doubles from JetStream's deterministic Math.random (reset before every
  * iteration, so most fresh keys collide with live ones and are redrawn), the same

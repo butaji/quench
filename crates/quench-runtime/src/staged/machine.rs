@@ -219,7 +219,7 @@ pub(crate) trait MachineVariables: Machine {
 
 /// A machine that continues in the code it calls, so the call is the end of the function: a tail
 /// call of `target`, or of the code at an address under a `signature`, on `arguments`.
-#[cfg(all(feature = "aot", feature = "jit", not(stencil_build)))]
+#[cfg(all(feature = "jit", not(stencil_build)))]
 pub(crate) trait MachineTail: MachineAccess + MachineFlow {
     fn tail_call(&mut self, target: Self::Function, arguments: &[Self::Word]);
     fn tail_call_indirect(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]);

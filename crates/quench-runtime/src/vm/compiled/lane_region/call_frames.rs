@@ -2,7 +2,9 @@
 //! words live in a lane body, and where each of its statuses continues. The order of the call
 //! (identity, `this`, room, window, entry, completion) is `staged::invoke`; this file keeps the
 //! words it reads (the register file, the lane stack's tops, the callee's entry cell) and the
-//! blocks the lowering made for its exits.
+//! blocks the lowering made for its exits. A callee the body owns (`DirectCallee`) has its words
+//! as constants; an image's proven callee has them in its `CallRecord` (`ProvenCall`), which the
+//! loader binds, so the code names the record by `Symbol::CallRecord` and never a JIT-time address.
 
 use super::*;
 use super::super::object_slots::emit;
@@ -11,7 +13,7 @@ use crate::staged::machine::{Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{EntryCell, RAISED_RUN};
-use quench_bjit::call_record::LaneStatus;
+use quench_bjit::call_record::{CallRecord, LaneStatus};
 use super::super::super::dispatch_fast::LaneRecoverySpace;
 use super::super::lane_body_abi::body_signature_in_lane;
 use crate::staged::call::admit_room;
@@ -37,8 +39,8 @@ impl Leave {
 /// words the call reads, and the blocks its statuses continue at.
 #[derive(Clone, Copy)]
 pub(super) struct CallSite<'a> {
-    /// The callee a body calls by its entry, which the body owns; `None` where the VM calls.
-    pub(super) callee: Option<&'a DirectCallee>,
+    /// The callee a body calls by its entry: one the body owns, or an image's proven callee; `None` where the VM calls.
+    pub(super) callee: Option<DirectSite<'a>>,
     /// The record the VM's call reads, and the lane context a body enters with.
     pub(super) record: u32,
     pub(super) context: ir::Value,
@@ -62,6 +64,48 @@ pub(super) struct CallSite<'a> {
     /// not entered (`call_enter`), as the VM's own construction does not run it (`initializes()`).
     pub(super) initializing: Option<(Register, u16)>,
 }
+
+/// The callee a body calls by its entry: one the body owns (a JIT plan's `DirectCallee`), or a call of an image the
+/// closed world proves, whose run-time words its record holds.
+#[derive(Clone, Copy)]
+pub(super) enum DirectSite<'a> {
+    Owned(&'a DirectCallee),
+    Proven(ProvenCall),
+}
+
+/// An image's call whose callee the closed world proves (`AotFacts::call_target`): the callee's function, which fixes
+/// its window and `this` form, and the symbol of the site's record (`Symbol::CallRecord`, as `(namespace, key)`). The
+/// call reads the callee's identity, cell, descriptor, captures, global, caller call and caller base from the record,
+/// which the loader binds (`BoundCalls::bind`). Until a binding the record's identity is no callee's, so the identity
+/// guard sends every call to the VM's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm::compiled) struct ProvenCall {
+    pub(in crate::vm::compiled) function: u32,
+    pub(in crate::vm::compiled) registers: u16,
+    pub(in crate::vm::compiled) sloppy: bool,
+    pub(in crate::vm::compiled) record: (u32, u32),
+}
+
+impl DirectSite<'_> {
+    /// The callee's window size: its code's, the same for either form.
+    fn registers(self) -> u16 {
+        match self {
+            Self::Owned(callee) => callee.registers,
+            Self::Proven(call) => call.registers,
+        }
+    }
+
+    /// The function the callee is: the owned callee's target, or the proven callee's function.
+    fn function(self) -> u32 {
+        match self {
+            Self::Owned(callee) => callee.target.function,
+            Self::Proven(call) => call.function,
+        }
+    }
+}
+
+/// The alias region of a proven call's record, which no code writes while it runs.
+const CALL_RECORD: Access = Region::EntryCell.readonly();
 
 /// The record that completes the activation a return ends (`LaneExit::Returned`), and where it
 /// leaves.
@@ -114,6 +158,12 @@ impl EmitFrame<'_> {
         }
     }
 
+    /// The word at `offset` of a proven call's record: the record's address is its symbol's.
+    fn record_word(&self, stage: &mut Emit<'_, '_>, call: ProvenCall, offset: usize) -> ir::Value {
+        let record = crate::vm::jit_backend::symbol_address(stage.builder, call.record.0, call.record.1);
+        stage.load_u64(CALL_RECORD, record, field(offset))
+    }
+
     /// A word of the dispatch: the addresses of the lane stack's tops and its ends.
     fn stack_word(&self, stage: &mut Emit<'_, '_>, offset: usize) -> ir::Value {
         stage.load_u64(DISPATCH, self.payload, field(offset))
@@ -135,7 +185,9 @@ impl EmitFrame<'_> {
     /// argument window's register `k` holds a value of parameter `k`'s type (`self.state`), so the body's proven entry,
     /// which skips those guards, takes them as the caller proved them. A call that does not pass a register window, that
     /// forwards its arguments, or whose target a forwarder names proves none.
-    fn arguments_proven(&self, site: &Invocation, callee: &DirectCallee) -> bool {
+    /// An image's proven callee pins no body, so it proves none and enters its cell's entry.
+    fn arguments_proven(&self, site: &Invocation, callee: DirectSite<'_>) -> bool {
+        let DirectSite::Owned(callee) = callee else { return false };
         let Some(types) = callee.body.as_deref().and_then(|body| body.entry_param_types()) else { return false };
         let Arguments::Window { first, count } = site.arguments else { return false };
         if site.forwards || callee.forwarder.is_some() || usize::from(count) < types.len() { return false; }
@@ -146,7 +198,8 @@ impl EmitFrame<'_> {
     /// The entry a direct call enters: the callee's proven entry where the call's arguments are proved to have its
     /// parameter types (`arguments_proven`) and the cell publishes the very body the call pinned (`DirectCallee::body`,
     /// `EntryCell::proven_body`), else the cell's entry. A cell that holds no proven entry, or another body's, enters `entry`.
-    fn entry_target(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, cell: ir::Value, entry: ir::Value) -> ir::Value {
+    fn entry_target(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, cell: ir::Value, entry: ir::Value) -> ir::Value {
+        let DirectSite::Owned(callee) = callee else { return entry };
         let (true, Some(body)) = (self.proven_arguments.get(), callee.body.as_ref()) else { return entry };
         let proven = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, proven_entry)));
         let owner = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, proven_body)));
@@ -171,12 +224,12 @@ impl EmitFrame<'_> {
     /// Admit the callee's window to the lane stack's values, and its native header to the plain frames
     /// (the index bound: `index + RECOVERY_ACTIVATIONS_AT + 1 <= plain_depth_limit`), each a room row
     /// leaving at `miss`.
-    fn admit_stacks(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, cell: ir::Value, miss: ir::Block) -> Option<Room<ir::Value>> {
+    fn admit_stacks(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, cell: ir::Value, miss: ir::Block) -> Option<Room<ir::Value>> {
         let word = std::mem::size_of::<Value>() as u64;
         let top = self.values_top(stage);
         let end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_values_end));
         // The next window's context words follow the callee's registers (`lane_values::CONTEXT`).
-        let next = stage.add_imm(top, (u64::from(callee.registers) + crate::vm::register_file::FRAME_CONTEXT as u64) * word);
+        let next = stage.add_imm(top, (u64::from(callee.registers()) + crate::vm::register_file::FRAME_CONTEXT as u64) * word);
         let recovery = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, recovery)));
         let recovered_values = stage.load_u64(ENTRY_CELL, recovery, field(std::mem::offset_of!(LaneRecoverySpace, values)));
         let bytes = stage.mul_imm(recovered_values, word);
@@ -196,16 +249,28 @@ impl EmitFrame<'_> {
     /// its receiver, the caller's registers, the callee's constant words and the packed word. Its body and
     /// descriptor go in the tables at its index, the plain depth is bumped and the window set as the innermost.
     /// The link (`native_frames::link_header`) fills the call record, caller base, argc and side record.
-    fn push_native(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, this: ir::Value, caller_registers: ir::Value, room: Room<ir::Value>) {
+    fn push_native(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, this: ir::Value, caller_registers: ir::Value, room: Room<ir::Value>) {
         use crate::staged::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_PACKED, CONTEXT_THIS};
         let window = room.top;
         let at = Region::Frame.mutable();
-        let descriptor = address(self.helpers, stage.builder, RelocKind::Descriptor, callee.target.function, callee as *const DirectCallee as u64);
+        // The words the callee's identity fixes are constants (its function's packed word); the words the binding
+        // makes are the record's (a proven callee's), a constant of the owned callee's own.
+        let (descriptor, call, caller_base, callee_word) = match callee {
+            DirectSite::Owned(owned) => (
+                address(self.helpers, stage.builder, RelocKind::Descriptor, owned.target.function, std::ptr::from_ref(owned).addr() as u64),
+                stage.constant(owned.call as u64),
+                stage.constant(owned.caller_base as u64),
+                stage.constant(owned.callee.to_bits()),
+            ),
+            DirectSite::Proven(proven) => (
+                self.record_word(stage, proven, std::mem::offset_of!(CallRecord, descriptor)),
+                self.record_word(stage, proven, std::mem::offset_of!(CallRecord, call)),
+                self.record_word(stage, proven, std::mem::offset_of!(CallRecord, caller_base)),
+                self.record_word(stage, proven, std::mem::offset_of!(CallRecord, callee)),
+            ),
+        };
         let body = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, body)));
-        let call = stage.constant(callee.call as u64);
-        let caller_base = stage.constant(callee.caller_base as u64);
-        let packed = stage.constant(u64::from(callee.target.function) | crate::staged::frame::PLAIN_FLAG | crate::staged::frame::NATIVE_FLAG);
-        let callee_word = stage.constant(callee.callee.to_bits());
+        let packed = stage.constant(u64::from(callee.function()) | crate::staged::frame::PLAIN_FLAG | crate::staged::frame::NATIVE_FLAG);
         // Unlike the b-jit call row, which writes the receiver only where the body's `uses_this` cell word says it
         // reads `this`, this writes it always: loading that word here would add a load and a branch to the
         // emitted header, and an unread receiver word is harmless.
@@ -261,14 +326,25 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
         self.proven_arguments.set(self.arguments_proven(site, callee));
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
-        // A callee register the state already holds as this very function (a Stable binding's
-        // read, or an identity an earlier guard proved) needs no check: the identity is folded.
-        let word = callee.callee.to_bits();
-        let proven = matches!(site.callee, crate::staged::forms::Callee::Register(register)
-            if self.state.values[usize::from(register)].value.ty.function_identity().map(|identity| identity.to_bits()) == Some(word));
-        let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };
-        let plan = DirectPlan { kind, identity, sloppy: callee.sloppy.map(Value::to_bits),
-            registers: callee.registers, returned: LANE_BODY_RETURNED, bound: None };
+        let (identity, sloppy) = match callee {
+            DirectSite::Owned(owned) => {
+                // A callee register the state already holds as this very function (a Stable binding's
+                // read, or an identity an earlier guard proved) needs no check: the identity is folded.
+                let word = owned.callee.to_bits();
+                let proven = matches!(site.callee, crate::staged::forms::Callee::Register(register)
+                    if self.state.values[usize::from(register)].value.ty.function_identity().map(|identity| identity.to_bits()) == Some(word));
+                let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };
+                (identity, owned.sloppy.map(Value::to_bits))
+            }
+            // The identity and the global are the record's words (`call_identity`, `call_global`): the plan's
+            // constants stand for them and are never emitted. The record's identity is checked against a register
+            // only, so a call of any other form takes the VM's (its callee is not the record's to check).
+            DirectSite::Proven(proven) => {
+                if !matches!(site.callee, crate::staged::forms::Callee::Register(_)) { return CallEntry::Helper; }
+                (Identity::Guarded(crate::vm::aot_image::unbound_callee()), proven.sloppy.then(crate::vm::aot_image::unbound_callee))
+            }
+        };
+        let plan = DirectPlan { kind, identity, sloppy, registers: callee.registers(), returned: LANE_BODY_RETURNED, bound: None };
         // The callee is the one the site linked, which the call guards: a Site fact, never inlined by the plan.
         plan_entry(Some(Resolved { plan, binding: BindingTime::Site, body: None }), self.tiers.lane_body.max_inlined_instructions)
     }
@@ -295,8 +371,29 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn call_room(&mut self, stage: &mut Emit<'_, '_>, miss: ir::Block) -> Option<Room<ir::Value>> {
         let callee = self.call_site()?.callee?;
-        let cell = address(self.helpers, stage.builder, RelocKind::EntryCell, callee.target.function, callee.cell as u64);
+        let cell = match callee {
+            DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::EntryCell, owned.target.function, owned.cell as u64),
+            DirectSite::Proven(proven) => self.record_word(stage, proven, std::mem::offset_of!(CallRecord, cell)),
+        };
         self.admit_stacks(stage, callee, cell, miss)
+    }
+
+    /// The identity an image's proven call checks its callee register against: the record's word, which the binding
+    /// makes the callee's identity (`BoundCalls::bind`) and which no callee holds while the record is unbound.
+    /// A body's own callee has its identity as the plan's constant, so the frame reads none.
+    fn call_identity(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
+        match self.call_site()?.callee? {
+            DirectSite::Proven(proven) => Some(self.record_word(stage, proven, std::mem::offset_of!(CallRecord, callee))),
+            DirectSite::Owned(_) => None,
+        }
+    }
+
+    /// The global object a proven sloppy callee binds, from the record's `global_this` (`BoundCalls::bind`).
+    fn call_global(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
+        match self.call_site()?.callee? {
+            DirectSite::Proven(proven) => Some(self.record_word(stage, proven, std::mem::offset_of!(CallRecord, global_this))),
+            DirectSite::Owned(_) => None,
+        }
     }
 
     /// The call of the entry the callee's cell holds, with the lane context, the receiver, the
@@ -319,8 +416,10 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let entry = self.entry_target(stage, callee, room.cell, entry);
         let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
-        let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,
-            callee.capture_word());
+        let captures = match callee {
+            DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::CaptureWords, owned.target.function, owned.capture_word()),
+            DirectSite::Proven(proven) => self.record_word(stage, proven, std::mem::offset_of!(CallRecord, captures)),
+        };
         let (status, word) = stage.call_entry(signature, entry, &[call.context, this, captures, room.top]);
         // The status test's fall-through is the returned path (`complete_call`); every other status is cold.
         let unfinished = stage.builder.create_block();

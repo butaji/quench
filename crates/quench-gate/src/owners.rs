@@ -8,7 +8,6 @@ const OWNERS: &[(&str, &str)] = &[
     ("staged", "J"),
     ("code_dependencies", "J"),
     ("api_native_tests", "J"),
-    ("vm::native_stencil", "J"),
     ("vm::jit_backend", "J"),
     ("vm::tier_machine", "J"),
     ("vm::dispatch_fast", "R"),

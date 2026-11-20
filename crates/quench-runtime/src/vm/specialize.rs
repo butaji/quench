@@ -9,7 +9,7 @@
 //! that instruction's residual code, so applying it across a program is a
 //! compiler derived from the interpreter. Rust monomorphization produces the
 //! per-opcode semantic entries at build time, and copy-and-patch stencils
-//! compile the residual shapes once per process (`native_stencil`).
+//! compile the residual shapes once per process.
 //!
 //! The contract, the division table and the plan live in
 //! `Linear TOD-1232`.
@@ -144,7 +144,6 @@ impl<E> CallThreaded<E> {
     /// The offline publication: static inputs and locations only.
     pub(crate) fn new(extension: E) -> Self { Self { extension, division: Division::Offline } }
     /// An eager image's publication: whole-program Stable facts, no feedback sites.
-    #[cfg(feature = "aot")]
     pub(crate) fn frozen(extension: E) -> Self { Self { extension, division: Division::Frozen } }
 }
 

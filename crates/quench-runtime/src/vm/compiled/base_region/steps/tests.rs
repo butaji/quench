@@ -32,14 +32,15 @@ fn every_opcode_is_lowered() {
     assert!(counts[1] > 0 && counts[0] > 0);
 }
 
-/// Without a helper table that has addresses (a linked or symbolic one) an instruction leaves:
-/// still lowered, never refused.
+/// Under `LaneHelpers::Ahead` (an AOT body) an instruction no row takes is the generic semantic row where image
+/// bodies run generic rows (`LaneHelpers::generic_rows`), else the leave a JIT body makes.
 #[test]
-fn without_helper_addresses_every_opcode_leaves() {
+fn under_ahead_every_opcode_without_a_row_is_generic_or_leaves() {
     let program = empty_program();
+    let unplaced = if LaneHelpers::Ahead.generic_rows() { Step::Generic } else { Step::Leave };
     for index in 0..Op::COUNT {
         let op = Op::from_index(index).expect("an opcode");
-        assert_eq!(lowering(instruction(op), known(&program), LaneHelpers::Ahead), Step::Leave, "{op:?}");
+        assert_eq!(lowering(instruction(op), known(&program), LaneHelpers::Ahead), unplaced, "{op:?}");
     }
 }
 

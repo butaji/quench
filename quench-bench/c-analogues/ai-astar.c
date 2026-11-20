@@ -1,3 +1,6 @@
+// jetstream-row: ai-astar
+// jetstream-files: SeaMonster/ai-astar.js
+// iterations: 120
 /* C analogue of JetStream's SeaMonster/ai-astar.js (javascript-astar 0.4.1): the same
  * 500x500 grid graph of heap nodes built once outside the timed loop, the same A* search
  * from [0][0] to [123][321] with the Manhattan heuristic, a binary heap keyed on f whose

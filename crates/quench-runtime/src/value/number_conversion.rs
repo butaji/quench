@@ -93,6 +93,8 @@ pub fn number_to_i32(value: f64) -> i32 {
 }
 
 /// ToUint8Clamp, the body `staged::math::clamp_u8` shares with the interpreter and the stencils.
+/// Not in the Wasm rows' stencil family, which does not compile `staged::math` (`stencil_family`).
+#[cfg(not(stencil_family = "wasm"))]
 #[inline(always)]
 pub fn number_to_uint8_clamp(number: f64) -> u8 {
     crate::staged::math::clamp_u8(number)

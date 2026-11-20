@@ -9,7 +9,7 @@ use super::{CallOut, Domain, Edge, NumericFrame, NumericStage, Operation, Step};
 #[cfg(not(stencil_build))]
 use crate::bytecode::WideInstruction;
 use crate::bytecode::Operand;
-use crate::typed_ir::Type;
+use crate::typed_ir::{Type, language_bit};
 use crate::vm::operations::{equality_binary_operator, equality_operator, NumberBitwise, NumberRelation};
 use crate::{Value, ValueType};
 
@@ -93,9 +93,11 @@ impl Comparison {
         }
     }
 
+    #[cfg(not(stencil_build))]
     /// The comparison `operator` names (a `JumpBinaryFalse`'s operator field): the widest Number
     /// relation, an equality, a bitwise test, `instanceof`, else the operator itself. A tier with
     /// more facts than the operator narrows it (the observed Numbers, the proved domain).
+    #[inline]
     pub(crate) fn of_operator(operator: u32) -> Self {
         equality_operator(operator)
             .map(|(strict, negated)| Self::Equality { strict, negated })
@@ -124,6 +126,7 @@ impl Comparison {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
     /// The `JumpBinaryFalse` row: it jumps where the comparison fails.
@@ -136,7 +139,7 @@ impl<W, P> Operation<W, P> {
 /// Run the comparison jump `operation`: the edge its answer takes, or `Unresolved` where the
 /// tier decides the comparison itself.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let Operation::CompareJump { comparison, left, right, negate } = operation else { return Step::Unresolved };
     let holds = match outcome(stage, frame, comparison, [left, right], negate) {
@@ -148,6 +151,13 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     };
     let taken = if negate { stage.not(holds) } else { holds };
     Step::Control(frame.branch(stage, taken))
+}
+
+/// `step_of` for any operation.
+#[inline(always)]
+pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
 /// Whether `comparison` of `operands` holds, for a jump that `negate`s it; `None` where only the
@@ -182,6 +192,22 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
 fn by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, comparison: Comparison,
     [left, right]: [Operand; 2]) -> Option<S::Cond> {
     if !frame.general_operators() { return None; }
+    by_vm_operator(stage, frame, comparison, [left, right])
+}
+
+/// No stencil frame takes the VM's general operators, and the stencil build has no parser's operator codes.
+#[cfg(stencil_build)]
+#[inline(always)]
+fn by_vm_operator<S: NumericStage, F: NumericFrame<S>>(_stage: &mut S, _frame: &mut F, _comparison: Comparison,
+    _operands: [Operand; 2]) -> Option<S::Cond> {
+    None
+}
+
+/// `by_vm` of a frame that takes the VM's general operators.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+fn by_vm_operator<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, comparison: Comparison,
+    [left, right]: [Operand; 2]) -> Option<S::Cond> {
     let both_registers = left.register_index().is_some() && right.register_index().is_some();
     match comparison {
         Comparison::Relation { relation, .. } => binary_decision(stage, frame, [left, right], relation.binary_operator()),
@@ -339,8 +365,10 @@ fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
     } else if ty.within_languages(Type::language(ValueType::Undefined)) {
         Some(!strict || matches!(expected, ValueType::Undefined))
     } else {
-        let number_or_boolean = Type::NUMBER.language_union(Type::language(ValueType::Boolean));
-        (ty.is_direct_object_family() || ty.within_languages(number_or_boolean)).then_some(false)
+        // Number or Boolean, as `Type::NUMBER.join(Type::language(ValueType::Boolean))`, as a constant a
+        // stencil row folds (the join is not inlined there).
+        const NUMBER_OR_BOOLEAN: Type = Type::languages(language_bit(ValueType::Number) | language_bit(ValueType::Boolean));
+        (ty.is_direct_object_family() || ty.is_subtype(NUMBER_OR_BOOLEAN)).then_some(false)
     }
 }
 

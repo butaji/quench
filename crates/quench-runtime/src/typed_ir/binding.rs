@@ -34,7 +34,6 @@ pub(crate) enum Division {
     /// Also Stable heap facts, each under a code dependency whose change retires
     /// the code, but no feedback site contents: the AOT image's whole-program
     /// division. The facts come from the closed program, not from a training run.
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     Frozen,
     /// Also the contents of feedback sites, each behind a guard whose failure
     /// resumes the interpreter at the exact PC, and Stable heap facts under a

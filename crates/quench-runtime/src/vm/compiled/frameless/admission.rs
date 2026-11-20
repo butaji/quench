@@ -84,13 +84,8 @@ fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: 
     Some(entry)
 }
 
-/// The native entry of `function` in `owner`'s linked code, which only native builds have.
-#[cfg(feature = "native-execution")]
-fn native_entry<H: Host>(vm: &Vm<H>, owner: crate::vm::ProgramId, function: u32) -> Option<usize> {
-    vm.programs.native_js_code(owner)?.entries().get(function as usize).map(|code| *code as usize)
-}
-
-#[cfg(not(feature = "native-execution"))]
+/// No program has a native entry of the native-graph ABI: an image's functions run their bodies on
+/// the lane runner (`Vm::install_ahead_body`).
 fn native_entry<H: Host>(_: &Vm<H>, _: crate::vm::ProgramId, _: u32) -> Option<usize> {
     None
 }

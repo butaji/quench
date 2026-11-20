@@ -273,7 +273,7 @@ pub(in crate::vm::dispatch_fast) const fn chain_row<H: Host, const L0: u16, cons
 /// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
 /// an environment window's function, which `window_local_handler` gives its row.
 pub(in crate::vm::dispatch_fast) fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
-    generated_row::<H, OP, ACC_NONE, FLAG_WINDOW> as Handler as *const () == handler
+    generated_row!(H, OP, ACC_NONE, FLAG_WINDOW) as Handler as *const () == handler
 }
 
 /// `chains!` index `chain` within `staged::FUSED_CHAINS` (past its end, entry 0 again).

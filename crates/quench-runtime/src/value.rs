@@ -21,7 +21,6 @@ static NARROW_UPPER_WORD_TABLE: [u64; NARROW_LOOKUP_CODES] = NARROW_UPPER_WORDS;
 /// constants live in `staged::value_encoding`): the runtime's own table reads.
 impl NarrowLayout {
     /// Only codes selected by the decoder belong in a native image.
-    #[cfg(feature = "aot")]
     pub(crate) fn decode_words() -> &'static [u64] {
         &NARROW_UPPER_WORD_TABLE[..=Self::CODE_MASK as usize]
     }

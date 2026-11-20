@@ -11,6 +11,8 @@ mod ascii;
 mod subject_cache; pub(super) use subject_cache::SubjectCache;
 mod literal_matches;
 mod literal;
+mod replacement;
+use replacement::{ReplaceResult, has_substitution, result_length};
 mod legacy;
 pub(super) use legacy::LegacyRegExpSnapshot;
 use legacy::{LegacyRegExpMatch, LegacyStatics};
@@ -461,7 +463,7 @@ impl<H: Host> Vm<H> {
                             replacement,
                             &matcher,
                             flags,
-                            true,
+                            ReplaceResult::Value,
                         );
                     }
                     let flags = vm.regexp_flags_text(p, receiver)?;
@@ -1006,7 +1008,7 @@ impl<H: Host> Vm<H> {
         replacement: FastReplacement<'_>,
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
-        result_used: bool,
+        build: ReplaceResult,
     ) -> Result<Value, JsError> {
         // Matching, slicing and substitution all read the input; a rope the program keeps
         // (V8-v7 RegExp's input variants) would otherwise keep a flat copy of its text for its
@@ -1014,9 +1016,9 @@ impl<H: Host> Vm<H> {
         let input = &input.unkept_flat();
         let subject = self.regexp_subject(input, matcher);
         if let FastReplacement::Template(template) = replacement
-            && !template.units().iter().any(|unit| unit == u16::from(b'$')) {
+            && !has_substitution(template) {
                 return self.regexp_replace_with_literal(
-                    p, receiver, input, input_value, &subject, template, matcher, flags, result_used,
+                    p, receiver, input, input_value, &subject, template, matcher, flags, build,
                 );
             }
         let matches = if flags.contains(RegExpFlags::GLOBAL) {
@@ -1146,7 +1148,7 @@ impl<H: Host> Vm<H> {
         template: &JsString,
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
-        result_used: bool,
+        build: ReplaceResult,
     ) -> Result<Value, JsError> {
         let (ranges, last) = if flags.contains(RegExpFlags::GLOBAL) {
             let searcher = matcher.range_searcher(subject);
@@ -1168,27 +1170,22 @@ impl<H: Host> Vm<H> {
             let found = matcher.range_searcher(subject).find(0);
             (found.iter().cloned().collect(), found.map(|found| Err(found.start)))
         };
+        // No match leaves the subject as it is: the same string value answers.
         let Some(last) = last else {
-            if !result_used {
-                return Ok(Value::UNDEFINED);
-            }
-            // No match leaves the subject as it is: the same string value answers.
-            return Ok(input_value);
+            return Ok(build.unchanged(input_value, input.units().len()));
         };
         let owner = self.regexp_legacy_owner(receiver)?;
         match last {
             Ok(found) => self.record_regexp_legacy_match(owner, input.clone(), found),
             Err(start) => self.record_regexp_legacy_pending(owner, input.clone(), Rc::clone(matcher), start),
         }
-        // Nothing reads the result: building it runs no guest code, so only its one
-        // observable outcome, a length past the limit raising, needs the length.
-        if !result_used {
-            let kept = ranges.iter().try_fold(input.units().len(), |length, range| {
-                (length - range.len()).checked_add(template.units().len())
-            });
-            if kept.is_some_and(|length| length <= super::wtf16::MAX_STRING_UNITS) {
-                return Ok(Value::UNDEFINED);
-            }
+        // Only a length is observable when nothing reads the string, or only its `.length`
+        // does: building it runs no guest code, so its length past the limit raising is the
+        // one outcome left to decide.
+        if build != ReplaceResult::Value
+            && let Some(length) = result_length(input.units().len(), &ranges, template.units().len())
+        {
+            return Ok(build.value(length));
         }
         let mut output = super::wtf16::JsStringBuilder::default();
         string_replace::walk_matches(input.units().len(), ranges, Range::clone, |piece| -> Result<(), JsError> {

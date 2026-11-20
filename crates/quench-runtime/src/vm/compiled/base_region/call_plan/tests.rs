@@ -54,7 +54,7 @@ fn every_other_call_takes_the_helper_with_its_reason() {
 
 fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
     let direct = direct.map_or(&[][..], std::slice::from_ref);
-    CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, proven_args: 0, read: None, chain: Vec::new(), builtin: None }
+    CallPlan { shape: SHAPE, direct, helper: HelperPlace::Address(0x4000), spills, reloads, proven_args: 0, read: None, chain: Vec::new(), builtin: None }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -82,7 +82,7 @@ fn a_helper_chain_has_no_record_and_its_helper_row_is_last_before_the_reloads() 
     let chain = plan_call(&plan(None, &[], &[(Place::PinF(0), 3)])).expect("a plan");
     assert_eq!((chain.choice, chain.records.is_empty(), chain.parts.len()), (Choice::Helper(Declined::NoTarget), true, 2));
     assert!(chain.parts.iter().all(|part| part.taken.is_none()));
-    let nowhere = CallPlan { helper: 0, ..plan(None, &[], &[]) };
+    let nowhere = CallPlan { helper: HelperPlace::Address(0), ..plan(None, &[], &[]) };
     assert!(plan_call(&nowhere).is_err(), "a helper row needs its address");
 }
 
@@ -90,11 +90,11 @@ fn a_helper_chain_has_no_record_and_its_helper_row_is_last_before_the_reloads() 
 #[test]
 fn a_step_chain_is_spills_helper_reloads() {
     let (spills, reloads) = ([(Place::Pin(0), 1)], [(Place::PinF(1), 5), (Place::Pin(0), 1)]);
-    let parts = plan_step(9, 0x4000, None, &spills, &reloads).expect("a chain");
+    let parts = plan_step(9, HelperPlace::Address(0x4000), None, &spills, &reloads).expect("a chain");
     assert_eq!(parts.len(), spills.len() + 1 + reloads.len());
     assert_eq!(parts[spills.len()].holes[..2], [9, 0x4000]);
     assert_eq!(parts[spills.len()].exits, [Exit::At(9), Exit::Status]);
-    assert!(plan_step(9, 0, None, &[], &[]).is_err(), "a helper row needs its address");
+    assert!(plan_step(9, HelperPlace::Address(0), None, &[], &[]).is_err(), "a helper row needs its address");
 }
 
 #[test]

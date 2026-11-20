@@ -21,6 +21,14 @@
 //! or leaves the lane where a collection is due or termination requested. A due
 //! collection zeroes the fuel, so the next safepoint jump leaves; a termination request
 //! from another thread raises the floor, read within one batch.
+/// The handler of opcode `$op`'s generated row at accumulator field `$acc` and site fact `$flag`
+/// (`lane_frame::generated_row_handler`), chosen at compile time so each use names one shard's instance.
+macro_rules! generated_row {
+    ($h:ty, $op:expr, $acc:expr, $flag:expr) => {
+        const { crate::vm::dispatch_fast::lane_frame::generated_row_handler::<$h, { $op }, { $acc }, { $flag }>() }
+    };
+}
+
 /// `body` with `$l` the const leaf form `leaf` names (`LeafForm`, 0..=4), chosen by `if const` so a
 /// const generic argument can name a leaf form a const expression computes.
 macro_rules! by_leaf {
@@ -698,10 +706,10 @@ impl LaneView {
                         returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, $leaf) as Handler),
                     (row_returning_field_first::<H, NOT_LEAF>, row_returning_field_first::<H, { $leaf }>),
                     (row_returning_field_miss::<H, NOT_LEAF>, row_returning_field_miss::<H, { $leaf }>),
-                    (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, NOT_LEAF) }>,
-                        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, { $leaf }) }>),
-                    (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, NOT_LEAF) }>,
-                        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, { $leaf }) }>),
+                    (generated_row!(H, FIELD_LEAF_READ, ACC_NONE, returning_site(true, NOT_LEAF)),
+                        generated_row!(H, FIELD_LEAF_READ, ACC_NONE, returning_site(true, { $leaf }))),
+                    (generated_row!(H, FIELD_LEAF_READ, ACC_NONE, returning_site(false, NOT_LEAF)),
+                        generated_row!(H, FIELD_LEAF_READ, ACC_NONE, returning_site(false, { $leaf }))),
                     (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, NOT_LEAF) as Handler,
                         returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, $leaf) as Handler),
                     (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, NOT_LEAF) as Handler,
@@ -905,6 +913,7 @@ mod indexed_compositions;
 pub(super) mod lane_body_stats;
 mod body_calls;
 mod body_forms;
+mod proven_callees;
 pub(super) use body_calls::{body_call_helper, body_construct_helper};
 #[path = "lane_leaves.rs"]
 mod lane_leaves;
@@ -2612,7 +2621,7 @@ struct ForwardedResolution {
 }
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
-const CONSTRUCT_PLAN_FIELDS: usize = 8;
+pub(in crate::vm) const CONSTRUCT_PLAN_FIELDS: usize = 8;
 // A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
 const _: () = assert!(INLINE_PROPERTY_COUNT <= CONSTRUCT_PLAN_FIELDS);
 // `ConstructPlan::defaulted` holds a bit per field.
@@ -4316,7 +4325,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, protocol_miss, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE, NameBinding, NameRead, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, protocol_family, is_row, jump_row, row_jump, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 mod capture_append;
@@ -4560,18 +4569,24 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
-        // A record that returns its result (`RETURN_REGISTER`), or a return op itself (a raw
-        // return such as `WasmReturn64`), completes the frame, which the general path does.
-        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0
-            || instruction.op().traits().has(crate::bytecode::Traits::RETURN_FAMILY)
-        {
+        // A return op itself (a raw return such as `WasmReturn64`) completes the frame, which the general path does.
+        if instruction.op().traits().has(crate::bytecode::Traits::RETURN_FAMILY) {
             return exit(ip);
         }
+        let returns = instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0;
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;
         match vm.step(code, frame, instruction, &mut next, false) {
-            Ok(StepResult::Continue) => {}
+            Ok(StepResult::Continue) if !returns => {}
+            // A record that returns its result (`RETURN_REGISTER`, a returning `a == b`): its value
+            // completes the activation as a returning row's does, with no exit from the lane.
+            Ok(StepResult::Return(value)) if returns => {
+                if instruction.op().traits().has(Traits::MAY_ALLOCATE) {
+                    note_allocation(vm);
+                }
+                resume!(cx, return_value_general_in_lane(cx, ip, value));
+            }
             Ok(other) => unreachable!("an in-place step only continues: {:?} gave {}", instruction.op(), match other { StepResult::Return(_) => "Return", _ => "another result" }),
             Err(error) => {
                 vm.lane_completion.raise(error);
@@ -5549,7 +5564,7 @@ script_handler! {
             // A walk that settled on a root binding requickens the record to its root row (`FLAG_ROOT`),
             // which reads the binding through the same reads this walk takes.
             if capture_settles_on_root::<H>(cx, depth) {
-                requicken::<H>(ip, generated_row::<H, { crate::staged::LOAD_CAPTURE_ROW }, ACC_NONE, FLAG_ROOT> as Handler);
+                requicken::<H>(ip, generated_row!(H, crate::staged::LOAD_CAPTURE_ROW, ACC_NONE, FLAG_ROOT) as Handler);
             }
             next!(cx, r, following(ip), view)
         }
@@ -5936,7 +5951,7 @@ script_handler! {
             let first = !vm.own_constant_probed(ip.addr());
             if let Some(index) = vm.probe_own_constant(ip.addr(), i.imm(), object, value, NO_CALL_LINK) {
                 set_record_hint(ip, OWN_CONSTANT_HINT, index);
-                requicken::<H>(ip, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, OWN_CONSTANT_REGISTER>);
+                requicken::<H>(ip, generated_row!(H, FIELD_LEAF_READ, ACC_NONE, OWN_CONSTANT_REGISTER));
                 r.set(i.a, value);
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
             }
@@ -5991,7 +6006,7 @@ const FIELD_LEAF_READ: u16 = {
 /// read it from the record: the row is installed at its cleared flag, so the passes that
 /// recognise the record's handler (`specialize_proved_arrays`) find it before a first run
 /// would requicken it.
-const fn element_write_row<H: Host>() -> Handler { generated_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_CLEAR> }
+const fn element_write_row<H: Host>() -> Handler { generated_row!(H, ELEMENT_WRITE, ACC_NONE, FLAG_CLEAR) }
 
 /// The site fact of a keyed access of a typed array's element (`requicken_typed`): the row proves
 /// the array's view for the element kind its record's immediate holds (`LaneFrame::kept_view`),
@@ -6001,10 +6016,10 @@ const fn element_write_row<H: Host>() -> Handler { generated_row::<H, ELEMENT_WR
 pub(super) const TYPED_SITE: u8 = own_site(false, OWN_FORMS.len() + 26);
 
 /// The generated typed keyed read (`generated_row` of `ELEMENT_READ`, `TYPED_SITE`).
-const fn element_typed_read_row<H: Host>() -> Handler { generated_row::<H, ELEMENT_READ, ACC_NONE, TYPED_SITE> }
+const fn element_typed_read_row<H: Host>() -> Handler { generated_row!(H, ELEMENT_READ, ACC_NONE, TYPED_SITE) }
 
 /// The generated typed keyed write (`generated_row` of `ELEMENT_WRITE`, `TYPED_SITE`).
-const fn element_typed_write_row<H: Host>() -> Handler { generated_row::<H, ELEMENT_WRITE, ACC_NONE, TYPED_SITE> }
+const fn element_typed_write_row<H: Host>() -> Handler { generated_row!(H, ELEMENT_WRITE, ACC_NONE, TYPED_SITE) }
 
 /// The opcode of the catalog's named field store of `receiver`, strict or not (`Op::field_store`),
 /// whose generated row (`generated_row`) a store record runs: its hint as a layout store.
@@ -6034,10 +6049,10 @@ const fn field_store_row<H: Host>(store: FieldStore) -> Handler { field_store_ro
 /// `field_store_row` at site fact `FLAG`: `ADD_SITE` is the row of a store that may add its property.
 const fn field_store_row_at<H: Host, const FLAG: u8>(store: FieldStore) -> Handler {
     match (store.receiver, store.strict) {
-        (StoreReceiver::Register, false) => generated_row::<H, FIELD_STORE, ACC_NONE, FLAG_UNREAD>,
-        (StoreReceiver::Register, true) => generated_row::<H, FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD>,
-        (StoreReceiver::This, false) => generated_row::<H, THIS_FIELD_STORE, ACC_NONE, FLAG_UNREAD>,
-        (StoreReceiver::This, true) => generated_row::<H, THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD>,
+        (StoreReceiver::Register, false) => generated_row!(H, FIELD_STORE, ACC_NONE, FLAG_UNREAD),
+        (StoreReceiver::Register, true) => generated_row!(H, FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD),
+        (StoreReceiver::This, false) => generated_row!(H, THIS_FIELD_STORE, ACC_NONE, FLAG_UNREAD),
+        (StoreReceiver::This, true) => generated_row!(H, THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD),
     }
 }
 
@@ -6162,9 +6177,9 @@ pub(super) const fn general_site(site: u8) -> bool { site == GENERAL_THIS || sit
 /// `GENERAL_REGISTER` for a register, and `row_get_field_general` for a nested or local base.
 fn general_handler<H: Host>(base: u16) -> Handler {
     if base == crate::bytecode::FieldBase::THIS.0 {
-        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GENERAL_THIS>
+        generated_row!(H, FIELD_LEAF_READ, ACC_NONE, GENERAL_THIS)
     } else if crate::bytecode::FieldBase(base).register_index().is_some() {
-        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GENERAL_REGISTER>
+        generated_row!(H, FIELD_LEAF_READ, ACC_NONE, GENERAL_REGISTER)
     } else {
         row_get_field_general::<H>
     }
@@ -6314,8 +6329,8 @@ pub(super) const fn returning_leaf(site: u8) -> u8 { site.saturating_sub(RETURNI
 /// Whether `handler` is the returning own-field row of no leaf form, at `this` or a register
 /// (`returning_site`): the leaf call's reads recognise it as the own read it is.
 fn returning_own_row<H: Host>(handler: *const ()) -> bool {
-    handler == generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, NOT_LEAF) }> as *const ()
-        || handler == generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, NOT_LEAF) }> as *const ()
+    handler == generated_row!(H, FIELD_LEAF_READ, ACC_NONE, returning_site(true, NOT_LEAF)) as *const ()
+        || handler == generated_row!(H, FIELD_LEAF_READ, ACC_NONE, returning_site(false, NOT_LEAF)) as *const ()
 }
 
 pub(super) const fn cell_own_site(site: u8) -> bool {
@@ -6388,7 +6403,7 @@ fn own_formed_handler<H: Host, const THIS: bool>(hint: Option<u32>) -> Handler {
             (_, false) => 4,
         },
     };
-    macro_rules! row { ($site:expr) => { generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { $site }> as Handler } }
+    macro_rules! row { ($site:expr) => { generated_row!(H, FIELD_LEAF_READ, ACC_NONE, $site) as Handler } }
     own_sites!(row)[form * 2 + usize::from(!THIS)]
 }
 
@@ -6564,9 +6579,9 @@ script_handler! {
     #[inline(never)]
     fn row_polymorphic_miss<>(cx, r, ip, i, view) {
         if unsafe { vm(cx) }.field_site_hashed(i.c) {
-            requicken::<H>(ip, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HASHED_SITE>);
+            requicken::<H>(ip, generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HASHED_SITE));
         }
-        sibling!(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HASHED_SITE>, r, ip, Carried::script_in(cx, view))
+        sibling!(generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HASHED_SITE), r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -6582,7 +6597,7 @@ script_handler! {
         let Some((object, value)) = (unsafe { known_field_base_in_lane::<H, THIS>(cx, r, i.b) })
             .and_then(|object| vm.primary_record_holder_field_hit(code, object, i.c).map(|value| (object, value)))
         else {
-            sibling!(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE>, r, ip, Carried::script_in(cx, view))
+            sibling!(generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE), r, ip, Carried::script_in(cx, view))
         };
         set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK));
         r.set(i.a, value);
@@ -6672,7 +6687,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let base = r.get(i.b);
         let Some(value) = vm.cell_holder_field_hit(code, base, i.c) else {
-            sibling!(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE>, r, ip, Carried::script_in(cx, view))
+            sibling!(generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE), r, ip, Carried::script_in(cx, view))
         };
         set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), base, value, NO_CALL_LINK));
         r.set(i.a, value);
@@ -6696,8 +6711,8 @@ script_handler! {
         if vm.is_private_name(i.imm()) && i.b != crate::bytecode::FieldBase::NESTED {
             // The private field row of the base; a local base reads through the general private read.
             let private: Handler = single_base_handler(i.b,
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS>,
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER>,
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS),
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER),
                 protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>());
             requicken::<H>(ip, private);
             sibling!(private, r, ip, Carried::script_in(cx, view))
@@ -6714,7 +6729,7 @@ script_handler! {
                 && crate::bytecode::FieldBase(i.b).register_index().is_some()
                 && i.b != crate::bytecode::FieldBase::NESTED
             {
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE>
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE)
             } else {
                 general_handler::<H>(i.b)
             };
@@ -6746,13 +6761,13 @@ script_handler! {
         }
         if let Some(length) = vm.string_length(receiver) {
             // A site that reads a string's length mostly reads strings, as a scan over one does.
-            requicken::<H>(ip, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, STRING_LENGTH_SITE>);
+            requicken::<H>(ip, generated_row!(H, FIELD_LEAF_READ, ACC_NONE, STRING_LENGTH_SITE));
             r.set(i.a, Value::length(length));
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
         if let Some(length) = length_read(vm, receiver) {
             // A site that reads such a `length` mostly reads these receivers, as a loop over a typed array does.
-            requicken::<H>(ip, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, TYPED_LENGTH_SITE>);
+            requicken::<H>(ip, generated_row!(H, FIELD_LEAF_READ, ACC_NONE, TYPED_LENGTH_SITE));
             r.set(i.a, length);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -6809,7 +6824,7 @@ script_handler! {
             _ if geometry_base => Some(single_base_handler(
                 i.b,
                 general_handler::<H>(i.b),
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GEOMETRY_SITE>,
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, GEOMETRY_SITE),
                 general_handler::<H>(i.b),
             )),
             // A string primitive reads `String.prototype`, whatever tier its entries name,
@@ -6818,7 +6833,7 @@ script_handler! {
                 Some(single_base_handler(
                     i.b,
                     protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>(),
-                    generated_row::<H, FIELD_LEAF_READ, ACC_NONE, STRING_SITE>,
+                    generated_row!(H, FIELD_LEAF_READ, ACC_NONE, STRING_SITE),
                     protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>(),
                 ))
             }
@@ -6831,44 +6846,44 @@ script_handler! {
                 Some(single_base_handler(
                     i.b,
                     general_handler::<H>(i.b),
-                    generated_row::<H, FIELD_LEAF_READ, ACC_NONE, NUMBER_SITE>,
+                    generated_row!(H, FIELD_LEAF_READ, ACC_NONE, NUMBER_SITE),
                     general_handler::<H>(i.b),
                 ))
             }
-            FieldSiteTier::Nested if nested_row_site(unsafe { vm(cx) }, code, i) => Some(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, NESTED_SITE>),
+            FieldSiteTier::Nested if nested_row_site(unsafe { vm(cx) }, code, i) => Some(generated_row!(H, FIELD_LEAF_READ, ACC_NONE, NESTED_SITE)),
             FieldSiteTier::Nested => Some(protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_NESTED as u16 }>()),
             FieldSiteTier::General => Some(general_handler::<H>(i.b)),
             // A getter's own-field hint is the generated read (`GETTER_THIS`, `GETTER_REGISTER`); a
             // local base, which no row names, reads through the getter's activation.
             FieldSiteTier::Getter => Some(single_base_handler(
                 i.b,
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_THIS>,
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_REGISTER>,
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, GETTER_THIS),
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, GETTER_REGISTER),
                 protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>(),
             )),
             FieldSiteTier::Polymorphic if is_single_field_base(i.b) =>
-                Some(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, POLYMORPHIC_SITE> as Handler),
+                Some(generated_row!(H, FIELD_LEAF_READ, ACC_NONE, POLYMORPHIC_SITE) as Handler),
             FieldSiteTier::Polymorphic => Some(general_handler::<H>(i.b)),
             // A receiver outside the object records, such as a function, takes the cell lookup.
             FieldSiteTier::Holder
                 if base.is_some_and(|object| object.direct_object_index().is_none()) =>
             {
                 Some(if crate::bytecode::FieldBase(i.b).register_index().is_some() {
-                    generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_CELL_REGISTER>
+                    generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HELD_CELL_REGISTER)
                 } else {
                     general_handler::<H>(i.b)
                 })
             }
             FieldSiteTier::Holder => Some(single_base_handler(
                 i.b,
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS>,
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER>,
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS),
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER),
                 general_handler::<H>(i.b),
             )),
             FieldSiteTier::Inherited => Some(single_base_handler(
                 i.b,
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, INHERITED_THIS>,
-                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, INHERITED_REGISTER>,
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, INHERITED_THIS),
+                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, INHERITED_REGISTER),
                 general_handler::<H>(i.b),
             )),
             // A receiver outside the object records, such as a function, reads its own slot by the
@@ -6884,11 +6899,11 @@ script_handler! {
                         let run = crate::heap::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM) == 0
                             && !crate::vm::switches::float_slots();
                         Some(if run {
-                            single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_RUN_THIS>,
-                                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_RUN_REGISTER>, general_handler::<H>(i.b))
+                            single_base_handler(i.b, generated_row!(H, FIELD_LEAF_READ, ACC_NONE, CELL_RUN_THIS),
+                                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, CELL_RUN_REGISTER), general_handler::<H>(i.b))
                         } else {
-                            single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_THIS>,
-                                generated_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER>, general_handler::<H>(i.b))
+                            single_base_handler(i.b, generated_row!(H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_THIS),
+                                generated_row!(H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER), general_handler::<H>(i.b))
                         })
                     }
                     // A site that cached nothing yet (its first read, before the general read
@@ -6898,8 +6913,8 @@ script_handler! {
                     // A function's own field the layout does not hold: the cached read.
                     _ => Some(single_base_handler(
                         i.b,
-                        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, CACHED_FIELD_THIS>,
-                        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, CACHED_FIELD_REGISTER>,
+                        generated_row!(H, FIELD_LEAF_READ, ACC_NONE, CACHED_FIELD_THIS),
+                        generated_row!(H, FIELD_LEAF_READ, ACC_NONE, CACHED_FIELD_REGISTER),
                         general_handler::<H>(i.b),
                     )),
                 }
@@ -8010,13 +8025,13 @@ script_handler! {
         let cell_receiver = !THIS && r.get(i.b).direct_object_index().is_none() && vm.is_object_like(r.get(i.b));
         // A private field's store takes the private element path (`row_set_field_miss_path`).
         let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
-            Some(generated_row::<H, OP, ACC_NONE, GENERAL_SITE>)
+            Some(generated_row!(H, OP, ACC_NONE, GENERAL_SITE))
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
-            Some(generated_row::<H, OP, ACC_NONE, ADD_SITE>)
+            Some(generated_row!(H, OP, ACC_NONE, ADD_SITE))
         } else if polymorphic && !cell_receiver {
-            Some(generated_row::<H, OP, ACC_NONE, POLY_SITE>)
+            Some(generated_row!(H, OP, ACC_NONE, POLY_SITE))
         } else if adds || polymorphic {
-            Some(generated_row::<H, OP, ACC_NONE, GENERAL_SITE>)
+            Some(generated_row!(H, OP, ACC_NONE, GENERAL_SITE))
         } else {
             None
         };
@@ -8473,6 +8488,12 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
             poll => poll,
         };
         let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
+        // A function of a program with a loaded AOT image takes the image's body (`install_ahead_body`) before any tier's.
+        if let super::compiled::LaneBodyWork::Start { generic, .. } = &work
+            && let Some(published) = vm.install_ahead_body(code, function, None, generic)
+        {
+            return super::compiled::LaneBodyOutcome::Published(published);
+        }
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         if crate::jit_mode::base_only() {
             let super::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
@@ -11274,7 +11295,7 @@ script_handler! {
         // callee back.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
             let native = *native;
-            let handler = native_call_handler::<H>(native, i, || call_result_dead_in_lane(cx, ip, i));
+            let handler = native_call_handler::<H>(native, i, || call_result_dead_in_lane(cx, ip, i), || regexp_calls::length_read(cx, ip, i));
             requicken::<H>(ip, handler);
             if handler as *const () != call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() as *const () {
                 native_calls::install_math_field_call::<H>(cx, ip, native);
@@ -12350,7 +12371,7 @@ use named_keys::named_key_element;
 mod in_place_natives;
 mod root_bindings;
 use root_bindings::frame_capture_at_root;
-mod native_calls; mod getters; mod generator_yields;
+mod native_calls; mod regexp_calls; mod getters; mod generator_yields;
 mod lane_roots;
 mod lane_trace;
 mod lane_stack_trace;
@@ -12930,6 +12951,10 @@ script_handler! {
         if !crate::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.lane_stack.refuses()) {
             return exit(ip);
         }
+        // A construction inside a leaf is the activation its call would have pushed
+        // (`materialize_running_leaf_in_lane`), which completes the caller as any construction
+        // does; a leaf completes a planned returned one itself (`return_constructed_in_lane`).
+        materialize_running_leaf_in_lane(cx);
         // The cached target in place, as a call reads it (`Vm::script_call_entry`); an
         // uncached callee resolves (`script_target_in_lane`), after which the construction
         // retries.
@@ -13286,6 +13311,9 @@ script_handler! {
     /// keep their code.
     #[inline(never)]
     fn script_construct_keeping_miss<>(cx, r, ip, i, view) {
+        // As `script_construct_miss`: a leaf's construction materializes the leaf's activation
+        // before anything completes, which a site reaches directly once it is keeping.
+        materialize_running_leaf_in_lane(cx);
         let finished = match construct_planned_fields_in_lane(cx, r, i) {
             Some(this) => Ok(KeepingConstruction::Finished(this)),
             None => construct_keeping_activation_in_lane(cx, r, ip, i),
@@ -14144,7 +14172,9 @@ fn tier_enter_in_lane<H: Host>(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
-        if !specialize_in_lane(cx, own, function, false, parameters, None) {
+        // A function of a program with a loaded AOT image takes its body at its first entry, no warm-up.
+        let ahead = vm.programs.ahead_images(program, code).is_some();
+        if !specialize_in_lane(cx, own, function, ahead, parameters, None) {
             own.release_from_tier();
         }
         return None;
@@ -16235,7 +16265,7 @@ enum FieldHit {
 
 /// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
 fn own_bound_handlers<H: Host>() -> [*const (); 18] {
-    macro_rules! row { ($site:expr) => { generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { $site }> as *const () } }
+    macro_rules! row { ($site:expr) => { generated_row!(H, FIELD_LEAF_READ, ACC_NONE, $site) as *const () } }
     own_sites!(row)
 }
 
@@ -16248,8 +16278,8 @@ impl FieldHit {
             || math_field_call_handlers::<H>().contains(&handler)
         {
             Some(Self::Own(record.c))
-        } else if handler == generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS> as *const ()
-            || handler == generated_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER> as *const ()
+        } else if handler == generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS) as *const ()
+            || handler == generated_row!(H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER) as *const ()
         {
             Some(Self::Holder(record.c))
         } else {
@@ -17021,8 +17051,8 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
         return field_return_row::<H, LEAF>(RETURNING_FIELD_PRIVATE);
     }
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
-        by_leaf!(LEAF, |L| single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, L) }>,
-            generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>,
+        by_leaf!(LEAF, |L| single_base_handler(i.b, generated_row!(H, FIELD_LEAF_READ, ACC_NONE, returning_site(true, L)),
+            generated_row!(H, FIELD_LEAF_READ, ACC_NONE, returning_site(false, L)),
             returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, L) as Handler))
     } else if field_site_tier_in_lane(vm, code, i) == FieldSiteTier::Nested {
         field_return_row::<H, LEAF>(RETURNING_FIELD_NESTED)
@@ -17786,7 +17816,7 @@ pub(in crate::vm) const ELEMENT_READ: u16 = {
 };
 
 /// The generated keyed read (`generated_row` of `ELEMENT_READ`) of a register base and key.
-const fn element_read_row<H: Host>() -> Handler { generated_row::<H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD> }
+const fn element_read_row<H: Host>() -> Handler { generated_row!(H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD) }
 
 /// The opcode of the catalog's keyed store: the element row whose record defines no result register
 /// (`Decoder::Element`), whose generated row (`generated_row`) a register-keyed store runs.
@@ -17819,7 +17849,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>, produces: false });
     }
     if admits_row(op) {
-        return Some(LaneHandler { handler: generated_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
+        return Some(LaneHandler { handler: generated_row!(H, OP, ACC, FLAG_UNREAD), produces: row_produces(op) });
     }
     let handler: Handler = match other_handler::<H>(op) {
         Some(handler) => handler,
@@ -18563,7 +18593,7 @@ fn derive_lane_view<'live, H: Host>(
                 Some(LaneHandler { handler: lane_frame::checked_local_hand::<H>(op) as Handler, produces: false })
             } else if crate::staged::reads_named_field(op) && sinks_field_in_lane(instruction) {
                 Some(LaneHandler {
-                    handler: generated_row::<H, FIELD_LEAF_READ, ACC_NONE, SINK_SITE> as Handler,
+                    handler: generated_row!(H, FIELD_LEAF_READ, ACC_NONE, SINK_SITE) as Handler,
                     produces: false,
                 })
             } else if op.immediate_layout() == ImmediateLayout::ConstructCountAndFlags && ImmediateLayout::super_construct(instruction.imm()) {
@@ -19054,7 +19084,7 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
 /// (`return_constant_miss`). The `Return` record stays for jumps that reach it, and the
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
-    let load = generated_row::<H, { crate::staged::LOAD_CONST_ROW }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let load = generated_row!(H, crate::staged::LOAD_CONST_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
     let ret = return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF)) as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
@@ -19070,23 +19100,23 @@ mod loop_kernel;
 /// the array's storage (`proof_span`) and runs its own full check where that declines.
 fn proved_row<H: Host>(handler: *const ()) -> Option<Handler> {
     if plain_row::<H, ELEMENT_READ>(handler) {
-        return Some(generated_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET>);
+        return Some(generated_row!(H, ELEMENT_READ, ACC_NONE, FLAG_SET));
     }
     // A store keeps its generic record (`set_index_miss`) until a proof names it: the keyed store
     // has no row of its own in the lane, so this is the one place a store's row is installed.
     if handler == protocol_row::<H, ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler as *const () {
-        return Some(generated_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET>);
+        return Some(generated_row!(H, ELEMENT_WRITE, ACC_NONE, FLAG_SET));
     }
     None
 }
 
 /// The proved element read row (`proved_row` of `ELEMENT_READ`), which the primitive bench counts.
 #[cfg(test)]
-pub(super) fn proved_element_read_row<H: Host>() -> *const () { generated_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET> as Handler as *const () }
+pub(super) fn proved_element_read_row<H: Host>() -> *const () { generated_row!(H, ELEMENT_READ, ACC_NONE, FLAG_SET) as Handler as *const () }
 
 /// The proved element write row (`proved_row` of `ELEMENT_WRITE`), which the primitive bench counts.
 #[cfg(test)]
-pub(super) fn proved_element_write_row<H: Host>() -> *const () { generated_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET> as Handler as *const () }
+pub(super) fn proved_element_write_row<H: Host>() -> *const () { generated_row!(H, ELEMENT_WRITE, ACC_NONE, FLAG_SET) as Handler as *const () }
 
 /// The span of the array a proved element row (`proved_row`) reads or stores through the proof of its
 /// base register's slot (`ArrayStorageProofs::read_span`, `write_span`), proving the array first where
@@ -19518,11 +19548,11 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
         let handler: Handler = match (load, environment) {
             // A captured slot's load keeps its environment row (`LoadEnvLocal`'s `Names` row).
             (true, true) => continue,
-            (true, false) => generated_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_UNREAD>,
+            (true, false) => generated_row!(H, crate::staged::LOCAL_LOAD_ROW, ACC_NONE, FLAG_UNREAD),
             _ if function.is_self_binding_slot(slot) => continue,
             // An environment slot's store keeps its row, which misses to the general store.
             (false, true) => continue,
-            (false, false) => generated_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_UNREAD>,
+            (false, false) => generated_row!(H, crate::staged::LOCAL_STORE_ROW, ACC_NONE, FLAG_UNREAD),
         };
         record.handler = handler as *const ();
     }
@@ -20823,7 +20853,7 @@ mod field_pair_census_tests;
 
 #[cfg(test)]
 mod leaf_call_tests;
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod retirement_tests;
 
 /// Counts a leave of a lane body at a place its body had not named before on the field sites of

@@ -42,16 +42,17 @@ pub(super) mod builtin;
 use builtin::BuiltinCall;
 pub(super) use chain::ChainRead;
 use chain::chained_reads;
-use super::{Exit, SLOT};
+use super::{Exit, NO_SYMBOLS, SLOT, Symbolic};
 use super::super::direct_callee::DirectCallee;
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
+use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use crate::staged::frame::{ARGC_SHIFT, BODY_FLAG, PLAIN_FLAG};
 use quench_bjit::call::{self, CallRow, ThisRow};
 use quench_bjit::call_record::{CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
+use crate::vm::aot_image::Symbol;
 
 /// How a body makes a call, by the instruction's operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,6 +302,9 @@ pub(super) struct CallPart {
     pub(super) holes: [u64; HOLES],
     pub(super) taken: Option<usize>,
     pub(super) exits: Vec<Exit>,
+    /// The holes whose run-time addresses are symbols the loader resolves, each with its symbol
+    /// (`HelperHole::Symbol`, the generic row's entry and operand record).
+    pub(super) symbols: Symbolic,
 }
 
 /// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
@@ -318,7 +322,7 @@ pub(super) struct CallPlan<'a> {
     /// Each callee the site reached, latest first (`Layout::callees`).
     pub(super) direct: &'a [DirectFacts],
     /// The address of `body_call_helper` (`helper_address`).
-    pub(super) helper: usize,
+    pub(super) helper: HelperPlace,
     pub(super) spills: &'a [(Place, Register)],
     pub(super) reloads: &'a [(Place, Register)],
     /// The arguments the caller proves Numbers (bit `k`: argument `k`, `call_args::proven_arguments`), which the direct row
@@ -335,11 +339,19 @@ pub(super) struct CallPlan<'a> {
     pub(super) builtin: Option<BuiltinCall>,
 }
 
+/// Where a helper row's address goes: the address itself in a process helper table, or the symbol
+/// an image's loader resolves to it (`LaneHelpers::Ahead`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HelperPlace {
+    Address(usize),
+    Symbol(LaneHelper),
+}
 
-/// The address of `helper` in a process helper table; none for a linked or symbolic one.
-pub(super) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<usize> {
+/// The helper's place for `helper` under `helpers`: none for a linked or a frameless one.
+pub(super) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<HelperPlace> {
     match helpers {
-        LaneHelpers::Process(table) => Some(table[helper as usize].addr()),
+        LaneHelpers::Process(table) => Some(HelperPlace::Address(table[helper as usize].addr())),
+        LaneHelpers::Ahead => Some(HelperPlace::Symbol(helper)),
         _ => None,
     }
 }
@@ -349,7 +361,7 @@ fn slot(register: Register) -> u64 {
 }
 
 fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> CallPart {
-    CallPart { stencil, holes, taken: None, exits }
+    CallPart { stencil, holes, taken: None, exits, symbols: NO_SYMBOLS }
 }
 
 pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
@@ -361,22 +373,25 @@ pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, 
     Ok(part(call::stencil(CallRow::Reload(place))?, padded_holes([slot(register)]), Vec::new()))
 }
 
-fn helper_part(call_pc: u32, helper: usize, packed: Option<[u64; 2]>) -> Result<CallPart, String> {
-    if helper == 0 {
-        return Err("call: no helper address".to_string());
-    }
+fn helper_part(call_pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>) -> Result<CallPart, String> {
+    let (address, symbols) = match helper {
+        HelperPlace::Address(0) => return Err("call: no helper address".to_string()),
+        HelperPlace::Address(address) => (address as u64, NO_SYMBOLS),
+        HelperPlace::Symbol(helper) => (0, [Some((HelperHole::Helper as u8, Symbol::Helper(helper as u32))), None]),
+    };
     let exits = vec![Exit::At(call_pc), Exit::Status];
     let mut holes = [0; HOLES];
     holes[HelperHole::CallPc as usize] = u64::from(call_pc);
-    holes[HelperHole::Helper as usize] = helper as u64;
-    match packed {
-        None => Ok(part(call::stencil(CallRow::Helper)?, holes, exits)),
+    holes[HelperHole::Helper as usize] = address;
+    let row = match packed {
+        None => part(call::stencil(CallRow::Helper)?, holes, exits),
         Some([first, imm]) => {
             holes[HelperHole::PackedFirst as usize] = first;
             holes[HelperHole::PackedImm as usize] = imm;
-            Ok(part(call::stencil(CallRow::HelperPacked)?, holes, exits))
+            part(call::stencil(CallRow::HelperPacked)?, holes, exits)
         }
-    }
+    };
+    Ok(CallPart { symbols, ..row })
 }
 
 /// The pinned register holding argument `k` of the call, where the call passes it by place (the leading
@@ -422,6 +437,7 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
         args_register: shape.window,
         result_register: shape.result,
         argument_places: arguments,
+        descriptor: 0,
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
@@ -443,7 +459,7 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
     let record = Box::new(CallRecord {
         proven_args: 0, callee: identity, cell: 0, expected: 0, call: 0, caller_base: 0, packed: 0, captures: 0, global_this: 0,
         callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
-        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS],
+        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS], descriptor: 0,
     });
     let stencil = call::stencil(CallRow::Builtin(row))?;
     Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))
@@ -451,7 +467,7 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
 
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
 /// the spills, the helper row, the reloads.
-pub(super) fn plan_step(pc: u32, helper: usize, packed: Option<[u64; 2]>, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+pub(super) fn plan_step(pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
     let mut parts = spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
     parts.push(helper_part(pc, helper, packed)?);
     for &(place, register) in reloads {
@@ -492,7 +508,7 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     if let Some((stencil, holes)) = read {
         // A miss takes the helper row behind the direct rows, as a refused direct call does: the spills ran, so the frame is canonical.
         let helper = 1 + directs.len() + refusal.len();
-        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)] });
+        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)], symbols: NO_SYMBOLS });
     }
     // Past every direct row, the refusal spills and the helper row that follows them: the first reload, or the next instruction.
     let past = parts.len() + directs.len() + refusal.len() + 1;

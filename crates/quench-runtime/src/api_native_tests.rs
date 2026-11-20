@@ -34,7 +34,6 @@ fn split_host_catalog_preserves_descriptors_and_dispatch_indices() {
         let mut runtime = Runtime::new(SplitHost(calls.clone()));
         runtime.execute(&program).unwrap();
         assert_eq!(calls.get(), 1);
-        #[cfg(feature = "aot")]
         {
             let native = crate::NativeJsProgram::compile_eager(program).unwrap();
             let calls = Rc::new(std::cell::Cell::new(0));
@@ -2183,7 +2182,6 @@ fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
     assert_eq!(kept.borrow().len(), 2);
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn eager_native_module_keeps_harness_closures_alive_after_owner_drop() {
     let mut compiler = crate::NativeJsCompiler::new(false);
@@ -2214,7 +2212,6 @@ fn eager_native_module_keeps_harness_closures_alive_after_owner_drop() {
     assert_eq!(runtime.rooted_value(result).unwrap().as_number(), Some(7.0));
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn native_execution_audit_retains_guest_caught_source_rejections() {
     let program = Engine::specialize_unspecialized(
@@ -2247,22 +2244,17 @@ if (effects.join(",") !== "rhs,create,plain") throw Error(effects.join(","));
 "#;
     let program = Engine::specialize_unspecialized(source, "strict-reference-order.js").unwrap();
     let modes = [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled].into_iter();
-    #[cfg(feature = "aot")]
     let modes = modes.chain([crate::ExecutionMode::NativeOnly]);
     for mode in modes {
         let mut runtime = Runtime::new(TestHost::default());
         runtime.set_execution_mode(mode);
-        #[cfg(feature = "aot")]
         if mode == crate::ExecutionMode::NativeOnly {
             let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
             runtime.execute_native(&native).unwrap();
         } else { runtime.execute(&program).unwrap(); }
-        #[cfg(not(feature = "aot"))]
-        runtime.execute(&program).unwrap();
     }
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owners() {
     let program = Engine::specialize_unspecialized(r#"
@@ -2280,11 +2272,10 @@ fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owne
         answer = saved();
         Promise.resolve().then(() => { answer += 1; });
     "#, "native-regions.js").unwrap();
-    let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(4).unwrap(), backend: crate::NativeJsBackend::Cranelift };
-    let module = crate::lower_native_js_module_with_options(&program, "native_regions", options).unwrap();
+    let module = crate::lower_native_js_module(&program, "native_regions").unwrap();
     assert!(module.functions.iter().filter(|function| matches!(function, crate::NativeFunction::Definition { .. })).count() > program.function_count());
     crate::emit_native_module("native_regions", module.functions, module.data).unwrap();
-    let native = crate::NativeJsProgram::compile_eager_with_options(program.clone(), options).unwrap();
+    let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
@@ -2302,7 +2293,6 @@ fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owne
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity() {
     const ENTRY: &str = r#"
@@ -2361,7 +2351,6 @@ fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity(
     }
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effects() {
     const SOURCE: &str = "globalThis.dependencyRan = true;";
@@ -2405,7 +2394,6 @@ fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effect
     }
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effects() {
     let mut compiler = crate::NativeJsCompiler::new(false);
@@ -2521,4 +2509,4 @@ fn reflection_finishes_replacement_lazy_groups_before_exposing_data_descriptors(
         }
     }
 }
-#[cfg(feature = "aot")] #[path = "api_native_tests/eager_images.rs"] mod eager_images; #[cfg(feature = "aot")] #[path = "api_native_tests/ahead_behaviour.rs"] mod ahead_behaviour;
+#[path = "api_native_tests/eager_images.rs"] mod eager_images; #[path = "api_native_tests/ahead_behaviour.rs"] mod ahead_behaviour;

@@ -10,7 +10,8 @@ license = "MIT"
 doctest = false
 
 [features]
-aot = ["quench-runtime/aot"]
+# Compatibility alias: AOT code is always compiled, so this feature is a no-op.
+aot = []
 
 [dependencies]
 quench-wasm = { path = "../quench-wasm" }

@@ -201,42 +201,36 @@ fn constant_int32(number: f64) -> i32 { crate::value::number_to_u32(number) as i
 #[inline(always)]
 fn constant_int32(_number: f64) -> i32 { 0 }
 
-/// The VM's general operation `call` defining `destination` (`callout::calling`). The stencil build
-/// carries no call-outs, so there the row stays unresolved and `call` is never built.
-macro_rules! general_call {
-    ($stage:expr, $frame:expr, $call:expr, $destination:expr) => {{
-        #[cfg(not(stencil_build))]
-        let step = super::callout::calling($stage, $frame, $call, $destination);
-        #[cfg(stencil_build)]
-        let step = { let _ = (&$stage, &$frame); Step::Unresolved };
-        step
-    }};
-}
-
-/// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
-/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
-/// The operator expression is built only where call-outs exist (not in the stencil build).
-macro_rules! general_unary {
-    ($stage:expr, $frame:expr, $operator:expr, ($destination:expr, $source:expr)) => {
-        match $source.register_index() {
-            Some(_value) if $frame.general_operators() =>
-                general_call!($stage, $frame, super::CallOut::Unary { operator: $operator, value: _value }, Some($destination)),
-            _ => Step::Unresolved,
-        }
-    };
-}
-
-/// The VM's general operation `call` (ToNumeric or an update) defining `destination`, where the frame takes
-/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
-macro_rules! general_update {
-    ($stage:expr, $frame:expr, $call:expr, $destination:expr) => {
-        if $frame.general_operators() { general_call!($stage, $frame, $call, Some($destination)) } else { Step::Unresolved }
-    };
-}
-
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
 #[inline(always)]
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: NumberOperation) -> Step<S::Word, F::Control> {
+    step_of::<{ kind::ANY }, S, F>(stage, frame, operation)
+}
+
+/// The `NumberOperation` variants as numbers, for `step_of`'s compile-time choice of arm: `ANY` runs every arm.
+pub(crate) mod kind {
+    pub(crate) const ANY: u8 = 0;
+    pub(crate) const ARITHMETIC: u8 = 1;
+    pub(crate) const RELATION: u8 = 2;
+    pub(crate) const RELATION_VALUE: u8 = 3;
+    pub(crate) const BITWISE: u8 = 4;
+    pub(crate) const REMAINDER: u8 = 5;
+    pub(crate) const INC_DEC: u8 = 6;
+    pub(crate) const BITWISE_NOT: u8 = 7;
+    pub(crate) const TO_NUMERIC: u8 = 8;
+    pub(crate) const UNARY: u8 = 9;
+    pub(crate) const MATH: u8 = 10;
+    pub(crate) const EXTREME: u8 = 11;
+    pub(crate) const IMUL: u8 = 12;
+    pub(crate) const INT_CASE: u8 = 13;
+}
+
+/// `step` where the caller knows the operation's variant `KIND` (`kind`) at compile time: every other arm is
+/// unresolved in a `const` test, which rustc drops before code generation, so a stencil row instantiates only its
+/// own arm. `kind::ANY` is `step`.
+#[inline(always)]
+pub(crate) fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: NumberOperation) -> Step<S::Word, F::Control> {
     #[cfg(not(stencil_build))]
     let general = if frame.general_operators() { general_binary(&operation) } else { None };
@@ -244,26 +238,31 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     let general: Option<(super::CallOut, Option<Register>)> = None;
     let step = match operation {
         NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero } =>
-            arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)),
+            if const { KIND == kind::ANY || KIND == kind::ARITHMETIC } { arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)) } else { Step::Unresolved },
         NumberOperation::Relation { left, right, relation, domain } =>
-            self::relation(stage, frame, left, right, relation, domain),
+            if const { KIND == kind::ANY || KIND == kind::RELATION } { self::relation(stage, frame, left, right, relation, domain) } else { Step::Unresolved },
         NumberOperation::RelationValue { destination, left, right, relation, domain } =>
-            relation_value(stage, frame, destination, left, right, relation, domain),
+            if const { KIND == kind::ANY || KIND == kind::RELATION_VALUE } { relation_value(stage, frame, destination, left, right, relation, domain) } else { Step::Unresolved },
         NumberOperation::Bitwise { destination, left, right, operation } =>
-            bitwise_value(stage, frame, destination, left, right, operation),
+            if const { KIND == kind::ANY || KIND == kind::BITWISE } { bitwise_value(stage, frame, destination, left, right, operation) } else { Step::Unresolved },
         NumberOperation::Remainder { destination, left, right, domain, zero, divisor_nonzero } =>
-            remainder(stage, frame, destination, left, right, domain, (zero, divisor_nonzero)),
+            if const { KIND == kind::ANY || KIND == kind::REMAINDER } { remainder(stage, frame, destination, left, right, domain, (zero, divisor_nonzero)) } else { Step::Unresolved },
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
-            increment(stage, frame, destination, source, decrement, overflow),
-        NumberOperation::BitwiseNot { destination, source } => bitwise_not(stage, frame, destination, source),
-        NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
+            if const { KIND == kind::ANY || KIND == kind::INC_DEC } { increment(stage, frame, destination, source, decrement, overflow) } else { Step::Unresolved },
+        NumberOperation::BitwiseNot { destination, source } =>
+            if const { KIND == kind::ANY || KIND == kind::BITWISE_NOT } { bitwise_not(stage, frame, destination, source) } else { Step::Unresolved },
+        NumberOperation::ToNumeric { destination, source } =>
+            if const { KIND == kind::ANY || KIND == kind::TO_NUMERIC } { to_numeric(stage, frame, destination, source) } else { Step::Unresolved },
         NumberOperation::Unary { destination, source, operation, domain } =>
-            unary(stage, frame, destination, source, operation, domain),
-        NumberOperation::Math { destination, source, operation } => math(stage, frame, destination, source, operation),
-        NumberOperation::Extreme { destination, left, right, maximum } => extreme(stage, frame, destination, (left, right), maximum),
-        NumberOperation::Imul { destination, left, right } => imul(stage, frame, destination, left, right),
+            if const { KIND == kind::ANY || KIND == kind::UNARY } { unary(stage, frame, destination, source, operation, domain) } else { Step::Unresolved },
+        NumberOperation::Math { destination, source, operation } =>
+            if const { KIND == kind::ANY || KIND == kind::MATH } { math(stage, frame, destination, source, operation) } else { Step::Unresolved },
+        NumberOperation::Extreme { destination, left, right, maximum } =>
+            if const { KIND == kind::ANY || KIND == kind::EXTREME } { extreme(stage, frame, destination, (left, right), maximum) } else { Step::Unresolved },
+        NumberOperation::Imul { destination, left, right } =>
+            if const { KIND == kind::ANY || KIND == kind::IMUL } { imul(stage, frame, destination, left, right) } else { Step::Unresolved },
         NumberOperation::IntCase { destination, source, minimum, maximum, count } =>
-            int_case(stage, frame, destination, source, (minimum, maximum), count),
+            if const { KIND == kind::ANY || KIND == kind::INT_CASE } { int_case(stage, frame, destination, source, (minimum, maximum), count) } else { Step::Unresolved },
     };
     match (general, step) {
         (Some((call, destination)), Step::Unresolved) => super::callout::calling(stage, frame, call, destination),
@@ -357,6 +356,7 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
 }
 
 /// `Math.imul` of two int32s: their wrapping product, `math::multiply`; any other operand leaves.
+#[inline(always)]
 fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
 ) -> Step<S::Word, F::Control> {
@@ -415,12 +415,21 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// The oxc unary operator `operation` names, which the VM's `unary` takes (`CallOut::Unary`).
+#[cfg(not(stencil_build))]
 fn unary_operator(operation: NumberUnary) -> u32 {
     match operation {
         NumberUnary::Plus => crate::vm::operations::unary_operator::UnaryPlus,
         NumberUnary::Negate => crate::vm::operations::unary_operator::UnaryNegation,
     }
 }
+
+/// The stencil build has no parser, and no stencil frame takes the VM's general operators
+/// (`NumericFrame::general_operators`), so no operator code reaches a callout there.
+#[cfg(stencil_build)]
+fn unary_operator(_operation: NumberUnary) -> u32 {
+    u32::MAX
+}
+
 
 /// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
 /// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
