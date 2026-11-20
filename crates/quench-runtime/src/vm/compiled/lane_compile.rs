@@ -32,7 +32,7 @@ pub(super) struct LanePlan {
 /// (`Vm::shape_is_stable`), and its `SetFunctionName` sites (`Vm::native_function_name`). A
 /// question outside them answers that no fact holds, which folds less and stays exact.
 #[derive(Clone, Default, PartialEq)]
-pub(super) struct FactTables {
+pub(in crate::vm) struct FactTables {
     instanceofs: std::collections::BTreeMap<u64, crate::code_dependencies::InstanceofFact>,
     stable_shapes: std::collections::BTreeSet<u32>,
     names: std::collections::BTreeMap<(u16, Atom), (crate::staged::add_plan::Transition, u64)>,
@@ -97,7 +97,7 @@ pub(super) fn construction_plans(unit: &lane_unit::Unit, function: u32, plan: &d
 impl FactTables {
     /// What `vm` answers now to the questions `function`'s lowering of `unit` may ask;
     /// `construct` names a construction's scalar plan.
-    fn of<H: Host>(vm: &Vm<H>, function: u32, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
+    pub(in crate::vm) fn of<H: Host>(vm: &Vm<H>, function: u32, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
         global_reads: &crate::vm::global_facts::GlobalReads, construct: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>) -> Self {
         use crate::vm::global_facts::GlobalRead;
         let mut tables = Self::default();
@@ -129,7 +129,7 @@ impl FactTables {
         tables
     }
 
-    fn own_constant(&self, atom: Atom) -> Option<OwnConstant> {
+    pub(super) fn own_constant(&self, atom: Atom) -> Option<OwnConstant> {
         self.own_constants.get(&atom).copied()
     }
 
@@ -137,20 +137,20 @@ impl FactTables {
         self.construct_plans.get(&(function, pc)).cloned()
     }
 
-    fn instanceof(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
+    pub(super) fn instanceof(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
         self.instanceofs.get(&constructor.to_bits()).copied()
     }
 
-    fn shape_stable(&self, shape: u32) -> bool {
+    pub(super) fn shape_stable(&self, shape: u32) -> bool {
         self.stable_shapes.contains(&shape)
     }
 
-    fn name(&self, site: u16, atom: Atom) -> Option<(crate::staged::add_plan::Transition, u64)> {
+    pub(super) fn name(&self, site: u16, atom: Atom) -> Option<(crate::staged::add_plan::Transition, u64)> {
         self.names.get(&(site, atom)).copied()
     }
 
     /// The root constant the capture read at `pc` takes (`root_constants`), with its program.
-    fn root_constant(&self, pc: usize) -> Option<(crate::vm::program_store::ProgramId, Value)> {
+    pub(super) fn root_constant(&self, pc: usize) -> Option<(crate::vm::program_store::ProgramId, Value)> {
         self.root_constants.get(&pc).map(|value| (self.root_program, *value))
     }
 }
@@ -312,8 +312,9 @@ pub(in crate::vm) enum LaneBodyWork<'a> {
         looped: Option<(u64, u64)>,
         /// The activation's array parameters sampled at entry, with their element type (`loop_tier::sample_array`).
         arrays: &'a [(crate::bytecode::Register, crate::typed_ir::Type)] },
-    /// Look for the code of the body compiling.
-    Poll(Box<PendingLaneMethod>),
+    /// Look for the code of the body compiling, for the view that started it (a plan again
+    /// after its code was too large starts from it).
+    Poll(Box<PendingLaneMethod>, &'a super::super::dispatch_fast::LaneView),
 }
 
 /// Why a body did not start compiling.
@@ -631,9 +632,9 @@ impl<H: Host> Vm<H> {
         let (mut observed, mut looped, mut called, mut caller, mut arrays) = (None, None, false, None, Vec::new());
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks, observed: seen, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (observed, looped, called, caller, arrays) = (seen, iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
-            LaneBodyWork::Poll(pending) => match self.body_poll_in_lane(program, pending) {
+            LaneBodyWork::Poll(pending, view) => match self.body_poll_in_lane(program, pending) {
                 Ok(outcome) => return outcome,
-                Err(replan) => replan,
+                Err(replan) => { caller = Some(view); replan }
             },
         };
         // A plan again after its code was too large starts at once, from the background

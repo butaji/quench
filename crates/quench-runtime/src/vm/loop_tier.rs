@@ -203,7 +203,8 @@ impl LoopTier {
             return true;
         }
         use super::super::compiled::OsrCompile;
-        match pending.poll(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs) {
+        let program = vm.programs.get(vm.active_program);
+        match pending.poll(vm, program.as_deref()) {
             Err(pending) => {
                 self.wait = site.tiers.lane_body.compile_poll_interval;
                 self.pending = Some(pending);
@@ -332,7 +333,12 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, (policy, machine.programs.tiers()), program, function, helpers,
-        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base));
+        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base,
+        // A Cranelift region folds Stable facts under its code's dependencies, as a lane body does (`Division::Online`).
+        if base { None } else { Some(super::super::compiled::OsrOnline { atoms: unsafe { vm(cx) }.method_cache_atoms.bits().clone(),
+            constants: unsafe { vm(cx) }.programs.constants(unsafe { vm(cx) }.active_program).to_vec(),
+            // SAFETY: the lane run owns the VM, as for the global reads above.
+            tables: Box::new(move |unit, fields, reads| super::super::compiled::FactTables::of(unsafe { vm(cx) }, function, unit, fields, reads, &|_, _| None)) }) }));
     if let Some(pending) = &started {
         let (watch, callees) = pending.native_calls();
         machine.programs.note_pending_native_calls(&watch, callees);
@@ -502,9 +508,13 @@ pub(super) fn method_call_region_in_lane<H: Host>(cx: *mut LaneContext<H>, site:
     let (function_index, function, decoded, constants) = loop_function_in_lane(cx, code)?;
     // A native method the loop holds inline is run in place by the lane (`intrinsic_call`), so its call
     // is no exit of the region (`native_method_call`). The lane run owns the VM here.
+    // A member of a Stable global read by name (`Math.abs`) is one too (`Vm::native_callees`).
     let machine = unsafe { vm(cx) };
+    let members = machine.native_callees(code, function_index, &decoded);
     let natives: Vec<bool> = (0..decoded.len())
-        .map(|pc| super::super::compiled::native_method_call(machine, &decoded, pc)).collect();
+        .map(|pc| super::super::compiled::native_method_call(machine, &decoded, pc)
+            || members[pc].is_some_and(|(_, native, _)| super::super::compiled::inlines_in_loop_call(native,
+                crate::bytecode::ImmediateLayout::argument_count(decoded[pc].imm())))).collect();
     super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
         code.shared_register_root_masks(function_index), site.header, site.backedge,
         super::super::compiled::MethodCalls::Exit, &|pc| natives.get(pc).copied().unwrap_or(false)).ok()

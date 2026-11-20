@@ -252,6 +252,8 @@ enum Flow {
     To(usize),
     /// Leaves the function's native code.
     Leaves,
+    /// Each entry of a branch table (`bytecode::branch_table_entries`).
+    Table,
 }
 
 fn register(operand: Operand) -> Option<Register> {
@@ -325,6 +327,11 @@ fn transfer(
             set(types, instruction.result_register(), source);
             Flow::Next
         }
+        // A dense switch's case slot: an int32 from 0 to its count, or the operand leaves.
+        Some(Operation::Number(NumberOperation::IntCase { destination, .. })) => {
+            set(types, *destination, Type::INT32);
+            Flow::Next
+        }
         Some(Operation::Number(NumberOperation::IncDec { .. })) => {
             // The operand is proved int32 or the instruction leaves.
             ranges::step(types, instruction);
@@ -372,6 +379,7 @@ fn transfer(
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }
+                ControlFlowLayout::BranchTable => Flow::Table,
                 _ => Flow::Leaves,
             }
         }

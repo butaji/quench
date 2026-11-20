@@ -49,7 +49,7 @@ mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
 #[path = "lane_region/data_view_calls.rs"] mod data_view_calls;
-pub(in crate::vm) use native_calls::{inlines_in_loop, native_method_call};
+pub(in crate::vm) use native_calls::{inlines_in_loop, inlines_in_loop_call, native_method_call};
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -1489,7 +1489,8 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
 }
 
 fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)],
-    intrinsics: &native_calls::Intrinsics, quiet_store: &dyn Fn(usize) -> bool) -> BTreeMap<usize, Vec<InvariantRead>> {
+    intrinsics: &native_calls::Intrinsics, quiet_store: &dyn Fn(usize) -> bool,
+    global_reads: &crate::vm::global_facts::GlobalReads) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
     for &(header, back) in loops {
@@ -1510,6 +1511,9 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
                 return Some(InvariantRead { pc, owner: None, rooted: stored.is_empty(), callee: None });
             }
             if !matches!(crate::vm::compiled::performed(candidate), Some(crate::staged::Operation::GetField { .. })) { return None; }
+            // A native method's read folds to the function its holder holds (`fold_native_member`): its receiver,
+            // a string primitive for `charCodeAt`, is no object whose field the entry would hoist.
+            if matches!(global_reads.get(&pc), Some(crate::vm::global_facts::GlobalRead::NativeMember { .. })) { return None; }
             match candidate.field_lookup() {
             Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom) && !(resizes && names_length(program, atom)) => {
                 let owner = invariant_field_owner(unit, header, pc, base.register_index()?, &written, &boundaries)?;
@@ -2071,6 +2075,9 @@ pub(super) fn lower(
     let own_shape = |pc: usize| {
         let instruction = instructions[pc];
         if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GetField { .. })) || instruction.result_flags() != 0 { return None; }
+        // A native method's read names its holder's function whatever its receiver (`fold_native_member`):
+        // a string primitive's `charCodeAt` proves no object shape of it.
+        if matches!(global_reads.get(&pc), Some(crate::vm::global_facts::GlobalRead::NativeMember { .. })) { return None; }
         let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
         let [field] = site_loads(fields, cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
@@ -2135,7 +2142,7 @@ pub(super) fn lower(
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     let preliminary = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     let quiet_store = |pc: usize| preliminary.numeric_store(pc) && lowering.typed_access(pc) == Some(super::facts::TypedAccess::Store);
-    let hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics, &quiet_store);
+    let hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics, &quiet_store, global_reads);
     lowering.hoists = hoists;
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
@@ -2891,6 +2898,9 @@ impl Lowering<'_, '_> {
     fn field_owner(&self, pc: usize, instruction: WideInstruction) -> Option<usize> {
         let count = usize::from(self.unit.registers);
         match () {
+            // A native method's read folds to its holder's function whatever its receiver (`fold_native_member`):
+            // a string primitive's `charCodeAt` reads no object's field.
+            _ if matches!(self.global_reads.get(&pc), Some(crate::vm::global_facts::GlobalRead::NativeMember { .. })) => None,
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) && !super::reads_length(self.program, instruction) => {
                 let base = self.field_base(pc, instruction);
                 base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }

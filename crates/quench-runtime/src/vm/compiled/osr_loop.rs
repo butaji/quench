@@ -1890,12 +1890,14 @@ fn admit_register_roles(
             } else {
                 // The slot pointer is captured at entry, of a receiver the region never
                 // rewrites. A read of the name through that receiver reads the current slot
-                // (`stored_fixed`); any other read of it could alias and keep a stale value.
+                // (`stored_fixed`), as does one through another receiver the region stores the
+                // name on, which may be the same object; any other read of it could alias and
+                // keep a stale value.
                 if instructions.iter().any(|candidate| {
                     crate::staged::reads_named_field(candidate.op())
                         && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
-                        && !field_path(*candidate, sites, &rooted)
-                            .is_some_and(|path| path.steps.len() == 1 && path.root == receiver)
+                        && !field_path(*candidate, sites, &rooted).is_some_and(|path| path.steps.len() == 1
+                            && (path.root == receiver || stored_fixed.contains(&(atom, path.root))))
                 }) {
                     return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
                 }
@@ -1965,7 +1967,9 @@ fn admit_register_roles(
     // require a reference barrier. Nested/tagged paths retain snapshot semantics.
     for (offset, index) in &field_stores {
         let store = &field_store_sites[*index];
-        let reads = admission.fields.iter().filter(|field| field.atom == store.atom);
+        // A read through another receiver the name is stored on is that store's to check.
+        let reads = admission.fields.iter().filter(|field| field.atom == store.atom
+            && (field.receiver == store.receiver || !stored_fixed.contains(&(field.atom, field.receiver))));
         for field in reads {
             if !store.matches(field) || field.tagged
                 || admission.roles.get(&instructions[*offset as usize].register_a()) != Some(&Role::Scalar(Representation::Float64))
