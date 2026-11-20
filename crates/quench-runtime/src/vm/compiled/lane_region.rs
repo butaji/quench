@@ -3395,10 +3395,12 @@ impl Lowering<'_, '_> {
             crate::ValueType::Undefined, crate::ValueType::String, crate::ValueType::BigInt, crate::ValueType::Symbol]
             .into_iter().find(|kind| ty != Type::NEVER && ty.is_subtype(Type::language(*kind)));
         let Some(kind) = known else {
-            // The staged operation leaves at the instruction for a heap value, whose cell decides its name.
-            let exit = self.guard_exit(state, pc as u32);
-            let operation = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::EMPTY).expect("typeof index decodes");
-            self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+            // A value of no one known kind: the VM names it, a heap value by its cell (`typeof_index_in_lane`).
+            // The staged row's heap arm needs a frame that proves a cell's kind, which this one does not.
+            let bits = self.tagged(state, source);
+            let index = self.helper_call(LaneHelper::TypeofIndex, &[bits]);
+            let int = self.raw_unary(Unary::Narrow(Lane::I32), index);
+            self.define(state, instruction.result_register(), int, RegisterFact::definition(Type::INT32, Representation::Int32));
             return Some(true);
         };
         let index = crate::bytecode::typeof_name_index(super::super::coercion::typeof_text(kind)).expect("a language typeof name");

@@ -1138,6 +1138,8 @@ lane_helper_inventory! { H;
     InstanceOf => instance_of_in_lane::<H>,
     /// A fused `typeof` test of a heap value (`typeof_is_in_lane`).
     TypeofIs => typeof_is_in_lane::<H>,
+    /// The `typeof` name index of any value (`typeof_index_in_lane`).
+    TypeofIndex => typeof_index_in_lane::<H>,
     /// A planned construction (`construct_in_lane`).
     Construct => constructions::construct_in_lane::<H>,
     ConstructReceiver => constructions::construct_receiver_in_lane::<H>,
@@ -4168,6 +4170,14 @@ unsafe extern "C" fn typeof_is_in_lane<H: Host>(vm: u64, _residual: u64, value: 
     // SAFETY: as `field_get_in_lane`; the test reads the value's cell and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm<H>) };
     u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
+}
+
+/// The index in `bytecode::TYPEOF_NAMES` of `typeof value` (`Vm::typeof_index_value`): a heap value's by its
+/// cell. Reads the cell and allocates nothing.
+unsafe extern "C" fn typeof_index_in_lane<H: Host>(vm: u64, _residual: u64, value: u64) -> u64 {
+    // SAFETY: as `typeof_is_in_lane`.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    vm.typeof_index_value(Value::from_bits(value)).as_int().map_or(0, |index| index as u64)
 }
 
 /// A lane body's store of `value` to the field the packed `write` names (its atom above its
