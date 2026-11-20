@@ -2857,12 +2857,13 @@ pub(in crate::vm) struct LaneStackWords {
     pub(in crate::vm) native_table: usize,
 }
 
-/// Whether emitted code may push native headers at all (one-frame-one-call.md F5). Off until the
-/// emitted push, its readers and the body table are verified (`QUENCH_DEV=native-frames` turns it on):
-/// the bound stays 0, so every call takes the helper row.
+/// Whether emitted code may push native headers (one-frame-one-call.md F5): on by default, so a
+/// u-jit direct call's `admit_stacks` finds room under `plain_depth_limit` instead of always
+/// missing to the helper row. `QUENCH_DEV=no-native-frames` keeps the bound 0 (every call takes
+/// the helper row) to compare against the old path.
 fn native_frames_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| crate::trace::Dev::NativeFrames.on())
+    *ON.get_or_init(|| !crate::trace::Dev::NoNativeFrames.on())
 }
 
 impl LaneStack {
