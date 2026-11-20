@@ -59,6 +59,10 @@ pub(crate) trait WasmTable: WasmStage {
     /// The reference at `index`, which the rule has checked: a stage may answer any word the call
     /// that follows resolves (the tier's is the element's row).
     fn table_element(&mut self, index: Self::Word) -> Self::Word;
+    /// The element row at `index`, which the rule has checked: the row the call that follows
+    /// reads its target from (the interpreter's `TableTarget`, the tier's row word).
+    type Row: Copy;
+    fn element_row(&mut self, index: Self::Word) -> Self::Row;
     /// The flag that `reference`, whose element holds the signature word `signature`, satisfies
     /// the `expected` signature word: equal words do, and any other is the machine's to relate
     /// (a subtype, a host function).
@@ -84,13 +88,14 @@ pub(crate) trait WasmTable: WasmStage {
 /// expected one is accepted first: the expected signature is never null, so the null check runs
 /// only where they differ, and traps in the same order. `null` is the canonical null signature's
 /// word, which the caller names (a stencil's cold path never reaches it, see `unless_equal`).
+/// The result is the reference and the element's row, read once after the checks.
 #[inline(always)]
 pub(crate) fn indirect_target_word<S: WasmTable>(
     stage: &mut S,
     index: S::Word,
     expected: S::Word,
     null: S::Word,
-) -> Result<S::Word, S::Exit> {
+) -> Result<(S::Word, S::Row), S::Exit> {
     let one = stage.constant(Width::I64, 1);
     let outside = stage.table_range_exceeds(index, one);
     stage.trap_when(outside, WasmTrap::UndefinedElement)?;
@@ -103,7 +108,8 @@ pub(crate) fn indirect_target_word<S: WasmTable>(
     })?;
     let mismatch = stage.operate_unary(Unary::EqualZero, Width::I32, accepted);
     stage.trap_when(mismatch, WasmTrap::IndirectCallTypeMismatch)?;
-    Ok(reference)
+    let row = stage.element_row(index);
+    Ok((reference, row))
 }
 
 /// `indirect_target_word` over the canonical signature the program's type names.
@@ -113,7 +119,7 @@ pub(crate) fn indirect_target<S: WasmTable>(
     stage: &mut S,
     index: S::Word,
     expected: CanonicalSignature,
-) -> Result<S::Word, S::Exit> {
+) -> Result<(S::Word, S::Row), S::Exit> {
     debug_assert_ne!(expected, CanonicalSignature::NULL);
     let word = stage.constant(Width::I64, expected.word() as i64);
     let null = stage.constant(Width::I64, CanonicalSignature::NULL.word() as i64);

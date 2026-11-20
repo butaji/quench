@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::{WasmHostValue, WasmSignature, WasmValue};
+use crate::wasm::WasmHostSignature;
+use super::wasm_js::WASM_INLINE_ARGUMENTS;
 
 #[derive(Clone, Copy)]
 enum WasmHostInvocation {
@@ -102,7 +104,8 @@ impl<H: Host> Vm<H> {
         if args.len() != signature.params.len() {
             return Err(JsError::validation("Wasm argument count mismatch".into()));
         }
-        let mut arguments = Vec::with_capacity(args.len());
+        let mut arguments: smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]> =
+            smallvec::SmallVec::with_capacity(args.len());
         for (&value, &ty) in args.iter().zip(&signature.params) {
             if !value.fits_type(ty) {
                 return Err(JsError::validation("Wasm argument type mismatch".into()));
@@ -117,6 +120,36 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
         let result = self.call_value(&program, function, Value::UNDEFINED, &arguments)?;
         self.decode_wasm_result_types(&signature.results, result, signature.declarations())
+            .map(super::wasm::WasmResults::into_vec)
+    }
+
+    /// The JavaScript callee of the host import `function`, its memcpy capture where it has one,
+    /// and its host signature, shared with the cell rather than copied. `None` for a function
+    /// that is no host function, or a host-backed import.
+    pub(super) fn host_import_js_target(
+        &self,
+        function: Value,
+    ) -> Option<(Value, Option<(Value, usize)>, Rc<WasmHostSignature>)> {
+        let Some(FunctionRecord {
+            kind: FunctionKind::Native(Native::WasmHost),
+            env,
+            ..
+        }) = self.heap.function(function)
+        else {
+            return None;
+        };
+        match self.heap.get(*env) {
+            Some(Cell::WasmHostFunction { target, signature }) => match target {
+                crate::heap::WasmHostTarget::Js(target) => Some((*target, None, signature.clone())),
+                crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => Some((
+                    target.function,
+                    Some((target.view_environment, target.view_slot)),
+                    signature.clone(),
+                )),
+                crate::heap::WasmHostTarget::Host(_) => None,
+            },
+            _ => None,
+        }
     }
 
     pub(super) fn wasm_callable_signature(&self, function: Value) -> Option<&WasmSignature> {

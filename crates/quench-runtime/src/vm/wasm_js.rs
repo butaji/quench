@@ -16,7 +16,7 @@ use wasmparser::ExternalKind;
 mod copy_shape;
 
 /// Arguments of a Wasm call that a JavaScript caller passes without a heap allocation.
-const WASM_INLINE_ARGUMENTS: usize = 8;
+pub(super) const WASM_INLINE_ARGUMENTS: usize = 8;
 
 /// Whether a value of `ty` may encode into a fresh heap cell (`Vm::encode_wasm_value`): 64-bit
 /// payloads outside the in-place range (`Vm::encode_bits64`) and vectors. 32-bit values encode
@@ -1225,7 +1225,7 @@ impl<H: Host> Vm<H> {
             }
             types => {
                 let results = self.decode_wasm_result_types(types, result, declarations)?;
-                self.wasm_results_to_js(p, results, types)
+                self.wasm_results_to_js(p, &results, types)
             }
         }
     }
@@ -1254,22 +1254,29 @@ impl<H: Host> Vm<H> {
         function: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let signature = self
-            .wasm_callable_signature(function)
-            .cloned()
-            .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
-        let mut values = Vec::with_capacity(signature.params.len());
-        for (position, &ty) in signature.params.iter().enumerate() {
+        // The types are copied out, so the signature's borrow ends before the conversions run JavaScript.
+        let (params, types) = {
+            let signature = self
+                .wasm_callable_signature(function)
+                .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
+            (
+                signature.params.iter().copied().collect::<smallvec::SmallVec<[WasmType; WASM_INLINE_ARGUMENTS]>>(),
+                signature.results.iter().copied().collect::<smallvec::SmallVec<[WasmType; crate::wasm::SCALAR_RETURN_ARITY]>>(),
+            )
+        };
+        let mut values: smallvec::SmallVec<[WasmValue; WASM_INLINE_ARGUMENTS]> =
+            smallvec::SmallVec::with_capacity(params.len());
+        for (position, &ty) in params.iter().enumerate() {
             let value = args.get(position).copied().unwrap_or(Value::UNDEFINED);
             values.push(self.js_to_wasm_value(p, value, ty, None)?);
         }
-        let encoded = values
+        let encoded: smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]> = values
             .into_iter()
             .map(|value| self.encode_wasm_value(value))
-            .collect::<Vec<_>>();
+            .collect();
         let result = self.call_value(p, function, Value::UNDEFINED, &encoded)?;
-        let results = self.decode_wasm_result_types(&signature.results, result, None)?;
-        self.wasm_results_to_js(p, results, &signature.results)
+        let results = self.decode_wasm_result_types(&types, result, None)?;
+        self.wasm_results_to_js(p, &results, &types)
     }
 
     /// A Wasm call's results, of types `types`, as JavaScript: undefined, the single value,
@@ -1277,15 +1284,15 @@ impl<H: Host> Vm<H> {
     fn wasm_results_to_js(
         &mut self,
         p: &ResidualProgram,
-        results: Vec<WasmValue>,
+        results: &[WasmValue],
         types: &[WasmType],
     ) -> Result<Value, JsError> {
-        match (results.as_slice(), types) {
+        match (results, types) {
             ([], _) => Ok(Value::UNDEFINED),
             ([value], [ty]) => self.wasm_value_to_js(p, *value, *ty),
             _ => {
                 let mut values = Vec::with_capacity(results.len());
-                for (value, &ty) in results.into_iter().zip(types) {
+                for (&value, &ty) in results.iter().zip(types) {
                     values.push(self.wasm_value_to_js(p, value, ty)?);
                 }
                 Ok(self.new_array(values))

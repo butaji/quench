@@ -2,6 +2,10 @@ use super::*;
 
 mod imports;
 
+/// The decoded results of a Wasm call. One result is held inline (`SCALAR_RETURN_ARITY`),
+/// so a scalar call returns without a heap allocation.
+pub(super) type WasmResults = smallvec::SmallVec<[crate::WasmValue; crate::wasm::SCALAR_RETURN_ARITY]>;
+
 impl<H: Host> Vm<H> {
     pub(crate) fn wasm_value_matches_type(
         &self,
@@ -39,7 +43,8 @@ impl<H: Host> Vm<H> {
                 "function requires the typed Wasm boundary".into(),
             ));
         }
-        let args: Vec<_> = args.iter().copied().map(crate::WasmValue::I32).collect();
+        let args: smallvec::SmallVec<[crate::WasmValue; super::wasm_js::WASM_INLINE_ARGUMENTS]> =
+            args.iter().copied().map(crate::WasmValue::I32).collect();
         self.execute_wasm(function, &args).map(|result| {
             result.map(|value| {
                 let crate::WasmValue::I32(value) = value else {
@@ -1167,11 +1172,11 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let args = args
+        let args: smallvec::SmallVec<[Value; super::wasm_js::WASM_INLINE_ARGUMENTS]> = args
             .iter()
             .copied()
             .map(|value| self.encode_wasm_value(value))
-            .collect::<Vec<_>>();
+            .collect();
         let previous = self.replace_active_program(id);
         let compiled = defined.and_then(|index| self.run_compiled(id, environment, index, &args));
         let result = match (defined, imported) {
@@ -1207,19 +1212,21 @@ impl<H: Host> Vm<H> {
             result,
             Some(&function.module.signatures.declarations),
         )
+        .map(WasmResults::into_vec)
     }
 
+    /// The decoded results of a call, a single one held inline (`SCALAR_RETURN_ARITY`).
     pub(super) fn decode_wasm_result_types(
         &self,
         types: &[crate::WasmType],
         result: Value,
         declarations: Option<&crate::WasmTypes>,
-    ) -> Result<Vec<crate::WasmValue>, JsError> {
+    ) -> Result<WasmResults, JsError> {
         match types {
-            [] => Ok(vec![]),
+            [] => Ok(WasmResults::new()),
             [ty] => self
                 .decode_wasm_value_in(result, *ty, declarations)
-                .map(|value| vec![value]),
+                .map(|value| smallvec::smallvec![value]),
             types => {
                 let Some(elements) = self.heap.array_elements(result) else {
                     return Err(JsError::validation("invalid Wasm result bundle".into()));

@@ -9655,31 +9655,9 @@ impl<H: Host> Vm<H> {
                     return Ok(());
                 }
             }
-            let js_import = match self.heap.function(callee) {
-                Some(FunctionRecord {
-                    kind: FunctionKind::Native(Native::WasmHost),
-                    env,
-                    ..
-                }) => match self.heap.get(*env) {
-                    Some(Cell::WasmHostFunction { target, signature })
-                        if values.len() == signature.params.len() =>
-                    {
-                        match target {
-                            crate::heap::WasmHostTarget::Js(target) => {
-                                Some((*target, None, signature.clone()))
-                            }
-                            crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => Some((
-                                target.function,
-                                Some((target.view_environment, target.view_slot)),
-                                signature.clone(),
-                            )),
-                            crate::heap::WasmHostTarget::Host(_) => None,
-                        }
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
+            let js_import = self
+                .host_import_js_target(callee)
+                .filter(|(_, _, signature)| values.len() == signature.params.len());
             if let Some((target, memcpy_capture, signature)) = js_import {
                 self.call_compiled_js_wasm_import(
                     program,
