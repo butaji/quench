@@ -175,7 +175,10 @@ impl Decisions {
             records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64),
             instance: |context, value, constructor| {
                 let machine = unsafe { vm(context.cast::<LaneContext<H>>()) };
-                machine.record_instanceof(value, constructor).or_else(|| machine.ordinary_instanceof(value, constructor))
+                // The proof is recorded here as well as read (`proved_instanceof`): the lane decides
+                // every steady `instanceof`, so no other path would record it.
+                machine.record_instanceof(value, constructor).or_else(|| machine.proved_instanceof(value, constructor))
+                    .or_else(|| machine.ordinary_instanceof(value, constructor))
             } }
     }
 }
@@ -574,6 +577,9 @@ struct EnvironmentReads {
     context: *mut (),
     read: unsafe fn(*mut ()) -> Option<*mut crate::heap::EnvironmentSlots>,
     write: unsafe fn(*mut (), u16) -> Option<*mut crate::heap::EnvironmentSlots>,
+    /// The value of one slot where `read` declines the whole storage (`environment_slot_read`): a
+    /// function that captures selectively reads each slot its environment holds.
+    slot_read: unsafe fn(*mut (), u16) -> Option<Value>,
 }
 
 /// The lane context's iterator cleanup stack for an `IteratorCleanupPush`/`Pop` row (`iterator_push_in_lane`,
@@ -1013,6 +1019,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
 
 /// The operands and operator of a binary call-out the lane's pure binary answers: a `Binary`, or an
 /// `Equality` as the operator of its strictness and negation.
+#[inline(always)]
 fn binary_call(operation: CallOut) -> Option<(Operand, Operand, u32)> {
     match operation {
         CallOut::Binary { left, right, operator } => Some((left, right, operator)),
@@ -1104,7 +1111,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
-        Value::from_bits(self.read(stage, register)).truthiness()
+        let value = Value::from_bits(self.read(stage, register));
+        match value.truthiness() {
+            Some(truthy) => Some(truthy),
+            // A string or another cell the word leaves: its cell decides it in place, where the
+            // row carries the heap (a truthiness jump's, `row_frame_of`).
+            // SAFETY: the heap outlives the row's step.
+            None => self.heap.map(|heap| crate::vm::coercion::heap_cell_truthy_in(unsafe { &*heap }, value)),
+        }
     }
 
     #[inline(always)]
@@ -1279,9 +1293,19 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
                 let (context, step) = self.names?;
                 let operands = operation.operands().fixed;
-                let operands = operands.map(|operand| operand.and_then(|operand| self.operand_word(stage, operand)).map(Value::from_bits));
+                // Element by element, not `<[_; 2]>::map`, whose closure left out of line takes the
+                // frame's address and keeps every field of the frame in memory on each row entry.
+                let first = match operands[0] { Some(operand) => self.operand_word(stage, operand).map(Value::from_bits), None => None };
+                let second = match operands[1] { Some(operand) => self.operand_word(stage, operand).map(Value::from_bits), None => None };
+                let operands = [first, second];
                 // SAFETY: the running lane's context, live for the row's step.
                 unsafe { step(context, operation, operands) }.map(|value| (value.to_bits(), Boxing::Value))
+            }
+            // A slot of a selectively captured environment (`environment_slot_read`).
+            CallOut::LoadEnvLocal { slot } => {
+                let EnvironmentReads { context, slot_read, .. } = self.environment?;
+                // SAFETY: the running lane's context, live for the row's step.
+                unsafe { slot_read(context, slot) }.map(|value| (value.to_bits(), Boxing::Value))
             }
             // The clone defines no register; its word is a placeholder the row does not write.
             CallOut::CloneEnv { plan } => {
@@ -1573,11 +1597,43 @@ unsafe fn environment_of<H: Host>(cx: *mut LaneContext<H>, store: Option<u16>)
     let vm = unsafe { vm(cx) };
     let frame = &vm.frames[unsafe { (*cx).frame() }];
     let function = unsafe { &*(*cx).code }.function(frame.function as usize);
-    if function.selective_capture_slots.is_some() || function.arguments_alias_parameters()
+    if function.selective_capture_slots.is_some() || aliases_arguments(function)
         || store.is_some_and(|slot| function.is_self_binding_slot(usize::from(slot))) {
         return None;
     }
     Some((std::ptr::from_mut(storage), frame.env))
+}
+
+/// Whether a parameter's binding may live in the function's `arguments` object
+/// (`mapped_arguments_slot`): a mapped object the function binds. A sloppy function that rebinds a
+/// parameter (`var l1`) but never names `arguments` has none.
+#[inline(always)]
+fn aliases_arguments(function: &crate::bytecode::Function) -> bool {
+    function.arguments_slot.is_some() && function.arguments_alias_parameters()
+}
+
+/// `EnvironmentReads::slot_read`: slot `slot` of the frame's environment storage where its function
+/// keeps that slot there (`Function::local_slot_uses_environment`), as `Vm::load_local_binding`
+/// reads it; a binding in its dead zone, or any other function `environment_of` declines, is the
+/// general path's.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(never)]
+unsafe fn environment_slot_read<H: Host>(cx: *mut (), slot: u16) -> Option<Value> {
+    let cx = cx.cast::<LaneContext<H>>();
+    if !unsafe { (*cx).registers }.env().is_deleted() {
+        return None;
+    }
+    let storage = super::frame_storage_in_lane(cx)?;
+    let vm = unsafe { vm(cx) };
+    let frame = &vm.frames[unsafe { (*cx).frame() }];
+    let function = unsafe { &*(*cx).code }.function(frame.function as usize);
+    if !function.local_slot_uses_environment(usize::from(slot)) || aliases_arguments(function) {
+        return None;
+    }
+    let mut stage = Concrete::new(std::ptr::null());
+    crate::staged::environment::environment_slot(&mut stage, std::ptr::from_mut(storage) as u64, slot, ()).map(Value::from_bits)
 }
 
 /// `EnvironmentReads::read`: the storage `environment_of` finds for a read.
@@ -2045,7 +2101,19 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
         // A sinking read's flag (`SET_THIS_REGISTER`) is its row's store, not the read's; the
         // read decodes by its register alone.
         let a = if const { FLAG == super::SINK_SITE } { self.0.a & crate::bytecode::REGISTER_MASK } else { self.0.a };
-        WideInstruction::new(self.op(), a, self.0.b, self.0.c, imm)
+        // Both operands of a two-operand arithmetic row the view proved registers (`FLAG_REGISTERS`):
+        // their tags are the register tag, so the decode's operand kind tests fold.
+        // A `Binary` record at an operator flag (`FLAG_OPERATOR_BASE`): its operator is the flag's, and
+        // its operands registers, or a register then a constant.
+        let operator_row = const { matches!(Self::OPCODE, Op::Binary) && FLAG >= FLAG_OPERATOR_BASE };
+        let imm = if operator_row { u32::from(FLAG.wrapping_sub(FLAG_OPERATOR_BASE) / 2) } else { imm };
+        const CONSTANT_TAG: u16 = (crate::bytecode::OperandKind::Constant as u16) << 14;
+        let (b, c) = if FLAG == FLAG_REGISTERS || (operator_row && FLAG.wrapping_sub(FLAG_OPERATOR_BASE) % 2 == 0) {
+            (self.0.b & crate::bytecode::Operand::PAYLOAD_MASK, self.0.c & crate::bytecode::Operand::PAYLOAD_MASK)
+        } else if operator_row {
+            (self.0.b & crate::bytecode::Operand::PAYLOAD_MASK, (self.0.c & crate::bytecode::Operand::PAYLOAD_MASK) | CONSTANT_TAG)
+        } else { (self.0.b, self.0.c) };
+        WideInstruction::new(self.op(), a, b, c, imm)
     }
 }
 
@@ -2106,6 +2174,15 @@ pub(in crate::vm::dispatch_fast) const FLAG_KEPT_MARKER: u8 = 17;
 /// `FLAG` of a local read of a keeping activation's `arguments` binding the activation makes into an object
 /// at its last read (`KeptArguments::Passes`): the row answers that object (`kept_arguments_binding`).
 pub(in crate::vm::dispatch_fast) const FLAG_KEPT_OBJECT: u8 = 18;
+/// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`, `NumericMultiply`) whose operands
+/// are both registers (`specialize_register_operands`): the row reads them without testing their tags.
+pub(in crate::vm::dispatch_fast) const FLAG_REGISTERS: u8 = 19;
+/// `FLAG` of a `Binary` record whose operator is `(FLAG - FLAG_OPERATOR_BASE) / 2` (`BinaryOperator`, up to
+/// `OPERATOR_ROWS`), its operands two registers where the rest is even, else a register then a constant
+/// (`specialize_binary_operators`): the row's operator and operand tests fold.
+pub(in crate::vm::dispatch_fast) const FLAG_OPERATOR_BASE: u8 = 200;
+/// The operators with operator rows: `BinaryOperator` 0 (`==`) through 19 (`&`).
+pub(in crate::vm::dispatch_fast) const OPERATOR_ROWS: usize = 20;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2187,6 +2264,11 @@ fn row_frame_of<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut 
         let complete: unsafe fn(*mut (), Value) -> Option<Resumed> = |context, value| super::lane_complete_wasm_activation::<H>(context.cast(), value);
         return LaneFrame::<ACC> { wasm_return: Some((cx.cast(), complete)), ..LaneFrame::<ACC>::new(r, view) };
     }
+    if const { LaneFields::<OP>::OPCODE.is_truthiness_jump() } {
+        // A jump on a string's (or another cell's) truth decides it from the heap (`truthiness`).
+        let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
+        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
+    }
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
@@ -2224,7 +2306,8 @@ fn row_frame_of<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut 
         } else {
             |context, slot| unsafe { super::arguments_count::<H, false>(context.cast(), slot) }
         };
-        let environment = EnvironmentReads { context: cx.cast(), read: environment_read::<H>, write: environment_write_storage::<H> };
+        let environment = EnvironmentReads { context: cx.cast(), read: environment_read::<H>, write: environment_write_storage::<H>,
+            slot_read: environment_slot_read::<H> };
         // A global-name store writes through the record's own hint (`global_name_store`), which a window's
         // store does not take: its scope answers the name (`ScopeReads::store`).
         let global_store = if const { OP == crate::staged::GLOBAL_WRITE_ROW } && FLAG != FLAG_SCOPE {
@@ -2404,6 +2487,10 @@ pub(in crate::vm::dispatch_fast) fn checked_local_hand<H: Host>(op: Op) -> Handl
 /// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
 /// (`store_name_first_miss`).
 pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
+    // A `Binary` the row leaves tries the lane's pure operation before the general step.
+    if matches!(op, Op::Binary) && matches!(crate::staged::miss(op), crate::staged::Miss::General) {
+        return super::binary_miss_in_lane::<H>;
+    }
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::load_capture_walk_miss::<H>,
         crate::staged::Miss::StoreNameFirst => match FLAG {
@@ -2471,6 +2558,48 @@ pub(in crate::vm::dispatch_fast) const fn closure_row<H: Host, const FLAG: u8>()
 pub(in crate::vm::dispatch_fast) fn row_near<H: Host, const OP: u16>(handler: *const ()) -> Option<Handler> {
     (handler == generated_row!(H, OP, ACC_NONE, FLAG_UNREAD) as Handler as *const ())
         .then_some(generated_row!(H, OP, ACC_NONE, FLAG_SET) as Handler)
+}
+
+/// Whether opcode `op`'s row has a `FLAG_REGISTERS` form: a two-operand arithmetic row.
+pub(in crate::vm::dispatch_fast) const fn register_operands_row(op: Op) -> bool {
+    matches!(op, Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+}
+
+/// Whether both operand fields of record `i` are registers (their tags are the register tag, 0).
+#[inline(always)]
+pub(in crate::vm::dispatch_fast) fn register_operands(i: &LaneInstruction) -> bool {
+    (i.b | i.c) >> 14 == 0
+}
+
+/// Opcode `OP`'s row at `FLAG_REGISTERS` for `handler`, its plain row (`FLAG_UNREAD`) at any accumulator field.
+pub(in crate::vm::dispatch_fast) fn registers_row<H: Host, const OP: u16>(handler: *const ()) -> Option<Handler> {
+    let plain: [Handler; ACC_POSITIONS] = [generated_row!(H, OP, ACC_NONE, FLAG_UNREAD), generated_row!(H, OP, ACC_A, FLAG_UNREAD),
+        generated_row!(H, OP, ACC_B, FLAG_UNREAD), generated_row!(H, OP, ACC_C, FLAG_UNREAD), generated_row!(H, OP, ACC_PAIR, FLAG_UNREAD)];
+    let registers: [Handler; ACC_POSITIONS] = [generated_row!(H, OP, ACC_NONE, FLAG_REGISTERS), generated_row!(H, OP, ACC_A, FLAG_REGISTERS),
+        generated_row!(H, OP, ACC_B, FLAG_REGISTERS), generated_row!(H, OP, ACC_C, FLAG_REGISTERS), generated_row!(H, OP, ACC_PAIR, FLAG_REGISTERS)];
+    plain.iter().position(|row| *row as *const () == handler).map(|at| registers[at])
+}
+
+/// The `Binary` row of plain record `record` at its operator flag (`FLAG_OPERATOR_BASE`): where its handler is
+/// the plain accumulator-free row, its operator has rows, and its operands are registers, or a register then a constant.
+pub(in crate::vm::dispatch_fast) fn operator_row<H: Host>(record: &LaneInstruction) -> Option<Handler> {
+    const BINARY: u16 = Op::Binary as u16;
+    macro_rules! rows { ($($k:literal)*) => { [$(generated_row!(H, BINARY, ACC_NONE, FLAG_OPERATOR_BASE + $k)),*] } }
+    let rows: [Handler; 2 * OPERATOR_ROWS] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29
+        30 31 32 33 34 35 36 37 38 39);
+    if record.handler != generated_row!(H, BINARY, ACC_NONE, FLAG_UNREAD) as Handler as *const () {
+        return None;
+    }
+    let operator = record.imm() as usize;
+    if operator >= OPERATOR_ROWS || record.b >> 14 != 0 {
+        return None;
+    }
+    let form = match record.c >> 14 {
+        0 => 0,
+        1 => 1,
+        _ => return None,
+    };
+    Some(rows[operator * 2 + form])
 }
 
 /// Whether `handler` is opcode `OP`'s generated row handler (`generated_row`), at any accumulator field:
@@ -2849,10 +2978,20 @@ lane_handler! {
         // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
         let decoded = if const { compare_flag(FLAG).is_some() } {
             match Operation::decode_generic(crate::staged::Fields::wide(fields)) {
-                Some(Operation::CompareJump { left, right, negate, .. }) => Some(Operation::CompareJump {
-                    comparison: crate::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
-                    left, right, negate,
-                }),
+                Some(Operation::CompareJump { left, right, negate, .. }) => {
+                    // The instance's operand form: the tags it fixes, so the operand reads test none.
+                    const CONSTANT_TAG: u16 = (crate::bytecode::OperandKind::Constant as u16) << 14;
+                    let payload = crate::bytecode::Operand::PAYLOAD_MASK;
+                    let (left, right) = match const { compare_operands(FLAG) } {
+                        Some(false) => (crate::bytecode::Operand(left.0 & payload), crate::bytecode::Operand(right.0 & payload)),
+                        Some(true) => (crate::bytecode::Operand(left.0 & payload), crate::bytecode::Operand((right.0 & payload) | CONSTANT_TAG)),
+                        None => (left, right),
+                    };
+                    Some(Operation::CompareJump {
+                        comparison: crate::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
+                        left, right, negate,
+                    })
+                }
                 other => other,
             }
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {

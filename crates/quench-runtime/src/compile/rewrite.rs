@@ -135,29 +135,26 @@ fusion_recipes! {
             if first.result_register() != second.register_a() { return None; }
             let sink = (second.atom_index(), second.cache_site_index());
             match first.field_lookup()? {
+                // A nested read sinks only where the lane's sinking row answers it; measured on richards, most
+                // sinks took the general read and store (`row_get_field_sink`), so the pair stays two rows.
+                crate::bytecode::FieldLookup::Site(_) if !SINK_NESTED_READS => return None,
                 crate::bytecode::FieldLookup::Site(index) => {
                     let site = fields.get_mut(index)?;
                     if site.sink.is_some() { return None; }
                     site.sink = Some(sink);
                 }
-                crate::bytecode::FieldLookup::Atom { atom, base, cache_site } => {
-                    // Field-site validation and scope projections do not support local bases.
-                    // Keep the checked local read and this write as separate operations.
-                    if base.local_index().is_some() { return None; }
-                    fields.push(FieldSite {
-                        base,
-                        first: (atom, cache_site),
-                        second: None,
-                        sink: Some(sink),
-                        sources: [FieldSite::NO_SOURCE; 3],
-                    });
-                    first.set_field_lookup_site(fields.len() - 1);
-                }
+                // A one-hop read keeps its own row and the store its own: the lane's sinking row plans
+                // only a nested read's two hops (`NESTED_SITE`), so a one-hop sink took the general
+                // read and store every time.
+                crate::bytecode::FieldLookup::Atom { .. } => return None,
             }
             first.set_this_result();
             Some(first)
         };
 }
+
+/// Whether `GetSetThis` fuses a nested read (`FieldLookup::Site`) with its store.
+const SINK_NESTED_READS: bool = false;
 
 pub(super) fn apply(
     function: &mut BcFunction,

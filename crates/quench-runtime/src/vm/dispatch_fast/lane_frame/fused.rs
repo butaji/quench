@@ -163,16 +163,16 @@ lane_handler! {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
+            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             let raw_result = mode & crate::staged::raw_bit($k) != 0;
             frame.raw_result = raw_result;
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<$L>::OPCODE) } {
-                        r.set($i.a, raw_word(raw_result, value));
+                        r.set(i.a, raw_word(raw_result, value));
                     }
                 }
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, ip, view),
             }
         }}; }
         macro_rules! value_link { ($ip:ident, $i:ident, $L:ident, $k:literal) => {
@@ -189,23 +189,23 @@ lane_handler! {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
+            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             // The last link's double result stays raw where the next record reads it (`CHAIN_RAW_OUT`, `MODE_RAW_OUT`).
             let raw_result = mode & crate::staged::MODE_RAW_OUT != 0;
             frame.raw_result = raw_result;
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<$L>::OPCODE) } {
-                        r.set($i.a, raw_word(raw_result, value));
+                        r.set(i.a, raw_word(raw_result, value));
                     }
                     if const { row_produces(LaneFields::<$L>::OPCODE) } {
                         // A raw result's NaN keeps its canonical form, as `LaneFrame::write` gives it (`raw_word`).
                         let acc = raw_word(raw_result, value);
-                        next!(cx, r, following($ip), Carried { acc: Slot::of(acc), ..view })
+                        next!(cx, r, following(ip), Carried { acc: Slot::of(acc), ..view })
                     }
-                    next!(cx, r, following($ip), view)
+                    next!(cx, r, following(ip), view)
                 }
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, ip, view),
             }
         }}; }
         macro_rules! last_link { ($ip:ident, $i:ident, $L:ident) => {{
@@ -220,22 +220,22 @@ lane_handler! {
                 } else {
                     Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
                 };
-                let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
+                let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
                 let mut stage = Concrete::new(std::ptr::null());
                 // A chain's last link is never a branch table, so its direction is the record's `MODE_BACKWARD`.
                 let backward = mode & crate::staged::MODE_BACKWARD != 0;
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::past_result(view) } else { view };
                 let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, $ip, $i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
-                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump::<H>(cx, r, $ip, backward, carried, None)),
-                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { $ip.add(1 + k as usize) }, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
                     Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
                     Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
-                    Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following($ip), carried),
+                    Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following(ip), carried),
                     Step::Unresolved => if backward {
-                        sibling!(const { jump_row_miss::<H, true>(LaneFields::<$L>::OPCODE) }, r, $ip, view)
+                        sibling!(const { jump_row_miss::<H, true>(LaneFields::<$L>::OPCODE) }, r, ip, view)
                     } else {
-                        sibling!(const { jump_row_miss::<H, false>(LaneFields::<$L>::OPCODE) }, r, $ip, view)
+                        sibling!(const { jump_row_miss::<H, false>(LaneFields::<$L>::OPCODE) }, r, ip, view)
                     },
                 }
             }

@@ -4614,6 +4614,22 @@ lane_handler! {
     }
 }
 
+script_handler! {
+    /// A `Binary` row its words leave (an operator past the Number rows: `instanceof`, `in`, `**`, a
+    /// string comparison): the lane's pure operation (`binary_value`) answers it in place, which
+    /// runs no guest code, before the general step; the step beside activations would make them
+    /// frames, and every return into them would leave the lane again.
+    #[inline(never)]
+    fn binary_miss_in_lane<>(cx, r, ip, i, view) {
+        if let Some(value) = unsafe { binary_value(cx, r, i) } {
+            note_allocation(unsafe { vm(cx) });
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..Carried::script_in(cx, view) })
+        }
+        sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
+    }
+}
+
 /// The memory view the record after a general step carries: a Wasm run's frame memory, read again
 /// as a call's return reads it (`complete_call`: the step may have grown it), never the script
 /// view `Carried::stepped` makes. A Wasm record addressing through the script view wrote and read
@@ -4866,6 +4882,12 @@ unsafe fn binary_values_classified<H: Host>(
         {
             relation_outcome::<H>(operator, left, right)
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
+        }
+        // `**` of two Numbers (raytrace's `x ** 2`), which `number_binary` leaves.
+        None if operator == oxc_ast::ast::BinaryOperator::Exponential as u32
+            && let (Some(base), Some(exponent)) = (left.as_number(), right.as_number()) =>
+        {
+            Some(Value::number(super::operations::exponentiate(base, exponent)))
         }
         None => bigint_value(cx, operator, left, right),
     }
@@ -8142,7 +8164,11 @@ fn relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Option<b
     }
     // An ordering operator (`<`, `<=`, `>`, `>=`) is decided by its operand pair alone: the
     // membership, prototype and identity tests below never answer it.
-    if super::operations::NumberRelation::from_operator(operator).is_some() {
+    // `==` and `===` share `Equal` (`NumberRelation::from_operator`), which is no ordering: they take
+    // the identity and string tests below.
+    if super::operations::NumberRelation::from_operator(operator)
+        .is_some_and(|relation| !matches!(relation, super::operations::NumberRelation::Equal | super::operations::NumberRelation::NotEqual))
+    {
         return vm.string_relation(operator, left, right)
             .or_else(|| vm.bigint_relation(operator, left, right))
             .or_else(|| vm.primitive_comparison(operator, left, right))
@@ -13527,7 +13553,9 @@ fn forwarded_fields_in_lane<H: Host>(vm: &mut Vm<H>, callee: Value, argument: im
     // A nested construction's field is a fresh object of its own plan; allocation never collects.
     if let Some(nested) = vm.lane_stack.construct_plans[index].nested {
         if !construct_plan::nested_root_holds(vm, &nested) { return None; }
-        values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
+        if nested.constructs {
+            values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
+        }
     }
     Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
 }
@@ -15522,8 +15550,9 @@ fn initialize_fields_in_lane<H: Host>(
     argument: impl Fn(u16) -> Value,
 ) -> Option<(Value, bool)> {
     let stores = code.function(function as usize).initializer_stores(&code.constants)?;
-    initialize_stores_in_lane(vm, callee, constructor, |vm, this, each| {
-        add_stores_in_lane(vm, code, this, stores, argument, |_, _| None, each)
+    let env = vm.same_realm_user_target(callee).map_or(Value::UNDEFINED, |(_, _, env)| env);
+    initialize_stores_in_lane(vm, callee, constructor, env, |vm, this, nested, each| {
+        add_stores_in_lane(vm, code, this, stores, argument, nested, each)
     })
 }
 
@@ -18705,7 +18734,7 @@ fn derive_lane_view<'live, H: Host>(
         .collect();
     // Each record's handler before any fusion: a record still holding it
     // runs only its own instruction.
-    let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
+    let mut selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: u16, acc: u8| {
         tables[0][usize::from(acc)]
@@ -18817,6 +18846,16 @@ fn derive_lane_view<'live, H: Host>(
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A host that runs no lane (`Host::RUNS_LANE` false) never runs these records, so it instantiates no fusion
     // handler: the tables of `fuse_chains`, `fuse_target_backedges` and `fuse_rows` are gated on the host.
+    // A `Binary` record of an operator with rows runs its operator's row rather than fusing (`operator_row`):
+    // its operator and operand tests fold, which a fused pair's run-time operator does not.
+    if !wasm {
+        for (record, selected) in records.iter_mut().zip(selected.iter_mut()) {
+            if let Some(row) = lane_frame::operator_row::<H>(record) {
+                record.handler = row as *const ();
+                *selected = record.handler;
+            }
+        }
+    }
     let mut fused = if const { H::RUNS_LANE } {
         lane_frame::fuse_chains::<H>(&mut records, &decoded, live().map(|masks| &**masks), function.handlers.is_empty())
     } else {
@@ -18863,6 +18902,7 @@ fn derive_lane_view<'live, H: Host>(
     // Last, so the fusions above and the accumulator check see each record's generated row.
     if !wasm {
         specialize_plain_operators::<H>(&decoded, constants, &mut records);
+        specialize_register_operands::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
@@ -19643,6 +19683,23 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
             continue;
         };
         records[pc].handler = handler as *const ();
+    }
+}
+
+/// Gives each plain two-operand arithmetic record whose operands are both registers its row at
+/// `FLAG_REGISTERS`, which reads them without testing their tags. Runs after the fusion passes, which
+/// find the rows by their plain handlers.
+fn specialize_register_operands<H: Host>(records: &mut [LaneInstruction]) {
+    for record in records.iter_mut() {
+        if !lane_frame::register_operands(record) {
+            continue;
+        }
+        let row = lane_frame::registers_row::<H, { crate::bytecode::Op::Binary as u16 }>(record.handler)
+            .or_else(|| lane_frame::registers_row::<H, { crate::bytecode::Op::NumericAdd as u16 }>(record.handler))
+            .or_else(|| lane_frame::registers_row::<H, { crate::bytecode::Op::NumericMultiply as u16 }>(record.handler));
+        if let Some(row) = row {
+            record.handler = row as *const ();
+        }
     }
 }
 

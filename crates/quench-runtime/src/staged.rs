@@ -284,7 +284,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below: a table mode that
 /// `fuse_rows` realizes as the record's settings bits (`MODE_DEAD_FIRST`, `raw_bit(0)`), not as an instance.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 90] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -377,8 +377,9 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
     (Op::WasmI32Load16U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
     // A local or capture read then a register comparison jump (`JumpBinaryFalse`). Subsumes
     // `specialize_load_branch_pairs` (`load_relation_jump_handler`), both directions of the jump.
-    (Op::LoadLocalPlain as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
-    (Op::LoadCapture as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
+    // A comparison jump is not a member: its own row fixes its operator and operand form at its first
+    // run (`compare_jump_row`), which a pair's jump decodes at run time, and a pair's jump builds the
+    // capture read's whole frame (`row_frame`).
     // A direct load then the direct store of its value, of the same width.
     (Op::WasmI32Load as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
     (Op::WasmI32Load8U as u16, Op::WasmI32Store8 as u16, FUSED_PLAIN),

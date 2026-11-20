@@ -5,7 +5,7 @@
 use super::*;
 use std::collections::BTreeMap;
 use crate::vm::jit_backend::relocatable_code::RelocatableCode;
-use crate::vm::aot_image::{LaneImage, base::{BaseImage, NO_ENTRY}, symbols::{Symbol, SymbolTable}};
+use crate::vm::aot_image::{LaneImage, base::BaseImage, symbols::{Symbol, SymbolTable}};
 use crate::compile::aot_facts::AotFacts;
 use super::lane_unit::Origin;
 use crate::vm::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self, LiveImage}};
@@ -39,8 +39,7 @@ fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u3
 }
 
 /// The unit of `function`'s lane body under the closed world's call targets (`lane_unit::unit`, its
-/// default budget); `None` where a frame it inlines would leave by making the callee's activation,
-/// which no base body continues (`leave_targets`).
+/// default budget); `None` where a frame it inlines would leave by making the callee's activation.
 fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Option<lane_unit::Unit> {
     unit_or_refusal(program, function, facts).ok()
 }
@@ -73,30 +72,42 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     Ok((code, lowered.region.fault_poll))
 }
 
-/// The lane body of `function` for an AOT image under the closed-world `facts`, its leaves
-/// continuing at `base`'s entries (`join`): every leave's target is interned in `symbols`. The
-/// whole-program values of `frozen` fold at their reads, each read checked where it is made
+/// The lane body of `function` for an AOT image under the closed-world `facts`, whose leaves
+/// return their exit words as a JIT lane's do (`AheadLeaves`). The whole-program values of `frozen` fold at their reads, each read checked where it is made
 /// (`GlobalRead::Frozen`, `VmFacts::frozen_fields`), as the JIT's frozen division folds them. A
 /// construction the closed world proves keeps its receiver as its fields (`constructions`). A call
 /// the closed world proves reads its callee's words from the base body's record (`proven_calls`).
 /// `None` where it gives no native record, or polls for faults: the lowering does not report
 /// the poll's offset, so the base body runs such a function.
 pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
-    (base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
+    (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Result<LaneImage, &'static str> {
     let unit = unit_or_refusal(program, function, facts)?;
     // A VM installs no lane body that inlines a frame (`ahead_lane_method`): its leaves inside one have no store list.
     if !unit.frames.is_empty() { return Err("inlines a call (not installable)"); }
-    let targets = leave_targets(&unit, function, base, symbols);
     let proven = proven_calls(program, &unit, function, calls, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
+    let strings = string_constants(program, &unit, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
-    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets, calls: &proven }), closed: Some(facts),
+    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
     if fault_poll { return Err("polls for faults"); }
     Ok(LaneImage { code, fault_poll: None })
+}
+
+/// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
+fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: &mut SymbolTable) -> BTreeMap<usize, u32> {
+    unit.instructions.iter()
+        .filter(|instruction| instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst)
+        .filter_map(|instruction| {
+            let slot = instruction.constant_index();
+            let crate::bytecode::Constant::String(text) = program.constants.get(slot)? else { return None };
+            let atom = symbols.text_atom(text);
+            let Symbol::HeapValue(key) = symbols.heap_value(aot_image::HeapValueRecipe::String(atom)) else { return None };
+            Some((slot, key))
+        }).collect()
 }
 
 /// By unit PC, the caller calls the closed world proves that the base body planned a record for
@@ -113,24 +124,6 @@ fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
         if this.lexical { return None; }
         let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc });
         Some((pc, lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record }))
-    }).collect()
-}
-
-/// Each unit PC's leave target as the base body's `Symbol::BasePc`, where the base body enters it: a
-/// caller record, or for a PC of an inlined callee the caller's call that inlined it, which restarts
-/// (every frame's recovery is `RestartCall`, `unit_of`: the callee ran no effect before it leaves).
-fn leave_targets(unit: &lane_unit::Unit, function: u32, base: &BaseImage, symbols: &mut SymbolTable) -> Box<[Option<(u32, u32)>]> {
-    let caller_call = |mut frame: usize| {
-        while let Some(parent) = unit.frames[frame].parent { frame = parent; }
-        unit.frames[frame].call
-    };
-    unit.origins.iter().map(|origin| {
-        let record = match *origin {
-            Origin::Caller(record) => record,
-            Origin::Inlined { frame, .. } => caller_call(frame),
-        };
-        base.pc_offsets.get(record as usize).is_some_and(|at| *at != NO_ENTRY)
-            .then(|| symbols.intern(Symbol::BasePc { function, pc: record }))
     }).collect()
 }
 
@@ -272,17 +265,24 @@ impl<H: Host> Vm<H> {
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
         let linked_live: &LiveImage = images.linked.as_ref()?;
         let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
-        let unit = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program)))?;
+        let refused = |why: &str| if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: image lane refused, {why}"); };
+        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program))) else {
+            refused("no unit"); return None;
+        };
         // An image has no lowering to ask which registers a leave inside an inlined frame stores.
-        if !unit.frames.is_empty() { return None; }
-        let (linked, roots) = live::link_lane(&images.image, self, linked_live, function)?;
+        if !unit.frames.is_empty() { refused("inlined frames"); return None; }
+        let Some((linked, roots)) = live::link_lane(&images.image, self, linked_live, function) else {
+            refused("link_lane"); return None;
+        };
         // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() }, entry_types: Default::default(), summary: None,
             exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
-        plan.finish(&linked, None, None)
+        let method = plan.finish(&linked, None, None);
+        if method.is_none() { refused("plan.finish"); }
+        method
     }
 
     /// `function`'s base body from `images`, where they are placed (`LiveImage::bases`).

@@ -629,7 +629,8 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn body_work_in_lane(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
-        let (mut observed, mut looped, mut called, mut caller, mut arrays) = (None, None, false, None, Vec::new());
+        let (mut observed, mut looped, mut called, mut arrays) = (None, None, false, Vec::new());
+        let caller;
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks, observed: seen, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (observed, looped, called, caller, arrays) = (seen, iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
             LaneBodyWork::Poll(pending, view) => match self.body_poll_in_lane(program, pending) {

@@ -339,7 +339,8 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     let int_tag = super::value::is_int(stage, tagged);
     let double_tag = super::value::is_double(stage, tagged);
     let number_tag = stage.either(int_tag, double_tag);
-    let number = stage.select(int_tag, from_int, tagged);
+    let double = stage.f64_from_bits(tagged);
+    let number = stage.select(int_tag, from_int, double);
     let truncated = stage.float_unary(super::math::FloatUnary::Trunc, number);
     let exact = stage.relation(NumberRelation::Equal, Domain::Float64, truncated, number);
     let lowest = stage.f64_constant(f64::from(i32::MIN));
@@ -407,8 +408,10 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             Step::Value(result)
         }
         Domain::Int32 => {
+            // A Number operand past the int32 domain (a double, `-0`, `i32::MIN`'s negation) takes the
+            // float row before the VM's operator: only a non-Number leaves.
             let Some(value) = frame.int_operand(stage, source, miss) else {
-                return general_unary(stage, frame, unary_operator(operation), (destination, source));
+                return float_or_general_unary(stage, frame, destination, source, operation);
             };
             match operation {
                 NumberUnary::Plus => {
@@ -422,17 +425,37 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                     // `-0` is no int32: a zero operand leaves, as `i32::MIN`'s overflow does; the VM's negation takes both.
                     let zero_operand = stage.i32_is_zero(value);
                     if stage.guard_false(zero_operand, miss).is_none() {
-                        return general_unary(stage, frame, unary_operator(operation), (destination, source));
+                        return float_or_general_unary(stage, frame, destination, source, operation);
                     }
                     let zero = stage.i32_constant(0);
                     match int_arithmetic_result(stage, frame, destination, zero, value,
                         NumberArithmetic::Subtract, LEAVES, miss) {
-                        Step::Unresolved => general_unary(stage, frame, unary_operator(operation), (destination, source)),
+                        Step::Unresolved => float_or_general_unary(stage, frame, destination, source, operation),
                         step => step,
                     }
                 }
             }
         }
+    }
+}
+
+/// `unary` of a Number operand in the float domain, else the VM's operator (`general_unary`).
+#[inline(always)]
+fn float_or_general_unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Operand, operation: NumberUnary,
+) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    match frame.number_operand(stage, source, miss) {
+        Some(value) => {
+            let result = match operation {
+                NumberUnary::Plus => value,
+                NumberUnary::Negate => stage.float_negate(value),
+            };
+            let fact = frame.number_fact();
+            frame.write(stage, destination, result, fact);
+            Step::Value(result)
+        }
+        None => general_unary(stage, frame, unary_operator(operation), (destination, source)),
     }
 }
 
@@ -559,6 +582,18 @@ fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
         let zero_count = stage.eq_imm(count, 0u64);
         let negative = stage.i32_is_negative(left);
         let widens = stage.both(zero_count, negative);
+        // A frame of tagged words writes a result past int32 (`x >>> 0` of a negative `x`) as its boxed
+        // binary64 word, under the one tagged fact; any other frame leaves there.
+        if let Some(fact) = frame.tagged_number_fact() {
+            let bits = stage.int_bitwise(operation, left, right);
+            let int = frame.int_result(stage, bits);
+            let result = stage.choose(widens, #[inline(always)] |stage| {
+                let number = stage.u32_to_f64(left);
+                stage.box_number(number)
+            }, #[inline(always)] |_| int);
+            frame.write(stage, destination, result, fact);
+            return Step::Value(result);
+        }
         if stage.guard_false(widens, miss).is_none() {
             return Step::Unresolved;
         }
@@ -764,10 +799,10 @@ fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
     let (result, fact) = match domain {
         Domain::Float64 => {
-            let (result, miss_cond) = stage.integral_remainder(left, right);
-            if stage.guard_false(miss_cond, miss).is_none() {
-                return Step::Unresolved;
-            }
+            // A pair the integral remainder does not answer (a fraction, a zero divisor, `-0`) takes
+            // the binary64 remainder, which is `%` for every pair of Numbers.
+            let (result, inexact) = stage.integral_remainder(left, right);
+            let result = stage.choose(inexact, #[inline(always)] |stage| stage.float_remainder(left, right), #[inline(always)] |_| result);
             (result, frame.number_fact())
         }
         Domain::Int32 => {

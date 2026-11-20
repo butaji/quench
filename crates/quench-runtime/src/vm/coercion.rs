@@ -400,14 +400,7 @@ impl<H: Host> Vm<H> {
     /// decides every falsy heap value, "", 0n and the IsHTMLDDA object.
     #[inline(never)]
     pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
-        // A string's length from its record in place (`string_length_value`), not its units.
-        if let Some(length) = self.string_length_value(v) {
-            return length != Value::integer(0);
-        }
-        match self.heap.get(v) {
-            Some(Cell::BigInt(value)) => !value.is_zero(),
-            _ => !self.is_html_dda(v),
-        }
+        heap_cell_truthy_in(&self.heap, v)
     }
 
     pub(super) fn is_html_dda(&self, value: Value) -> bool {
@@ -459,4 +452,21 @@ pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
 #[inline(always)]
 pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
     crate::staged::value::concrete_immediate_typeof_index(value)
+}
+
+/// `Vm::heap_cell_truthy` from the heap alone, so a lane frame (which names no host) decides a
+/// string's or another cell's ToBoolean in place: a string's length from its record, a BigInt's
+/// zero, the IsHTMLDDA object, and every other cell truthy.
+#[inline(never)]
+pub(crate) fn heap_cell_truthy_in(heap: &crate::heap::Heap, v: Value) -> bool {
+    if let Some(length) = heap.string_record_base().and_then(|records| crate::staged::string_length::concrete_string_length(records, v)) {
+        return length != Value::integer(0);
+    }
+    if let Some(text) = heap.string(v) {
+        return text.len() != 0;
+    }
+    match heap.get(v) {
+        Some(Cell::BigInt(value)) => !value.is_zero(),
+        _ => !matches!(heap.function(v), Some(FunctionRecord { kind: FunctionKind::Native(Native::IsHTMLDDA), .. })),
+    }
 }

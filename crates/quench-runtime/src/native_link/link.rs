@@ -84,12 +84,14 @@ impl NativeSupport {
                     {
                         return Err("native support includes an architecture code generator".into());
                     }
+                    // A dynamic-source image links the standard build's artifacts (default features:
+                    // `bundled-sources`, `jit`); a static image's support excludes both, and its link's
+                    // symbol audit checks that the compiler is dropped.
                     if name == host_crate || name == "quench_runtime" {
                         if !features.iter().any(|feature| feature == "native-execution")
-                            || features.iter().any(|feature| {
-                                matches!(feature.as_str(), Some("aot" | "bundled-sources"))
-                                    || (!support.allows_dynamic_source() && feature == "jit")
-                            })
+                            || (!support.allows_dynamic_source() && features.iter().any(|feature| {
+                                matches!(feature.as_str(), Some("aot" | "bundled-sources" | "jit"))
+                            }))
                         {
                             return Err(format!("{name} is not valid {support:?} native support"));
                         }
@@ -549,12 +551,10 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_source_support_requires_jit_and_excludes_build_features() {
+    fn dynamic_source_support_requires_jit() {
         for (name, features, reason) in [
             ("quench", vec!["native-execution"], "no JIT"),
             ("quench_runtime", vec!["native-execution"], "no JIT"),
-            ("quench", vec!["native-execution", "jit", "bundled-sources"], "native support"),
-            ("quench_runtime", vec!["native-execution", "jit", "aot"], "native support"),
         ] {
             let report = serde_json::json!({"reason":"compiler-artifact","target":{"name":name},"features":features}).to_string();
             let error = NativeSupport::from_cargo_report(&report, "quench", NativeImageSupport::DynamicSource)
