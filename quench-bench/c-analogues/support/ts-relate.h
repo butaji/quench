@@ -468,6 +468,8 @@ static bool cSigIsGeneric(CSig *sig) { return !sig->erased && sig->decl->typePar
 typedef struct { TsNode *decl; TsMapper *mapper; CSig res; } CEraseEnt;
 static CEraseEnt *cEraseList;
 static int cEraseN, cEraseCap;
+/* the erased signatures live in the checker arena: every checker run starts with none */
+static void cResetEraseList(void) { cEraseN = 0; }
 static CSig cErasedSignature(CSig *sig) {
   if (!cSigIsGeneric(sig)) return *sig;
   for (int i = 0; i < cEraseN; i++)

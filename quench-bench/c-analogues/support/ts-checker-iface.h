@@ -11,7 +11,8 @@
  *   - checkTypeReferenceNode (86183) with checkTypeArgumentConstraints (86146): a reference to a generic class or
  *     interface checks each type argument against its instantiated constraint (2344). The heritage clauses of
  *     classes and interfaces are checked the same way (the type arguments of the base expression).
- * NOT PORTED: checkInheritedPropertiesAreIdentical (2320), generic type alias references (their constraints),
+ * ALSO PORTED: checkInheritedPropertiesAreIdentical (2320) and checkTypeParameter (default against constraint, 2344).
+ * NOT PORTED: generic type alias references (their constraints),
  *   the late-bound names of index constraints (a property with a computed name is skipped and reported as
  *   unported), checkIndexConstraints of classes (static index and class member names).
  */
@@ -146,6 +147,111 @@ static void cCheckIndexConstraints(TsType *type) {
     for (int i = 0; i < type->nindex; i++) cCheckIndexConstraintForIndexSignature(type, &type->index[i]);
 }
 
+/* compareProperties (identity): the same accessibility, optionality and readonly flags, and identical types */
+static bool cIsPropertyIdenticalTo(TsSymbol *s, TsSymbol *t) {
+  if (s == t) return true;
+  TsNode *sd = s->valueDeclaration, *td = t->valueDeclaration;
+  bool sNonPublic = sd && (bModifierFlags(sd) & (TMF_Private | TMF_Protected));
+  bool tNonPublic = td && (bModifierFlags(td) & (TMF_Private | TMF_Protected));
+  if (sNonPublic != tNonPublic) return false;
+  if (sNonPublic) {
+    if (s->instTarget != t->instTarget) return false;
+  } else if ((s->flags & SF_Optional) != (t->flags & SF_Optional)) return false;
+  if (cIsReadonlyProp(s) != cIsReadonlyProp(t)) return false;
+  TsType *a = cTypeOfSymbol(s), *b = cTypeOfSymbol(t);
+  if (a == cErrorType || b == cErrorType) { cUnportedHit = true; return true; }
+  return cIdentical(a, b);
+}
+
+/* checkInheritedPropertiesAreIdentical (89870s): an interface with several bases may not inherit a property of
+ * the same name with different types (2320 at the name). Returns false when it reports. */
+static bool cCheckInheritedPropertiesAreIdentical(TsType *type, TsNode *typeNode) {
+  cResolveBaseTypes(type);
+  if (type->nbases < 2) return true;
+  /* seen: the declared properties first, then the first property of each name from the bases */
+  int cap = 64, ns = 0;
+  TsSymbol **seenSym = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)cap);
+  TsType **seenCont = ts_arena_alloc(sizeof(TsType *) * (size_t)cap);
+  TsSymTable *own = cDeclaredMembers(type);
+  for (int k = 0; own && k < own->n; k++) {
+    TsSymbol *p = own->e[k].sym;
+    if (cIsSignatureName(own->e[k].key) || !(p->flags & SF_Value)) continue;
+    if (ns == cap) {
+      TsSymbol **ns2 = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)cap * 2);
+      TsType **nc2 = ts_arena_alloc(sizeof(TsType *) * (size_t)cap * 2);
+      memcpy(ns2, seenSym, sizeof(TsSymbol *) * (size_t)ns);
+      memcpy(nc2, seenCont, sizeof(TsType *) * (size_t)ns);
+      seenSym = ns2; seenCont = nc2; cap *= 2;
+    }
+    seenSym[ns] = p; seenCont[ns] = type; ns++;
+  }
+  bool ok = true;
+  for (int b = 0; b < type->nbases; b++) {
+    TsType *base = type->bases[b];
+    if (base == cErrorType) continue;
+    TsType *bwt = cGetTypeWithThisArgument(base, type->thisType);
+    TsSymbol **props;
+    int np = cPropertiesOf(bwt, &props);
+    for (int i = 0; i < np; i++) {
+      TsSymbol *p = props[i];
+      int hit = -1;
+      for (int q = 0; q < ns && hit < 0; q++)
+        if (seenSym[q]->name.n == p->name.n && memcmp(seenSym[q]->name.s, p->name.s, (size_t)p->name.n) == 0) hit = q;
+      if (hit < 0) {
+        if (ns == cap) {
+          TsSymbol **ns2 = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)cap * 2);
+          TsType **nc2 = ts_arena_alloc(sizeof(TsType *) * (size_t)cap * 2);
+          memcpy(ns2, seenSym, sizeof(TsSymbol *) * (size_t)ns);
+          memcpy(nc2, seenCont, sizeof(TsType *) * (size_t)ns);
+          seenSym = ns2; seenCont = nc2; cap *= 2;
+        }
+        seenSym[ns] = p; seenCont[ns] = base; ns++;
+      } else if (seenCont[hit] != type && !cIsPropertyIdenticalTo(seenSym[hit], p)) {
+        ok = false;
+        cDiagAdd(cSourceFileOf(typeNode), cNodeStart(typeNode), 2320, NULL);
+      }
+    }
+  }
+  return ok;
+}
+
+/* checkTypeParameter (85592): the default must satisfy the constraint, instantiated with the default for the
+ * type parameter (2344 at the default) */
+static void cCheckTypeParameterNode(TsNode *n) {
+  if (n->kind != TSK_TypeParameter || !n->symbol) return;
+  TsType *tp = cTypeOfTypeParameter(cGetMergedSymbol(n->symbol));
+  TsNode *dn = cTypeParamDefaultNode(tp);
+  if (!dn) return;
+  TsType *def = cTypeFromNode(dn);
+  if (def == cErrorType) return;
+  TsType *c = cConstraintOf(tp);
+  if (!c) return;
+  TsMapper *m = cCreateTypeMapper(&tp, &def, 1);
+  TsType *inst = cInstantiate(c, m);
+  if (inst == cErrorType) return;
+  inst = cGetTypeWithThisArgument(inst, def);
+  cCheckTypeRelatedTo(def, inst, REL_Assignable, dn, 2344);
+}
+
+/* checkSourceElement over the type nodes (checkUnionOrIntersectionType, checkTypeLiteral, the other type node
+ * checks): each type node is resolved with getTypeFromTypeNode, and a type literal checks its index constraints
+ * (checkIndexConstraints of the literal's anonymous type, 89089, lazily). */
+static void cCheckTypeNode(TsNode *n) {
+  switch (n->kind) {
+    case TSK_UnionType: case TSK_IntersectionType: case TSK_ArrayType: case TSK_TupleType: case TSK_TypeOperator:
+    case TSK_IndexedAccessType: case TSK_ConditionalType: case TSK_MappedType: case TSK_LiteralType: case TSK_FunctionType:
+    case TSK_ConstructorType: case TSK_TypeQuery: case TSK_TemplateLiteralType: case TSK_TypeReference: case TSK_ParenthesizedType:
+      cTypeFromNode(n);
+      break;
+    case TSK_TypeLiteral: {
+      TsType *t = cTypeFromNode(n);
+      if (t != cErrorType && (t->flags & TF_Object)) cCheckIndexConstraints(t);
+      break;
+    }
+    default: break;
+  }
+}
+
 /* checkInterfaceDeclaration (89909) for the first declaration of an interface: the base types and the index
  * constraints (the lazy diagnostics of the declaration). */
 static void cCheckInterfaceDecl(TsNode *n) {
@@ -155,6 +261,7 @@ static void cCheckInterfaceDecl(TsNode *n) {
   TsType *type = cDeclaredTypeOfClassOrInterface(sym);
   cResolveMembers(type);
   TsType *typeWithThis = cGetTypeWithThisArgument(type, NULL);
+  if (!cCheckInheritedPropertiesAreIdentical(type, n->name ? n->name : n)) return;
   cResolveBaseTypes(type);
   for (int b = 0; b < type->nbases; b++) {
     TsType *base = type->bases[b];

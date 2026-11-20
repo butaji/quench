@@ -17,10 +17,11 @@ typedef struct { TsType *tpl; } CTplEntry;
 static TsType **cTplList;
 static int cTplN, cTplCap;
 /* the template literal types live in the checker arena, which every checker run resets */
-static void cResetTemplateTypes(void) { cTplN = 0; }
 typedef struct { TsSymbol *sym; TsType *type; TsType *res; } CSmEntry;
 static CSmEntry *cSmList;
 static int cSmN, cSmCap;
+/* the template and string mapping types live in the checker arena: every checker run starts with none */
+static void cResetTemplateTypes(void) { cTplN = 0; cSmN = 0; }
 
 static char *cArenaCat(const char *a, int na, const char *b, int nb) {
   char *r = ts_arena_alloc((size_t)na + (size_t)nb + 1);
