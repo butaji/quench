@@ -511,6 +511,12 @@ impl Engine {
         Self::static_module_analysis_with(source, module_name, false, |analyze| analyze())
     }
 
+    /// Whether `text`, a compiled module's kept text, is `source` as the compiler reads it: as
+    /// given, or with its hashbang blanked (`early::normalize_hashbang`).
+    pub(crate) fn compiled_module_text_is(text: &str, source: &str) -> bool {
+        text == source || text == &*early::normalize_hashbang(source)
+    }
+
     /// `static_module_analysis`, whose memo misses `obtain`, which analyzes the text with the
     /// function it is given or finds the analysis elsewhere (a host's compile cache).
     pub(crate) fn static_module_analysis_with(
@@ -1187,8 +1193,16 @@ impl Engine {
         let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len(), source_type.is_module());
         // A recognized body's check needs its call-only facts deferred, or none to find
         // (`BodyFacts::check`): only bodies with no function inside are recognized then.
-        let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
-        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing));
+        // A module checks every body alone (`BodyFacts::checks_every_body`), so a body is never
+        // recognized without its tree: a check that declined one would parse it whole again.
+        let recognize = if module_goal {
+            annex_b_targets::Recognize::No
+        } else if stubbing.functions {
+            annex_b_targets::Recognize::All
+        } else {
+            annex_b_targets::Recognize::Flat
+        };
+        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing, module_goal));
         #[cfg(feature = "aot")]
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
         // A first-call chunk's annotations resolve against its program's top-level names.

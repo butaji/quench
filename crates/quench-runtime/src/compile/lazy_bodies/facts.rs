@@ -19,6 +19,11 @@ pub(in crate::compile) struct BodyFacts {
     /// The functions may compile on first call: their call-only facts wait for the
     /// compilation that reads them (`call_only::deferred`), unless their load compiles them.
     pub(in crate::compile) call_only_deferred: bool,
+    /// Every body is checked alone by its semantic analysis, whatever its parse's verdict
+    /// (`LazyBody::early`) says. A module compiles without an analysis of its own first
+    /// (`Vm::collect_static_module_programs`), so its compilation's checks are what rule out
+    /// its early errors.
+    pub(in crate::compile) checks_every_body: bool,
     /// Arrow functions' bodies may be taken (`first_call::Stubs::arrows`).
     arrows: bool,
     /// The bodies the skim takes where it decides them (`parse_collecting`), a body it declines
@@ -52,11 +57,18 @@ pub(in crate::compile) struct BodyFacts {
 impl BodyFacts {
     /// No facts yet, for a source compiled as `stubbing` says: its call-only facts deferred where
     /// its functions compile on first call, its arrow functions' bodies taken, its bodies skimmed.
-    pub(in crate::compile) fn deferring(stubbing: crate::compile::program_shape::Stubbing) -> Self {
+    /// `checks_every_body`: each body is checked alone, not by its parse's verdict.
+    pub(in crate::compile) fn deferring(stubbing: crate::compile::program_shape::Stubbing, checks_every_body: bool) -> Self {
         // A direct eval's streamed roots are none (its source is not replayable), so only a
         // script's large bodies are declined.
         let streams = stubbing.skim && !stubbing.arrows;
-        Self { call_only_deferred: stubbing.functions, arrows: stubbing.arrows, skim: stubbing.skim, streams, ..Self::default() }
+        Self { call_only_deferred: stubbing.functions, checks_every_body, arrows: stubbing.arrows, skim: stubbing.skim, streams, ..Self::default() }
+    }
+
+    /// Whether a body's parse verdict stands for its check (`checked_by_parse`): not where every
+    /// body is checked (`checks_every_body`), nor under `QUENCH_DEV=early-verify`.
+    fn takes_parse_verdict(&self) -> bool {
+        !self.checks_every_body && !verify_early()
     }
 
     /// Checks one function the parser hands over before releasing its body
@@ -77,7 +89,7 @@ impl BodyFacts {
         }
         let typescript = program.source_type.is_typescript();
         if stub {
-            return !typescript && early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early, functions_inside));
+            return !typescript && early.is_some_and(|early| self.takes_parse_verdict() && self.checked_by_parse(program, call_assignment_targets, in_function, early, functions_inside));
         }
         if typescript {
             if crate::compile::typescript::needs_admission(program) {
@@ -91,7 +103,7 @@ impl BodyFacts {
             eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, crate::compile::call_only::compiles_at_load(program, false, false));
         }
         if let Some(early) = early
-            && !verify_early()
+            && self.takes_parse_verdict()
             && self.checked_by_parse(program, call_assignment_targets, in_function, early, true)
         {
             return true;
