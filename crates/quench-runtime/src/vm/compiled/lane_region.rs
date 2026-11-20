@@ -2595,10 +2595,11 @@ impl Lowering<'_, '_> {
         format
     }
 
-    /// The receiver bits a run starts with: a lane body's caller passes them as the entry's
-    /// word, a loop region reads its window's header.
+    /// The receiver bits a run starts with: a body entry's word, which its driver passes (a lane
+    /// body's caller, the OSR region's `entry_protocol` descriptor, the AOT trampoline); a scalar
+    /// entry, which takes none, reads its window's header.
     fn entry_receiver_bits(&mut self) -> ir::Value {
-        if self.body_entry() { return self.entry_words.0; }
+        if self.completion == Completion::Body { return self.entry_words.0; }
         let window = self.loop_window();
         emit_frame_word(&mut self.builder, window, crate::staged::frame::CONTEXT_THIS)
     }
@@ -4580,7 +4581,7 @@ impl Lowering<'_, '_> {
         // A nested lookup that writes the current `this` stores the chain's value to `this`'s
         // sink field too, after its reads (`FieldSite::sink`).
         // An inlined frame's nested site names its base, and its sink's `this`, by the callee's
-        // registers: they are the frame's (`lane_unit::Frame`).
+        // registers: they are the frame's (`lane_unit::InlinedCall`).
         let frame = match self.unit.origins.get(pc) {
             Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(self.unit.frames[*frame]),
             _ => None,

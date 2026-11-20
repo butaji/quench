@@ -67,7 +67,7 @@ pub(crate) enum Origin {
 /// An inlined call. Its registers are the unit's: the caller's are its first, and each
 /// callee's start at its `base`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Frame {
+pub(crate) struct InlinedCall {
     pub(crate) recovery: CallRecovery,
     /// The frame whose function makes the call; `None` for the caller's.
     pub(crate) parent: Option<usize>,
@@ -100,7 +100,7 @@ pub(crate) struct Frame {
     pub(crate) function_call: Option<(Register, Value)>,
 }
 
-impl Frame {
+impl InlinedCall {
     /// The physical parameter homes initialized by the passed arguments.
     pub(crate) fn passed_registers(self, callee: &Function) -> impl Iterator<Item = (Register, Register)> + '_ {
         (0..self.arguments.min(callee.params)).filter_map(move |argument|
@@ -110,7 +110,7 @@ impl Frame {
     }
 
     /// The parent's register 0: the caller's, or the enclosing callee's.
-    pub(crate) fn parent_base(&self, frames: &[Frame]) -> Register {
+    pub(crate) fn parent_base(&self, frames: &[InlinedCall]) -> Register {
         self.parent.map_or(0, |parent| frames[parent].base)
     }
 }
@@ -119,7 +119,7 @@ impl Frame {
 pub(crate) struct Unit {
     pub(crate) instructions: Vec<WideInstruction>,
     pub(crate) origins: Vec<Origin>,
-    pub(crate) frames: Vec<Frame>,
+    pub(crate) frames: Vec<InlinedCall>,
     /// The unit PC of each frame's call marker, where the call's guards and bindings run.
     pub(crate) markers: Vec<usize>,
     pub(crate) caller_registers: u16,
@@ -525,7 +525,7 @@ impl Emitter {
                     self.unit.markers.push(marker);
                     let callee_base = Register::try_from(call.base).ok()?;
                     let next = (alternative + 1 < calls.len() + usize::from(keeps)).then(|| marker + 1 + call.plan.length(false) as usize);
-                    let frame_record = Frame {
+                    let frame_record = InlinedCall {
                         recovery: call.recovery,
                         parent: frame,
                         call: pc as u32,

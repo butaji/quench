@@ -32,7 +32,13 @@ pub(in crate::vm) enum EntryKind {
 pub(in crate::vm) struct EntryDescriptor {
     /// The driver that built the descriptor, which says how its result is read.
     pub(super) kind: EntryKind,
-    /// The receiver word the entry takes (`THIS`); 0 where the entry has none.
+    /// The receiver word the entry takes (`THIS`): a lane body's, an OSR region's and a body
+    /// entry's (`Completion::Body`), which the entry reads as its argument. 0 where the entry has none
+    /// (a bare stencil region, a numeric entry). Remaining difference: the AOT trampoline
+    /// (`ahead_entry.rs`) is entered as a native function, whose ABI (`native_entry_signature`) has
+    /// no receiver word, so it reads the receiver from the window header its caller wrote and passes
+    /// it to the body as the argument. Changing that would change the call rows' emitted entry
+    /// protocol, so it is left as is.
     pub(super) receiver: u64,
     /// The capture word the entry takes: the activation's captures, or a resume stub's address
     /// for a region entered mid-run; 0 where neither applies.

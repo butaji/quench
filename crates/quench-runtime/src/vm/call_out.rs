@@ -535,4 +535,7 @@ impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
     fn miss(&self) {}
     fn int_fact(&self) {}
     fn number_fact(&self) {}
+
+    /// The VM's registers hold tagged words, so an int32 result is defined as its boxed int.
+    fn int_result(&mut self, _stage: &mut Concrete, word: u64) -> u64 { Value::integer(word as u32 as i32).to_bits() }
 }

@@ -34,7 +34,7 @@ use crate::bytecode::{Class, FieldBase, FieldLookup, Register, WideInstruction, 
 use crate::compile::liveness::RegisterMasks;
 use crate::heap::GlobalFact;
 use crate::value::Value;
-use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, Frame};
+use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, InlinedCall};
 use super::super::super::osr_loop::{inlined_returning, renamed};
 use super::super::super::tier_policy::Stitch;
 use super::super::decode::{numeric_row, register_of, site_read_row, Decoded, Numbers, Source};
@@ -148,7 +148,7 @@ pub(in super::super) struct InlineSite {
     pub(in super::super) copies: Vec<(Register, Register)>,
     /// The call as the method's inlined frame, which a leave inside the callee recovers
     /// (`Vm::body_inlined_activation_in_lane`).
-    pub(in super::super) frame: Frame,
+    pub(in super::super) frame: InlinedCall,
 }
 
 /// The first reason `callee` does not inline at `shape`.
@@ -344,8 +344,8 @@ fn reached_after(reached: &crate::bitset::BitSet, pc: usize, len: usize) -> bool
 
 /// The call of `callee` at `shape`, its window at `base`, as the inlined frame the interpreter
 /// recovers by materializing the callee's activation.
-fn frame(shape: &CallShape, callee: &Callee, base: Register) -> Frame {
-    Frame {
+fn frame(shape: &CallShape, callee: &Callee, base: Register) -> InlinedCall {
+    InlinedCall {
         recovery: CallRecovery::Materialize,
         parent: None,
         call: shape.call_pc,

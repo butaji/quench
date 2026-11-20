@@ -149,6 +149,8 @@ impl EntryCell {
         self.entry.set(Self::stub());
         self.rows.set(0);
         self.proven.set(0);
+        self.proven_entry.set(0);
+        self.proven_body.set(0);
         self.scalar.set(Self::scalar_stub());
         self.proven_entry.set(0);
         self.proven_body.set(0);

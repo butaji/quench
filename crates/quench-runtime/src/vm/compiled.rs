@@ -193,7 +193,7 @@ use crate::vm::specializer::Specializer as _;
 mod wasm_codes_check;
 #[cfg(target_arch = "x86_64")]
 mod wasm_call_vm;
-pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
+pub(super) use lane_unit::{CalleeBinding, CallTarget, InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
 /// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call
@@ -1192,7 +1192,7 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
     let call_pc = entry.link.call_pc as u32;
-    let function = frameless::admitted_function(vm, entry.link.callee);
+    let function = frameless::callee_function(vm, entry.link.callee);
     let instruction = body.widened(body.code[call_pc as usize]);
     // The activation the instruction's step pushes (`Vm::pushed_frame`).
     let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.link.callee, entry.link.this);
@@ -3489,7 +3489,7 @@ impl CompiledOsrRegion {
                             EntryStamp { captures: captures_key(vm, frame), ..EntryStamp::of(vm, (program, function, frame), lane_context, registers, residual.specialized) }
                         }
                     };
-                    osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context, registers);
+                    osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context);
                     osr_lane::bind_captures::<H>(region, entry, lane_context, registers, calls, &mut captures);
                     self.stamp.set(Some(stamp));
                     let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
@@ -3501,7 +3501,7 @@ impl CompiledOsrRegion {
                 // runs after it.
                 None => JsStepDispatch::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |dispatch, vm| {
                     dispatch.bind_native_storage(std::ptr::from_mut(vm));
-                    osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context, registers);
+                    osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
                     osr_lane::bind_captures::<H>(region, entry, lane_context, registers, calls, &mut captures);
                     // `with_function` admitted the program; it holds it for the run.
                     let Some(residual) = vm.programs.get(program) else { return RegionRun::own(LaneExit::Terminated) };

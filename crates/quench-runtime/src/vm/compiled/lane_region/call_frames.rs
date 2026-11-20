@@ -206,6 +206,9 @@ impl EmitFrame<'_> {
         let caller_base = stage.constant(callee.caller_base as u64);
         let packed = stage.constant(u64::from(callee.target.function) | crate::staged::frame::PLAIN_FLAG | crate::staged::frame::NATIVE_FLAG);
         let callee_word = stage.constant(callee.callee.to_bits());
+        // Unlike the b-jit call row, which writes the receiver only where the body's `uses_this` cell word says it
+        // reads `this`, this writes it always: loading that word here would add a load and a branch to the
+        // emitted header, and an unread receiver word is harmless.
         stage.store_u64(at, window, context_at(CONTEXT_THIS), this);
         stage.store_u64(at, window, context_at(CONTEXT_CALL), call);
         stage.store_u64(at, window, context_at(CONTEXT_CALLER_REGISTERS), caller_registers);

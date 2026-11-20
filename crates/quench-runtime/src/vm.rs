@@ -466,19 +466,6 @@ impl Frame {
         }
     }
 
-    /// Arguments for a body that keeps its parameters in registers.
-    #[inline(always)]
-    fn bind_register_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
-        if let Some(base) = function.parameter_registers {
-            for offset in 0..function.params {
-                self.registers[usize::from(base + offset)] = args
-                    .get(usize::from(offset))
-                    .copied()
-                    .unwrap_or(Value::UNDEFINED);
-            }
-        }
-    }
-
     /// A Wasm activation's registers: the parameters where the function
     /// keeps them, every other register its default, each written once.
     #[inline(always)]
@@ -504,15 +491,20 @@ impl Frame {
         self.registers.clear();
         self.registers.reserve(count);
         let registers = self.registers.as_mut_ptr();
+        let window_end = base + parameters.len();
         // SAFETY: capacity holds `count` values; every slot below `count` is
-        // written before the length covers it, parameters in their window.
+        // written before the length covers it. The fills cover only the slots
+        // outside the parameter window, which the copy below writes.
         unsafe {
-            for index in 0..count {
+            for index in 0..base {
                 registers.add(index).write(initial);
             }
             // A few values: an inline copy, not a library call.
             for (offset, value) in parameters.iter().enumerate() {
                 registers.add(base + offset).write(*value);
+            }
+            for index in window_end..count {
+                registers.add(index).write(initial);
             }
             self.registers.set_len(count);
         }
@@ -592,9 +584,12 @@ impl Frame {
         self.locals.resize(count, Value::UNDEFINED);
     }
 
-    /// `initialize_promoted_registers` for a plain activation, whose locals already start
-    /// undefined: its promoted entries, ordered by local, begin with every parameter, and
-    /// validation places promoted entry `i` in register `i`.
+    /// `place_parameters` for a plain activation, the in-place case of it: its locals already
+    /// start undefined, so none is cleared, and its promoted entries, ordered by local, begin
+    /// with every parameter, so validation places promoted entry `i` in register `i` and
+    /// parameter `k` (for `k` below the promoted count) is written once to register `k`.
+    /// Plain functions take no rest parameter and keep no parameter registers, so the general
+    /// rules reduce to this copy.
     #[inline(always)]
     fn place_plain_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
@@ -620,13 +615,28 @@ impl Frame {
         }
     }
 
-    fn initialize_promoted_registers(
-        &mut self,
-        function: &crate::bytecode::Function,
-        args: &[Value],
-    ) {
+    /// Places a general activation's parameters and promoted locals, each register written once.
+    /// Parameter `k` lives in its promoted register when it has one, else in register
+    /// `parameter_registers + k` when the body keeps its parameters in registers, else in its
+    /// local, which `bind_activation_arguments` filled. Its value is `args[k]`, or `undefined`
+    /// past the arguments; a promoted rest parameter takes the array its local holds instead. A
+    /// promoted parameter's local is cleared, and every other promoted local starts `undefined`.
+    /// A body has either `parameter_registers` or `local_registers`, never both: a wasm body
+    /// keeps its parameters in registers and promotes nothing, and a compiled body has no
+    /// parameter registers.
+    fn place_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
         debug_assert_eq!(self.locals.len(), usize::from(function.locals));
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        if let Some(base) = function.parameter_registers {
+            for offset in 0..function.params {
+                if function.promoted_register(offset).is_none() {
+                    self.registers[usize::from(base + offset)] = args
+                        .get(usize::from(offset))
+                        .copied()
+                        .unwrap_or(Value::UNDEFINED);
+                }
+            }
+        }
         let rest = function.rest.then(|| function.params - 1);
         for entry in &function.local_registers {
             // A promoted parameter starts as its argument, a promoted rest parameter as the
@@ -1188,9 +1198,10 @@ impl ProgramCacheLayout {
 /// Entries of the in-loop call target cache, indexed by the callee's heap index.
 const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
-/// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), valid
-/// for `callee` until collection, realm transition or heap reset clears the cache.
-/// Its function kind, environment and realm are immutable during that lifetime.
+/// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), or construct
+/// in place (`construct`), valid for `callee` until collection, realm transition or heap reset
+/// clears the cache. Its function kind, environment, realm and body are immutable during that
+/// lifetime, so its classifications are computed once, when the entry is filled.
 #[derive(Clone, Copy)]
 struct InLoopCallTarget {
     callee: Value,
@@ -1198,6 +1209,7 @@ struct InLoopCallTarget {
     function: u32,
     env: Value,
     push: InLoopPush,
+    construct: ConstructKind,
 }
 /// How the dispatch loop pushes an in-loop callee.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1208,6 +1220,18 @@ enum InLoopPush {
     /// settles the promise the call returns and whose first suspension returns that promise
     /// to the caller; only a plain call pushes it.
     Settles,
+    /// A callee the loop does not push as a call; its entry serves `new` (`ConstructKind`).
+    Unpushed,
+}
+/// How `new` may push a cached callee in place (`Vm::inline_construct_target`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConstructKind {
+    /// Not admitted to an in-loop construction: `new` keeps `construct_value`.
+    No,
+    /// A base constructor (`Vm::inline_constructible`).
+    Base,
+    /// A derived class constructor (`Vm::inline_derived_constructible`).
+    Derived,
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     callee: Value::UNDEFINED,
@@ -1215,6 +1239,7 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     function: 0,
     env: Value::UNDEFINED,
     push: InLoopPush::Body,
+    construct: ConstructKind::No,
 };
 /// A table of empty targets, which no binding matches: its function is the root, never a callee.
 static NO_CALL_TARGETS: [InLoopCallTarget; CALL_TARGET_CACHE_SIZE] = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
