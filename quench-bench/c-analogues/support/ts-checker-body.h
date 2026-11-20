@@ -2841,10 +2841,39 @@ static TsSymbol *cPropertyOfObjectOrGlobal(TsType *o, BName name, bool *ok) {
   return (m && (m->flags & SF_Value) && !(m->flags & SF_Signature)) ? m : NULL;
 }
 
+static TsType *cNonNullableType(TsType *t);
+
+/* the object of a single-link optional chain e.expression?.name or e.expression?.[k] (checkPropertyAccessChain): a nullable
+ * object gives its non-nullable type to the access (*nullable), and the access result has undefined added. A chain that
+ * continues past this link (its parent accesses or calls it) is not ported; so is an object that is not a plain union */
+static TsType *cOptionalObject(TsNode *e, TsType *o0, bool *nullable) {
+  *nullable = false;
+  if (o0 == cErrorType || (o0->flags & TF_Any)) return o0;
+  TsNode *p = e->parent;
+  if (p && (p->kind == TSK_PropertyAccessExpression || p->kind == TSK_ElementAccessExpression || p->kind == TSK_CallExpression) && p->expression == e)
+    return cUnported("optional chain continuation");
+  if (o0->flags & TF_Object) return o0;
+  if (!(o0->flags & TF_Union)) return cUnported("optional chain of a non-object");
+  bool nul = false;
+  for (int i = 0; i < o0->ntypes; i++) {
+    uint32_t f = o0->types[i]->flags;
+    if (f & (TF_Undefined | TF_Null)) nul = true;
+    else if (!(f & TF_Object)) return cUnported("optional chain of an unported union");
+  }
+  if (!nul) return o0;
+  *nullable = true;
+  return cNonNullableType(o0);
+}
+
+/* undefined added to the result of an optional access whose object was nullable (propagateOptionalTypeMarker) */
+static TsType *cOptionalResult(TsType *r, bool nullable) {
+  if (!nullable || r == cErrorType) return r;
+  TsType *ts[2] = { r, cUndefinedType };
+  return cGetUnionType(ts, 2);
+}
+
 /* the type of a member access e.expression.name (checkPropertyAccessExpression) */
-static TsType *cPropertyAccessType(TsNode *e) {
-  if (e->questionDotToken) return cUnported("optional chain");
-  TsType *o = cExprType(e->expression);
+static TsType *cPropertyAccessOf(TsNode *e, TsType *o) {
   if (o == cErrorType) return o;
   if (o->flags & TF_Any) return o;
   if (!e->name || e->name->kind != TSK_Identifier) return cUnported("private name access");
@@ -2867,6 +2896,15 @@ static TsType *cPropertyAccessType(TsNode *e) {
   return cAccessReferenceFlow(e, declared, true);
 }
 
+static TsType *cPropertyAccessType(TsNode *e) {
+  TsType *o0 = cExprType(e->expression);
+  if (!e->questionDotToken) return cPropertyAccessOf(e, o0);
+  bool nullable = false;
+  TsType *o = cOptionalObject(e, o0, &nullable);
+  if (o == cErrorType) return o;
+  return cOptionalResult(cPropertyAccessOf(e, o), nullable);
+}
+
 /* the unique symbol key of an element access, the name of its property */
 static TsSymbol *cElementAccessProperty(TsType *o, TsNode *e) {
   TsNode *k = cSkipParens(e->argumentExpression);
@@ -2882,9 +2920,17 @@ static TsSymbol *cElementAccessProperty(TsType *o, TsNode *e) {
   return NULL;
 }
 
+static TsType *cElementAccessOf(TsNode *e, TsType *o);
 static TsType *cElementAccessType(TsNode *e) {
-  if (e->questionDotToken) return cUnported("optional chain");
-  TsType *o = cExprType(e->expression);
+  TsType *o0 = cExprType(e->expression);
+  if (!e->questionDotToken) return cElementAccessOf(e, o0);
+  bool nullable = false;
+  TsType *o = cOptionalObject(e, o0, &nullable);
+  if (o == cErrorType) return o;
+  return cOptionalResult(cElementAccessOf(e, o), nullable);
+}
+
+static TsType *cElementAccessOf(TsNode *e, TsType *o) {
   if (o == cErrorType) return o;
   TsNode *k = cSkipParens(e->argumentExpression);
   if (!k) return cUnported("element access without argument");
