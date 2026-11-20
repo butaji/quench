@@ -244,6 +244,22 @@ impl LaneStack {
         self.plain.bound.set(0);
     }
 
+    /// The frames a spill makes records (`LaneStack::spill_plain`), innermost first: every frame
+    /// above the records floor, the outermost seal's records or, where nothing is sealed, every
+    /// record. The records below the floor are records already, and the side records left under
+    /// the walked frames (the second count) are theirs, so the spill keeps both where they are
+    /// and its cost follows the headers pushed since the last spill, not the stack's depth.
+    pub(super) fn frames_to_spill(&self) -> (usize, usize, smallvec::SmallVec<[ActivationView; 16]>) {
+        // SAFETY: reads the lengths alone.
+        let records = unsafe { self.records_unspilled() }.len();
+        // Seals are pushed innermost last over a records count that never falls below an outer one.
+        let floor = unsafe { &*self.segments.get() }.first().map_or(records, |segment| segment.records);
+        let count = records - floor + self.plain.depth.get() + self.sealed.get();
+        let mut walk = self.walk_innermost();
+        let frames = walk.by_ref().take(count).map(|(frame, _)| frame).collect();
+        (floor, walk.left, frames)
+    }
+
     /// Forget every seal, their headers made records or taken (`spill_plain`, `take_frames`).
     ///
     /// # Safety
