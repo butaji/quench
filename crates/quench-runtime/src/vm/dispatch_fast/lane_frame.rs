@@ -2739,6 +2739,119 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// Where a generated row's planned named read misses (`generated_row`'s `property_miss!`): the own
+    /// read past its record's hint, which reads through the site's cache and rebinds the hint; a held
+    /// read, the site's holder entry. Out of the row's body, so each row instance holds one jump here
+    /// rather than this chain at each of its misses.
+    #[inline(never)]
+    fn property_miss_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+        let script: *mut LaneContext<H> = view.memory.bytes.cast();
+        // A local's read past its record's hint: the cached read of its site's tier (`local_field_miss`).
+        if const { FLAG == super::LOCAL_FIELD_SITE } {
+            sibling!(super::local_field_miss::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::general_site(FLAG) } {
+            // The general read the host path did not answer: its activation path, as `lane_get_field` made it.
+            sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::sink_site(FLAG) } {
+            // The general read and store, which repeats the side-effect-free reads.
+            sibling!(super::row_get_field_sink::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::entry_site(FLAG) } {
+            // The polymorphic read past its inline entries probes the hash (`row_polymorphic_miss`); the
+            // hashed read, the holder's and the inherited walk's take the general read, which moves the record on.
+            if const { FLAG == super::POLYMORPHIC_SITE } {
+                sibling!(super::row_polymorphic_miss::<H>, r, ip, Carried::script_in(script, view))
+            }
+            if const { FLAG == super::HASHED_SITE } {
+                sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
+            }
+            sibling!(super::row_get_field_miss::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::returning_field_site(FLAG) } {
+            // A returning read's stale hint: the returning miss answers and moves the record on.
+            by_leaf!(super::returning_leaf(FLAG), |L| sibling!(super::row_returning_field_miss::<H, L>, r, ip, Carried::script_in(script, view)))
+        }
+        if const { super::private_field_site(FLAG) } {
+            // A method, accessor or missing private field: the general private read.
+            sibling!(get_private_field_miss::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::cached_field_site(FLAG) } {
+            // A read the cache does not answer: the general read, which runs the getter.
+            sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::held_site(FLAG) && !super::held_other_site(FLAG) } {
+            // A direct object's miss; the read of any other receiver's object part.
+            if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
+                sibling!(generated_row::<H, OP, ACC, { super::HELD_OTHER_THIS }>, r, ip, Carried::script_in(script, view))
+            }
+            sibling!(generated_row::<H, OP, ACC, { super::HELD_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
+        }
+        if const { FLAG == super::STRING_SITE } {
+            sibling!(row_get_field_string_refresh::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { FLAG == super::NUMBER_SITE } {
+            sibling!(super::row_get_field_number_refresh::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { FLAG == super::NESTED_SITE } {
+            // A nested read whose hops the record does not hold (or whose steps miss): the hand
+            // read that refreshes the hint from the steps' entries.
+            sibling!(get_field_nested_miss::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::own_constant_site(FLAG) } {
+            // Another object, or the object was written: the site reads as its tier decides
+            // and never holds an own constant again.
+            sibling!(super::refuse_own_constant_row::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::length_site(FLAG) } {
+            // Another receiver, or a form the row does not read: the general length reads.
+            sibling!(super::row_length_other::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { FLAG == super::TYPED_LENGTH_SITE } {
+            // A receiver the host read does not answer: an array's or a string's length is the array row's.
+            sibling!(generated_row::<H, OP, ACC, { super::ARRAY_LENGTH_SITE }>, r, ip, Carried::script_in(script, view))
+        }
+        if const { FLAG == super::GEOMETRY_SITE } {
+            // A name the view's geometry does not answer (a shadowed or ordinary one): the general read.
+            sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::cell_own_site(FLAG) } {
+            // The record moves on as the site's tier decides, which rebinds the hint.
+            sibling!(row_get_field_miss::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::getter_site(FLAG) } {
+            // The getter's refresh makes the hint, or reads through the getter's activation.
+            sibling!(super::getters::row_get_field_getter_refresh::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::inherited_site(FLAG) && !super::inherited_other_site(FLAG) } {
+            // A direct object's miss; the read of any other receiver's object part.
+            if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
+                sibling!(generated_row::<H, OP, ACC, { super::INHERITED_OTHER_THIS }>, r, ip, Carried::script_in(script, view))
+            }
+            sibling!(generated_row::<H, OP, ACC, { super::INHERITED_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::inherited_other_site(FLAG) } {
+            // The inherited chain walk (`INHERITED_WALK_SITE`) answers what the record's hint did not.
+            sibling!(generated_row::<H, OP, ACC, { super::INHERITED_WALK_SITE }>, r, ip, Carried::script_in(script, view))
+        }
+        if const { FLAG == super::HELD_CELL_REGISTER } {
+            sibling!(row_get_field_holder_cell_refresh::<H>, r, ip, Carried::script_in(script, view))
+        }
+        if const { super::held_other_site(FLAG) } {
+            if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
+                sibling!(row_get_field_holder_refresh::<H, true>, r, ip, Carried::script_in(script, view))
+            }
+            sibling!(row_get_field_holder_refresh::<H, false>, r, ip, Carried::script_in(script, view))
+        }
+        if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
+            sibling!(row_get_field_own_refresh::<H, true, true>, r, ip, Carried::script_in(script, view))
+        }
+        sibling!(row_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(script, view))
+    }
+}
+
 /// Whether a view can select accumulator field `acc` for opcode `op`'s record
 /// (`accumulator_field`): a register field it reads, or the first register of its register pair.
 const fn accumulator_readable(op: Op, acc: u8) -> bool {
@@ -2773,111 +2886,9 @@ lane_handler! {
         }
         // Where a planned named read misses: the own read past its record's hint, which reads
         // through the site's cache and rebinds the hint; a held read, the site's holder entry.
-        macro_rules! property_miss { () => {{
-            let script: *mut LaneContext<H> = view.memory.bytes.cast();
-            // A local's read past its record's hint: the cached read of its site's tier (`local_field_miss`).
-            if const { FLAG == super::LOCAL_FIELD_SITE } {
-                sibling!(super::local_field_miss::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::general_site(FLAG) } {
-                // The general read the host path did not answer: its activation path, as `lane_get_field` made it.
-                sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::sink_site(FLAG) } {
-                // The general read and store, which repeats the side-effect-free reads.
-                sibling!(super::row_get_field_sink::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::entry_site(FLAG) } {
-                // The polymorphic read past its inline entries probes the hash (`row_polymorphic_miss`); the
-                // hashed read, the holder's and the inherited walk's take the general read, which moves the record on.
-                if const { FLAG == super::POLYMORPHIC_SITE } {
-                    sibling!(super::row_polymorphic_miss::<H>, r, ip, Carried::script_in(script, view))
-                }
-                if const { FLAG == super::HASHED_SITE } {
-                    sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
-                }
-                sibling!(super::row_get_field_miss::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::returning_field_site(FLAG) } {
-                // A returning read's stale hint: the returning miss answers and moves the record on.
-                by_leaf!(super::returning_leaf(FLAG), |L| sibling!(super::row_returning_field_miss::<H, L>, r, ip, Carried::script_in(script, view)))
-            }
-            if const { super::private_field_site(FLAG) } {
-                // A method, accessor or missing private field: the general private read.
-                sibling!(get_private_field_miss::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::cached_field_site(FLAG) } {
-                // A read the cache does not answer: the general read, which runs the getter.
-                sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::held_site(FLAG) && !super::held_other_site(FLAG) } {
-                // A direct object's miss; the read of any other receiver's object part.
-                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
-                    sibling!(generated_row::<H, OP, ACC, { super::HELD_OTHER_THIS }>, r, ip, Carried::script_in(script, view))
-                }
-                sibling!(generated_row::<H, OP, ACC, { super::HELD_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
-            }
-            if const { FLAG == super::STRING_SITE } {
-                sibling!(row_get_field_string_refresh::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { FLAG == super::NUMBER_SITE } {
-                sibling!(super::row_get_field_number_refresh::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { FLAG == super::NESTED_SITE } {
-                // A nested read whose hops the record does not hold (or whose steps miss): the hand
-                // read that refreshes the hint from the steps' entries.
-                sibling!(get_field_nested_miss::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::own_constant_site(FLAG) } {
-                // Another object, or the object was written: the site reads as its tier decides
-                // and never holds an own constant again.
-                sibling!(super::refuse_own_constant_row::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::length_site(FLAG) } {
-                // Another receiver, or a form the row does not read: the general length reads.
-                sibling!(super::row_length_other::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { FLAG == super::TYPED_LENGTH_SITE } {
-                // A receiver the host read does not answer: an array's or a string's length is the array row's.
-                sibling!(generated_row::<H, OP, ACC, { super::ARRAY_LENGTH_SITE }>, r, ip, Carried::script_in(script, view))
-            }
-            if const { FLAG == super::GEOMETRY_SITE } {
-                // A name the view's geometry does not answer (a shadowed or ordinary one): the general read.
-                sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::cell_own_site(FLAG) } {
-                // The record moves on as the site's tier decides, which rebinds the hint.
-                sibling!(row_get_field_miss::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::getter_site(FLAG) } {
-                // The getter's refresh makes the hint, or reads through the getter's activation.
-                sibling!(super::getters::row_get_field_getter_refresh::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::inherited_site(FLAG) && !super::inherited_other_site(FLAG) } {
-                // A direct object's miss; the read of any other receiver's object part.
-                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
-                    sibling!(generated_row::<H, OP, ACC, { super::INHERITED_OTHER_THIS }>, r, ip, Carried::script_in(script, view))
-                }
-                sibling!(generated_row::<H, OP, ACC, { super::INHERITED_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::inherited_other_site(FLAG) } {
-                // The inherited chain walk (`INHERITED_WALK_SITE`) answers what the record's hint did not.
-                sibling!(generated_row::<H, OP, ACC, { super::INHERITED_WALK_SITE }>, r, ip, Carried::script_in(script, view))
-            }
-            if const { FLAG == super::HELD_CELL_REGISTER } {
-                sibling!(row_get_field_holder_cell_refresh::<H>, r, ip, Carried::script_in(script, view))
-            }
-            if const { super::held_other_site(FLAG) } {
-                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
-                    sibling!(row_get_field_holder_refresh::<H, true>, r, ip, Carried::script_in(script, view))
-                }
-                sibling!(row_get_field_holder_refresh::<H, false>, r, ip, Carried::script_in(script, view))
-            }
-            if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
-                sibling!(row_get_field_own_refresh::<H, true, true>, r, ip, Carried::script_in(script, view))
-            }
-            sibling!(row_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(script, view))
-        }} }
+        macro_rules! property_miss { () => {
+            sibling!(property_miss_row::<H, OP, ACC, FLAG>, r, ip, view)
+        } }
         // A deletion shares the property decoder but reads no named property: its misses and results are
         // the generic ones (the call-out's, below), not a named read's plan.
         let property = const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Property))
