@@ -654,6 +654,131 @@ static TsType *cNarrowByInstanceof(TsNode *c, bool truthy, TsType *t) {
   return truthy ? inst : t;
 }
 
+static TsSymbol *cUnionProperty(TsType *u, BName name);   /* the property of a union (below) */
+
+/* isDiscriminantProperty (74019) of a union: the property of every member has a type that differs from the others and
+ * includes a literal type, and the union property type is not generic. Returns 1, 0, or -1 when not ported (a member
+ * without the property may have an index signature or be an object literal, which node types as a partial property). */
+static int cIsDiscriminantProp(TsType *u, BName name) {
+  if (!(u->flags & TF_Union)) return 0;
+  TsType **pts = ts_arena_alloc(sizeof(TsType *) * (size_t)u->ntypes);
+  bool nonUniform = false, hasLiteral = false;
+  for (int i = 0; i < u->ntypes; i++) {
+    TsType *m = u->types[i];
+    if (!(m->flags & TF_Object)) return -1;
+    TsSymbol *p = cPropertyOf(m, name);
+    if (!p) return -1;
+    TsType *pt = cTypeOfSymbol(p);
+    if (pt == cErrorType) return -1;
+    if (pt->flags & (TF_TemplateLiteral | TF_StringMapping)) return -1;
+    pts[i] = pt;
+    if (i && pt != pts[0]) nonUniform = true;
+    bool lit = (pt->flags & TF_Boolean) != 0;
+    if (!lit && (pt->flags & TF_Union)) {
+      lit = true;
+      for (int j = 0; j < pt->ntypes && lit; j++) lit = cIsUnitType(pt->types[j]);
+    } else if (!lit) lit = cIsUnitType(pt);
+    hasLiteral |= lit;
+  }
+  if (!nonUniform || !hasLiteral) return 0;
+  return cIsGenericType(cGetUnionType(pts, u->ntypes)) ? 0 : 1;
+}
+
+/* the object of a discriminant access (getDiscriminantPropertyAccess, 75255): an access of the reference whose property is a
+ * discriminant of the flow type of the reference, or of its declared union when the flow type is one of its members. NULL
+ * when there is none; *unported when the answer is not ported (an optional chain, an element access without a literal). */
+static TsNode *cDiscriminantAccess(TsNode *expr, CFlowRef *r, TsType *t, bool *unported) {
+  TsNode *a = cSkipParens(expr);
+  *unported = false;
+  if (!a || (a->kind != TSK_PropertyAccessExpression && a->kind != TSK_ElementAccessExpression)) return NULL;
+  if (!cMatchesRefTree(a->expression, r)) return NULL;
+  bool declUnion = r->declared && (r->declared->flags & TF_Union);
+  if (!declUnion && !(t->flags & TF_Union)) return NULL;
+  BName name;
+  if (a->kind == TSK_PropertyAccessExpression) {
+    if (!a->name || a->name->kind != TSK_Identifier) { *unported = true; return NULL; }
+    name = bnEscapeText(a->name->text, a->name->textLen);
+  } else {
+    TsNode *k = cSkipParens(a->argumentExpression);
+    if (!k || (k->kind != TSK_StringLiteral && k->kind != TSK_NumericLiteral)) { *unported = true; return NULL; }
+    if (k->kind == TSK_StringLiteral) name = bnEscapeText(k->text, k->textLen);
+    else {
+      double v = cNumericLiteralValue(k->text, k->textLen);
+      char buf[64];
+      int n = (v == (double)(long long)v) ? snprintf(buf, sizeof buf, "%lld", (long long)v) : snprintf(buf, sizeof buf, "%.17g", v);
+      name = bnEscapeText(buf, n);
+    }
+  }
+  TsType *type = t;
+  if (declUnion && t != r->declared) {
+    for (int i = 0; i < r->declared->ntypes; i++) if (r->declared->types[i] == t) { type = r->declared; break; }
+  }
+  int d = cIsDiscriminantProp(type, name);
+  if (d < 0) { *unported = true; return NULL; }
+  return d ? a : NULL;
+}
+
+/* the property name of a discriminant access (getAccessedPropertyName for the access nodes of cDiscriminantAccess) */
+static BName cDiscriminantName(TsNode *a) {
+  if (a->kind == TSK_PropertyAccessExpression) return bnEscapeText(a->name->text, a->name->textLen);
+  TsNode *k = cSkipParens(a->argumentExpression);
+  if (k->kind == TSK_StringLiteral) return bnEscapeText(k->text, k->textLen);
+  double v = cNumericLiteralValue(k->text, k->textLen);
+  char buf[64];
+  int n = (v == (double)(long long)v) ? snprintf(buf, sizeof buf, "%lld", (long long)v) : snprintf(buf, sizeof buf, "%.17g", v);
+  return bnEscapeText(buf, n);
+}
+
+/* narrowTypeByDiscriminant (75270): the members of the union whose property of the name is comparable with the narrowed
+ * property type. narrow maps the property type (the equality or the truthiness of the access). Returns NULL when not ported. */
+static TsType *cNarrowByDiscriminantWith(TsType *t, BName name, TsType *(*narrow)(TsType *, void *), void *ctx) {
+  TsSymbol *up = cUnionProperty(t, name);
+  if (!up) return NULL;
+  TsType *np = narrow(cTypeOfSymbol(up), ctx);
+  if (np == cErrorType) return np;
+  int n = t->ntypes;
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+  int k = 0;
+  for (int i = 0; i < n; i++) {
+    TsType *m = t->types[i];
+    TsSymbol *mp = cPropertyOf(m, name);
+    TsType *dt = mp ? cTypeOfSymbol(mp) : cUnknownType;
+    if (dt == cErrorType) return cErrorType;
+    if (!(dt->flags & TF_Never) && !(np->flags & TF_Never) && cAreTypesComparable(np, dt)) kept[k++] = m;
+  }
+  if (k == n) return t;
+  if (k == 0) return cNeverType;
+  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+}
+
+/* the discriminant narrowing of the equality of an access with a value (narrowTypeByDiscriminantProperty for the
+ * operators other than the key property ones, and narrowTypeByEquality of the property type). */
+typedef struct { TsType *value; bool doubleEq; bool holds; } CDiscEq;
+static TsType *cDiscEqNarrow(TsType *pt, void *c) {
+  CDiscEq *e = c;
+  if (pt->flags & TF_Any) return pt;
+  if (e->value == cErrorType) return cUnported("equality with an unported value");
+  if (e->value->flags & (TF_Undefined | TF_Null)) return cNullishEquality(pt, e->value, e->doubleEq, e->holds);
+  return cNarrowByEqualityValue(pt, e->value, e->doubleEq, e->holds);
+}
+
+/* the truthiness of a discriminant access (narrowTypeByTruthiness: getTypeWithFacts of the property type) */
+typedef struct { bool truthy; } CDiscTruthy;
+static TsType *cDiscTruthyNarrow(TsType *pt, void *c) {
+  CDiscTruthy *d = c;
+  if (pt == cErrorType || (pt->flags & TF_Any)) return pt;
+  return cTypeWithFacts(pt, d->truthy ? TFC_Truthy : TFC_Falsy);
+}
+
+/* the key property path of narrowTypeByDiscriminantProperty (getKeyPropertyName) needs a union of ten or more object members;
+ * it is not ported */
+static bool cHasKeyPropertyCandidate(TsType *t) {
+  if (!(t->flags & TF_Union) || t->ntypes < 10) return false;
+  int objs = 0;
+  for (int i = 0; i < t->ntypes; i++) if (t->types[i]->flags & (TF_Object | TF_Intersection | TF_TypeParameter | TF_IndexedAccess | TF_Conditional)) objs++;
+  return objs >= 10;
+}
+
 /* the flow type of a reference narrowed by a condition (narrowType): the reference is matched directly, through `!`,
  * by equality with undefined or null, by a typeof comparison, and by calls whose arguments include it (without a type
  * predicate). Discriminants, instanceof, in, literal equality and type predicates are not ported. A condition that does
@@ -713,8 +838,21 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
          * value removes the unit members; any other value leaves the type as it is */
         return cNarrowByEqualityValue(t, ov, doubleEq, isEq == truthy);
       }
-      /* a discriminant: a property of the reference compared (narrowTypeByDiscriminant for a union) */
-      if (cIsMemberOfRef(l, r) || cIsMemberOfRef(rt, r)) return (t->flags & TF_Union) ? cUnported("discriminant narrowing") : t;
+      /* a discriminant: a property of the reference compared (getDiscriminantPropertyAccess: the left operand, then the right) */
+      bool unp = false;
+      TsNode *acc = cDiscriminantAccess(l, r, t, &unp);
+      TsNode *accValue = rt;
+      if (!acc && !unp) { acc = cDiscriminantAccess(rt, r, t, &unp); accValue = l; }
+      if (unp) return cUnported("discriminant narrowing of an unported shape");
+      if (acc) {
+        if (acc->questionDotToken) return cUnported("discriminant narrowing of an optional chain");
+        if (cHasKeyPropertyCandidate(t) && (op == TSK_EqualsEqualsEqualsToken || op == TSK_ExclamationEqualsEqualsToken))
+          return cUnported("discriminant narrowing by a key property");
+        CDiscEq e = { cExprType(accValue), doubleEq, isEq == truthy };
+        TsType *res = cNarrowByDiscriminantWith(t, cDiscriminantName(acc), cDiscEqNarrow, &e);
+        return res ? res : cUnported("discriminant narrowing of a union property");
+      }
+      return t;
     }
   }
   if (c->kind == TSK_CallExpression && c->arguments) {
@@ -728,7 +866,15 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
     return cUnported("narrowing by a call");
   }
   if (c->kind == TSK_PropertyAccessExpression || c->kind == TSK_ElementAccessExpression) {
-    if (cIsMemberOfRef(c, r)) return (t->flags & TF_Union) ? cUnported("discriminant truthiness") : t;
+    bool unp = false;
+    TsNode *acc = cDiscriminantAccess(c, r, t, &unp);
+    if (unp) return cUnported("discriminant truthiness of an unported shape");
+    if (acc) {
+      if (acc->questionDotToken) return cUnported("discriminant truthiness of an optional chain");
+      CDiscTruthy d = { truthy };
+      TsType *res = cNarrowByDiscriminantWith(t, cDiscriminantName(acc), cDiscTruthyNarrow, &d);
+      return res ? res : cUnported("discriminant truthiness of a union property");
+    }
   }
   /* narrowType: any other kind of condition leaves the type as it is (an identifier may be an aliased condition: not ported) */
   if (c->kind == TSK_Identifier) return cUnported("condition that mentions the reference");
@@ -1647,11 +1793,23 @@ static bool cHasLiteralOrVariable(TsType *t) {
   return false;
 }
 
+/* a parameter of a method or function declaration without annotation, initializer, optional or rest marker: its type is any
+ * (getContextuallyTypedParameterType is undefined for these, and the implicit any is not reported without noImplicitAny).
+ * An object literal method is context sensitive, and so is a `this` parameter: not covered here. */
+static bool cIsUntypedDeclParam(TsNode *p) {
+  TsNode *fn = p->parent;
+  if (!fn || (fn->kind != TSK_MethodDeclaration && fn->kind != TSK_FunctionDeclaration)) return false;
+  if (p->type || p->initializer || p->questionToken || p->dotDotDotToken) return false;
+  if (!p->name || p->name->kind != TSK_Identifier || (p->name->textLen == 4 && memcmp(p->name->text, "this", 4) == 0)) return false;
+  return !(fn->parent && fn->parent->kind == TSK_ObjectLiteralExpression);
+}
+
 /* getContextuallyTypedParameterType and assignContextualParameterTypes: an unannotated parameter of a function expression or
  * arrow has the type at its position in the contextual signature. Parameters with an initializer, optional or rest
  * parameters, binding patterns and the parameters of other functions (implicit any) are not ported. */
 static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
   (void)sym;
+  if (cIsUntypedDeclParam(d)) return cAnyType;
   TsNode *fn = d->parent;
   if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction)) return cUnported("parameter without annotation");
   if (d->initializer || d->questionToken || d->dotDotDotToken || !d->name || d->name->kind != TSK_Identifier)
@@ -1807,6 +1965,7 @@ static TsSymbol *cUnionProperty(TsType *u, BName name) {
   TsSymbol *single = NULL;
   TsSymbol **set = NULL;
   int nset = 0;
+  bool merged = false;   /* mergedInstantiations: instances of one generic declaration with the same type */
   for (int i = 0; i < u->ntypes; i++) {
     TsType *m = u->types[i];
     if (!(m->flags & TF_Object)) return NULL;
@@ -1822,7 +1981,7 @@ static TsSymbol *cUnionProperty(TsType *u, BName name) {
     if (ta == tb && cTypeOfSymbol(p) == cTypeOfSymbol(single) && ((p->flags ^ single->flags) & SF_Optional) == 0) {
       /* the same property of the same declaration with the same type (compareProperties on the identical types) */
       TsNode *owner = single->parent && single->parent->valueDeclaration ? single->parent->valueDeclaration : NULL;
-      if (owner && owner->typeParameters && owner->typeParameters->n) return NULL;
+      merged = owner && owner->typeParameters && owner->typeParameters->n;
       continue;
     }
     if (!set) { set = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)u->ntypes); set[nset++] = single; }
@@ -1832,7 +1991,18 @@ static TsSymbol *cUnionProperty(TsType *u, BName name) {
   }
   if (!single) return NULL;
   TsSymbol *result = single;
-  if (set) {
+  if (!set && merged) {
+    /* the clone of createUnionOrIntersectionProperty: a transient symbol of the same type whose parent is the declaring
+     * symbol of the declaration (createSymbolWithType) */
+    TsNode *vd = single->valueDeclaration;
+    result = cCreateSymbol(single->flags, name);
+    result->decls = single->decls;
+    result->ndecls = single->ndecls;
+    result->declCap = single->declCap;
+    result->valueDeclaration = vd;
+    result->parent = vd && vd->symbol ? vd->symbol->parent : NULL;
+    result->type = cTypeOfSymbol(single);
+  } else if (set) {
     TsType **pts = ts_arena_alloc(sizeof(TsType *) * (size_t)nset);
     for (int k = 0; k < nset; k++) {
       pts[k] = cTypeOfSymbol(set[k]);

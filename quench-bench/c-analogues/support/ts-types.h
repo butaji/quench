@@ -1664,7 +1664,7 @@ static void cResolveMembers(TsType *t) {
     TsType *tg = t->target;
     int ntp = tg->ntypeParams + (tg->thisType ? 1 : 0);
     TsType **tps = ts_arena_alloc(sizeof(TsType *) * (size_t)(ntp ? ntp : 1));
-    memcpy(tps, tg->typeParams, sizeof(TsType *) * (size_t)tg->ntypeParams);
+    if (tg->ntypeParams) memcpy(tps, tg->typeParams, sizeof(TsType *) * (size_t)tg->ntypeParams);
     if (tg->thisType) tps[ntp - 1] = tg->thisType;
     TsType **args = t->args;
     int nargs = t->nargs;
@@ -1840,6 +1840,7 @@ static TsType *cInitializedSymbolType(TsSymbol *sym, TsNode *d, bool member) {
 
 /* the declared type of a parameter (getTypeOfParameter): an annotation, with undefined when it is optional */
 static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d);   /* ts-checker-body.h: contextual parameter types */
+static bool cIsUntypedDeclParam(TsNode *p);                       /* ts-checker-body.h */
 static TsType *cBindingElementType(TsSymbol *sym, TsNode *d);     /* ts-checker-body.h: destructured variables */
 static TsType *cParameterSymbolType(TsSymbol *sym, TsNode *d) {
   if (!d->type) return cUnannotatedParamType(sym, d);
@@ -2046,6 +2047,7 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
     TsType *ct = cTypeOfSymbol(p->symbol);
     return m && ct != cErrorType ? cInstantiate(ct, m) : ct;
   }
+  if (cIsUntypedDeclParam(p)) return cAnyType;
   TsType *t = cTypeFromNodeM(p->type, m);
   if (p->questionToken) t = cAddOptionality(t);
   return t;
