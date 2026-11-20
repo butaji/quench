@@ -31,8 +31,12 @@ impl Lowering<'_, '_> {
         for register in self.written.iter().take_while(|register| *register < usize::from(self.unit.caller_registers)) {
             if !self.is_live(pc, register as Register) || state.proofs.homed.contains(register) { continue; }
             let fact = state.values[register];
+            // An unboxed register leaves boxed from its unboxed view, which every path defines. Its tagged view
+            // may be a word one arm of a branching row boxed (`register_tagged`): the leave's block, shared by
+            // every leave that stores the same registers, does not see it, and the tagged variable is stale on
+            // the arms that did not box it (an element read's generic arm left a loop counter `undefined`).
             let view = match fact.value.representation {
-                _ if fact.tagged.current() => &mut stores.tagged,
+                Representation::Tagged => &mut stores.tagged,
                 Representation::Int32 => &mut stores.int,
                 Representation::Int64 => &mut stores.long,
                 _ => &mut stores.float,
@@ -47,7 +51,8 @@ impl Lowering<'_, '_> {
     pub(super) fn materialize_inlined(&mut self, state: &mut State, pc: usize) {
         let inlined = usize::from(self.unit.caller_registers)..state.values.len();
         let needed: Vec<usize> = inlined.filter(|register| self.is_live(pc, *register as Register))
-            .filter(|register| !state.values[*register].tagged.current()).collect();
+            // An unboxed register's tagged word is boxed again here, where it dominates the leave (`stored_at`).
+            .filter(|register| !state.values[*register].tagged.current() || state.values[*register].value.representation != Representation::Tagged).collect();
         for register in needed { self.tagged(state, register as Register); }
     }
 
@@ -70,8 +75,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The exit blocks: write back each one's registers, and an inlined callee's registers to the
-    /// window its recovery makes the activation from, then leave at the origin. `None` where an
-    /// ahead body has a leave no base body entry continues (`leave_to_base`): no lane body then.
+    /// window its recovery makes the activation from, then leave at the origin.
     pub(super) fn fill_exits(&mut self) -> Option<()> {
         if super::clif_census::enabled() {
             let count = |stored: &ExitStores| [&stored.tagged, &stored.int, &stored.long, &stored.float].iter().map(|set| set.iter().count()).sum::<usize>();
@@ -91,7 +95,6 @@ impl Lowering<'_, '_> {
             for ExitBlock { stored, block } in std::mem::take(&mut self.exits[pc]) {
                 self.switch_to(block, true);
                 self.store_exit_registers(&stored);
-                if self.vm.ahead.is_some() { self.leave_to_base(pc)?; continue; }
                 let word = match self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end)) {
                     super::lane_unit::Origin::Caller(record) => LaneExit::At(record as usize).word(),
                     super::lane_unit::Origin::Inlined { frame, pc: record } => {
@@ -103,39 +106,6 @@ impl Lowering<'_, '_> {
             }
         }
         Some(())
-    }
-
-    /// Continues the activation at the base body's record this leave's origin names
-    /// (`AheadLeaves`). The stores are written and the entry words are the base body's, so it runs
-    /// on the same Frame; an inlined callee's registers go to the scratch window first.
-    // TODO: materialize the callee's activation (`body_inlined_activation_in_lane`); AOT has no helper for it yet.
-    /// `None` where the base body enters no record at the leave's origin.
-    pub(super) fn leave_to_base(&mut self, pc: usize) -> Option<()> {
-        let (namespace, key) = self.base_leave(pc)?;
-        if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc).copied() {
-            self.store_inlined_registers(pc, frame);
-        }
-        let target = crate::vm::jit_backend::symbol_address(&mut self.builder, namespace, key);
-        let signature = self.builder.func.signature.clone();
-        let signature = self.builder.import_signature(signature);
-        let (this, captures) = self.entry_words;
-        // A plain call and return, not a sibling call: the base entry has this function's own
-        // signature (four words in, two out), and a `return_call_indirect` of it asks the register
-        // allocator for a tail call's constraints on a shape it cannot always satisfy (AArch64's
-        // multi-value return fails to allocate). A leave is the cold path either way.
-        let call = self.builder.ins().call_indirect(signature, target, &[self.context, this, captures, self.registers_base]);
-        let results: Vec<_> = self.builder.inst_results(call).to_vec();
-        // A body's rows leave (word, status) and its entry thunk swaps them on the way out
-        // (`stencils/entry.rs`); this leave enters a record directly, so it swaps them here into
-        // the body ABI's (status, word).
-        self.builder.ins().return_(&[results[1], results[0]]);
-        Some(())
-    }
-
-    /// The `(namespace, key)` of the base body's entry the leave at `pc` continues at.
-    fn base_leave(&self, pc: usize) -> Option<(u32, u32)> {
-        let leaves = self.vm.ahead.expect("an ahead lowering names its base entries");
-        leaves.targets.get(pc).copied().flatten()
     }
 
     /// Each register of `stored` to the lane frame: its tagged bits, or its unboxed view boxed here.

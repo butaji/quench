@@ -1923,7 +1923,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// The program constant a constant operand names (`Reads::word`), which the numeric stage folds.
     #[inline(always)]
     fn constant_operand(&mut self, operand: Operand) -> Option<Value> {
-        (operand.kind() == Some(crate::bytecode::OperandKind::Constant)).then(|| self.reads.word(operand)).flatten()
+        if operand.kind() == Some(crate::bytecode::OperandKind::Constant) { self.reads.word(operand) } else { None }
     }
 
     #[inline(always)]
@@ -2043,7 +2043,19 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
         // A sinking read's flag (`SET_THIS_REGISTER`) is its row's store, not the read's; the
         // read decodes by its register alone.
         let a = if const { FLAG == super::SINK_SITE } { self.0.a & crate::bytecode::REGISTER_MASK } else { self.0.a };
-        WideInstruction::new(self.op(), a, self.0.b, self.0.c, imm)
+        // Both operands of a two-operand arithmetic row the view proved registers (`FLAG_REGISTERS`):
+        // their tags are the register tag, so the decode's operand kind tests fold.
+        // A `Binary` record at an operator flag (`FLAG_OPERATOR_BASE`): its operator is the flag's, and
+        // its operands registers, or a register then a constant.
+        let operator_row = const { matches!(Self::OPCODE, Op::Binary) && FLAG >= FLAG_OPERATOR_BASE };
+        let imm = if operator_row { u32::from(FLAG.wrapping_sub(FLAG_OPERATOR_BASE) / 2) } else { imm };
+        const CONSTANT_TAG: u16 = (crate::bytecode::OperandKind::Constant as u16) << 14;
+        let (b, c) = if FLAG == FLAG_REGISTERS || (operator_row && FLAG.wrapping_sub(FLAG_OPERATOR_BASE) % 2 == 0) {
+            (self.0.b & crate::bytecode::Operand::PAYLOAD_MASK, self.0.c & crate::bytecode::Operand::PAYLOAD_MASK)
+        } else if operator_row {
+            (self.0.b & crate::bytecode::Operand::PAYLOAD_MASK, (self.0.c & crate::bytecode::Operand::PAYLOAD_MASK) | CONSTANT_TAG)
+        } else { (self.0.b, self.0.c) };
+        WideInstruction::new(self.op(), a, b, c, imm)
     }
 }
 
@@ -2104,6 +2116,15 @@ pub(in crate::vm::dispatch_fast) const FLAG_KEPT_MARKER: u8 = 17;
 /// `FLAG` of a local read of a keeping activation's `arguments` binding the activation makes into an object
 /// at its last read (`KeptArguments::Passes`): the row answers that object (`kept_arguments_binding`).
 pub(in crate::vm::dispatch_fast) const FLAG_KEPT_OBJECT: u8 = 18;
+/// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`, `NumericMultiply`) whose operands
+/// are both registers (`specialize_register_operands`): the row reads them without testing their tags.
+pub(in crate::vm::dispatch_fast) const FLAG_REGISTERS: u8 = 19;
+/// `FLAG` of a `Binary` record whose operator is `(FLAG - FLAG_OPERATOR_BASE) / 2` (`BinaryOperator`, up to
+/// `OPERATOR_ROWS`), its operands two registers where the rest is even, else a register then a constant
+/// (`specialize_binary_operators`): the row's operator and operand tests fold.
+pub(in crate::vm::dispatch_fast) const FLAG_OPERATOR_BASE: u8 = 200;
+/// The operators with operator rows: `BinaryOperator` 0 (`==`) through 19 (`&`).
+pub(in crate::vm::dispatch_fast) const OPERATOR_ROWS: usize = 20;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2471,6 +2492,48 @@ pub(in crate::vm::dispatch_fast) fn row_near<H: Host, const OP: u16>(handler: *c
         .then_some(generated_row!(H, OP, ACC_NONE, FLAG_SET) as Handler)
 }
 
+/// Whether opcode `op`'s row has a `FLAG_REGISTERS` form: a two-operand arithmetic row.
+pub(in crate::vm::dispatch_fast) const fn register_operands_row(op: Op) -> bool {
+    matches!(op, Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+}
+
+/// Whether both operand fields of record `i` are registers (their tags are the register tag, 0).
+#[inline(always)]
+pub(in crate::vm::dispatch_fast) fn register_operands(i: &LaneInstruction) -> bool {
+    (i.b | i.c) >> 14 == 0
+}
+
+/// Opcode `OP`'s row at `FLAG_REGISTERS` for `handler`, its plain row (`FLAG_UNREAD`) at any accumulator field.
+pub(in crate::vm::dispatch_fast) fn registers_row<H: Host, const OP: u16>(handler: *const ()) -> Option<Handler> {
+    let plain: [Handler; ACC_POSITIONS] = [generated_row!(H, OP, ACC_NONE, FLAG_UNREAD), generated_row!(H, OP, ACC_A, FLAG_UNREAD),
+        generated_row!(H, OP, ACC_B, FLAG_UNREAD), generated_row!(H, OP, ACC_C, FLAG_UNREAD), generated_row!(H, OP, ACC_PAIR, FLAG_UNREAD)];
+    let registers: [Handler; ACC_POSITIONS] = [generated_row!(H, OP, ACC_NONE, FLAG_REGISTERS), generated_row!(H, OP, ACC_A, FLAG_REGISTERS),
+        generated_row!(H, OP, ACC_B, FLAG_REGISTERS), generated_row!(H, OP, ACC_C, FLAG_REGISTERS), generated_row!(H, OP, ACC_PAIR, FLAG_REGISTERS)];
+    plain.iter().position(|row| *row as *const () == handler).map(|at| registers[at])
+}
+
+/// The `Binary` row of plain record `record` at its operator flag (`FLAG_OPERATOR_BASE`): where its handler is
+/// the plain accumulator-free row, its operator has rows, and its operands are registers, or a register then a constant.
+pub(in crate::vm::dispatch_fast) fn operator_row<H: Host>(record: &LaneInstruction) -> Option<Handler> {
+    const BINARY: u16 = Op::Binary as u16;
+    macro_rules! rows { ($($k:literal)*) => { [$(generated_row!(H, BINARY, ACC_NONE, FLAG_OPERATOR_BASE + $k)),*] } }
+    let rows: [Handler; 2 * OPERATOR_ROWS] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29
+        30 31 32 33 34 35 36 37 38 39);
+    if record.handler != generated_row!(H, BINARY, ACC_NONE, FLAG_UNREAD) as Handler as *const () {
+        return None;
+    }
+    let operator = record.imm() as usize;
+    if operator >= OPERATOR_ROWS || record.b >> 14 != 0 {
+        return None;
+    }
+    let form = match record.c >> 14 {
+        0 => 0,
+        1 => 1,
+        _ => return None,
+    };
+    Some(rows[operator * 2 + form])
+}
+
 /// Whether `handler` is opcode `OP`'s generated row handler (`generated_row`), at any accumulator field:
 /// the passes that fuse a record by its handler find the row whichever field the view carried.
 pub(in crate::vm::dispatch_fast) fn is_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
@@ -2688,6 +2751,24 @@ macro_rules! row_decode {
     };
 }
 
+/// The first `FLAG` of a comparison jump whose operator its instance fixes (`compare_jump_row`):
+/// `FLAG_COMPARE + operator`, past every other flag.
+const FLAG_COMPARE: u8 = 200;
+/// The operators a comparison jump's instance fixes: every binary operator code (`binary_operator`).
+const COMPARE_OPERATORS: u8 = 22;
+
+/// The operator a comparison jump's `flag` fixes, `None` for any other flag.
+const fn compare_flag(flag: u8) -> Option<u32> {
+    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { Some((flag - FLAG_COMPARE) as u32) } else { None }
+}
+
+/// The instance of the comparison jump row whose comparison is `operator`'s, `None` past the codes.
+fn compare_jump_row<H: Host, const BACKWARD: bool>(operator: u32) -> Option<Handler> {
+    macro_rules! rows { ($($n:literal)+) => { [$(row_jump::<H, { crate::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { FLAG_COMPARE + $n }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler),+] } }
+    let table: [Handler; COMPARE_OPERATORS as usize] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21);
+    table.get(operator as usize).copied()
+}
+
 lane_handler! {
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
@@ -2709,9 +2790,32 @@ lane_handler! {
             let header = unsafe { ip.byte_offset(site.jump) };
             next!(cx, r, header, Carried::script_in(cx, view))
         }
+        // A comparison jump's operator is a constant of its record: its first run moves the record to
+        // the instance whose `FLAG` names the operator (`compare_jump_row`), where the comparison is a
+        // constant and its row folds to that operator's test rather than matching every comparison.
+        if const { OP == crate::bytecode::Op::JumpBinaryFalse as u16 && FLAG == FLAG_UNREAD
+            && PREFIX == crate::staged::NO_LINK && COPY == crate::staged::NO_LINK && TEST == crate::staged::NO_LINK } {
+            // The operator is the record's field A (`binary_operator_field`); the instance is taken only
+            // where that operator names the comparison the record decodes to.
+            let operator = u32::from(i.a);
+            let decodes_so = matches!(Operation::<u64, ()>::decode_generic(crate::staged::Fields::wide(LaneFields::<OP>(i))),
+                Some(Operation::CompareJump { comparison, .. }) if comparison == crate::staged::Comparison::of_operator(operator));
+            if decodes_so && let Some(handler) = compare_jump_row::<H, BACKWARD>(operator) {
+                requicken::<H>(ip, handler);
+                sibling!(handler, r, ip, view)
+            }
+        }
         let fields = LaneFields::<OP>(i);
         // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
-        let decoded = if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+        let decoded = if const { compare_flag(FLAG).is_some() } {
+            match Operation::decode_generic(crate::staged::Fields::wide(fields)) {
+                Some(Operation::CompareJump { left, right, negate, .. }) => Some(Operation::CompareJump {
+                    comparison: crate::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
+                    left, right, negate,
+                }),
+                other => other,
+            }
+        } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             Operation::decode_names(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
             Operation::decode_generic(crate::staged::Fields::wide(fields))
@@ -2725,7 +2829,7 @@ lane_handler! {
         };
         let mut stage = Concrete::new(std::ptr::null());
         // A loop's exit writes its result register, so no producer's accumulator carries past it.
-        let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
+        let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::past_result(view) } else { view };
         let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(LaneControl::Edge(Edge::Target)) => {

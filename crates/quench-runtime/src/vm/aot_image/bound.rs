@@ -122,6 +122,7 @@ impl BoundCalls {
                 call: direct.call as u64, caller_base: direct.caller_base as u64,
                 packed: ((*record).packed & !FUNCTION_WORD) | u64::from(direct.target.function),
                 captures: direct.capture_word(), global_this: direct.sloppy.map_or(0, crate::Value::to_bits), descriptor,
+                env: direct.target.context_words().0, capture: direct.target.context_words().1,
                 ..*record };
             (*record).callee = identity;
         }

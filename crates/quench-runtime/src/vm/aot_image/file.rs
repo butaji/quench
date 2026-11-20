@@ -15,7 +15,7 @@ const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x02";
 const NO_PROTOTYPE: u32 = u32::MAX;
 const RECIPE_INTRINSIC: u8 = 0;
 const RECIPE_GLOBAL: u8 = 1;
-const RECIPE_CONSTANT: u8 = 2;
+const RECIPE_STRING: u8 = 2;
 const RECIPE_PROTOTYPE_OF: u8 = 3;
 const RECIPE_CLOSURE_OF: u8 = 4;
 const RELOC_ABS8: u8 = 0;
@@ -139,7 +139,7 @@ fn put_heap_value(out: &mut Vec<u8>, value: &HeapValueRecipe) {
     let (tag, key) = match *value {
         HeapValueRecipe::Intrinsic(key) => (RECIPE_INTRINSIC, key),
         HeapValueRecipe::Global(key) => (RECIPE_GLOBAL, key),
-        HeapValueRecipe::Constant(key) => (RECIPE_CONSTANT, key),
+        HeapValueRecipe::String(key) => (RECIPE_STRING, key),
         HeapValueRecipe::PrototypeOf(key) => (RECIPE_PROTOTYPE_OF, key),
         HeapValueRecipe::ClosureOf(key) => (RECIPE_CLOSURE_OF, key),
     };
@@ -244,7 +244,7 @@ fn read_heap_value(words: &mut Words<'_>) -> Result<HeapValueRecipe, String> {
     Ok(match tag {
         RECIPE_INTRINSIC => HeapValueRecipe::Intrinsic(key),
         RECIPE_GLOBAL => HeapValueRecipe::Global(key),
-        RECIPE_CONSTANT => HeapValueRecipe::Constant(key),
+        RECIPE_STRING => HeapValueRecipe::String(key),
         RECIPE_PROTOTYPE_OF => HeapValueRecipe::PrototypeOf(key),
         RECIPE_CLOSURE_OF => HeapValueRecipe::ClosureOf(key),
         _ => return Err("an AOT image heap value recipe has an unknown kind".into()),

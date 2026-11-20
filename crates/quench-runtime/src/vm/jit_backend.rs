@@ -290,6 +290,13 @@ pub(super) fn compile_function<T>(
         Err(_error) => {
             #[cfg(test)]
             eprintln!("shared native compile rejected by Cranelift: {_error:?}");
+            if crate::trace::Channel::AotLanes.on() {
+                let text = match &_error.inner {
+                    cranelift_codegen::CodegenError::Verifier(errors) => errors.0.first().map(|error| format!("{}: {}", error.location, error.message)).unwrap_or_default(),
+                    other => format!("{other}"),
+                }.replace('\n', " ");
+                eprintln!("aot-lanes: Cranelift error: {}", text.chars().take(240).collect::<String>());
+            }
             Err(NativeCompileRejection::Cranelift)
         }
         Ok(0) => Err(NativeCompileRejection::EmptyCode),

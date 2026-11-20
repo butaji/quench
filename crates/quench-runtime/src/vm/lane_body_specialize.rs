@@ -54,7 +54,7 @@ impl LaneView {
                 return true;
             }
             LaneBody::Compiling { pending, recompiles, stuck, looks, .. } =>
-                (work(super::super::super::compiled::LaneBodyWork::Poll(pending)), 0, recompiles, stuck, looks.saturating_add(1)),
+                (work(super::super::super::compiled::LaneBodyWork::Poll(pending, self)), 0, recompiles, stuck, looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
         *body = self.body_after(outcome, entry, entries, recompiles, stuck, looks);

@@ -1796,6 +1796,14 @@ impl Carried {
         Self { integers: incoming.integers, ..Self::script(cx) }
     }
 
+    /// What a record that writes its result register carries on: `incoming` with no accumulator, since
+    /// no earlier producer's accumulator holds past the write. The memory view stays: a Wasm record
+    /// (`WasmI32AddImmediateJumpNonZero`) runs where later records address linear memory through it.
+    #[inline(always)]
+    fn past_result(incoming: Carried) -> Self {
+        Self { acc: Slot::unset(), ..incoming }
+    }
+
     /// What the general step of `instruction` carries on: `script_in`, with the accumulator its
     /// result register now holds, since the record was selected as an accumulator producer
     /// (`LaneHandler::produces`) and the next record may read the accumulator for it.
@@ -2313,6 +2321,13 @@ const TARGET_READS_IMPLICIT: u8 = 16;
 const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 
 impl ScriptCallTarget {
+    /// The closure environment and captures pointer its activation's window holds
+    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CallRecord::env`, `capture`).
+    #[inline(always)]
+    pub(in crate::vm) fn context_words(&self) -> (u64, u64) {
+        (self.env.to_bits(), self.capture.expose_provenance() as u64)
+    }
+
     /// `new` may activate it too (`Vm::inline_constructible`).
     #[inline(always)]
     fn constructs(&self) -> bool {
@@ -4569,15 +4584,20 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
-        // A record that returns its result (`RETURN_REGISTER`) completes the frame, which the general path does.
-        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
-            return exit(ip);
-        }
+        let returns = instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0;
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;
         match vm.step(code, frame, instruction, &mut next, false) {
-            Ok(StepResult::Continue) => {}
+            Ok(StepResult::Continue) if !returns => {}
+            // A record that returns its result (`RETURN_REGISTER`, a returning `a == b`): its value
+            // completes the activation as a returning row's does, with no exit from the lane.
+            Ok(StepResult::Return(value)) if returns => {
+                if instruction.op().traits().has(Traits::MAY_ALLOCATE) {
+                    note_allocation(vm);
+                }
+                resume!(cx, return_value_general_in_lane(cx, ip, value));
+            }
             Ok(other) => unreachable!("an in-place step only continues: {:?} gave {}", instruction.op(), match other { StepResult::Return(_) => "Return", _ => "another result" }),
             Err(error) => {
                 vm.lane_completion.raise(error);
@@ -4591,8 +4611,33 @@ lane_handler! {
         }
         // SAFETY: the step continues at a record of the running frame's view.
         let target = unsafe { (*cx).base.add(next) };
-        if next > pc { next!(cx, r, target, Carried::stepped(cx, view, r, instruction)) } else { exit(target) }
+        if next > pc { next!(cx, r, target, Carried { memory: memory_after_step(cx, view.memory), ..Carried::stepped(cx, view, r, instruction) }) } else { exit(target) }
     }
+}
+
+/// The memory view the record after a general step carries: a Wasm run's frame memory, read again
+/// as a call's return reads it (`complete_call`: the step may have grown it), never the script
+/// view `Carried::stepped` makes. A Wasm record addressing through the script view wrote and read
+/// the lane context's own bytes as linear memory (JetStream argon2-wasm: `argon2_hash` stored its
+/// costs after a `v128.store`, which a general step makes, past the context, so validation read
+/// zeros). `incoming` is the view the step's record ran with; one that is not the run's resolved
+/// memory is none, whose accesses take the general path.
+#[inline(always)]
+fn memory_after_step<H: Host>(cx: *mut LaneContext<H>, incoming: MemoryView) -> MemoryView {
+    // SAFETY: the context's program outlives the lane run.
+    if unsafe { (*(*cx).code).kind } != crate::bytecode::ProgramKind::Wasm {
+        return MemoryView::script(cx);
+    }
+    let (binding, resolved) = unsafe { (*cx).resolved };
+    let memory = if incoming.bytes == resolved.bytes {
+        let fresh = memory_view(unsafe { vm(cx) }, binding);
+        unsafe { (*cx).resolved = (binding, fresh) };
+        fresh
+    } else {
+        MemoryView::NONE
+    };
+    unsafe { (*cx).memory = memory };
+    memory
 }
 
 /// `general_step_in_lane` within a frameless activation: a value step (`Vm::call_out`) of
@@ -4629,7 +4674,8 @@ fn step_beside_activations_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Register
     if let (Some(value), Some(result)) = (value, result) {
         r.set(result, value);
     }
-    Resumed::At(r, following(ip), Carried::stepped(cx, Carried::script(cx), r, instruction))
+    let memory = memory_after_step(cx, unsafe { (*cx).memory });
+    Resumed::At(r, following(ip), Carried { memory, ..Carried::stepped(cx, Carried::script(cx), r, instruction) })
 }
 
 /// Make `operation` of the record at `ip` from the lane, as its general step would: in a
@@ -10581,6 +10627,18 @@ use lane_plain_activation;
 
 mod leaf_calls;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_leaf_in_lane, leaf_call_handler};
+
+/// Makes the running leaf, if one runs in `registers`, the activation its call would have pushed, before a lane
+/// body runs in it whose direct calls push windows at the lane stack's values' top: a leaf's window lies at that
+/// top without moving it (`script_call_leaf_miss`), so the first callee's window would be the leaf's own and its
+/// arguments overwrite the leaf's registers (a recursive `f(d - 1)` read `d` as its callee's under `--b-jit`).
+pub(in crate::vm) fn settle_leaf_before_direct_calls<H: Host>(lane_context: *mut (), registers: *mut Value) {
+    let cx = lane_context.cast::<LaneContext<H>>();
+    // SAFETY: a lane body's context is the running lane's, which nothing else accesses.
+    if !cx.is_null() && unsafe { (*cx).registers.0 } == registers {
+        materialize_running_leaf_in_lane(cx);
+    }
+}
 
 /// Make the running leaf (`LaneContext::leaf`) the activation its call would have pushed
 /// (`enter_window_in_lane`), before anything observes activations: their materialization
@@ -18641,7 +18699,7 @@ fn derive_lane_view<'live, H: Host>(
         .collect();
     // Each record's handler before any fusion: a record still holding it
     // runs only its own instruction.
-    let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
+    let mut selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: u16, acc: u8| {
         tables[0][usize::from(acc)]
@@ -18753,6 +18811,16 @@ fn derive_lane_view<'live, H: Host>(
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A host that runs no lane (`Host::RUNS_LANE` false) never runs these records, so it instantiates no fusion
     // handler: the tables of `fuse_chains`, `fuse_target_backedges` and `fuse_rows` are gated on the host.
+    // A `Binary` record of an operator with rows runs its operator's row rather than fusing (`operator_row`):
+    // its operator and operand tests fold, which a fused pair's run-time operator does not.
+    if !wasm {
+        for (record, selected) in records.iter_mut().zip(selected.iter_mut()) {
+            if let Some(row) = lane_frame::operator_row::<H>(record) {
+                record.handler = row as *const ();
+                *selected = record.handler;
+            }
+        }
+    }
     let mut fused = if const { H::RUNS_LANE } {
         lane_frame::fuse_chains::<H>(&mut records, &decoded, live().map(|masks| &**masks), function.handlers.is_empty())
     } else {
@@ -18795,6 +18863,9 @@ fn derive_lane_view<'live, H: Host>(
                 records[pc].handler = plain.handler as *const ();
             }
         }
+    }
+    if !wasm {
+        specialize_register_operands::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
@@ -19512,6 +19583,23 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
             continue;
         };
         records[pc].handler = handler as *const ();
+    }
+}
+
+/// Gives each plain two-operand arithmetic record whose operands are both registers its row at
+/// `FLAG_REGISTERS`, which reads them without testing their tags. Runs after the fusion passes, which
+/// find the rows by their plain handlers.
+fn specialize_register_operands<H: Host>(records: &mut [LaneInstruction]) {
+    for record in records.iter_mut() {
+        if !lane_frame::register_operands(record) {
+            continue;
+        }
+        let row = lane_frame::registers_row::<H, { crate::bytecode::Op::Binary as u16 }>(record.handler)
+            .or_else(|| lane_frame::registers_row::<H, { crate::bytecode::Op::NumericAdd as u16 }>(record.handler))
+            .or_else(|| lane_frame::registers_row::<H, { crate::bytecode::Op::NumericMultiply as u16 }>(record.handler));
+        if let Some(row) = row {
+            record.handler = row as *const ();
+        }
     }
 }
 

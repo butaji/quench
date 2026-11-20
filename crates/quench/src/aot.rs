@@ -132,6 +132,15 @@ fn execute_native_with_teardown(
     Ok(completion)
 }
 
+/// The lane helper symbols an ahead image's objects name (`quench_lane_helper_<Name>`), defined
+/// here once for the Node host: an image's driver links them from this library instead of
+/// instantiating every helper, and all they reach, in its own crate (about 2 minutes per row).
+#[cfg(feature = "native-execution")]
+#[unsafe(export_name = "quench_lane_helper_symbols")]
+pub extern "C" fn lane_helper_symbols() {
+    quench_runtime::define_lane_helper_symbols::<crate::NodeHost>()
+}
+
 mod link;
 pub use quench_runtime::native_link::{DynamicInterface, ExportPolicy};
 pub use link::{NativeSupport, NativeLinkAudit};

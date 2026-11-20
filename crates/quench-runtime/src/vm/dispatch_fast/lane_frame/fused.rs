@@ -80,7 +80,7 @@ lane_handler! {
             };
             let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
             let mut stage = Concrete::new(std::ptr::null());
-            let carried = if const { LaneFields::<B>::RESULT_A } { Carried::script_in(cx, view) } else { view };
+            let carried = if const { LaneFields::<B>::RESULT_A } { Carried::past_result(view) } else { view };
             // The jump's direction: a branch table's is its `BACKWARD` (entry edges); any other jump's is the record's `MODE_BACKWARD`.
             let backward = if const { crate::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } { BACKWARD } else { mode & crate::staged::MODE_BACKWARD != 0 };
             let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
@@ -152,6 +152,10 @@ lane_handler! {
     pub(super) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, FAMILY: u8>(cx, r, ip, i, view) {
         // The head record's settings word, read before the links name their own records.
         let mode = i.mode;
+        // The running link's record and its pointer. The macros below name these bindings where they are
+        // defined (`macro_rules!` hygiene), so each link advances them in place: a `let` that shadowed them
+        // after the definitions would leave every link reading the head record.
+        let (mut ip, mut i) = (ip, i);
         // Link `$k` at flag `$flag`; its double result is raw where `mode`'s raw mask has bit `$k`.
         macro_rules! link_flag { ($L:ident, $k:literal, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>(i);
@@ -222,7 +226,7 @@ lane_handler! {
                 let mut stage = Concrete::new(std::ptr::null());
                 // A chain's last link is never a branch table, so its direction is the record's `MODE_BACKWARD`.
                 let backward = mode & crate::staged::MODE_BACKWARD != 0;
-                let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::script_in(cx, view) } else { view };
+                let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::past_result(view) } else { view };
                 let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                     Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None)),
@@ -244,17 +248,17 @@ lane_handler! {
             }
         }}; }
         value_link!(L0, 0);
-        let ip = following(ip);
+        ip = following(ip);
         // SAFETY: the next record of the running view (the chain's install checked its length).
-        let i = unsafe { &*ip };
+        i = unsafe { &*ip };
         value_link!(L1, 1);
-        let ip = following(ip);
+        ip = following(ip);
         if const { L3 == crate::staged::NO_LINK } {
             last_link!(L2)
         } else {
-            let i = unsafe { &*ip };
+            i = unsafe { &*ip };
             value_link!(L2, 2);
-            let ip = following(ip);
+            ip = following(ip);
             last_link!(L3)
         }
     }

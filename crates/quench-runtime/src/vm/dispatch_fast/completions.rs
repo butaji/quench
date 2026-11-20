@@ -76,9 +76,49 @@ fn complete_trapped_read_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value
 /// activation the same way (`complete_cross_activation_in_lane`).
 #[inline(always)]
 pub(super) fn return_plain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    // The header's plain return first (`lane_return_header`), then the side record's.
+    // The header's plain return first (`lane_return_header`), then a run of returning plain
+    // frames, then the side record's.
     let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
-    lane_return_header::<H, false>(cx, window, value).or_else(|| return_from_in_lane::<H, false, false, false, false>(cx, value))
+    if let Some(returned) = lane_return_header::<H, false>(cx, window, value) {
+        return Some(returned);
+    }
+    // A plain activation whose call returns its callee's completion (`return f()`) completes with
+    // the same value: where a run of such plain frames ends in a call that keeps it, they pop
+    // header by header and the outermost returns into that call, with no frame walk.
+    if let Some(above) = returning_plain_run::<H>(cx, window) {
+        for _ in 0..above {
+            let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
+            // SAFETY: `returning_plain_run` proved this many plain activations, innermost first.
+            let (_call, caller_registers, caller_base) = unsafe { vm(cx).lane_stack.pop_plain(window.0) };
+            unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
+        }
+        let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
+        return lane_return_header::<H, false>(cx, window, value);
+    }
+    return_from_in_lane::<H, false, false, false, false>(cx, value)
+}
+
+/// How many plain activations, innermost first from the one on `window`, return their callee's
+/// completion before one whose header returns plainly into a call that keeps it; `None` where
+/// the run ends any other way. Reads headers only.
+#[inline(always)]
+fn returning_plain_run<H: Host>(cx: *mut LaneContext<H>, mut window: Registers) -> Option<usize> {
+    let depth = unsafe { vm(cx) }.lane_stack.plain.depth.get() as usize;
+    let stage = &mut crate::staged::Concrete::new(std::ptr::null());
+    for above in 0..depth {
+        let packed = crate::staged::call_complete::frame_packed(stage, window.0.expose_provenance() as u64);
+        if !crate::staged::call_complete::completes_plainly(stage, packed) {
+            return None;
+        }
+        let (call, caller_registers, _) = window.plain_caller();
+        // SAFETY: the call record belongs to the caller's live view.
+        let destination = unsafe { (*call).a };
+        if !crate::staged::call_complete::returns_callee_completion(stage, u64::from(destination)) {
+            return (above != 0).then_some(above);
+        }
+        window = caller_registers;
+    }
+    None
 }
 
 /// The plain return of the innermost activation where it is a plain one running on `window`

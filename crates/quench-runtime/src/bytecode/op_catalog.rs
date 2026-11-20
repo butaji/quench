@@ -579,6 +579,7 @@ impl Traits {
     /// `NumericAdd`, `NumericMultiply`).
     pub(crate) const ARITHMETIC_BINARY: Self = Self(0, 1 << 6);
 
+    #[inline(always)]
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 || self.1 & other.1 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0, self.1 | other.1) }
 }
