@@ -49,6 +49,7 @@ pub(crate) fn to_int32(value: f64) -> i32 {
 }
 
 /// ToUint8Clamp of a binary64's bits: the staged body `math::clamp_u8`, which this build mounts.
+#[cfg(not(stencil_family = "wasm"))]
 #[inline(always)]
 pub(crate) fn clamp_u8(bits: u64) -> u64 {
     u64::from(crate::staged::math::clamp_u8(f64::from_bits(bits)))

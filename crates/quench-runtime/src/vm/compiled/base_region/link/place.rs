@@ -34,7 +34,7 @@ fn symbol_sites(rows: &[Placed], symbols: &[Symbolic], head: usize) -> Result<Ve
 /// each resume stub's `jumps` is patched to its row.
 pub(in super::super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize, symbols: &[Symbolic]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
     let head = thunk(ending, 0, 0)?.len();
-    let resume = if ending == Ending::Region { routine("entry_resume")?.code } else { Vec::new() };
+    let resume: &[u8] = if ending == Ending::Region { &routine("entry_resume")?.code } else { &[] };
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
     let stubs = exits.iter().flatten().filter(|target| matches!(target, Target::Stub { .. })).count();
     let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + stubs * EXIT_STUB_LEN + resume.len();
@@ -53,7 +53,7 @@ pub(in super::super) fn place_rows(ending: Ending, rows: &[Placed], (exits, rout
     let proven_at = head + starts.get(proven_row).copied().unwrap_or(0);
     let thunk_bytes = thunk(ending, head, proven_at)?;
     code[..head].copy_from_slice(&thunk_bytes);
-    code[at..at + resume.len()].copy_from_slice(&resume);
+    code[at..at + resume.len()].copy_from_slice(resume);
     let resume_at = at;
     at += resume.len();
     code.truncate(at);

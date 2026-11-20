@@ -9,7 +9,6 @@ use crate::bytecode::ImmediateLayout;
 use crate::staged::array_search::{DenseNeedle, scan_dense};
 use crate::staged::region::Region;
 use crate::staged::{Domain, builtins, elements, strings};
-use crate::staged::Stage as _;
 use crate::heap::Native;
 
 /// A builtin a call runs on its staged row.

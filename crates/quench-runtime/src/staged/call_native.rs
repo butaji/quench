@@ -32,7 +32,8 @@ pub(crate) fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
 
 /// A Math function of Number arguments: the one table of them (`vm::number::math_call`), from which
 /// each tier derives its dispatch.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+// No equality: it holds function pointers, whose addresses name no function uniquely.
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum MathCall {
     /// A machine operation of one Number (`staged::math::float_unary`), `Math.sign` included.
     Unary(FloatUnary),

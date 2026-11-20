@@ -13,7 +13,7 @@ mod parts;
 mod payload;
 pub(crate) use parts::{Part, Parts, MAX_PARTS, MIN_PARTS};
 mod search;
-pub(crate) use search::{find_ascii, scans};
+pub(crate) use search::scans;
 pub(super) use concat_all::JsStringBuilder;
 pub(crate) mod split;
 mod text_hash;

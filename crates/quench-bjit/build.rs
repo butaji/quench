@@ -19,6 +19,8 @@ mod cache;
 mod call_rows;
 #[path = "build/checks.rs"]
 mod checks;
+// The build reads the relocation classes; the stub lengths are the library's (`stub`).
+#[allow(dead_code)]
 #[path = "src/class.rs"]
 mod class;
 #[path = "build/edits.rs"]

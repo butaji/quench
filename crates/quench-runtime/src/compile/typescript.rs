@@ -7,7 +7,6 @@ use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_syntax::scope::ScopeFlags;
 
-use crate::bytecode::DeclaredTypes;
 use crate::typed_ir::language_bit;
 use crate::staged::value::language as bits;
 
