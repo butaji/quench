@@ -34,6 +34,7 @@
 #include "support/ts-checker.h"
 #include "support/ts-checker-names.h"
 #include "support/ts-checker-decls.h"
+#include "support/ts-checker-vars.h"
 #include "support/ts-checker-expected.h"
 
 #define FAIL(...)                  \
@@ -274,10 +275,13 @@ static void runChecker(void) {
   cNDupPairs = 0;
   cFiles = programFiles;
   cFileCount = EXPECTED_PROGRAM_FILES;
+  cCreateIntrinsicTypes();
   cInitializeGlobals(programFiles, EXPECTED_PROGRAM_FILES);
+  cCreateGlobalThisType();
   cReportAmalgamatedDuplicates();
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkNames(programFiles[i]);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclaresObjectType);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckVariableLike);
 }
 
 int main(int argc, char **argv) {
@@ -308,6 +312,9 @@ int main(int argc, char **argv) {
   printf("validated: %d files match node (nodeCount, identifierCount, binder symbolCount and flow node count); sum nodes %ld "
          "identifiers %ld symbols %ld flow nodes %ld\n",
          sourceCount, sumNodes, sumIdents, sumSymbols, sumFlows);
+  printf("checker counts: symbols %ld (node %d), types %d (node %d, after init %d), identity cache %d (node %d), unported type requests %d\n",
+         sumSymbols + checkerSymbolCount, EXPECTED_SYMBOLS, cTypeCount, EXPECTED_TYPES, EXPECTED_TYPES_AFTER_INIT,
+         cIdentityCacheCount, EXPECTED_REL_IDENTITY, cUnportedCount);
   if (diagBad) printf("validation FAILED: %d diagnostics differ from node\n", diagBad);
   else printf("validation ok\n");
   return diagBad ? 1 : 0;
