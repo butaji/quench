@@ -996,6 +996,27 @@ static void cInferObjects(CInfer *c, TsType *source, TsType *target) {
   c->nvis--;
 }
 
+static TsType *cTypeWithFacts(TsType *t, uint32_t facts);
+
+/* the property name of a source property applies to an index key type (getLiteralTypeFromProperty and isApplicableIndexType):
+ * a string key takes every name but a unique symbol one, a number key takes a numeric name. A name that may be numeric
+ * but is not a plain integer is not ported (*unp) */
+static bool cPropertyNameApplies(TsSymbol *p, TsType *keyType, bool *unp) {
+  if (keyType != cStringType && keyType != cNumberType) { *unp = true; return false; }
+  if (p->name.n >= 3 && memcmp(p->name.s, "__@", 3) == 0) return false;
+  if (keyType == cStringType) return true;
+  TsNode *d = p->valueDeclaration ? p->valueDeclaration : (p->ndecls ? p->decls[0] : NULL);
+  if (d && d->name && d->name->kind == TSK_NumericLiteral) return true;
+  int n = p->name.n;
+  const char *s = p->name.s;
+  if (n == 0) return false;
+  bool digits = true;
+  for (int i = 0; i < n; i++) if (s[i] < '0' || s[i] > '9') digits = false;
+  if (digits && (n == 1 || s[0] != '0')) return true;
+  if ((s[0] >= '0' && s[0] <= '9') || s[0] == '-' || s[0] == '.' || s[0] == 'I' || s[0] == 'N') { *unp = true; return false; }
+  return false;
+}
+
 static void cInferObjectsBody(CInfer *c, TsType *source, TsType *target) {
   TsSymbol **tp;
   int nt = cPropertiesOf(target, &tp);
@@ -1018,18 +1039,42 @@ static void cInferObjectsBody(CInfer *c, TsType *source, TsType *target) {
    * of the target (not ported); otherwise each index signature of the target infers from the applicable index
    * signature of the source (getApplicableIndexInfo) */
   cResolveSignatures(source);
-  if (source->symbol && !(source->objectFlags & OF_Tuple) && !(source->symbol->flags & SF_Class) && (source->symbol->flags & (SF_ObjectLiteral | SF_TypeLiteral | SF_RegularEnum | SF_ValueModule)) &&
-      source->ncall == 0 && source->nconstruct == 0) {
-    cUnported("inference into an index signature");
-    return;
-  }
+  /* getPriority2: a homomorphic mapped type infers into the index signatures of a mapped target with priority 8 */
+  int prio2 = ((source->objectFlags & target->objectFlags) & OF_Mapped) ? 8 : 0;
   cResolveIndexInfos(source);
+  /* isObjectTypeWithInferableIndex: an object literal, type literal, enum or namespace without signatures */
+  bool inferable = source->symbol && !(source->objectFlags & OF_Tuple) && !(source->symbol->flags & SF_Class) &&
+                   (source->symbol->flags & (SF_ObjectLiteral | SF_TypeLiteral | SF_RegularEnum | SF_ValueModule)) &&
+                   source->ncall == 0 && source->nconstruct == 0;
+  if (inferable) {
+    TsSymbol **sp;
+    int np = cPropertiesOf(source, &sp);
+    for (int i = 0; i < target->nindex; i++) {
+      CIndexInfo *ti = &target->index[i];
+      TsType **pts = ts_arena_alloc(sizeof(TsType *) * (size_t)(np + source->nindex + 1));
+      int npt = 0;
+      for (int k = 0; k < np; k++) {
+        bool unp = false;
+        if (!cPropertyNameApplies(sp[k], ti->keyType, &unp)) { if (unp) { cUnported("inference into an index signature"); return; } continue; }
+        TsType *pt = cTypeOfSymbol(sp[k]);
+        /* removeMissingOrUndefinedType of an optional property (exactOptionalPropertyTypes is off) */
+        if (sp[k]->flags & SF_Optional) pt = cTypeWithFacts(pt, 524288u /* TFC_NEUndefined */);
+        if (pt == cErrorType) return;
+        pts[npt++] = pt;
+      }
+      for (int k = 0; k < source->nindex; k++) {
+        CIndexInfo *si = &source->index[k];
+        if (si->keyType == ti->keyType || (ti->keyType == cStringType && si->keyType == cNumberType)) pts[npt++] = si->type;
+      }
+      if (npt) cInferWithPriority(c, cGetUnionType(pts, npt), ti->type, prio2);
+    }
+  }
   for (int i = 0; i < target->nindex; i++) {
     CIndexInfo *ti = &target->index[i];
     bool unp = false;
     CIndexInfo *si = cApplicableIndexInfo(source, ti->keyType, &unp);
     if (unp) { cUnported("inference into an index signature"); return; }
-    if (si) cInferFrom(c, si->type, ti->type);
+    if (si) cInferWithPriority(c, si->type, ti->type, prio2);
   }
 }
 
