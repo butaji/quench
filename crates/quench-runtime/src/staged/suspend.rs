@@ -14,6 +14,7 @@
 //! frames answer none of the call-outs yet, so the row stays unresolved there and the tier exits at
 //! its exact PC for the interpreter to suspend.
 use super::{CallFrame, Operation, Register, Stage, Step};
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
 
 /// What suspends the activation.
@@ -72,6 +73,7 @@ impl<W> Suspending<W> {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     /// The suspension row of `instruction` (`decode_flow`); `None` for any other opcode.
     pub(super) fn decode_suspend(instruction: WideInstruction) -> Option<Self> {

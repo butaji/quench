@@ -48,17 +48,6 @@ pub(crate) struct Arm<'a> {
     pub(crate) holds: Option<u32>,
 }
 
-/// What holds an inherited read's receiver to the prototype its constants fold against.
-#[derive(Clone, Copy)]
-pub(crate) enum PrototypeProof {
-    /// The holder is subscribed (`PropertyFrame::hold_prototype`): a change of its values retires the
-    /// constant, and the read checks the link only through `IcOp::PrototypeConstants`.
-    Watched { holder: u32 },
-    /// The receiver's prototype link is `expected_link`, checked on each read (`entry::held_constant`)
-    /// for a Stable fact a code's live check holds rather than a holder subscription.
-    Linked { expected_link: u32 },
-}
-
 /// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the
 /// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
 /// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
@@ -72,6 +61,17 @@ pub(crate) enum EntryKind {
     Holder,
     /// The site's inherited entry, walked past the immediate prototype.
     Inherited,
+}
+
+/// What holds an inherited read's receiver to the prototype its constants fold against.
+#[derive(Clone, Copy)]
+pub(crate) enum PrototypeProof {
+    /// The holder is subscribed (`PropertyFrame::hold_prototype`): a change of its values retires the
+    /// constant, and the read checks the link only through `IcOp::PrototypeConstants`.
+    Watched { holder: u32 },
+    /// The receiver's prototype link is `expected_link`, checked on each read (`entry::held_constant`)
+    /// for a Stable fact a code's live check holds rather than a holder subscription.
+    Linked { expected_link: u32 },
 }
 
 /// How a `GetField` site reads, as the proof its tier holds of the site.
@@ -492,7 +492,10 @@ pub(super) fn base_word<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 }
 
 /// The value `plan` reads from `owner`'s `object`, or a leave at `miss`; `readable` where the
-/// plan admits a function's record as the receiver.
+/// plan admits a function's record as the receiver. Inlined, so a tier whose plan is static data
+/// (a stencil row's) folds the match to its one arm; the recursive plans re-enter through
+/// `read_nested`, so this function never calls itself and stays inlinable.
+#[inline(always)]
 pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool),
     object: S::Word, plan: FieldPlan<'_>, miss: S::Miss) -> Option<S::Word> {
     match plan {
@@ -526,9 +529,9 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
                 }
             }
         }
-        FieldPlan::Readable(inner) => read_with(stage, frame, (owner, true), object, *inner, miss),
+        FieldPlan::Readable(inner) => read_nested(stage, frame, (owner, true), object, *inner, miss),
         FieldPlan::Probed { fast, atom, site } => frame.probed(stage, owner, object, (atom, site), miss,
-            #[inline(always)] |stage, frame, miss| read_with(stage, frame, (owner, readable), object, *fast, miss)),
+            #[inline(always)] |stage, frame, miss| read_nested(stage, frame, (owner, readable), object, *fast, miss)),
         FieldPlan::Known => frame.known_value(stage, owner),
         FieldPlan::Chain(links) => chain(stage, frame, (owner, readable), object, links, miss),
         FieldPlan::Host { atom, site } => frame.field_probe(stage, owner, object, atom, site, miss),
@@ -544,8 +547,16 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     }
 }
 
+/// `read_with` of a plan nested in another (`Readable`, `Probed`, a `Chain` link): the one
+/// out-of-line entry of the recursion.
+fn read_nested<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owner: (Owner, bool),
+    object: S::Word, plan: FieldPlan<'_>, miss: S::Miss) -> Option<S::Word> {
+    read_with(stage, frame, owner, object, plan, miss)
+}
+
 /// Continues where `owner`'s object has exact shape `shape`: a proof the frame holds emits
 /// nothing, else the guard is made and recorded. `direct` where the receiver is a direct object.
+#[inline(always)]
 pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
     at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
     if frame.proven_shape(stage, owner) == Some(shape) { return Some(()); }
@@ -598,7 +609,7 @@ fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Ow
     let mut object = base;
     let mut from = first;
     for link in links {
-        object = read_with(stage, frame, from, object, *link, miss)?;
+        object = read_nested(stage, frame, from, object, *link, miss)?;
         from = (Owner::Temporary, true);
     }
     Some(object)

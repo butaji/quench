@@ -95,6 +95,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
     })
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
     /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the

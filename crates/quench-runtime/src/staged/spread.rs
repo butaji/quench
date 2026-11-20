@@ -26,6 +26,7 @@ pub(crate) enum Passing {
     Rest,
 }
 
+#[cfg(not(stencil_build))]
 /// The call-out row of a spread call or a super construction; `None` for any other instruction,
 /// and for a direct eval, which the host decides.
 #[cfg(not(stencil_build))]

@@ -5,7 +5,7 @@
 use super::Stage;
 use super::ic::Reached;
 use super::region::Region;
-use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, formed_own_layout, has_extras, inline_storage, own_layout, proto_link, read_slot, read_slot_value};
+use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, own_layout, proto_link, read_slot_value};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::typed_ir::Representation;
 

@@ -29,6 +29,7 @@ pub(crate) enum ElementView<W> {
     Typed(TypedView<W>),
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
     /// The element rows of `decode`: `GetIndex` of a register base and a register or immediate

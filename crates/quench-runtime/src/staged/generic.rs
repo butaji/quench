@@ -6,18 +6,21 @@
 
 use super::value::{is_direct_string, is_double, is_heap, is_int};
 use super::*;
+#[cfg(not(stencil_build))]
 use crate::bytecode::OperandKind;
 use crate::value::ValueLayout;
 #[cfg(not(stencil_build))]
 use crate::vm::operations::equality_operator;
 use crate::Value;
 
+#[cfg(not(stencil_build))]
 /// Whether `operand` names a register or a program constant: the operands a `Binary` or an
 /// `Equality` row reads (`NumericFrame::operand_word`).
 pub(super) fn is_value_operand(operand: Operand) -> bool {
     matches!(operand.kind(), Some(OperandKind::Register | OperandKind::Constant))
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where a `Binary`

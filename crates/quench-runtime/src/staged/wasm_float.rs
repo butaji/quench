@@ -243,7 +243,7 @@ pub(crate) fn copysign_bits(float: Float, left: u64, right: u64) -> u64 {
 /// load (a relocation stencils may not carry), so the word is hidden behind `black_box`. The
 /// interpreter and u-jit builds fold it freely.
 #[inline(always)]
-fn opaque(word: u64) -> u64 {
+pub(crate) fn opaque(word: u64) -> u64 {
     #[cfg(stencil_build)]
     {
         core::hint::black_box(word)

@@ -56,6 +56,7 @@ pub(crate) enum CallForm {
 #[cfg(not(stencil_build))]
 /// The general form of the call-family opcode `op`, else `None`: the records the call runner answers
 /// (`vm::dispatch`'s `Runner::Call`).
+#[cfg(not(stencil_build))]
 pub(crate) const fn general_call_form(op: Op) -> Option<CallForm> {
     Some(match op {
         Op::Call => CallForm::Plain,
@@ -248,6 +249,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
     /// The general form `form` of the call-family record `instruction` at resume PC `pc`, which the
     /// call row runner asks where the row declined (the record's operands are read from it, since an
     /// `Invocation` does not name every form). `None` where the frame runs no general calls.
+    #[cfg(not(stencil_build))]
     #[inline(always)]
     fn call_general(&mut self, _form: CallForm, _instruction: WideInstruction, _pc: usize) -> Option<Step<S::Word, Self::Control>> {
         None

@@ -9,7 +9,7 @@ use super::{CallOut, Domain, Edge, NumericFrame, NumericStage, Operation, Step};
 #[cfg(not(stencil_build))]
 use crate::bytecode::WideInstruction;
 use crate::bytecode::Operand;
-use crate::typed_ir::Type;
+use crate::typed_ir::{Type, language_bit};
 use crate::vm::operations::{equality_binary_operator, equality_operator, NumberBitwise, NumberRelation};
 use crate::{Value, ValueType};
 
@@ -93,6 +93,7 @@ impl Comparison {
         }
     }
 
+    #[cfg(not(stencil_build))]
     /// The comparison `operator` names (a `JumpBinaryFalse`'s operator field): the widest Number
     /// relation, an equality, a bitwise test, `instanceof`, else the operator itself. A tier with
     /// more facts than the operator narrows it (the observed Numbers, the proved domain).
@@ -124,6 +125,7 @@ impl Comparison {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
     /// The `JumpBinaryFalse` row: it jumps where the comparison fails.
@@ -182,6 +184,22 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
 fn by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, comparison: Comparison,
     [left, right]: [Operand; 2]) -> Option<S::Cond> {
     if !frame.general_operators() { return None; }
+    by_vm_operator(stage, frame, comparison, [left, right])
+}
+
+/// No stencil frame takes the VM's general operators, and the stencil build has no parser's operator codes.
+#[cfg(stencil_build)]
+#[inline(always)]
+fn by_vm_operator<S: NumericStage, F: NumericFrame<S>>(_stage: &mut S, _frame: &mut F, _comparison: Comparison,
+    _operands: [Operand; 2]) -> Option<S::Cond> {
+    None
+}
+
+/// `by_vm` of a frame that takes the VM's general operators.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+fn by_vm_operator<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, comparison: Comparison,
+    [left, right]: [Operand; 2]) -> Option<S::Cond> {
     let both_registers = left.register_index().is_some() && right.register_index().is_some();
     match comparison {
         Comparison::Relation { relation, .. } => binary_decision(stage, frame, [left, right], relation.binary_operator()),
@@ -358,6 +376,7 @@ fn nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, te
 
 /// Whether a value of type `ty` is `expected` (loosely, either nullish value) by its type
 /// alone: the nullish types are, and objects, Numbers and Booleans are not.
+#[inline(always)]
 fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
     let [null, undefined] = [ValueType::Null, ValueType::Undefined].map(Type::language);
     if ty.is_subtype(null) {
@@ -365,7 +384,10 @@ fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
     } else if ty.is_subtype(undefined) {
         Some(!strict || expected == ValueType::Undefined)
     } else {
-        (ty.is_direct_object_family() || ty.is_subtype(Type::NUMBER.join(Type::language(ValueType::Boolean)))).then_some(false)
+        // Number or Boolean, as `Type::NUMBER.join(Type::language(ValueType::Boolean))`, as a constant a
+        // stencil row folds (the join is not inlined there).
+        const NUMBER_OR_BOOLEAN: Type = Type::languages(language_bit(ValueType::Number) | language_bit(ValueType::Boolean));
+        (ty.is_direct_object_family() || ty.is_subtype(NUMBER_OR_BOOLEAN)).then_some(false)
     }
 }
 
