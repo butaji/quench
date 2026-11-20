@@ -1894,13 +1894,16 @@ static TsType *cExprTypeWithContext(TsNode *arg, TsType *ptype) {
  * left out (anyFunctionType, related to any function-like target); the applicable one then has its arguments checked with
  * its parameter types, which fix the parameters of the arguments for good, and is checked again. Returns NULL when no
  * candidate is applicable; *err is set when a parameter type is not ported. */
-static CSig *cChooseDeferredOverload(CSig *sigs, CParams *pss, bool *arityOk, int ns, TsType **at, bool *deferred, TsNode **args,
-                                     int na, bool *err) {
+static CSig *cChooseDeferredOverload(CSig *sigs, CParams *pss, bool *arityOk, bool *generic, int ns, TsType **at, bool *deferred,
+                                     TsNode **args, int na, bool *err) {
   TsType **skip = ts_arena_alloc(sizeof(TsType *) * (size_t)(na ? na : 1));
   for (int pass = 0; pass < 2; pass++) {
     int rel = pass == 0 ? REL_Subtype : REL_Assignable;
     for (int c = 0; c < ns; c++) {
       if (!arityOk[c]) continue;
+      /* a generic candidate is reached only when the candidates before it fail (chooseOverload returns the first one that
+       * passes): its inference with context-sensitive arguments is not ported */
+      if (generic[c]) { *err = true; return NULL; }
       for (int i = 0; i < na; i++) skip[i] = deferred[i] ? cAnyFunctionType : at[i];
       if (!cArgsApplicable(&pss[c], skip, na, &sigs[c], rel)) continue;
       for (int i = 0; i < na; i++) {
@@ -1961,10 +1964,9 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
   int chosen = -1;
   CSig *chosenSig = NULL;
   if (anyDeferred) {
-    if (anyGeneric) return cUnported("overloaded call with a function argument and generic candidates");
     bool err = false;
-    chosenSig = cChooseDeferredOverload(sigs, pss, arityOk, ns, at, deferred, e->arguments->v, na, &err);
-    if (err) return cUnported("parameter type of a context-sensitive argument");
+    chosenSig = cChooseDeferredOverload(sigs, pss, arityOk, generic, ns, at, deferred, e->arguments->v, na, &err);
+    if (err) return cUnported("overloaded call with a function argument reaches a generic candidate or an unported parameter");
     if (!chosenSig) {
       /* no candidate: the arguments are typed without a context (unported) so that their bodies are still checked */
       for (int i = 0; i < na; i++) if (deferred[i]) cExprType(e->arguments->v[i]);
