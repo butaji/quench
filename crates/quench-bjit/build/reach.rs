@@ -105,9 +105,36 @@ pub fn reached(ll: &str, is_row: impl Fn(&str) -> bool) -> BTreeSet<String> {
     out
 }
 
+/// Every identifier of the functions rustc lists as a shard's mono items (`-Z print-mono-items`, one
+/// `MONO_ITEM fn <path> @@ <units>` line each): a superset of what its rows reach, since a crate's mono items are
+/// every function instantiated in it, which holds every function a row runs. Each path's identifiers are its words
+/// (a module, a type, a function, a closure's enclosing function), as `identifiers` reads them from a symbol.
+pub fn mono_items(listing: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for line in listing.lines() {
+        let Some(item) = line.strip_prefix("MONO_ITEM ") else { continue };
+        let path = item.split(" @@ ").next().unwrap_or(item);
+        for word in path.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            if word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                out.insert(word.to_string());
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mono_items_read_every_word_of_each_path() {
+        let listing = "MONO_ITEM fn staged::ic::run::<stage::StencilStage> @@ rows.cgu.0[Internal]\n\
+                       MONO_ITEM fn h_1_0 @@ rows.cgu.0[External]\nwarning: noise\n";
+        let ids = mono_items(listing);
+        assert!(ids.contains("ic") && ids.contains("run") && ids.contains("StencilStage") && ids.contains("h_1_0"));
+        assert!(!ids.contains("rows") && !ids.contains("noise"));
+    }
 
     #[test]
     fn reach_follows_uses_and_reads_identifiers() {

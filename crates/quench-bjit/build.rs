@@ -513,15 +513,20 @@ fn compile(job: &Shard, shard: usize) {
         fs::write(&job.key_file, &job.key).unwrap();
         return;
     }
-    let run = || Command::new(rustc()).args(&job.args).envs(job.envs.iter().map(|(name, path)| (*name, path))).status().expect("run rustc");
-    let mut status = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
-    if killed(&status) {
+    // The same rustc lists the shard's mono items (`-Z print-mono-items`, on stdout), which name every function a
+    // row can reach: the reach file comes from this compile rather than a second, unoptimized one (`write_reach`).
+    // The flag is outside `job.args`, so it is in no key.
+    let run = || Command::new(rustc()).args(&job.args).args(["-Z", "print-mono-items=yes"])
+        .envs(job.envs.iter().map(|(name, path)| (*name, path))).stderr(std::process::Stdio::inherit()).output().expect("run rustc");
+    let mut output = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
+    if killed(&output.status) {
         println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again alone");
         let _alone = MEMORY.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        status = run();
+        output = run();
     }
-    assert!(status.success(), "rustc failed on {SOURCE} (shard {shard}): {status}");
-    job.write_reach();
+    assert!(output.status.success(), "rustc failed on {SOURCE} (shard {shard}): {}", output.status);
+    let ids = reach::mono_items(&String::from_utf8_lossy(&output.stdout));
+    fs::write(job.reach_file(), ids.into_iter().map(|id| id + "\n").collect::<String>()).unwrap();
     if let Some(shared) = &shared {
         publish(&job.object, shared);
         if job.reach_file().is_file() {
@@ -604,14 +609,13 @@ fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
     (rows, counts)
 }
 
-/// Held while a shard of heap rows compiles, so two never run together (`compile_shards`).
-static HEAVY_SHARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// The rows that failed a check, across every shard (`stencil_rows`).
 static FAILED_ROWS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 /// What one shard's rustc may reach, in bytes: the workers the box's memory holds (`memory_workers`).
-const SHARD_MEMORY: u64 = 5 << 30;
+/// Measured: no shard of the per-row step dispatch (`staged::step_of`) peaked past 2.6 GB on the 15 GB, 4-core box
+/// (2026-11-20), so a worker per core fits; a shard killed for memory is compiled again alone (`compile`).
+const SHARD_MEMORY: u64 = 3 << 30;
 
 /// How many shard rustc processes the box's available memory holds, at least one.
 fn memory_workers() -> usize {
