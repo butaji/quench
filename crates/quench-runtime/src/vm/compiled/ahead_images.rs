@@ -124,7 +124,7 @@ impl AheadImages {
     /// The images `to_bytes` wrote; an error names what the file lacks.
     pub fn from_bytes(file: &[u8]) -> Result<Self, String> {
         let mut words = Words(file.strip_prefix(MAGIC.as_slice()).ok_or("not an ahead image file")?);
-        if words.quad()? != BUILD_ID { return Err("images from another quench-node build".into()); }
+        if words.quad()? != BUILD_ID { return Err("images from another quench build".into()); }
         let program = words.quad()?;
         let mut images = Vec::new();
         for _ in 0..words.half()? {

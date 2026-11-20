@@ -45,7 +45,7 @@ Thumbs.db
 /target/test262_report.json
 /target/test262_report.md
 
-# quench-node test byproducts - cp/pull/stream tests create scratch dirs at the repo root
+# quench test byproducts - cp/pull/stream tests create scratch dirs at the repo root
 /cp-error-*/
 /pull-concurrent-*/
 /pull-lifecycle-*/

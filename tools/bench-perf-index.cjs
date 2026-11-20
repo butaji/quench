@@ -25,7 +25,7 @@ const parseArg = (name, fallback = null) => {
 
 const binary = parseArg(
   "--binary",
-  path.join(root, "target", "iteration", "quench-node"),
+  path.join(root, "target", "iteration", "quench"),
 );
 const output = parseArg(
   "--out",

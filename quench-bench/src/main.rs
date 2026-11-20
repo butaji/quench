@@ -999,7 +999,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         node: "node".into(),
         bun: "bun".into(),
         qjs: "qjs".into(),
-        quench: "target/experiment/quench-node".into(),
+        quench: "target/experiment/quench".into(),
         quench_peer: None,
         rounds: MIN_QUALIFYING_ROUNDS,
         fixed_work: false,
@@ -3453,11 +3453,11 @@ mod tests {
 
     #[test]
     fn release_builds_are_recognized_by_their_release_directory() {
-        assert!(is_release_build(Path::new("target/release/quench-node")));
+        assert!(is_release_build(Path::new("target/release/quench")));
         assert!(is_release_build(Path::new(
-            "/home/user/qtri-target/release/quench-node"
+            "/home/user/qtri-target/release/quench"
         )));
-        assert!(!is_release_build(Path::new("target/debug/quench-node")));
+        assert!(!is_release_build(Path::new("target/debug/quench")));
     }
 
     #[test]

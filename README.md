@@ -21,6 +21,7 @@
 <p align="center">
   <a href="https://quench.run">Website</a> ·
   <a href="https://quench.run/blog/">Blog</a> ·
+  <a href="#built-for-agent-code-mode">For AI agents</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#benchmarks">Benchmarks</a> ·
   <a href="#how-it-works">How it works</a>
@@ -29,8 +30,8 @@
 ---
 
 ```console
-$ quench-node app.ts                      # run TypeScript, JavaScript or WebAssembly
-$ quench-node --build-aot app.ts -o app   # or compile the whole program to one native executable
+$ quench app.ts                      # run TypeScript, JavaScript or WebAssembly
+$ quench --build-aot app.ts -o app   # or compile the whole program to one native executable
 $ ./app
 ```
 
@@ -42,6 +43,15 @@ $ ./app
 - **One semantics.** The interpreter, b-jit, u-jit and AOT derive each opcode's meaning from one shared definition, so the tiers agree about what a program means. The few hand-written exceptions left are tracked in a list that may only shrink.
 - **TypeScript types are kept.** Types are not erased before execution. They feed the specializer, so typed code can start out specialized.
 - **Node-compatible.** `node:` APIs are implemented in Rust and checked against a local Node oracle, and the source is parsed by [OXC](https://github.com/oxc-project/oxc).
+
+## Built for agent Code Mode
+
+More and more agents write code and run it inside the harness instead of chaining tool calls one at a time. A busy machine can host hundreds of these agents, each running code nobody reviewed. That needs a JavaScript engine that lives inside the harness, stays small, runs without a JIT, and runs whatever the model wrote. That is the slot Quench is built for.
+
+- **The QuickJS slot, with more speed.** Today the choice is QuickJS for small scripts or V8 for heavy ones. Quench aims at QuickJS's place (small, embedded, interpreter only) with an interpreter well ahead of the ones in V8 and JavaScriptCore: with the JIT off, V8-v7 scores 1.49x to 2.57x the best of `node --jitless` and Bun JIT-off, and five of the eight benchmarks peak at 6.4 to 8.2 MB, against 43 to 50 MB for Node and 16 to 26 MB for Bun. We have not benchmarked against QuickJS yet; that comparison is next, and it will be published either way.
+- **Embeddable and Rust-native.** [`quench-runtime`](crates/quench-runtime) is a Rust library. The harness creates a `Runtime` with its own `Host`, exposes its tools as host functions, and can stop runaway code from another thread with an execution interrupt. Generated code runs in the harness's own process, with no subprocess and no IPC. It is not on crates.io yet and the API will still change.
+- **No JIT required.** `--no-jit`, which is also the library's default mode, runs the interpreter only (WebAssembly included), so no machine code is generated while untrusted code runs. That takes JIT compiler bugs off the attack surface and gives an attacker far less control over the machine code that executes, which Spectre-style attacks rely on. The speed above is measured with the JIT off. The engine is still not a sandbox on its own: isolation and limits come from your host.
+- **Full JavaScript and TypeScript.** Test262 passes 53,353 tests with zero failures, TypeScript runs directly with no build step, and `node:` APIs are there too. Code a model writes just runs: there is no "Lua needs a C extension for that" step, and models write JavaScript and TypeScript far better than Lua.
 
 ## Benchmarks
 
@@ -71,8 +81,8 @@ Quench is early and has no packaged releases yet. Build it from source with the 
 ```sh
 git clone https://github.com/butaji/quench
 cd quench
-cargo build --release -p quench-node                    # interpreter + JIT tiers
-cargo build --release -p quench-node --features aot     # adds the AOT compiler
+cargo build --release -p quench                    # interpreter + JIT tiers
+cargo build --release -p quench --features aot     # adds the AOT compiler
 ```
 
 The engine itself is pure Rust; the Node layer links OpenSSL (for `node:crypto` and TLS) and zstd.
@@ -80,8 +90,8 @@ The engine itself is pure Rust; the Node layer links OpenSSL (for `node:crypto` 
 Then run something you already have:
 
 ```sh
-./target/release/quench-node app.ts
-./target/release/quench-node -e 'console.log([1, 2, 3].map(x => x * 2))'
+./target/release/quench app.ts
+./target/release/quench -e 'console.log([1, 2, 3].map(x => x * 2))'
 ```
 
 Choose an execution tier with a flag. Every mode must print the same output:
@@ -121,7 +131,7 @@ The engine follows a few laws, enforced by lints and tests in this repository ([
 | ----- | ---------- |
 | [`quench-runtime`](crates/quench-runtime) | Interpreter, object model, GC, u-jit and AOT |
 | [`quench-bjit`](crates/quench-bjit) | Copy-and-patch stencils for b-jit |
-| [`quench-node`](crates/quench-node) | The `quench-node` binary and Node-compatible APIs |
+| [`quench`](crates/quench) | The `quench` binary and Node-compatible APIs |
 | [`quench-wasm`](crates/quench-wasm) | WebAssembly |
 | [`quench-regexp`](crates/quench-regexp) · [`quench-intl`](crates/quench-intl) · [`quench-temporal`](crates/quench-temporal) | RegExp, Intl and Temporal |
 | [`quench-test262`](crates/quench-test262) | Test262 runner with Node-arbitrated waivers |

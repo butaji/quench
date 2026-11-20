@@ -1,6 +1,6 @@
-// V8-v7 max RSS board, run by quench-node itself:
+// V8-v7 max RSS board, run by quench itself:
 //
-//   quench-node quench-bench/v8-v7-rss.cjs --quench PATH [--qjs PATH] [--node PATH]
+//   quench quench-bench/v8-v7-rss.cjs --quench PATH [--qjs PATH] [--node PATH]
 //     [--bun PATH] [--runs N] [--only richards,regexp] [--rss-exec PATH] [--rss-cpu N]
 //     [--node-options OPTIONS] [--bun-options OPTIONS] [--out FILE]
 //
@@ -66,7 +66,7 @@ function option(name, fallback) {
 function usage(message) {
   if (message) console.error(message);
   console.error(
-    "usage: quench-node quench-bench/v8-v7-rss.cjs --quench PATH [--qjs PATH] [--node PATH]" +
+    "usage: quench quench-bench/v8-v7-rss.cjs --quench PATH [--qjs PATH] [--node PATH]" +
       " [--bun PATH] [--runs N] [--only a,b] [--rss-exec PATH] [--rss-cpu N]" +
       " [--node-options OPTIONS] [--bun-options OPTIONS] [--out FILE]"
   );
@@ -100,7 +100,7 @@ const sameFile = (left, right) => {
   const [a, b] = [fs.statSync(left), fs.statSync(right)];
   return a.dev === b.dev && a.ino === b.ino;
 };
-const measuredQuench = sameFile(process.execPath, quench) ? path.join(scratch, "quench-node") : quench;
+const measuredQuench = sameFile(process.execPath, quench) ? path.join(scratch, "quench") : quench;
 if (measuredQuench !== quench) {
   fs.copyFileSync(quench, measuredQuench);
   fs.chmodSync(measuredQuench, 0o755);

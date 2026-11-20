@@ -1,5 +1,5 @@
 // npm — the real published `ms` package (vendored, MIT) loads and runs
-// under quench-node via node_modules resolution, with output matching Node.
+// under quench via node_modules resolution, with output matching Node.
 'use strict';
 const assert = require('assert');
 const ms = require('ms');

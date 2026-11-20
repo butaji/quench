@@ -1,6 +1,6 @@
 // Usage: <node-or-quench> parity.cjs scenarios/<framework>.cjs
 // Prints one normalized line per response so two binaries' outputs can be diffed:
-//   diff <(node parity.cjs S) <(quench-node parity.cjs S)
+//   diff <(node parity.cjs S) <(quench parity.cjs S)
 // Run-specific values (timestamps, Next build IDs) are removed before the length is taken.
 const http = require('node:http');
 const path = require('node:path');

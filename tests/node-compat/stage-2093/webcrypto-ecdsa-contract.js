@@ -8,7 +8,7 @@ const assert = require("assert");
   );
   assert.strictEqual(pair.privateKey.type, "private");
   assert.strictEqual(pair.publicKey.type, "public");
-  const data = new TextEncoder().encode("quench-node");
+  const data = new TextEncoder().encode("quench");
   const signature = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     pair.privateKey,
