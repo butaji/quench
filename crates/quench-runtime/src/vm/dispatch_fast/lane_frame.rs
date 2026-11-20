@@ -2722,8 +2722,9 @@ lane_handler! {
             sibling!(general_step_in_lane::<H>, r, ip, view)
         };
         let mut stage = Concrete::new(std::ptr::null());
-        // A loop's exit writes its result register, so no producer's accumulator carries past it.
-        let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
+        // A loop's exit or a Wasm fused jump writes its result register, so no producer's accumulator
+        // carries past it; the view carries on as it came (a Wasm run's memory, a JavaScript run's context).
+        let carried = if const { LaneFields::<OP>::RESULT_A } { Carried { acc: Slot::unset(), ..view } } else { view };
         let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(LaneControl::Edge(Edge::Target)) => {
