@@ -2388,6 +2388,12 @@ static TsType *cIndexedAtPosition(TsType *rt, int index) {
   return cGetUnionType(parts, rt->ntypes);
 }
 
+/* the element of a rest parameter's type at an index (getIndexedAccessType of a tuple past its length is absent) */
+static TsType *cRestElementAt(TsType *rt, int index, bool *ok) {
+  if (rt == cErrorType) return rt;
+  if ((rt->objectFlags & OF_Tuple) && index >= rt->nargs) { *ok = false; return NULL; }
+  return cIndexedAtPosition(rt, index);
+}
 /* the type of a parameter at a position (getTypeAtPosition): a rest parameter gives its element type */
 static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
   TsNode *p = pos < cp->n ? cp->params[pos] : cp->rest;
@@ -2398,10 +2404,7 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
      * rest has no type beyond its length */
     if (!p->type) return cUnported("rest parameter element type");
     TsType *rt = cTypeFromNodeM(p->type, m);
-    if (rt == cErrorType) return rt;
-    int index = pos - (cp->n - 1);   /* the rest parameter is the last of cp->params */
-    if ((rt->objectFlags & OF_Tuple) && index >= rt->nargs) { *ok = false; return NULL; }
-    return cIndexedAtPosition(rt, index);
+    return cRestElementAt(rt, pos - (cp->n - 1), ok);   /* the rest parameter is the last of cp->params */
   }
   bool objMethod = !p->type && p->parent && p->parent->kind == TSK_MethodDeclaration && p->parent->parent &&
                    p->parent->parent->kind == TSK_ObjectLiteralExpression;
@@ -2456,6 +2459,12 @@ static void cSigInstantiate(CSig *dst, const CSig *src, struct TsMapper *m) {
  * parameter is instantiated once per signature instance. The rest parameter and the positions past the list keep the
  * element type of the rest array (cParamTypeAt). */
 static TsType *cSigParamType(CSig *sig, CParams *cp, int pos, bool *ok) {
+  /* a rest parameter of an instance: its type is the instantiated symbol's (getTypeOfSymbol, cached on the symbol) */
+  if (sig->mapper && sig->psyms && cp->rest && cp->n && cp->params[cp->n - 1] == cp->rest && pos >= cp->n - 1 &&
+      sig->psyms[cp->n - 1] && cp->rest->type) {
+    *ok = true;
+    return cRestElementAt(cTypeOfSymbol(sig->psyms[cp->n - 1]), pos - (cp->n - 1), ok);
+  }
   if (!sig->mapper || !sig->psyms || pos >= cp->n || !sig->psyms[pos] || cp->params[pos]->dotDotDotToken)
     return cParamTypeAt(cp, pos, ok, sig->mapper);
   *ok = true;

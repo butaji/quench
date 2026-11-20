@@ -823,7 +823,9 @@ static TsType *cSigEffectiveRest(CSig *sig, CParams *cp, bool *ok) {
   *ok = true;
   if (!cp->rest) return NULL;
   if (!cp->rest->type) { *ok = false; return NULL; }
-  TsType *t = cTypeFromNodeM(cp->rest->type, sig->mapper);
+  /* the rest type of an instance is its instantiated parameter symbol's type (cached on the symbol) */
+  bool instRest = sig->mapper && sig->psyms && cp->n && cp->params[cp->n - 1] == cp->rest && sig->psyms[cp->n - 1];
+  TsType *t = instRest ? cTypeOfSymbol(sig->psyms[cp->n - 1]) : cTypeFromNodeM(cp->rest->type, sig->mapper);
   if (t == cErrorType || cIsTupleType(t)) { *ok = false; return NULL; }
   if (t->flags & TF_Any) return cTypeReference(cGlobalArrayDeclared(), &cAnyType, 1);
   return t;
