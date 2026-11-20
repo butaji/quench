@@ -72,6 +72,8 @@ typedef struct TsSymbol {
   struct TsSymbol *mergedInto;   /* recordMergedSymbol: the symbol this one was merged into */
   struct TsType *declaredType, *type;
   struct TsType *uniqueType;     /* the unique symbol type of a const or readonly property symbol */
+  struct TsSymbol *instTarget;   /* instantiated symbols: the symbol instantiated (instantiateSymbol) */
+  struct TsMapper *instMapper;   /* instantiated symbols: the mapper */
   uint32_t checkFlags;
   uint32_t checkId;              /* getSymbolId: assigned on first use, used in unique symbol names */
 } TsSymbol;

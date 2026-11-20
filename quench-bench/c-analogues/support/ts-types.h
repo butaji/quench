@@ -43,6 +43,8 @@ enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Anonymous = 16, OF_I
 
 typedef struct CSig CSig;
 typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; } CIndexInfo;
+/* an instantiation of a generic type by type arguments (the type's instantiations list) */
+typedef struct TsInst { struct TsType **key; int n; struct TsType *val; } TsInst;
 
 typedef struct TsType {
   uint32_t flags, objectFlags;
@@ -59,6 +61,15 @@ typedef struct TsType {
   struct TsType **typeParams;    /* generic declared types: their type parameters */
   int ntypeParams;
   TsNode *typeNode;              /* anonymous types from a type node; literal value */
+  struct TsMapper *mapper;       /* instantiated anonymous types: the mapper of the instantiation */
+  struct TsType **outerTps;      /* anonymous types: the outer type parameters of the declaration */
+  int nOuterTps;
+  bool outerDone, instsInit, declDone, basesDone;
+  TsInst *insts;                 /* instantiations of this generic type, by type arguments */
+  int ninsts, capInsts;
+  uint8_t couldContain;          /* couldContainTypeVariables: 0 not computed, 1 yes, 2 no */
+  struct TsMapper *sigMapper;    /* the mapper of the signatures and index infos of this type */
+  TsSymTable *declMembers;       /* declared members of an interface, class or type literal (own and late) */
   /* union and intersection */
   struct TsType **types;
   int ntypes;
@@ -73,7 +84,7 @@ typedef struct TsType {
   int nindex;
 } TsType;
 
-struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; };
+struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
 
 /* createType counts (typeCount) */
 static int cTypeCount;
@@ -93,6 +104,7 @@ static TsType *cNewType(uint32_t flags) {
 static TsType *cErrorType, *cAnyType, *cUnknownType, *cStringType, *cNumberType, *cBigIntType, *cBooleanType;
 static TsType *cESSymbolType, *cVoidType, *cUndefinedType, *cNullType, *cNeverType, *cNonPrimitiveType;
 static TsType *cTrueType, *cFalseType, *cGlobalThisType;
+static TsType *cIntrinsicMarkerType;   /* intrinsicMarkerType: the type of `intrinsic` in lib type aliases */
 
 /* the type of globalThis (createObjectType(Anonymous, globalThisSymbol), 16) */
 static void cCreateGlobalThisType(void) {
@@ -125,6 +137,7 @@ static void cCreateIntrinsicTypes(void) {
   cNullType = cIntrinsic(TF_Null);
   cNeverType = cIntrinsic(TF_Never);
   cNonPrimitiveType = cIntrinsic(TF_NonPrimitive);
+  cIntrinsicMarkerType = cIntrinsic(TF_Any);
 }
 
 /* ---- unported marker ---- */
@@ -142,6 +155,7 @@ static TsType *cUnported(const char *what) {
 /* ---- declared types, symbols ---- */
 static TsType *cTypeFromNode(TsNode *node);
 static TsType *cTypeOfSymbol(TsSymbol *sym);
+static bool cIsSignatureName(BName n);
 
 /* the type of a type parameter symbol (createTypeParameter, cached on the symbol) */
 static TsType *cTypeOfTypeParameter(TsSymbol *sym) {
@@ -153,32 +167,8 @@ static TsType *cTypeOfTypeParameter(TsSymbol *sym) {
   return t;
 }
 
-/* createTypeReference: a reference to a generic type with type arguments (cached per target and arguments) */
-static TsType **cRefCache;
-static int cRefN, cRefCap;
-static TsType *cTypeReference(TsType *target, TsType **args, int nargs) {
-  for (int i = 0; i < cRefN; i++) {
-    TsType *r = cRefCache[i];
-    if (r->target != target || r->nargs != nargs) continue;
-    bool same = true;
-    for (int k = 0; k < nargs && same; k++) same = r->args[k] == args[k];
-    if (same) return r;
-  }
-  TsType *r = cNewType(TF_Object);
-  r->objectFlags = OF_Reference;
-  r->target = target;
-  r->symbol = target->symbol;
-  r->args = ts_arena_alloc(sizeof(TsType *) * (size_t)(nargs ? nargs : 1));
-  memcpy(r->args, args, sizeof(TsType *) * (size_t)nargs);
-  r->nargs = nargs;
-  if (cRefN == cRefCap) {
-    cRefCap = cRefCap ? cRefCap * 2 : 64;
-    cRefCache = realloc(cRefCache, sizeof(TsType *) * (size_t)cRefCap);
-    if (!cRefCache) abort();
-  }
-  cRefCache[cRefN++] = r;
-  return r;
-}
+/* ts-instantiate.h: mappers, instantiation, type references (createTypeReference), unions and intersections */
+#include "ts-instantiate.h"
 
 /* literal types are cached per value (getStringLiteralType / getNumberLiteralType) */
 static TsType **cLitCache;
@@ -222,7 +212,7 @@ static TsType *cDeclaredTypeOfClassOrInterface(TsSymbol *sym) {
       for (int i = 0; dn->typeParameters && i < dn->typeParameters->n; i++) {
         TsNode *tp = dn->typeParameters->v[i];
         bool seen = false;
-        for (int k = 0; k < t->ntypeParams && !seen; k++) seen = t->typeParams[k]->symbol == tp->symbol;
+        for (int k = 0; k < t->ntypeParams && !seen; k++) seen = t->typeParams[k]->symbol == cGetMergedSymbol(tp->symbol);
         if (!seen) t->typeParams[t->ntypeParams++] = cTypeOfTypeParameter(cGetMergedSymbol(tp->symbol));
       }
     }
@@ -245,8 +235,22 @@ static TsType *cDeclaredTypeOfTypeAlias(TsSymbol *sym) {
   cAliasStack[cAliasDepth++] = sym;
   TsType *t = cTypeFromNode(d->type);
   cAliasDepth--;
+  if (t == cIntrinsicMarkerType) {
+    /* getDeclaredTypeOfTypeAlias (61914): BuiltinIteratorReturn is undefined under strictBuiltinIteratorReturn,
+     * which the project's tsconfig gets from "strict": true */
+    if (bnEq(sym->name, bnC("BuiltinIteratorReturn"))) t = cUndefinedType;
+    else t = cUnported("intrinsic type alias");
+  }
   sym->declaredType = t;
   return t;
+}
+
+/* the default type node of a type parameter (its declaration with a default; the merged declarations) */
+static TsNode *cTypeParamDefaultNode(TsType *tp) {
+  TsSymbol *sym = tp->symbol;
+  for (int i = 0; i < sym->ndecls; i++)
+    if (sym->decls[i]->defaultType) return sym->decls[i]->defaultType;
+  return NULL;
 }
 
 /* a type reference to a symbol with type arguments */
@@ -261,13 +265,22 @@ static TsType *cTypeFromSymbolReference(TsSymbol *s, TsNode *ref) {
     TsType *d = cDeclaredTypeOfClassOrInterface(s);
     int na = ref->typeArguments ? ref->typeArguments->n : 0;
     if (d->ntypeParams == 0 && na == 0) return d;
-    if (na != d->ntypeParams) return cUnported("type argument count");
-    TsType **args = ts_arena_alloc(sizeof(TsType *) * (size_t)(na ? na : 1));
+    if (na > d->ntypeParams) return cUnported("type argument count");
+    TsType **args = ts_arena_alloc(sizeof(TsType *) * (size_t)d->ntypeParams);
     for (int i = 0; i < na; i++) {
       args[i] = cTypeFromNode(ref->typeArguments->v[i]);
       if (args[i] == cErrorType) return cErrorType;
     }
-    return cTypeReference(d, args, na);
+    /* fillMissingTypeArguments (64560): the defaults, instantiated with the arguments before them */
+    for (int i = na; i < d->ntypeParams; i++) {
+      TsNode *dn = cTypeParamDefaultNode(d->typeParams[i]);
+      if (!dn) return cUnported("missing type argument without default");
+      TsType *def = cTypeFromNode(dn);
+      if (def == cErrorType) return cErrorType;
+      if (i > 0) def = cInstantiate(def, cCreateTypeMapper(d->typeParams, args, i));
+      args[i] = def;
+    }
+    return cTypeReference(d, args, d->ntypeParams);
   }
   if (s->flags & SF_TypeParameter) return cTypeOfTypeParameter(s);
   return cUnported("type reference kind");
@@ -317,8 +330,18 @@ static TsType *cUniqueSymbolType(TsNode *decl) {
   return t;
 }
 
-/* getTypeFromTypeNode (67684) for the node kinds of this project */
+static TsType *cTypeFromNodeWorker(TsNode *n);
+
+/* getTypeFromTypeNode (67684): the type of a type node, cached on the node (links.resolvedType) */
 static TsType *cTypeFromNode(TsNode *n) {
+  if (!n) return cErrorType;
+  if (n->resolvedType) return n->resolvedType;
+  TsType *t = cTypeFromNodeWorker(n);
+  n->resolvedType = t;
+  return t;
+}
+
+static TsType *cTypeFromNodeWorker(TsNode *n) {
   if (!n) return cErrorType;
   switch (n->kind) {
     case TSK_AnyKeyword: return cAnyType;
@@ -332,6 +355,7 @@ static TsType *cTypeFromNode(TsNode *n) {
     case TSK_UndefinedKeyword: return cUndefinedType;
     case TSK_NeverKeyword: return cNeverType;
     case TSK_VoidKeyword: return cVoidType;
+    case TSK_IntrinsicKeyword: return cIntrinsicMarkerType;
     case TSK_ParenthesizedType: return cTypeFromNode(n->type);
     case TSK_TypeOperator:
       if (n->extra != TSK_UniqueKeyword) return cUnported("type operator");
@@ -349,34 +373,14 @@ static TsType *cTypeFromNode(TsNode *n) {
     }
     case TSK_UnionType: case TSK_IntersectionType: {
       uint32_t fl = n->kind == TSK_UnionType ? TF_Union : TF_Intersection;
-      TsType **members = NULL;
-      int nm = 0, cap = 0;
-      for (int i = 0; n->types && i < n->types->n; i++) {
+      int cnt = n->types ? n->types->n : 0;
+      TsType **members = ts_arena_alloc(sizeof(TsType *) * (size_t)(cnt ? cnt : 1));
+      for (int i = 0; i < cnt; i++) {
         TsType *m = cTypeFromNode(n->types->v[i]);
         if (m == cErrorType) return cErrorType;
-        /* flatten nested unions and intersections of the same kind */
-        TsType **parts = &m;
-        int np = 1;
-        if (m->flags & fl) { parts = m->types; np = m->ntypes; }
-        for (int k = 0; k < np; k++) {
-          bool dup = false;
-          for (int j = 0; j < nm && !dup; j++) dup = members[j] == parts[k];
-          if (dup) continue;
-          if (nm == cap) {
-            cap = cap ? cap * 2 : 8;
-            members = realloc(members, sizeof(TsType *) * (size_t)cap);
-            if (!members) abort();
-          }
-          members[nm++] = parts[k];
-        }
+        members[i] = m;
       }
-      if (nm == 1 && fl == TF_Union) { TsType *only = members[0]; free(members); return only; }
-      TsType *u = cNewType(fl);
-      u->types = ts_arena_alloc(sizeof(TsType *) * (size_t)(nm ? nm : 1));
-      memcpy(u->types, members, sizeof(TsType *) * (size_t)nm);
-      u->ntypes = nm;
-      free(members);
-      return u;
+      return fl == TF_Union ? cGetUnionType(members, cnt) : cGetIntersectionType(members, cnt);
     }
     case TSK_ArrayType: {
       /* createArrayType: Array<T>, a reference to the global generic interface */
@@ -506,45 +510,93 @@ static TsSymTable *cMembersWithLate(TsSymbol *s, TsSymTable *early) {
   return res;
 }
 
-/* resolved members of an object type: the declared members, then inherited members of the base types */
+/* the declared members of an interface, class or type literal: its own symbols and the late-bound ones */
+static TsSymTable *cDeclaredMembers(TsType *d) {
+  if (!d->declDone) {
+    d->declDone = true;
+    d->declMembers = cMembersWithLate(d->symbol, d->symbol->members);
+  }
+  return d->declMembers;
+}
+
+/* getBaseTypes (61714) for interfaces and classes: the types named by the extends clauses */
+static void cResolveBaseTypes(TsType *d) {
+  if (d->basesDone) return;
+  d->basesDone = true;
+  TsSymbol *s = d->symbol;
+  TsType *found[64];
+  int nf = 0;
+  for (int dd = 0; dd < s->ndecls; dd++) {
+    TsNode *dn = s->decls[dd];
+    for (int h = 0; dn->heritageClauses && h < dn->heritageClauses->n; h++) {
+      TsNode *hc = dn->heritageClauses->v[h];
+      if (hc->extra != TSK_ExtendsKeyword) continue;
+      for (int e = 0; hc->types && e < hc->types->n; e++) {
+        TsNode *ewta = hc->types->v[e];
+        TsNode *expr = ewta->expression;
+        if (!expr || expr->kind != TSK_Identifier) { cUnported("base type expression"); continue; }
+        TsSymbol *bs = cSymbolOfTypeName(dn, expr);
+        if (!bs) { cUnported("unresolved base"); continue; }
+        TsType *bt = cTypeFromSymbolReference(bs, ewta);
+        if (bt == cErrorType) continue;
+        if (nf == 64) { cUnported("too many base types"); continue; }
+        found[nf++] = bt;
+      }
+    }
+  }
+  d->bases = cCopyTypes(found, nf);
+  d->nbases = nf;
+}
+
+static void cResolveMembers(TsType *t);
+
+/* resolveObjectTypeMembers (62289): the members of t are the declared members of src, instantiated
+ * under m (the identity when m is NULL), then the inherited members of the instantiated base types. */
+static void cResolveObjectMembers(TsType *t, TsType *src, TsMapper *m) {
+  TsSymTable *own = m ? cInstantiateTable(cDeclaredMembers(src), m) : cDeclaredMembers(src);
+  if (!own) own = bTableNew();
+  cResolveBaseTypes(src);
+  TsSymTable *res = src->nbases ? cTableCopy(own) : own;
+  for (int i = 0; i < src->nbases; i++) {
+    TsType *bi = m ? cInstantiate(src->bases[i], m) : src->bases[i];
+    if (bi == cErrorType) continue;
+    cResolveMembers(bi);
+    if (!bi->members) continue;
+    for (int k = 0; k < bi->members->n; k++) {
+      BName key = bi->members->e[k].key;
+      if (cIsSignatureName(key) || !(bi->members->e[k].sym->flags & SF_Value)) continue;
+      if (bTableIndex(res, key) < 0) bTableSet(res, key, bi->members->e[k].sym);
+    }
+  }
+  t->members = res;
+  t->sigMapper = m;
+}
+
+/* resolved members of an object type (resolveStructuredTypeMembers) */
 static void cResolveMembers(TsType *t) {
   if (t->resolved) return;
   t->resolved = true;
-  if (t->objectFlags & OF_Reference) return;
+  if (t->objectFlags & OF_Reference) {
+    /* resolveTypeReferenceMembers (62338): the identity when the arguments are the type's parameters */
+    TsType *tg = t->target;
+    bool identity = t->nargs == tg->ntypeParams;
+    for (int i = 0; identity && i < t->nargs; i++) identity = t->args[i] == tg->typeParams[i];
+    cResolveObjectMembers(t, tg, identity ? NULL : cCreateTypeMapper(tg->typeParams, t->args, t->nargs));
+    return;
+  }
+  if (t->target) {
+    /* resolveAnonymousTypeMembers (62809): the members of the target under the instantiation's mapper */
+    cResolveMembers(t->target);
+    t->members = cInstantiateTable(t->target->members, t->mapper);
+    t->sigMapper = t->mapper;
+    return;
+  }
   if (t->typeNode && (t->typeNode->kind == TSK_TypeLiteral)) {
-    t->members = cMembersWithLate(t->symbol, t->symbol->members);
+    t->members = cDeclaredMembers(t);
     return;
   }
   if (t->objectFlags & (OF_Interface | OF_Class)) {
-    TsSymbol *s = t->symbol;
-    TsSymTable *own = cMembersWithLate(s, s->members ? s->members : bTableNew());
-    /* base types: heritage clauses of the declarations (interface extends, class extends) */
-    TsSymTable *res = cTableCopy(own);
-    for (int d = 0; d < s->ndecls; d++) {
-      TsNode *dn = s->decls[d];
-      for (int h = 0; dn->heritageClauses && h < dn->heritageClauses->n; h++) {
-        TsNode *hc = dn->heritageClauses->v[h];
-        if (hc->extra != TSK_ExtendsKeyword) continue;
-        for (int e = 0; hc->types && e < hc->types->n; e++) {
-          TsNode *ewta = hc->types->v[e];
-          if (ewta->typeArguments && ewta->typeArguments->n) cUnported("generic base type");
-          TsNode *expr = ewta->expression;
-          if (!expr || expr->kind != TSK_Identifier) { cUnported("base type expression"); continue; }
-          TsSymbol *bs = cSymbolOfTypeName(dn, expr);
-          if (!bs) { cUnported("unresolved base"); continue; }
-          TsType *bt = cTypeFromSymbolReference(bs, ewta);
-          if (bt == cErrorType) continue;
-          cResolveMembers(bt);
-          if (!bt->members) continue;
-          for (int i = 0; i < bt->members->n; i++) {
-            BName key = bt->members->e[i].key;
-            if (cIsSignatureName(key)) continue;
-            if (bTableIndex(res, key) < 0) bTableSet(res, key, bt->members->e[i].sym);
-          }
-        }
-      }
-    }
-    t->members = res;
+    cResolveObjectMembers(t, t, NULL);
     return;
   }
   t->members = t->symbol ? t->symbol->members : NULL;
@@ -575,17 +627,30 @@ static TsSymbol *cPropertyOf(TsType *t, BName name) {
 }
 
 /* signatures of an object type: from the declarations of __call / __new, or the declarations of a
- * function or method symbol, or the type node of an anonymous function type */
+ * function or method symbol, or the type node of an anonymous function type. Each signature carries
+ * the mapper of the type (instantiateSignatures for instantiated types). */
 static void cResolveSignatures(TsType *t) {
   if (t->sigsResolved) return;
   t->sigsResolved = true;
   cResolveMembers(t);
+  if (t->target) {
+    /* an instantiated anonymous type: the target's signatures, instantiated with the type's mapper */
+    cResolveSignatures(t->target);
+    t->ncall = t->target->ncall;
+    t->nconstruct = t->target->nconstruct;
+    t->call = ts_arena_alloc(sizeof(CSig) * (size_t)(t->ncall ? t->ncall : 1));
+    for (int i = 0; i < t->ncall; i++) { t->call[i] = t->target->call[i]; t->call[i].mapper = t->mapper; }
+    t->construct = ts_arena_alloc(sizeof(CSig) * (size_t)(t->nconstruct ? t->nconstruct : 1));
+    for (int i = 0; i < t->nconstruct; i++) { t->construct[i] = t->target->construct[i]; t->construct[i].mapper = t->mapper; }
+    return;
+  }
   TsSymbol *callSym = NULL, *newSym = NULL;
   if (t->typeNode && (t->typeNode->kind == TSK_FunctionType || t->typeNode->kind == TSK_ConstructorType)) {
     bool ctor = t->typeNode->kind == TSK_ConstructorType;
     t->call = ts_arena_alloc(sizeof(CSig));
     t->call[0].decl = t->typeNode;
     t->call[0].isConstruct = ctor;
+    t->call[0].mapper = t->sigMapper;
     t->ncall = ctor ? 0 : 1;
     t->construct = ctor ? t->call : NULL;
     t->nconstruct = ctor ? 1 : 0;
@@ -599,6 +664,7 @@ static void cResolveSignatures(TsType *t) {
     for (int d = 0; d < s->ndecls; d++) {
       t->call[t->ncall].decl = s->decls[d];
       t->call[t->ncall].isConstruct = false;
+      t->call[t->ncall].mapper = t->sigMapper;
       t->ncall++;
     }
     return;
@@ -612,6 +678,7 @@ static void cResolveSignatures(TsType *t) {
     for (int d = 0; d < callSym->ndecls; d++) {
       t->call[t->ncall].decl = callSym->decls[d];
       t->call[t->ncall].isConstruct = false;
+      t->call[t->ncall].mapper = t->sigMapper;
       t->ncall++;
     }
   }
@@ -620,12 +687,13 @@ static void cResolveSignatures(TsType *t) {
     for (int d = 0; d < newSym->ndecls; d++) {
       t->construct[t->nconstruct].decl = newSym->decls[d];
       t->construct[t->nconstruct].isConstruct = true;
+      t->construct[t->nconstruct].mapper = t->sigMapper;
       t->nconstruct++;
     }
   }
 }
 
-/* index infos: the __index declarations with one parameter */
+/* index infos: the __index declarations with one parameter, instantiated with the type's mapper */
 static void cResolveIndexInfos(TsType *t) {
   if (t->index || t->nindex) return;
   cResolveMembers(t);
@@ -637,8 +705,8 @@ static void cResolveIndexInfos(TsType *t) {
     TsNode *decl = idx->decls[d];
     if (decl->parameters->n != 1) { cUnported("index signature arity"); continue; }
     CIndexInfo ii;
-    ii.keyType = cTypeFromNode(decl->parameters->v[0]->type);
-    ii.type = cTypeFromNode(decl->type);
+    ii.keyType = cTypeFromNodeM(decl->parameters->v[0]->type, t->sigMapper);
+    ii.type = cTypeFromNodeM(decl->type, t->sigMapper);
     ii.isReadonly = (bModifierFlags(decl) & TMF_Readonly) != 0;
     t->index[t->nindex++] = ii;
   }
@@ -646,6 +714,10 @@ static void cResolveIndexInfos(TsType *t) {
 
 /* ---- types of symbols (getTypeOfSymbol) ---- */
 static TsType *cTypeOfSymbol(TsSymbol *sym) {
+  if (sym->instTarget) {   /* getTypeOfInstantiatedSymbol (61381) */
+    if (!sym->type) sym->type = cInstantiate(cTypeOfSymbol(sym->instTarget), sym->instMapper);
+    return sym->type;
+  }
   sym = cGetMergedSymbol(sym);
   if (sym->type) return sym->type;
   TsType *t = NULL;
@@ -771,17 +843,18 @@ static bool cSplitParams(TsNode *decl, CParams *cp) {
 }
 
 /* the type of a parameter at a position (getTypeAtPosition): a rest parameter gives its element type */
-static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok) {
+static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
   TsNode *p = pos < cp->n ? cp->params[pos] : cp->rest;
   *ok = true;
   if (!p) { *ok = false; return cErrorType; }
   if (p->dotDotDotToken) {
     TsNode *tn = p->type;
-    if (tn && tn->kind == TSK_ArrayType) return cTypeFromNode(tn->elementType);
-    if (tn && tn->kind == TSK_TypeReference && tn->typeArguments && tn->typeArguments->n == 1) return cTypeFromNode(tn->typeArguments->v[0]);
+    if (tn && tn->kind == TSK_ArrayType) return cTypeFromNodeM(tn->elementType, m);
+    if (tn && tn->kind == TSK_TypeReference && tn->typeArguments && tn->typeArguments->n == 1)
+      return cTypeFromNodeM(tn->typeArguments->v[0], m);
     return cUnported("rest parameter element type");
   }
-  TsType *t = cTypeFromNode(p->type);
+  TsType *t = cTypeFromNodeM(p->type, m);
   if (p->questionToken && t != cErrorType) {
     TsType *u = cNewType(TF_Union);
     u->types = ts_arena_alloc(sizeof(TsType *) * 2);
@@ -794,8 +867,9 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok) {
 }
 
 static bool cCompareSignaturesIdentical(CSig *a, CSig *b) {
-  if (a->decl == b->decl) return true;
+  if (a->decl == b->decl && a->mapper == b->mapper) return true;
   TsNode *da = a->decl, *db = b->decl;
+  TsMapper *ma = a->mapper, *mb = b->mapper;
   if ((da->typeParameters && da->typeParameters->n) || (db->typeParameters && db->typeParameters->n)) {
     cUnported("generic signature");
     return true;
@@ -807,9 +881,9 @@ static bool cCompareSignaturesIdentical(CSig *a, CSig *b) {
   if (pa.n != pb.n || pa.min != pb.min || restA != restB) return false;
   /* this types: a target without a this type passes (as in TypeScript) */
   if (pa.thisParam) {
-    TsType *ta = cTypeFromNode(pa.thisParam->type);
+    TsType *ta = cTypeFromNodeM(pa.thisParam->type, ma);
     if (pb.thisParam) {
-      TsType *tb = cTypeFromNode(pb.thisParam->type);
+      TsType *tb = cTypeFromNodeM(pb.thisParam->type, mb);
       if (ta == cErrorType || tb == cErrorType) { cUnported("this parameter"); return true; }
       if (!cIdentical(ta, tb)) return false;
     }
@@ -817,7 +891,7 @@ static bool cCompareSignaturesIdentical(CSig *a, CSig *b) {
   /* parameter types at every position of the target */
   for (int i = 0; i < pb.n; i++) {
     bool okA, okB;
-    TsType *tx = cParamTypeAt(&pa, i, &okA), *ty = cParamTypeAt(&pb, i, &okB);
+    TsType *tx = cParamTypeAt(&pa, i, &okA, ma), *ty = cParamTypeAt(&pb, i, &okB, mb);
     if (!okA || !okB || tx == cErrorType || ty == cErrorType) { cUnported("parameter type"); return true; }
     if (!cIdentical(ty, tx)) return false;
   }
@@ -826,8 +900,8 @@ static bool cCompareSignaturesIdentical(CSig *a, CSig *b) {
     cUnported("type predicate");
     return true;
   }
-  TsType *ra = da->type ? cTypeFromNode(da->type) : cAnyType;
-  TsType *rb = db->type ? cTypeFromNode(db->type) : cAnyType;
+  TsType *ra = da->type ? cTypeFromNodeM(da->type, ma) : cAnyType;
+  TsType *rb = db->type ? cTypeFromNodeM(db->type, mb) : cAnyType;
   if (ra == cErrorType || rb == cErrorType) { cUnported("return type"); return true; }
   return cIdentical(ra, rb);
 }
@@ -886,6 +960,21 @@ static bool cIdentical(TsType *s, TsType *t) {
   cIdN++;
   cIdentityCacheCount++;
   return r;
+}
+
+/* Every checker run starts with empty caches: the arena that holds their entries is reset between runs. */
+static void cResetTypeCaches(void) {
+  cIdN = 0;
+  cLitN = 0;
+  cGlobalArrayType = NULL;
+  cNextSymbolId = 1;
+  cUnportedCount = 0;
+  cIdentityCacheCount = 0;
+  cInstTotal = 0;
+  cInstDepth = 0;
+  cActiveN = 0;
+  memset(cUnionTab, 0, sizeof cUnionTab);
+  memset(cInterTab, 0, sizeof cInterTab);
 }
 
 /* isTypeIdenticalTo: the entry point used by the checks */

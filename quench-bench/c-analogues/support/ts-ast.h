@@ -57,6 +57,7 @@ struct TsNode {
   int32_t binderSymbolCount;  /* SourceFile: file.symbolCount set by the binder */
   int32_t binderFlowCount;    /* SourceFile: flow nodes created by the binder */
   const char *fileName;       /* SourceFile: program file name */
+  struct TsType *resolvedType; /* checker: getTypeFromTypeNode cache (links.resolvedType) */
 };
 
 /* ---- arena ---- */

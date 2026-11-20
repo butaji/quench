@@ -243,6 +243,7 @@ static int parseProgram(int verify, long *sumNodes, long *sumIdents, long *sumSy
 
 /* ---- checker run: initializeTypeChecker, then the diagnostics of getPreEmitDiagnostics ---- */
 static long checkerSymbolCount;
+static int checkerInitSymbolCount; /* checker symbolCount after initializeTypeChecker, before the checks */
 
 /* Matches the produced diagnostics with node's list by file, line, column and code. */
 static int compareDiagnostics(int verbose) {
@@ -278,7 +279,18 @@ static int compareDiagnostics(int verbose) {
   return missing + extra;
 }
 
+/* the member part of checkClassLikeDeclaration and checkInterfaceDeclaration: the resolved members (base
+ * types instantiated, inherited members) and the index infos of every class and interface. */
+static void cResolveDeclaredMembersOf(TsNode *n) {
+  if ((n->kind == TSK_ClassDeclaration || n->kind == TSK_InterfaceDeclaration) && n->symbol) {
+    TsType *t = cDeclaredTypeOfClassOrInterface(cGetMergedSymbol(n->symbol));
+    cResolveMembers(t);
+    cResolveIndexInfos(t);
+  }
+}
+
 static void runChecker(void) {
+  cResetTypeCaches();
   cDiagCount = 0;
   cNDupPairs = 0;
   cFiles = programFiles;
@@ -287,9 +299,11 @@ static void runChecker(void) {
   cInitializeGlobals(programFiles, EXPECTED_PROGRAM_FILES);
   cCreateGlobalThisType();
   cReportAmalgamatedDuplicates();
+  checkerInitSymbolCount = cSymbolCount;
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkNames(programFiles[i]);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclaresObjectType);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckVariableLike);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cResolveDeclaredMembersOf);
 }
 
 int main(int argc, char **argv) {
@@ -305,7 +319,7 @@ int main(int argc, char **argv) {
   if (bad) FAIL("%d files differ from node", bad);
   runChecker();
   checkerSymbolCount = cSymbolCount;
-  printf("checker init: symbols %ld (node %d), diagnostics produced %d\n", sumSymbols + checkerSymbolCount,
+  printf("checker init: symbols %ld (node %d), diagnostics produced %d\n", sumSymbols + checkerInitSymbolCount,
          EXPECTED_SYMBOLS_AFTER_INIT, cDiagCount);
   int diagBad = compareDiagnostics(1);
 
@@ -323,6 +337,8 @@ int main(int argc, char **argv) {
   printf("checker counts: symbols %ld (node %d), types %d (node %d, after init %d), identity cache %d (node %d), unported type requests %d\n",
          sumSymbols + checkerSymbolCount, EXPECTED_SYMBOLS, cTypeCount, EXPECTED_TYPES, EXPECTED_TYPES_AFTER_INIT,
          cIdentityCacheCount, EXPECTED_REL_IDENTITY, cUnportedCount);
+  printf("checker instantiations: %d (node %d; node counts the body checks too, which are not ported)\n", cInstTotal,
+         EXPECTED_INSTANTIATIONS);
   if (diagBad) printf("validation FAILED: %d diagnostics differ from node\n", diagBad);
   else printf("validation ok\n");
   return diagBad ? 1 : 0;
