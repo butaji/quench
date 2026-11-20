@@ -93,6 +93,7 @@ fn write_field(
         | FieldLayout::SignedConstant
         | FieldLayout::WasmPayloadType
         | FieldLayout::CacheSiteIndex
+        | FieldLayout::StaticOffset
         | FieldLayout::WideIndexChunk
         | FieldLayout::BooleanFlag => write_scalar_field(output, instruction, field, layout),
         FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
@@ -160,6 +161,9 @@ fn write_scalar_field(
         }
         (InstructionField::C, FieldLayout::CacheSiteIndex) => {
             write!(output, " cache={}", instruction.cache_site_index())
+        }
+        (InstructionField::C, FieldLayout::StaticOffset) => {
+            write!(output, " offset={}", instruction.field_value(InstructionField::C))
         }
         (field, FieldLayout::BooleanFlag) => {
             write!(

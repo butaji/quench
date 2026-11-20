@@ -89,7 +89,7 @@ fn log(entries: &[&str]) -> Vec<String> {
 fn a_struct_read_checks_null_then_the_field_then_reads() {
     let mut probe = Probe::default();
     let value = field(StorageType::Val(ValType::I32));
-    field_read(&mut probe, Aggregate::Struct, 0, 0, value, GcFieldAccess::Read).expect("the probe never traps");
+    field_read(&mut probe, Aggregate::Struct, 0, 0, value, GcFieldAccess::Read, None).expect("the probe never traps");
     assert_eq!(
         probe.log,
         log(&[
@@ -107,7 +107,7 @@ fn a_struct_read_checks_null_then_the_field_then_reads() {
 fn an_array_read_traps_past_the_end_after_the_null_check() {
     let mut probe = Probe::default();
     let element = field(StorageType::Val(ValType::I32));
-    field_read(&mut probe, Aggregate::Array, 0, 0, element, GcFieldAccess::Read).expect("the probe never traps");
+    field_read(&mut probe, Aggregate::Array, 0, 0, element, GcFieldAccess::Read, None).expect("the probe never traps");
     assert_eq!(
         probe.log,
         log(&[
@@ -125,7 +125,7 @@ fn an_array_read_traps_past_the_end_after_the_null_check() {
 fn a_signed_packed_read_sign_extends_after_the_checks() {
     let mut probe = Probe::default();
     let packed = field(StorageType::I8);
-    field_read(&mut probe, Aggregate::Struct, 0, 0, packed, GcFieldAccess::ReadSigned).expect("the probe never traps");
+    field_read(&mut probe, Aggregate::Struct, 0, 0, packed, GcFieldAccess::ReadSigned, None).expect("the probe never traps");
     assert_eq!(
         probe.log,
         log(&[

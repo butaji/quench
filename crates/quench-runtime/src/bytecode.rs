@@ -238,6 +238,9 @@ pub(crate) enum FieldLayout {
     SignedConstant,
     /// The payload type a Wasm exception field read carries (`staged::wasm_exception::PayloadType`).
     WasmPayloadType,
+    /// A struct read's field's static payload offset, a 16-bit byte offset carried in the operand
+    /// (`wasm::gc::static_offset`); not a register.
+    StaticOffset,
 }
 
 #[cfg(feature = "aot")]
@@ -297,7 +300,8 @@ impl FieldLayout {
             | Self::BooleanFlag
             | Self::BinaryOperator
             | Self::SignedConstant
-            | Self::WasmPayloadType => BindingTime::Static,
+            | Self::WasmPayloadType
+            | Self::StaticOffset => BindingTime::Static,
         }
     }
 }
@@ -1145,11 +1149,11 @@ opcodes!($;
     WasmRefEq => Effect::PURE; layout Scalar; meaning Unused; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, Register),
     WasmStructNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, StaticOffset),
+    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, StaticOffset),
+    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, StaticOffset),
     WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE STRUCT_SET_FAMILY, @ Register, @ fields(Register, Register, Unused),
-    WasmStructGetRaw => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGetRaw => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, StaticOffset),
     WasmStructSetRaw => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM STRUCT_SET_FAMILY, @ Register, @ fields(Register, Register, Unused),
 
     WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNew; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
