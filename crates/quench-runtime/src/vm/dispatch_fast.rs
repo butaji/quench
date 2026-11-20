@@ -19145,10 +19145,11 @@ fn arithmetic_binary(instruction: WideInstruction) -> bool {
 /// Gives each plain `Binary` record of an arithmetic operator that still runs its generated row, at
 /// any accumulator field, that operator's `operator_row`: the operator becomes a parameter of the
 /// instantiation, so the row neither decodes nor dispatches on it (179 against 64 instructions for an
-/// int32 add). A record with an int32 constant operand takes the int32 form. Its misses go back to the
+/// int32 add). Its operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). Its misses go back to the
 /// generated row, so every operand pair stays decided by the one staged row.
 fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction]) {
-    use crate::bytecode::OperandKind::Constant;
+    use crate::bytecode::OperandKind::{Constant, Register};
+    use lane_frame::{OPERANDS_ANY, OPERANDS_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
         ($acc:expr) => {
             generated_row!(H, crate::staged::BINARY_ROW, $acc, FLAG_UNREAD) as Handler as *const ()
@@ -19162,16 +19163,31 @@ fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &
         }
         let int32_constant = |operand: crate::bytecode::Operand| operand.kind() == Some(Constant)
             && constants.get(usize::from(operand.payload())).is_some_and(|constant| constant.as_int().is_some());
-        let int32 = int32_constant(instruction.operand_b()) || int32_constant(instruction.operand_c());
+        let (left, right) = (instruction.operand_b(), instruction.operand_c());
+        let form = match (left.kind(), right.kind()) {
+            (Some(Register), Some(Register)) => OPERANDS_REGISTERS,
+            (Some(Register), Some(Constant)) if int32_constant(right) => OPERANDS_REGISTER_INT32,
+            (Some(Register), Some(Constant)) => OPERANDS_REGISTER_CONSTANT,
+            _ if int32_constant(left) || int32_constant(right) => OPERANDS_INT32,
+            _ => OPERANDS_ANY,
+        };
+        macro_rules! at_form {
+            ($acc:expr, $op:expr) => {
+                match form {
+                    OPERANDS_REGISTERS => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTERS> as Handler,
+                    OPERANDS_REGISTER_INT32 => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_INT32> as Handler,
+                    OPERANDS_REGISTER_CONSTANT => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_CONSTANT> as Handler,
+                    OPERANDS_INT32 => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_INT32> as Handler,
+                    _ => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_ANY> as Handler,
+                }
+            };
+        }
         macro_rules! pick {
             ($op:expr) => {
-                match (acc, int32) {
-                    (0, true) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, true> as Handler,
-                    (0, false) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, false> as Handler,
-                    (1, true) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_B, { $op as u8 }, true> as Handler,
-                    (1, false) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_B, { $op as u8 }, false> as Handler,
-                    (_, true) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_C, { $op as u8 }, true> as Handler,
-                    (_, false) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_C, { $op as u8 }, false> as Handler,
+                match acc {
+                    0 => at_form!(ACC_NONE, $op),
+                    1 => at_form!(ACC_B, $op),
+                    _ => at_form!(ACC_C, $op),
                 }
             };
         }
