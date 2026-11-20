@@ -2379,14 +2379,15 @@ static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsT
   CParams ps;
   if (!cSplitParams(sig->decl, &ps)) { cUnported("too many parameters"); return false; }
   if (ps.thisParam || ps.rest) { cUnported("generic call with a this or rest parameter"); return false; }
+  bool *prim = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));   /* hasPrimitiveConstraint */
   for (int k = 0; k < n; k++) {
-    if (cTypeParamDefaultNode(tps[k])) { cUnported("generic call with a default type parameter"); return false; }
     if (cTypeParamIsConst(tps[k])) { cUnported("generic call with a const type parameter"); return false; }
     TsType *c = cConstraintOf(tps[k]);
     if (c) {
       bool unp = false;
       if (cCouldContain(c)) { cUnported("generic call with a constraint of type parameters"); return false; }
-      if (cMaybePrimitive(c, &unp) || unp) { cUnported("generic call with a primitive constraint"); return false; }
+      prim[k] = cMaybePrimitive(c, &unp);
+      if (unp) { cUnported("generic call with a primitive constraint"); return false; }
     }
   }
   int before = cUnportedCount;
@@ -2436,8 +2437,16 @@ static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsT
     if (ci.ctn[k]) { cUnported("contravariant candidates of a generic call"); return false; }
     TsType *c = cConstraintOf(tps[k]);
     if (ci.cn[k] == 0) {
-      /* no candidate: the constraint, else unknown (getInferredType) */
-      inferred = c ? c : cUnknownType;
+      /* no candidate: the default (instantiated with the backreference mapper: not ported when it mentions a type parameter),
+       * else the constraint, else unknown (getInferredType) */
+      TsNode *dn = cTypeParamDefaultNode(tps[k]);
+      if (dn) {
+        inferred = cTypeFromNode(dn);
+        if (inferred == cErrorType) return false;
+        if (cCouldContain(inferred)) { cUnported("generic call with a default mentioning a type parameter"); return false; }
+      } else {
+        inferred = c ? c : cUnknownType;
+      }
     } else {
       TsType **cs = ci.cand[k];
       int nc = ci.cn[k];
@@ -2459,9 +2468,10 @@ static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsT
       bool unp = false;
       bool atTop = cTypeParamAtTop(ret, tps[k], &unp);
       if (unp) { cUnported("generic call with a conditional return type"); return false; }
-      bool widen = !notTop[k] && !atTop;
+      /* getCovariantInference: a primitive constraint keeps the literal types (regular), else they widen at the top level */
+      bool widen = !prim[k] && !notTop[k] && !atTop;
       TsType **base = ts_arena_alloc(sizeof(TsType *) * (size_t)nc);
-      for (int i = 0; i < nc; i++) base[i] = widen ? cWidenLiteralType(cs[i]) : cs[i];
+      for (int i = 0; i < nc; i++) base[i] = prim[k] ? cRegularType(cs[i]) : widen ? cWidenLiteralType(cs[i]) : cs[i];
       for (int i = 0; i < nc; i++) if (base[i] == cErrorType) return false;
       inferred = cCommonSupertype(base, nc);
       if (inferred == cErrorType) return false;

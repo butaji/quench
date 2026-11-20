@@ -646,6 +646,7 @@ static void cInferInit(CInfer *c, TsType **params, int n) {
   c->prio = ts_arena_alloc(sizeof(int) * (size_t)(n ? n : 1));
   for (int i = 0; i < n; i++) c->prio[i] = -1;
   c->priority = 0;
+  c->visS = c->visT = NULL; c->nvis = c->capvis = 0;
   c->contravariant = false;
   c->hits = 0;
 }
@@ -801,8 +802,24 @@ static bool cInferSignature(CInfer *c, CSig *src, CSig *tgt) {
   return true;
 }
 
+static void cInferObjectsBody(CInfer *c, TsType *source, TsType *target);
 /* inferFromObjectTypes: the properties of the target that the source has, then the signatures */
 static void cInferObjects(CInfer *c, TsType *source, TsType *target) {
+  /* invokeOnce: a pair already being inferred is not inferred again (node's circularity), and the depth is bounded */
+  for (int i = 0; i < c->nvis; i++) if (c->visS[i] == source && c->visT[i] == target) return;
+  if (c->nvis >= 100) { cUnported("inference of nested object types"); return; }
+  if (c->nvis == c->capvis) {
+    int cap = c->capvis ? 2 * c->capvis : 8;
+    TsType **ns = ts_arena_alloc(sizeof(TsType *) * (size_t)cap), **nt = ts_arena_alloc(sizeof(TsType *) * (size_t)cap);
+    for (int i = 0; i < c->nvis; i++) { ns[i] = c->visS[i]; nt[i] = c->visT[i]; }
+    c->visS = ns; c->visT = nt; c->capvis = cap;
+  }
+  c->visS[c->nvis] = source; c->visT[c->nvis] = target; c->nvis++;
+  cInferObjectsBody(c, source, target);
+  c->nvis--;
+}
+
+static void cInferObjectsBody(CInfer *c, TsType *source, TsType *target) {
   TsSymbol **tp;
   int nt = cPropertiesOf(target, &tp);
   for (int i = 0; i < nt; i++) {

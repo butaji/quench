@@ -106,6 +106,7 @@ typedef struct CInfer {
   int priority;                    /* the priority of the inference in progress */
   bool contravariant;
   int hits;                        /* candidates added at the current priority (the matched check of unions) */
+  TsType **visS, **visT; int nvis, capvis;   /* the pairs of object types being inferred (invokeOnce: a cycle ends) */
 } CInfer;
 static void cInferInit(CInfer *c, TsType **params, int n);
 static void cInferFrom(CInfer *c, TsType *source, TsType *target);
