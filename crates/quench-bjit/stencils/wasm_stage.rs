@@ -27,17 +27,14 @@ impl WasmSimd for StencilSimd {
     type Value = u128;
     type Scalar = u64;
 
-    #[inline(always)]
     fn constant_vector(&mut self, bits: u128) -> u128 {
         bits
     }
 
-    #[inline(always)]
     fn vector_native(&mut self, native: Native, left: u128, right: Option<u128>) -> u128 {
         native_bits(native, left, right.unwrap_or(0))
     }
 
-    #[inline(always)]
     fn vector_kernel(&mut self, selector: u32, left: u128, right: Option<u128>) -> u128 {
         kernel_bits(selector, left, right)
     }
@@ -48,7 +45,6 @@ impl WasmSimd for StencilSimd {
         kernel_bits(selector, left, right) as u64
     }
 
-    #[inline(always)]
     fn vector_shuffle(&mut self, lanes: [u8; V128_BYTES], left: u128, right: u128) -> u128 {
         shuffle_bits(left, right, lanes)
     }

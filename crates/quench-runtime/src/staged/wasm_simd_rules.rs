@@ -322,7 +322,6 @@ fn lane_wise(native: Native, left: u128, right: u128) -> u128 {
 
 /// The bits of the native row `native` on `left` and `right` (a shift count, or a vector; zero
 /// where it takes none): the whole-vector operators, the widening multiply, or a lane-wise row.
-#[inline(always)]
 pub(crate) fn native_bits(native: Native, left: u128, right: u128) -> u128 {
     match (native.op, native.lanes) {
         (NativeOp::Not, _) => !left,
