@@ -163,6 +163,9 @@ pub struct Row {
 }
 
 #[path = "../stencils/library.rs"]
+// The stencils and the build script share these files and each reads its own part: the lib does not read every
+// count, kind method or runtime operator table they mount (`codes.rs`, `supernode_rules.rs`).
+#[allow(dead_code)]
 pub mod library;
 #[path = "../stencils/site_bits.rs"]
 pub mod site_bits;
@@ -170,6 +173,7 @@ use library::TYPED_KINDS;
 #[path = "../stencils/row_names.rs"]
 pub mod row_names;
 #[path = "../stencils/supernodes.rs"]
+#[allow(dead_code)]
 pub mod supernodes;
 
 impl Place {
