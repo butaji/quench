@@ -13528,7 +13528,9 @@ fn forwarded_fields_in_lane<H: Host>(vm: &mut Vm<H>, callee: Value, argument: im
     // A nested construction's field is a fresh object of its own plan; allocation never collects.
     if let Some(nested) = vm.lane_stack.construct_plans[index].nested {
         if !construct_plan::nested_root_holds(vm, &nested) { return None; }
-        values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
+        if nested.constructs {
+            values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
+        }
     }
     Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
 }
@@ -15523,8 +15525,9 @@ fn initialize_fields_in_lane<H: Host>(
     argument: impl Fn(u16) -> Value,
 ) -> Option<(Value, bool)> {
     let stores = code.function(function as usize).initializer_stores(&code.constants)?;
-    initialize_stores_in_lane(vm, callee, constructor, |vm, this, each| {
-        add_stores_in_lane(vm, code, this, stores, argument, |_, _| None, each)
+    let env = vm.same_realm_user_target(callee).map_or(Value::UNDEFINED, |(_, _, env)| env);
+    initialize_stores_in_lane(vm, callee, constructor, env, |vm, this, nested, each| {
+        add_stores_in_lane(vm, code, this, stores, argument, nested, each)
     })
 }
 
