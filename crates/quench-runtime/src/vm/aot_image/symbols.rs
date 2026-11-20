@@ -35,6 +35,8 @@ pub(crate) enum Symbol {
     CaptureWords(u32),
     Invalidation,
     Helper(u32),
+    /// The helper table itself (`RelocKind::HelperTable`): the address an image loads a helper from.
+    HelperTable,
     ConstantPool(u32),
     Atom(u32),
     /// The monomorphized semantic entry of opcode number `op` (`Op::native_semantic_entry`).
@@ -137,13 +139,17 @@ impl SymbolTable {
     }
 }
 
+/// The helper table names no key: one symbol for the whole table.
+fn helper_table(_key: u32) -> Symbol { Symbol::HelperTable }
+
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 9] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 10] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
     (RelocKind::Invalidation as u32, invalidation),
     (RelocKind::Helper as u32, Symbol::Helper),
+    (RelocKind::HelperTable as u32, helper_table),
     (RelocKind::ConstantPool as u32, Symbol::ConstantPool),
     (RelocKind::Atom as u32, Symbol::Atom),
     (RelocKind::HeapValue as u32, Symbol::HeapValue),
@@ -163,6 +169,7 @@ impl Symbol {
             Self::CaptureWords(_) => RelocKind::CaptureWords as u32,
             Self::Invalidation => RelocKind::Invalidation as u32,
             Self::Helper(_) => RelocKind::Helper as u32,
+            Self::HelperTable => RelocKind::HelperTable as u32,
             Self::ConstantPool(_) => RelocKind::ConstantPool as u32,
             Self::Atom(_) => RelocKind::Atom as u32,
             Self::HeapValue(_) => RelocKind::HeapValue as u32,
@@ -175,6 +182,7 @@ impl Symbol {
     /// The key of a symbol keyed by its own number (a base PC is keyed by its label, `intern`).
     fn key(self) -> u32 {
         match self {
+            Self::HelperTable => 0,
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) => key,
             Self::Invalidation => 0,

@@ -71,6 +71,10 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
         }
         let import = match SymbolTable::decode(&image.labels, key.0, key.1) {
             Some(Symbol::Helper(helper)) => helper_import(isa, helper),
+            Some(Symbol::HelperTable) => NativeFunction::Import {
+                name: crate::NATIVE_JS_LANE_HELPERS_SYMBOL.to_owned(),
+                signature: crate::vm::compiled::native_lane_helpers_signature(isa),
+            },
             Some(Symbol::SemanticEntry(op)) => operation_import(isa, op),
             Some(Symbol::BasePc { .. }) => continue,
             Some(symbol) => return Err(format!("{symbol:?} has no object form yet")),

@@ -1262,6 +1262,20 @@ impl LaneHelpers {
     /// The address of `helper`: a symbol, or the table's entry (a symbol per use in live lane
     /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
     fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
+        // An ahead image names the one helper table and loads the entry it needs: the linked
+        // executable exports that table (`native_js_lane_helpers`), which is the only helper
+        // symbol a link can define without knowing how many helpers a build has.
+        if matches!(self, Self::Ahead) {
+            let table = lane_region::helper_table_symbol(builder);
+            let mut signature = ir::Signature::new(builder.func.signature.call_conv);
+            signature.returns.push(ir::AbiParam::new(types::I64));
+            let signature = builder.import_signature(signature);
+            let call = builder.ins().call_indirect(signature, table, &[]);
+            let table = builder.inst_results(call)[0];
+            let mut stage = object_slots::emit(builder);
+            return stage.raw_load(crate::staged::machine::Lane::I64, invariant(), table,
+                (helper as usize * std::mem::size_of::<usize>()) as i32);
+        }
         if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
         let mut stage = object_slots::emit(builder);
         match self.table_address(helper) {

@@ -97,6 +97,7 @@ fn resolve<H: Host>(image: &AotImage, vm: &mut Vm<H>, bases: &[u64], invalidatio
     let symbol = SymbolTable::decode(&image.labels, namespace, key)?;
     match symbol {
         Symbol::Helper(helper) => LaneHelper::addresses::<H>().get(helper as usize).map(|address| *address as usize as u64),
+        Symbol::HelperTable => Some(crate::vm::compiled::native_js_lane_helpers::<H>() as usize as u64),
         Symbol::SemanticEntry(op) => semantic_entry::<H>(op),
         Symbol::Atom(atom) => Some(u64::from(vm.intern_atom(image.atoms.get(atom as usize)?))),
         Symbol::Invalidation => Some(invalidation as u64),
