@@ -900,7 +900,7 @@
                     <div class="dots" id="dots"></div>
                     <div class="card-body swap" id="card-body" aria-live="polite">
                         <p class="feature-description" id="feature-description">One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.</p>
-                        <p class="tui-header"><span class="tui-prompt">$</span> <span id="feature-cmd">quench-node app.ts</span></p>
+                        <p class="tui-header"><span class="tui-prompt">$</span> <span id="feature-cmd">quench app.ts</span></p>
                         <p class="feature-detail" id="feature-detail">Types are kept, and they make it fast.</p>
                     </div>
                 </div>
@@ -936,20 +936,20 @@
             <div class="tile">
                 <h2>Run</h2>
                 <pre><span class="c"># TypeScript, JavaScript, WebAssembly</span>
-<span class="p">$</span> quench-node app.ts
-<span class="p">$</span> quench-node server.mjs</pre>
+<span class="p">$</span> quench app.ts
+<span class="p">$</span> quench server.mjs</pre>
             </div>
             <div class="tile">
                 <h2>Compile ahead of time</h2>
                 <pre><span class="c"># one native executable</span>
-<span class="p">$</span> quench-node --build-aot app.ts -o app
+<span class="p">$</span> quench --build-aot app.ts -o app
 <span class="p">$</span> ./app</pre>
             </div>
             <div class="tile wide">
                 <h2>Build from source</h2>
                 <pre><span class="p">$</span> git clone https://github.com/butaji/quench
 <span class="p">$</span> cd quench
-<span class="p">$</span> cargo build --release -p quench-node <span class="c"># add --features aot for the AOT compiler</span></pre>
+<span class="p">$</span> cargo build --release -p quench <span class="c"># add --features aot for the AOT compiler</span></pre>
                 <p class="fine" style="margin-top:0.75rem">Quench is early and has no packaged releases yet.</p>
             </div>
         </section>
@@ -1014,7 +1014,7 @@
                 <h2>Work on the engine</h2>
                 <ul>
                     <li><b>quench-runtime.</b> Interpreter, object model, GC and the tiers.</li>
-                    <li><b>quench-node.</b> Node-compatible APIs in Rust, checked against Node.</li>
+                    <li><b>quench.</b> Node-compatible APIs in Rust, checked against Node.</li>
                     <li><b>quench-wasm, quench-regexp, quench-intl.</b> Self-contained and easy to start in.</li>
                     <li><b>AGENTS.md.</b> The rules every change follows, and the gates it must pass.</li>
                 </ul>
@@ -1222,7 +1222,7 @@
                         "vertical1": "TS / JS / WASM",
                         "vertical2": "RUNTIME IN RUST",
                         "description": "One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.",
-                        "cmd": "quench-node app.ts",
+                        "cmd": "quench app.ts",
                         "detail": "Types are kept, and they make it fast."
             },
             {
@@ -1231,7 +1231,7 @@
                         "vertical1": "AHEAD OF TIME",
                         "vertical2": "NATIVE BINARY",
                         "description": "Compile an entry file and everything it imports into one native executable. Same semantics as the interpreter, decided ahead of time.",
-                        "cmd": "quench-node --build-aot app.ts -o app",
+                        "cmd": "quench --build-aot app.ts -o app",
                         "detail": "One file in. One binary out."
             },
             {
@@ -1240,7 +1240,7 @@
                         "vertical1": "NO-JIT  B-JIT",
                         "vertical2": "U-JIT  AOT",
                         "description": "A register-bytecode interpreter, b-jit copy-and-patch stencils and u-jit on Cranelift. Native code exits to the exact bytecode.",
-                        "cmd": "quench-node --no-jit | --b-jit | --u-jit",
+                        "cmd": "quench --no-jit | --b-jit | --u-jit",
                         "detail": "Pick a tier, or let the counters decide."
             },
             {
@@ -1249,7 +1249,7 @@
                         "vertical1": "34.3 SCORE",
                         "vertical2": "JIT TURNED OFF",
                         "description": "With JIT off, Quench scores 34.3 against Node --jitless at 39.7 and Bun at 32.2, on the 56 tests all three finish.",
-                        "cmd": "quench-node --no-jit jetstream",
+                        "cmd": "quench --no-jit jetstream",
                         "detail": "Goal: 1.5x the best of them."
             },
             {
@@ -1258,7 +1258,7 @@
                         "vertical1": "28.5 MB PEAK",
                         "vertical2": "GEOMEAN RSS",
                         "description": "Peak memory of 28.5 MB on the same tests. That is about a quarter of Node and 60% of Bun.",
-                        "cmd": "quench-node --no-jit jetstream",
+                        "cmd": "quench --no-jit jetstream",
                         "detail": "Goal: half of the best."
             },
             {
@@ -1285,7 +1285,7 @@
                         "vertical1": "MIT LICENSE",
                         "vertical2": "BUILD FROM SOURCE",
                         "description": "Rust from parser to codegen, MIT licensed. Early and moving fast: build it from source and read how it works.",
-                        "cmd": "cargo build --release -p quench-node",
+                        "cmd": "cargo build --release -p quench",
                         "detail": "Fork it. Measure it. Break it."
             }
 ];

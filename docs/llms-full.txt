@@ -135,9 +135,9 @@ Quench is fastest on long-running hot loops: on JetStream 3 with JIT off, gaussi
 
 git clone https://github.com/butaji/quench
 cd quench
-cargo build --release -p quench-node # interpreter + JIT tiers
-cargo build --release -p quench-node --features aot # adds the AOT compiler
-./target/release/quench-node app.ts
+cargo build --release -p quench # interpreter + JIT tiers
+cargo build --release -p quench --features aot # adds the AOT compiler
+./target/release/quench app.ts
 
 ## Questions
 
@@ -207,9 +207,9 @@ One 64-bit word per value, compact object layouts, a register-bytecode interpret
 
 git clone https://github.com/butaji/quench
 cd quench
-cargo build --release -p quench-node # interpreter + JIT tiers
-cargo build --release -p quench-node --features aot # adds the AOT compiler
-./target/release/quench-node app.ts
+cargo build --release -p quench # interpreter + JIT tiers
+cargo build --release -p quench --features aot # adds the AOT compiler
+./target/release/quench app.ts
 
 ## Questions
 
@@ -239,12 +239,12 @@ quench.run / updated 20 November 2026
 
 Quench's AOT compiler turns a JavaScript or TypeScript program into machine code, not a bundled script.
 
-Quench compiles a JavaScript or TypeScript entry file and its imports ahead of time into one native executable: quench-node --build-aot app.ts -o app. The program is lowered to machine code with the same meaning as Quench's interpreter; the full interpreter and JITs are left out unless the program uses eval or new Function. AOT is experimental and no AOT speed numbers are published yet.
+Quench compiles a JavaScript or TypeScript entry file and its imports ahead of time into one native executable: quench --build-aot app.ts -o app. The program is lowered to machine code with the same meaning as Quench's interpreter; the full interpreter and JITs are left out unless the program uses eval or new Function. AOT is experimental and no AOT speed numbers are published yet.
 
 ## Usage
 
-cargo build --release -p quench-node --features aot
-./target/release/quench-node --build-aot app.ts -o app
+cargo build --release -p quench --features aot
+./target/release/quench --build-aot app.ts -o app
 ./app
 
 ## How it compares
@@ -287,7 +287,7 @@ Benchmark rows: interpreter only in every engine (quench --no-jit, node --jitles
 ## Questions
 
 ### How do I compile JavaScript or TypeScript to a native executable?
-With Quench built with the aot feature, run quench-node --build-aot app.ts -o app, then ./app. The entry file and the modules it imports are compiled ahead of time into one native executable.
+With Quench built with the aot feature, run quench --build-aot app.ts -o app, then ./app. The entry file and the modules it imports are compiled ahead of time into one native executable.
 
 ### Is the Quench AOT compiler faster than Node?
 No AOT speed numbers are published yet. The goal is AOT code within 5x of the equivalent C program, and it is not yet met on every benchmark.
@@ -563,7 +563,7 @@ We built a closed-world JavaScript-to-native compiler, measured it, and threw it
 
 Ahead-of-time compilation for JavaScript is an old wish: hand the tool a program, get back one native executable that starts instantly and needs no runtime installed. Quench has a mode for it.
 
-$ quench-node --build-aot app.ts -o app
+$ quench --build-aot app.ts -o app
 $ ./app
 
 This post is about the design behind that command, and the version of it we discarded on 7 November 2026.

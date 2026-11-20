@@ -85,7 +85,7 @@ impl Mode {
             }
             _ => {
                 output(bin, &[args, &["-e", "0"]].concat(), suite, env)?;
-                Ok(format!("quench-node {} accepted {args:?}", self.name()))
+                Ok(format!("quench {} accepted {args:?}", self.name()))
             }
         }
     }

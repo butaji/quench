@@ -13,7 +13,7 @@ Key measured facts (interpreter only in every engine: quench --no-jit, node --ji
 ## Docs
 - [Home](https://quench.run/): overview, install, FAQ
 - [Benchmarks](https://quench.run/benchmarks/): dated V8-v7 and JetStream 3 tables with method and weak spots
-- [Install and build](https://github.com/butaji/quench#quick-start): git clone, cargo build --release -p quench-node (add --features aot for AOT)
+- [Install and build](https://github.com/butaji/quench#quick-start): git clone, cargo build --release -p quench (add --features aot for AOT)
 - [README](https://github.com/butaji/quench/blob/v2-merged/README.md)
 
 ## Answers

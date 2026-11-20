@@ -11,7 +11,7 @@ const assert = require("assert");
     true,
     ["sign", "verify"],
   );
-  const data = new TextEncoder().encode("quench-node");
+  const data = new TextEncoder().encode("quench");
   const signature = await crypto.subtle.sign(
     { name: "RSA-PSS", saltLength: 32 },
     pair.privateKey,

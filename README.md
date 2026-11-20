@@ -29,8 +29,8 @@
 ---
 
 ```console
-$ quench-node app.ts                      # run TypeScript, JavaScript or WebAssembly
-$ quench-node --build-aot app.ts -o app   # or compile the whole program to one native executable
+$ quench app.ts                      # run TypeScript, JavaScript or WebAssembly
+$ quench --build-aot app.ts -o app   # or compile the whole program to one native executable
 $ ./app
 ```
 
@@ -71,8 +71,8 @@ Quench is early and has no packaged releases yet. Build it from source with the 
 ```sh
 git clone https://github.com/butaji/quench
 cd quench
-cargo build --release -p quench-node                    # interpreter + JIT tiers
-cargo build --release -p quench-node --features aot     # adds the AOT compiler
+cargo build --release -p quench                    # interpreter + JIT tiers
+cargo build --release -p quench --features aot     # adds the AOT compiler
 ```
 
 The engine itself is pure Rust; the Node layer links OpenSSL (for `node:crypto` and TLS) and zstd.
@@ -80,8 +80,8 @@ The engine itself is pure Rust; the Node layer links OpenSSL (for `node:crypto` 
 Then run something you already have:
 
 ```sh
-./target/release/quench-node app.ts
-./target/release/quench-node -e 'console.log([1, 2, 3].map(x => x * 2))'
+./target/release/quench app.ts
+./target/release/quench -e 'console.log([1, 2, 3].map(x => x * 2))'
 ```
 
 Choose an execution tier with a flag. Every mode must print the same output:
@@ -121,7 +121,7 @@ The engine follows a few laws, enforced by lints and tests in this repository ([
 | ----- | ---------- |
 | [`quench-runtime`](crates/quench-runtime) | Interpreter, object model, GC, u-jit and AOT |
 | [`quench-bjit`](crates/quench-bjit) | Copy-and-patch stencils for b-jit |
-| [`quench-node`](crates/quench-node) | The `quench-node` binary and Node-compatible APIs |
+| [`quench`](crates/quench) | The `quench` binary and Node-compatible APIs |
 | [`quench-wasm`](crates/quench-wasm) | WebAssembly |
 | [`quench-regexp`](crates/quench-regexp) · [`quench-intl`](crates/quench-intl) · [`quench-temporal`](crates/quench-temporal) | RegExp, Intl and Temporal |
 | [`quench-test262`](crates/quench-test262) | Test262 runner with Node-arbitrated waivers |
