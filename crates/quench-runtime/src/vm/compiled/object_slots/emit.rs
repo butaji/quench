@@ -4,7 +4,7 @@ use super::*;
 use crate::staged::region::Mutability;
 use crate::staged::{Access, Domain, NumericStage, Stage, Table};
 use crate::staged::flow::FlowStage;
-use crate::staged::math::{FloatUnary, ROUND_HALF};
+use crate::staged::math::FloatUnary;
 use crate::staged::number_machine as numbers;
 use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use crate::vm::compiled::regions;
@@ -39,44 +39,6 @@ impl Emit<'_, '_> {
         let watch = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.store_watch));
         let counts = self.and_imm(watch, crate::staged::layout_offsets::STORE_WATCH_COUNTS);
         self.raw_compare_imm(Relation::Equal, counts, 0)
-    }
-
-    /// `Math.sign` (`staged::math::float_unary`): `-1` or `1` by the sign bit; NaN and both zeros are the operand.
-    fn sign(&mut self, value: ir::Value) -> ir::Value {
-        let zero = self.f64_constant(0.0);
-        let (one, minus_one) = (self.f64_constant(1.0), self.f64_constant(-1.0));
-        let negative = self.raw_compare(Relation::FloatLess, value, zero);
-        let signed = self.raw_select(negative, minus_one, one);
-        let is_zero = self.raw_compare(Relation::FloatEqual, value, zero);
-        let unordered = self.raw_compare(Relation::FloatUnordered, value, value);
-        let keep = self.raw_binary(Binary::Or, is_zero, unordered);
-        self.raw_select(keep, value, signed)
-    }
-
-    /// `Math.round` (`staged::math::float_unary`): NaN, both zeros and infinities are the operand;
-    /// `-0` for `-0.5 <= value < 0`; else the floor, one more where the excess reaches a half.
-    fn round_half_up(&mut self, value: ir::Value) -> ir::Value {
-        let (zero, half) = (self.f64_constant(0.0), self.f64_constant(ROUND_HALF));
-        let infinite = self.f64_constant(f64::INFINITY);
-        let unordered = self.raw_compare(Relation::FloatUnordered, value, value);
-        let is_zero = self.raw_compare(Relation::FloatEqual, value, zero);
-        let magnitude = self.raw_unary(Unary::FloatAbsolute, value);
-        let is_infinite = self.raw_compare(Relation::FloatEqual, magnitude, infinite);
-        let kept = self.raw_binary(Binary::Or, unordered, is_zero);
-        let keep = self.raw_binary(Binary::Or, kept, is_infinite);
-        let floor = self.raw_unary(Unary::Floor, value);
-        let excess = self.raw_binary(Binary::FloatSub, value, floor);
-        let up = self.raw_compare(Relation::FloatGreaterEqual, excess, half);
-        let one = self.f64_constant(1.0);
-        let step = self.raw_select(up, one, zero);
-        let rounded = self.raw_binary(Binary::FloatAdd, floor, step);
-        let minus_half = self.f64_constant(-ROUND_HALF);
-        let at_least_minus_half = self.raw_compare(Relation::FloatGreaterEqual, value, minus_half);
-        let below_zero = self.raw_compare(Relation::FloatLess, value, zero);
-        let rounds_to_zero = self.raw_binary(Binary::And, at_least_minus_half, below_zero);
-        let minus_zero = self.f64_constant(-0.0);
-        let signed = self.raw_select(rounds_to_zero, minus_zero, rounded);
-        self.raw_select(keep, value, signed)
     }
 
     /// `imm` as an operand: Cranelift folds a constant operand back into the instruction's immediate.
@@ -229,6 +191,27 @@ impl Stage for Emit<'_, '_> {
     }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
         self.compare(Relation::UnsignedLess, a, b)
+    }
+    fn eq(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
+        self.compare(Relation::Equal, a, b)
+    }
+    /// A do-while in a header block whose parameters are the carried words. The body is emitted into the
+    /// header: its `go_on` branches back to the header with the next words, or on to the exit block, whose
+    /// parameters are the final words. The header is sealed after the back edge.
+    fn loop_words<const N: usize>(&mut self, init: [ir::Value; N],
+        mut body: impl FnMut(&mut Self, [ir::Value; N]) -> (ir::Value, [ir::Value; N])) -> [ir::Value; N] {
+        let kinds = init.map(|word| self.builder.func.dfg.value_type(word));
+        let (header, exit) = (self.builder.create_block(), self.builder.create_block());
+        let carried: [ir::Value; N] = std::array::from_fn(|index| self.builder.append_block_param(header, kinds[index]));
+        let finals: [ir::Value; N] = std::array::from_fn(|index| self.builder.append_block_param(exit, kinds[index]));
+        self.goto(header, &init[..]);
+        self.builder.switch_to_block(header);
+        let (go_on, next) = body(self, carried);
+        self.branch_if(go_on, (header, &next[..]), (exit, &next[..]));
+        self.builder.seal_block(header);
+        self.builder.switch_to_block(exit);
+        self.builder.seal_block(exit);
+        finals
     }
     fn uextend32(&mut self, a: ir::Value) -> ir::Value {
         if self.raw_lane(a) == Lane::I32 { self.widen(a) } else { a }
@@ -395,6 +378,12 @@ impl NumericStage for Emit<'_, '_> {
     fn float_negate(&mut self, value: ir::Value) -> ir::Value {
         self.raw_unary(Unary::FloatNegate, value)
     }
+    /// IEEE equality of two binary64 words: a word of an integer lane is read as its bits.
+    fn float_eq(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+        let left = if self.raw_lane(left) == Lane::F64 { left } else { self.f64_from_bits(left) };
+        let right = if self.raw_lane(right) == Lane::F64 { right } else { self.f64_from_bits(right) };
+        self.raw_compare(Relation::FloatEqual, left, right)
+    }
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         numbers::checked_int32_arithmetic(self, operation, left, right)
@@ -433,8 +422,8 @@ impl NumericStage for Emit<'_, '_> {
                 let single = self.raw_unary(Unary::Demote, value);
                 self.raw_unary(Unary::Promote, single)
             }
-            FloatUnary::Round => self.round_half_up(value),
-            FloatUnary::Sign => self.sign(value),
+            FloatUnary::Round => crate::staged::math::round(self, value),
+            FloatUnary::Sign => crate::staged::math::sign(self, value),
         }
     }
     fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {

@@ -121,10 +121,7 @@ impl<H: Host> Vm<H> {
             let words = elements.narrow_words()?;
             ConcatSegment::Narrow(words.as_ptr(), words.len())
         };
-        if !self.concat_spreadable_proved(shape) && !self.prove_concat_spreadable_absent(shape, symbol) {
-            return None;
-        }
-        Some(segment)
+        self.concat_spreadable_absent_shape(shape, symbol).then_some(segment)
     }
 
     /// `array_concat_dense` where an item's backing is neither wide nor narrow (doubles):
@@ -189,16 +186,15 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let shape = array.shape();
-        if self.concat_spreadable_proved(shape) {
-            return true;
-        }
-        self.prove_concat_spreadable_absent(shape, symbol)
+        self.concat_spreadable_absent_shape(shape, symbol)
     }
 
-    /// Whether `concat_spreadable_proof` holds for arrays of `shape`.
+    /// `concat_spreadable_absent` for an ordinary Array of `shape`: the recorded proof for that
+    /// shape (`concat_spreadable_proof`) answers while its cell holds, else the proof is made.
     #[inline(always)]
-    fn concat_spreadable_proved(&self, shape: u32) -> bool {
+    fn concat_spreadable_absent_shape(&mut self, shape: u32, symbol: Value) -> bool {
         self.concat_spreadable_proof.is_some_and(|(proved, cell)| proved == shape && cell.holds())
+            || self.prove_concat_spreadable_absent(shape, symbol)
     }
 
     #[cold]

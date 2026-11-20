@@ -2044,6 +2044,10 @@ pub(crate) struct Vm<H> {
     /// about to reach its general native, so that native skips that body (the one-shot flag is
     /// taken at each such native's entry, and cleared at each dispatcher attempt).
     declined_fast: Option<Native>,
+    /// The index a declined `indexOf` or `includes` dense walk stopped at (`Err(Some(index))` of
+    /// `dense_search_resume`), recorded with `declined_fast` naming that native and taken with it
+    /// by the general native, which resumes its steps there instead of rescanning the prefix.
+    declined_resume: Option<usize>,
     /// The programs the running job queues return to, innermost last (`Vm::run_job_queue`):
     /// an await's job leaves its function's program active for the queue's next jobs, so a
     /// collection keeps each of these, which the queue makes active again when it ends.

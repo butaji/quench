@@ -1883,6 +1883,11 @@ impl<H: Host> Vm<H> {
         else {
             return None;
         };
+        if let Some(operator) = numeric_binary_operator(op)
+            && let Some(value) = crate::staged::bigint_small::small_operation(operator, left, right)
+        {
+            return Some(Ok(value));
+        }
         Some(match op {
             ADDITION => Ok(left.add(right)),
             SUBTRACTION => Ok(left.sub(right)),
@@ -1926,12 +1931,10 @@ impl<H: Host> Vm<H> {
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
     pub(super) fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
-        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
-            (self.heap.get(left), self.heap.get(right))
-        else {
+        if !(self.is_bigint(left) && self.is_bigint(right)) {
             return None;
-        };
-        let ordering = left.cmp(right);
+        }
+        let ordering = super::finalization::compare_bigint_values(&self.heap, left, right)??;
         NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 

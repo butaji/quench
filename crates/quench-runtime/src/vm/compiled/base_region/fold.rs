@@ -111,23 +111,25 @@ fn leaving_number(region: &LoopRegion, instruction: WideInstruction) -> Option<D
     (row.kind != Kind::Add && instruction.result_flags() == 0 && super::numbers::self_checking(&row, None)).then_some(row)
 }
 
-/// The Number operation a native Math method computes (`math_call`'s row), if it is one.
+/// The Number operation a native Math method computes (`math_call`'s row), if it is one: the row's
+/// `MathCall` read as the base tier's `Kind`. The libm and two-Number functions are no row.
 pub(super) fn math_kind(native: crate::heap::Native) -> Option<Kind> {
-    use crate::heap::Native;
-    Some(match native {
-        Native::MathSqrt => Kind::Sqrt,
-        Native::MathFloor => Kind::Floor,
-        Native::MathCeil => Kind::Ceil,
-        Native::MathTrunc => Kind::Trunc,
-        Native::MathAbs => Kind::Abs,
-        Native::MathRound => Kind::Round,
-        Native::MathMin => Kind::Min,
-        Native::MathMax => Kind::Max,
-        Native::MathImul => Kind::Imul,
-        Native::MathClz32 => Kind::Clz32,
-        Native::MathFround => Kind::Fround,
-        Native::MathSign => Kind::Sign,
-        _ => return None,
+    use crate::staged::call_native::MathCall;
+    use crate::staged::math::FloatUnary;
+    Some(match crate::vm::number::math_call(native)? {
+        MathCall::Unary(FloatUnary::Sqrt) => Kind::Sqrt,
+        MathCall::Unary(FloatUnary::Floor) => Kind::Floor,
+        MathCall::Unary(FloatUnary::Ceil) => Kind::Ceil,
+        MathCall::Unary(FloatUnary::Trunc) => Kind::Trunc,
+        MathCall::Unary(FloatUnary::Abs) => Kind::Abs,
+        MathCall::Unary(FloatUnary::Round) => Kind::Round,
+        MathCall::Unary(FloatUnary::Fround) => Kind::Fround,
+        MathCall::Unary(FloatUnary::Sign) => Kind::Sign,
+        MathCall::Extreme(true) => Kind::Max,
+        MathCall::Extreme(false) => Kind::Min,
+        MathCall::Imul => Kind::Imul,
+        MathCall::LeadingZeros => Kind::Clz32,
+        MathCall::Libm(_) | MathCall::Binary(_) => return None,
     })
 }
 

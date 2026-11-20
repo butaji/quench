@@ -113,6 +113,22 @@ pub(crate) mod strings;
 pub(crate) mod string_length;
 pub(crate) mod code_units;
 pub(crate) mod parse_int;
+/// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
+pub(crate) mod string_text;
+/// String search builtins (indexOf, lastIndexOf, includes, startsWith, endsWith) and cuts (slice, substring, substr).
+pub(crate) mod string_search;
+/// String.prototype.split with a string separator: the cut offsets, once.
+pub(crate) mod string_split;
+/// String.prototype.replace/replaceAll with a string pattern: the plan and the write, once.
+pub(crate) mod string_replace;
+/// Map/Set/WeakMap/WeakSet hash and probe: one lookup body.
+pub(crate) mod collections;
+/// Array indexOf/includes/lastIndexOf over dense elements: one search body.
+pub(crate) mod array_search;
+/// BigInt small-magnitude arithmetic and comparison: one body.
+pub(crate) mod bigint_small;
+/// The calendar fields of a Date's time value, derived once for the getters, setters and `toISOString` (`vm::date`).
+pub(crate) mod date_fields;
 pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod array_iteration;

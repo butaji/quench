@@ -100,6 +100,22 @@ impl Stage for Concrete {
     #[inline(always)]
     fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
     #[inline(always)]
+    fn eq(&mut self, a: u64, b: u64) -> bool { a == b }
+    /// A plain Rust loop: the body runs on the state until it says the loop ends.
+    #[inline(always)]
+    fn loop_words<const N: usize>(&mut self, init: [u64; N], mut body: impl FnMut(&mut Self, [u64; N]) -> (bool, [u64; N]))
+        -> [u64; N] {
+        let mut state = init;
+        loop {
+            let (go_on, next) = body(self, state);
+            state = next;
+            if !go_on {
+                break;
+            }
+        }
+        state
+    }
+    #[inline(always)]
     fn uextend32(&mut self, a: u64) -> u64 { a }
     #[inline(always)]
     fn sub(&mut self, a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
@@ -145,7 +161,7 @@ impl Stage for Concrete {
     fn f64_to_f32(&mut self, a: u64) -> u64 { u64::from((f64::from_bits(a) as f32).to_bits()) }
     #[inline(always)]
     fn clamp_u8(&mut self, a: u64) -> u64 {
-        u64::from(crate::value::number_to_uint8_clamp(f64::from_bits(a)))
+        u64::from(super::math::clamp_u8(f64::from_bits(a)))
     }
     #[inline(always)]
     fn fill_window(&mut self, top: u64, undefined: u64, prefix: &[u64], passed: super::Passed<'_, u64>, registers: u16) {

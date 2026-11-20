@@ -1,4 +1,8 @@
 use super::*;
+use crate::staged::typed_elements::{
+    element_integer, element_number, find_number_element, store_double_element, store_element_number,
+    store_number_element, NATIVE_LITTLE_ENDIAN,
+};
 
 const MAX_TYPED_ARRAY_ELEMENT_WIDTH: usize = std::mem::size_of::<u64>();
 
@@ -310,19 +314,10 @@ impl<H: Host> Vm<H> {
         let Some(start) = view.element(index, bytes.len()) else {
             return Some(Value::UNDEFINED);
         };
-        Some(match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Value::integer(i32::from(bytes[start])),
-            TypedArrayKind::Int8 => Value::integer(i32::from(bytes[start] as i8)),
-            TypedArrayKind::Uint16 => Value::integer(i32::from(u16::from_ne_bytes([bytes[start], bytes[start + 1]]))),
-            TypedArrayKind::Int16 => Value::integer(i32::from(i16::from_ne_bytes([bytes[start], bytes[start + 1]]))),
-            TypedArrayKind::Int32 => Value::integer(i32::from_ne_bytes(
-                bytes[start..start + 4].try_into().expect("an Int32 element has four bytes"),
-            )),
-            _ => {
-                let mut element = [0; size_of::<u64>()];
-                element[..kind.width()].copy_from_slice(&bytes[start..start + kind.width()]);
-                Value::number(Self::typed_array_number_of(kind, &element))
-            }
+        let field = &bytes[start..start + kind.width()];
+        Some(match element_integer(kind, field) {
+            Some(integer) => Value::integer(integer),
+            None => Value::number(element_number(kind, field, NATIVE_LITTLE_ENDIAN)),
         })
     }
 
@@ -445,34 +440,31 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(
                 u64::from_ne_bytes(bytes[..8].try_into().unwrap()).into(),
             )),
-            _ => Value::number(Self::typed_array_number_of(kind, bytes)),
+            _ => Value::number(element_number(kind, &bytes[..kind.width()], NATIVE_LITTLE_ENDIAN)),
         })
     }
 
-    /// The Number a numeric typed array element of `kind` holds in its leading `bytes`.
-    fn typed_array_number_of(kind: TypedArrayKind, bytes: &[u8; size_of::<u64>()]) -> f64 {
-        match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => bytes[0] as f64,
-            TypedArrayKind::Uint16 => u16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
-            TypedArrayKind::Uint32 => {
-                u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-            }
-            TypedArrayKind::Int8 => bytes[0] as i8 as f64,
-            TypedArrayKind::Int16 => i16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
-            TypedArrayKind::Int32 => {
-                i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-            }
-            TypedArrayKind::Float16 => {
-                super::number::half_to_f64(u16::from_ne_bytes([bytes[0], bytes[1]]))
-            }
-            TypedArrayKind::Float32 => {
-                f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-            }
-            TypedArrayKind::Float64 => f64::from_ne_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ]),
-            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => unreachable!("a BigInt element is no Number"),
-        }
+    /// The first index in `from..end` of the typed array `object` whose element is the Number
+    /// `search` (strictly, or under `nan_matches` as SameValueZero), read over its attached bytes:
+    /// the search core `staged::typed_elements::find_number_element` over the elements the
+    /// general element read would answer. An element past the view's length or of a detached
+    /// buffer matches nothing, as `typed_array_get` answers `undefined` for it.
+    pub(super) fn typed_array_find_number(
+        &self,
+        object: Value,
+        from: usize,
+        end: usize,
+        search: f64,
+        nan_matches: bool,
+    ) -> Option<usize> {
+        let view = self.typed_array_view(object)?;
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
+            return None;
+        };
+        let bytes = bytes.read();
+        let end = end.min(view.length_within(bytes.len()));
+        let elements = bytes.get(view.offset..view.offset + end * view.kind.width())?;
+        find_number_element(elements, view.kind, from, search, nan_matches)
     }
 
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
@@ -662,12 +654,9 @@ impl<H: Host> Vm<H> {
             _ => view.element(index, store.len()),
         };
         if let Some(start) = start {
-            match view.kind {
-                TypedArrayKind::Uint8Clamped => store[start] = integer.clamp(0, i32::from(u8::MAX)) as u8,
-                TypedArrayKind::Uint8 | TypedArrayKind::Int8 => store[start] = integer as u8,
-                TypedArrayKind::Uint16 | TypedArrayKind::Int16 => store[start..start + size_of::<u16>()].copy_from_slice(&(integer as u16).to_ne_bytes()),
-                _ => store[start..start + size_of::<u32>()].copy_from_slice(&(integer as u32).to_ne_bytes()),
-            }
+            // SAFETY: `start` is an element of `view` in the store, so its `width` bytes are in bounds
+            // (the slice checks them), and an integer kind's element store takes the integer.
+            unsafe { store_number_element(view.kind, store[start..start + width].as_mut_ptr(), Value::integer(integer)) };
         }
         true
     }
@@ -736,20 +725,6 @@ impl<H: Host> Vm<H> {
             _ => 0.0,
         };
         match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => {
-                bytes[0] = Self::uint8_from_value(number)
-            }
-            TypedArrayKind::Uint8Clamped => bytes[0] = crate::value::number_to_uint8_clamp(number),
-            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => bytes[..kind.width()]
-                .copy_from_slice(&Self::uint16_from_value(number).to_ne_bytes()),
-            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => bytes[..kind.width()]
-                .copy_from_slice(&Self::uint32_from_value(number).to_ne_bytes()),
-            TypedArrayKind::Float16 => bytes[..kind.width()]
-                .copy_from_slice(&super::number::f64_to_half(number).to_ne_bytes()),
-            TypedArrayKind::Float32 => {
-                bytes[..kind.width()].copy_from_slice(&(number as f32).to_ne_bytes())
-            }
-            TypedArrayKind::Float64 => bytes.copy_from_slice(&number.to_ne_bytes()),
             TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
                 let TypedArrayElement::BigInt(value) = value else {
                     unreachable!("BigInt content type was validated");
@@ -763,6 +738,7 @@ impl<H: Host> Vm<H> {
                     *target = source;
                 }
             }
+            _ => store_element_number(kind, number, &mut bytes[..kind.width()], NATIVE_LITTLE_ENDIAN),
         }
         bytes
     }
@@ -896,8 +872,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// `typed_array_copy_elements` of `length` Number elements of another kind, made on the
-    /// bytes: each source element (`typed_array_number_of`) converted as its write converts a
-    /// Number (`typed_array_element_bytes`), a run reading the source's bytes before writing
+    /// bytes: each source element (`staged::typed_elements::element_number`) converted as its
+    /// write converts a Number (`staged::typed_elements::element_word`), a run reading the source's bytes before writing
     /// any, as the spec's clone of a shared source does. `false`, writing nothing, where either
     /// range lies past its buffer, which the element copy then decides.
     #[allow(clippy::too_many_arguments)]
@@ -1008,53 +984,8 @@ fn typed_kind<const KIND: usize>(kind: TypedArrayKind) -> Option<TypedArrayKind>
     (kind == constant).then_some(constant)
 }
 
-/// Writes `element` at `target`, which need not be aligned.
-///
-/// # Safety
-/// `target` is valid for a write of `size_of::<T>()` bytes.
-#[inline(always)]
-unsafe fn write_element<T>(target: *mut u8, element: T) {
-    // SAFETY: the caller's contract.
-    unsafe { target.cast::<T>().write_unaligned(element) }
-}
-
-/// Stores an integer `value` as an element of `kind` at `target` (its low bits, clamped for
-/// Uint8Clamped), or any Number into a float kind: the hot element store of the cached and
-/// quick typed stores. False, storing nothing, for a double into an integer kind
-/// (`store_any_number` takes it, out of the hot handler) or any other value.
-///
-/// Integers and float kinds only: a double arm here, even out of line, kept the matched kind a
-/// runtime value and pushed a frame in the hot handler, +2 to +9 Ir per Uint8 store (k16_sieve).
-///
-/// # Safety
-/// `target` is valid for a write of one element of `kind`.
-#[inline(always)]
-unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
-    macro_rules! store {
-        ($element:expr) => {
-            // SAFETY: the caller's contract.
-            unsafe { write_element(target, $element) }
-        };
-    }
-    match (kind, value.as_int()) {
-        (TypedArrayKind::Uint8 | TypedArrayKind::Int8, Some(integer)) => store!(integer as u8),
-        (TypedArrayKind::Uint8Clamped, Some(integer)) => store!(integer.clamp(0, i32::from(u8::MAX)) as u8),
-        (TypedArrayKind::Uint16 | TypedArrayKind::Int16, Some(integer)) => store!(integer as u16),
-        (TypedArrayKind::Uint32 | TypedArrayKind::Int32, Some(integer)) => store!(integer as u32),
-        (TypedArrayKind::Float32, _) => match value.as_number() {
-            Some(number) => store!(number as f32),
-            None => return false,
-        },
-        (TypedArrayKind::Float64, _) => match value.as_number() {
-            Some(number) => store!(number),
-            None => return false,
-        },
-        _ => return false,
-    }
-    true
-}
-
-/// `store_number_element` of any Number, a double into an integer kind by `store_double_element`.
+/// `store_number_element` of any Number, a double into an integer kind by `store_double_element`
+/// (both in `staged::typed_elements`).
 ///
 /// # Safety
 /// As `store_number_element`.
@@ -1062,29 +993,6 @@ unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8, value: Val
 unsafe fn store_any_number(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
     // SAFETY: the caller's contract.
     unsafe { store_number_element(kind, target, value) || store_double_element(kind, target, value) }
-}
-
-/// `store_number_element` of a non-integer into an integer kind: ToUint32's low bits or
-/// ToUint8Clamp of the double; false for a value that is no Number or a kind with no
-/// conversion here.
-///
-/// # Safety
-/// As `store_number_element`.
-#[inline(always)]
-unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
-    use crate::value::{number_to_u32, number_to_uint8_clamp};
-    let Some(number) = value.as_number() else { return false };
-    // SAFETY: the caller's contract, for each arm.
-    unsafe {
-        match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => write_element(target, number_to_u32(number) as u8),
-            TypedArrayKind::Uint8Clamped => write_element(target, number_to_uint8_clamp(number)),
-            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => write_element(target, number_to_u32(number) as u16),
-            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => write_element(target, number_to_u32(number)),
-            _ => return false,
-        }
-    }
-    true
 }
 
 /// How many views `TypedViewCache` holds, a power of two: a view's slot index picks its entry.

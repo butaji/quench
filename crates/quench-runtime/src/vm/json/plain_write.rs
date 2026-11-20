@@ -416,20 +416,15 @@ impl<H: Host> Vm<H> {
         key: (u32, Value),
         w: &mut JsonWriter,
     ) -> Option<std::rc::Rc<[JsonMember]>> {
-        let recent = key.0 as usize % JSON_RECENT_PLANS;
-        if let Some((last, proof)) = &w.recent_plans[recent]
-            && *last == key
+        let shape = key.0 as usize;
+        if let Some(Some((prototype, proof))) = w.plans.get(shape)
+            && *prototype == key.1
             && proof.cell.holds()
         {
             return proof.plan.clone();
         }
-        if let Some(proof) = w.object_plans.get(&key).filter(|proof| proof.cell.holds()).cloned() {
-            if proof.plan.is_some() {
-                w.recent_plans[recent] = Some((key, proof.clone()));
-            }
-            return proof.plan;
-        }
-        let plan = (!self.shape_may_have_accessors(key.0) && self.json_lacks_to_json(value, w.to_json))
+        // `json_plain_plan` decided that `value` is not a boxed primitive.
+        let plan = (!self.shape_may_have_accessors(key.0) && self.json_chain_lacks_to_json(value, w.to_json))
             .then(|| self.shape_enumerable_slots(value))
             .flatten()
             .and_then(|slots| {
@@ -447,7 +442,10 @@ impl<H: Host> Vm<H> {
                     .collect::<Option<std::rc::Rc<[JsonMember]>>>()
             });
         if let Some(cell) = self.json_chain_cell(key.1) {
-            w.object_plans.insert(key, JsonPlanProof { cell, plan: plan.clone() });
+            if w.plans.len() <= shape {
+                w.plans.resize(shape + 1, None);
+            }
+            w.plans[shape] = Some((key.1, JsonPlanProof { cell, plan: plan.clone() }));
         }
         plan
     }

@@ -122,6 +122,8 @@ pub(crate) trait Stage {
     fn ugt_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
     /// Whether `a` is below `b`, both unsigned and of one width.
     fn ult(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
+    /// Whether the words `a` and `b` are equal, bit for bit.
+    fn eq(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
     /// A 32-bit word zero-extended to the full word (the full word unchanged).
     fn uextend32(&mut self, a: Self::Word) -> Self::Word;
     fn sub(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
@@ -205,6 +207,11 @@ pub(crate) trait Stage {
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
+    /// A do-while over `N` loop-carried words, from `init`: `body` runs on the state and returns whether the loop
+    /// goes on and the next state; the loop returns the state it last computed. The body is emitted once: a
+    /// specializer's loop is a block whose parameters are the state, the interpreter's a Rust loop.
+    fn loop_words<const N: usize>(&mut self, init: [Self::Word; N],
+        body: impl FnMut(&mut Self, [Self::Word; N]) -> (Self::Cond, [Self::Word; N])) -> [Self::Word; N];
     /// `choose` whose arms may leave: each runs only on its own path, and a `None` from the taken
     /// arm (a guard inside it that failed) leaves the whole. The interpreter takes one arm as a
     /// plain `if`; a specializer's guard inside an arm is a branch to its miss block, so the arm's

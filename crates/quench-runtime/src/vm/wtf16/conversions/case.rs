@@ -2,7 +2,9 @@
 //! `toLowerCase`, written straight into the result's units.
 
 use super::super::{FlatUnits, JsString, Units};
+use crate::staged::string_text;
 use std::borrow::Cow;
+use std::rc::Rc;
 
 /// The one letter whose default lowercase depends on its context (SpecialCasing's
 /// Final_Sigma): its strings take the run-wise host mapping (`vm::string::map_case`).
@@ -15,28 +17,72 @@ impl JsString {
     pub(crate) fn default_case(&self, upper: bool) -> Option<Cow<'_, JsString>> {
         let mapped = match self.units() {
             Units::Ascii(bytes) => ascii_case(bytes, upper),
-            // Latin-1 text maps through the wide mapping: its result may leave Latin-1 (U+00FF
-            // uppercases to U+0178), and `from_units` stores whatever it makes in canonical form.
-            Units::Latin1(bytes) => wide_case(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), upper)?,
+            Units::Latin1(bytes) => latin1_case(bytes, upper)?,
             Units::Wide(units) => wide_case(units, upper)?,
         };
         Some(mapped.map_or(Cow::Borrowed(self), Cow::Owned))
     }
 }
 
-fn ascii_byte_case(byte: u8, upper: bool) -> u8 {
-    if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() }
-}
-
 /// ASCII maps to ASCII unit for unit, straight into the result's storage; `None` where
 /// nothing changes.
 fn ascii_case(bytes: &[u8], upper: bool) -> Option<JsString> {
-    bytes.iter().position(|byte| ascii_byte_case(*byte, upper) != *byte)?;
+    if !string_text::ascii_case_changes(bytes, upper) {
+        return None;
+    }
     Some(JsString::from_flat(FlatUnits::ascii_with(bytes.len(), |output| {
         for (slot, byte) in output.iter_mut().zip(bytes) {
-            slot.write(ascii_byte_case(*byte, upper));
+            slot.write(string_text::ascii_case_byte(*byte, upper));
         }
     })))
+}
+
+/// Latin-1 text maps unit for unit into Latin-1 storage, written straight into the result. A
+/// character whose full mapping is not one Latin-1 character (U+00B5, U+00DF and U+00FF
+/// uppercased) makes the whole string take the wide mapping instead. Non-ASCII Latin-1 maps to
+/// non-ASCII Latin-1, so the result is already in canonical storage. `Some(None)` where nothing
+/// changes.
+fn latin1_case(bytes: &[u8], upper: bool) -> Option<Option<JsString>> {
+    // ASCII's mapping is the same unit for unit, so ASCII-only text takes its fast path.
+    if bytes.is_ascii() {
+        return Some(ascii_case(bytes, upper));
+    }
+    let Some(first) = bytes.iter().position(|byte| latin1_case_byte(*byte, upper) != Some(*byte)) else {
+        return Some(None);
+    };
+    let mut output = Vec::with_capacity(bytes.len());
+    output.extend_from_slice(&bytes[..first]);
+    for byte in &bytes[first..] {
+        let Some(mapped) = latin1_case_byte(*byte, upper) else {
+            return wide_case(&bytes.iter().map(|unit| u16::from(*unit)).collect::<Vec<u16>>(), upper);
+        };
+        output.push(mapped);
+    }
+    let storage: Rc<[u8]> = Rc::from(output);
+    Some(Some(JsString::from_flat(FlatUnits::Latin1(storage))))
+}
+
+/// The Latin-1 unit that `byte`'s full mapping is; `None` where that mapping is not one
+/// Latin-1 character.
+fn latin1_case_byte(byte: u8, upper: bool) -> Option<u8> {
+    if byte.is_ascii() {
+        return Some(string_text::ascii_case_byte(byte, upper));
+    }
+    let character = char::from(byte);
+    let mut upper_map;
+    let mut lower_map;
+    let mapped: &mut dyn Iterator<Item = char> = if upper {
+        upper_map = character.to_uppercase();
+        &mut upper_map
+    } else {
+        lower_map = character.to_lowercase();
+        &mut lower_map
+    };
+    let only = mapped.next()?;
+    if mapped.next().is_some() {
+        return None;
+    }
+    u8::try_from(u32::from(only)).ok()
 }
 
 /// Each character's full mapping in order, its units unchanged up to the first that maps
@@ -52,7 +98,7 @@ fn wide_case(units: &[u16], upper: bool) -> Option<Option<JsString>> {
     while let Some(&unit) = units.get(index) {
         index += 1;
         if let Some(byte) = ascii_unit(unit) {
-            output.push(u16::from(ascii_byte_case(byte, upper)));
+            output.push(u16::from(string_text::ascii_case_byte(byte, upper)));
             continue;
         }
         let pair = units.get(index).and_then(|low| crate::unicode::decode_surrogate_pair(unit, *low));
@@ -73,7 +119,7 @@ fn ascii_unit(unit: u16) -> Option<u8> {
 /// Whether `unit` is a whole character whose mapping is itself.
 fn maps_to_itself(unit: u16, upper: bool) -> bool {
     if let Some(byte) = ascii_unit(unit) {
-        return ascii_byte_case(byte, upper) == byte;
+        return string_text::ascii_case_byte(byte, upper) == byte;
     }
     let Some(character) = char::from_u32(u32::from(unit)) else { return false };
     if upper { is_only(character, character.to_uppercase()) } else { is_only(character, character.to_lowercase()) }
