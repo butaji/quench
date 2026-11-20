@@ -2009,7 +2009,8 @@ static TsType *cIdentifierType(TsNode *e) {
   TsSymbol *s = cResolveValueName(e, nm);
   if (!s) {
     if (e->textLen == 9 && memcmp(e->text, "undefined", 9) == 0) return cUndefinedType;
-    return cUnported("unresolved value");
+    /* checkIdentifier: an unknown symbol is the error type (the name is reported by cCheckIdentifierReference) */
+    return cErrorType;
   }
   if (s == cUndefinedSymbol) return cUndefinedType;
   if (!(s->flags & (SF_Variable | SF_Alias))) return cTypeOfSymbol(s);
