@@ -39,7 +39,8 @@ enum {
 };
 
 /* ObjectFlags (TypeScript 5.9.2) */
-enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Tuple = 8, OF_Anonymous = 16, OF_Instantiated = 64, OF_ObjectLiteral = 128 };
+enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Tuple = 8, OF_Anonymous = 16, OF_Mapped = 32, OF_Instantiated = 64,
+       OF_ObjectLiteral = 128 };
 
 typedef struct CSig CSig;
 typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; } CIndexInfo;
@@ -488,6 +489,13 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
       }
       return fl == TF_Union ? cGetUnionType(members, cnt) : cGetIntersectionType(members, cnt);
     }
+    case TSK_MappedType: {
+      /* a mapped type object (resolveMappedTypeMembers): its members come from the literal keys of the constraint */
+      TsType *t = cNewType(TF_Object);
+      t->objectFlags = OF_Mapped;
+      t->typeNode = n;
+      return t;
+    }
     case TSK_TupleType: {
       /* the element types of a tuple of plain types (named, optional and rest members are not ported) */
       int cnt = n->elements ? n->elements->n : 0;
@@ -777,10 +785,74 @@ static void cResolveObjectMembers(TsType *t, TsType *src, TsMapper *m) {
   t->sigMapper = m;
 }
 
+/* the key of a string literal type: its value without the quotes */
+static BName cLiteralKey(TsType *l) {
+  if (l->textLen >= 2 && (l->text[0] == '"' || l->text[0] == '\'')) return bnEscapeText(l->text + 1, l->textLen - 2);
+  return bnEscapeText(l->text, l->textLen);
+}
+
+/* the modifiers type of a mapped type over keyof T, or over a type parameter whose constraint is keyof T
+ * (getModifiersTypeFromMappedType): the optional flags of its properties are copied */
+static TsType *cMappedModifiersType(TsNode *tp, TsMapper *m) {
+  TsNode *c = tp->constraint;
+  if (!c) return NULL;
+  if (c->kind == TSK_TypeOperator && c->extra == TSK_KeyOfKeyword) return cTypeFromNodeM(c->type, m);
+  if (c->kind == TSK_TypeReference && c->typeName && c->typeName->kind == TSK_Identifier) {
+    TsSymbol *s = cSymbolOfTypeName(c, c->typeName);
+    if (s && (s->flags & SF_TypeParameter) && s->ndecls) {
+      TsNode *pd = s->decls[0];
+      if (pd->constraint && pd->constraint->kind == TSK_TypeOperator && pd->constraint->extra == TSK_KeyOfKeyword)
+        return cTypeFromNodeM(pd->constraint->type, m);
+    }
+  }
+  return NULL;
+}
+
+/* the type of a mapped member: the template with the key bound to the type parameter (T[P] is evaluated
+ * as the property type of T under the key, the other templates as type nodes under the mapper) */
+static TsType *cMappedTemplate(TsNode *tpl, TsMapper *mm) {
+  if (tpl->kind != TSK_IndexedAccessType) return cTypeFromNodeM(tpl, mm);
+  TsType *o = cTypeFromNodeM(tpl->objectType, mm);
+  TsType *ix = cTypeFromNodeM(tpl->indexType, mm);
+  if (o == cErrorType || ix == cErrorType) return cErrorType;
+  if (!(ix->flags & TF_StringLiteral) || !(o->flags & TF_Object)) return cUnported("indexed access with a non-literal index");
+  TsSymbol *p = cPropertyOf(o, cLiteralKey(ix));
+  if (!p) return cUnported("indexed access: no such property");
+  return cTypeOfSymbol(p);
+}
+
+/* resolveMappedTypeMembers (for constraints that are string literals or unions of them) */
+static void cResolveMappedMembers(TsType *t) {
+  TsNode *mn = t->typeNode;
+  TsNode *tp = mn->typeParameter;
+  TsType *P = cTypeOfTypeParameter(cGetMergedSymbol(tp->symbol));
+  t->members = bTableNew();
+  TsType *c = cTypeFromNodeM(tp->constraint, t->mapper);
+  if (c == cErrorType) return;
+  TsType **keys = c->flags & TF_Union ? c->types : &c;
+  int nk = c->flags & TF_Union ? c->ntypes : 1;
+  TsType *mod = mn->questionToken ? NULL : cMappedModifiersType(tp, t->mapper);
+  for (int i = 0; i < nk; i++) {
+    TsType *k = keys[i];
+    if (!(k->flags & TF_StringLiteral)) { cUnported("mapped type over a non-literal key"); return; }
+    BName key = cLiteralKey(k);
+    TsSymbol *sym = cCreateSymbol(SF_Property, key);
+    if (mn->questionToken) sym->flags |= SF_Optional;
+    else if (mod && (mod->flags & TF_Object)) {
+      TsSymbol *mp = cPropertyOf(mod, key);
+      if (mp && (mp->flags & SF_Optional)) sym->flags |= SF_Optional;
+    }
+    TsMapper *mm = cCombineMappers(t->mapper, cCreateTypeMapper(&P, &k, 1));
+    sym->type = cMappedTemplate(mn->type, mm);
+    bTableSet(t->members, key, sym);
+  }
+}
+
 /* resolved members of an object type (resolveStructuredTypeMembers) */
 static void cResolveMembers(TsType *t) {
   if (t->resolved) return;
   t->resolved = true;
+  if (t->objectFlags & OF_Mapped) { cResolveMappedMembers(t); return; }
   if (t->objectFlags & OF_Reference) {
     /* resolveTypeReferenceMembers (62338): the identity when the arguments are the type's parameters */
     TsType *tg = t->target;

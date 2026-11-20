@@ -89,6 +89,8 @@ static bool cCouldContain(TsType *t) {
     } else if (t->objectFlags & OF_Anonymous) {
       r = t->symbol && (t->symbol->flags & (SF_Function | SF_Method | SF_Class | SF_TypeLiteral | SF_ObjectLiteral)) &&
           t->symbol->ndecls > 0;
+    } else if (t->objectFlags & OF_Mapped) {
+      r = true;   /* a mapped type may refer to the type parameters of its declaration */
     }
   } else if (t->flags & (TF_Union | TF_Intersection)) {
     for (int i = 0; i < t->ntypes && !r; i++) r = cCouldContain(t->types[i]);
@@ -508,6 +510,14 @@ static TsType *cInstantiateWorker(TsType *t, TsMapper *m) {
       return changed ? cTypeReference(t->target, na, t->nargs) : t;
     }
     if (t->objectFlags & OF_Anonymous) return cObjectTypeInstantiation(t, m);
+    if (t->objectFlags & OF_Mapped) {
+      /* instantiateMappedType: the same node under the combined mapper */
+      TsType *r = cNewType(TF_Object);
+      r->objectFlags = OF_Mapped;
+      r->typeNode = t->typeNode;
+      r->mapper = cCombineMappers(t->mapper, m);
+      return r;
+    }
     return t;
   }
   if (t->flags & (TF_Union | TF_Intersection)) {

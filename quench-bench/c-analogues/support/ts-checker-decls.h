@@ -24,9 +24,17 @@ static TsSymbol *cResolveNameMeaning(TsNode *loc, BName name, uint32_t meaning);
 static TsSymbol *cResolveTypeName(TsNode *loc, BName name);
 
 /* resolveAlias for an import specifier: the exported symbol of the module, or NULL when unresolved */
+static TsSymbol *cEntityNameSymbol(TsNode *loc, TsNode *name, uint32_t meaning);
+#define CE_AnyMeaning (SF_Value | SF_Type | SF_Namespace)
+
 static TsSymbol *cResolveImportAlias(TsSymbol *alias, int depth) {
   if (depth > 8 || !alias->ndecls) return NULL;
   TsNode *spec = alias->decls[0];
+  if (spec->kind == TSK_ImportEqualsDeclaration) {
+    /* export import X = A.B (resolveAlias of an import-equals declaration) */
+    if (!spec->moduleReference || spec->moduleReference->kind == TSK_ExternalModuleReference) return NULL;
+    return cEntityNameSymbol(spec, spec->moduleReference, CE_AnyMeaning);
+  }
   if (spec->kind != TSK_ImportSpecifier) return NULL;
   TsNode *importDecl = spec->parent && spec->parent->parent ? spec->parent->parent->parent : NULL;
   if (!importDecl || importDecl->kind != TSK_ImportDeclaration) return NULL;

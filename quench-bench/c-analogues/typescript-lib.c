@@ -303,7 +303,11 @@ static int cMemberNameCmp(const void *a, const void *b) { return strcmp(*(char *
 static void cPrintMembersOf(TsNode *n) {
   if (!((n->kind == TSK_ClassDeclaration || n->kind == TSK_InterfaceDeclaration) && n->symbol && n->name)) return;
   TsSymbol *m = cGetMergedSymbol(n->symbol);
-  if (m->decls[0] != n) return;   /* one line per merged symbol */
+  /* one line per merged symbol, at its first class or interface declaration (a merged const comes first) */
+  TsNode *first = NULL;
+  for (int d = 0; d < m->ndecls && !first; d++)
+    if (m->decls[d]->kind == TSK_ClassDeclaration || m->decls[d]->kind == TSK_InterfaceDeclaration) first = m->decls[d];
+  if (first != n) return;
   TsType *t = cDeclaredTypeOfClassOrInterface(m);
   TsSymbol **props;
   int np = cPropertiesOf(t, &props);
@@ -386,6 +390,10 @@ int main(int argc, char **argv) {
          cIdentityCacheCount, EXPECTED_REL_IDENTITY, cUnportedCount);
   printf("checker instantiations: %d (node %d; node counts the body checks too, which are not ported)\n", cInstTotal,
          EXPECTED_INSTANTIATIONS);
+  printf("relation caches: assignable %d (node %d), identity %d (node %d), subtype %d (node %d), strictSubtype %d (node %d)\n",
+         cRelTab[REL_Assignable].n, EXPECTED_REL_ASSIGNABLE, cIdentityCacheCount, EXPECTED_REL_IDENTITY,
+         cRelTab[REL_Subtype].n, EXPECTED_REL_SUBTYPE, cRelTab[REL_StrictSubtype].n, EXPECTED_REL_STRICT_SUBTYPE);
+  printf("relation overflows (depth or maybe stack limits): %d\n", cRelOverflows);
   if (diagBad) printf("validation FAILED: %d diagnostics differ from node\n", diagBad);
   else printf("validation ok\n");
   return diagBad ? 1 : 0;

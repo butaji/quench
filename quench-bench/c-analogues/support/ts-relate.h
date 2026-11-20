@@ -53,6 +53,7 @@ static TsType *cMarkerSuper, *cMarkerSub, *cMarkerOther;
 static TsType *cGlobalStructTypes[5];   /* String, Number, Boolean, BigInt, Symbol: declared types (lazy) */
 
 static int cIsRelatedTo(TsType *s, TsType *t, int st);
+static bool cIsRelatedWith(TsType *s, TsType *t, int rel);
 
 /* ---- relation caches (relation.get / relation.set; the key is the two type ids and the state) ---- */
 static uint32_t cRelHash(TsType *s, TsType *t, int st) {
@@ -270,6 +271,24 @@ static void cCollectReturns(TsNode *n, TsNode ***out, int *cnt, int *cap) {
   cCollectReturns(n->caseBlock, out, cnt, cap);
 }
 
+/* removeSubtypes (UnionReduction.Subtype of getUnionType): a type that is a strict subtype of another member is
+ * dropped, scanning from the last member; the relation is the strict subtype relation */
+static TsType *cUnionWithSubtypesRemoved(TsType **ts, int n) {
+  bool *drop = calloc((size_t)n, sizeof(bool));
+  if (!drop) abort();
+  for (int i = n - 1; i >= 0; i--) {
+    for (int j = 0; j < n; j++) {
+      if (j == i || drop[j]) continue;
+      if (cIsRelatedWith(ts[i], ts[j], REL_StrictSubtype)) { drop[i] = true; break; }
+    }
+  }
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+  int k = 0;
+  for (int i = 0; i < n; i++) if (!drop[i]) kept[k++] = ts[i];
+  free(drop);
+  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+}
+
 /* getReturnTypeOfSignature for a declaration without a return annotation (uninstantiated) */
 static TsType *cInferReturnType(TsNode *d) {
   if (d->inferState == 2) return d->inferredReturn;
@@ -295,7 +314,7 @@ static TsType *cInferReturnType(TsNode *d) {
         ts[k++] = t;
       }
       free(rets);
-      r = k < 0 ? cErrorType : (nr == 1 ? ts[0] : cGetUnionType(ts, nr));
+      r = k < 0 ? cErrorType : (nr == 1 ? ts[0] : cUnionWithSubtypesRemoved(ts, nr));
     }
   }
   d->inferredReturn = r;
