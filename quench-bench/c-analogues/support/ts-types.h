@@ -2407,19 +2407,44 @@ static TsType *cSigParamType(CSig *sig, CParams *cp, int pos, bool *ok) {
   return cTypeOfSymbol(sig->psyms[pos]);
 }
 
+/* the declared type parameters of a signature declaration (typeParameters) */
+static TsType **cDeclTypeParamsOfNode(TsNode *d, int *n) {
+  *n = d->typeParameters ? d->typeParameters->n : 0;
+  TsType **tps = ts_arena_alloc(sizeof(TsType *) * (size_t)(*n ? *n : 1));
+  for (int i = 0; i < *n; i++) tps[i] = cTypeOfTypeParameter(cGetMergedSymbol(d->typeParameters->v[i]->symbol));
+  return tps;
+}
+
 static bool cCompareSignaturesIdentical(CSig *a, CSig *b) {
   if (a->decl == b->decl && a->mapper == b->mapper) return true;
   TsNode *da = a->decl, *db = b->decl;
   TsMapper *ma = a->mapper, *mb = b->mapper;
-  if ((da->typeParameters && da->typeParameters->n) || (db->typeParameters && db->typeParameters->n)) {
-    cUnported("generic signature");
-    return true;
-  }
   CParams pa, pb;
   if (!cSplitParams(da, &pa) || !cSplitParams(db, &pb)) { cUnported("too many parameters"); return true; }
   /* isMatchingSignature: parameter count, min count and rest parameter */
   bool restA = pa.rest != NULL, restB = pb.rest != NULL;
   if (pa.n != pb.n || pa.min != pb.min || restA != restB) return false;
+  /* the type parameters (compareSignaturesIdentical): the same number, the constraints and defaults identical under
+   * the mapping from the source's to the target's, then the source is erased under that mapping */
+  int na = da->typeParameters ? da->typeParameters->n : 0, nb = db->typeParameters ? db->typeParameters->n : 0;
+  if (na != nb) return false;
+  if (na) {
+    int n;
+    TsType **sTps = cDeclTypeParamsOfNode(da, &n), **tTps = cDeclTypeParamsOfNode(db, &n);
+    TsMapper *tpm = cCreateTypeMapper(sTps, tTps, na);
+    for (int i = 0; i < na; i++) {
+      if (sTps[i] == tTps[i]) continue;
+      TsType *cs = cConstraintOf(sTps[i]), *ct = cConstraintOf(tTps[i]);
+      TsNode *dsN = cTypeParamDefaultNode(sTps[i]), *dtN = cTypeParamDefaultNode(tTps[i]);
+      TsType *ds = dsN ? cTypeFromNode(dsN) : NULL, *dt = dtN ? cTypeFromNode(dtN) : NULL;
+      if (ds == cErrorType || dt == cErrorType) { cUnported("type parameter default"); return true; }
+      TsType *csI = cs ? cInstantiate(cs, tpm) : cUnknownType;
+      if (!cIdentical(csI, ct ? ct : cUnknownType)) return false;
+      TsType *dsI = ds ? cInstantiate(ds, tpm) : cUnknownType;
+      if (!cIdentical(dsI, dt ? dt : cUnknownType)) return false;
+    }
+    ma = cCombineMappers(ma, tpm);   /* instantiateSignature(source, mapper, true) */
+  }
   /* this types: a target without a this type passes (as in TypeScript) */
   if (pa.thisParam) {
     TsType *ta = cTypeFromNodeM(pa.thisParam->type, ma);
