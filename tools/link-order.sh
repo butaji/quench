@@ -24,7 +24,7 @@ packages="$work/packages"
 rm -rf "$corpus" "$profiles" "$work/homes"
 mkdir -p "$corpus" "$profiles" "$packages"
 
-cargo build --profile experiment -p quench-wasm-test --bin symbol-order >/dev/null
+cargo build --profile experiment -p quench-symbols --bin symbol-order >/dev/null
 
 printf '{"type": "commonjs"}\n' >"$corpus/package.json"
 printf 'console.log(1)\n' >"$corpus/000-print.cjs"
