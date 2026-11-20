@@ -1,6 +1,7 @@
 // jetstream-row: web-ssr
-// jetstream-files: utils/StartupBenchmark.js web-ssr/benchmark.js web-ssr/dist/bundle.min.js web-ssr/src/components.cjs web-ssr/src/country-flags.cjs web-ssr/src/wine-data.cjs web-ssr/src/react-render-test.cjs
+// jetstream-files: utils/StartupBenchmark.js web-ssr/benchmark.js
 // iterations: 30
+// jetstream-driver: class=Async preload=BUNDLE=web-ssr/dist/bundle.min.js
 /* C analogue of the JetStream web-ssr row (web-ssr/dist/bundle.min.js, React 19.1.1 renderToString of
  * src/components.cjs over src/wine-data.cjs).
  *

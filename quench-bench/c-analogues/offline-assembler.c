@@ -1,5 +1,5 @@
 // jetstream-row: OfflineAssembler
-// jetstream-files: RexBench/OfflineAssembler/LowLevelInterpreter.asm RexBench/OfflineAssembler/InitBytecodes.asm RexBench/OfflineAssembler/LowLevelInterpreter64.asm RexBench/OfflineAssembler/LowLevelInterpreter32_64.asm RexBench/OfflineAssembler/expected.js
+// jetstream-files: RexBench/OfflineAssembler/registers.js RexBench/OfflineAssembler/instructions.js RexBench/OfflineAssembler/ast.js RexBench/OfflineAssembler/parser.js RexBench/OfflineAssembler/file.js RexBench/OfflineAssembler/LowLevelInterpreter.js RexBench/OfflineAssembler/LowLevelInterpreter32_64.js RexBench/OfflineAssembler/LowLevelInterpreter64.js RexBench/OfflineAssembler/InitBytecodes.js RexBench/OfflineAssembler/expected.js RexBench/OfflineAssembler/benchmark.js
 // iterations: 80
 /* C analogue of JetStream's RexBench/OfflineAssembler: the offlineasm lexer, parser and
  * AST construction for LowLevelInterpreter.asm (including the InitBytecodes, 64 and 32_64
@@ -1329,8 +1329,8 @@ static void validate(Node *ast) {
 }
 
 int main(int argc, char **argv) {
-  const char *root = argc > 1 ? argv[1] : default_root;
-  int iterations = argc > 2 ? atoi(argv[2]) : DEFAULT_ITERATIONS;
+  const char *root = argc > 2 ? argv[2] : default_root;
+  int iterations = argc > 1 ? atoi(argv[1]) : DEFAULT_ITERATIONS;
   arena = malloc(ARENA_BYTES);
   if (!arena) die("cannot allocate arena");
   load_sources(root);

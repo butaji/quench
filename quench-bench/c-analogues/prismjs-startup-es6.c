@@ -1,6 +1,7 @@
 // jetstream-row: prismjs-startup-es6
-// jetstream-files: utils/StartupBenchmark.js prismjs/benchmark.js prismjs/dist/bundle.es6.min.js prismjs/data/sample.cpp prismjs/data/sample.css prismjs/data/sample.html prismjs/data/sample.js prismjs/data/sample.json prismjs/data/sample.md prismjs/data/sample.py prismjs/data/sample.sql prismjs/data/sample.ts
+// jetstream-files: utils/StartupBenchmark.js prismjs/benchmark.js
 // iterations: 120
+// jetstream-driver: class=Async preload=BUNDLE=prismjs/dist/bundle.es6.min.js,SAMPLE_CPP=prismjs/data/sample.cpp,SAMPLE_CSS=prismjs/data/sample.css,SAMPLE_HTML=prismjs/data/sample.html,SAMPLE_JS=prismjs/data/sample.js,SAMPLE_JSON=prismjs/data/sample.json,SAMPLE_MD=prismjs/data/sample.md,SAMPLE_PY=prismjs/data/sample.py,SAMPLE_SQL=prismjs/data/sample.sql,SAMPLE_TS=prismjs/data/sample.ts
 // c-sources: -lpcre2-8
 /* C analogue of JetStream's prismjs-startup-es6 row.
  *
@@ -773,8 +774,8 @@ static char *read_file(const char *dir, const char *name, int *len) {
 }
 
 int main(int argc, char **argv) {
-  const char *root = argc > 1 ? argv[1] : "../jetstream";
-  int iterations = argc > 2 ? atoi(argv[2]) : 120;
+  const char *root = argc > 2 ? argv[2] : "../jetstream";
+  int iterations = argc > 1 ? atoi(argv[1]) : 120;
   const char *dump_dir = argc > 3 ? argv[3] : NULL; /* debugging: write iteration-0 html */
   for (int i = 0; i < N_SAMPLES; i++) SAMPLES[i].content = read_file(root, SAMPLES[i].file, &SAMPLES[i].len);
 

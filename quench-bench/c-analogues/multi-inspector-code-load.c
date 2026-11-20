@@ -1,6 +1,7 @@
 // jetstream-row: multi-inspector-code-load
-// jetstream-files: code-load/code-multi-load.js code-load/inspector-payload-minified.js
+// jetstream-files: code-load/code-multi-load.js
 // iterations: 120
+// jetstream-driver: class=Async preload=inspectorPayloadBlob=code-load/inspector-payload-minified.js
 /* C analogue of JetStream's multi-inspector-code-load row. Each iteration the JS row evaluates
  * "function test<i>() { let _____top_level_____ = <random>; <inspector payload> }" with indirect
  * eval. Preparing that text is outside the timed region, as in the driver
@@ -13,8 +14,8 @@
 #include "js-parser-analogue.h"
 
 int main(int argc, char **argv) {
-  const char *root = argc > 1 ? argv[1] : "../jetstream";
-  const int iterations = 120;
+  const char *root = argc > 2 ? argv[2] : "../jetstream";
+  const int iterations = argc > 1 ? atoi(argv[1]) : 120;
   char path[4096];
   size_t plen;
   snprintf(path, sizeof path, "%s/code-load/inspector-payload-minified.js", root);

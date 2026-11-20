@@ -1,6 +1,7 @@
 // jetstream-row: mobx-startup
-// jetstream-files: utils/StartupBenchmark.js mobx/benchmark.js mobx/dist/bundle.es6.min.js mobx/src/test.mjs mobx/src/Person.mjs mobx/src/Room.mjs mobx/src/Message.mjs mobx/src/Notifications.mjs
+// jetstream-files: utils/StartupBenchmark.js mobx/benchmark.js
 // iterations: 30
+// jetstream-driver: class=Async preload=BUNDLE=mobx/dist/bundle.es6.min.js
 /* C analogue of the JetStream mobx-startup row (mobx/dist/bundle.es6.min.js and mobx/benchmark.js).
  *
  * Each timed iteration does what the JS does: it takes this iteration's copy of the MobX bundle (the

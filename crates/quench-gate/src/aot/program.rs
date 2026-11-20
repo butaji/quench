@@ -33,8 +33,60 @@ const SEEDED_RANDOM: &str = "(() => {
 /// failure. The entry runs as a CommonJS module (as `quench compile` compiles it), so a UMD bundle's
 /// `this` is `module.exports`; `namespace=` binds that to the global the bundle sets in a shell.
 const HOST_SURFACE: &str = "globalThis.print = globalThis.print ?? console.log;
+const __jsRowLog = console.log.bind(console);
 globalThis.self = globalThis;
 console.assert = (condition, ...details) => { if (!condition) throw new Error(\"Assertion failed: \" + details.join(\" \")); };
+";
+
+/// `RegExp.escape` (ES2025, which node 22 lacks), for the startup rows' `StartupBenchmark`.
+const REGEXP_ESCAPE: &str = r#"if (!RegExp.escape) RegExp.escape = (text) => String(text).replace(/[\\^$.*+?()[\]{}|\/]/g, "\\$&");
+"#;
+
+/// The shell's `Worker`: a worker runs its script in its own realm (a vm context, as a browser
+/// worker has its own global), and each `postMessage` reaches the other side's `onmessage` on a
+/// later turn. `JetStream.isInBrowser` is set because the row runs only in a browser.
+const WORKER_SHIM: &str = r#"(() => {
+  const vm = require("vm");
+  const fs = require("fs");
+  globalThis.Worker = class Worker {
+    constructor(file) {
+      this.onmessage = null;
+      const parent = this;
+      const sandbox = {
+        console,
+        setTimeout,
+        clearTimeout,
+        importScripts() {},
+        close() {},
+        postMessage(data) {
+          setImmediate(() => { if (parent.onmessage) parent.onmessage({ data: structuredClone(data) }); });
+        },
+      };
+      sandbox.self = sandbox;
+      this.context = vm.createContext(sandbox);
+      const source = fs.readFileSync(file, "utf8");
+      setImmediate(() => vm.runInContext(source, this.context, { filename: file }));
+    }
+    postMessage(data) {
+      const context = this.context;
+      setImmediate(() => { if (context.onmessage) context.onmessage({ data: structuredClone(data) }); });
+    }
+    terminate() {}
+  };
+})();
+globalThis.JetStream.isInBrowser = true;
+"#;
+
+/// The driver loop of `runner=wsl` (WSLBenchmark): a fresh `Benchmark` per iteration, its stdlib
+/// built and its main run timed. `{count}`, `{done}`.
+const WSL_LOOP: &str = "{
+  for (let i = 0; i < {count}; i++) {
+    const benchmark = new Benchmark({ iterationCount: {count} });
+    benchmark.buildStdlib();
+    benchmark.run();
+  }
+  {done}
+}
 ";
 
 /// Reads a resource as bytes; a `.z` resource is inflated, as the driver's prefetch does.
@@ -101,6 +153,7 @@ fn prelude(analogue: &Analogue, jetstream: &Path) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut text = String::from(HOST_SURFACE);
+    text.push_str(REGEXP_ESCAPE);
     text.push_str(READ_BYTES);
     text.push_str(&format!("globalThis.JetStream = {{ preload: {{ {preload} }}, resources: {{ {preload} }} }};\n"));
     if driver.class != Class::Default {
@@ -111,6 +164,9 @@ fn prelude(analogue: &Analogue, jetstream: &Path) -> String {
     }
     if driver.deterministic {
         text.push_str(SEEDED_RANDOM);
+    }
+    if driver.worker {
+        text.push_str(WORKER_SHIM);
     }
     text
 }
@@ -140,11 +196,23 @@ fn namespace_text(driver: &Driver, file: &str) -> String {
         .collect()
 }
 
+/// The globals a plain file's top-level declarations named in `exports` become, after the file: a
+/// shell's file is a global script, so its functions are visible to the eval'd code of later files.
+fn expose_text(driver: &Driver, file: &str) -> String {
+    if file.ends_with(".z") {
+        return String::new();
+    }
+    driver.exports.iter().map(|name| format!("if (typeof {name} !== \"undefined\") globalThis.{name} = {name};\n")).collect()
+}
+
 /// The driver loop for `count` iterations of the row's `Benchmark`, reporting the row's line when
 /// `report` is set.
 fn run_body(driver: &Driver, row: &str, count: u64, report: bool) -> String {
     let reset = if driver.deterministic { "Math.random.__resetSeed();" } else { "" };
-    let done = if report { format!("console.log({});", js_string(&format!("{row} {count} iterations"))) } else { String::new() };
+    let done = if report { format!("__jsRowLog({});", js_string(&format!("{row} {count} iterations"))) } else { String::new() };
+    if driver.runner == "wsl" {
+        return WSL_LOOP.replace("{count}", &count.to_string()).replace("{done}", &done);
+    }
     let template = if driver.class == Class::Default { DEFAULT_LOOP } else { ASYNC_LOOP };
     template.replace("{count}", &count.to_string()).replace("{reset}", reset).replace("{done}", &done)
 }
@@ -162,13 +230,14 @@ pub fn compose(analogue: &Analogue, jetstream: &Path) -> Result<String, String> 
             program.push_str(&run_body(&subtest, row, count, false));
             program.push_str("}\n");
         }
-        program.push_str(&format!("console.log({});\n", js_string(&format!("{row} {count} iterations"))));
+        program.push_str(&format!("__jsRowLog({});\n", js_string(&format!("{row} {count} iterations"))));
         return Ok(program);
     }
     for file in &analogue.files {
         program.push_str(&file_text(driver, jetstream, file)?);
         program.push('\n');
         program.push_str(&namespace_text(driver, file));
+        program.push_str(&expose_text(driver, file));
     }
     program.push_str(&run_body(driver, row, count, true));
     Ok(program)

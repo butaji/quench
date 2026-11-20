@@ -1,6 +1,7 @@
 // jetstream-row: segmentation
-// jetstream-files: worker/segmentation.js worker/async-task.js
+// jetstream-files: worker/segmentation.js
 // iterations: 36
+// jetstream-driver: class=Async preload=asyncTaskBlob=worker/async-task.js worker=true
 /* C analogue of JetStream's worker/segmentation.js benchmark.
  *
  * The JetStream row does not segment text with Intl.Segmenter. Its iteration runs
@@ -202,8 +203,8 @@ static int run_iteration(const Series *d1, const Series *d2, int *out) {
 }
 
 int main(int argc, char **argv) {
-  const char *root = argc > 1 ? argv[1] : "../jetstream";
-  int iterations = argc > 2 ? atoi(argv[2]) : 36;
+  const char *root = argc > 2 ? argv[2] : "../jetstream";
+  int iterations = argc > 1 ? atoi(argv[1]) : 36;
   char path[4096];
   snprintf(path, sizeof path, "%s/worker/segmentation.js", root);
   FILE *f = fopen(path, "rb");

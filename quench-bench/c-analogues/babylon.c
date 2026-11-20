@@ -1,6 +1,7 @@
 // jetstream-row: Babylon
-// jetstream-files: ARES-6/Babylon/index.js ARES-6/Babylon/benchmark.js ARES-6/Babylon/air-blob.js ARES-6/Babylon/basic-blob.js ARES-6/Babylon/inspector-blob.js ARES-6/Babylon/babylon-blob.js
+// jetstream-files: ARES-6/Babylon/index.js ARES-6/Babylon/benchmark.js
 // iterations: 120
+// jetstream-driver: class=Async preload=airBlob=ARES-6/Babylon/air-blob.js,basicBlob=ARES-6/Babylon/basic-blob.js,inspectorBlob=ARES-6/Babylon/inspector-blob.js,babylonBlob=ARES-6/Babylon/babylon-blob.js
 /* C analogue of JetStream's ARES-6 Babylon row. The JS row runs Babel's parser (ARES-6/Babylon/
  * index.js) over four blobs each iteration: air, basic and inspector as scripts and babylon as a
  * module. This analogue parses the same four sources with the shared parser in
@@ -27,8 +28,8 @@ static const Input inputs[] = {
 #define NINPUTS (sizeof inputs / sizeof inputs[0])
 
 int main(int argc, char **argv) {
-  const char *root = argc > 1 ? argv[1] : "../jetstream";
-  const int iterations = 120;
+  const char *root = argc > 2 ? argv[2] : "../jetstream";
+  const int iterations = argc > 1 ? atoi(argv[1]) : 120;
   char *srcs[NINPUTS];
   size_t lens[NINPUTS];
   char path[4096];

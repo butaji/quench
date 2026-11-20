@@ -29,6 +29,8 @@ SEEDED_RANDOM = """(() => {
   Math.random.__resetSeed = () => { seed = initialSeed; };
 })();
 """
+REGEXP_ESCAPE = r'''if (!RegExp.escape) RegExp.escape = (text) => String(text).replace(/[\\^$.*+?()[\]{}|\/]/g, "\\$&");
+'''
 READ_BYTES = """const __jsRowBytes = (path) => {
   const fs = require("fs");
   if (path.endsWith(".z")) return require("zlib").inflateSync(fs.readFileSync(path));
@@ -44,6 +46,38 @@ JetStream.getString = async function (path) { return __jsRowBytes(path).toString
 # Runs the program as a classic script in the global realm, as JetStream's shells do: `this` is
 # (the shell runs files as scripts; this runs the same text as a CommonJS entry, as quench compile does)
 RUNNER = "require('vm').runInThisContext(require('fs').readFileSync(process.argv[1], 'utf8'), { filename: process.argv[1] });"
+# The shell's Worker: each worker runs its script in its own realm (a vm context, as a browser worker
+# has its own global), with postMessage delivered to the parent's onmessage on a later turn.
+WORKER_SHIM = """(() => {
+  const vm = require("vm");
+  const fs = require("fs");
+  globalThis.Worker = class Worker {
+    constructor(file) {
+      this.onmessage = null;
+      const parent = this;
+      const sandbox = {
+        console,
+        setTimeout,
+        clearTimeout,
+        importScripts() {},
+        close() {},
+        postMessage(data) {
+          setImmediate(() => { if (parent.onmessage) parent.onmessage({ data: structuredClone(data) }); });
+        },
+      };
+      sandbox.self = sandbox;
+      this.context = vm.createContext(sandbox);
+      const source = fs.readFileSync(file, "utf8");
+      setImmediate(() => vm.runInContext(source, this.context, { filename: file }));
+    }
+    postMessage(data) {
+      const context = this.context;
+      setImmediate(() => { if (context.onmessage) context.onmessage({ data: structuredClone(data) }); });
+    }
+    terminate() {}
+  };
+})();
+"""
 WASM_PRERUN = """globalThis.quit = globalThis.abort = () => {};
 globalThis.Module = { preRun: [], postRun: [], noInitialRun: true, print: () => {}, printErr: () => {} };
 """
@@ -61,7 +95,7 @@ def header_fields(text):
     return fields
 
 
-DRIVER_KEYS = ("class", "deterministic", "preload", "exports", "group", "namespace")
+DRIVER_KEYS = ("class", "deterministic", "preload", "exports", "group", "namespace", "worker", "runner")
 
 
 def driver_options(text):
@@ -95,6 +129,8 @@ def analogue(path, root):
         exports=[name for name in options.get("exports", "").split(",") if name],
         group=options.get("group", ""),
         namespaces=[tuple(entry.split("@", 1)) for entry in options.get("namespace", "").split(",") if entry],
+        worker=options.get("worker", "false") == "true",
+        runner=options.get("runner", ""),
         root=root,
     )
 
@@ -107,9 +143,12 @@ def prelude(a):
     preload = ", ".join(f"{name}: {js_string(path)}" for name, path in a["preload"])
     lines = [
         "globalThis.print = globalThis.print ?? console.log;",
+        # The row's own files may silence console (web-ssr does); the composer's completion line uses this.
+        "const __jsRowLog = console.log.bind(console);",
         "globalThis.self = globalThis;",
         # A failed console.assert is a failed validation: it must exit the program non-zero.
         "console.assert = (condition, ...details) => { if (!condition) throw new Error(\"Assertion failed: \" + details.join(\" \")); };",
+        REGEXP_ESCAPE,
         READ_BYTES,
         f"globalThis.JetStream = {{ preload: {{ {preload} }}, resources: {{ {preload} }} }};",
     ]
@@ -119,6 +158,9 @@ def prelude(a):
         lines.append(WASM_PRERUN)
     if a["deterministic"]:
         lines.append(SEEDED_RANDOM)
+    if a["worker"]:
+        # The row runs only in a browser (JetStream's exposeBrowserTest): its Workers are the shim below.
+        lines.append(WORKER_SHIM + "globalThis.JetStream.isInBrowser = true;\n")
     return "\n".join(lines)
 
 
@@ -136,6 +178,14 @@ def namespace_text(a, file):
     return "".join(f"globalThis.{name} = module.exports;\n" for name, bundle in a["namespaces"] if bundle == file)
 
 
+def expose_text(a, file):
+    """A plain file's top-level declarations named by `exports=` become globals, as in a shell, where
+    a file is a global script and its functions are visible to the eval'd code of later files."""
+    if file.endswith(".z"):
+        return ""
+    return "".join(f"if (typeof {name} !== \"undefined\") globalThis.{name} = {name};\n" for name in a["exports"])
+
+
 def reset(a):
     return "Math.random.__resetSeed();" if a["deterministic"] else ""
 
@@ -143,7 +193,17 @@ def reset(a):
 def run_body(a, count, report=True):
     """The driver's loop over `Benchmark` (sync or async), as JetStream's runner does."""
     row, n = a["row"], count
-    done = f"console.log({js_string(row + ' ' + str(n) + ' iterations')});" if report else ""
+    done = f"__jsRowLog({js_string(row + ' ' + str(n) + ' iterations')});" if report else ""
+    if a["runner"] == "wsl":
+        return f"""{{
+  for (let i = 0; i < {n}; i++) {{
+    const benchmark = new Benchmark({{ iterationCount: {n} }});
+    benchmark.buildStdlib();
+    benchmark.run();
+  }}
+  {done}
+}}
+"""
     if a["cls"] == "Default":
         return f"""{{
   const benchmark = new Benchmark({{ iterationCount: {n} }});
@@ -176,9 +236,9 @@ def compose(a):
     if a["group"] == "file":
         for file in a["files"]:
             parts.append("{\n" + file_text(a, file) + run_body(dict(a, cls="Default"), a["iterations"], False) + "}\n")
-        parts.append(f"console.log({js_string(a['row'] + ' ' + str(a['iterations']) + ' iterations')});\n")
+        parts.append(f"__jsRowLog({js_string(a['row'] + ' ' + str(a['iterations']) + ' iterations')});\n")
         return "\n".join(parts)
-    parts.extend(file_text(a, file) + "\n" + namespace_text(a, file) for file in a["files"])
+    parts.extend(file_text(a, file) + "\n" + namespace_text(a, file) + expose_text(a, file) for file in a["files"])
     parts.append(run_body(a, a["iterations"]))
     return "\n".join(parts)
 

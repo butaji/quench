@@ -1,6 +1,7 @@
 // jetstream-row: octane-code-load
 // jetstream-files: Octane/code-first-load.js
 // iterations: 120
+// jetstream-driver: deterministic=true exports=MockElement
 /* C analogue of JetStream's octane-code-load row (Octane/code-first-load.js). Each iteration
  * builds two sources from the file's BASE_JS (Closure base.js) and JQUERY_JS (jQuery 1.7.2)
  * strings, exactly as runClosure and runJQuery do: a salt prefix, the cache-busting rename of
@@ -186,8 +187,8 @@ static void load_sources(const char *root, Sources *s) {
 }
 
 int main(int argc, char **argv) {
-  const char *root = argc > 1 ? argv[1] : "../jetstream";
-  const int iterations = 120;
+  const char *root = argc > 2 ? argv[2] : "../jetstream";
+  const int iterations = argc > 1 ? atoi(argv[1]) : 120;
   Sources s;
   load_sources(root, &s);
   JsContext ctx;

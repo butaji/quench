@@ -28,6 +28,10 @@ pub struct Driver {
     pub per_file: bool,
     /// `(global, file)` pairs: after `file` (a UMD bundle) the global is its `module.exports`.
     pub namespaces: Vec<(String, String)>,
+    /// The row's `Worker`s run their scripts in their own realms (`worker=true`, a browser row).
+    pub worker: bool,
+    /// `runner=wsl`: each iteration builds a fresh `Benchmark` and times its `buildStdlib` and `run`.
+    pub runner: String,
 }
 
 impl Class {
@@ -82,6 +86,8 @@ impl Driver {
                 "exports" => driver.exports = value.split(',').filter(|name| !name.is_empty()).map(str::to_owned).collect(),
                 "group" => driver.per_file = value == "file",
                 "namespace" => driver.namespaces = namespaces(value)?,
+                "worker" => driver.worker = value == "true",
+                "runner" => driver.runner = value.to_owned(),
                 other => return Err(format!("unknown driver field `{other}`")),
             }
         }
