@@ -19134,6 +19134,14 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
     }
 }
 
+/// Whether `instruction` is a plain `Binary` of an arithmetic operator (`arithmetic_operators!`), which
+/// `specialize_plain_operators` gives its operator's row.
+fn arithmetic_binary(instruction: WideInstruction) -> bool {
+    macro_rules! pick { ($op:expr) => { () }; }
+    instruction.op() == crate::bytecode::Op::Binary && instruction.result_flags() == 0
+        && arithmetic_operators!(instruction.binary_operator(), pick).is_some()
+}
+
 /// Gives each plain `Binary` record of an arithmetic operator that still runs its generated row, at
 /// any accumulator field, that operator's `operator_row`: the operator becomes a parameter of the
 /// instantiation, so the row neither decodes nor dispatches on it (179 against 64 instructions for an
