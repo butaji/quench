@@ -2238,7 +2238,8 @@ static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
     return cUnported("parameter without annotation");
   if (d->inferState == 1) return cUnported("circular parameter type");
   d->inferState = 1;
-  TsType *t = cUnported("parameter without annotation");
+  /* the refusal is counted only when no type is found: a counted placeholder would end the inference or narrowing around it */
+  TsType *t = NULL;
   bool err = false;
   CSig *cs = cContextualSignature(fn, &err);
   if (!err && cs) {
@@ -2254,6 +2255,7 @@ static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
     }
   }
   d->inferState = 0;
+  if (!t || t == cErrorType) return cUnported("parameter without annotation");
   return t;
 }
 
