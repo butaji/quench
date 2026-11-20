@@ -113,7 +113,7 @@ static void cResetRelationCaches(void) {
 }
 
 /* ---- the types the relation looks at ---- */
-static bool cIsStructured(TsType *t) { return (t->flags & (TF_Object | TF_Union | TF_Intersection | TF_TypeParameter)) != 0; }
+static bool cIsStructured(TsType *t) { return (t->flags & (TF_Object | TF_Union | TF_Intersection | TF_TypeParameter | TF_Index | TF_IndexedAccess)) != 0; }
 
 /* getConstraintOfTypeParameter: the declared constraint (NULL when unconstrained); the marker sub type
  * is constrained by the marker super type */
@@ -977,13 +977,156 @@ static int cSomeTypeRelatedToType(TsType *s, TsType *t, int st) {
   return result;
 }
 
+/* ---- index and indexed access types (structuredTypeRelatedToWorker 70759-70971) ---- */
+/* getBaseConstraintOfType: the base of a type parameter chain, or the type itself when it is not instantiable;
+ * NULL when a type parameter has no constraint, cErrorType (unported) for the compound forms that are not ported */
+static TsType *cBaseConstraintOf(TsType *t) {
+  for (int depth = 0; t->flags & TF_TypeParameter; depth++) {
+    if (t->isThisType || depth > 50) return cUnported("base constraint of a this type");
+    TsType *c = cConstraintOf(t);
+    if (!c) return NULL;
+    t = c;
+  }
+  if (t->flags & (TF_IndexedAccess | TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping))
+    return cUnported("base constraint of an instantiable type");
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    for (int i = 0; i < t->ntypes; i++)
+      if (t->types[i]->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping))
+        return cUnported("base constraint of a generic union or intersection");
+  }
+  return t;
+}
+
+/* the value of o[key] for a relation: the property, or the applicable index signature unless noIdx (NoIndexSignatures);
+ * NULL when there is none (an undefined result of getIndexedAccessTypeOrUndefined) */
+static TsType *cIndexedPropertyOrNull(TsType *o, TsType *key, bool noIdx) {
+  if (o->flags & (TF_Any | TF_Never)) {
+    if (key->flags & (TF_StringLiteral | TF_NumberLiteral | TF_String | TF_Number)) return o;
+    return cUnported("indexed access relation of any with another key");
+  }
+  if (o->flags & TF_Unknown) return NULL;
+  if (!(o->flags & TF_Object)) return cUnported("indexed access relation on a primitive object");
+  if (noIdx) {
+    if (!(key->flags & (TF_StringLiteral | TF_NumberLiteral))) return NULL;
+    BName name = (key->flags & TF_StringLiteral) ? cLiteralKey(key) : bnEscapeText(key->text, key->textLen);
+    TsSymbol *p = cPropertyOf(o, name);
+    return p ? cTypeOfSymbol(p) : NULL;
+  }
+  return cPropertyTypeForIndex(o, key);
+}
+
+/* getIndexedAccessTypeOrUndefined for a relation: a generic access is deferred as usual; a union key gives the
+ * intersection of its members when writing and the union otherwise; a missing member gives NULL */
+static TsType *cIndexedAccessForRelation(TsType *o, TsType *ix, bool writing, bool noIdx) {
+  if (o == cErrorType || ix == cErrorType) return cErrorType;
+  if (cIsGenericIndex(ix) || cIsGenericObject(o)) return cGetIndexedAccessType(o, ix, false);
+  if (ix->flags & TF_Union && !(ix->flags & TF_Boolean)) {
+    TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(ix->ntypes ? ix->ntypes : 1));
+    for (int i = 0; i < ix->ntypes; i++) {
+      parts[i] = cIndexedPropertyOrNull(o, ix->types[i], noIdx);
+      if (!parts[i]) return NULL;
+      if (parts[i] == cErrorType) return cErrorType;
+    }
+    return writing ? cGetIntersectionType(parts, ix->ntypes) : cGetUnionType(parts, ix->ntypes);
+  }
+  return cIndexedPropertyOrNull(o, ix, noIdx);
+}
+
+/* getConstraintOfIndexedAccess (getConstraintFromIndexedAccess): the access through the constraint of the index,
+ * else of the object. NULL when there is none; cErrorType for a form whose simplification is not ported */
+static TsType *cConstraintOfIndexed(TsType *ia) {
+  TsType *ob = ia->iaObj, *ix = ia->iaIdx;
+  if ((ob->flags & (TF_Union | TF_Intersection | TF_IndexedAccess | TF_Index | TF_Conditional)) ||
+      (ix->flags & (TF_IndexedAccess | TF_Index | TF_Conditional)))
+    return cUnported("constraint of an indexed access with a compound object or index");
+  if (ix->flags & TF_TypeParameter) {
+    TsType *c = cConstraintOf(ix);
+    if (c) {
+      TsType *r = cIndexedAccessForRelation(ob, c, false, false);
+      if (r) return r;
+    }
+  }
+  if (ob->flags & TF_TypeParameter) {
+    TsType *c = cConstraintOf(ob);
+    return c ? cIndexedAccessForRelation(c, ix, false, false) : NULL;
+  }
+  return NULL;
+}
+
+/* the target side of structuredTypeRelatedToWorker: keyof T and T[K] as targets. RR_False means the rule did not
+ * relate them and the source side is tried next, as in TypeScript. */
+static int cIndexTargetRelated(TsType *s, TsType *t, int st) {
+  (void)st;
+  if (t->flags & TF_Index) {
+    TsType *tt = t->ixOf;
+    if (s->flags & TF_Index) {
+      int r = cIsRelatedTo(tt, s->ixOf, IS_None);
+      if (r != RR_False) return r;
+    }
+    if (tt->objectFlags & OF_Tuple) { cUnported("keyof of a tuple"); return RR_True; }
+    TsType *c = NULL;
+    if (tt->flags & TF_TypeParameter) c = cConstraintOf(tt);
+    else if (tt->flags & TF_IndexedAccess) {
+      c = cConstraintOfIndexed(tt);
+      if (c == cErrorType) return RR_True;
+    }
+    if (c) {
+      if (cIsRelatedTo(s, cGetIndexType(c), IS_Target) == RR_True) return RR_True;
+    } else if ((tt->flags & TF_Object) && (tt->objectFlags & OF_Mapped) && cIsGenericIndex(tt->mapConstraint)) {
+      if (tt->typeNode && tt->typeNode->nameType) { (void)cUnported("keys of a mapped type with a name type"); return RR_True; }
+      if (cIsRelatedTo(s, tt->mapConstraint, IS_None) == RR_True) return RR_True;
+    }
+    return RR_False;
+  }
+  /* t is T[K] */
+  if (s->flags & TF_IndexedAccess) {
+    int ro = cIsRelatedTo(s->iaObj, t->iaObj, IS_None);
+    if (ro != RR_False) {
+      int ri = cIsRelatedTo(s->iaIdx, t->iaIdx, IS_None);
+      if (ri != RR_False) return (ro == RR_True && ri == RR_True) ? RR_True : RR_Maybe;
+    }
+  }
+  if (cCurRel == REL_Assignable) {
+    /* a target T[K] with a non-generic base is related through the access of its base constraints, written */
+    TsType *bo = cBaseConstraintOf(t->iaObj), *bi = cBaseConstraintOf(t->iaIdx);
+    if (bo == cErrorType || bi == cErrorType) return RR_True;
+    if (!bo) bo = t->iaObj;
+    if (!bi) bi = t->iaIdx;
+    if (!cIsGenericObject(bo) && !cIsGenericIndex(bi)) {
+      TsType *c = cIndexedAccessForRelation(bo, bi, true, bo != t->iaObj);
+      if (c == cErrorType) return RR_True;
+      if (c) {
+        int r = cIsRelatedTo(s, c, IS_Target);
+        if (r != RR_False) return r;
+      }
+    }
+  }
+  return RR_False;
+}
+
+/* the source side for keyof T and T[K] (the TypeVariable and Index branches): keyof T is string | number | symbol,
+ * and T[K] through its constraint */
+static int cIndexSourceRelated(TsType *s, TsType *t, int st) {
+  if (s->flags & TF_Index) {
+    TsType *keys = cGetUnionType((TsType *[]){cStringType, cNumberType, cESSymbolType}, 3);
+    return cIsRelatedTo(keys, t, IS_Source);
+  }
+  if (t->flags & TF_IndexedAccess) return RR_False;   /* both T[K]: the constraint of the source is not related to T[K] */
+  TsType *c = cConstraintOfIndexed(s);
+  if (c == cErrorType) return RR_True;
+  int r = cIsRelatedTo(c ? c : cUnknownType, t, st);
+  if (r != RR_False) return r;
+  if (s->iaObj->flags & TF_Object && (s->iaObj->objectFlags & OF_Mapped)) { (void)cUnported("indexed access of a mapped type as a source"); return RR_True; }
+  return RR_False;
+}
+
 static int cStructuredRelated(TsType *s, TsType *t, int st) {
   if (s->flags & TF_Union) return cEachTypeRelatedToType(s, t, st);
   if (t->flags & TF_Union) {
     /* a type parameter source that is related to no member of the target union is related through its constraint
      * (structuredTypeRelatedToWorker falls through to the constraint of an instantiable source) */
     int r = cTypeRelatedToSome(s, t, st);
-    if (r != RR_False || !(s->flags & TF_TypeParameter)) return r;
+    if (r != RR_False || !(s->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Index))) return r;
   }
   if (t->flags & TF_Intersection) return cTypeRelatedToEach(s, t, IS_Target);
   if (s->flags & TF_Intersection) {
@@ -996,6 +1139,11 @@ static int cStructuredRelated(TsType *s, TsType *t, int st) {
     }
     return RR_False;
   }
+  if (t->flags & (TF_Index | TF_IndexedAccess)) {
+    int r = cIndexTargetRelated(s, t, st);
+    if (r != RR_False) return r;
+  }
+  if (s->flags & (TF_IndexedAccess | TF_Index)) return cIndexSourceRelated(s, t, st);
   if (s->flags & TF_TypeParameter) {
     TsType *c = cConstraintOf(s);
     if (!c) return RR_False;
@@ -1058,8 +1206,7 @@ static int cRecursiveRelated(TsType *s, TsType *t, int st) {
 static int cIsRelatedTo(TsType *s, TsType *t, int st) {
   if (s == t) return RR_True;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return RR_True; }
-  /* indexed access and index types: their relation rules (constraints of T[K], keyof) are not ported */
-  if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); return RR_True; }
+  if ((s->flags | t->flags) & (TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); return RR_True; }
   if (cIsSimpleRelated(s, t, cCurRel)) return RR_True;
   /* isRelatedTo (5.9.2): a type parameter is related to its own constraint without a cache entry */
   if ((s->flags & TF_TypeParameter) && cConstraintOf(s) == t) return RR_True;
@@ -1096,7 +1243,7 @@ static bool cIsRelatedWith(TsType *s, TsType *t, int rel) {
   if (rel == REL_Identity) r = cIdentical(s, t);
   else if (s == t) r = true;
   else if (cIsSimpleRelated(s, t, rel)) r = true;
-  else if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); r = true; }
+  else if ((s->flags | t->flags) & (TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); r = true; }
   else if (!cIsStructured(s) && !cIsStructured(t)) r = false;
   else {
     int ci = cRelFind(&cRelTab[rel], s, t, IS_None);
