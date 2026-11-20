@@ -292,6 +292,31 @@ static TsType *cGlobalArrayDeclared(void) {
   return cGlobalArrayType;
 }
 
+/* getSymbolId: symbols get their ids on first use (nextSymbolId) */
+static uint32_t cNextSymbolId = 1;
+static uint32_t cSymbolId(TsSymbol *s) {
+  if (!s->checkId) s->checkId = cNextSymbolId++;
+  return s->checkId;
+}
+
+/* getESSymbolLikeTypeForNode / createUniqueESSymbolType: `unique symbol` on a readonly property
+ * signature (the form used by lib.es2015.symbol.d.ts). The escaped name is "__@<name>@<id>" and is
+ * kept in text, which is what late binding uses as the member name (getPropertyNameFromType). */
+static TsType *cUniqueSymbolType(TsNode *decl) {
+  if (decl->kind != TSK_PropertySignature || !(bModifierFlags(decl) & TMF_Readonly) || !decl->symbol)
+    return cUnported("unique symbol placement");
+  TsSymbol *sym = cGetMergedSymbol(decl->symbol);
+  if (sym->uniqueType) return sym->uniqueType;
+  TsType *t = cNewType(TF_UniqueESSymbol);
+  t->symbol = sym;
+  char *buf = ts_arena_alloc((size_t)sym->name.n + 32);
+  int k = snprintf(buf, (size_t)sym->name.n + 32, "__@%.*s@%u", sym->name.n, sym->name.s, (unsigned)cSymbolId(sym));
+  t->text = buf;
+  t->textLen = k;
+  sym->uniqueType = t;
+  return t;
+}
+
 /* getTypeFromTypeNode (67684) for the node kinds of this project */
 static TsType *cTypeFromNode(TsNode *n) {
   if (!n) return cErrorType;
@@ -308,6 +333,10 @@ static TsType *cTypeFromNode(TsNode *n) {
     case TSK_NeverKeyword: return cNeverType;
     case TSK_VoidKeyword: return cVoidType;
     case TSK_ParenthesizedType: return cTypeFromNode(n->type);
+    case TSK_TypeOperator:
+      if (n->extra != TSK_UniqueKeyword) return cUnported("type operator");
+      if (!n->type || n->type->kind != TSK_SymbolKeyword) return cUnported("unique operand");
+      return cUniqueSymbolType(n->parent);
     case TSK_LiteralType: {
       TsNode *l = n->literal;
       if (!l) return cUnported("literal type");
@@ -408,18 +437,87 @@ static bool cIsReadonlyProp(TsSymbol *s) {
   return false;
 }
 
+/* ---- late-bound members (getMembersOfSymbol, resolveDeclaredMembers) ---- */
+static TsSymbol *cPropertyOf(TsType *t, BName name);
+
+/* isLateBindableName: a computed name whose expression is an entity name (Symbol.iterator, x) */
+static bool cIsLateBindableName(TsNode *name) {
+  return name->kind == TSK_ComputedPropertyName && name->expression && bIsEntityNameExpression(name->expression);
+}
+
+/* checkComputedPropertyName of an entity name expression (Symbol.iterator, x.y, x): the type of the
+ * name. An unresolved or unported part gives the error type. */
+static TsType *cEntityNameType(TsNode *loc, TsNode *e) {
+  if (e->kind == TSK_Identifier) {
+    TsSymbol *s = cResolveValueName(loc, bnEscapeText(e->text, e->textLen));
+    if (!s) return cUnported("late name: unresolved identifier");
+    return cTypeOfSymbol(s);
+  }
+  TsType *lt = cEntityNameType(loc, e->expression);
+  if (lt == cErrorType) return lt;
+  if (!(lt->flags & TF_Object)) return cUnported("late name: property of a non-object");
+  TsSymbol *p = cPropertyOf(lt, bnEscapeText(e->name->text, e->name->textLen));
+  if (!p) return cUnported("late name: property");
+  return cTypeOfSymbol(p);
+}
+
+/* the late member name of a computed member: the unique symbol type, NULL when the name type is not
+ * usable as a property name (the member is then left out, as lateBindMember does), or the error type */
+static TsType *cLateNameType(TsNode *member) {
+  TsType *t = cEntityNameType(member->name, member->name->expression);
+  if (t == cErrorType) return t;
+  return (t->flags & TF_UniqueESSymbol) ? t : NULL;
+}
+
+/* getMembersOfSymbol: the early (declared) members, then the late-bound members of the declarations,
+ * as getResolvedMembersOrExportsOfSymbol combines them. Returns early itself when there are none. */
+static TsSymTable *cMembersWithLate(TsSymbol *s, TsSymTable *early) {
+  TsSymTable *lateSyms = NULL; /* the late symbols by name, in the order of lateBindMember calls */
+  for (int d = 0; d < s->ndecls; d++) {
+    TsNode *dn = s->decls[d];
+    if (!dn->members) continue;
+    for (int m = 0; m < dn->members->n; m++) {
+      TsNode *mem = dn->members->v[m];
+      if (!mem->name || !cIsLateBindableName(mem->name)) continue;
+      if (bHasSyntacticModifier(mem, TMF_Static) || !mem->symbol) continue; /* static members: resolvedExports */
+      TsType *nt = cLateNameType(mem);
+      if (nt == cErrorType) { cUnported("late-bound member name"); continue; }
+      if (!nt) continue;
+      BName key = { nt->text, nt->textLen };
+      if (early && bTableGet(early, key)) { cUnported("late-bound member with an early name"); continue; }
+      if (!lateSyms) lateSyms = bTableNew();
+      TsSymbol *ls = bTableGet(lateSyms, key);
+      uint32_t symFlags = mem->symbol->flags;
+      if (!ls) {
+        ls = cCreateSymbol(0, key);
+        bTableSet(lateSyms, key, ls);
+      } else if (ls->flags & cExcludedFlags(symFlags)) {
+        cUnported("late-bound duplicate member");
+        continue;
+      }
+      ls->flags |= symFlags;
+      cAddDeclRaw(ls, mem);
+      if (symFlags & SF_Value) bSetValueDeclaration(ls, mem);
+    }
+  }
+  if (!lateSyms) return early;
+  TsSymTable *res = early ? cTableCopy(early) : bTableNew();
+  for (int i = 0; i < lateSyms->n; i++) bTableSet(res, lateSyms->e[i].key, lateSyms->e[i].sym);
+  return res;
+}
+
 /* resolved members of an object type: the declared members, then inherited members of the base types */
 static void cResolveMembers(TsType *t) {
   if (t->resolved) return;
   t->resolved = true;
   if (t->objectFlags & OF_Reference) return;
   if (t->typeNode && (t->typeNode->kind == TSK_TypeLiteral)) {
-    t->members = t->symbol->members;
+    t->members = cMembersWithLate(t->symbol, t->symbol->members);
     return;
   }
   if (t->objectFlags & (OF_Interface | OF_Class)) {
     TsSymbol *s = t->symbol;
-    TsSymTable *own = s->members ? s->members : bTableNew();
+    TsSymTable *own = cMembersWithLate(s, s->members ? s->members : bTableNew());
     /* base types: heritage clauses of the declarations (interface extends, class extends) */
     TsSymTable *res = cTableCopy(own);
     for (int d = 0; d < s->ndecls; d++) {
