@@ -16,7 +16,7 @@ mod specializer;
 pub(crate) mod specialize;
 #[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
-mod compiled;
+pub(crate) mod compiled;
 #[cfg(unix)]
 pub use compiled::NativeFaultHandler;
 #[cfg(feature = "profile-native-ops")]

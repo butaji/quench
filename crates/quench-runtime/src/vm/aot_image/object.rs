@@ -43,14 +43,32 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
         name: crate::NATIVE_JS_ABI_SYMBOL.into(),
         signature: ir::Signature::new(isa.default_call_conv()),
     }];
-    let imports = import_symbols(image, isa, &mut functions)?;
+    let (mut imports, helpers) = import_symbols(image, isa, &mut functions)?;
     let first = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
     let bases = base_declarations(image, first)?;
+    // The helper stubs follow every entry and base body, so the entry numbering `base_declarations`
+    // computes is unchanged.
+    let lanes = u32::try_from(image.functions.iter().filter(|function| function.lane.is_some()).count())
+        .map_err(|_| "native symbol count exceeds u32")?;
+    let helper_base = first.checked_add(u32::try_from(image.functions.len()).map_err(|_| "native symbol count exceeds u32")?)
+        .and_then(|after| after.checked_add(lanes)).ok_or("native symbol count overflow")?;
+    for (at, helper) in helpers.iter().enumerate() {
+        imports.insert((crate::vm::compiled::lane_helper_key(*helper).0, crate::vm::compiled::lane_helper_key(*helper).1), helper_base + at as u32);
+    }
     let targets = Targets { image, imports: &imports, bases: &bases, conv: isa.default_call_conv() };
     let mut definitions = image.functions.iter().map(|function| entry_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?;
     definitions.extend(image.functions.iter().filter(|function| function.lane.is_some())
         .map(|function| base_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?);
     functions.extend(definitions);
+    if !helpers.is_empty() {
+        let table = *imports.get(&(crate::vm::compiled::lane_helper_table_key().0, crate::vm::compiled::lane_helper_table_key().1))
+            .ok_or("an image names a helper but no helper table")?;
+        // Named per module: each object defines its own stub (nothing outside references it -- the
+        // code reaches it by declaration index), so two objects never collide on one name.
+        for helper in &helpers {
+            functions.push(helper_stub(format!("{namespace}_lane_helper_{helper}"), *helper, table, isa));
+        }
+    }
     let data = vec![recipe_data(namespace, image), entry_table(isa, namespace, image.functions.len(), first)?];
     Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
 }
@@ -60,20 +78,30 @@ fn codes(function: &AotFunction) -> impl Iterator<Item = &RelocatableCode> {
     std::iter::once(&function.base.code).chain(function.lane.as_ref().map(|lane| &lane.code))
 }
 
-/// Declares the helper and semantic-entry symbols the code names, after `functions`' existing
-/// declarations, and returns their declaration indices.
-fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<NativeFunction>) -> Result<BTreeMap<(u32, u32), u32>, String> {
+/// Declares the semantic-entry symbols the code names, after `functions`' existing declarations,
+/// and returns their declaration indices and the helpers the code names. A helper is not an
+/// import: the module defines one stub per helper over the exported table (`helper_stub`), because
+/// the executable cannot export a text symbol per helper of a build it does not know.
+fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<NativeFunction>)
+    -> Result<(BTreeMap<(u32, u32), u32>, Vec<u32>), String> {
     let mut imports = BTreeMap::new();
+    let mut helpers: Vec<u32> = Vec::new();
     for reloc in image.functions.iter().flat_map(codes).flat_map(|code| code.relocations.iter()) {
         let key = (reloc.namespace, reloc.key);
+        match SymbolTable::decode(&image.labels, key.0, key.1) {
+            Some(Symbol::Helper(helper)) => {
+                if !helpers.contains(&helper) { helpers.push(helper); }
+                continue;
+            }
+            _ => {}
+        }
         if imports.contains_key(&key) {
             continue;
         }
         let import = match SymbolTable::decode(&image.labels, key.0, key.1) {
-            Some(Symbol::Helper(helper)) => helper_import(isa, helper),
             Some(Symbol::HelperTable) => NativeFunction::Import {
-                name: crate::NATIVE_JS_LANE_HELPERS_SYMBOL.to_owned(),
-                signature: crate::vm::compiled::native_lane_helpers_signature(isa),
+                name: crate::NATIVE_JS_LANE_HELPER_TABLE_SYMBOL.to_owned(),
+                signature: ir::Signature::new(isa.default_call_conv()),
             },
             Some(Symbol::SemanticEntry(op)) => operation_import(isa, op),
             Some(Symbol::BasePc { .. }) => continue,
@@ -83,11 +111,62 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
         imports.insert(key, u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?);
         functions.push(import);
     }
-    Ok(imports)
+    // A helper needs the table; an image that names helpers before the table does gets it here.
+    if !helpers.is_empty() && !imports.contains_key(&(crate::vm::compiled::lane_helper_table_key().0, crate::vm::compiled::lane_helper_table_key().1)) {
+        let key = (crate::vm::compiled::lane_helper_table_key().0, crate::vm::compiled::lane_helper_table_key().1);
+        imports.insert(key, u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?);
+        functions.push(NativeFunction::Import {
+            name: crate::NATIVE_JS_LANE_HELPER_TABLE_SYMBOL.to_owned(),
+            signature: ir::Signature::new(isa.default_call_conv()),
+        });
+    }
+    Ok((imports, helpers))
 }
 
-fn helper_import(isa: &dyn TargetIsa, helper: u32) -> NativeFunction {
-    NativeFunction::Import { name: format!("{HELPER_SYMBOL_PREFIX}{helper}"), signature: ir::Signature::new(isa.default_call_conv()) }
+/// Helper `helper`'s stub: a branch to the table's entry, so a stitched row's call reaches the
+/// helper through one exported symbol. Built as Cranelift IR rather than bytes, so the target
+/// backend emits the reference to the table with the relocations Mach-O accepts from a text
+/// section (an absolute word there is illegal, and the table lives in data).
+///
+/// The stub forwards its own parameter registers unchanged, which is the row ABI a helper is
+/// entered with: it reads none of them, it only tails into the helper's entry.
+#[cfg(target_arch = "aarch64")]
+fn helper_stub(name: String, helper: u32, table: u32, isa: &dyn TargetIsa) -> NativeFunction {
+    use cranelift_codegen::ir::InstBuilder as _;
+    use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    for _ in 0..STUB_PARAMETERS { signature.params.push(ir::AbiParam::new(cranelift_codegen::ir::types::I64)); }
+    signature.returns.push(ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+    let mut function = ir::Function::with_name_signature(ir::UserFuncName::user(0, 0), signature.clone());
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut function, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let symbol = builder.func.declare_imported_user_function(ir::UserExternalName::new(NATIVE_FUNCTION_NAMESPACE, table));
+    let table_value = builder.func.create_global_value(ir::GlobalValueData::Symbol {
+        name: ir::ExternalName::user(symbol), offset: ir::immediates::Imm64::new(0), colocated: false, tls: false });
+    let base = builder.ins().symbol_value(cranelift_codegen::ir::types::I64, table_value);
+    let entry_address = builder.ins().load(cranelift_codegen::ir::types::I64, ir::MemFlagsData::trusted(), base, (helper * 8) as i32);
+    let call = builder.import_signature(signature);
+    let arguments: Vec<_> = builder.block_params(entry).to_vec();
+    // A call and return, not a sibling call: AArch64's register allocator cannot satisfy a tail
+    // call of this shape (`return_call_indirect` fails to allocate a minimal bundle).
+    let call = builder.ins().call_indirect(call, entry_address, &arguments);
+    let results: Vec<_> = builder.inst_results(call).to_vec();
+    builder.ins().return_(&results);
+    builder.finalize(isa.frontend_config());
+    NativeFunction::Definition { name, function }
+}
+
+/// The word registers a helper's entry may read: the row ABI's context, residual and operands.
+#[cfg(target_arch = "aarch64")]
+const STUB_PARAMETERS: usize = 5;
+
+#[cfg(not(target_arch = "aarch64"))]
+fn helper_stub(name: String, _helper: u32, _table: u32, isa: &dyn TargetIsa) -> NativeFunction {
+    NativeFunction::Import { name, signature: ir::Signature::new(isa.default_call_conv()) }
 }
 
 fn operation_import(isa: &dyn TargetIsa, op: u16) -> NativeFunction {
@@ -133,6 +212,7 @@ fn definition(name: String, code: &RelocatableCode, targets: &Targets<'_>) -> Re
         signature: ir::Signature::new(targets.conv),
         code: code.code.to_vec(),
         alignment: CODE_ALIGNMENT,
+        local: false,
         relocations,
     }))
 }

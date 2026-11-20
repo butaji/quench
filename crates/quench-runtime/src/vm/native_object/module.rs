@@ -14,6 +14,9 @@ pub struct NativeCode {
     pub code: Vec<u8>,
     pub alignment: u64,
     pub relocations: Vec<NativeReloc>,
+    /// Defined for this object alone: a symbol another object may also define (a helper stub,
+    /// one per module that names the helper) keeps its uniqueness with local linkage.
+    pub local: bool,
 }
 
 /// One relocation of `NativeCode`: the field at `offset` takes the address of declaration

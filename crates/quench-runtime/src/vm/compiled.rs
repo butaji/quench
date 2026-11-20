@@ -1035,7 +1035,9 @@ macro_rules! lane_helper_inventory {
         pub(super) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
             const COUNT: usize = [$(stringify!($name)),+].len();
-            pub(in crate::vm) fn addresses<$host: Host>() -> &'static [*const (); Self::COUNT] {
+            /// The process's helper addresses. `const` so a produced executable exports the table
+            /// itself as data: a stitched row reaches a helper through it without a call.
+            pub(in crate::vm) const fn addresses<$host: Host>() -> &'static [*const (); Self::COUNT] {
                 &[$($address as *const ()),+]
             }
         }
@@ -1267,11 +1269,6 @@ impl LaneHelpers {
         // symbol a link can define without knowing how many helpers a build has.
         if matches!(self, Self::Ahead) {
             let table = lane_region::helper_table_symbol(builder);
-            let mut signature = ir::Signature::new(builder.func.signature.call_conv);
-            signature.returns.push(ir::AbiParam::new(types::I64));
-            let signature = builder.import_signature(signature);
-            let call = builder.ins().call_indirect(signature, table, &[]);
-            let table = builder.inst_results(call)[0];
             let mut stage = object_slots::emit(builder);
             return stage.raw_load(crate::staged::machine::Lane::I64, invariant(), table,
                 (helper as usize * std::mem::size_of::<usize>()) as i32);
@@ -1313,9 +1310,24 @@ enum HelperAddress {
 /// Immutable host-specific helper addresses, resolved by the running image.
 /// The table and every code pointer have process lifetime; obtaining it has no effects.
 #[cfg(feature = "native-execution")]
+/// The relocation key of lane helper `helper` in image code, and of the helper table itself.
+pub(in crate::vm) fn lane_helper_key(helper: u32) -> (u32, u32) { (lane_region::RelocKind::Helper as u32, helper) }
+pub(in crate::vm) fn lane_helper_table_key() -> (u32, u32) { (lane_region::RelocKind::HelperTable as u32, 0) }
+
 pub fn native_js_lane_helpers<H: Host>() -> *const () {
     LaneHelper::addresses::<H>().as_ptr().cast()
 }
+
+/// The helper table as a value, for an executable to export as data
+/// (`NATIVE_JS_LANE_HELPER_TABLE_SYMBOL`): image code loads a helper's address from it, so one
+/// exported symbol serves every helper a build has.
+pub const fn native_js_lane_helper_table<H: Host>() -> [*const (); NATIVE_JS_LANE_HELPER_COUNT] {
+    *LaneHelper::addresses::<H>()
+}
+
+/// How many helpers a build has (`native_js_lane_helper_table`'s length).
+pub const NATIVE_JS_LANE_HELPER_COUNT: usize = LaneHelper::COUNT;
+
 
 pub(super) fn native_lane_helpers_signature(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Signature {
     call_signature::word_signature(isa.default_call_conv(), 0, 1, isa.pointer_type())

@@ -74,7 +74,7 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/compare_jumps.rs"] mod compare_jumps;
 #[path = "lane_region/relocs.rs"] pub(super) mod relocs;
-use relocs::RelocKind; pub(super) use relocs::{atom_symbol, helper_symbol, helper_table_symbol, numeric_symbol};
+pub(super) use relocs::RelocKind; pub(super) use relocs::{atom_symbol, helper_symbol, helper_table_symbol, numeric_symbol};
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/virtual_objects.rs"] mod virtual_objects;

@@ -83,11 +83,27 @@ fn derive_native_exports(
         exports.push(export);
     }
     let lane_helpers_symbol = format!("{}LaneHelpers_v{version}", prefix.value());
+    // The helper table's export name: one home, beside the other symbol names this macro emits.
+    let helper_table_symbol = "quench_lane_helper_table";
+    // The table itself, as data: image code loads a helper's address from it, so one exported
+    // symbol serves every helper a build has (a stitched row reaches its helper without a call).
+    let lane_helper_table_export = quote! {
+        /// The helper addresses as data (transparent over the array, so the symbol is the table).
+        #[repr(transparent)]
+        pub struct LaneHelperTable([*const (); $crate::NATIVE_JS_LANE_HELPER_COUNT]);
+        // SAFETY: every entry is one of the runtime's own helper functions, unchanged for the
+        // process's life, so sharing the table is what sharing code is.
+        unsafe impl Sync for LaneHelperTable {}
+        #[unsafe(export_name = #helper_table_symbol)]
+        pub static LANE_HELPER_TABLE: LaneHelperTable =
+            LaneHelperTable($crate::native_js_lane_helper_table::<$host>());
+    };
     let lane_helpers_export = quote! {
         #[unsafe(export_name = #lane_helpers_symbol)]
         pub extern "C" fn native_js_lane_helpers_export() -> *const () {
             $crate::native_js_lane_helpers::<$host>()
         }
+        #lane_helper_table_export
     };
     let marker = format!("quench_native_js_abi_v{version}_{hash:016x}");
     Ok(quote! {
@@ -98,6 +114,10 @@ fn derive_native_exports(
         pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_LANE_HELPERS_SYMBOL: &str = #lane_helpers_symbol;
+        /// The name a produced executable exports the helper table under (image code loads a
+        /// helper's address from it).
+        #[cfg(feature = "native-execution")]
+        pub const NATIVE_JS_LANE_HELPER_TABLE_SYMBOL: &str = #helper_table_symbol;
         /// The header contains the ABI marker.
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 1;
@@ -131,6 +151,7 @@ fn derive_native_exports(
                 pub extern "C" fn abi_marker() {}
             };
             (@operation $host:ty, #lane_helpers_symbol) => { #lane_helpers_export };
+            (@operation $host:ty, #helper_table_symbol) => { #lane_helper_table_export };
             #(#export_arms)*
         }
     })

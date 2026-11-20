@@ -156,6 +156,8 @@ pub mod shared_backing;
 
 #[cfg(feature = "native-execution")]
 pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_LANE_HELPERS_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS_OPERATION_PREFIX, NativeProgramNamespace};
+pub use vm::compiled::{NATIVE_JS_LANE_HELPER_COUNT, native_js_lane_helper_table};
+pub use bytecode::NATIVE_JS_LANE_HELPER_TABLE_SYMBOL;
 #[cfg(feature = "native-execution")]
 pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,

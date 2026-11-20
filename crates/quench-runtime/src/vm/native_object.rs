@@ -90,7 +90,7 @@ pub fn emit_native_module_for(
             NativeFunction::Definition { name, function } => {
                 (name, &function.signature, Linkage::Export)
             }
-            NativeFunction::Code(code) => (&code.name, &code.signature, Linkage::Export),
+            NativeFunction::Code(code) => (&code.name, &code.signature, if code.local { Linkage::Local } else { Linkage::Export }),
             NativeFunction::Import { name, signature } => (name, signature, Linkage::Import),
         };
         // Duplicate declarations would make declaration indices cease to name
