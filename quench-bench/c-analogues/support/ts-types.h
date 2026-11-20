@@ -1664,7 +1664,7 @@ static void cResolveMembers(TsType *t) {
     TsType *tg = t->target;
     int ntp = tg->ntypeParams + (tg->thisType ? 1 : 0);
     TsType **tps = ts_arena_alloc(sizeof(TsType *) * (size_t)(ntp ? ntp : 1));
-    memcpy(tps, tg->typeParams, sizeof(TsType *) * (size_t)tg->ntypeParams);
+    if (tg->ntypeParams) memcpy(tps, tg->typeParams, sizeof(TsType *) * (size_t)tg->ntypeParams);
     if (tg->thisType) tps[ntp - 1] = tg->thisType;
     TsType **args = t->args;
     int nargs = t->nargs;
