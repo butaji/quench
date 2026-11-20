@@ -14,3 +14,10 @@ c1	[] grown by push to 1024	register	then a[i]	ok
 grow	[] grown by push to 2000 (objects)	register	then a[i].k	ok
 d1	new Array(1024), filled, then stored	register	then a[i]	ok
 c3	literal [0..15]	register a[i & 15]	1024 reads	ok
+# hash-map (SIGBUS at 0x2aac000130 = heap ptr + layout entry address): the faulting row's
+# window register x20 holds a heap pointer (x20 = x3 = the record 0xaac000100), not the lane
+# window, and the row stores through [x20 + slot]. The region was entered with x3 as x20 (the
+# body thunk), so the caller of the region passed a heap pointer as the register file, or a
+# call inside the row clobbered x20/x21: under preserve_none they are argument registers, not
+# callee-saved, so a row that calls must save and restore them itself (x86's r12/r13 are
+# callee-saved).
