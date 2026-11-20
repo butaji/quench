@@ -220,10 +220,11 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     entry
 }
 
-/// The function an admitted frameless callee runs: the callee is an admitted user function
-/// (`general_frameless_admit`), so its heap kind names it.
+/// The function a frameless callee runs, read from its heap object: the callee is an admitted user function
+/// (`general_frameless_admit`), so its heap kind names it. Not `admission::admitted_function`, which finds an
+/// admission by function index, not by callee value.
 #[cfg(feature = "native-execution")]
-pub(super) fn admitted_function<H: Host>(vm: &Vm<H>, callee: Value) -> u32 {
+pub(super) fn callee_function<H: Host>(vm: &Vm<H>, callee: Value) -> u32 {
     let Some(crate::heap::FunctionKind::User(_, function)) = vm.heap.function(callee).map(|callee| callee.kind)
         else { unreachable!("a frameless callee is an admitted user function") };
     function
@@ -241,11 +242,11 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
     let mut window = vm.frameless.stacks().windows.as_ptr();
     let records: Vec<_> = live.iter().zip(continues).map(|(record, source_pc)| {
         let registers = window;
-        window = window.wrapping_add(usize::from(program.function(admitted_function(vm, record.callee) as usize).registers));
+        window = window.wrapping_add(usize::from(program.function(callee_function(vm, record.callee) as usize).registers));
         ChainFrame { source_pc, registers, link: *record }
     }).collect();
     if let Some(last) = records.last() {
-        let last_function = admitted_function(vm, last.link.callee);
+        let last_function = callee_function(vm, last.link.callee);
         let epoch = vm.cache_epochs.gc;
         let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last_function)).or_default();
         if *counted != epoch { (*leaves, *counted) = (0, epoch); }
