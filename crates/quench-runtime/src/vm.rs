@@ -9,7 +9,9 @@ pub use native_operands::NativeJsOperands;
 pub(crate) mod aot_image;
 pub(crate) mod native_object;
 // The one fact-based specializer: the u-jit runs it on a run's observations and the AOT compiler
-// runs it ahead over the program, so the library a produced image links keeps it as well.
+// runs it ahead over the program. Both are the producing side (a produced image links no
+// compiler), which is why it rides the jit feature the producer builds with.
+#[cfg(feature = "jit")]
 mod specializer;
 pub(crate) mod specialize;
 #[cfg(feature = "native-execution")]

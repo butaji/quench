@@ -21,12 +21,20 @@ const LANE_BODY_CODE_CEILING: usize = 2 * crate::vm::compiled::tier_policy::LANE
 
 /// The code of one function, compiled on the calling thread.
 fn function_code(function: ir::Function, level: super::super::jit_backend::CompileLevel) -> Result<Vec<u8>, super::super::jit_backend::NativeCompileRejection> {
+    #[cfg_attr(not(feature = "jit"), allow(unused_variables))]
     let level = match level {
         super::super::jit_backend::CompileLevel::Optimized | super::super::jit_backend::CompileLevel::Quick if function.dfg.num_insts() > super::LANE_BACKTRACKING_MAX_INSTS =>
             super::super::jit_backend::CompileLevel::Large,
         level => level,
     };
+    // A run-time publication copies code into this process's executable memory; an image keeps
+    // relocatable code, which a linker places (and compiles without the run-time JIT at all).
+    #[cfg(feature = "jit")]
     let isa = super::super::jit_backend::target_isa_level(level)
+        .ok_or(super::super::jit_backend::NativeCompileRejection::Publish)?;
+    #[cfg(not(feature = "jit"))]
+    let isa = super::super::jit_backend::relocatable_isa(&super::super::jit_backend::NativeTarget::default())
+        .ok()
         .ok_or(super::super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, LANE_BODY_CODE_CEILING, |code| Some(code.to_vec()))
 }

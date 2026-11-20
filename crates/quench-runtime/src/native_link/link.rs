@@ -57,10 +57,15 @@ impl NativeSupport {
                     let features = artifact["features"]
                         .as_array()
                         .ok_or("Cargo artifact has no feature list")?;
-                    if matches!(
+                    // A static image carries no code generator: it runs the linked records and
+                    // nothing else. A dynamic-source image already carries the interpreter and
+                    // the JIT (`jit` is required of it below), so the object writer adds no
+                    // capability it does not have; it is what lets that image be produced at all.
+                    if (matches!(
                         name,
                         "cranelift_object" | "cranelift_module"
-                    ) || (name == "cranelift_native" && !support.allows_dynamic_source()) {
+                    ) && !support.allows_dynamic_source())
+                        || (name == "cranelift_native" && !support.allows_dynamic_source()) {
                         return Err(format!(
                             "native support includes compiler dependency {name}"
                         ));

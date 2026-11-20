@@ -179,6 +179,7 @@ fn target_isa_with(
 
     let target = match publication {
         CodePublication::RelocatableObject => NativeTarget::default(),
+        #[cfg(feature = "jit")]
         _ => NativeTarget::host(),
     };
     let isa = build_isa(opt_level, publication, level, &target).ok()?;
