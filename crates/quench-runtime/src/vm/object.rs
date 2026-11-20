@@ -1,4 +1,5 @@
 use super::property_key::PropertyKey;
+use super::dispatch_frame::this_is_fixed;
 use super::*;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub(super) use super::field_cache::FieldCacheProbe;
@@ -1167,7 +1168,7 @@ impl<H: Host> Vm<H> {
         // An initialized `this` binding never changes (a second `super()` throws), so the
         // frame keeps it as its fixed receiver; only a derived constructor's binding before
         // `super()` stays to be resolved again.
-        let initialized = !value.is_deleted();
+        let initialized = this_is_fixed(false, value);
         let activation = &mut self.frames[frame];
         activation.this = value;
         activation.fixed_this = initialized;
