@@ -27,6 +27,7 @@
 #ifndef TS_TYPES_H
 #define TS_TYPES_H
 
+#include <math.h>
 #include "ts-checker-decls.h"
 
 /* TypeFlags (TypeScript 5.9.2) */
@@ -94,6 +95,10 @@ typedef struct TsType {
   /* indexed access types (T[K]): object and index type; index types (keyof T): the type */
   struct TsType *iaObj, *iaIdx, *ixOf;
   struct TsType *resolvedIndex;   /* getIndexTypeForGenericType cache */
+  /* literal types (getFreshTypeOfLiteralType): the regular and the fresh object of one literal; the value of a
+   * number literal (its text is the source slice). Enum types and their literals use the same fields. */
+  struct TsType *litRegular, *litFresh;
+  double litNum;
 } TsType;
 
 struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
@@ -281,17 +286,10 @@ static TsNode *cTypeParamDefaultNode(TsType *tp) {
   return NULL;
 }
 
-/* the type of an enum member used as a type (a literal type of the enum; its value is not computed) */
-static TsType *cEnumMemberType(TsSymbol *m) {
-  m = cGetMergedSymbol(m);
-  if (m->declaredType) return m->declaredType;
-  TsNode *d = m->decls[0];
-  uint32_t fl = (d->initializer && d->initializer->kind == TSK_StringLiteral) ? TF_StringLiteral : TF_NumberLiteral;
-  TsType *t = cNewType(fl | TF_EnumLiteral);
-  t->symbol = m;
-  m->declaredType = t;
-  return t;
-}
+/* enums: defined after cEntityNameSymbol (ts-types.h, "enums" below) */
+static TsType *cEnumMemberType(TsSymbol *m);
+static TsType *cDeclaredTypeOfEnum(TsSymbol *sym);
+static TsType *cRegularType(TsType *t);
 
 /* the type arguments of a reference to a generic declaration: the given ones, then the defaults (fillMissing) */
 static TsType **cTypeArgsOfReference(TsType **params, int ntp, TsNode *ref, int *nout) {
@@ -355,6 +353,11 @@ static TsType *cTypeFromSymbolReference(TsSymbol *s, TsNode *ref) {
     return cGenericAliasReference(cGetMergedSymbol(s), ref);
   }
   if (s->flags & SF_EnumMember) return cEnumMemberType(s);
+  if (s->flags & (SF_RegularEnum | SF_ConstEnum)) {
+    /* getTypeReferenceType: tryGetDeclaredTypeOfSymbol, then checkNoTypeArguments */
+    if (ref->typeArguments && ref->typeArguments->n) return cUnported("type arguments of an enum");
+    return cRegularType(cDeclaredTypeOfEnum(s));
+  }
   if (s->flags & (SF_Class | SF_Interface)) {
     TsType *d = cDeclaredTypeOfClassOrInterface(s);
     int na = ref->typeArguments ? ref->typeArguments->n : 0;
@@ -397,6 +400,304 @@ static TsSymbol *cEntityNameSymbol(TsNode *loc, TsNode *name, uint32_t meaning) 
   } else return NULL;
   if (s && (s->flags & SF_Alias)) s = cResolveImportAlias(s, 0);
   return s;
+}
+
+/* ---- enums (getDeclaredTypeOfEnum 61932, computeEnumMemberValues, evaluate 23423) ----
+ * An enum type is the union of the literal types of its members, one per distinct value (the regular
+ * literal, with its fresh object for the member's declared type), and the members' values come from the
+ * constant evaluator. A member without a value (computed, in an ambient enum) is an Enum type of its own. */
+enum { EV_Undefined = 0, EV_Number = 1, EV_String = 2 };
+typedef struct { int kind; double num; const char *s; int n; } CEnumVal;
+
+static CEnumVal cEvalEnum(TsNode *e, TsNode *loc);
+
+static CEnumVal cNoValue(void) {
+  CEnumVal v = { EV_Undefined, 0, NULL, 0 };
+  return v;
+}
+
+/* the value of an enum member (getEnumMemberValue): the declaration is an EnumMember node */
+static CEnumVal cEnumMemberValue(TsNode *m);
+
+/* the regular object of a literal type (getRegularTypeOfLiteralType); other types are their own */
+static TsType *cRegularType(TsType *t) {
+  if ((t->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral | TF_Enum)) && t->litRegular) return t->litRegular;
+  return t;
+}
+
+static double cToInt32Num(double d) {
+  if (!(d == d) || d - d != 0) return 0;   /* NaN and infinities */
+  double m = fmod(trunc(d), 4294967296.0);
+  if (m < 0) m += 4294967296.0;
+  return m;
+}
+
+/* the numeric value of a numeric literal's source text (decimal, hex, octal and binary, with separators) */
+static double cNumericLiteralValue(const char *t, int n) {
+  char buf[128];
+  int k = 0;
+  for (int i = 0; i < n && k < (int)sizeof buf - 1; i++) if (t[i] != '_') buf[k++] = t[i];
+  buf[k] = 0;
+  if (k > 1 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')) return (double)strtoull(buf + 2, NULL, 16);
+  if (k > 1 && buf[0] == '0' && (buf[1] == 'o' || buf[1] == 'O')) return (double)strtoull(buf + 2, NULL, 8);
+  if (k > 1 && buf[0] == '0' && (buf[1] == 'b' || buf[1] == 'B')) return (double)strtoull(buf + 2, NULL, 2);
+  if (k > 1 && buf[0] == '0' && buf[1] >= '0' && buf[1] <= '9') { cUnported("legacy octal literal in an enum"); return 0; }
+  return strtod(buf, NULL);
+}
+
+/* the value of an identifier or a property access that names an enum member, or a global number */
+static CEnumVal cEvalEntityName(TsNode *e) {
+  CEnumVal v = cNoValue();
+  if (e->kind == TSK_PropertyAccessExpression) {
+    /* E.M: the member of an enum (evaluateEntityNameExpression with the enum's exports) */
+    if (!e->expression || e->expression->kind != TSK_Identifier || !e->name) return cUnported("enum initializer access"), v;
+    TsSymbol *ls = cResolveNameMeaning(e, bnEscapeText(e->expression->text, e->expression->textLen), SF_Value);
+    if (!ls) return v;
+    if (ls->flags & SF_Alias) return cUnported("enum initializer through an alias"), v;
+    ls = cGetMergedSymbol(ls);
+    if (!(ls->flags & SF_Enum) || !ls->exports) return v;
+    TsSymbol *m = bTableGet(ls->exports, bnEscapeText(e->name->text, e->name->textLen));
+    if (!m || !(m->flags & SF_EnumMember)) return v;
+    return cEnumMemberValue(m->decls[0]);
+  }
+  /* identifier */
+  BName name = bnEscapeText(e->text, e->textLen);
+  TsSymbol *s = cResolveNameMeaning(e, name, SF_Value);
+  if (!s) return v;
+  if (s->flags & SF_Alias) return cUnported("enum initializer through an alias"), v;
+  s = cGetMergedSymbol(s);
+  if ((name.n == 8 && memcmp(name.s, "Infinity", 8) == 0) || (name.n == 3 && memcmp(name.s, "NaN", 3) == 0)) {
+    TsSymbol *g = bTableGet(cGlobals, name);
+    if (g == s) {
+      v.kind = EV_Number;
+      v.num = name.n == 3 ? NAN : INFINITY;
+      return v;
+    }
+  }
+  if (s->flags & SF_EnumMember) return cEnumMemberValue(s->decls[0]);
+  if (s->flags & SF_Variable) return cUnported("enum initializer from a variable"), v;
+  return v;
+}
+
+/* evaluate (23423): numbers, strings, enum members by name, and the operators of constant expressions */
+static CEnumVal cEvalEnum(TsNode *e, TsNode *loc) {
+  (void)loc;
+  CEnumVal v = cNoValue();
+  while (e->kind == TSK_ParenthesizedExpression) e = e->expression;
+  switch (e->kind) {
+    case TSK_PrefixUnaryExpression: {
+      CEnumVal a = cEvalEnum(e->operand, loc);
+      if (a.kind != EV_Number) return v;
+      if (e->extra == TSK_PlusToken) return a;
+      if (e->extra == TSK_MinusToken) { a.num = -a.num; return a; }
+      if (e->extra == TSK_TildeToken) { a.num = (double)~(int32_t)(uint32_t)cToInt32Num(a.num); return a; }
+      return v;
+    }
+    case TSK_BinaryExpression: {
+      CEnumVal a = cEvalEnum(e->left, loc);
+      CEnumVal b = cEvalEnum(e->right, loc);
+      int op = e->operatorToken->kind;
+      if (a.kind == EV_Number && b.kind == EV_Number) {
+        uint32_t ua = (uint32_t)cToInt32Num(a.num), ub = (uint32_t)cToInt32Num(b.num);
+        int32_t sa = (int32_t)ua;
+        v.kind = EV_Number;
+        switch (op) {
+          case TSK_BarToken: v.num = (double)(int32_t)(ua | ub); return v;
+          case TSK_AmpersandToken: v.num = (double)(int32_t)(ua & ub); return v;
+          case TSK_CaretToken: v.num = (double)(int32_t)(ua ^ ub); return v;
+          case TSK_GreaterThanGreaterThanToken: v.num = (double)(sa >> (ub & 31)); return v;
+          case TSK_GreaterThanGreaterThanGreaterThanToken: v.num = (double)(ua >> (ub & 31)); return v;
+          case TSK_LessThanLessThanToken: v.num = (double)(int32_t)(ua << (ub & 31)); return v;
+          case TSK_AsteriskToken: v.num = a.num * b.num; return v;
+          case TSK_SlashToken: v.num = a.num / b.num; return v;
+          case TSK_PlusToken: v.num = a.num + b.num; return v;
+          case TSK_MinusToken: v.num = a.num - b.num; return v;
+          case TSK_PercentToken: v.num = fmod(a.num, b.num); return v;
+          case TSK_AsteriskAsteriskToken: v.num = pow(a.num, b.num); return v;
+          default: return cNoValue();
+        }
+      }
+      if (op == TSK_PlusToken && a.kind != EV_Undefined && b.kind != EV_Undefined && (a.kind == EV_String || b.kind == EV_String)) {
+        /* string concatenation; a number part must print the way JavaScript prints an integer */
+        char nb[64];
+        const char *ps[2];
+        int pn[2];
+        CEnumVal *parts[2] = { &a, &b };
+        for (int i = 0; i < 2; i++) {
+          if (parts[i]->kind == EV_String) { ps[i] = parts[i]->s; pn[i] = parts[i]->n; continue; }
+          double d = parts[i]->num;
+          if (d != floor(d) || fabs(d) >= 1e15) return cUnported("enum string concatenation of a number"), v;
+          pn[i] = snprintf(nb, sizeof nb, "%.0f", d);
+          if (i == 0) { char *c = ts_arena_alloc((size_t)pn[i] + 1); memcpy(c, nb, (size_t)pn[i] + 1); ps[i] = c; }
+          else ps[i] = nb;
+        }
+        int total = pn[0] + pn[1];
+        char *out = ts_arena_alloc((size_t)total + 1);
+        memcpy(out, ps[0], (size_t)pn[0]);
+        memcpy(out + pn[0], ps[1], (size_t)pn[1]);
+        out[total] = 0;
+        v.kind = EV_String;
+        v.s = out;
+        v.n = total;
+        return v;
+      }
+      return v;
+    }
+    case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
+      if (memchr(e->text, '\\', (size_t)e->textLen)) return cUnported("enum string with an escape"), v;
+      v.kind = EV_String;
+      v.s = e->text;
+      v.n = e->textLen;
+      return v;
+    case TSK_NumericLiteral:
+      v.kind = EV_Number;
+      v.num = cNumericLiteralValue(e->text, e->textLen);
+      return v;
+    case TSK_Identifier: case TSK_PropertyAccessExpression:
+      return cEvalEntityName(e);
+    default:
+      return v;
+  }
+}
+
+/* computeConstantEnumMemberValue / computeEnumMemberValue (member with no initializer: the next value) */
+static CEnumVal cComputeEnumMemberValue(TsNode *m, bool hasAuto, double autoValue) {
+  if (m->name && m->name->kind == TSK_ComputedPropertyName) return cUnported("computed enum member name"), cNoValue();
+  if (m->initializer) {
+    CEnumVal r = cEvalEnum(m->initializer, m);
+    /* an initializer that is not a constant is checked as an expression, which is not ported */
+    if (r.kind == EV_Undefined) return cUnported("enum member initializer is not a constant"), r;
+    return r;
+  }
+  if ((m->parent->flags & TNF_Ambient) && !bIsEnumConst(m->parent)) return cNoValue();
+  if (!hasAuto) return cUnported("enum member without an initializer after a computed value"), cNoValue();
+  CEnumVal r = { EV_Number, autoValue, NULL, 0 };
+  return r;
+}
+
+/* computeEnumMemberValues (89964): the values of all members of one enum declaration, in order */
+static void cComputeEnumMemberValues(TsNode *ed) {
+  if (ed->enumValuesComputed) return;
+  ed->enumValuesComputed = 1;
+  bool hasAuto = true;
+  double autoValue = 0;
+  if (!ed->members) return;
+  for (int i = 0; i < ed->members->n; i++) {
+    TsNode *m = ed->members->v[i];
+    CEnumVal r = cComputeEnumMemberValue(m, hasAuto, autoValue);
+    m->enumValueDone = 1;
+    m->enumValueKind = (uint8_t)r.kind;
+    m->enumValueNum = r.num;
+    m->enumValueStr = r.s;
+    m->enumValueLen = r.n;
+    hasAuto = r.kind == EV_Number;   /* autoValue = typeof value === "number" ? value + 1 : undefined */
+    autoValue = r.num + 1;
+  }
+}
+
+static CEnumVal cEnumMemberValue(TsNode *m) {
+  if (!m->parent || m->parent->kind != TSK_EnumDeclaration) return cUnported("enum member without its enum"), cNoValue();
+  cComputeEnumMemberValues(m->parent);
+  CEnumVal v = cNoValue();
+  if (m->enumValueDone) {
+    v.kind = m->enumValueKind;
+    v.num = m->enumValueNum;
+    v.s = m->enumValueStr;
+    v.n = m->enumValueLen;
+  } else {
+    /* a reference to a member whose value is still being computed: a forward reference (not ported) */
+    cUnported("enum forward reference");
+  }
+  return v;
+}
+
+/* a regular and a fresh object of a computed enum member (createComputedEnumType) */
+static TsType *cCreateComputedEnumType(TsSymbol *sym) {
+  TsType *reg = cNewType(TF_Enum);
+  TsType *fr = cNewType(TF_Enum);
+  reg->symbol = sym;
+  fr->symbol = sym;
+  reg->litRegular = reg;
+  reg->litFresh = fr;
+  fr->litRegular = reg;
+  fr->litFresh = fr;
+  return reg;
+}
+
+/* getDeclaredTypeOfEnum: the declared type of the enum symbol (all its declarations) */
+static TsType *cDeclaredTypeOfEnum(TsSymbol *sym) {
+  sym = cGetMergedSymbol(sym);
+  if (sym->declaredType) return sym->declaredType;
+  int nm = 0, nl = 0;
+  int cap = 0;
+  for (int d = 0; d < sym->ndecls; d++)
+    if (sym->decls[d]->kind == TSK_EnumDeclaration && sym->decls[d]->members) cap += sym->decls[d]->members->n;
+  TsType **mlist = ts_arena_alloc(sizeof(TsType *) * (size_t)(cap ? cap : 1));
+  TsType **lits = ts_arena_alloc(sizeof(TsType *) * (size_t)(cap ? cap : 1));   /* one regular literal per value */
+  CEnumVal *lvals = ts_arena_alloc(sizeof(CEnumVal) * (size_t)(cap ? cap : 1));
+  for (int d = 0; d < sym->ndecls; d++) {
+    TsNode *ed = sym->decls[d];
+    if (ed->kind != TSK_EnumDeclaration || !ed->members) continue;
+    for (int i = 0; i < ed->members->n; i++) {
+      TsNode *m = ed->members->v[i];
+      TsSymbol *ms = cGetMergedSymbol(m->symbol);
+      CEnumVal v = cEnumMemberValue(m);
+      TsType *reg, *fresh;
+      if (v.kind == EV_Undefined) {
+        reg = cCreateComputedEnumType(ms);
+        fresh = reg->litFresh;
+      } else {
+        int k = 0;
+        while (k < nl && !(lvals[k].kind == v.kind && (v.kind == EV_Number ? lvals[k].num == v.num
+                                                       : lvals[k].n == v.n && memcmp(lvals[k].s, v.s, (size_t)v.n) == 0)))
+          k++;
+        if (k < nl) {
+          reg = lits[k];
+          fresh = reg->litFresh;
+        } else {
+          /* getEnumLiteralType (created once per value and enum) and getFreshTypeOfLiteralType */
+          uint32_t fl = TF_EnumLiteral | (v.kind == EV_String ? TF_StringLiteral : TF_NumberLiteral);
+          reg = cNewType(fl);
+          fresh = cNewType(fl);
+          reg->symbol = ms;
+          fresh->symbol = ms;
+          reg->litNum = v.num;
+          reg->text = v.s;
+          reg->textLen = v.n;
+          fresh->litNum = v.num;
+          fresh->text = v.s;
+          fresh->textLen = v.n;
+          reg->litRegular = reg;
+          reg->litFresh = fresh;
+          fresh->litRegular = reg;
+          fresh->litFresh = fresh;
+          lits[nl] = reg;
+          lvals[nl] = v;
+          nl++;
+        }
+      }
+      ms->declaredType = fresh;   /* getSymbolLinks(memberSymbol).declaredType */
+      mlist[nm++] = reg;          /* getRegularTypeOfLiteralType(memberType) */
+    }
+  }
+  TsType *et = nm ? cGetUnionType(mlist, nm) : cCreateComputedEnumType(sym);
+  if (et->flags & TF_Union) {
+    et->flags |= TF_EnumLiteral;
+    et->symbol = sym;
+  }
+  sym->declaredType = et;
+  return et;
+}
+
+/* the type of an enum member used as a type: getDeclaredTypeOfEnumMember, regular (getTypeReferenceType) */
+static TsType *cEnumMemberType(TsSymbol *m) {
+  m = cGetMergedSymbol(m);
+  if (!m->declaredType) {
+    if (!m->decls[0]->parent || !m->decls[0]->parent->symbol) return cUnported("enum member without its enum");
+    cDeclaredTypeOfEnum(m->decls[0]->parent->symbol);
+  }
+  if (!m->declaredType) return cUnported("enum member type");
+  return cRegularType(m->declaredType);
 }
 
 /* the symbol a TypeReference names (type meaning), following import aliases */
@@ -1570,6 +1871,8 @@ static bool cCompareSignaturesIdentical(CSig *a, CSig *b) {
 }
 
 static bool cIdentical(TsType *s, TsType *t) {
+  s = cRegularType(s);
+  t = cRegularType(t);
   if (s == t) return true;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return true; }
   if (s->flags != t->flags) return false;

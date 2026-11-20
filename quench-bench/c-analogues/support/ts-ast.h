@@ -60,6 +60,11 @@ struct TsNode {
   struct TsType *resolvedType; /* checker: getTypeFromTypeNode cache (links.resolvedType) */
   struct TsType *inferredReturn; /* checker: the inferred return type of a declaration (ts-relate.h) */
   uint8_t inferState;
+  /* enums (ts-types.h): EnumDeclaration: EnumValuesComputed; EnumMember: its computed value */
+  uint8_t enumValuesComputed, enumValueDone, enumValueKind;   /* kind: 0 undefined, 1 number, 2 string */
+  double enumValueNum;
+  const char *enumValueStr;
+  int32_t enumValueLen;
 };
 
 /* ---- arena ---- */

@@ -140,7 +140,7 @@ static TsType *cApparentType(TsType *s) {
   int idx;
   const char *name;
   if (s->flags & (TF_String | TF_StringLiteral)) { idx = 0; name = "String"; }
-  else if (s->flags & (TF_Number | TF_NumberLiteral)) { idx = 1; name = "Number"; }
+  else if (s->flags & (TF_Number | TF_NumberLiteral | TF_Enum)) { idx = 1; name = "Number"; }
   else if (s->flags & (TF_Boolean | TF_BooleanLiteral)) { idx = 2; name = "Boolean"; }
   else if (s->flags & TF_BigInt) { idx = 3; name = "BigInt"; }
   else if (s->flags & (TF_ESSymbol | TF_UniqueESSymbol)) { idx = 4; name = "Symbol"; }
@@ -154,6 +154,11 @@ static TsType *cApparentType(TsType *s) {
 }
 
 /* isSimpleTypeRelatedTo (checker.ts): the rules of the primitive, any, unknown and never types */
+static bool cSameLiteralValue(TsType *s, TsType *t) {
+  if (s->flags & TF_NumberLiteral) return s->litNum == t->litNum;
+  return s->textLen == t->textLen && memcmp(s->text, t->text, (size_t)s->textLen) == 0;
+}
+
 static bool cIsSimpleRelated(TsType *s, TsType *t, int rel) {
   uint32_t sf = s->flags, tf = t->flags;
   if ((tf & (TF_Any | TF_Unknown)) || (sf & TF_Never)) return true;
@@ -162,7 +167,32 @@ static bool cIsSimpleRelated(TsType *s, TsType *t, int rel) {
   if ((sf & TF_Object) && (tf & TF_NonPrimitive) && !(rel == REL_StrictSubtype && (s->objectFlags & OF_Anonymous) && !s->symbol)) return true;
   if (rel == REL_Assignable && (sf & TF_Any)) return true;
   if ((sf & (TF_String | TF_StringLiteral)) && (tf & TF_String)) return true;
-  if ((sf & (TF_Number | TF_NumberLiteral)) && (tf & TF_Number)) return true;
+  /* enum literals (isSimpleTypeRelatedTo, 5.9.2): a literal of an enum relates to the plain literal of its value */
+  if ((sf & TF_StringLiteral) && (sf & TF_EnumLiteral) && (tf & TF_StringLiteral) && !(tf & TF_EnumLiteral) && cSameLiteralValue(s, t)) return true;
+  if ((sf & (TF_Number | TF_NumberLiteral | TF_Enum)) && (tf & TF_Number)) return true;
+  if ((sf & TF_NumberLiteral) && (sf & TF_EnumLiteral) && (tf & TF_NumberLiteral) && !(tf & TF_EnumLiteral) && cSameLiteralValue(s, t)) return true;
+  if ((sf & TF_EnumLiteral) && (tf & TF_EnumLiteral)) {
+    /* isEnumTypeRelatedTo: the same enum relates; two different enums of one name would need the members compared */
+    if (((sf & TF_Union) && (tf & TF_Union)) && s->symbol == t->symbol) return true;
+    if (((sf & TF_Union) && (tf & TF_Union)) && s->symbol && t->symbol && s->symbol->name.n == t->symbol->name.n &&
+        memcmp(s->symbol->name.s, t->symbol->name.s, (size_t)s->symbol->name.n) == 0) {
+      cUnported("enum union relation between two enums of one name");
+      return true;
+    }
+  }
+  if ((sf & TF_Enum) && (tf & TF_Enum)) {
+    if (s->symbol == t->symbol) return true;
+    if (s->symbol && t->symbol && s->symbol->name.n == t->symbol->name.n &&
+        memcmp(s->symbol->name.s, t->symbol->name.s, (size_t)s->symbol->name.n) == 0) {
+      cUnported("enum relation between two enums of one name");
+      return true;
+    }
+  }
+  if (rel == REL_Assignable) {
+    if ((sf & TF_Number) && ((tf & TF_Enum) || ((tf & TF_NumberLiteral) && (tf & TF_EnumLiteral)))) return true;
+    if ((sf & TF_NumberLiteral) && !(sf & TF_EnumLiteral) &&
+        ((tf & TF_Enum) || ((tf & TF_NumberLiteral) && (tf & TF_EnumLiteral) && s->litNum == t->litNum))) return true;
+  }
   if ((sf & TF_BigInt) && (tf & TF_BigInt)) return true;
   if ((sf & (TF_Boolean | TF_BooleanLiteral)) && (tf & TF_Boolean)) return true;
   if ((sf & (TF_ESSymbol | TF_UniqueESSymbol)) && (tf & TF_ESSymbol)) return true;
@@ -683,6 +713,9 @@ static int cIsRelatedTo(TsType *s, TsType *t, int st) {
 /* ---- the entry points ---- */
 /* isTypeRelatedTo (69): any relation, Maybe counts as related at the top */
 static bool cIsRelatedWith(TsType *s, TsType *t, int rel) {
+  /* isTypeRelatedTo: fresh literal types relate as their regular types */
+  s = cRegularType(s);
+  t = cRegularType(t);
   int saved = cCurRel;
   cCurRel = rel;
   bool r;
