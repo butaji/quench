@@ -39,6 +39,10 @@
  * iterations; prints "pdfjs <n> iterations <ms> ms" and "validation ok"/"validation
  * FAILED". argv[2] (JetStream root) is accepted for the common driver interface but
  * unused: the PDF is embedded.
+ *
+ * Measured on this machine, 120 iterations: C 302-360 ms (validation ok); node 22
+ * running the same loop (instrumented copy of the composed row, timed with
+ * performance.now()) 2155-2597 ms.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <math.h>
@@ -56,8 +60,7 @@
 /* Expected values from node (tools/pdfjs-validate.cjs). */
 #define EXP_LOG_LENGTH 36788
 #define EXP_LOG_HASH 939524096
-#define EXP_LOG_FULLHASH 0u
-#define EXP_OPS 0
+#define EXP_LOG_FULLHASH 3529148173u
 #define EXP_PARSER_GETOBJ 2747
 #define EXP_CHAR_TO_GLYPH 1942
 #define EXP_CHARS_TO_GLYPHS 708
@@ -174,6 +177,9 @@ static uint32_t fnv(const uint8_t *p, int n) {
   return h;
 }
 static void smap_init(StrMap *m, int cap) {
+  int c = 16;
+  while (c < cap) c <<= 1;
+  cap = c;
   m->cap = cap;
   m->n = 0;
   m->keys = aalloc(sizeof(Bytes) * (size_t)cap);
@@ -335,10 +341,6 @@ static Obj dict_get3(const Dict *d, const char *k1, const char *k2, const char *
 }
 static Obj dict_get(const Dict *d, const char *k) { return dict_get3(d, k, NULL, NULL); }
 static int dict_has(const Dict *d, const char *k) { return dict_find(d, k) >= 0; }
-static Obj dict_getraw(const Dict *d, const char *k) {
-  int i = dict_find(d, k);
-  return i >= 0 ? d->v[i] : O_undef();
-}
 
 /* ------------------------------------------------------------------------ */
 /* Streams: Stream (plain bytes view) and FlateStream (DecodeStream subclass).  */
@@ -371,11 +373,6 @@ static Stream *st_plain(const uint8_t *bytes, int blen, int start, int length, D
   return s;
 }
 /* Stream over a copy of a typed array (new Uint8Array(typedArray) copies). */
-static Stream *st_from_array(Bytes src, int start, int length, Dict *d) {
-  Bytes c = bytes_copy(src.p, src.n);
-  return st_plain(c.p, c.n, start, length, d);
-}
-static int st_length(const Stream *s) { return s->end - s->start; }
 
 static void flate_read_block(Stream *s);
 static void ds_ensure(Stream *s, int requested);
@@ -497,6 +494,9 @@ static HTab huff_table(const uint8_t *lengths, int n) {
   return t;
 }
 
+static uint32_t g_fixed_lit_codes[512], g_fixed_dist_codes[32];
+
+/* The fixed Huffman tables are built once, outside the per-iteration arena. */
 static void flate_init_tables(void) {
   uint8_t l[288];
   for (int i = 0; i < 144; i++) l[i] = 8;
@@ -507,6 +507,10 @@ static void flate_init_tables(void) {
   uint8_t d[32];
   for (int i = 0; i < 32; i++) d[i] = 5;
   fixed_dist = huff_table(d, 32);
+  memcpy(g_fixed_lit_codes, fixed_lit.codes, sizeof g_fixed_lit_codes);
+  memcpy(g_fixed_dist_codes, fixed_dist.codes, sizeof g_fixed_dist_codes);
+  fixed_lit.codes = g_fixed_lit_codes;
+  fixed_dist.codes = g_fixed_dist_codes;
 }
 
 static void ds_ensure(Stream *s, int requested) {
@@ -669,9 +673,14 @@ static void flate_read_block(Stream *s) {
 }
 
 /* new FlateStream(stream): header checks, then a DecodeStream over the bytes. */
+static Stream *g_flate_list[64];   /* FlateStreams in creation order (validation) */
+static int g_flate_n;
+
 static Stream *flate_new(Stream *parent) {
   Bytes bytes = st_getbytes(parent, 0);
   Stream *s = aalloc(sizeof(Stream));
+  if (g_flate_n >= 64) die("too many flate streams");
+  g_flate_list[g_flate_n++] = s;
   s->flate = 1;
   s->dict = parent->dict;
   s->bytes = bytes.p;
@@ -872,7 +881,7 @@ static Obj lex_gethexstring(Lexer *L, int ch) {
   return O_str(buf_view(&str), T_STR);
 }
 
-static Obj cmd_obj(const char *name) { return O_str(B(name), T_CMD); }
+static Obj cmd_obj(const char *name) { return O_str(bytes_copy((const uint8_t *)name, (int)strlen(name)), T_CMD); }
 static Obj cmd_bytes(Bytes b) { return O_str(b, T_CMD); }
 
 static Obj lex_getobj(Lexer *L) {
@@ -1205,7 +1214,6 @@ static Obj xref_fetch(XRef *x, Obj ref) {
   return val;
 }
 
-static Obj xref_fetch_if(XRef *x, Obj ref) { return xref_fetch(x, ref); }
 
 /* Catalog */
 typedef struct Page Page;
@@ -1380,6 +1388,20 @@ static void pdf_open(PDFDoc *doc, const uint8_t *data, int len) {
   if (!is_dict(root)) die("Invalid root reference");
   x->root = root;
   doc->catalog = catalog_new(x);
+  /* PDFDocument.getDocumentInfo: fetches /Info and converts its string values */
+  if (dict_has(trailer, "Info")) {
+    Obj infoObj = dict_get(trailer, "Info");
+    if (is_dict(infoObj)) {
+      Dict *idict = infoObj.p;
+      for (int i = 0; i < idict->n; i++) {
+        Obj v = idict->v[i];
+        if (v.t == T_STR) {
+          Buf conv = {0};   /* stringToPDFString: one pass over the bytes */
+          for (int k = 0; k < v.s.n; k++) buf_c(&conv, v.s.p[k]);
+        }
+      }
+    }
+  }
   if (dict_has(doc->catalog->catDict, "AcroForm")) dict_get(doc->catalog->catDict, "AcroForm");
 }
 
@@ -1510,6 +1532,7 @@ static double js_parseint(Bytes b) {
 }
 
 static int g_hinting_enabled = 0;   /* kHintingEnabled is false in this build */
+static long long g_count_decode;    /* decodeCharString calls (validation counter) */
 
 typedef struct { Cs cs; double lsb, width; } Decoded;
 
@@ -1526,6 +1549,7 @@ static void cs_remove_front(Cs *cs, int k) {
 /* Type1Parser.decodeCharString (charStringDictionary, hinting disabled). */
 static Decoded decode_charstring(const uint8_t *array, int count) {
   Decoded out;
+  g_count_decode++;
   memset(&out, 0, sizeof out);
   Cs cs = {0};
   double lsb = 0, width = 0;
@@ -1990,6 +2014,10 @@ typedef struct {
   int fixedPitch;
   int flags;
   PrivData pd;               /* properties.privateData */
+  Bytes differences[256];    /* properties.differences */
+  double widths[256];        /* properties.widths */
+  uint8_t widthHas[256];
+  double defaultWidth;
 } FontProps;
 
 /* Type1Parser.extractFontHeader over the cleartext block (FontMatrix, Encoding). */
@@ -2582,4 +2610,1073 @@ static Bytes font_convert(Bytes fontName, Bytes cff, const Glyph *cs, int n, Fon
   t[k].tag = "name"; t[k].data = nmt; k++;
   t[k].tag = "post"; t[k].data = post; k++;
   return otf_assemble(t, 9);
+}
+/* ------------------------------------------------------------------------ */
+/* Font loading: PartialEvaluator.translateFont / extractDataStructures /     */
+/* extractWidths, the Font constructor for Type 1 programs, and Font glyph   */
+/* lookups (charToGlyph / charsToGlyphs).                                     */
+
+static long long g_count_char_to_glyph, g_count_chars_to_glyphs, g_count_charstrings;
+static StrMap g_glyph_unicode;     /* GlyphsUnicode: name -> unicode (setup, not arena) */
+
+typedef struct {
+  int isnull;
+  uint16_t fontChar;
+  double width;
+} GlyphRec;
+
+typedef struct Font {
+  Bytes loadedName;
+  Bytes data;                  /* the OpenType file (font.data) */
+  double fontMatrix[6];
+  int nfontMatrix;
+  double widthMultiplier;
+  Bytes encoding[256];         /* font.encoding (properties.baseEncoding) */
+  Bytes differences[256];      /* font.differences */
+  double widths[256];          /* font.widths, with widthHas flags */
+  uint8_t widthHas[256];
+  double defaultWidth;
+  double tu[256];              /* font.toUnicode (JS array) */
+  uint8_t tuHas[256];
+  int isSerifFont, isSymbolicFont;
+  int loading;
+  int attached;
+  StrMap glyphNameMap;         /* name -> unicode */
+  StrMap charsCache;           /* chars -> GlyphRec* (JS charsCache) */
+} Font;
+
+/* TranslatedFont: the result of PartialEvaluator.translateFont. */
+typedef struct {
+  Bytes name;
+  Bytes file;                  /* decoded FontFile bytes */
+  Font *font;                  /* the loaded Font (translated.font) */
+  int length1, length2;
+  int hasLength2;
+  FontProps props;
+} TFont;
+
+static int g_nfonts;
+static Font *g_fonts[32];
+
+/* Hand-written lookup: the GlyphsUnicode object. */
+static void init_static_tables(void) {
+  int n = PDFJS_GLYPHS_UNICODE_LEN;
+  flate_init_tables();
+  flate_init_tables();
+  /* static table: calloc'd, outside the per-iteration arena */
+  g_glyph_unicode.cap = 8192;
+  g_glyph_unicode.n = 0;
+  g_glyph_unicode.keys = calloc((size_t)g_glyph_unicode.cap, sizeof(Bytes));
+  g_glyph_unicode.vals = calloc((size_t)g_glyph_unicode.cap, sizeof(intptr_t));
+  g_glyph_unicode.used = calloc((size_t)g_glyph_unicode.cap, 1);
+  if (!g_glyph_unicode.keys || !g_glyph_unicode.vals || !g_glyph_unicode.used) die("out of memory");
+  for (int i = 0; i < n; i++) {
+    Bytes k = B(pdfjs_glyphs_unicode[i].name);
+    uint32_t h = fnv(k.p, k.n) & (uint32_t)(g_glyph_unicode.cap - 1);
+    while (g_glyph_unicode.used[h] && !bytes_eqb(g_glyph_unicode.keys[h], k))
+      h = (h + 1) & (uint32_t)(g_glyph_unicode.cap - 1);
+    g_glyph_unicode.used[h] = 1;
+    g_glyph_unicode.keys[h] = k;
+    g_glyph_unicode.vals[h] = pdfjs_glyphs_unicode[i].code;
+    g_glyph_unicode.n++;
+  }
+}
+static int glyph_unicode_get(Bytes name, double *out) {
+  uint32_t h = fnv(name.p, name.n) & (uint32_t)(g_glyph_unicode.cap - 1);
+  while (g_glyph_unicode.used[h]) {
+    if (bytes_eqb(g_glyph_unicode.keys[h], name)) { *out = (double)g_glyph_unicode.vals[h]; return 1; }
+    h = (h + 1) & (uint32_t)(g_glyph_unicode.cap - 1);
+  }
+  return 0;
+}
+
+/* Encodings[name] */
+static int encodings_lookup(Bytes name, Bytes out[256]) {
+  static const struct { const char *name; const char *const *tab; int len; } encs[] = {
+    {"StandardEncoding", pdfjs_enc_StandardEncoding, PDFJS_ENC_StandardEncoding_LEN},
+    {"MacRomanEncoding", pdfjs_enc_MacRomanEncoding, PDFJS_ENC_MacRomanEncoding_LEN},
+    {"WinAnsiEncoding", pdfjs_enc_WinAnsiEncoding, PDFJS_ENC_WinAnsiEncoding_LEN},
+    {"symbolsEncoding", pdfjs_enc_symbolsEncoding, PDFJS_ENC_symbolsEncoding_LEN},
+    {"zapfDingbatsEncoding", pdfjs_enc_zapfDingbatsEncoding, PDFJS_ENC_zapfDingbatsEncoding_LEN},
+    {"ExpertEncoding", pdfjs_enc_ExpertEncoding, PDFJS_ENC_ExpertEncoding_LEN},
+    {"MacExpertEncoding", pdfjs_enc_MacExpertEncoding, PDFJS_ENC_MacExpertEncoding_LEN},
+  };
+  memset(out, 0, sizeof(Bytes) * 256);
+  for (int e = 0; e < 7; e++) {
+    if (bytes_eq(name, encs[e].name)) {
+      for (int j = 0; j < encs[e].len && j < 256; j++)
+        if (encs[e].tab[j]) out[j] = B(encs[e].tab[j]);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+
+/* Number value of an object, or NaN when it is not a number. */
+static double num_or_nan(Obj o) { return o.t == T_NUM ? o.n : NAN; }
+
+/* PartialEvaluator.extractDataStructures for a simple (non-composite) font. */
+static void extract_data_structures(Dict *dict, Dict *baseDict, FontProps *props) {
+  Obj tu = dict_get(dict, "ToUnicode");
+  if (tu.t == T_UNDEF || tu.t == T_NULL) tu = dict_get(baseDict, "ToUnicode");
+  if (tu.t != T_UNDEF && tu.t != T_NULL) die("ToUnicode CMaps are not used by this document");
+
+  Bytes baseEncoding[256];
+  if (props->flags & 4) encodings_lookup(B("symbolsEncoding"), baseEncoding);
+  else encodings_lookup(B("StandardEncoding"), baseEncoding);
+  int hasEncoding = dict_has(dict, "Encoding");
+  memset(props->differences, 0, sizeof props->differences);
+  if (hasEncoding) {
+    Obj encoding = dict_get(dict, "Encoding");
+    if (is_dict(encoding)) {
+      Dict *ed = encoding.p;
+      Obj baseName = dict_get(ed, "BaseEncoding");
+      if (baseName.t == T_NAME) {
+        if (!encodings_lookup(baseName.s, baseEncoding)) die("unknown BaseEncoding");
+      } else {
+        hasEncoding = 0;
+      }
+      if (dict_has(ed, "Differences")) {
+        Obj diff = dict_get(ed, "Differences");
+        if (!is_arr(diff)) die("Differences is not an array");
+        Arr *da = diff.p;
+        int index = 0;
+        for (int j = 0; j < da->n; j++) {
+          Obj data = da->a[j];
+          if (is_num(data)) index = (int)data.n;
+          else {
+            if (!is_name(data)) die("Differences entry is not a name");
+            if (index < 0 || index >= 256) die("Differences index out of range");
+            props->differences[index++] = data.s;
+          }
+        }
+      }
+    } else if (is_name(encoding)) {
+      if (!encodings_lookup(encoding.s, baseEncoding)) die("unknown Encoding name");
+    } else {
+      die("Encoding is not a Name nor a Dict");
+    }
+  }
+  memcpy(props->baseEncoding, baseEncoding, sizeof baseEncoding);
+  props->hasEncoding = hasEncoding;
+}
+
+/* PartialEvaluator.extractWidths (simple fonts with /Widths). */
+static void extract_widths(Dict *dict, Dict *descriptor, FontProps *props) {
+  for (int i = 0; i < 256; i++) props->widthHas[i] = 0;
+  Obj widths = dict_get(dict, "Widths");
+  if (!is_arr(widths)) die("font without /Widths is not used by this document");
+  Arr *wa = widths.p;
+  int j = props->firstChar;
+  for (int i = 0; i < wa->n; i++) {
+    if (j < 0 || j >= 256) die("Widths index out of range");
+    props->widths[j] = num_or_nan(wa->a[i]);
+    props->widthHas[j] = wa->a[i].t == T_NUM;
+    j++;
+  }
+  Obj missing = dict_get(descriptor, "MissingWidth");
+  props->defaultWidth = 0;
+  if (missing.t == T_NUM && missing.n == missing.n && missing.n != 0) props->defaultWidth = missing.n;
+}
+
+/* PartialEvaluator.translateFont for a Type 1 font with a FontDescriptor. */
+static TFont *translate_font(Dict *dict) {
+  Obj type = dict_get(dict, "Subtype");
+  if (!is_name(type)) die("invalid font Subtype");
+  if (bytes_eq(type.s, "Type0")) die("composite fonts are not used by this document");
+  if (bytes_eq(type.s, "Type3")) die("Type3 fonts are not used by this document");
+  if (!bytes_eq(type.s, "Type1")) die("only Type1 fonts are used by this document");
+
+  Obj descObj = dict_get(dict, "FontDescriptor");
+  if (!is_dict(descObj)) die("font without FontDescriptor is not used by this document");
+  Dict *descriptor = descObj.p;
+
+  TFont *tf = aalloc(sizeof(TFont));
+  memset(&tf->props, 0, sizeof tf->props);
+  FontProps *props = &tf->props;
+
+  Obj firstObj = dict_get(dict, "FirstChar");
+  Obj lastObj = dict_get(dict, "LastChar");
+  int firstChar = (firstObj.t == T_NUM && firstObj.n != 0) ? (int)firstObj.n : 0;
+  int lastChar = (lastObj.t == T_NUM && lastObj.n != 0) ? (int)lastObj.n : 255;
+  props->firstChar = firstChar;
+  props->lastChar = lastChar;
+
+  Obj fontName = dict_get(descriptor, "FontName");
+  if (is_string(fontName)) fontName.t = T_NAME;
+  if (!is_name(fontName)) die("invalid font name");
+  tf->name = fontName.s;
+
+  Obj fontFile = dict_get(descriptor, "FontFile");
+  if (fontFile.t == T_UNDEF || fontFile.t == T_NULL) fontFile = dict_get(descriptor, "FontFile2");
+  if (fontFile.t == T_UNDEF || fontFile.t == T_NULL) fontFile = dict_get(descriptor, "FontFile3");
+  if (!is_stream(fontFile)) die("font without an embedded font program is not used by this document");
+  Stream *fs = fontFile.p;
+  Obj st = dict_get(fs->dict, "Subtype");
+  if (is_name(st) && !bytes_eq(st.s, "Type1")) die("only Type1 font programs are used by this document");
+  Obj l1 = dict_get(fs->dict, "Length1");
+  Obj l2 = dict_get(fs->dict, "Length2");
+  tf->length1 = is_num(l1) ? (int)l1.n : 0;
+  tf->hasLength2 = is_num(l2);
+  tf->length2 = is_num(l2) ? (int)l2.n : 0;
+
+  props->flags = (int)num_or_nan(dict_get(descriptor, "Flags"));
+  Obj bbox = dict_get(descriptor, "FontBBox");
+  if (!is_arr(bbox) || ((Arr *)bbox.p)->n < 4) die("FontBBox missing");
+  for (int i = 0; i < 4; i++) props->bbox[i] = num_or_nan(((Arr *)bbox.p)->a[i]);
+  props->ascent = num_or_nan(dict_get(descriptor, "Ascent"));
+  props->descent = num_or_nan(dict_get(descriptor, "Descent"));
+  props->xHeight = num_or_nan(dict_get(descriptor, "XHeight"));
+  props->capHeight = num_or_nan(dict_get(descriptor, "CapHeight"));
+  props->italicAngle = num_or_nan(dict_get(descriptor, "ItalicAngle"));
+  props->fixedPitch = 0;
+
+  extract_widths(dict, descriptor, props);
+  extract_data_structures(dict, dict, props);
+
+  /* the font program bytes (Stream.getBytes() of the whole decoded stream) */
+  Bytes all = st_getbytes(fs, 0);
+  tf->file = all;
+  return tf;
+}
+
+/* Type1 Font constructor + Font.convert + the Font fields. */
+static Font *font_load(TFont *tf, Bytes loadedName) {
+  Font *f = aalloc(sizeof(Font));
+  f->loadedName = loadedName;
+  FontProps *p = &tf->props;
+
+  /* rebuildToUnicode: from the PDF's encoding, before the font program */
+  memset(f->tuHas, 0, sizeof f->tuHas);
+  for (int i = p->firstChar; i <= p->lastChar && i < 256; i++) {
+    Bytes glyph = p->differences[i];
+    if (!glyph.p) glyph = p->baseEncoding[i];
+    double u;
+    if (glyph.p && glyph_unicode_get(glyph, &u)) {
+      f->tu[i] = u;
+      f->tuHas[i] = 1;
+    }
+  }
+  f->isSerifFont = !!(p->flags & 2);
+  f->isSymbolicFont = !!(p->flags & 4);
+
+  /* Type1Font(name, file, properties): header, then eexec program. */
+  int n = tf->file.n;
+  int l1 = tf->length1 < n ? tf->length1 : n;
+  int l2end = tf->hasLength2 ? (tf->length1 + tf->length2) : n;
+  if (l2end > n) l2end = n;
+  if (l2end < l1) l2end = l1;
+  Bytes hdr = {tf->file.p, l1};
+  Bytes eexec = {tf->file.p + l1, l2end - l1};
+  t1_extract_header(hdr, p);
+  T1Program *prog = t1_extract_program(eexec);
+  p->pd = prog->pd;
+  p->fixedPitch = prog->nglyphs <= 1;   /* isFixedPitch on object identities */
+
+  int nord = 0;
+  Glyph *ord = ordered_charstrings(prog->glyphs, prog->nglyphs, &nord, &g_glyph_unicode);
+  g_count_charstrings += nord;
+  for (int i = 0; i < nord; i++) ord[i].type2 = flatten_charstring(&ord[i].cs);
+  Bytes *subrs;
+  int nsubrs = type2_subrs(prog, &subrs);
+  Bytes cff = cff_wrap(tf->name, ord, nord, subrs, nsubrs, p);
+
+  /* Font.convert: glyphNameMap, then the OpenType tables. */
+  smap_init(&f->glyphNameMap, nord > 0 ? 2 * nord + 16 : 16);
+  for (int i = 0; i < nord; i++) {
+    smap_set(&f->glyphNameMap, ord[i].glyph, (intptr_t)ord[i].unicode);
+  }
+  f->data = font_convert(tf->name, cff, ord, nord, p);
+
+  /* ctor fields */
+  if (p->nfontMatrix) {
+    memcpy(f->fontMatrix, p->fontMatrix, sizeof(double) * (size_t)(p->nfontMatrix < 6 ? p->nfontMatrix : 6));
+    f->nfontMatrix = p->nfontMatrix < 6 ? p->nfontMatrix : 6;
+  } else {
+    double id[6] = {1, 0, 0, 1, 0, 0};
+    memcpy(f->fontMatrix, id, sizeof id);
+    f->nfontMatrix = 6;
+  }
+  f->widthMultiplier = 1.0 / f->fontMatrix[0];
+  memcpy(f->encoding, p->baseEncoding, sizeof f->encoding);
+  memcpy(f->differences, p->differences, sizeof f->differences);
+  memcpy(f->widths, p->widths, sizeof f->widths);
+  memcpy(f->widthHas, p->widthHas, sizeof f->widthHas);
+  f->defaultWidth = p->defaultWidth;
+  f->loading = 1;
+  f->attached = 0;
+  smap_init(&f->charsCache, 512);
+  return f;
+}
+
+/* Font.charToGlyph for a Type1 font (the only font kind in this document). */
+static GlyphRec char_to_glyph(const Font *f, int charcode) {
+  GlyphRec g;
+  g_count_char_to_glyph++;
+  double width = f->widthHas[charcode] ? f->widths[charcode] : NAN;
+  Bytes glyphName = f->differences[charcode].p ? f->differences[charcode] : f->encoding[charcode];
+  double fontCharCode;
+  if (glyphName.p) {
+    intptr_t uni;
+    if (smap_get(&f->glyphNameMap, glyphName, &uni) && uni) fontCharCode = (double)uni;
+    else if (glyph_unicode_get(glyphName, &fontCharCode)) { }
+    else fontCharCode = charcode;
+  } else {
+    fontCharCode = charcode;
+  }
+  g.isnull = 0;
+  g.fontChar = (uint16_t)js_i32(fontCharCode);
+  width = (width == width ? width : f->defaultWidth) * f->widthMultiplier;
+  g.width = width;
+  return g;
+}
+
+typedef struct { int n; GlyphRec *g; } CachedGlyphs;
+
+/* Font.charsToGlyphs (non-wide): one entry per byte, null after each space. */
+static CachedGlyphs *chars_to_glyphs(Font *f, Bytes chars) {
+  g_count_chars_to_glyphs++;
+  intptr_t cached;
+  if (smap_get(&f->charsCache, chars, &cached)) return (CachedGlyphs *)cached;
+  int cnt = 0;
+  for (int i = 0; i < chars.n; i++) cnt += chars.p[i] == 0x20 ? 2 : 1;
+  CachedGlyphs *c = aalloc(sizeof(CachedGlyphs));
+  c->g = aalloc(sizeof(GlyphRec) * (size_t)(cnt ? cnt : 1));
+  int k = 0;
+  for (int i = 0; i < chars.n; i++) {
+    int code = chars.p[i];
+    c->g[k++] = char_to_glyph(f, code);
+    if (code == 0x20) {
+      c->g[k].isnull = 1;
+      k++;
+    }
+  }
+  c->n = k;
+  smap_set(&f->charsCache, chars, (intptr_t)c);
+  return c;
+}
+
+/* ------------------------------------------------------------------------ */
+/* PartialEvaluator.getOperatorList (the operators this document uses) and   */
+/* the CanvasGraphics executor with the mock context log.                    */
+
+enum {
+  OP_BT, OP_ET, OP_TF, OP_TD, OP_TJ, OP_SAVE, OP_RESTORE, OP_CM, OP_W, OP_J, OP_D,
+  OP_M, OP_L, OP_S
+};
+
+static int op_code(Bytes c) {
+  static const struct { const char *n; int code; } ops[] = {
+    {"BT", OP_BT}, {"ET", OP_ET}, {"Tf", OP_TF}, {"Td", OP_TD}, {"TJ", OP_TJ},
+    {"q", OP_SAVE}, {"Q", OP_RESTORE}, {"cm", OP_CM}, {"w", OP_W}, {"J", OP_J},
+    {"d", OP_D}, {"m", OP_M}, {"l", OP_L}, {"S", OP_S},
+  };
+  for (int i = 0; i < (int)(sizeof ops / sizeof ops[0]); i++)
+    if (bytes_eq(c, ops[i].n)) return ops[i].code;
+  return -1;
+}
+
+typedef struct {
+  uint8_t fn;
+  Font *font;
+  Obj *args;
+  int nargs;
+} OpEntry;
+
+typedef struct {
+  OpEntry *ops;
+  int n, cap;
+} OpList;
+
+static void oplist_push(OpList *L, OpEntry e) {
+  if (L->n == L->cap) {
+    int nc = L->cap ? L->cap * 2 : 256;
+    OpEntry *no = aalloc(sizeof(OpEntry) * (size_t)nc);
+    if (L->n) memcpy(no, L->ops, sizeof(OpEntry) * (size_t)L->n);
+    L->ops = no;
+    L->cap = nc;
+  }
+  L->ops[L->n++] = e;
+}
+
+/* Dict lookup by a name object's bytes (Dict.get(name)). */
+static Obj dict_get_b(Dict *d, Bytes key) {
+  for (int i = 0; i < d->n; i++) {
+    if (bytes_eqb(d->k[i], key)) {
+      Obj v = d->v[i];
+      return d->xref ? fetch_if_ref(d->xref, v) : v;
+    }
+  }
+  return O_undef();
+}
+
+static int g_obj_counter;
+
+/* PartialEvaluator.handleSetFont: loads the font on first use (sends 'obj'). */
+static Font *handle_set_font(XRef *xref, Dict *resources, Bytes fontName) {
+  Obj fontRes = dict_get(resources, "Font");
+  if (!is_dict(fontRes)) die("fontRes not available");
+  Obj fobj = dict_get_b(fontRes.p, fontName);
+  if (!is_dict(fobj)) die("font is not a dictionary");
+  Dict *fd = fobj.p;
+  (void)xref;
+  ++g_obj_counter;
+  if (!fd->translated) {
+    TFont *tf = translate_font(fd);
+    if (!tf) die("translateFont returned null");
+    char buf[32];
+    int n = snprintf(buf, sizeof buf, "font_p0_%d", g_obj_counter);
+    Bytes loadedName = bytes_copy((const uint8_t *)buf, n);
+    fd->translated = tf;
+    fd->loadedName = loadedName;
+    fd->hasLoadedName = 1;
+    /* handler.send('obj', ...) -> main thread: new Font(name, file, properties) */
+    Font *f = font_load(tf, loadedName);
+    tf->font = f;
+    if (g_nfonts >= 32) die("too many fonts");
+    g_fonts[g_nfonts++] = f;
+  }
+  return ((TFont *)fd->translated)->font;
+}
+
+/* PartialEvaluator.getOperatorList over the content stream. */
+static void eval_content(XRef *xref, Stream *content, Dict *resources, OpList *L) {
+  Parser *P = parser_new(content, 0, xref);
+  Obj args[34];
+  int nargs = 0;
+  for (;;) {
+    Obj obj = parser_getobj(P);
+    if (is_eof(obj)) break;
+    if (obj.t == T_CMD) {
+      int code = op_code(obj.s);
+      if (code < 0) die("Unknown command in content stream");
+      OpEntry e;
+      memset(&e, 0, sizeof e);
+      e.fn = (uint8_t)code;
+      if (code == OP_TF) {
+        if (nargs < 1 || args[0].t != T_NAME) die("Tf without a font name");
+        e.font = handle_set_font(xref, resources, args[0].s);
+        args[0] = nargs > 1 ? args[1] : O_undef();
+        nargs = nargs > 1 ? 1 : 0;
+      }
+      e.nargs = nargs;
+      e.args = aalloc(sizeof(Obj) * (size_t)(nargs ? nargs : 1));
+      if (nargs) memcpy(e.args, args, sizeof(Obj) * (size_t)nargs);
+      oplist_push(L, e);
+      nargs = 0;
+    } else {
+      if (nargs >= 33) die("Too many arguments");
+      args[nargs++] = obj;
+    }
+  }
+}
+
+/* ---- the mock context log: one JS array item per entry ---- */
+typedef struct {
+  const char *s;   /* kind 0: string item */
+  double n;        /* kind 1: number item; kind 2: code unit of a one-char string */
+  uint8_t kind;
+} LogItem;
+
+static LogItem *g_log;
+static int g_logn;
+#define LOG_CAP 40000
+
+static void L_S(const char *s) {
+  if (g_logn >= LOG_CAP) die("log overflow");
+  g_log[g_logn].s = s;
+  g_log[g_logn].kind = 0;
+  g_logn++;
+}
+static void L_N(double v) {
+  if (g_logn >= LOG_CAP) die("log overflow");
+  g_log[g_logn].n = v;
+  g_log[g_logn].kind = 1;
+  g_logn++;
+}
+static void L_C(int ch) {
+  if (g_logn >= LOG_CAP) die("log overflow");
+  g_log[g_logn].n = ch;
+  g_log[g_logn].kind = 2;
+  g_logn++;
+}
+
+/* CanvasExtraState (the fields the executed operators read and write). */
+typedef struct {
+  Font *font;
+  double textMatrix[6];
+  double fontMatrix[6];
+  double fontSize, fontSizeScale;
+  double leading, x, y, lineX, lineY;
+  double charSpacing, wordSpacing, textHScale;
+  int textRenderingMode;
+  double lineWidth;
+} CState;
+
+static CState g_cur;
+static CState g_stack[256];
+static int g_sp;
+
+static const double k_identity[6] = {1, 0, 0, 1, 0, 0};
+
+static double js_sign(double n) { return n < 0 ? -1 : 1; }
+
+/* ctx.save() / ctx.restore() of the mock context: always logged. */
+static void ctx_save(void) {
+  L_S("save");
+  L_S("\n");
+}
+static void ctx_restore(void) {
+  L_S("restore");
+  L_S("\n");
+}
+/* CanvasGraphics.save: ctx.save() and push the current state. */
+static void cg_save(void) {
+  ctx_save();
+  if (g_sp >= 256) die("state stack overflow");
+  g_stack[g_sp++] = g_cur;
+}
+/* CanvasGraphics.restore: pop; ctx.restore() only when a state was popped. */
+static void cg_restore(void) {
+  if (g_sp > 0) {
+    g_cur = g_stack[--g_sp];
+    ctx_restore();
+  }
+}
+static void cg_transform(const double m[6]) {
+  L_S("transform");
+  for (int i = 0; i < 6; i++) L_N(m[i]);
+  L_S("\n");
+}
+static void cg_scale(double x, double y) {
+  L_S("scale");
+  L_N(x);
+  L_N(y);
+  L_S("\n");
+}
+static void cg_translate(double x, double y) {
+  L_S("translate");
+  L_N(x);
+  L_N(y);
+  L_S("\n");
+}
+
+/* applyTextTransforms (non-coded fonts). */
+static void cg_apply_text_transforms(void) {
+  CState *c = &g_cur;
+  double textHScale = c->textHScale;
+  const double *fm = c->fontMatrix;
+  cg_transform(c->textMatrix);
+  cg_scale(1, -1);
+  cg_translate(c->x, -1 * c->y);
+  cg_transform(fm);
+  cg_scale(textHScale, 1);
+}
+
+/* CanvasGraphics.showText for a non-coded font. */
+static void cg_show_text(Bytes str, int skipTextSelection) {
+  (void)skipTextSelection;
+  CState *c = &g_cur;
+  Font *font = c->font;
+  CachedGlyphs *cg = chars_to_glyphs(font, str);
+  double fontSize = c->fontSize;
+  double fontSizeScale = c->fontSizeScale;
+  double charSpacing = c->charSpacing;
+  double wordSpacing = c->wordSpacing;
+  double textHScale = c->textHScale;
+  const double *fontMatrix = c->fontMatrix;
+  double textHScale2 = textHScale * fontMatrix[0];
+  ctx_save();
+  cg_apply_text_transforms();
+  double lineWidth = c->lineWidth;
+  (void)lineWidth;
+  if (fontSizeScale != 1.0) {
+    cg_scale(fontSizeScale, fontSizeScale);
+  }
+  double x = 0;
+  for (int i = 0; i < cg->n; ++i) {
+    GlyphRec *glyph = &cg->g[i];
+    if (glyph->isnull) {
+      x += js_sign(c->fontMatrix[0]) * wordSpacing;
+      continue;
+    }
+    double charWidth = glyph->width * fontSize * 0.001 + js_sign(c->fontMatrix[0]) * charSpacing;
+    double scaledX = x / fontSizeScale;
+    /* TextRenderingMode.FILL: ctx.fillText(character, scaledX, 0) */
+    L_S("fillText");
+    L_C(glyph->fontChar);
+    L_N(scaledX);
+    L_N(0);
+    L_S("\n");
+    x += charWidth;
+  }
+  c = &g_cur;
+  c->x += x * textHScale2;
+  ctx_restore();
+}
+
+/* One operator of the operator list (executeOperatorList body). */
+static void exec_op(const OpEntry *e) {
+  CState *c = &g_cur;
+  switch (e->fn) {
+  case OP_BT:
+    memcpy(c->textMatrix, k_identity, sizeof k_identity);
+    c->x = c->lineX = 0;
+    c->y = c->lineY = 0;
+    break;
+  case OP_ET:
+    break;
+  case OP_TF: {
+    /* setFont(loadedName, size) */
+    Font *font = e->font;
+    double size = e->args[0].n;
+    memcpy(c->fontMatrix, font->fontMatrix, sizeof c->fontMatrix);
+    if (size < 0) {
+      size = -size;
+      c->fontMatrix[0] *= -1;
+      c->fontMatrix[3] *= -1;
+    }
+    c->font = font;
+    c->fontSize = size;
+    double browserFontSize = size >= 1 ? size : 1;   /* MIN_FONT_SIZE */
+    c->fontSizeScale = browserFontSize != 1 ? 1.0 : size / 1;
+    break;
+  }
+  case OP_TD: {
+    double x = e->args[0].n, y = e->args[1].n;
+    c->lineX += x;
+    c->x = c->lineX;
+    c->lineY += y;
+    c->y = c->lineY;
+    break;
+  }
+  case OP_TJ: {
+    /* showSpacedText(arr) */
+    if (!is_arr(e->args[0])) die("TJ without an array");
+    Arr *arr = e->args[0].p;
+    double fontSize = c->fontSize;
+    double textHScale = c->textHScale;
+    textHScale *= c->fontMatrix[0];   /* non-coded fonts */
+    for (int i = 0; i < arr->n; ++i) {
+      Obj ee = arr->a[i];
+      if (is_num(ee)) {
+        double spacingLength = -ee.n * 0.001 * fontSize * textHScale;
+        c->x += spacingLength;
+      } else if (is_string(ee)) {
+        cg_show_text(ee.s, 1);
+        c = &g_cur;
+      } else {
+        die("TJ array element is not string or num");
+      }
+    }
+    break;
+  }
+  case OP_SAVE:
+    cg_save();
+    break;
+  case OP_RESTORE:
+    cg_restore();
+    break;
+  case OP_CM: {
+    double m[6];
+    for (int i = 0; i < 6; i++) m[i] = e->args[i].n;
+    cg_transform(m);
+    break;
+  }
+  case OP_W:
+    c->lineWidth = e->args[0].n;
+    break;
+  case OP_J:
+  case OP_D:
+    break;   /* canvas properties only: no log entries */
+  case OP_M:
+    L_S("moveTo");
+    L_N(e->args[0].n);
+    L_N(e->args[1].n);
+    L_S("\n");
+    c->x = e->args[0].n;
+    c->y = e->args[1].n;
+    break;
+  case OP_L:
+    L_S("lineTo");
+    L_N(e->args[0].n);
+    L_N(e->args[1].n);
+    L_S("\n");
+    c->x = e->args[0].n;
+    c->y = e->args[1].n;
+    break;
+  case OP_S:
+    /* stroke() then consumePath() -> ctx.beginPath() */
+    L_S("stroke");
+    L_S("\n");
+    L_S("beginPath");
+    L_S("\n");
+    break;
+  default:
+    die("unknown operator");
+  }
+}
+
+/* ---- FontLoader.bind and the mock DOM it drives ---- */
+
+static const char k_b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/* window.btoa (the mock's encoder, standard output with '=' padding). */
+static void b64_encode(Buf *out, Bytes in) {
+  for (int i = 0; i < in.n; i += 3) {
+    int rem = in.n - i;
+    int b1 = in.p[i];
+    int b2 = rem > 1 ? in.p[i + 1] : 0;
+    int b3 = rem > 2 ? in.p[i + 2] : 0;
+    buf_c(out, k_b64[b1 >> 2]);
+    buf_c(out, k_b64[((b1 & 3) << 4) | (b2 >> 4)]);
+    if (rem == 1) {
+      BUF_LIT(out, "==");
+    } else {
+      buf_c(out, k_b64[((b2 & 15) << 2) | (b3 >> 6)]);
+      if (rem == 2) buf_c(out, '=');
+      else buf_c(out, k_b64[b3 & 63]);
+    }
+  }
+}
+
+/* FontLoader.bind: builds the @font-face rules and the font-load document. */
+static void font_loader_bind(void) {
+  Buf rules = {0}, names = {0};
+  int nload = 0;
+  Font *toLoad[32];
+  for (int i = 0; i < g_nfonts; i++) {
+    Font *f = g_fonts[i];
+    if (f->attached || f->loading == 0) continue;
+    f->attached = 1;
+    toLoad[nload++] = f;
+    Buf str = {0};
+    buf_put(&str, f->data.p, f->data.n);            /* String.fromCharCode loop */
+    Buf url = {0};
+    BUF_LIT(&url, "url(data:font/opentype;base64,");
+    b64_encode(&url, (Bytes){str.p, str.n});        /* btoa(data) */
+    BUF_LIT(&url, ");");
+    BUF_LIT(&rules, "@font-face { font-family:'");
+    buf_put(&rules, f->loadedName.p, f->loadedName.n);
+    BUF_LIT(&rules, "';src:");
+    buf_put(&rules, url.p, url.n);
+    BUF_LIT(&rules, "}");
+    buf_put(&names, f->loadedName.p, f->loadedName.n);
+  }
+  if (nload == 0) return;
+
+  /* prepareFontLoadEvent: names must be \w+ ; html and iframe source */
+  for (int i = 0; i < names.n; i++) {
+    int c = names.p[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'))
+      die("Invalid font name(s)");
+  }
+  Buf html = {0};
+  for (int i = 0; i < nload; i++) {
+    BUF_LIT(&html, "<span style=\"font-family:");
+    buf_put(&html, toLoad[i]->loadedName.p, toLoad[i]->loadedName.n);
+    BUF_LIT(&html, "\">Hi</span>");
+  }
+  Buf src = {0};
+  BUF_LIT(&src, "<!DOCTYPE HTML><html><head>");
+  BUF_LIT(&src, "<style type=\"text/css\">");
+  buf_put(&src, rules.p, rules.n);
+  BUF_LIT(&src, "</style>");
+  BUF_LIT(&src, "<script type=\"application/javascript\">");
+  Buf fnames = {0};
+  for (int i = 0; i < nload; i++) {
+    buf_c(&fnames, '"');
+    buf_put(&fnames, toLoad[i]->loadedName.p, toLoad[i]->loadedName.n);
+    BUF_LIT(&fnames, "\", ");
+  }
+  BUF_LIT(&src, "  var fontNames=[");
+  buf_put(&src, fnames.p, fnames.n);
+  BUF_LIT(&src, "];\n");
+  BUF_LIT(&src, "</script></head><body>");
+  for (int i = 0; i < nload; i++) {
+    BUF_LIT(&src, "<p style=\"font-family:'");
+    buf_put(&src, toLoad[i]->loadedName.p, toLoad[i]->loadedName.n);
+    BUF_LIT(&src, "'\">Hi</p>");
+  }
+  BUF_LIT(&src, "</body></html>");
+  Buf frame = {0};
+  BUF_LIT(&frame, "data:text/html,");
+  buf_put(&frame, src.p, src.n);
+  /* the 'message' event and 'pdfjsFontLoad' dispatch: all fonts finish loading */
+  for (int i = 0; i < nload; i++) toLoad[i]->loading = 0;
+}
+
+/* ---- Page: viewport, render, and the per-iteration driver ---- */
+
+typedef struct {
+  double width, height;
+  double transform[6];
+} Viewport;
+
+/* PageViewport for scale 1 and rotation 0 over the page's view box. */
+static Viewport page_viewport(const double vb[4]) {
+  Viewport v;
+  double scale = 1;
+  double rotateA = 1, rotateB = 0, rotateC = 0, rotateD = -1;
+  double centerX = (vb[2] + vb[0]) / 2;
+  double centerY = (vb[3] + vb[1]) / 2;
+  double offsetCanvasX = fabs(centerX - vb[0]) * scale + 0;
+  double offsetCanvasY = fabs(centerY - vb[1]) * scale + 0;
+  v.width = fabs(vb[2] - vb[0]) * scale;
+  v.height = fabs(vb[3] - vb[1]) * scale;
+  v.transform[0] = rotateA * scale;
+  v.transform[1] = rotateB * scale;
+  v.transform[2] = rotateC * scale;
+  v.transform[3] = rotateD * scale;
+  v.transform[4] = offsetCanvasX - rotateA * scale * centerX - rotateC * scale * centerY;
+  v.transform[5] = offsetCanvasY - rotateB * scale * centerX - rotateD * scale * centerY;
+  return v;
+}
+
+/* Page.mediaBox / Page.view / Page.rotate. */
+static void page_view_box(Page *pg, double vb[4]) {
+  Obj obj = page_inherit(pg, "MediaBox");
+  if (!is_arr(obj) || ((Arr *)obj.p)->n != 4) {
+    vb[0] = 0; vb[1] = 0; vb[2] = 612; vb[3] = 792;
+  } else {
+    Arr *a = obj.p;
+    for (int i = 0; i < 4; i++) vb[i] = a->a[i].n;
+  }
+  Obj crop = page_inherit(pg, "CropBox");
+  if (is_arr(crop) && ((Arr *)crop.p)->n == 4) die("CropBox is not used by this document");
+  Obj rot = page_inherit(pg, "Rotate");
+  if (rot.t == T_NUM && rot.n != 0) die("page rotation is not used by this document");
+}
+
+static void draw_page(const Viewport *vp) {
+  /* beginDrawing: ctx.save(); ctx.transform(viewport.transform) */
+  ctx_save();
+  cg_transform(vp->transform);
+}
+
+/* One runPdfJS() pass over the embedded document (one JetStream iteration). */
+static void run_iteration(void) {
+  g_arena_used = 0;
+  g_logn = 0;
+  g_nfonts = 0;
+  g_obj_counter = 0;
+  g_sp = 0;
+  g_count_getobj = 0;
+  g_count_char_to_glyph = 0;
+  g_count_chars_to_glyphs = 0;
+  g_count_charstrings = 0;
+  g_count_decode = 0;
+  g_flate_n = 0;
+  memset(&g_cur, 0, sizeof g_cur);
+  memcpy(g_cur.textMatrix, k_identity, sizeof k_identity);
+  memcpy(g_cur.fontMatrix, k_identity, sizeof k_identity);
+  g_cur.fontSizeScale = 1;
+  g_cur.textHScale = 1;
+  g_cur.lineWidth = 1;
+
+  /* renderPages: context.clearRect(0, 0, canvas.width, canvas.height) */
+  L_S("createRect");
+  L_N(0);
+  L_N(0);
+  L_N(100);
+  L_N(100);
+  L_S("\n");
+
+  PDFDoc doc;
+  pdf_open(&doc, pdfjs_pdf, PDFJS_PDF_LEN);
+  Page *pg = catalog_get_page(doc.catalog, 1);
+
+  /* Page.getOperatorList: the content stream and the evaluator. */
+  Obj content = page_inherit(pg, "Contents");
+  if (content.t != T_UNDEF && content.t != T_NULL && !is_stream(content)) die("multi-stream content is not used");
+  if (!is_stream(content)) die("page without a content stream");
+  Stream *cs = content.p;
+  st_reset(cs);
+  Obj res = page_inherit(pg, "Resources");
+  if (!is_dict(res)) die("page resources missing");
+  OpList L;
+  memset(&L, 0, sizeof L);
+  eval_content(doc.xref, cs, res.p, &L);
+
+  double vb[4];
+  page_view_box(pg, vb);
+  Viewport vp = page_viewport(vb);
+
+  font_loader_bind();
+  draw_page(&vp);
+  /* executeOperatorList */
+  for (int i = 0; i < L.n; i++) exec_op(&L.ops[i]);
+  /* endDrawing: ctx.restore() */
+  ctx_restore();
+}
+
+/* ------------------------------------------------------------------------ */
+/* Validation (after each timed iteration, outside the timer) and main().    */
+
+/* JS Number::toString for the values that reach the log. */
+static int js_num_str(double v, char *out) {
+  if (v != v) return sprintf(out, "NaN");
+  if (v == 0) return sprintf(out, "0");
+  if (v < 0) {
+    out[0] = '-';
+    return 1 + js_num_str(-v, out + 1);
+  }
+  if (v == INFINITY) return sprintf(out, "Infinity");
+  /* shortest round-trip digits */
+  char digits[32];
+  int k = 0, e = 0;
+  for (int p = 1; p <= 17; p++) {
+    char tmp[64];
+    snprintf(tmp, sizeof tmp, "%.*e", p - 1, v);
+    if (strtod(tmp, NULL) == v || p == 17) {
+      /* tmp: d[.ddd]e[+-]xx */
+      char *q = tmp;
+      k = 0;
+      while (*q && *q != 'e') {
+        if (*q >= '0' && *q <= '9') digits[k++] = *q;
+        q++;
+      }
+      e = atoi(q + 1);
+      break;
+    }
+  }
+  while (k > 1 && digits[k - 1] == '0') k--;
+  int n = e + 1;
+  char *o = out;
+  if (k <= n && n <= 21) {
+    memcpy(o, digits, (size_t)k);
+    o += k;
+    for (int i = 0; i < n - k; i++) *o++ = '0';
+  } else if (0 < n && n <= 21) {
+    memcpy(o, digits, (size_t)n);
+    o += n;
+    *o++ = '.';
+    memcpy(o, digits + n, (size_t)(k - n));
+    o += k - n;
+  } else if (-6 < n && n <= 0) {
+    *o++ = '0';
+    *o++ = '.';
+    for (int i = 0; i < -n; i++) *o++ = '0';
+    memcpy(o, digits, (size_t)k);
+    o += k;
+  } else {
+    *o++ = digits[0];
+    if (k > 1) {
+      *o++ = '.';
+      memcpy(o, digits + 1, (size_t)(k - 1));
+      o += k - 1;
+    }
+    o += sprintf(o, "e%c%d", n - 1 >= 0 ? '+' : '-', n - 1 >= 0 ? n - 1 : -(n - 1));
+  }
+  *o = 0;
+  return (int)(o - out);
+}
+
+static uint16_t *g_units;
+static size_t g_units_cap;
+
+/* log.join(" ") as UTF-16 code units. */
+static size_t log_join_units(void) {
+  size_t n = 0;
+  char tmp[64];
+  for (int i = 0; i < g_logn; i++) {
+    if (i) g_units[n++] = ' ';
+    const LogItem *it = &g_log[i];
+    if (it->kind == 0) {
+      for (const char *p = it->s; *p; p++) g_units[n++] = (uint16_t)(unsigned char)*p;
+    } else if (it->kind == 1) {
+      int len = js_num_str(it->n, tmp);
+      for (int k = 0; k < len; k++) g_units[n++] = (uint16_t)(unsigned char)tmp[k];
+    } else {
+      g_units[n++] = (uint16_t)it->n;
+    }
+    if (n + 64 > g_units_cap) die("join buffer too small");
+  }
+  return n;
+}
+
+static int32_t js_hash_prefix(const uint16_t *u, size_t len) {
+  uint32_t h = 0;
+  for (size_t i = 0; 4 * (double)i - 3 < (double)len; i += 4)
+    for (size_t j = 0; j < 4 && i + j < len; ++j)
+      h = (uint32_t)(h + u[i + j]) << (8 * j);
+  return (int32_t)h;
+}
+
+static uint32_t fnv_units(const uint16_t *u, size_t len) {
+  uint32_t h = 2166136261u;
+  for (size_t i = 0; i < len; i++) h = (h ^ u[i]) * 16777619u;
+  return h;
+}
+
+/* Expected values (node 22, tools/pdfjs-validate.cjs). */
+static const int EXP_FONT_BYTES[EXP_NUM_FONTS] = {8708, 2204, 15592, 4596, 21804, 4272, 2352, 16580, 2804};
+static const uint32_t EXP_FONT_SUM[EXP_NUM_FONTS] = {619229617u, 2003984382u, 4194821069u, 163240549u,
+                                                    1590319067u, 3313030037u, 3117272685u, 1391838009u,
+                                                    1948379445u};
+static const int EXP_FLATE_LEN[EXP_NUM_FLATE] = {7740, 11080, 7447, 15032, 9996, 20066, 8719, 7484, 16323, 7725};
+
+static int validate_iteration(int it) {
+  int ok = 1;
+  size_t len = log_join_units();
+  int32_t h = js_hash_prefix(g_units, len);
+  uint32_t full = fnv_units(g_units, len);
+  if (g_logn != EXP_LOG_LENGTH) { fprintf(stderr, "iteration %d: log length %d\n", it, g_logn); ok = 0; }
+  if (h != EXP_LOG_HASH) { fprintf(stderr, "iteration %d: log hash %d\n", it, (int)h); ok = 0; }
+  if (full != EXP_LOG_FULLHASH) { fprintf(stderr, "iteration %d: full log hash %u\n", it, (unsigned)full); ok = 0; }
+  if (g_nfonts != EXP_NUM_FONTS) { fprintf(stderr, "iteration %d: %d fonts\n", it, g_nfonts); ok = 0; }
+  for (int i = 0; i < g_nfonts && i < EXP_NUM_FONTS; i++) {
+    uint32_t sum = 0;
+    for (int k = 0; k < g_fonts[i]->data.n; k++) sum = sum * 31u + g_fonts[i]->data.p[k];
+    if (g_fonts[i]->data.n != EXP_FONT_BYTES[i] || sum != EXP_FONT_SUM[i]) {
+      fprintf(stderr, "iteration %d: font %d bytes %d sum %u\n", it, i, g_fonts[i]->data.n, (unsigned)sum);
+      ok = 0;
+    }
+  }
+  if (g_flate_n != EXP_NUM_FLATE) { fprintf(stderr, "iteration %d: %d flate streams\n", it, g_flate_n); ok = 0; }
+  for (int i = 0; i < g_flate_n && i < EXP_NUM_FLATE; i++) {
+    if (g_flate_list[i]->bufLen != EXP_FLATE_LEN[i]) {
+      fprintf(stderr, "iteration %d: flate %d length %d\n", it, i, g_flate_list[i]->bufLen);
+      ok = 0;
+    }
+  }
+  if (g_count_getobj != EXP_PARSER_GETOBJ) { fprintf(stderr, "iteration %d: getObj %lld\n", it, g_count_getobj); ok = 0; }
+  if (g_count_char_to_glyph != EXP_CHAR_TO_GLYPH) { fprintf(stderr, "iteration %d: charToGlyph %lld\n", it, g_count_char_to_glyph); ok = 0; }
+  if (g_count_chars_to_glyphs != EXP_CHARS_TO_GLYPHS) { fprintf(stderr, "iteration %d: charsToGlyphs %lld\n", it, g_count_chars_to_glyphs); ok = 0; }
+  if (g_count_charstrings != EXP_CHARSTRINGS) { fprintf(stderr, "iteration %d: charstrings %lld\n", it, g_count_charstrings); ok = 0; }
+  if (g_count_decode != EXP_DECODE_CHARSTRING) { fprintf(stderr, "iteration %d: decodeCharString %lld\n", it, g_count_decode); ok = 0; }
+  return ok;
+}
+
+static double now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+int main(int argc, char **argv) {
+  int iterations = argc > 1 ? atoi(argv[1]) : ITERATIONS;
+  if (iterations <= 0) iterations = ITERATIONS;
+  g_arena = malloc(ARENA_BYTES);
+  g_log = calloc(LOG_CAP, sizeof(LogItem));
+  g_units_cap = 64 * (size_t)LOG_CAP + 1024;
+  g_units = calloc(g_units_cap, sizeof(uint16_t));
+  if (!g_arena || !g_log || !g_units) die("out of memory");
+  init_static_tables();
+
+  double total = 0;
+  int ok = 1;
+  for (int it = 0; it < iterations; it++) {
+    double t0 = now_ms();
+    run_iteration();
+    total += now_ms() - t0;
+    if (!validate_iteration(it)) {
+      ok = 0;
+      break;
+    }
+  }
+  printf("pdfjs %d iterations %.3f ms\n", iterations, total);
+  printf(ok ? "validation ok\n" : "validation FAILED\n");
+  return ok ? 0 : 1;
 }

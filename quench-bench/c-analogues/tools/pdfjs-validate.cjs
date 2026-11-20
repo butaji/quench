@@ -51,6 +51,9 @@ function hash(s) {
   return h;
 }
 const joined = log.join(' ');
+// Full-string FNV-1a over the UTF-16 code units of join(" ") (the C check).
+let fullHash = 0x811c9dc5;
+for (let i = 0; i < joined.length; i++) fullHash = Math.imul(fullHash ^ joined.charCodeAt(i), 16777619) >>> 0;
 const kinds = {};
 for (const x of log) if (typeof x === 'string' && x !== '\n') kinds[x] = (kinds[x] || 0) + 1;
 
@@ -63,7 +66,7 @@ const flateInfo = __count.flate.map(s => s.bufferLength);
 
 console.log(JSON.stringify({
   iterations, ms,
-  canvasLogs: logs.length, logLength: log.length, logHash: hash(joined),
+  canvasLogs: logs.length, logLength: log.length, logHash: hash(joined), logFullHash: fullHash,
   expected: { length: 36788, hash: 939524096 },
   logItemsByOp: kinds,
   opsByName: __count.ops,
