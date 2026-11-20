@@ -377,21 +377,6 @@ static TsType *cNarrowByTypeof(TsNode *typeofExpr, TsNode *lit, bool truthy, TsT
   return cTypeWithFacts(t, cTypeofNeFacts(lit->text, lit->textLen));
 }
 
-/* the callee of a call has a type predicate or an assertion signature (narrowing by a call); *known is false when the
- * callee type is not ported */
-static bool cCalleeHasPredicate(TsNode *call, bool *known) {
-  *known = false;
-  TsType *f = cExprType(call->expression);
-  if (f == cErrorType || !(f->flags & TF_Object)) return false;
-  cResolveSignatures(f);
-  *known = true;
-  for (int i = 0; i < f->ncall; i++) {
-    TsNode *d = f->call[i].decl;
-    if (d && d->type && d->type->kind == TSK_TypePredicate) return true;
-  }
-  return false;
-}
-
 /* getNarrowedType (75764) with checkDerived false, as type predicates use it. Assuming the predicate holds, each member of
  * the candidate narrows the members of the type that are strict subtypes or subtypes of it; a type that is related to no
  * member is replaced by the candidate, the type or the intersection. When it is false, the members that are subsets of the
@@ -501,7 +486,13 @@ static TsType *cNarrowByPredicate(TsNode *c, bool truthy, TsType *t, CFlowRef *r
         memcmp(pn->text, pred->parameterName->text, (size_t)pn->textLen) == 0) idx = k;
   }
   if (idx < 0 || !c->arguments || idx >= c->arguments->n) return cUnported("narrowing by a call");
-  if (!cMatchesRefTree(cSkipParens(c->arguments->v[idx]), r)) return cUnported("narrowing by a call");
+  /* narrowTypeByTypePredicate: an argument that is not the reference leaves the type, unless it is a discriminant of a union
+   * (not ported) */
+  TsNode *arg = c->arguments->v[idx];
+  if (!cMatchesRefTree(cSkipParens(arg), r)) {
+    if ((t->flags & TF_Union) && cAssignContains(arg, r)) return cUnported("discriminant narrowing by a predicate");
+    return t;
+  }
   TsType *cand = cTypeFromNode(pred->type);
   if (cand == cErrorType || (cand->flags & (TF_Any | TF_Unknown))) return cUnported("narrowing by a call");
   if (t == cErrorType) return t;
@@ -647,6 +638,22 @@ static TsType *cNarrowByInstanceof(TsNode *c, bool truthy, TsType *t) {
   return truthy ? inst : t;
 }
 
+enum { CE_None = 0, CE_Sig, CE_Unported };
+static int cGetEffects(TsNode *call, TsNode **decl);   /* the effects signature of a call, below */
+
+/* hasMatchingArgument: an argument is the reference or contains it (x.y for x), or the callee's object is */
+static bool cHasMatchingArgument(TsNode *call, CFlowRef *r) {
+  if (call->arguments)
+    for (int i = 0; i < call->arguments->n; i++) {
+      TsNode *a = call->arguments->v[i];
+      if (cMatchesRefTree(cSkipParens(a), r) || cAssignContains(a, r)) return true;
+    }
+  TsNode *ce = call->expression;
+  if (ce->kind == TSK_PropertyAccessExpression && (cMatchesRefTree(cSkipParens(ce->expression), r) || cAssignContains(ce->expression, r)))
+    return true;
+  return false;
+}
+
 /* the flow type of a reference narrowed by a condition (narrowType): the reference is matched directly, through `!`,
  * by equality with undefined or null, by a typeof comparison, and by calls whose arguments include it (without a type
  * predicate). Discriminants, instanceof, in, literal equality and type predicates are not ported. A condition that does
@@ -710,15 +717,21 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
       if (cIsMemberOfRef(l, r) || cIsMemberOfRef(rt, r)) return (t->flags & TF_Union) ? cUnported("discriminant narrowing") : t;
     }
   }
-  if (c->kind == TSK_CallExpression && c->arguments) {
-    bool argMentions = false;
-    for (int i = 0; i < c->arguments->n; i++) if (cMentionsText(c->arguments->v[i], r->text, r->len)) argMentions = true;
-    if (!argMentions) return t;
-    bool known;
-    bool pred = cCalleeHasPredicate(c, &known);
-    if (known && !pred) return t;
-    if (known && pred) return cNarrowByPredicate(c, truthy, t, r);
-    return cUnported("narrowing by a call");
+  if (c->kind == TSK_CallExpression) {
+    /* narrowTypeByCallExpression: a call that has the reference as an argument (or as the object of its callee) narrows by
+     * the type predicate of its effects signature (an identifier predicate; a this predicate is not ported). A false
+     * optional call has no effects signature. */
+    if (!cHasMatchingArgument(c, r)) return t;
+    if (!truthy && bIsOptionalChain(c)) return t;
+    if (cExprType(c->expression) == cErrorType) return cUnported("narrowing by a call of an unported callee");
+    TsNode *d = NULL;
+    int k = cGetEffects(c, &d);
+    if (k == CE_None) return t;
+    if (k == CE_Unported) return cUnported("narrowing by a call");
+    TsNode *p = d->type;
+    if (p->kind != TSK_TypePredicate || p->assertsModifier) return t;
+    if (!p->parameterName || p->parameterName->kind != TSK_Identifier) return cUnported("narrowing by a this predicate");
+    return cNarrowByPredicate(c, truthy, t, r);
   }
   if (c->kind == TSK_PropertyAccessExpression || c->kind == TSK_ElementAccessExpression) {
     if (cIsMemberOfRef(c, r)) return (t->flags & TF_Union) ? cUnported("discriminant truthiness") : t;
@@ -986,7 +999,6 @@ static int cAssertParamIndex(TsNode *d, TsNode *pred) {
 /* the effects signature of a call (getEffectsSignature): none, the single declared signature, or a case not ported (several
  * signatures with a predicate or a never return, a generic one, a union or other callee type). The callee is the expression
  * type (node uses the dotted name in an expression statement). An error or any callee has no effect. */
-enum { CE_None = 0, CE_Sig, CE_Unported };
 static int cGetEffects(TsNode *call, TsNode **decl) {
   *decl = NULL;
   if (call->kind != TSK_CallExpression || call->expression->kind == TSK_SuperKeyword) return CE_None;
