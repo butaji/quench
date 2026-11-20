@@ -86,8 +86,16 @@ static TsNode *cInterfaceDeclOfType(TsType *type) {
 
 /* the literal type of a property name (getLiteralTypeFromProperty); NULL for a late-bound name */
 static TsType *cPropertyNameLiteral(TsSymbol *prop) {
-  if (prop->name.n >= 3 && memcmp(prop->name.s, "__@", 3) == 0) return NULL;
   TsNode *d = prop->valueDeclaration ? prop->valueDeclaration : (prop->ndecls ? prop->decls[0] : NULL);
+  if (prop->name.n >= 3 && memcmp(prop->name.s, "__@", 3) == 0) {
+    /* a late-bound name: the type of its computed name (the nameType set by late binding); a type that is neither
+     * a string or number literal nor a unique symbol gives never, as getLiteralTypeFromProperty does */
+    TsNode *nm = d ? d->name : NULL;
+    if (!nm || nm->kind != TSK_ComputedPropertyName) return NULL;
+    TsType *t = cExprType(nm->expression);
+    if (t == cErrorType) return NULL;
+    return (t->flags & (TF_StringLiteral | TF_NumberLiteral | TF_UniqueESSymbol)) ? t : cNeverType;
+  }
   if (d && d->name && d->name->kind == TSK_NumericLiteral) return cLiteralType(TF_NumberLiteral, d->name->text, d->name->textLen);
   return cStringLiteralType(prop->name.s, prop->name.n);
 }
@@ -348,6 +356,42 @@ static void cCheckTypePredicateNode(TsNode *n) {
   TsType *paramType = cTypeOfSymbol(cGetMergedSymbol(param->symbol));
   if (paramType == cErrorType) return;
   cCheckTypeRelatedTo(predType, paramType, REL_Assignable, n->type, 2677);
+}
+
+/* checkTemplateLiteralType (86000s): each span type is assignable to the template constraint (string, number,
+ * bigint, boolean, null or undefined) */
+static void cCheckTemplateLiteralTypeNode(TsNode *n) {
+  if (n->kind != TSK_TemplateLiteralType) return;
+  static TsType *templateConstraint;
+  if (!templateConstraint)
+    templateConstraint = cGetUnionType((TsType *[]){cStringType, cNumberType, cBigIntType, cBooleanType, cNullType, cUndefinedType}, 6);
+  for (int i = 0; n->spans && i < n->spans->n; i++) {
+    TsNode *sp = n->spans->v[i];
+    TsType *t = cTypeFromNode(sp->type);
+    if (t != cErrorType) cCheckTypeRelatedTo(t, templateConstraint, REL_Assignable, sp->type, 2322);
+  }
+}
+
+/* checkMappedType (88420s): the constraint of a mapped type is assignable to keyof any (string | number | symbol) */
+static void cCheckMappedTypeNode(TsNode *n) {
+  if (n->kind != TSK_MappedType) return;
+  static TsType *keyofConstraint;
+  if (!keyofConstraint) keyofConstraint = cGetUnionType((TsType *[]){cStringType, cNumberType, cESSymbolType}, 3);
+  if (n->nameType) { (void)cUnported("mapped type with an as clause"); return; }
+  TsType *t = cTypeFromNode(n);
+  if (t == cErrorType || !(t->flags & TF_Object) || !(t->objectFlags & OF_Mapped) || t->mapConstraint == cErrorType) return;
+  TsNode *tpc = n->typeParameter ? n->typeParameter->constraint : NULL;
+  cCheckTypeRelatedTo(t->mapConstraint, keyofConstraint, REL_Assignable, tpc ? tpc : n, 2322);
+}
+
+/* checkIndexedAccessType (88390s): the index type is assignable to keyof of the object type (2536 otherwise) */
+static void cCheckIndexedAccessNode(TsNode *n) {
+  if (n->kind != TSK_IndexedAccessType) return;
+  TsType *t = cTypeFromNode(n);
+  if (t == cErrorType || !(t->flags & TF_IndexedAccess)) return;
+  TsType *keys = cGetIndexType(t->iaObj);
+  if (keys == cErrorType) return;
+  cCheckTypeRelatedTo(t->iaIdx, keys, REL_Assignable, n->indexType, 2536);
 }
 
 #endif
