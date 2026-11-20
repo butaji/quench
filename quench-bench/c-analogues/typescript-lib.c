@@ -53,7 +53,15 @@
  *   Still behind node: subtype and strictSubtype pairs (body checks: array literal and return type reduction,
  *   variable initializers), overload consistency of functions (checkFunctionOrConstructorSymbol), enum and module
  *   declaration checks, static and class index constraints, and checkTypeOperator and conditional type checks
- *   (no relation pairs in the corpus, but not ported). Unported requests remain in body checks (about 410 of them, printed as "unported type requests"; the main causes are contextual signatures of overloaded calls with arrow arguments, parameters of unported callees, unions with type-parameter constraints, equality narrowing with values, and conditional types of unported branches). Node's body instantiations are attributed by tools/typescript-lib-instr.cjs: most of them are the parameter types of call signatures and the union property types of variable initializers.
+ *   (no relation pairs in the corpus, but not ported). Unported requests remain in body checks (about 383 of them, printed as "unported type requests"; the main causes, by
+ *   count of the TS_TYPES_DEBUG trace, are parameters without annotation, contextual types of overloaded calls and of
+ *   function expressions (generic candidates and their inference are not ported), references of type parameters with
+ *   union constraints, conditional types of unported branches, never-returning calls (the flow after them is unreachable,
+ *   not ported), narrowing of outer references, discriminant narrowing and truthiness, and generic signatures).
+ *   Ported in this round: the comparable relation and equality narrowing by a value, type predicate narrowing of
+ *   references that are not any, instanceof and in of any references, assertion-call narrowing, removeSubtypes with
+ *   node's candidates and key property, literal reduction of unions, and context-sensitive arguments of overloaded calls
+ *   with non-generic candidates (anyFunctionType, chooseOverload's two rounds). Node's body instantiations are attributed by tools/typescript-lib-instr.cjs: most of them are the parameter types of call signatures and the union property types of variable initializers.
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
