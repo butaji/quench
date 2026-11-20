@@ -2181,6 +2181,17 @@ static TsType *cContextualType(TsNode *e) {
         sig = &sigs[0];
         if (sig->decl->typeParameters && sig->decl->typeParameters->n) {
           TsNode *ca = cSkipParens(c);
+          if (ca->kind == TSK_ObjectLiteralExpression) {
+            /* getContextualTypeForArgument of an object literal in an inference: the parameter type, uninstantiated
+             * (instantiateContextualType instantiates only for a signature). The literal's type does not depend on it;
+             * a property that needs it (a literal or a function value) meets a non-object context and is not ported */
+            CParams gp;
+            bool gok;
+            if (!cSplitParams(sig->decl, &gp) || gp.thisParam || gp.rest) return cUnported("contextual type of a generic call");
+            TsType *gt = cSigParamType(sig, &gp, idx, &gok);
+            if (!gok) return cUnported("contextual type of a generic call");
+            return gt;
+          }
           if (ca->kind != TSK_ArrowFunction) return cUnported("contextual type of a generic call");
           return cGenericCallFnArgContext(sig, idx);
         }
