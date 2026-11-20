@@ -236,7 +236,7 @@ impl ArrayElements {
         // SAFETY: the new allocation holds `values.len()` slots after the header.
         unsafe {
             std::ptr::copy_nonoverlapping(values.as_ptr(), elements.values(), values.len());
-            (*elements.header.as_ptr()).others = others;
+            (*elements.header.as_ptr()).head.others = others;
         }
         elements
     }
@@ -252,7 +252,7 @@ impl ArrayElements {
         // SAFETY: the new allocation holds `len` slots after the header, and no part aliases it.
         let counted = unsafe { write_parts(elements.values(), parts) };
         // SAFETY: the allocation is fresh and this array alone owns it.
-        unsafe { (*elements.header.as_ptr()).others = counted };
+        unsafe { (*elements.header.as_ptr()).head.others = counted };
         elements
     }
 
@@ -362,7 +362,7 @@ impl ArrayElements {
             // Not every value has a narrow form, or the copy saves no block: no collection
             // tries again (a later write may change that; the array then stays wide).
             // SAFETY: a backing of one owner with a length is this array's allocation.
-            unsafe { (*self.header.as_ptr()).capacity |= KEEP_WIDE };
+            unsafe { (*self.header.as_ptr()).head.capacity |= KEEP_WIDE };
             return 0;
         };
         let saved = self.allocated_bytes() - narrow.allocated_bytes();
@@ -703,7 +703,7 @@ impl ArrayElements {
             unsafe {
                 let word = self.double_words().add(index);
                 if word.read() == Value::DELETED.to_bits() {
-                    (*self.header.as_ptr()).others -= 1;
+                    (*self.header.as_ptr()).head.others -= 1;
                 }
                 word.write(double_word(number));
             }
@@ -722,7 +722,7 @@ impl ArrayElements {
         unsafe {
             if added != removed {
                 let header = self.header.as_ptr();
-                (*header).others = recounted((*header).others, added, removed);
+                (*header).head.others = recounted((*header).head.others, added, removed);
             }
             self.narrow_values().cast_mut().add(index).write(narrow);
         }
@@ -769,8 +769,8 @@ impl ArrayElements {
         // SAFETY: as above; no value is a hole.
         unsafe {
             let header = self.header.as_ptr();
-            (*header).len |= DOUBLE_LEN;
-            (*header).others = 0;
+            (*header).head.len |= DOUBLE_LEN;
+            (*header).head.others = 0;
         }
     }
 
@@ -783,7 +783,7 @@ impl ArrayElements {
         }
         let elements = Self::allocate(MIN_GROWN_CAPACITY, 0);
         // SAFETY: a fresh allocation of one owner, empty.
-        unsafe { (*elements.header.as_ptr()).len = DOUBLE_LEN };
+        unsafe { (*elements.header.as_ptr()).head.len = DOUBLE_LEN };
         elements
     }
 
@@ -821,7 +821,7 @@ impl ArrayElements {
         // SAFETY: below the capacity of a double backing this array alone owns.
         unsafe {
             self.double_words().add(len).write(double_word(number));
-            (*self.header.as_ptr()).len += 1;
+            (*self.header.as_ptr()).head.len += 1;
         }
         true
     }
@@ -876,7 +876,7 @@ impl ArrayElements {
                 copy.make_mut().set_others(self.header().others);
             }
             // SAFETY: the copy is a fresh allocation of one owner (the length is not zero).
-            unsafe { (*copy.header.as_ptr()).capacity |= KEEP_WIDE };
+            unsafe { (*copy.header.as_ptr()).head.capacity |= KEEP_WIDE };
             return copy;
         }
         // SAFETY: the first `len` values of a wide backing are initialized.
@@ -969,7 +969,7 @@ impl Clone for ArrayElements {
                 }
                 let owners = owners.checked_add(1).expect("array backing owners overflow");
                 // SAFETY: arrays are single-threaded; the header is live and only owners write it.
-                unsafe { (*self.header.as_ptr()).owners = owners };
+                unsafe { (*self.header.as_ptr()).head.owners = owners };
             }
         }
         Self {
@@ -991,7 +991,7 @@ impl Drop for ArrayElements {
             unsafe { release(start, layout) };
         } else {
             // SAFETY: as in `clone`.
-            unsafe { (*self.header.as_ptr()).owners = owners };
+            unsafe { (*self.header.as_ptr()).head.owners = owners };
         }
     }
 }
@@ -1024,7 +1024,7 @@ impl UniqueElements {
     #[inline] fn set_others(&mut self, others: u32) {
         if self.0.capacity() != 0 {
             // SAFETY: a unique backing with a capacity is this array's own allocation.
-            unsafe { (*self.0.header.as_ptr()).others = others };
+            unsafe { (*self.0.header.as_ptr()).head.others = others };
         }
     }
 
@@ -1084,7 +1084,7 @@ impl UniqueElements {
         debug_assert!(len <= self.0.capacity());
         if self.0.capacity() != 0 {
             // SAFETY: a unique backing with a capacity is this array's own allocation.
-            unsafe { (*self.0.header.as_ptr()).len = len as u32 };
+            unsafe { (*self.0.header.as_ptr()).head.len = len as u32 };
         }
     }
 
@@ -1130,7 +1130,7 @@ impl UniqueElements {
         };
         self.0.header = header;
         // SAFETY: the reallocated header is this array's own, its words copied from the old.
-        unsafe { (*header.as_ptr()).capacity = capacity_word | ((*header.as_ptr()).capacity & KEEP_WIDE) };
+        unsafe { (*header.as_ptr()).head.capacity = capacity_word | ((*header.as_ptr()).head.capacity & KEEP_WIDE) };
     }
 
     #[inline(always)]

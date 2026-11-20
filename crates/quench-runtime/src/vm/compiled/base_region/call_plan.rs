@@ -145,7 +145,7 @@ pub(super) struct CallShape {
 impl CallShape {
     pub(super) fn of(call_pc: u32, instruction: WideInstruction, form: CallForm) -> Self {
         let imm = instruction.imm();
-        let (result, returning) = (instruction.result_register(), instruction.returns_from_frame());
+        let (result, returning, op) = (instruction.result_register(), instruction.returns_from_frame(), instruction.op());
         match form {
             CallForm::Plain => Self {
                 call_pc,

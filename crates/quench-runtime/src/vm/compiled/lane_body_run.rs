@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
         // binds its own: the run it returns into gets back the address it entered with.
         unsafe { let dispatch = &mut (*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) = outer_locals };
         // SAFETY: as above; a completing body wrote the record before it returned.
-        let exit = entry_protocol::exit(&descriptor, returned, || unsafe { (*frame).dispatch.returned_pc });
+        let exit = entry_protocol::exit(&descriptor, returned, || unsafe { (*frame).dispatch.head.returned_pc });
         self.programs.tier_events().record(Event::ended(exit));
         if LaneStatus::of(status) == Some(LaneStatus::Returned) { self.programs.tier_events().record(Event::Returned); }
         exit
@@ -86,10 +86,10 @@ impl<H: Host> Vm<H> {
             if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0)) {
                 self.programs.tier_events().record(Event::RunBound);
             }
-            debug_assert_eq!((*dispatch).field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
+            debug_assert_eq!((*dispatch).head.field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
             let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context);
-            ((*dispatch).native_locals, (*dispatch).local_count, (*dispatch).environment_storage) = (locals.locals, locals.count, locals.environment);
+            ((*dispatch).head.native_locals, (*dispatch).head.local_count, (*dispatch).head.environment_storage) = (locals.locals, locals.count, locals.environment);
             if !run.bases_stand { (*dispatch).refresh_object_bases_at_entry(self); }
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
@@ -98,10 +98,10 @@ impl<H: Host> Vm<H> {
             // through its cell has an activation pending, which a leave pushes first: it makes no
             // direct call, the frames of which would sit above that activation's room.
             let words = self.stack_words_in_lane(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
-            (*dispatch).lane_frames_end = words.frames_end;
-            (*dispatch).lane_values_top = words.values_top;
-            (*dispatch).lane_values_end = words.values_end;
-            (*dispatch).lane_activations_top = words.activations_top;
+            (*dispatch).head.lane_frames_end = words.frames_end;
+            (*dispatch).head.lane_values_top = words.values_top;
+            (*dispatch).head.lane_values_end = words.values_end;
+            (*dispatch).head.lane_activations_top = words.activations_top;
             (*dispatch).head.plain_depth = words.plain_depth;
             (*dispatch).head.plain_depth_limit = words.plain_depth_limit;
             (*dispatch).head.activation_count = words.activation_count;

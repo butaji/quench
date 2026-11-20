@@ -7824,8 +7824,8 @@ fn guard_support() -> Option<&'static GuardSupport> {
                 std::sync::atomic::Ordering::Release);
             // SAFETY: the assembled trampoline implements `Trampoline` for this ABI.
             let trampoline = unsafe { std::mem::transmute::<unsafe extern "C" fn(), Trampoline>(quench_guard_trampoline) };
-            let landing = quench_guard_landing as usize;
-            let termination = quench_guard_termination as usize;
+            let landing = quench_guard_landing as *const () as usize;
+            let termination = quench_guard_termination as *const () as usize;
             install_guard_signals(&[(libc::SIGSEGV, &PREVIOUS_SEGV)],
                 guard_fault as *const () as usize, libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER)?;
             Some(GuardSupport {
@@ -7986,16 +7986,16 @@ unsafe fn resume_guard_fault(info: *mut libc::siginfo_t, context: *mut libc::c_v
         if !active.is_null()
             && let Some(support) = guard_support()
         {
-            let landing = if (*active).guard_start <= address && address < (*active).guard_end {
+            let landing = if (*active).head.guard_start <= address && address < (*active).head.guard_end {
                 Some(support.landing)
-            } else if (*active).poll_start <= address && address < (*active).poll_end {
+            } else if (*active).head.poll_start <= address && address < (*active).head.poll_end {
                 Some(support.termination)
             } else {
                 None
             };
             if let Some(landing) = landing {
                 let context = &mut *context.cast::<libc::ucontext_t>();
-                context.uc_mcontext.gregs[libc::REG_RSP as usize] = (*active).entry_stack as i64;
+                context.uc_mcontext.gregs[libc::REG_RSP as usize] = (*active).head.entry_stack as i64;
                 context.uc_mcontext.gregs[libc::REG_RIP as usize] = landing as i64;
                 return true;
             }
