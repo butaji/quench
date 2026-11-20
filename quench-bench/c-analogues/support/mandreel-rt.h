@@ -269,6 +269,14 @@ struct js_global_entry {
 extern const struct js_global_entry js_global_table[];
 
 /* Runtime calls made by the generated code (defined in mandreel.c). */
+/* A run of data emits with literal operands (see FnGen.emitRun in tools/mandreel-to-c.cjs): count
+ * stores of width bytes (1, 2 or 4) of data, each at the emit address, which advances by width. */
+struct js_emit_op {
+  int32_t data;
+  int32_t count;
+  int32_t width;
+};
+void js_emit_ops(const struct js_emit_op *ops, int n);
 double js_register_delegate(void *fn);
 double js_emit_bytes(const uint16_t *units, int count);
 double js_fill_cstring(double ptr, const char *s);

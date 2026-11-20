@@ -157,6 +157,11 @@ class Program {
     this.stringVars = new Set();   // string globals (C const char *)
     this.problems = new Map();   // function name -> reason it is a stub
     this.stmtStubs = [];         // 'function: reason' for statements replaced by aborts
+    this.emitTables = [];        // data-emit runs (see FnGen.emitRun), as arrays of {data, count, width}
+    this.emitRuns = new Map();   // first statement of a run -> its js_emit_ops call
+    this.callJoin = new Map();   // function -> per parameter: join of the argument types of its direct calls
+    this.paramTypes = new Map(); // function -> per parameter: 'i', 'l' or 'd' (see generate())
+    this.excluded = new Set();   // functions whose signature stays double (called from C or through pointers)
   }
 
   analyze() {
@@ -206,6 +211,13 @@ class Program {
         }
       });
     }
+  }
+
+  // Records the type of argument k of a direct call of `name` (the join over all call sites).
+  joinCall(name, k, t) {
+    let a = this.callJoin.get(name);
+    if (!a) { a = []; this.callJoin.set(name, a); }
+    a[k] = join(a[k], t);
   }
 
   // Function values held in globals, including reassigned function declarations, are globals too.
@@ -282,13 +294,18 @@ class FnGen {
     this.params = new Set(params);
     this.locals = new Set(params);
     this.types = types || new Map(); // local -> type, from the previous pass
+    this.paramTy = new Map();        // parameter -> its C type ('i', 'l' or 'd'; see generate())
     this.contrib = new Map();        // local -> join of the types assigned in this pass
     this.tempTypes = [];
     this.pre = [];
     this.loops = [];
     this.labelMap = new Map();
     this.stmtStubs = [];
-    if (fnNode) { const vars = new Set(); collectVars(fnNode.body, vars); for (const v of vars) this.locals.add(v); }
+    if (fnNode) {
+      const vars = new Set(); collectVars(fnNode.body, vars); for (const v of vars) this.locals.add(v);
+      const ptys = this.p.paramTypes.get(fnNode.id.name);
+      fnNode.params.forEach((prm, k) => this.paramTy.set(prm.name, ptys[k]));
+    }
   }
 
   temp(type = 'd') {
@@ -311,7 +328,7 @@ class FnGen {
   identifier(name) {
     if (name === 'undefined' || name === 'NaN') return { c: 'NAN', t: 'd', dep: 0 };
     if (name === 'Infinity') return { c: 'INFINITY', t: 'd', dep: 0 };
-    if (this.locals.has(name)) return { c: cName(name), t: this.params.has(name) ? 'd' : this.localType(name), dep: 0 };
+    if (this.locals.has(name)) return { c: cName(name), t: this.params.has(name) ? this.paramTy.get(name) : this.localType(name), dep: 0 };
     if (this.p.fnvars.has(name)) throw new Unsupported(`function value ${name} read as a value`);
     if (this.p.stringVars.has(name)) throw new Unsupported(`string ${name} read as a number`);
     if (this.p.globals.has(name)) return { c: globalName(name), t: 'd', dep: 0 };
@@ -595,7 +612,7 @@ class FnGen {
           return { c: `(${L(a)} >= 0 ? ${L(a)} : ${L(a)} + 4294967296LL)`, t: 'l', dep: 0 };
         }
         const arity = this.p.topFuncs.get(name).params.length;
-        const exprs = this.padArgs(args, arity);
+        const exprs = this.padArgs(args, arity, name);
         return { c: `${fnName(name)}(${exprs.join(', ')})`, t: 'd', dep: 0 };
       }
       if (this.p.globals.has(name)) throw new Unsupported(`call of global ${name}`);
@@ -627,10 +644,22 @@ class FnGen {
     return `((${this.sigOf(exprs.length)})${target})(${exprs.join(', ')})`;
   }
 
-  // Argument expressions for a direct call of a function with `arity` parameters (JS pads with undefined and drops extras).
-  padArgs(args, arity) {
-    const exprs = this.exList(args.slice(0, arity)).map(D);
-    while (exprs.length < arity) exprs.push('NAN');
+  // Argument expressions for a direct call of `callee` with `arity` parameters (JS pads with undefined and drops
+  // extras). Each argument is converted to the C type of its parameter; the argument types are recorded
+  // for the parameter typing in generate().
+  padArgs(args, arity, callee) {
+    const vals = this.exList(args.slice(0, arity));
+    const tys = this.p.paramTypes.get(callee);
+    const exprs = [];
+    for (let k = 0; k < arity; k++) {
+      if (k < vals.length) {
+        this.p.joinCall(callee, k, vals[k].t);
+        exprs.push(convTo(tys[k], vals[k]));
+      } else {
+        this.p.joinCall(callee, k, 'd'); // undefined: NaN
+        exprs.push(tys[k] === 'd' ? 'NAN' : '0');
+      }
+    }
     for (const extra of args.slice(arity)) {
       this.pre.push(`(void)(${D(this.ex(extra))});`);
     }
@@ -758,8 +787,57 @@ class FnGen {
 
   block(stmts, depth) {
     const out = [];
-    for (const s of stmts) out.push(...this.stmt(s, depth));
+    for (let i = 0; i < stmts.length;) {
+      const run = this.emitRun(stmts, i);
+      if (run) {
+        out.push(run.line);
+        i = run.end;
+        continue;
+      }
+      out.push(...this.stmt(stmts[i], depth));
+      i++;
+    }
     return out;
+  }
+
+  // A run of data emits with literal operands (emit_8/16/32(N), emit_fill(N, K)) starting at stmts[i]:
+  // their operands are known now, so the run becomes one table of {data, count, width} records that
+  // js_emit_ops() writes in order, with the same stores as the calls. A run of 150k such calls in
+  // one function made GCC take minutes; the table compiles in seconds. Returns null if no run starts here.
+  emitRun(stmts, i) {
+    const ops = [];
+    let j = i;
+    for (; j < stmts.length; j++) {
+      const op = this.emitOp(stmts[j]);
+      if (!op) break;
+      ops.push(op);
+    }
+    if (ops.length === 0) return null;
+    // The type fixpoint translates a body several times: each run gets its table once, keyed by its first statement.
+    let run = this.p.emitRuns.get(stmts[i]);
+    if (!run) {
+      run = { line: `js_emit_ops(k_emit_${this.p.emitTables.length}, ${ops.length});`, end: j };
+      this.p.emitTables.push(ops);
+      this.p.emitRuns.set(stmts[i], run);
+    }
+    return run;
+  }
+
+  // {data, count, width} for a data emit statement with literal operands, else null.
+  emitOp(s) {
+    if (s.type !== 'ExpressionStatement' || s.expression.type !== 'CallExpression') return null;
+    const cal = s.expression.callee, args = s.expression.arguments;
+    if (cal.type !== 'Identifier' || this.locals.has(cal.name) || this.p.topFuncs.get(cal.name) === undefined) return null;
+    const lit = (e) => e.type === 'Literal' && typeof e.value === 'number' && Number.isFinite(e.value);
+    const widths = { emit_8: 1, emit_16: 2, emit_32: 4 };
+    if (widths[cal.name] && args.length === 1 && lit(args[0])) {
+      return { data: args[0].value | 0, count: 1, width: widths[cal.name] };
+    }
+    if (cal.name === 'emit_fill' && args.length === 2 && lit(args[0]) && lit(args[1]) &&
+        Number.isInteger(args[1].value) && args[1].value >= 0 && args[1].value < 2 ** 31) {
+      return { data: args[0].value | 0, count: args[1].value, width: 1 };
+    }
+    return null;
   }
 
   // A statement outside the subset becomes a call that aborts: reaching it is an error, and the
@@ -971,6 +1049,13 @@ class FnGen {
   }
 }
 
+// The C value of typed value e converted to the C type of a parameter of type T ('i', 'l' or 'd').
+function convTo(T, e) {
+  if (T === 'd') return D(e);
+  if (T === 'l') return e.t === 'd' ? `((int64_t)${e.c})` : L(e);
+  return I(e);
+}
+
 function isSimpleObj(e) {
   return e.val !== undefined || /^t_\d+$/.test(e.c);
 }
@@ -1016,23 +1101,70 @@ function translateFunction(prog, f) {
   return { gen, types, bodyLines };
 }
 
-function generate(src) {
-  const ast = acorn.parse(src, { ecmaVersion: 2022, sourceType: 'script', locations: false });
-  const prog = new Program(src, ast);
-  prog.analyze();
-  prog.finishGlobals();
-  const funcs = [...prog.topFuncs.values()];
-  const bodies = [];
+// Functions whose parameters keep the double signature: the ones mandreel.c calls, and any function that is
+// used as a value (registered in the function table, or assigned to a global function variable), since
+// those are called through a pointer with double arguments.
+function computeExcluded(prog, funcs) {
+  const ex = new Set([...OVERRIDES, ...EXPORTED_FUNCS]);
+  const calleeIds = new Set(), declIds = new Set();
+  walk(prog.ast, (n) => {
+    if (n.type === 'CallExpression' && n.callee.type === 'Identifier') calleeIds.add(n.callee);
+    if (n.type === 'FunctionDeclaration') declIds.add(n.id);
+  });
+  walk(prog.ast, (n) => {
+    if (n.type === 'Identifier' && prog.topFuncs.has(n.name) && !calleeIds.has(n) && !declIds.has(n)) ex.add(n.name);
+  });
+  return ex;
+}
+
+// Parameter types: a parameter is 'i' (int32), 'l' (int64) or 'd' (double) by the join of the types of its
+// arguments at every direct call and of the values assigned to it in the body. It starts at 'i' (or 'd' when
+// excluded) and rises until a whole-program pass changes nothing, so every call site and body agrees.
+const MAX_PARAM_PASSES = 8;
+
+function nextParamTypes(prog, funcs, contribs) {
+  const next = new Map();
+  for (const f of funcs) {
+    const name = f.id.name;
+    const cj = prog.callJoin.get(name) || [];
+    const ct = contribs.get(name) || [];
+    next.set(name, f.params.map((p, k) => {
+      if (prog.excluded.has(name)) return 'd';
+      const t = join(cj[k], ct[k]);
+      return t === undefined ? 'i' : t;
+    }));
+  }
+  return next;
+}
+
+function sameParamTypes(a, b) {
+  for (const [name, ts] of a) {
+    const other = b.get(name);
+    if (ts.length !== other.length || ts.some((t, k) => t !== other[k])) return false;
+  }
+  return true;
+}
+
+// One translation of every function and of the top-level script, with the parameter types in prog.paramTypes.
+function translateAll(prog, funcs) {
+  prog.callJoin = new Map();
+  prog.strings = [];
+  prog.stmtStubs = [];
+  prog.problems = new Map();
   const protos = [];
+  const bodies = [];
+  const contribs = new Map();
   for (const f of funcs) {
     const name = f.id.name;
     const params = f.params.map((p) => p.name);
-    const plist = params.length ? params.map((p) => 'double ' + cName(p)).join(', ') : 'void';
+    const ptys = prog.paramTypes.get(name);
+    const plist = params.length ? params.map((p, k) => CTYPE[ptys[k]] + ' ' + cName(p)).join(', ') : 'void';
     const baseSig = `double ${fnName(name)}(${plist})`;
     if (OVERRIDES.has(name)) { protos.push(baseSig + ';'); continue; }
     let lines;
     try {
       const { gen, types, bodyLines } = translateFunction(prog, f);
+      contribs.set(name, params.map((p) => gen.contrib.get(p)));
       for (const m of gen.stmtStubs) prog.stmtStubs.push(`${name}: ${m}`);
       lines = [`${baseSig} {`, ...declLines(gen, types), ...bodyLines.map((l) => '  ' + l), '  return NAN;', '}'];
     } catch (error) {
@@ -1054,7 +1186,31 @@ function generate(src) {
     for (const l of lines) bodies.push(l);
     bodies.push('');
   }
-  return { prog, protos, bodies };
+  const top = topLevel(prog);
+  return { prog, protos, bodies, top, contribs };
+}
+
+function generate(src) {
+  const ast = acorn.parse(src, { ecmaVersion: 2022, sourceType: 'script', locations: false });
+  const prog = new Program(src, ast);
+  prog.analyze();
+  prog.finishGlobals();
+  const funcs = [...prog.topFuncs.values()];
+  prog.excluded = computeExcluded(prog, funcs);
+  const allDouble = () => new Map(funcs.map((f) => [f.id.name, f.params.map(() => 'd')]));
+  let types = new Map(funcs.map((f) => [f.id.name, f.params.map(() => 'i')]));
+  for (const f of funcs) if (prog.excluded.has(f.id.name)) types.set(f.id.name, f.params.map(() => 'd'));
+  for (let pass = 0; ; pass++) {
+    prog.paramTypes = types;
+    if (pass + 1 >= MAX_PARAM_PASSES) {
+      prog.paramTypes = allDouble();
+      return translateAll(prog, funcs);
+    }
+    const res = translateAll(prog, funcs);
+    const next = nextParamTypes(prog, funcs, res.contribs);
+    if (sameParamTypes(next, types)) return res;
+    types = next;
+  }
 }
 
 // Top-level script: the variable initializers and calls, in source order, as js_toplevel_init().
@@ -1095,8 +1251,7 @@ function topLevel(prog) {
 
 // The whole generated file.
 function emitFile(src) {
-  const { prog, protos, bodies } = generate(src);
-  const top = topLevel(prog);
+  const { prog, protos, bodies, top } = generate(src);
   const out = [];
   out.push('/* Generated by quench-bench/c-analogues/tools/mandreel-to-c.cjs from JetStream Octane/mandreel.js. Do not edit. */');
   out.push('#include "mandreel-rt.h"');
@@ -1110,6 +1265,14 @@ function emitFile(src) {
   out.push('');
   out.push('/* String literals passed to emit_string(), as UTF-16 code units. */');
   prog.strings.forEach((units, i) => out.push(`static const uint16_t k_str_${i}[] = {${units.join(',')}};`));
+  out.push('/* Data segment runs: {data, count, width} records written by js_emit_ops (mandreel.c). */');
+  prog.emitTables.forEach((ops, i) => {
+    out.push(`static const struct js_emit_op k_emit_${i}[] = {`);
+    for (let k = 0; k < ops.length; k += 8) {
+      out.push(ops.slice(k, k + 8).map((o) => `{${o.data},${o.count},${o.width}}`).join(',') + ',');
+    }
+    out.push('};');
+  });
   out.push('');
   out.push('/* Hand-written in mandreel.c: functions the benchmark needs that use JS features outside the subset. */');
   for (const name of [...OVERRIDES].sort()) {

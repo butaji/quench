@@ -177,6 +177,24 @@ double js_register_delegate(void *fn) {
   return id * 4;
 }
 
+/* The emit calls of one data-segment run, in order (the stores of emit_8, emit_16, emit_32 and emit_fill). */
+void js_emit_ops(const struct js_emit_op *ops, int n) {
+  for (int k = 0; k < n; k++) {
+    for (int32_t j = 0; j < ops[k].count; j++) {
+      if (ops[k].width == 1) {
+        ST_U8(V_g_addr_emit, ops[k].data);
+        V_g_addr_emit = V_g_addr_emit + 1.0;
+      } else if (ops[k].width == 2) {
+        ST_U16((js_toint32(V_g_addr_emit) >> 1u), ops[k].data);
+        V_g_addr_emit = V_g_addr_emit + 2.0;
+      } else {
+        ST_U32((js_toint32(V_g_addr_emit) >> 2u), ops[k].data);
+        V_g_addr_emit = V_g_addr_emit + 4.0;
+      }
+    }
+  }
+}
+
 double js_emit_bytes(const uint16_t *units, int count) {
   for (int i = 0; i < count; i++) {
     ST_U8(V_g_addr_emit, units[i]);
