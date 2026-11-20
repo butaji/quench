@@ -18,6 +18,8 @@ pub(in crate::vm) struct ForInMemo {
     /// `FOR_IN_CURSOR` element, which compiled code steps too (`staged::iteration::for_in_next`).
     /// Every collection forgets it (`Vm::for_in_forget_active`).
     active: Option<ActiveForIn>,
+    /// The shapes the last key walk of an ordinary chain saw (`Vm::shape_for_in_keys`).
+    walked: ForInWalk,
 }
 
 #[derive(Clone, Copy)]
@@ -28,19 +30,45 @@ struct ActiveForIn {
     len: usize,
 }
 
-impl ForInMemo {
-    /// Drops the snapshot, whose shape a compaction renumbers.
-    pub(in crate::vm) fn forget_snapshot(&mut self) {
-        self.own_keys = None;
+/// The chain a key snapshot was walked over, up to the object that owns its last enumerable key,
+/// each object with its shape (`Vm::shape_for_in_keys`). While each still has its shape, its
+/// prototype link and no side descriptors, and the collection epoch is the one recorded, every
+/// key of `keys` is still an own enumerable property of the object the walk found it on, so a
+/// step over it needs no lookup (`Vm::for_in_key_is_enumerable`). One buffer serves each walk.
+#[derive(Default)]
+struct ForInWalk {
+    keys: Option<Value>,
+    epoch: u64,
+    chain: Vec<(Value, u32)>,
+}
+
+impl ForInWalk {
+    fn record(&mut self, keys: Value, epoch: u64, chain: &[(Value, u32)]) {
+        self.keys = Some(keys);
+        self.epoch = epoch;
+        self.chain.clear();
+        self.chain.extend_from_slice(chain);
+    }
+
+    fn forget(&mut self) {
+        self.keys = None;
     }
 }
 
-/// The key snapshot a for-in last took from a shape (`Vm::list_own_for_in_keys`): the internal
+impl ForInMemo {
+    /// Drops the snapshot, whose shape a compaction renumbers, and the walk's shapes with it.
+    pub(in crate::vm) fn forget_snapshot(&mut self) {
+        self.own_keys = None;
+        self.walked.forget();
+    }
+}
+
+/// The key snapshot a for-in last took from a shape (`Vm::record_receiver_for_in_keys`): the internal
 /// array of that shape's own enumerable keys, with the shape and the collection epoch. In
 /// the same epoch (which no reused handle or compacted shape shares), any receiver with that
 /// shape and no side descriptors has exactly these keys, each an own enumerable property, so
-/// a later loop over such a receiver whose prototypes are still the ones listed, each of its
-/// listed shape, reuses the array (`Vm::listed_for_in_keys`), and a step of a loop walking it
+/// a later loop over such a receiver whose prototype is still the one listed, with the chain
+/// from it still holding its cell, reuses the array (`Vm::listed_for_in_keys`), and a step of a loop walking it
 /// over such a receiver needs no lookup (`Vm::for_in_snapshot_current`). No script reaches
 /// the array, so loops share it.
 struct ForInOwnKeys {
@@ -52,8 +80,12 @@ struct ForInOwnKeys {
     slot_words: Value,
     /// Each key's atom and slot in `shape`, in snapshot order.
     slots: EnumerableSlots,
-    /// The receiver's prototypes when listed, each with its shape: none had an enumerable key.
-    chain: Box<[(Value, u32)]>,
+    /// The receiver's prototype when listed.
+    prototype: Value,
+    /// The cell of the chain from `prototype` to its end (`Vm::chain_cell_to_end`), made when
+    /// listed: it holds while no link changes its layout or dies, so each of them still has
+    /// the shape it had then, with no side descriptors and no enumerable key.
+    chain: crate::heap::ChainCell,
     /// The key the last step over a receiver of `shape` yielded, with its snapshot index: a
     /// read of that key from such a receiver is a slot read (`Vm::enumerated_key_get`), as
     /// V8 loads a property with an enumerated key.
@@ -138,10 +170,10 @@ impl<H: Host> Vm<H> {
         if let Some(step) = self.for_in_step_listed(state) {
             return Ok(step);
         }
-        while let Some((object, _, key, cursor)) = self.for_in_peek(state) {
+        while let Some((object, keys, key, cursor)) = self.for_in_peek(state) {
             self.for_in_advance(state, cursor);
             let root = self.heap.root(key);
-            let enumerable = self.object_for_in_key_is_enumerable(p, object, key);
+            let enumerable = self.for_in_key_is_enumerable(p, object, keys, key);
             let key = self.heap.root_value(root).expect("rooted for-in key");
             self.heap.release_root(root);
             if enumerable? {
@@ -260,44 +292,117 @@ impl<H: Host> Vm<H> {
     }
 
     /// The memo's snapshot (`ForInOwnKeys`) for `receiver`: a shape-keyed object of its shape
-    /// whose prototypes are the ones listed, each still of its listed shape, in the same
-    /// epoch. None of them has an enumerable key then, as when listed.
+    /// whose prototype is the one listed, with the chain from it still holding its cell, in the
+    /// same epoch. None of the prototypes has an enumerable key then, as when listed.
     pub(in crate::vm) fn listed_for_in_keys(&self, receiver: Value) -> Option<Value> {
         let listed = self.for_in.own_keys.as_ref()?;
         let data = self.shape_keyed_object(receiver)?;
         let keys = listed.keys(data.shape(), self.heap.collection_epoch())?;
-        let mut prototype = data.proto();
-        for &(walked, shape) in &listed.chain {
-            let data = self.object_data(prototype).filter(|_| prototype == walked)?;
-            if data.shape() != shape || data.has_side_descriptors() {
-                return None;
-            }
-            prototype = data.proto();
-        }
-        prototype.is_null().then_some(keys)
+        (data.proto() == listed.prototype && listed.chain.holds()).then_some(keys)
     }
 
-    /// `shape_for_in_keys` of a receiver none of whose prototypes has an enumerable string
-    /// key, as most have not (class methods are not enumerable): a prototype then neither
-    /// adds a key nor shadows one the receiver lists first, so the keys are the receiver's
-    /// own enumerable ones, read from the shape memo (`shape_enumerable_slots`) and
-    /// snapshotted for the next loop (`ForInOwnKeys`). `None` leaves any other chain to the
-    /// walk.
-    pub(super) fn list_own_for_in_keys(&mut self, receiver: Value) -> Option<Value> {
-        let slots = self.shape_enumerable_slots(receiver)?;
-        let mut chain = Vec::new();
-        let mut prototype = self.object_data(receiver)?.proto();
-        while !prototype.is_null() {
-            if !self.shape_enumerable_slots(prototype)?.is_empty() {
+    /// The for-in key snapshot of an ordinary `receiver` (`Vm::object_for_in_keys`), from one walk
+    /// of its chain: every enumerable string key along the chain, each once, in
+    /// EnumerateObjectProperties order. The walk stops at the last object with an enumerable key,
+    /// since later objects can neither add a key nor shadow one; a name an earlier object owns
+    /// shadows the same name further on, enumerable or not. The last object's keys come from its
+    /// memoized slots (`shape_enumerable_slots`), the others' from their own slots
+    /// (`for_in_ordinary_names`). When every object of the chain has that memo and the last object
+    /// is the receiver or none is enumerable, the keys are the receiver's own, and the walk records
+    /// them as the memo a later loop reuses (`ForInOwnKeys`). The shapes the walk saw are recorded
+    /// for the snapshot (`ForInWalk`). `None` sends a chain with an object whose keys do not live
+    /// in its shape to the generic walk.
+    pub(super) fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Value> {
+        let mut chain = smallvec::SmallVec::<[(Value, u32); 4]>::new();
+        let mut last = None;
+        let mut receiver_slots = None;
+        let mut memoized = true;
+        let mut current = receiver;
+        while !current.is_null() {
+            if !self.shape_lists_enumerable_keys(current) {
                 return None;
             }
-            let data = self.object_data(prototype)?;
-            chain.push((prototype, data.shape()));
-            prototype = data.proto();
+            let data = self.object_data(current)?;
+            let (shape, prototype) = (data.shape(), data.proto());
+            let slots = self.shape_enumerable_slots(current);
+            let enumerable = match &slots {
+                Some(slots) => !slots.is_empty(),
+                None => self.for_in_ordinary_names(current).iter().any(|&(_, enumerable)| enumerable),
+            };
+            if chain.is_empty() {
+                receiver_slots = slots.clone();
+            }
+            memoized &= slots.is_some();
+            if enumerable {
+                last = Some(chain.len());
+            }
+            chain.push((current, shape));
+            current = prototype;
         }
-        let (shape, epoch) = (self.object_data(receiver)?.shape(), self.heap.collection_epoch());
-        let keys: Vec<Value> = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect();
-        let keys = self.array_of(&keys);
+        // The walk's objects up to the last enumerable key decide each key's enumerability.
+        let walked = last.map_or(0, |last| last + 1);
+        let provable = chain[..walked].iter().all(|&(object, _)| {
+            self.object_data(object).is_some_and(|data| {
+                !data.has_side_descriptors() && !self.shape_is_dictionary(data.shape())
+            })
+        });
+        if let Some(slots) = receiver_slots.filter(|_| memoized && last.is_none_or(|last| last == 0)) {
+            return Some(self.record_receiver_for_in_keys(&chain, slots, provable));
+        }
+        let Some(last) = last else {
+            return Some(self.array_of(&[]));
+        };
+        let mut visited = FxHashSet::default();
+        let mut result: Vec<Value> = Vec::new();
+        for (depth, &(object, _)) in chain[..=last].iter().enumerate() {
+            let memo = if depth == last { self.shape_enumerable_slots(object) } else { None };
+            match memo {
+                Some(slots) => {
+                    for &(atom, _) in slots.iter() {
+                        if !Self::for_in_shadowed(&mut visited, atom, depth, last) {
+                            result.push(self.atom_string(atom));
+                        }
+                    }
+                }
+                None => {
+                    for (atom, enumerable) in self.for_in_ordinary_names(object) {
+                        if Self::for_in_shadowed(&mut visited, atom, depth, last) || !enumerable {
+                            continue;
+                        }
+                        result.push(self.atom_string(atom));
+                    }
+                }
+            }
+        }
+        let keys = self.array_of(&result);
+        if provable {
+            self.for_in.walked.record(keys, self.heap.collection_epoch(), &chain[..=last]);
+        } else {
+            self.for_in.walked.forget();
+        }
+        Some(keys)
+    }
+
+    /// Whether `atom`, an own name of chain object `depth`, is shadowed by an earlier object of
+    /// the chain. Objects before `last` record their names in `visited` for the objects after
+    /// them, whatever the names' enumerability; the last object only checks.
+    #[inline(always)]
+    fn for_in_shadowed(visited: &mut FxHashSet<Atom>, atom: Atom, depth: usize, last: usize) -> bool {
+        if depth < last {
+            !visited.insert(atom) && depth > 0
+        } else {
+            depth > 0 && visited.contains(&atom)
+        }
+    }
+
+    /// The keys of `receiver`, which alone contributes to its walk (`shape_for_in_keys`): `slots`
+    /// are its enumerable keys, `chain` the walk from it to the end of the chain. The keys are
+    /// recorded as the memo `ForInOwnKeys` a later loop over such a receiver reuses, and the walk
+    /// as the receiver's shape (`ForInWalk`), which is all a step over its keys needs.
+    fn record_receiver_for_in_keys(&mut self, chain: &[(Value, u32)], slots: EnumerableSlots, provable: bool) -> Value {
+        let (shape, epoch) = (chain[0].1, self.heap.collection_epoch());
+        let names: Vec<Value> = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect();
+        let keys = self.array_of(&names);
         // A slot read answers a plain named key of a shape without accessors (`enumerated_key_get`).
         let accessors = self.shape_may_have_accessors(shape);
         let words: Vec<Value> = slots.iter().map(|&(atom, slot)| match u16::try_from(slot) {
@@ -305,8 +410,50 @@ impl<H: Host> Vm<H> {
             _ => Value::UNDEFINED,
         }).collect();
         let slot_words = self.array_of(&words);
-        self.for_in.own_keys = Some(ForInOwnKeys { shape, epoch, keys, slot_words, slots, chain: chain.into(), stepped: None });
-        Some(keys)
+        // The memo holds while the chain past the receiver keeps its cell (`chain_cell_to_end`).
+        let prototype = chain.get(1).map_or(Value::NULL, |&(object, _)| object);
+        self.for_in.own_keys = self.chain_cell_to_end(prototype)
+            .map(|cell| ForInOwnKeys { shape, epoch, keys, slot_words, slots, prototype, chain: cell, stepped: None });
+        if provable {
+            self.for_in.walked.record(keys, epoch, &chain[..1]);
+        } else {
+            self.for_in.walked.forget();
+        }
+        keys
+    }
+
+    /// Whether the walk recorded for the snapshot `keys` still holds over `object`: `object` is the
+    /// walk's receiver, and each object of the walk has its recorded shape, no side descriptors,
+    /// and the prototype link the walk followed (`ForInWalk`). Nothing else is read.
+    #[inline(always)]
+    fn for_in_walk_holds(&self, object: Value, keys: Value) -> bool {
+        let walked = &self.for_in.walked;
+        if walked.keys != Some(keys) || walked.epoch != self.heap.collection_epoch() {
+            return false;
+        }
+        let chain = walked.chain.as_slice();
+        if chain.first().is_none_or(|&(first, _)| first != object) {
+            return false;
+        }
+        chain.iter().enumerate().all(|(index, &(walked_object, shape))| {
+            self.object_data(walked_object).is_some_and(|data| {
+                data.shape() == shape
+                    && !data.has_side_descriptors()
+                    && chain.get(index + 1).is_none_or(|&(next, _)| data.proto() == next)
+            })
+        })
+    }
+
+    /// `object_for_in_key_is_enumerable` for `key` of the snapshot `keys` over `object`. A key the
+    /// recorded walk still holds for is an own enumerable property of `object` (`for_in_walk_holds`),
+    /// so no lookup is made. Any other step takes the walk, which skips a key deleted or made
+    /// non-enumerable since the snapshot.
+    #[inline]
+    fn for_in_key_is_enumerable(&mut self, p: &ResidualProgram, object: Value, keys: Value, key: Value) -> Result<bool, JsError> {
+        if self.for_in_walk_holds(object, keys) {
+            return Ok(true);
+        }
+        self.object_for_in_key_is_enumerable(p, object, key)
     }
 
     /// `base[key]` where `key` is the one the last for-in step over a receiver of `base`'s

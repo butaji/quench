@@ -498,7 +498,7 @@ impl<W, P> Operation<W, P> {
 
     /// The record `instruction` is without its completion flags, and those flags: a return, or a `this` write.
     #[inline(always)]
-    fn completion_split(instruction: WideInstruction) -> Option<(WideInstruction, crate::bytecode::Register)> {
+    pub(crate) fn completion_split(instruction: WideInstruction) -> Option<(WideInstruction, crate::bytecode::Register)> {
         use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
         // The returned flags are the completions only: a return, or a `this` write. A numeric local target
         // is where the result goes, not how it completes, so it is left to the record (`writes_numeric_local`);

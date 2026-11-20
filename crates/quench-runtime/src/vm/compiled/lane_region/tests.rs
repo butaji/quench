@@ -309,7 +309,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
         let mut registers = framed(usize::from(unit.caller_registers));
         registers[FRAME] = Value::number(input);
         let window = unsafe { registers.as_mut_ptr().add(FRAME) };
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, Value::UNDEFINED.to_bits(), 0, window.cast()) };
         assert_eq!(status, LANE_BODY_RETURNED, "comparison result must continue natively: {input}, stopped at {word}");
         assert_eq!(Value::from_bits(word), Value::number(if input == -1.0 || input == 1.0 { 7.0 } else { 9.0 }));
     }
@@ -320,7 +320,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
         registers[FRAME] = Value::number(input);
         let before = registers.clone();
         let window = unsafe { registers.as_mut_ptr().add(FRAME) };
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, Value::UNDEFINED.to_bits(), 0, window.cast()) };
         // The entry's proof failed: the leave names it (`LaneExit::Entry`, which resumes
         // at the first record), not a PC the code would continue at.
         assert_eq!((status, word), (NATIVE_JS_STOPPED, super::super::LaneExit::Entry.word()));

@@ -1,4 +1,4 @@
-#[path = "../../crates/quench-node/src/host/ts_checker/protocol.rs"]
+#[path = "../../crates/quench/src/host/ts_checker/protocol.rs"]
 #[allow(dead_code)]
 mod protocol;
 

@@ -170,7 +170,7 @@ pub(crate) enum NumberOperation {
     /// `Math.max` (`maximum`) or `Math.min` of two Numbers, a double: `staged::math::float_extreme`.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Extreme { destination: Register, left: Operand, right: Operand, maximum: bool },
-    /// `Math.imul` of two int32s: `staged::math::int_multiply`. Any other value leaves.
+    /// `Math.imul` of two int32s: `staged::math::multiply`, the wrapping product. Any other value leaves.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Imul { destination: Register, left: Operand, right: Operand },
     /// The case slot of a `switch` over the dense int labels `minimum..=maximum` (`count` slots, the
@@ -355,13 +355,14 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     Step::Value(slot)
 }
 
-/// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
+/// `Math.imul` of two int32s: their wrapping product, `math::multiply`; any other operand leaves.
 #[inline(always)]
 fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
 ) -> Step<S::Word, F::Control> {
     let Some((left, right)) = operands(stage, frame, left, right, Domain::Int32) else { return Step::Unresolved };
     let result = super::math::multiply(stage, left, right);
+    let result = frame.int_result(stage, result);
     let fact = frame.int_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)

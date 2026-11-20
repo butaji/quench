@@ -14,6 +14,9 @@ pub(super) struct ArraySpeciesProof {
 }
 
 impl<H: Host> Vm<H> {
+    /// The element `Array.prototype.at` reads for `value` among `length` elements: ToIntegerOrInfinity
+    /// of `value`, then the staged relative position `element_at` (shared with
+    /// `%TypedArray%.prototype.at`). `None` when the position lies outside the array.
     pub(super) fn indexed_at_index(
         &mut self,
         p: &ResidualProgram,
@@ -21,16 +24,7 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<Option<usize>, JsError> {
         let integer = crate::units::to_integer_or_infinity(self.to_number(p, value)?);
-        let relative = if integer < 0.0 {
-            length as f64 + integer
-        } else {
-            integer
-        };
-        if relative < 0.0 || relative >= length as f64 {
-            Ok(None)
-        } else {
-            Ok(Some(relative as usize))
-        }
+        Ok(crate::staged::typed_elements::element_at(integer, length))
     }
 
     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
@@ -197,7 +191,6 @@ impl<H: Host> Vm<H> {
             }
             vm.set_array_like_length(p, removed, delete_count)?;
 
-            let items = args.iter().copied().skip(2).collect::<Vec<_>>();
             let new_length = length
                 .checked_sub(delete_count)
                 .and_then(|length| length.checked_add(items.len()))
@@ -225,7 +218,7 @@ impl<H: Host> Vm<H> {
                     )?;
                 }
             }
-            for (offset, value) in items.into_iter().enumerate() {
+            for (offset, value) in items.iter().copied().enumerate() {
                 vm.set_index_mode(
                     p,
                     object,
@@ -526,7 +519,8 @@ impl<H: Host> Vm<H> {
 
     /// Array.prototype.concat: the dense body (`array_concat_dense`) first, on the boxed receiver,
     /// which answers when no step can be observed; otherwise the general steps, which read each
-    /// item's `@@isConcatSpreadable` and length and copy its elements by [[Get]].
+    /// item's `@@isConcatSpreadable` (`concat_item_spreadable`) and length and copy its elements
+    /// through `copy_present_range`.
     pub(super) fn array_concat_native(
         &mut self,
         p: &ResidualProgram,
@@ -563,26 +557,40 @@ impl<H: Host> Vm<H> {
                 if next.saturating_add(length) as f64 > MAX_SAFE_INTEGER {
                     return Err(vm.type_error(p, "array concat length exceeds safe integer".into()));
                 }
-                // Present own data elements read without observing anything, and append as
-                // the definitions would.
-                if let Some(values) = vm.present_dense_elements(item, 0..length).map(|values| values.into_owned())
-                    && vm.append_dense_definitions(target, next, &values)
-                {
-                    next += length;
-                    continue;
-                }
-                for index in 0..length {
-                    let source_key = Value::number(index as f64);
-                    if vm.has_property(p, item, source_key)? {
-                        let value = vm.get_index(p, item, source_key)?;
-                        vm.create_data_property_or_throw(p, target, next, value)?;
-                    }
-                    next += 1;
-                }
+                vm.copy_present_range(p, target, next, item, 0..length)?;
+                next += length;
             }
             vm.set_array_like_length(p, target, next)?;
             Ok(target)
         })
+    }
+
+    /// The copy step of `concat` and `slice`: the indices `source_range` of `source` defined on
+    /// `target` from index `dest` on. Present own data elements of the range are defined as a run
+    /// (`append_dense_definitions`), which observes nothing; any other range goes index by index
+    /// through HasProperty, Get and CreateDataPropertyOrThrow, a hole leaving its index undefined.
+    pub(super) fn copy_present_range(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        dest: usize,
+        source: Value,
+        source_range: std::ops::Range<usize>,
+    ) -> Result<(), JsError> {
+        let (first, count) = (source_range.start, source_range.len());
+        if let Some(values) = self.present_dense_elements(source, source_range).map(|values| values.into_owned())
+            && self.append_dense_definitions(target, dest, &values)
+        {
+            return Ok(());
+        }
+        for offset in 0..count {
+            let source_key = Value::number((first + offset) as f64);
+            if self.has_property(p, source, source_key)? {
+                let value = self.get_index(p, source, source_key)?;
+                self.create_data_property_or_throw(p, target, dest + offset, value)?;
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn array_push_native(
@@ -634,15 +642,14 @@ impl<H: Host> Vm<H> {
         this: Value,
         range: std::ops::Range<usize>,
     ) -> Option<std::borrow::Cow<'_, [Value]>> {
-        let view = self.array_read_view(this)?;
-        let elements = view.get(range.clone())?;
+        let elements = match self.array_read_view(this)? {
+            std::borrow::Cow::Borrowed(all) => std::borrow::Cow::Borrowed(all.get(range)?),
+            std::borrow::Cow::Owned(all) => std::borrow::Cow::Owned(all.get(range)?.to_vec()),
+        };
         if !elements.iter().all(|value| !value.is_deleted()) {
             return None;
         }
-        Some(match view {
-            std::borrow::Cow::Borrowed(all) => std::borrow::Cow::Borrowed(&all[range]),
-            std::borrow::Cow::Owned(all) => std::borrow::Cow::Owned(all[range].to_vec()),
-        })
+        Some(elements)
     }
 
     /// CreateDataPropertyOrThrow of `values` at indices `start..` of `array`, a dense array
@@ -975,13 +982,7 @@ impl<H: Host> Vm<H> {
         let result = self.array_species_create(p, object, count)?;
         // `result` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([result], |vm| {
-            for (destination, source) in (start..end).enumerate() {
-                let key = Value::number(source as f64);
-                if vm.has_property(p, object, key)? {
-                    let value = vm.get_index(p, object, key)?;
-                    vm.create_data_property_or_throw(p, result, destination, value)?;
-                }
-            }
+            vm.copy_present_range(p, result, 0, object, start..start + count)?;
             vm.set_array_like_length(p, result, count)?;
             Ok(result)
         })
@@ -1136,20 +1137,26 @@ impl<H: Host> Vm<H> {
         Ok(crate::units::relative_index(self.to_number(p, value)?, length))
     }
 
-    /// Array.prototype.includes: the dense search (`dense_search_call`) first, which decides a
+    /// Array.prototype.includes: the dense search (`dense_search_resume`) first, which decides a
     /// dense array from an immediate or absent `fromIndex`; otherwise the general steps, which
     /// resume the dense search at a hole a prototype may hold and read the rest by [[Get]].
+    /// A dispatcher's declined walk (`fast_search_declined`) supplies its resume index instead.
     pub(super) fn array_includes_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if self.declined_fast.take() != Some(Native::ArrayIncludes)
-            && let Some(found) = self.dense_search_call(Native::ArrayIncludes, this, args)
-        {
-            return Ok(found);
-        }
+        let declined = self.declined_fast.take() == Some(Native::ArrayIncludes);
+        let recorded = self.declined_resume.take();
+        let resume = if declined {
+            recorded
+        } else {
+            match self.dense_search_resume(Native::ArrayIncludes, this, args) {
+                Ok(found) => return Ok(found),
+                Err(resume) => resume,
+            }
+        };
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
@@ -1162,12 +1169,17 @@ impl<H: Host> Vm<H> {
             .map(|value| self.to_number(p, value))
             .transpose()?
             .unwrap_or(0.0);
-        let mut start = crate::units::relative_index(from, length);
-        match self.search_dense(object, start..length, false, search, Match::SameValueZero) {
-            Search::Found(_) => return Ok(Value::TRUE),
-            Search::Missing => return Ok(Value::FALSE),
-            Search::Resume(index) => start = index,
-        }
+        let start = match resume {
+            Some(index) => index,
+            None => {
+                let range = crate::units::relative_index(from, length);
+                match self.search_dense(object, range..length, false, search, Match::SameValueZero) {
+                    Search::Found(_) => return Ok(Value::TRUE),
+                    Search::Missing => return Ok(Value::FALSE),
+                    Search::Resume(index) => index,
+                }
+            }
+        };
         for index in start..length {
             let value = self.get_index(p, object, Value::number(index as f64))?;
             if self.same_value_zero(value, search) {

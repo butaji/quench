@@ -17,7 +17,7 @@ impl HostEnvironmentSlot {
 }
 
 /// Arguments a host call roots without allocating their list: all but 12 of the 906 host
-/// operations `quench-node` declares take at most this many.
+/// operations `quench` declares take at most this many.
 const HOST_CALL_INLINE_ARGUMENTS: usize = 6;
 
 impl<H: Host> Vm<H> {

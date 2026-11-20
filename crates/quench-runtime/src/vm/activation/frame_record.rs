@@ -170,21 +170,21 @@ impl FrameRecord {
         unsafe { entries.add(usize::from(WINDOW_LOCALS)).copy_from_nonoverlapping(self.locals.as_ptr(), self.locals.len()) };
     }
 
-    /// The record of an ordinary activation of `function` of `program` that runs a direct eval
-    /// (`lane_eval`): its closure `callee`, its receiver and the environment its closure
-    /// captured, with no registers or locals of its own until the window is pulled.
-    pub(in crate::vm) fn for_eval(program: ProgramId, function: u32, callee: Value, this: Value, env: Value) -> Box<Self> {
-        let record = Self {
-            receiver: this.to_bits(),
-            context: CallContext::Function(callee),
+    /// A record at rest over `registers`, with nothing a run derived yet. Its fields are spelled
+    /// here alone: the constructors and `clone` set what they carry over, through struct update.
+    #[inline(always)]
+    fn at_rest(program: ProgramId, function: u32, registers: RegisterFile) -> Self {
+        Self {
+            receiver: Value::UNDEFINED.to_bits(),
+            context: CallContext::Internal,
             cold: None,
             program,
             function,
             pc: 0,
-            env,
+            env: Value::NULL,
             locals: Vec::new(),
             captured: false,
-            registers: RegisterFile::new(),
+            registers,
             active_iterators: Vec::new(),
             traces_live: false,
             suspension_live: None,
@@ -194,8 +194,19 @@ impl FrameRecord {
             environment_window: false,
             resuming_generator: std::ptr::null_mut(),
             fixed_this: false,
-        };
-        Box::new(record)
+        }
+    }
+
+    /// The record of an ordinary activation of `function` of `program` that runs a direct eval
+    /// (`lane_eval`): its closure `callee`, its receiver and the environment its closure
+    /// captured, with no registers or locals of its own until the window is pulled.
+    pub(in crate::vm) fn for_eval(program: ProgramId, function: u32, callee: Value, this: Value, env: Value) -> Box<Self> {
+        Box::new(Self {
+            receiver: this.to_bits(),
+            context: CallContext::Function(callee),
+            env,
+            ..Self::at_rest(program, function, RegisterFile::new())
+        })
     }
 
     /// Makes `this` the receiver an eval's code reads (`CallerView::this`) and returns the
@@ -278,12 +289,10 @@ impl FrameRecord {
             fixed_this, js_jit_skip_entry_once,
         } = *frame;
         let cold = FrameCold { reflected_parameters, original_arguments, dynamic_bindings, with_objects, binding_site_pc: None }.boxed();
-        let record = Self {
-            receiver: this.to_bits(), context, cold, program, function, pc, env, locals, captured, registers, active_iterators,
-            traces_live: false, suspended_epoch: 0, suspension_live: None, window_plan: None, js_jit_skip_entry_once, environment_window: false,
-            resuming_generator: std::ptr::null_mut(), fixed_this,
-        };
-        Box::new(record)
+        Box::new(Self {
+            receiver: this.to_bits(), context, cold, pc, env, locals, captured, active_iterators, js_jit_skip_entry_once, fixed_this,
+            ..Self::at_rest(program, function, registers)
+        })
     }
 
     /// The suspended frame, ready to push: it continues after its suspending instruction,
@@ -357,22 +366,18 @@ impl Clone for FrameRecord {
             receiver: self.receiver,
             context: self.context,
             cold: self.cold.as_deref().and_then(|cold| FrameCold { binding_site_pc: None, ..cold.clone() }.boxed()),
-            program: self.program,
-            function: self.function,
             pc: self.pc,
             env: self.env,
             locals: self.locals.clone(),
             captured: self.captured,
-            registers: self.registers.clone(),
             active_iterators: self.active_iterators.clone(),
             traces_live: self.traces_live,
             suspension_live: self.suspension_live.clone(),
             suspended_epoch: self.suspended_epoch,
-            window_plan: None,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
-            environment_window: false,
-            resuming_generator: std::ptr::null_mut(),
             fixed_this: self.fixed_this,
+            // A clone runs its own window and plan, so these start unset.
+            ..Self::at_rest(self.program, self.function, self.registers.clone())
         }
     }
 }
@@ -414,19 +419,11 @@ impl Snap for FrameRecord {
         cold.dynamic_bindings = Snap::unsnap(reader)?;
         let (registers, active_iterators) = (Snap::unsnap(reader)?, Snap::unsnap(reader)?);
         cold.with_objects = Snap::unsnap(reader)?;
-        let record = Self {
-            receiver, context, cold: cold.boxed(), program, function, pc, env, locals, registers, active_iterators,
+        Ok(Self {
+            receiver, context, cold: cold.boxed(), pc, env, locals, active_iterators,
             captured: Snap::unsnap(reader)?,
-            traces_live: false,
-            suspension_live: None,
-            suspended_epoch: 0,
-            window_plan: None,
-            js_jit_skip_entry_once: false,
-            environment_window: false,
-            resuming_generator: std::ptr::null_mut(),
-            fixed_this: false,
-        };
-        Ok(record)
+            ..Self::at_rest(program, function, registers)
+        })
     }
 }
 

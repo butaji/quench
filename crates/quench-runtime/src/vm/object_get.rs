@@ -518,41 +518,45 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
         let Some(data) = self.heap.ordinary_object(object) else { return self.plain_proved_get_past_own(object, key, None) };
-        let probed = key.key32().and_then(|key32| self.symbol_load_proofs.word(data.layout_id(), key32));
-        if let Some(word) = probed.filter(|word| word.kind() == super::symbol_load_proof::KIND_OWN) {
+        let probed = key.key32().map(|key32| (data.layout_id(), self.symbol_load_proofs.word(data.layout_id(), key32)));
+        if let Some(word) = probed.and_then(|(_, word)| word).filter(|word| word.kind() == super::symbol_load_proof::KIND_OWN) {
             // SAFETY: the proof recorded this slot for an own data property of this layout's shape.
             return Some(unsafe { self.heap.property_get_unchecked(data, word.slot()) });
         }
-        self.plain_proved_get_past_own(object, key, probed.map(|word| (data.layout_id(), word)))
+        self.plain_proved_get_past_own(object, key, probed)
     }
 
     /// `plain_proved_get` past an own-slot hit, given the entry its probe found for the
-    /// receiver's layout (`probed`): the other answers, else the proving walk.
+    /// receiver's layout (`probed`, the layout and the probe's answer, `None` once unprobed):
+    /// the other answers, else the proving walk.
     #[inline(never)]
-    fn plain_proved_get_past_own(&mut self, object: Value, key: PropertyKey, probed: Option<(u32, super::symbol_load_proof::FactWord)>) -> Option<Value> {
+    fn plain_proved_get_past_own(&mut self, object: Value, key: PropertyKey, probed: Option<(u32, Option<super::symbol_load_proof::FactWord>)>) -> Option<Value> {
         use super::symbol_load_proof::{KIND_ABSENT, KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT, KIND_INHERITED, KIND_OWN};
         let data = self.proved_read_receiver(object, key)?;
-        if let Some(key32) = key.key32()
-            && let Some(word) = probed.filter(|&(layout, _)| layout == data.layout_id()).map(|(_, word)| word)
-                .or_else(|| self.symbol_load_proofs.word(data.layout_id(), key32))
-        {
-            // A proof's layout is an ordinary one, so the receiver is no namespace, deferred
-            // module or arguments object; side descriptors could name the key outside its shape.
-            let inherits = !data.has_side_descriptors();
-            match word.kind() {
-                // SAFETY: the proof recorded this slot for an own data property of this shape.
-                KIND_OWN => return Some(unsafe { self.heap.property_get_unchecked(data, word.slot()) }),
-                KIND_INHERITED if inherits => {
-                    let holder = match self.symbol_load_proofs.holder(data.layout_id(), key32) {
-                        Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
-                        _ => self.proof_holder(data, word.hops())?,
-                    };
-                    // SAFETY: the entry's subjects keep the holder and the shape its slot was recorded in.
-                    return unsafe { self.heap.property_get_shaped(holder, word.slot()) };
+        if let Some(key32) = key.key32() {
+            let word = match probed {
+                Some((layout, word)) if layout == data.layout_id() => word,
+                _ => self.symbol_load_proofs.word(data.layout_id(), key32),
+            };
+            if let Some(word) = word {
+                // A proof's layout is an ordinary one, so the receiver is no namespace, deferred
+                // module or arguments object; side descriptors could name the key outside its shape.
+                let inherits = !data.has_side_descriptors();
+                match word.kind() {
+                    // SAFETY: the proof recorded this slot for an own data property of this shape.
+                    KIND_OWN => return Some(unsafe { self.heap.property_get_unchecked(data, word.slot()) }),
+                    KIND_INHERITED if inherits => {
+                        let holder = match self.symbol_load_proofs.holder(data.layout_id(), key32) {
+                            Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                            _ => self.proof_holder(data, word.hops())?,
+                        };
+                        // SAFETY: the entry's subjects keep the holder and the shape its slot was recorded in.
+                        return unsafe { self.heap.property_get_shaped(holder, word.slot()) };
+                    }
+                    KIND_ABSENT if inherits => return Some(Value::UNDEFINED),
+                    KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if inherits || word.hops() == 0 => return None,
+                    _ => {}
                 }
-                KIND_ABSENT if inherits => return Some(Value::UNDEFINED),
-                KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if inherits || word.hops() == 0 => return None,
-                _ => {}
             }
         }
         self.prove_symbol_load(object, key)
@@ -831,7 +835,7 @@ impl<H: Host> Vm<H> {
         } else if object.as_number().is_some() {
             let prototype = self.primitive_prototype(object).unwrap_or(self.object_proto);
             match atom {
-                _ if self.lookup_atom("toString") == Some(atom) => Native::NumberString,
+                _ if atom == self.runtime_atoms.to_string => Native::NumberString,
                 _ if atom == self.to_fixed_atom => Native::NumberFixed,
                 _ if atom == self.to_precision_atom => Native::NumberPrecision,
                 _ => return ControlFlow::Continue(prototype),
@@ -905,7 +909,9 @@ impl<H: Host> Vm<H> {
                 }
                 return self.proxy_get(p, target, handler, receiver, PropertyKey::string(atom));
             }
-            if let Some(attributes) = self.property_attributes(object, PropertyKey::string(atom))
+            // The object's own shape slot is resolved once, for both its accessor flag and its value.
+            let own_slot = self.own_shape_slot(object, atom);
+            if let Some(attributes) = self.property_attributes_at(object, PropertyKey::string(atom), own_slot)
                 && attributes.accessor
             {
                 if private_name && attributes.getter.is_none() {
@@ -952,7 +958,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some(v) = self.own_property(object, atom).or_else(|| self.string_wrapper_unit(object, PropertyKey::string(atom))) {
+            if let Some(v) = self.own_property_at(object, atom, own_slot).or_else(|| self.string_wrapper_unit(object, PropertyKey::string(atom))) {
                 return Ok(v);
             }
             if let Some(data) = self.heap.object_record(object) {

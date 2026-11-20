@@ -53,6 +53,10 @@ pub(super) struct ChunkWindow<'a> {
     /// The load checked the function's body alone (`ProgramReplay::checked_at_load`), so its early
     /// errors are settled and the chunk's analysis skips their check.
     checked: bool,
+    /// The program's declared environment, which the chunk's function's declarations are read from
+    /// (`declared`), and the end of the function's source range in the program's text.
+    program_declared: Option<&'a crate::bytecode::DeclaredTypes>,
+    end: u32,
 }
 
 impl<'a> ChunkWindow<'a> {
@@ -68,6 +72,17 @@ impl<'a> ChunkWindow<'a> {
 
     pub(super) fn start(&self) -> u32 {
         self.start
+    }
+
+    /// The program's saved top-level type names, which the chunk's annotations resolve against.
+    pub(super) fn saved_names(&self) -> Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>> {
+        self.program_declared.and_then(|declared| declared.type_names.clone())
+    }
+
+    /// The declarations of the chunk's function and of what lies in it, at their places in the
+    /// program's text (`DeclaredTypes::within`): a chunk compiles them as the program's load did.
+    pub(super) fn declared(&self) -> crate::bytecode::DeclaredTypes {
+        self.program_declared.map_or_else(Default::default, |declared| declared.within(self.function, self.end))
     }
 
     /// Whether the chunk compiles a run of a streamed body.
@@ -181,8 +196,9 @@ impl Engine {
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let checked = program.replay.as_deref().is_some_and(|replay| replay.checked_at_load(span.start));
-        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, run, checked };
-        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script(), None)
+        let program_declared = program.declared_types.as_deref();
+        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, run, checked, program_declared, end: span.end };
+        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script().with_typescript(source.typescript), None)
     }
 }
 

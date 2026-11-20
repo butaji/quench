@@ -209,6 +209,19 @@ const FOUND: &[&str] = &[
        if (out.a.join(',') !== 'a,b,c,d') bad++;
      }
      throw bad;",
+    // Math.round of a negative zero is the zero (`-0`), and of -0.4 too; the compiled round
+    // returned +0 for the zero, as `-0 + 0` does. Halves round toward +Infinity.
+    "function round(x) { return Math.round(x); }
+     var bad = 0;
+     for (var k = 0; k < 3000; k++) {
+       if (!Object.is(round(-0 * (k + 1)), -0)) bad++;
+       if (!Object.is(round(-0.4 - 0 * k), -0)) bad++;
+       if (round(2.5 + 0 * k) !== 3) bad++;
+       if (round(-2.5 - 0 * k) !== -2) bad++;
+       if (!Number.isNaN(round(NaN + 0 * k))) bad++;
+       if (round(Infinity + 0 * k) !== Infinity) bad++;
+     }
+     throw bad;",
 ];
 
 #[test]

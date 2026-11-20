@@ -98,6 +98,7 @@ pub(crate) mod double_view;
 pub(crate) mod element_rows;
 pub(crate) mod typed_elements;
 pub(crate) mod typed_view;
+pub(crate) mod data_view;
 mod element_frame;
 pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
@@ -106,13 +107,29 @@ pub(crate) mod ic;
 pub(crate) mod ic_flat;
 pub(crate) mod ic_read;
 pub(crate) mod object;
-mod narrow;
+pub(crate) mod narrow;
 pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
 pub(crate) mod string_length;
 pub(crate) mod code_units;
 pub(crate) mod parse_int;
+/// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
+pub(crate) mod string_text;
+/// String search builtins (indexOf, lastIndexOf, includes, startsWith, endsWith) and cuts (slice, substring, substr).
+pub(crate) mod string_search;
+/// String.prototype.split with a string separator: the cut offsets, once.
+pub(crate) mod string_split;
+/// String.prototype.replace/replaceAll with a string pattern: the plan and the write, once.
+pub(crate) mod string_replace;
+/// Map/Set/WeakMap/WeakSet hash and probe: one lookup body.
+pub(crate) mod collections;
+/// Array indexOf/includes/lastIndexOf over dense elements: one search body.
+pub(crate) mod array_search;
+/// BigInt small-magnitude arithmetic and comparison: one body.
+pub(crate) mod bigint_small;
+/// The calendar fields of a Date's time value, derived once for the getters, setters and `toISOString` (`vm::date`).
+pub(crate) mod date_fields;
 pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod array_iteration;
@@ -912,6 +929,11 @@ pub(crate) const fn row_writes_result(op: Op) -> bool {
     // store and a fill define none.
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
         return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
+    }
+    // An opcode whose A field is no result register defines none, so there is nothing for the lane
+    // to write: its row's value (a cleanup pop's 0, a store's source) must not land in register A.
+    if !matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) {
+        return true;
     }
     // A keyed read's answer is written by the lane (its record's result register, as every
     // producer writes it beside the carried value).

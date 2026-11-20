@@ -18,11 +18,10 @@ pub(super) enum RootedRead {
 #[derive(Clone, Copy)]
 pub(super) enum Dense {
     /// The slots (values, count) the running activation holds (`Entry::capture_values`), or a
-    /// published callee's, fixed by the identity its call guards (`Lowering::frame_captures`).
+    /// published callee's, fixed by the identity its call guards (`Lowering::frame_captures`), or
+    /// the bound callee's frameless admission, as its frameless activation would read them
+    /// (`Lowering::admitted_captures`).
     Held(ir::Value, ir::Value),
-    /// The bound callee's frameless admission, as its frameless activation would read them
-    /// (`frameless::emit_admitted_captures`).
-    Admitted,
     /// No dense slots: the read takes its slow case.
     Absent,
 }
@@ -55,7 +54,7 @@ pub(super) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site
     (depth, slot): (u16, u16), exit: ir::Block) -> ir::Value {
     let (slow, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(slow);
-    let dense = dense_slots(builder, reach.0, site, slow);
+    let dense = dense_slots(site);
     let value = builder.append_block_param(join, types::I64);
     match dense {
         Some((values, len)) => {
@@ -73,12 +72,10 @@ pub(super) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site
     value
 }
 
-/// The dense slots (values, length) the site names; `slow` where a callee's admission declines.
-fn dense_slots(builder: &mut FunctionBuilder<'_>, payload: ir::Value, site: &CaptureSite,
-    slow: ir::Block) -> Option<(ir::Value, ir::Value)> {
+/// The dense slots (values, length) the site names, `None` where it has none.
+fn dense_slots(site: &CaptureSite) -> Option<(ir::Value, ir::Value)> {
     match site.dense {
         Dense::Held(values, len) => Some((values, len)),
-        Dense::Admitted => site.callee.map(|callee| super::super::frameless::emit_admitted_captures(builder, payload, callee, slow)),
         Dense::Absent => None,
     }
 }
@@ -155,14 +152,14 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         let callee = admitted_callee.or_else(|| frame.map(|frame| self.tagged(state, self.unit.frames[frame].callee_register)));
-        let dense = if depth == 0 { self.dense_slots(frame, callee) } else { Dense::Absent };
+        let dense = if depth == 0 { self.dense_slots(state, frame, callee) } else { Dense::Absent };
         CaptureSite { dense, callee, walks: depth != 0 || self.rooted_walk(rooted) }
     }
 
     /// Where the activation that runs `frame` keeps its dense slots: the running one's, a
     /// published callee's its call's guarded identity fixes, or else those of the bound `callee`'s
     /// frameless admission.
-    fn dense_slots(&mut self, frame: Option<usize>, callee: Option<ir::Value>) -> Dense {
+    fn dense_slots(&mut self, state: &mut State, frame: Option<usize>, callee: Option<ir::Value>) -> Dense {
         match frame {
             None => {
                 let entry = self.entry.as_ref().expect("entry facts");
@@ -172,9 +169,23 @@ impl Lowering<'_, '_> {
                 let (values, len) = self.frame_captures.get(frame).copied().unwrap_or((0, 0));
                 Dense::Held(self.raw_const(Lane::I64, values as i64), self.raw_const(Lane::I64, len as i64))
             }
-            Some(_) if callee.is_some() => Dense::Admitted,
-            Some(_) => Dense::Absent,
+            Some(_) => callee.map_or(Dense::Absent, |callee| self.admitted_captures(state, callee)),
         }
+    }
+
+    /// The dense capture slots of `callee`'s frameless admission. The probe (`emit_admitted_captures`)
+    /// is emitted once per callee on each path, where the state first needs it; a later read on that
+    /// path takes its values, which that probe dominates, and a join keeps the view only where every
+    /// arrival holds it.
+    fn admitted_captures(&mut self, state: &mut State, callee: ir::Value) -> Dense {
+        if let Some(&(_, (values, len))) = state.proofs.admitted_captures.iter().find(|(admitted, _)| *admitted == callee) {
+            return Dense::Held(values, len);
+        }
+        let cache = super::super::emit_js_payload_word(&mut self.builder, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, call_cache));
+        let (values, len) = super::super::frameless::emit_admitted_captures(&mut self.builder, self.payload, callee, cache);
+        state.proofs.note_admitted_captures(callee, (values, len));
+        Dense::Held(values, len)
     }
 
     /// Whether a read the dense slots miss may take the lane's own lookup of a root-held

@@ -443,7 +443,9 @@ impl<H: Host> Vm<H> {
             );
         }
 
-        let guard = self.method_cache_guard(this, metadata.atom);
+        // The guard only feeds a specialized refill, so an unspecialized site walks the chain once,
+        // for the callee alone. It is taken before the callee, which may run a getter that changes it.
+        let guard = if specialized { self.method_cache_guard(this, metadata.atom) } else { None };
         let callee = self.get_field_cached(p, this, metadata.atom, metadata.cache)?;
         if specialized
             && let Some(guard) = guard

@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::staged::Passing;
+use std::borrow::Cow;
 
 impl<H: Host> Vm<H> {
     /// `callee` called with `this` and the arguments `passing` makes of `list`, the values of the
@@ -30,7 +31,7 @@ impl<H: Host> Vm<H> {
             Passing::Rest => (Passing::Iterable, list),
             passing => (passing, list),
         };
-        let args = self.with_call_roots([callee, this], |vm| vm.gathered_arguments(p, passing, list))?;
+        let args = self.with_call_roots([callee, this], move |vm| vm.gathered_arguments(p, passing, list))?;
         self.with_call_roots([callee, this].into_iter().chain(args.iter().copied()),
             |vm| vm.call_value_from_frame(p, callee, this, &args))
     }
@@ -45,21 +46,22 @@ impl<H: Host> Vm<H> {
             self.materialize_deferred_lane();
         }
         let args = match passing {
-            Passing::Array => self.super_argument_list(p, list)?,
-            Passing::Values | Passing::Iterable | Passing::Rest => self.with_call_roots([callee], |vm| vm.gathered_arguments(p, passing, list))?,
+            Passing::Array => Cow::Owned(self.super_argument_list(p, list)?),
+            Passing::Values | Passing::Iterable | Passing::Rest => self.with_call_roots([callee], move |vm| vm.gathered_arguments(p, passing, list))?,
         };
         self.with_call_roots([callee].into_iter().chain(args.iter().copied()), |vm| vm.construct_super_value(p, callee, &args))
     }
 
-    /// The argument values of `list` as `passing` holds them: the values themselves, the elements of
-    /// the array in the one register, or the values an iterable in it spreads into a new array.
-    fn gathered_arguments(&mut self, p: &ResidualProgram, passing: Passing, list: &[Value]) -> Result<Vec<Value>, JsError> {
-        if passing == Passing::Values { return Ok(list.to_vec()); }
+    /// The argument values of `list` as `passing` holds them: the values themselves, borrowed, or
+    /// the elements of the array in the one register, or the values an iterable in it spreads into
+    /// a new array.
+    fn gathered_arguments<'a>(&mut self, p: &ResidualProgram, passing: Passing, list: &'a [Value]) -> Result<Cow<'a, [Value]>, JsError> {
+        if passing == Passing::Values { return Ok(Cow::Borrowed(list)); }
         let argument = list.first().copied().expect("a spread names its argument register");
-        if passing == Passing::Array { return self.array_values(argument); }
+        if passing == Passing::Array { return Ok(Cow::Owned(self.array_values(argument)?)); }
         let array = self.hole_array(0);
         self.with_call_roots([array, argument], |vm| vm.spread_into_array(p, array, argument))?;
-        self.array_values(array)
+        Ok(Cow::Owned(self.array_values(array)?))
     }
 
     /// The values a rest view's activation kept past its fixed parameters (`Function::rest_view`),

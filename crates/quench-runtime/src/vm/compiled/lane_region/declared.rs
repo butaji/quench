@@ -1,11 +1,11 @@
 //! TypeScript declared types as u-jit facts. An annotation is a seed, never erased: where a value
-//! enters a register the tier checks it once (`conform_register`) and then trusts the fact, as a
-//! declared parameter is checked at entry (`scalar::declared_entry_types`).
+//! enters a register the tier checks it once (`conform_declared`) and then trusts the register's
+//! narrowed fact, as a declared parameter is checked at entry (`scalar::declared_entry_types`).
 
 use super::*;
 
 /// The type a declared language set seeds where a tier checks it exactly: a Number, or a set
-/// `scalar::checkable` names (a String included). A BigInt, Symbol or a mixed set with Number is not checked here.
+/// `scalar::checkable` names (a String, an array or a plain object included). A BigInt, Symbol or a mixed set with Number is not checked here.
 pub(super) fn checkable_declared(bits: u16) -> Option<Type> {
     let ty = Type::languages(bits);
     (ty == Type::NUMBER || scalar::checkable(bits)).then_some(ty)
@@ -100,7 +100,7 @@ pub(super) fn declared_local_types(program: &ResidualProgram, function: &crate::
 impl Lowering<'_, '_> {
     /// Whether a check after the instruction at `pc` can resume at the next PC: a fused successor
     /// (`consumed`) is executed by its predecessor's lowering, so an exit there would run it twice.
-    fn resumes_after(&self, pc: usize) -> bool {
+    pub(super) fn resumes_after(&self, pc: usize) -> bool {
         pc + 1 < self.unit.instructions.len() && !self.consumed.contains(pc + 1)
     }
 
@@ -108,7 +108,15 @@ impl Lowering<'_, '_> {
     /// declared type, checked once at the resume point after the call's effect. The guard reads the
     /// result value, so it holds whichever path joined the completion (the direct entry or the VM's call).
     pub(super) fn conform_declared_result(&mut self, state: &mut State, pc: usize, result: Register, ty: Type) {
-        if self.resumes_after(pc) { self.conform_register(state, pc + 1, result, ty); }
+        if self.resumes_after(pc) { self.conform_declared(state, pc + 1, result, ty); }
+    }
+
+    /// Conforms `register` to the declared `ty` on this path. A fact that already implies `ty` emits
+    /// nothing: the register's narrowed fact carries the check, so no later use re-proves it. The
+    /// register keeps its representation, as only a join's edge needs the target's view (`conform`).
+    fn conform_declared(&mut self, state: &mut State, pc: usize, register: Register, ty: Type) {
+        if state.values[usize::from(register)].value.ty.is_subtype(ty) { return; }
+        self.conform_register(state, pc, register, ty);
     }
 
     /// Conforms each annotated local the entry function's own instruction at `pc` defines
@@ -117,12 +125,12 @@ impl Lowering<'_, '_> {
         if !self.caller_record(pc) || !self.resumes_after(pc) { return; }
         // The entry function's own `this` read (`LoadThis`) enters its destination with the declared type.
         if let Some(ty) = self.declared_this && matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::LoadThis { .. })) {
-            self.conform_register(state, pc + 1, instruction.result_register(), ty);
+            self.conform_declared(state, pc + 1, instruction.result_register(), ty);
         }
         if self.declared_definitions.is_empty() { return; }
         for register in instruction.written_registers() {
             let Some(ty) = self.declared_definitions.iter().find(|(local, _)| *local == register).map(|(_, ty)| *ty) else { continue };
-            self.conform_register(state, pc + 1, register, ty);
+            self.conform_declared(state, pc + 1, register, ty);
         }
     }
 
@@ -132,7 +140,7 @@ impl Lowering<'_, '_> {
     pub(super) fn conform_declared_rest_read(&mut self, state: &mut State, pc: usize, base: Register, result: Register) {
         let Some((rest, ty)) = self.declared_rest else { return };
         if base != rest || !self.caller_record(pc) || !self.resumes_after(pc) { return; }
-        self.conform_register(state, pc + 1, result, ty);
+        self.conform_declared(state, pc + 1, result, ty);
     }
 
     /// Conforms the value a named read `atom` of the entry function's declared parameter (`base`,
@@ -144,6 +152,20 @@ impl Lowering<'_, '_> {
         if !self.caller_record(pc) || !self.resumes_after(pc) { return; }
         let program = self.program;
         let Some(ty) = declared_member_type(program, start, parameter, &program.atoms[atom as usize]) else { return };
-        self.conform_register(state, pc + 1, result, ty);
+        self.conform_declared(state, pc + 1, result, ty);
+        narrow_field_read(state, base, atom, result);
+    }
+}
+
+/// Narrows the cached read of `atom` on `base` that defined `result` to `result`'s conformed fact,
+/// the declared type the check just proved of that same value. A later read of the member on this
+/// path then takes that type from the cache (`define_field_read`) and emits no second conform. A
+/// call clears the cache (`call_effect`), and a join keeps only entries both arrivals hold (`join_states`).
+fn narrow_field_read(state: &mut State, base: Register, atom: Atom, result: Register) {
+    let fact = state.values[usize::from(result)];
+    let TaggedView::Value(value) = fact.tagged else { return };
+    if let Some(field) = state.proofs.fields.iter_mut()
+        .find(|field| field.owner == Some(base) && field.atom == atom && field.value == value) {
+        field.ty = fact.value.ty;
     }
 }

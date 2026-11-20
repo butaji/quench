@@ -105,6 +105,23 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
     character_of_unit(stage, table, unit, miss)
 }
 
+/// The unit `string_char_at` names, before the table maps it to its one-character string: the
+/// `char_at_ascii` row of `string`, leaving at `miss` where that row leaves. A comparison of the
+/// one-character string with a one-unit constant decides on the unit alone, so the string is
+/// never made (`Lowering::unit_compare`).
+#[inline(always)]
+pub(crate) fn string_unit_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    at_width(stage, string, |stage, width| char_at_ascii(stage, width, string.units, string.length, index, miss))
+}
+
+/// `string_unit_at` for an index the caller proves below the string's length (`char_at_ascii_within`).
+#[inline(always)]
+pub(crate) fn string_unit_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    at_width(stage, string, |stage, width| char_at_ascii_within(stage, width, string.units, index, miss))
+}
+
 /// The one-character string of the ASCII `unit` from the table at `table`, which the unit has once
 /// it is made (`leaving at miss` where it has none yet).
 #[inline(always)]
@@ -171,6 +188,33 @@ pub(crate) fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, 
     let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
     string_char_at(&mut stage, string, index.to_bits(), table as u64, ()).map(Value::from_bits)
+}
+
+/// The unit index that `String.prototype.at` (`from_end`) or `codePointAt` reads for the relative
+/// `index`: a negative `at` index counts back from the end, and any other index is taken as given.
+/// `None` where the index lies outside `units`. Plain over `Units`, which the stencils do not
+/// name, so the row callers stay on the runtime.
+#[cfg(not(stencil_build))]
+pub(crate) fn relative_unit(units: Units<'_>, index: i64, from_end: bool) -> Option<usize> {
+    let index = if from_end && index < 0 { units.len() as i64 + index } else { index };
+    usize::try_from(index).ok().filter(|&index| index < units.len())
+}
+
+/// The code point that `codePointAt` answers at the unit `index` of `units`: the supplementary
+/// code point of a high surrogate followed by a low one, else the unit itself. `None` past the end.
+#[cfg(not(stencil_build))]
+pub(crate) fn code_point_at(units: Units<'_>, index: usize) -> Option<u32> {
+    let first = units.get(index)?;
+    let pair = units.get(index + 1).and_then(|low| crate::unicode::decode_surrogate_pair(first, low));
+    Some(pair.unwrap_or_else(|| u32::from(first)))
+}
+
+/// The code unit `String.fromCharCode` stores for an argument whose ToNumber is `number`: its
+/// ToUint16, the low sixteen bits of the number's integer part (`value::number_to_u32`).
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn from_char_code_unit(number: f64) -> u16 {
+    crate::value::number_to_u32(number) as u16
 }
 
 #[cfg(test)]

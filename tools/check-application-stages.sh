@@ -2,9 +2,9 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 stages=${QUENCH_APPLICATION_STAGES:-"2047 2069 2080 2081 2104 2251"}
-runner=${QUENCH_NODE_BIN:-"$root/target/iteration/quench-node"}
+runner=${QUENCH_NODE_BIN:-"$root/target/iteration/quench"}
 metrics=${QUENCH_APPLICATION_METRICS_FILE:-"$root/target/compat/application-gates.jsonl"}
-[ -x "$runner" ] || cargo build --quiet --profile iteration --manifest-path "$root/Cargo.toml" -p quench-node
+[ -x "$runner" ] || cargo build --quiet --profile iteration --manifest-path "$root/Cargo.toml" -p quench
 mkdir -p "$(dirname -- "$metrics")"
 : >"$metrics"
 failed=0

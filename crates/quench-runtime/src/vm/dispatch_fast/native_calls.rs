@@ -708,8 +708,8 @@ pub(super) fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram
             vm.fast_declined(native, joined)
         }
         Native::ArrayIndexOf | Native::ArrayIncludes => {
-            let found = vm.dense_search_call(native, receiver, args);
-            vm.fast_declined(native, found)
+            let found = vm.dense_search_resume(native, receiver, args);
+            vm.fast_search_declined(native, found)
         }
         Native::ArrayJoin => vm.plain_array_join(receiver, args),
         Native::ArrayAt => vm.plain_array_at(receiver, args),

@@ -1,7 +1,7 @@
 //! A live census of the heap's actual record spaces and owned payloads.
 //! Shared array/string storage is charged once; collecting a census adds no
 //! allocation-path instrumentation and does not execute guest code.
-use super::{Cell, CellKind, CollectionRecord, CollectionStorage, FreeSlotBitmap, Heap, Object, Slot};
+use super::{Cell, CellKind, CollectionRecord, CollectionStorage, FreeSlotBitmap, Heap, Object, Slot, WasmGcRecord};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use std::collections::{BTreeMap, HashSet};
@@ -127,6 +127,7 @@ impl Heap {
             let direct_v128 = identity.direct_v128_index().is_some();
             let direct_environment = identity.direct_environment_index().is_some();
             let direct_symbol = identity.direct_symbol_index().is_some();
+            let direct_wasm_gc = identity.direct_wasm_gc_index().is_some();
             direct_records += usize::from(
                 direct_object
                     || direct_array
@@ -138,9 +139,12 @@ impl Heap {
                     || direct_string
                     || direct_v128
                     || direct_environment
-                    || direct_symbol,
+                    || direct_symbol
+                    || direct_wasm_gc,
             );
-            let kind = if direct_symbol {
+            let kind = if direct_wasm_gc {
+                CellKind::WasmGc as usize
+            } else if direct_symbol {
                 CellKind::Symbol as usize
             } else if direct_environment {
                 CellKind::Environment as usize
@@ -164,7 +168,9 @@ impl Heap {
                 Self::cell_kind(cell.expect("live legacy value has a Cell")) as usize
             };
             cell_counts[kind] += 1;
-            let variant_name = if direct_symbol {
+            let variant_name = if direct_wasm_gc {
+                "wasm_gc"
+            } else if direct_symbol {
                 "symbol"
             } else if direct_environment {
                 "environment"
@@ -236,6 +242,8 @@ impl Heap {
             } else if direct_promise {
                 self.promise(identity)
                     .map_or(0, |promise| promise.object.allocated_extra_bytes())
+            } else if direct_wasm_gc {
+                self.wasm_gc(identity).map_or(0, WasmGcRecord::allocated_bytes)
             } else if direct_symbol {
                 self.symbol_data(identity)
                     .and_then(|symbol| symbol.description.as_ref())

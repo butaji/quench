@@ -78,6 +78,7 @@ fn stencil_units_match() {
         assert_eq!(stencil_units::to_int32(value), crate::units::to_int32(value), "ToInt32 of {value}");
         let clamped = if value.is_nan() { 0 } else { value.clamp(f64::from(u8::MIN), f64::from(u8::MAX)).round_ties_even() as u64 };
         assert_eq!(stencil_units::clamp_u8(value.to_bits()), clamped, "clamp of {value}");
+        assert_eq!(stencil_units::clamp_u8(value.to_bits()), u64::from(crate::value::number_to_uint8_clamp(value)), "ToUint8Clamp of {value}");
     }
 }
 

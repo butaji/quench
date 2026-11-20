@@ -1,6 +1,7 @@
 //! The storage of a Wasm GC object's fields and of a Wasm table's references, each behind
 //! one word so their cells stay compact.
 
+use crate::staged::record_heads::WasmGcHead;
 use crate::value::Value;
 use crate::wasm::CanonicalSignature;
 use crate::wasm::gc::{GcField, ObjectLayout};
@@ -108,8 +109,95 @@ impl WasmGcFields {
         }
     }
 
+    /// The address of field `index` of a struct, or element `index` of an array, for a read from a
+    /// shared borrow: no write barrier is passed, so the address is read from, never written to.
+    /// `None` past the end.
+    pub(crate) fn address(&self, layout: &ObjectLayout, index: usize) -> Option<*const u8> {
+        if index >= self.count(layout) {
+            return None;
+        }
+        let offset = layout.offset(index)?;
+        Some(self.0.as_ptr().wrapping_add(offset))
+    }
+
     pub(crate) fn allocated_bytes(&self) -> usize {
         self.0.allocated_bytes()
+    }
+}
+
+/// A Wasm GC object's record (`Heap::alloc_wasm_gc`): its head first, so compiled code reads the
+/// payload's address, length and type index at fixed offsets (`NATIVE_WASM_GC_LAYOUT`), then the
+/// declarations its layout comes from and its payload. The head names the payload's bytes: it is
+/// written whenever the payload is installed (`new`, `set_fields`), and the bytes change only in place.
+#[repr(C)]
+pub(crate) struct WasmGcRecord {
+    head: WasmGcHead,
+    declarations: crate::WasmTypes,
+    fields: WasmGcFields,
+}
+
+impl WasmGcRecord {
+    /// The record of an object of type `ty` of `declarations`, with payload `fields`.
+    pub(crate) fn new(declarations: crate::WasmTypes, ty: u32, fields: WasmGcFields) -> Self {
+        let mut record = Self {
+            head: WasmGcHead { payload: 0, length: 0, ty },
+            declarations,
+            fields,
+        };
+        record.sync_head();
+        record
+    }
+
+    /// Points the head at the payload's current bytes.
+    fn sync_head(&mut self) {
+        self.head.payload = self.fields.0.as_ptr() as u64;
+        self.head.length = self.fields.0.len() as u64;
+    }
+
+    pub(crate) fn declarations(&self) -> &crate::WasmTypes {
+        &self.declarations
+    }
+
+    /// The index of the object's type in its declarations.
+    pub(crate) fn ty(&self) -> u32 {
+        self.head.ty
+    }
+
+    /// The layout of the object's payload (`declarations`' layout of its type).
+    pub(crate) fn layout(&self) -> Option<&ObjectLayout> {
+        self.declarations.layout(self.head.ty)
+    }
+
+    pub(crate) fn fields(&self) -> &WasmGcFields {
+        &self.fields
+    }
+
+    /// The payload, mutably, for writes its bytes take in place (the head stays valid).
+    pub(crate) fn fields_mut(&mut self) -> &mut WasmGcFields {
+        &mut self.fields
+    }
+
+    /// The layout and the payload, mutably: a write into the payload needs the layout it follows.
+    pub(crate) fn split_mut(&mut self) -> Option<(&ObjectLayout, &mut WasmGcFields)> {
+        let layout = self.declarations.layout(self.head.ty)?;
+        Some((layout, &mut self.fields))
+    }
+
+    /// Replaces the payload, and points the head at the new one.
+    pub(crate) fn set_fields(&mut self, fields: WasmGcFields) {
+        self.fields = fields;
+        self.sync_head();
+    }
+
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.fields.allocated_bytes()
+    }
+
+    /// Pushes each reference word the object holds, which the collector follows.
+    pub(crate) fn trace_children(&self, work: &mut Vec<Value>) {
+        if let Some(layout) = self.layout() {
+            self.fields.for_each_reference(layout, |value| work.push(value));
+        }
     }
 }
 

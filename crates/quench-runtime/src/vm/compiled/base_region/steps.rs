@@ -270,11 +270,12 @@ fn plan_catch(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers)
 /// The word a `typeof` fast arm answers for any Number, which an operand held in a pinned register or an
 /// int slot always is: the fact is the operand's representation, proved once where it was defined.
 fn number_typeof(fast: Heap, names: u64) -> Option<u64> {
+    let index = crate::staged::value::language_typeof_index(crate::staged::value::language::NUMBER)?;
     match fast {
         // SAFETY: the table is the compiling VM's (`Known::typeof_names`), whose strings the VM roots.
-        Heap::TypeofString => Some(unsafe { (names as *const u64).add(crate::staged::value::TYPEOF_NUMBER as usize).read() }),
-        Heap::TypeofIndex => Some(Value::integer(crate::staged::value::TYPEOF_NUMBER as i32).to_bits()),
-        Heap::TypeofIs { index, negated } => Some(Value::boolean((u64::from(index) == crate::staged::value::TYPEOF_NUMBER) != negated).to_bits()),
+        Heap::TypeofString => Some(unsafe { (names as *const u64).add(index as usize).read() }),
+        Heap::TypeofIndex => Some(Value::integer(index as i32).to_bits()),
+        Heap::TypeofIs { index: tested, negated } => Some(Value::boolean((u64::from(tested) == index) != negated).to_bits()),
         _ => None,
     }
 }

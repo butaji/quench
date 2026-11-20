@@ -80,25 +80,33 @@ impl<H: Host> Vm<H> {
     }
     /// How many properties `shape` holds.
     pub(super) fn shape_entry_count(&self, shape: u32) -> usize {
-        match self.walked_shape_entries(shape) {
-            Some(entries) => entries.len(),
+        let mut count = 0usize;
+        match self.walk_shape_adds(shape, |_, _| count += 1) {
+            Some(()) => count,
             None => self.shape_lookup_index(shape).live_len(),
         }
     }
     /// `shape`'s entries read off its chain, when it has no lookup index and its chain makes
     /// them exactly its adds (`shape_entries`).
     fn walked_shape_entries(&self, shape: u32) -> Option<smallvec::SmallVec<[(PropertyKey, u32); WALKED_SHAPE_ENTRIES]>> {
+        let mut entries = smallvec::SmallVec::<[(PropertyKey, u32); WALKED_SHAPE_ENTRIES]>::new();
+        self.walk_shape_adds(shape, |key, slot| entries.push((key, slot)))?;
+        entries.reverse();
+        Some(entries)
+    }
+    /// Visits `shape`'s adds newest first, when `walked_shape_entries` holds for it; `None`
+    /// (nothing visited) otherwise.
+    fn walk_shape_adds(&self, shape: u32, mut visit: impl FnMut(PropertyKey, u32)) -> Option<()> {
         let entry = &self.shapes[shape as usize];
         if entry.lookup_index.get().is_some() || entry.is_dictionary() || entry.facts.deletions() {
             return None;
         }
-        let mut entries = smallvec::SmallVec::<[(PropertyKey, u32); WALKED_SHAPE_ENTRIES]>::new();
         let mut current = Some(shape);
         let mut distance = 0usize;
         while let Some(id) = current {
             let link = &self.shapes[id as usize];
             if let ShapeTransition::Add { key, slot, .. } = link.transition {
-                entries.push((key, slot));
+                visit(key, slot);
             }
             current = link.parent();
             distance += 1;
@@ -106,8 +114,7 @@ impl<H: Host> Vm<H> {
         if distance >= super::object::SHAPE_INDEX_WALK_DISTANCE {
             self.note_long_shape_walk(shape);
         }
-        entries.reverse();
-        Some(entries)
+        Some(())
     }
     pub(super) fn shape_lookup_index(&self, shape: u32) -> &ShapeLookupIndex {
         self.shapes[shape as usize].lookup_index.get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))

@@ -260,11 +260,18 @@ pub(crate) fn instanceof_by_words<S: Stage>(stage: &mut S, records: S::Word, val
     miss: S::Miss) -> Option<S::Cond> {
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;
+    let (decided, holds) = instance_decision(stage, records, value, target);
+    stage.guard(decided, miss)?;
+    Some(holds)
+}
+
+/// The walk's decision for `value` as `(decided, holds)`: whether the words decide `instanceof`, and
+/// where they do, whether it holds.
+#[inline(always)]
+pub(crate) fn instance_decision<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word) -> (S::Cond, S::Cond) {
     let answer = instance_answer(stage, records, value, target);
     let undecided = stage.eq_imm(answer, WALK_UNDECIDED);
-    let decided = stage.not(undecided);
-    stage.guard(decided, miss)?;
-    Some(stage.eq_imm(answer, WALK_HOLDS))
+    (stage.not(undecided), stage.eq_imm(answer, WALK_HOLDS))
 }
 
 /// The walk's answer for `value`: a direct object's chain, `fails` for a primitive, else undecided.

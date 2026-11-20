@@ -9,6 +9,19 @@ pub(super) fn table_range(
         .map_err(|_| out_of_bounds_table())
 }
 
+/// The index type of a table, from its `table64` flag.
+pub(super) fn table_index_type(table64: bool) -> crate::WasmType {
+    if table64 { crate::WasmType::I64 } else { crate::WasmType::I32 }
+}
+
+/// The type of a copy's length: i64 only when both the destination and the source are i64.
+pub(super) fn copy_length_type(destination: crate::WasmType, source: crate::WasmType) -> crate::WasmType {
+    match (destination, source) {
+        (crate::WasmType::I64, crate::WasmType::I64) => crate::WasmType::I64,
+        _ => crate::WasmType::I32,
+    }
+}
+
 /// The trap of a table access outside its elements.
 fn out_of_bounds_table() -> JsError {
     JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsTable)
@@ -32,19 +45,14 @@ impl<H: Host> Vm<H> {
                 }
             );
         }
-        if let Some(Cell::WasmGc {
-            declarations,
-            ty: index,
-            ..
-        }) = self.heap.get(value)
-        {
-            return declarations.reference_subtype(
+        if let Some(record) = self.heap.wasm_gc(value) {
+            return record.declarations().reference_subtype(
                 wasmparser::RefType::new(
                     false,
-                    wasmparser::HeapType::Exact(wasmparser::UnpackedIndex::Module(*index)),
+                    wasmparser::HeapType::Exact(wasmparser::UnpackedIndex::Module(record.ty())),
                 )
                 .unwrap(),
-                declarations,
+                record.declarations(),
                 ty,
             );
         }
@@ -122,11 +130,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn wasm_table_index_type(&self, table: Value) -> Result<crate::WasmType, JsError> {
         match self.heap.get(table) {
-            Some(Cell::WasmTable { table64, .. }) => Ok(if *table64 {
-                crate::WasmType::I64
-            } else {
-                crate::WasmType::I32
-            }),
+            Some(Cell::WasmTable { table64, .. }) => Ok(table_index_type(*table64)),
             _ => Err(JsError::validation("invalid Wasm table binding".into())),
         }
     }
@@ -147,7 +151,7 @@ impl<H: Host> Vm<H> {
             (crate::WasmType::I64, _, Some(bits)) => return Ok(bits),
             _ => {}
         }
-        match self.decode_wasm_value(value, ty)? {
+        match self.decode_wasm_value_slow(value, ty, None)? {
             crate::WasmValue::I32(value) => Ok(u64::from(value as u32)),
             crate::WasmValue::I64(value) => Ok(value as u64),
             _ => Err(JsError::validation("invalid Wasm index type".into())),

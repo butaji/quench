@@ -50,6 +50,9 @@ pub(super) struct CallSite<'a> {
     /// an exception (`Vm::lane_raised`) continues at `raised` (`Lowering::raised_call`), and a
     /// leave in a callee, or a termination, reaches `stop` with its status.
     pub(super) completed: ir::Block,
+    /// Where a native return of a callee whose summary types the result continues, with the returned word
+    /// as its parameter (`Lowering::typed_completion`); `None` completes at `completed`.
+    pub(super) returned: Option<ir::Block>,
     pub(super) missed: ir::Block,
     pub(super) raised: ir::Block,
     pub(super) stop: ir::Block,
@@ -268,6 +271,9 @@ impl EmitFrame<'_> {
         };
         let body = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, body)));
         let packed = stage.constant(u64::from(callee.function()) | crate::staged::frame::PLAIN_FLAG | crate::staged::frame::NATIVE_FLAG);
+        // Unlike the b-jit call row, which writes the receiver only where the body's `uses_this` cell word says it
+        // reads `this`, this writes it always: loading that word here would add a load and a branch to the
+        // emitted header, and an unread receiver word is harmless.
         stage.store_u64(at, window, context_at(CONTEXT_THIS), this);
         stage.store_u64(at, window, context_at(CONTEXT_CALL), call);
         stage.store_u64(at, window, context_at(CONTEXT_CALLER_REGISTERS), caller_registers);
@@ -433,7 +439,10 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         // An initializing construction pushed no header (`call_enter`): there is none to pop.
         if call.initializing.is_none() { self.pop_native(stage, room); }
         stage.store_u64(FRAME, call.registers, register_offset(site.result), value);
-        stage.jump(call.completed, &[]);
+        match call.returned {
+            Some(returned) => stage.jump(returned, &[value]),
+            None => stage.jump(call.completed, &[]),
+        }
         let (left, missed, threw, raised) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
         for block in [left, missed, threw, raised] {
             stage.builder.set_cold_block(block);

@@ -83,17 +83,16 @@ fn replacement(
     let distinct = atoms.iter().enumerate().all(|(index, atom)| !atoms[..index].contains(atom));
     if atoms.is_empty() || atoms.len() != values.len() || !distinct { return None; }
     // The tables are the scratch's own buffers, filled in place for this function.
-    let CompileScratch { transfers, successors, incoming, .. } = scratch;
-    if !liveness::buffers::transfers_into(function, methods, fields, supers, transfers) { return None; }
-    successors.refill(function);
-    incoming.clear();
-    incoming.resize(function.code.len(), None);
-    incoming[0] = Some(Aliases { may: RegisterSet::default(), must: RegisterSet::default() });
+    if !liveness::buffers::transfers_into(function, methods, fields, supers, &mut scratch.transfers) { return None; }
+    scratch.successors.refill(function);
+    scratch.incoming.clear();
+    scratch.incoming.resize(function.code.len(), None);
+    scratch.incoming[0] = Some(Aliases { may: RegisterSet::default(), must: RegisterSet::default() });
     loop {
         let mut changed = false;
         for (pc, instruction) in function.instructions().enumerate() {
-            let Some(before) = incoming[pc] else { continue };
-            let definitions = transfers[pc].1;
+            let Some(before) = scratch.incoming[pc] else { continue };
+            let definitions = scratch.transfers[pc].1;
             let mut after = Aliases { may: before.may & !definitions, must: before.must & !definitions };
             if pc == allocation {
                 after.may |= register_bit(make.result_register());
@@ -104,8 +103,8 @@ fn replacement(
                 if before.may & source != 0 { after.may |= destination; }
                 if before.must & source != 0 { after.must |= destination; }
             }
-            for (target, _) in successors.at(pc) {
-                let Some(entry) = incoming.get_mut(target) else { continue };
+            for (target, _) in scratch.successors.at(pc) {
+                let Some(entry) = scratch.incoming.get_mut(target) else { continue };
                 let next = entry.map_or(after, |old| Aliases {
                     may: old.may | after.may, must: old.must & after.must,
                 });
@@ -127,19 +126,24 @@ fn replacement(
     // result register, which the allocation redefines (dead copies are redefined before use).
     // The solve is needed only when an earlier alias may reach the allocation at all: with none,
     // the test below holds whatever the live set is, and `transfers` already proved it solvable.
-    let reached = incoming[allocation]?;
+    let reached = scratch.incoming[allocation]?;
     let escaping = reached.may & !register_bit(make.result_register());
     if escaping != 0 {
-        let live = liveness::analyze(function, methods, fields, supers)?;
+        // The transfer and successor tables above are this function's, so the solve reuses them.
+        let transfers = std::mem::take(&mut scratch.transfers);
+        let successors = std::mem::take(&mut scratch.successors);
+        let live = liveness::analyze_wide_with(function, &transfers, &successors, scratch);
+        scratch.transfers = transfers;
+        scratch.successors = successors;
         if escaping & live[allocation] != 0 { return None; }
     }
     let mut replacements = vec![None; function.code.len()];
     let scalar = |atom| atoms.iter().position(|candidate| *candidate == atom)
         .map(|index| function.registers + index as u16);
     for (pc, instruction) in function.instructions().enumerate() {
-        let Some(aliases) = incoming[pc] else { continue };
+        let Some(aliases) = scratch.incoming[pc] else { continue };
         if aliases.may & observable != 0 { return None; }
-        let uses = transfers[pc].0 & aliases.may;
+        let uses = scratch.transfers[pc].0 & aliases.may;
         if pc == allocation {
             if uses != 0 || register_bit(make.result_register()) & observable != 0 { return None; }
             replacements[pc] = Some(values.iter().enumerate()

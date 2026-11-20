@@ -199,17 +199,9 @@ impl Row {
 /// The stencil of `row`, built at compile time by rustc and shared for the life of the process;
 /// a row the library does not hold is an error, which declines the region that needs it.
 pub fn stencil(row: Row) -> Result<&'static Stencil, String> {
-    type Table = Mutex<HashMap<library::Code, &'static Stencil>>;
-    static TABLE: OnceLock<Table> = OnceLock::new();
+    static TABLE: crate::rustc::Memo<library::Code> = OnceLock::new();
     let code = library::canonical(row.code());
-    let mut table = TABLE.get_or_init(Default::default).lock().map_err(|e| e.to_string())?;
-    if let Some(found) = table.get(&code) {
-        return Ok(found);
-    }
-    let found = crate::rustc::stencil(&library::name(code)).ok_or_else(|| format!("no stencil row {row:?}"))?;
-    let stencil: &'static Stencil = Box::leak(Box::new(found));
-    table.insert(code, stencil);
-    Ok(stencil)
+    crate::rustc::memoized(&TABLE, code, || crate::rustc::stencil(&library::name(code)).ok_or_else(|| format!("no stencil row {row:?}")))
 }
 
 /// The stencil of the supernode row computing `nodes` (`supernodes.rs`), built at compile time by

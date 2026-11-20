@@ -35,7 +35,7 @@ impl<H: Host> AccessorCall<H> {
         let getter = match vm.getter_entry_read(object, index) {
             crate::vm::accessor_cache::GetterEntryRead::Answer(value, _) => return Some(Some(value)),
             crate::vm::accessor_cache::GetterEntryRead::Call(getter) => getter,
-            crate::vm::accessor_cache::GetterEntryRead::Miss => vm.cached_field_getter(object, atom, index)?,
+            crate::vm::accessor_cache::GetterEntryRead::Miss => vm.cached_getter_after_miss(object, atom, index)?,
         };
         let Some(value) = (unsafe { self.getter_answer(getter, object) }) else {
             return Some(None);

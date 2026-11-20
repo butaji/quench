@@ -43,6 +43,9 @@ pub(crate) trait WasmGc: MachineStage {
     /// has no field `index`: one lookup that both checks the field and locates it, as a compiled
     /// access computes the address it bounds-checks. Valid until the next allocation.
     fn field_slot(&mut self, reference: Self::Word, index: Self::Word) -> Self::Word;
+    /// `field_slot` for a store into the field: the same address, past the write barrier a store
+    /// into the object requires. Reads never take it, so a read of a field is barrier-free.
+    fn field_slot_for_write(&mut self, reference: Self::Word, index: Self::Word) -> Self::Word;
     /// The number of fields of the object `reference`.
     fn field_count(&mut self, reference: Self::Word) -> Self::Word;
     /// The Wasm bits stored at the field address `slot` (`field_slot`, checked nonzero), typed by
@@ -87,10 +90,16 @@ fn negated<S: MachineStage>(stage: &mut S, flag: S::Word) -> S::Word {
 /// reference traps as its aggregate's null trap, then a struct's missing field is rejected or an
 /// array's element past the end traps. The field's address, which the access then uses.
 #[inline(always)]
-fn locate<S: WasmGc>(stage: &mut S, aggregate: Aggregate, reference: S::Word, index: S::Word) -> Result<S::Word, S::Exit> {
+fn locate<S: WasmGc>(
+    stage: &mut S,
+    aggregate: Aggregate,
+    reference: S::Word,
+    index: S::Word,
+    write: bool,
+) -> Result<S::Word, S::Exit> {
     let null = stage.is_null(reference);
     stage.trap_when(null, aggregate.null_trap())?;
-    let slot = stage.field_slot(reference, index);
+    let slot = if write { stage.field_slot_for_write(reference, index) } else { stage.field_slot(reference, index) };
     let missing = stage.operate_unary(Unary::EqualZero, Width::I64, slot);
     match aggregate {
         Aggregate::Struct => stage.reject_when(missing, "invalid Wasm aggregate reference")?,
@@ -111,7 +120,7 @@ pub(crate) fn field_read<S: WasmGc>(
     field: GcField,
     access: GcFieldAccess,
 ) -> Result<S::Word, S::Exit> {
-    let slot = locate(stage, aggregate, reference, index)?;
+    let slot = locate(stage, aggregate, reference, index, false)?;
     let stored = stage.read_slot(slot, field);
     let bits = match (access, field.packed_bits()) {
         (GcFieldAccess::ReadSigned, Some(bits)) => bits,
@@ -132,7 +141,7 @@ pub(crate) fn field_write<S: WasmGc>(
     field: GcField,
     value: S::Word,
 ) -> Result<(), S::Exit> {
-    let slot = locate(stage, aggregate, reference, index)?;
+    let slot = locate(stage, aggregate, reference, index, true)?;
     stage.write_slot(slot, field, value);
     Ok(())
 }
@@ -319,6 +328,10 @@ macro_rules! wasm_gc_table {
             WasmArrayGetS => Some(GcStep::ArrayGet { signed: Some(true) }),
             WasmArrayGetU => Some(GcStep::ArrayGet { signed: Some(false) }),
             WasmArraySet => Some(GcStep::ArraySet),
+            WasmStructGetRaw => Some(GcStep::StructGet { signed: None }),
+            WasmStructSetRaw => Some(GcStep::StructSet),
+            WasmArrayGetRaw => Some(GcStep::ArrayGet { signed: None }),
+            WasmArraySetRaw => Some(GcStep::ArraySet),
             WasmArrayLen => Some(GcStep::ArrayLen),
             WasmRefIsNull => Some(GcStep::IsNull),
             WasmRefAsNonNull => Some(GcStep::AsNonNull),

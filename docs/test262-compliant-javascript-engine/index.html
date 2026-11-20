@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Test262 compliant JavaScript engine: Quench passes 53,353 with 0 failing</title>
+<meta name="description" content="Quench, a JavaScript runtime written in Rust, passes 53,353 Test262 tests with 0 failing and 53 Node-identical waivers, with JIT off and on. WebAssembly spec: 67,124 of 67,124." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/test262-compliant-javascript-engine/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/test262-compliant-javascript-engine/" />
+<meta property="og:title" content="Test262 compliant JavaScript engine: Quench passes 53,353 with 0 failing" />
+<meta property="og:description" content="Quench, a JavaScript runtime written in Rust, passes 53,353 Test262 tests with 0 failing and 53 Node-identical waivers, with JIT off and on. WebAssembly spec: 67,124 of 67,124." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:modified_time" content="2026-11-20" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Test262 compliant JavaScript engine: Quench passes 53,353 with 0 failing" />
+<meta name="twitter:description" content="Quench, a JavaScript runtime written in Rust, passes 53,353 Test262 tests with 0 failing and 53 Node-identical waivers, with JIT off and on. WebAssembly spec: 67,124 of 67,124." />
+<meta name="twitter:image" content="https://quench.run/og.png" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<style>.prose .answer{background:#FFF3EC;border-left:4px solid #EF5102;border-radius:8px;padding:1rem 1.25rem;margin-top:1.25rem;font-size:1.1rem;color:#1C1C1E}.prose .small{font-size:.9rem;color:#555B66}</style>
+<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/", "applicationCategory": "DeveloperApplication", "applicationSubCategory": "JavaScript, TypeScript and WebAssembly runtime", "operatingSystem": "Linux", "programmingLanguage": "Rust", "license": "https://opensource.org/licenses/MIT", "codeRepository": "https://github.com/butaji/quench", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "isAccessibleForFree": true, "description": "JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables."}, {"@context": "https://schema.org", "@type": "TechArticle", "headline": "A Test262 compliant JavaScript engine", "description": "Quench, a JavaScript runtime written in Rust, passes 53,353 Test262 tests with 0 failing and 53 Node-identical waivers, with JIT off and on. WebAssembly spec: 67,124 of 67,124.", "url": "https://quench.run/test262-compliant-javascript-engine/", "dateModified": "2026-11-20", "datePublished": "2026-11-20", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run/"}, "about": {"@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/"}}, {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Quench", "item": "https://quench.run/"}, {"@type": "ListItem", "position": 2, "name": "A Test262 compliant JavaScript engine", "item": "https://quench.run/test262-compliant-javascript-engine/"}]}, {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Which JavaScript engine passes Test262?", "acceptedAnswer": {"@type": "Answer", "text": "Quench, a JavaScript runtime written in Rust, passes 53,353 Test262 tests with 0 failing and 53 waived, with the JIT off and on. The 53 waived cases fail exactly the way Node fails them and stay counted as failures in every report."}}, {"@type": "Question", "name": "What are the 53 waived Test262 tests?", "acceptedAnswer": {"@type": "Answer", "text": "Cases where Node.js itself fails in the same way, for example Node has no Error.prototype.stack accessor. Each is listed with a reason in node-waivers.json, and a waiver is rejected as soon as its case starts passing or fails differently."}}, {"@type": "Question", "name": "Does Quench pass the WebAssembly spec tests?", "acceptedAnswer": {"@type": "Answer", "text": "Yes: 67,124 of 67,124 WebAssembly spec suite cases."}}]}]</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/benchmarks/">Benchmarks</a>
+<a class="badge" href="/blog/">Blog</a>
+<a class="badge" href="https://github.com/butaji/quench">GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>TEST262</span><span>NOVEMBER 2026</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/">quench.run</a> / updated <time datetime="2026-11-20">20 November 2026</time></p>
+<h1>A Test262 compliant JavaScript engine</h1>
+<p class="lead">How Quench reports conformance, and what the 53 waivers are.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p class="answer"><b>Quench</b> passes <b>53,353 Test262 tests with 0 failing</b>, with the JIT off and on. 53 cases are waived because they fail exactly the way Node.js fails them; they are listed with reasons and still counted as failures in every report. The WebAssembly spec suite passes <b>67,124 of 67,124</b>.</p>
+<h2 id="results">Results</h2>
+<div class="table-scroll"><table><thead><tr><th>Suite</th><th>Passing</th><th>Failing</th><th>Waived</th><th>Modes</th></tr></thead><tbody><tr><td>Test262</td><td class="n">53,353</td><td class="n">0</td><td class="n">53</td><td>JIT off and JIT on</td></tr><tr><td>WebAssembly spec</td><td class="n">67,124</td><td class="n">0</td><td class="n">0</td><td></td></tr></tbody></table></div>
+<h2 id="how">How conformance is enforced</h2>
+<p>The Test262 runner in <code>crates/quench-test262</code> reports every raw outcome. Test262 runs in interpreter and JIT modes before changes merge. A waiver must name a case that Node fails in the same way; it is rejected the moment the case starts passing or fails differently. The list: <a href="https://github.com/butaji/quench/blob/v2-merged/crates/quench-test262/node-waivers.json">node-waivers.json</a>. History: <a href="/blog/test262-and-the-skip-list/">Test262 and the skip list</a>.</p>
+<h2 id="comparison">Quench vs Node.js, Bun and Deno</h2>
+<div class="table-scroll"><table><thead><tr><th></th><th>Quench</th><th>Node.js</th><th>Bun</th><th>Deno</th></tr></thead><tbody><tr><td>Written in</td><td>Rust (engine and runtime)</td><td>C++ (V8) and JavaScript</td><td>Zig, C++ (JavaScriptCore)</td><td>Rust runtime, C++ engine (V8)</td></tr><tr><td>V8-v7 score, JIT off, geomean of 8</td><td><b>4,980</b></td><td>2,349</td><td>1,979</td><td>not measured</td></tr><tr><td>V8-v7 peak memory, JIT off, geomean</td><td><b>11.4 MB</b></td><td>65.4 MB</td><td>26.8 MB</td><td>not measured</td></tr><tr><td>JetStream 3 score, JIT off, 56 tests</td><td>34.3</td><td><b>39.7</b></td><td>32.2</td><td>not measured</td></tr><tr><td>JetStream 3 peak memory, JIT off</td><td><b>28.5 MB</b></td><td>110.1 MB</td><td>47.7 MB</td><td>not measured</td></tr><tr><td>Test262</td><td>53,353 passing, 0 failing, 53 waived</td><td>not measured</td><td>not measured</td><td>not measured</td></tr><tr><td>JIT performance</td><td>JIT tiers not yet competitive</td><td>mature JIT</td><td>mature JIT</td><td>mature JIT (V8)</td></tr><tr><td>Packaged releases</td><td>no, build from source</td><td>yes</td><td>yes</td><td>yes</td></tr></tbody></table></div><p class="small">Benchmark rows: interpreter only in every engine (<code>quench --no-jit</code>, <code>node --jitless</code>, Bun with <code>BUN_JSC_useJIT=0</code>), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. <a href="/benchmarks/">Full tables and method</a>.</p>
+<p class="small">We run Test262 only on Quench. For other engines' Test262 results see <a href="https://test262.fyi/">test262.fyi</a>.</p><h2 id="questions">Questions</h2><h3>Which JavaScript engine passes Test262?</h3><p>Quench, a JavaScript runtime written in Rust, passes 53,353 Test262 tests with 0 failing and 53 waived, with the JIT off and on. The 53 waived cases fail exactly the way Node fails them and stay counted as failures in every report.</p><h3>What are the 53 waived Test262 tests?</h3><p>Cases where Node.js itself fails in the same way, for example Node has no Error.prototype.stack accessor. Each is listed with a reason in node-waivers.json, and a waiver is rejected as soon as its case starts passing or fails differently.</p><h3>Does Quench pass the WebAssembly spec tests?</h3><p>Yes: 67,124 of 67,124 WebAssembly spec suite cases.</p>
+<h2 id="about">About Quench</h2>
+<p>Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: <a href="https://github.com/butaji/quench">github.com/butaji/quench</a>. Machine-readable summary: <a href="/llms.txt">llms.txt</a>.</p>
+<p class="small">Related: <a href="/benchmarks/">benchmarks</a> · <a href="/fastest-javascript-runtime-in-rust/">JavaScript runtime in Rust</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node.js alternative</a> · <a href="/compile-javascript-to-native-executable/">compile JavaScript to a native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262 conformance</a> · <a href="/javascript-engine-for-ai-agents/">JavaScript for AI agents</a></p>
+</div></div>
+</article>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/benchmarks/">benchmarks</a> · <a href="/blog/">blog</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

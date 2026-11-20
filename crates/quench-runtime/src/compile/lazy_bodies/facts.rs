@@ -19,6 +19,11 @@ pub(in crate::compile) struct BodyFacts {
     /// The functions may compile on first call: their call-only facts wait for the
     /// compilation that reads them (`call_only::deferred`), unless their load compiles them.
     pub(in crate::compile) call_only_deferred: bool,
+    /// Every body is checked alone by its semantic analysis, whatever its parse's verdict
+    /// (`LazyBody::early`) says. A module compiles without an analysis of its own first
+    /// (`Vm::collect_static_module_programs`), so its compilation's checks are what rule out
+    /// its early errors.
+    pub(in crate::compile) checks_every_body: bool,
     /// Arrow functions' bodies may be taken (`first_call::Stubs::arrows`).
     arrows: bool,
     /// The bodies the skim takes where it decides them (`parse_collecting`), a body it declines
@@ -51,11 +56,18 @@ pub(in crate::compile) struct BodyFacts {
 impl BodyFacts {
     /// No facts yet, for a source compiled as `stubbing` says: its call-only facts deferred where
     /// its functions compile on first call, its arrow functions' bodies taken, its bodies skimmed.
-    pub(in crate::compile) fn deferring(stubbing: crate::compile::program_shape::Stubbing) -> Self {
+    /// `checks_every_body`: each body is checked alone, not by its parse's verdict.
+    pub(in crate::compile) fn deferring(stubbing: crate::compile::program_shape::Stubbing, checks_every_body: bool) -> Self {
         // A direct eval's streamed roots are none (its source is not replayable), so only a
         // script's large bodies are declined.
         let streams = stubbing.skim && !stubbing.arrows;
-        Self { call_only_deferred: stubbing.functions, arrows: stubbing.arrows, skim: stubbing.skim, streams, ..Self::default() }
+        Self { call_only_deferred: stubbing.functions, checks_every_body, arrows: stubbing.arrows, skim: stubbing.skim, streams, ..Self::default() }
+    }
+
+    /// Whether a body's parse verdict stands for its check (`checked_by_parse`): not where every
+    /// body is checked (`checks_every_body`), nor under `QUENCH_DEV=early-verify`.
+    fn takes_parse_verdict(&self) -> bool {
+        !self.checks_every_body && !verify_early()
     }
 
     /// Checks one function the parser hands over before releasing its body
@@ -64,19 +76,33 @@ impl BodyFacts {
     /// generation: an analysis per function between the records code generation keeps left
     /// the heap their holes (JetStream +2-3% max RSS).
     /// False where `stub` and the check needs the body's tree (`LazyBody::stub`).
+    /// A TypeScript body is checked as its source is, before admission (which runs where it compiles,
+    /// `lazy_bodies::parse`): where admission would rewrite or reject a construct in it, the body
+    /// fails the check (`needs_admission`), and the program compiles eagerly, which reports the errors
+    /// at load. Its declarations are collected where it compiles, with the program's type names
+    /// (`reparse`), since the program's names are not known until its whole tree is parsed; a stub has
+    /// no tree to check, so it is parsed whole.
     pub(in crate::compile) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early, stub, functions_inside }: oxc_parser::LazyBody<'_, '_>, global_script_calls: &[(String, String)]) -> bool {
         if self.failed {
             return true;
         }
+        let typescript = program.source_type.is_typescript();
         if stub {
-            return early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early, functions_inside));
+            return !typescript && early.is_some_and(|early| self.takes_parse_verdict() && self.checked_by_parse(program, call_assignment_targets, in_function, early, functions_inside));
         }
-        self.streamed.extend(crate::compile::statement_stream::streamable_start(program));
+        if typescript {
+            if crate::compile::typescript::needs_admission(program) {
+                self.failed = true;
+                return true;
+            }
+        } else {
+            self.streamed.extend(crate::compile::statement_stream::streamable_start(program));
+        }
         if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
             eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, crate::compile::call_only::compiles_at_load(program, false, false));
         }
         if let Some(early) = early
-            && !verify_early()
+            && self.takes_parse_verdict()
             && self.checked_by_parse(program, call_assignment_targets, in_function, early, true)
         {
             return true;
@@ -177,7 +203,11 @@ impl BodyFacts {
         if !functions_inside {
             // No function inside: no call-only facts to find, at load or where it compiles.
             self.call_only_found.push((program.span.start, program.span.end));
-            self.stream_candidates.extend(crate::compile::statement_stream::streaming_function(program).map(|function| function.span.start));
+            // A typed body does not stream: its compilation parses it again with the program's names
+            // (`reparse`), which the stream's own compilation does not.
+            if !program.source_type.is_typescript() {
+                self.stream_candidates.extend(crate::compile::statement_stream::streaming_function(program).map(|function| function.span.start));
+            }
         }
         match free_names {
             Some((start, names)) => {

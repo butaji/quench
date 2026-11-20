@@ -39,7 +39,9 @@ impl<H: Host> Vm<H> {
             && self.atom_name(atom).starts_with(INTERNAL_PROPERTY_PREFIX)
     }
 
-    pub(super) fn own_named_keys(&self, object: Value) -> Vec<Atom> {
+    /// The shape-held string keys `object` owns, each with its slot, in own-key order
+    /// (`ordered_shape`), without the engine-internal names.
+    pub(super) fn own_named_slots(&self, object: Value) -> Vec<(Atom, usize)> {
         let Some(data) = self.object_data(object) else {
             return Vec::new();
         };
@@ -49,8 +51,11 @@ impl<H: Host> Vm<H> {
                 self.heap.property_get(data, *slot).is_some()
                     && !self.is_internal_property_name(*atom)
             })
-            .map(|(atom, _)| atom)
             .collect()
+    }
+
+    pub(super) fn own_named_keys(&self, object: Value) -> Vec<Atom> {
+        self.own_named_slots(object).into_iter().map(|(atom, _)| atom).collect()
     }
 
     /// The engine-internal names an object owns, hidden from every key enumeration.

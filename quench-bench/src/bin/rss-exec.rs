@@ -1,5 +1,5 @@
 //! Runs one command and reports its peak resident set from `wait4`, for board runners that
-//! cannot read a child's resource usage themselves (a JavaScript runner on quench-node).
+//! cannot read a child's resource usage themselves (a JavaScript runner on quench).
 //!
 //! ```sh
 //! rss-exec [--evict PATH]... [--cpu N] -- COMMAND [ARGUMENT]...

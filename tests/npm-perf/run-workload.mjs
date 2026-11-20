@@ -30,7 +30,7 @@ function bunBinary() {
 }
 
 const binaries = {
-  quench: process.env.QUENCH_NODE_BIN ?? path.join(repo, "target/release/quench-node"),
+  quench: process.env.QUENCH_NODE_BIN ?? path.join(repo, "target/release/quench"),
   quenchControl: process.env.QUENCH_CONTROL_BIN,
   node: process.env.NODE_BIN ?? process.execPath,
   bun: bunBinary(),

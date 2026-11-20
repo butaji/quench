@@ -12,8 +12,8 @@ doctest = false
 name = "quench_runtime"
 
 [[bin]]
-name = "quench"
-path = "src/bin/quench.rs"
+name = "quench-runtime"
+path = "src/bin/quench-runtime.rs"
 
 [[bench]]
 name = "number_primitives"
@@ -70,7 +70,7 @@ memchr = "2"
 ryu = "1"
 itoa = "1"
 # The shape transition index keeps only child ids (`vm::shape_transitions`).
-# Default features and `raw-entry` match what quench-node enables (feature pins below).
+# Default features and `raw-entry` match what quench enables (feature pins below).
 hashbrown = { version = "0.16", features = ["raw-entry"] }
 rayon = "1.12.0"
 smallvec = "1.15.2"
@@ -95,9 +95,9 @@ libc = "0.2"
 libm = "=0.2.16"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
-# Feature pins, not used here. quench-node's dependencies (oxc_resolver, openssl, tracing)
+# Feature pins, not used here. quench's dependencies (oxc_resolver, openssl, tracing)
 # enable more features on crates this one shares. Cargo resolves features per selected
-# package, so without these `-p quench-runtime` and `-p quench-node` built oxc, cranelift and
+# package, so without these `-p quench-runtime` and `-p quench` built oxc, cranelift and
 # this crate twice under different hashes. `cargo tree -e features` on both selections must
 # list the same features for this crate's dependencies.
 serde = { version = "1", features = ["derive"] }
@@ -107,10 +107,10 @@ foldhash = "0.2"
 utf8_iter = "1"
 
 [build-dependencies]
-# Feature pin, not used by build.rs: quench-node's proc-macros enable syn "visit-mut", and
+# Feature pin, not used by build.rs: quench's proc-macros enable syn "visit-mut", and
 # syn is shared with oxc's proc-macros (see the feature pins above).
 syn = { version = "2", features = ["full", "visit-mut"] }
-# Feature pin, not used by build.rs: quench-node's syntax-check proc-macro builds oxc for the
+# Feature pin, not used by build.rs: quench's syntax-check proc-macro builds oxc for the
 # host with phf "macros", which oxc's own proc-macros share.
 phf = { version = "0.14", features = ["macros"] }
 

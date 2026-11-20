@@ -30,7 +30,7 @@ const PARALLEL_DIR: &str = "tests/node/test/parallel";
 
 fn main() -> ExitCode {
     #[cfg(target_os = "linux")]
-    if let Err(error) = quench_node::shared_run::initialize_cli_process_signals() {
+    if let Err(error) = quench::shared_run::initialize_cli_process_signals() {
         eprintln!("initialize CLI process signals: {error}");
         return std::process::ExitCode::FAILURE;
     }
@@ -128,7 +128,7 @@ fn main() -> ExitCode {
 }
 
 fn print_help() {
-    println!("run-parallel: execute Node parallel fixtures through quench-node");
+    println!("run-parallel: execute Node parallel fixtures through quench");
     println!();
     println!("usage:");
     println!("  run-parallel                         run the checked-in stage manifest");

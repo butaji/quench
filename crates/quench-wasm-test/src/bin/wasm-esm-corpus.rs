@@ -1,12 +1,12 @@
 //! Writes a Wasm-ESM training corpus: the spec testsuite's modules as `.wasm` files that
 //! `run.mjs` imports through Node's Wasm ESM integration, invoking each module's actions.
-//! It trains the static `quench-node` layout on the Wasm load path (resolution, validation,
+//! It trains the static `quench` layout on the Wasm load path (resolution, validation,
 //! lowering, instantiation, the facade and its warning, imports from a JavaScript package) and
 //! the interpreter, from generic programs rather than a scored benchmark.
 //!
 //! ```sh
 //! wasm-esm-corpus OUT_DIR WAST_FILE...
-//! quench-node OUT_DIR/run.mjs [returns]
+//! quench OUT_DIR/run.mjs [returns]
 //! ```
 //!
 //! A module is kept when everything it imports comes from `spectest`, which

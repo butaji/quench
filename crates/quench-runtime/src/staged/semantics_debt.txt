@@ -1,7 +1,6 @@
 # Semantic debt: each line allows one hit of a fingerprint (`staged/semantics_duplication_tests.rs`),
 # `fingerprint path:text`, where text is the trimmed source line. A hit outside its home that no line
 # allows fails, and so does a line no hit uses. Lines may only go away. Goal: an empty file.
-canonical_nan quench-bjit/stencils/stage.rs:} else if double.is_nan() {
 canonical_nan quench-bjit/stencils/words.rs:} else if f.is_nan() {
 clz32 quench-bjit/stencils/numeric.rs:fn clz32_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
 imul quench-bjit/stencils/builtin_rows.rs:unsafe fn imul(s: &S, record: usize) -> Option<u64> {

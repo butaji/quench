@@ -12,8 +12,6 @@
 use crate::staged::Form;
 use quench_bjit::numeric::{library, Place};
 use quench_bjit::Stencil;
-use std::collections::HashMap;
-use std::sync::Mutex;
 
 
 /// The heap catalog's macro (`quench-bjit/stencils/row_catalog.rs`, exported by the lib) and its heap row names
@@ -328,17 +326,9 @@ impl HeapRow {
 
 /// The stencil of `row`, built at compile time by rustc; a row the library lacks declines the region.
 pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
-    static TABLE: Mutex<Option<HashMap<library::HeapCode, &'static Stencil>>> = Mutex::new(None);
+    static TABLE: quench_bjit::rustc::Memo<library::HeapCode> = std::sync::OnceLock::new();
     let code = row.code();
-    let mut table = TABLE.lock().map_err(|e| e.to_string())?;
-    let table = table.get_or_insert_with(HashMap::new);
-    if let Some(found) = table.get(&code) {
-        return Ok(found);
-    }
-    let found = quench_bjit::rustc::stencil(&library::heap_name(code)).ok_or_else(|| format!("no stencil row {row:?}"))?;
-    let stencil: &'static Stencil = Box::leak(Box::new(found));
-    table.insert(code, stencil);
-    Ok(stencil)
+    quench_bjit::rustc::memoized(&TABLE, code, || quench_bjit::rustc::stencil(&library::heap_name(code)).ok_or_else(|| format!("no stencil row {row:?}")))
 }
 
 /// The runtime's heap codes are the catalog's rows (`quench-bjit/stencils/row_catalog.rs`): a `Heap` variant

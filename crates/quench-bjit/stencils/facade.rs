@@ -57,20 +57,11 @@ impl Value {
         }
     }
     /// The runtime's `Value::number`: an integral value within int32 (but not -0) as an
-    /// int32, NaN as the canonical NaN, any other double as its bits.
+    /// int32, NaN as the canonical NaN, any other double as its bits. The one copy is
+    /// `words::canonical`, which the stencil rows also call.
+    #[inline(always)]
     pub(crate) fn number(value: f64) -> Self {
-        let integer = value as i32;
-        let back = integer as f64;
-        if back < value || back > value {
-            return Self(value.to_bits());
-        }
-        if value != value {
-            return Self::NAN;
-        }
-        if integer != 0 || value.to_bits() == 0 {
-            return Self::integer(integer);
-        }
-        Self(value.to_bits())
+        Self(crate::words::canonical(value))
     }
 }
 

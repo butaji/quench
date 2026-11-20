@@ -7,7 +7,7 @@ use std::process::Command;
 use crate::{config::Config, lint::LINT, process, step::Verdict};
 
 /// The JavaScript host the kernels run on.
-pub const NODE: &str = "quench-node";
+pub const NODE: &str = "quench";
 
 /// The test262 runners: the whole suite, and one test.
 pub const TEST262_SUITE: &str = "run-all";
