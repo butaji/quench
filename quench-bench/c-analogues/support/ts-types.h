@@ -138,6 +138,9 @@ static CSigInst *cSigInstTab[1024];
 
 /* createType counts (typeCount) */
 static int cTypeCount;
+/* createType counts of the string and number literal types (stringLiteralTypes and numberLiteralTypes creations, fresh copies included) */
+static int cStringLitCount, cNumberLitCount;   /* all string and number literal types: created by cNewType */
+static int cLitRegular[2], cLitFresh[2], cLitEnum[2];   /* [0] string, [1] number: regular (getStringLiteralType), fresh, enum members */
 static int cNextTypeId = 1;
 static bool cUnportedHit;          /* set when a type or relation outside the ported subset was met */
 static int cUnportedCount;
@@ -145,6 +148,8 @@ static int cIdentityCacheCount;
 
 static TsType *cNewType(uint32_t flags) {
   cTypeCount++;
+  if (flags & TF_StringLiteral) cStringLitCount++;
+  if (flags & TF_NumberLiteral) cNumberLitCount++;
   TsType *t = ts_arena_zalloc(sizeof(TsType));
   t->flags = flags;
   t->id = cNextTypeId++;
@@ -167,6 +172,10 @@ static TsType *cIntrinsic(uint32_t flags) { return cNewType(flags); }
 
 static void cCreateIntrinsicTypes(void) {
   cTypeCount = 0;
+  cStringLitCount = cNumberLitCount = 0;
+  memset(cLitRegular, 0, sizeof cLitRegular);
+  memset(cLitFresh, 0, sizeof cLitFresh);
+  memset(cLitEnum, 0, sizeof cLitEnum);
   cNextTypeId = 1;
   cErrorType = cIntrinsic(TF_Any);
   cAnyType = cIntrinsic(TF_Any);
@@ -275,6 +284,8 @@ static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
     h = (h + 1) & mask;
   }
   TsType *l = cNewType(flags);
+  if (flags & TF_StringLiteral) cLitRegular[0]++;
+  else if (flags & TF_NumberLiteral) cLitRegular[1]++;
   l->text = text;
   l->textLen = n;
   if (cLitN == cLitCap) {
@@ -291,6 +302,8 @@ static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
 static TsType *cFreshLiteral(TsType *r) {
   if (r->litFresh) return r->litFresh;
   TsType *f = cNewType(r->flags);
+  if (r->flags & TF_StringLiteral) cLitFresh[0]++;
+  else if (r->flags & TF_NumberLiteral) cLitFresh[1]++;
   f->text = r->text;
   f->textLen = r->textLen;
   f->litNum = r->litNum;
@@ -775,6 +788,7 @@ static TsType *cDeclaredTypeOfEnum(TsSymbol *sym) {
           uint32_t fl = TF_EnumLiteral | (v.kind == EV_String ? TF_StringLiteral : TF_NumberLiteral);
           reg = cNewType(fl);
           fresh = cNewType(fl);
+          cLitEnum[v.kind == EV_String ? 0 : 1] += 2;
           reg->symbol = ms;
           fresh->symbol = ms;
           reg->litNum = v.num;
