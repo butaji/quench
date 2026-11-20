@@ -14,16 +14,22 @@
  *   - Checker, part 1 (support/ts-checker*.h): initializeTypeChecker (global merge, 6200 merge
  *     diagnostics, symbol count after init matches node's 56307), module resolution (classic),
  *     name resolution with 2304/2580, import/export member errors, duplicate index signatures (2374),
- *     redeclared variables and properties (2403/2717/2687), and the identity relation with its cache
- *     (support/ts-types.h). Late-bound well-known symbol members (Symbol.iterator, unique symbols) and
- *     generic instantiation (support/ts-instantiate.h: type mappers, type references with defaults,
- *     anonymous types, unions and intersections, cached instantiations) are ported, and base types
- *     are resolved through instantiation, so inherited members of Map, MapIterator and the esnext
- *     Iterator match node (--members). 45 of the 54 node diagnostics match; the other 9 (mapset.ts,
- *     2416/2322) need assignability. NOT PORTED: expression and statement checking (checkSourceFile
- *     bodies), this types, indexed access, conditional, mapped and template types, tuples, literal
- *     reduction, assignability, emit. The counts of types, instantiations and relation cache entries
- *     therefore stay far below node's; the run prints them next to node's numbers and fails validation.
+ *     redeclared variables and properties (2403/2717/2687).
+ *   - Checker, part 2 (support/ts-types.h, ts-instantiate.h, ts-relate.h, ts-checker-class.h): types of
+ *     declarations and type nodes (keywords, literals, references with defaults, generic aliases and
+ *     enum members, unions and intersections, tuples, mapped types over literal keys, class constructor
+ *     types, accessors), late-bound well-known symbol members, instantiation with type mappers and
+ *     caches, heritage members through instantiated bases (import-equals and namespace-qualified
+ *     bases included), the identity relation, and the assignable and subtype relations (maybe stack,
+ *     depth limits, variances by marker types, signatures, index signatures, weak types), the base type
+ *     check of classes with issueMemberSpecificError (2416 at member names, 2415).
+ *   53 of the 54 node diagnostics match. The one that does not is mapset.ts 185:5 (2322), an assignment
+ *   in a constructor whose target is an indexed access of a mapped type: expression checking is not ported.
+ *   NOT PORTED: expression and statement checking (checkSourceFile bodies, checkExpression, assignments),
+ *   this types, indexed access and conditional types in general, template and string mapping types,
+ *   intersection structure in relations, emit. The counts of types, instantiations and relation cache
+ *   entries therefore stay far below node's; the run prints them next to node's numbers and fails validation.
+ *   --members prints the member list of every class and interface and matches node's exactly.
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
