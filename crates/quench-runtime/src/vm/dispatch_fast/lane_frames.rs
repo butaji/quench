@@ -252,7 +252,7 @@ impl Side {
             keeps,
             environment,
             completion.crosses(),
-            !matches!(completion, Completion::Plain | Completion::Cross),
+            completion.needs_completion_flag(),
             !record.is_null(),
         )
     }

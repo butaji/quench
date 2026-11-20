@@ -2201,6 +2201,13 @@ impl Completion {
     #[inline] fn crosses(self) -> bool {
         matches!(self, Self::Cross | Self::CrossConstructs)
     }
+
+    /// Whether a header of this completion carries the completion side flag
+    /// (`frame::COMPLETION_FLAG`): every completion past `Plain` and `Cross`, which a return
+    /// completes by the header's side record rather than the plain pop.
+    #[inline] fn needs_completion_flag(self) -> bool {
+        !matches!(self, Self::Plain | Self::Cross)
+    }
 }
 
 /// A forwarding constructor whose activation a construction skipped

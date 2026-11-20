@@ -243,7 +243,7 @@ fn returning_chain_outermost(mut frames: impl Iterator<Item = Frame>) -> Option<
             return (!crossed).then_some((above, frame, false));
         }
         crossed |= completion == Completion::Cross;
-        if !matches!(completion, Completion::Plain | Completion::Cross) {
+        if completion.needs_completion_flag() {
             return None;
         }
         // SAFETY: the call record belongs to the caller's live view.
