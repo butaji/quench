@@ -67,6 +67,11 @@ pub(crate) trait Frame<S: Stage> {
     /// Define `register` with `value`, carrying `fact`.
     fn write(&mut self, stage: &mut S, register: Register, value: S::Word, fact: Self::Fact);
 
+    /// The fact a register's *tagged* word carries: a local holds the word `tagged` boxes, not
+    /// the source's unboxed view, so a kept store's result is canonical where the stage can say.
+    #[inline(always)]
+    fn tagged_fact(&self, register: Register) -> Self::Fact { self.fact(register) }
+
     /// Copy `source` into `destination` with its value and every fact derived from it; the
     /// word copied.
     #[inline(always)]

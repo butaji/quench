@@ -132,6 +132,13 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         register_define(stage.builder, self.registers, self.written, self.state, register, value, fact);
     }
 
+    /// A kept local store's word is the source's tagged word (`write_local` boxes it), whatever
+    /// unboxed view the source had: the result register holds it canonically.
+    #[inline(always)]
+    fn tagged_fact(&self, _register: Register) -> RegisterFact {
+        RegisterFact::canonical()
+    }
+
     #[inline(always)]
     fn move_register(&mut self, stage: &mut Emit<'_, '_>, destination: Register, source: Register) -> ir::Value {
         register_copy(stage.builder, self.registers, self.written, self.state, destination, source)
