@@ -4497,17 +4497,29 @@ impl Heap {
     ) -> bool {
         // Without `LOGS`, a store the barrier would log is left to the caller, so this one
         // makes no call; the barrier does nothing for any other.
-        if !LOGS && self.object_records.store_logs(record_id, value) {
-            return false;
+        if !LOGS {
+            if self.object_records.store_logs(record_id, value) {
+                return false;
+            }
+            // SAFETY: as the caller's contract; the barrier passed the store.
+            return unsafe { self.record_property_set_unbarriered(record_id, slot, value, layout) };
         }
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
-        let data = unsafe {
-            if LOGS {
-                self.object_records.get_live_mut_storing(record_id, value, &self.properties)
-            } else {
-                self.object_records.get_live_mut_unbarriered(record_id)
-            }
-        };
+        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value, &self.properties) };
+        let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
+        self.settle_widened();
+        stored
+    }
+
+    /// `record_property_set_flat::<false>` once the caller has tested the barrier (`store_logs`)
+    /// and the store passes it: the flat store with no barrier call.
+    ///
+    /// # Safety
+    /// As `record_property_set_flat`.
+    #[inline(always)]
+    unsafe fn record_property_set_unbarriered(&mut self, record_id: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
+        // SAFETY: the caller proves the record live; `&mut self` is exclusive.
+        let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
         self.settle_widened();
         stored
@@ -4529,13 +4541,17 @@ impl Heap {
         if record.layout_id() != hint {
             return false;
         }
+        // The barrier is tested once for both the arena store and the flat store after it.
+        if self.object_records.store_logs(record_id, value) {
+            return false;
+        }
         if crate::staged::ic::layout_form(hint) == 0
-            // SAFETY: the matched layout's shape holds `slot`, in the arena form.
-            && unsafe { self.held_arena_store(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
+            // SAFETY: the matched layout's shape holds `slot`, in the arena form; the barrier passed.
+            && unsafe { self.held_arena_store_unlogged(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
             return true;
         }
         // SAFETY: as above.
-        unsafe { self.record_property_set_flat::<false>(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
+        unsafe { self.record_property_set_unbarriered(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
     }
 
     /// The store of `value` at `slot` of the arena-form record `record_id` of exact `shape`
@@ -4550,6 +4566,16 @@ impl Heap {
         if self.object_records.store_logs(record_id, value) {
             return false;
         }
+        // SAFETY: the caller's contract; the barrier passed the store.
+        unsafe { self.held_arena_store_unlogged(record_id, shape, slot, value) }
+    }
+
+    /// `held_arena_store` once the caller has tested the barrier (`store_logs`) and it passes.
+    ///
+    /// # Safety
+    /// As `held_arena_store`, and the barrier does not log the store.
+    #[inline(always)]
+    unsafe fn held_arena_store_unlogged(&mut self, record_id: u32, shape: u32, slot: u16, value: Value) -> bool {
         // SAFETY: the caller's contract.
         let Some(ty) = (unsafe { self.properties.held_slot_word(shape, usize::from(slot), value) }) else {
             return false;

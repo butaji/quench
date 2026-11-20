@@ -17,12 +17,7 @@ pub(in crate::vm) enum EntryKind {
     /// A lane body, run from its entry cell or its call site (`run_lane_body`).
     Body,
     /// An OSR loop region, entered at the header of the loop it runs (`osr_lane::enter`).
-    Region {
-        /// The PC of the loop's header, which the region's entry starts from. Nothing reads it yet:
-        /// the descriptor names the loop, and the protocol does not branch on it.
-        #[allow(dead_code)]
-        header_pc: u32,
-    },
+    Region,
     /// A bare stencil region that reads no heap row, run on the register file (`run_bare`).
     Stencil,
     /// A numeric image or JIT body over its argument window (`run_numeric_entry`), whose status 0 is success.

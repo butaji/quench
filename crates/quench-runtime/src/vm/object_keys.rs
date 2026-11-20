@@ -49,11 +49,6 @@ impl<H: Host> Vm<H> {
         if let Some(keys) = self.own_enumerable_key_values_cached(object) {
             return Some(self.array_of(&keys));
         }
-        // The shape's key strings, made once per shape, copied into the result in one part; the
-        // allocation does not collect, so the memo's strings stay live through the copy.
-        if let Some(keys) = self.own_enumerable_key_values_cached(object) {
-            return Some(self.array_of(&keys));
-        }
         let keys: EnumerableKeys<Value> =
             self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();
         Some(self.array_of(&keys))
@@ -126,6 +121,12 @@ impl<H: Host> Vm<H> {
         if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
             return None;
         }
+        self.own_enumerable_key_values_of_shape(object, shape)
+    }
+
+    /// `own_enumerable_key_values_cached` for `object` whose `shape` the caller has tested (a
+    /// non-dictionary shape with no side descriptors), so the record is not read again.
+    pub(in crate::vm) fn own_enumerable_key_values_of_shape(&mut self, object: Value, shape: u32) -> Option<std::rc::Rc<[Value]>> {
         if let Some(Some(values)) = self.enumerable_key_value_lists.get(shape as usize) {
             return Some(values.clone());
         }
