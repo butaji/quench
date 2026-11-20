@@ -50,7 +50,6 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use crate::staged::js_step_head::JsStepHead;
 use crate::staged::record_heads::CallContextHead;
-use quench_bjit::call_record::return_status_pc;
 
 /// The staged operation a record decodes to, with no constants or sites resolved: what a
 /// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
@@ -1056,11 +1055,54 @@ macro_rules! lane_helper_inventory {
         pub(super) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
             const COUNT: usize = [$(stringify!($name)),+].len();
+            /// Each helper's name, by its index (`addresses`).
+            const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             pub(in crate::vm) fn addresses<$host: Host>() -> &'static [*const (); Self::COUNT] {
                 &[$($address as *const ()),+]
             }
         }
+
+        /// Defines the symbol `quench_lane_helper_<Name>` of every lane helper for `$host`: a tail
+        /// jump to the helper, so a call through it is the helper's own (every register and the
+        /// stack as the caller left them). These are the symbols an ahead image's object imports
+        /// (`aot_image::object`, `lane_helper_symbol`). An executable's export macro instantiates
+        /// this once (`export_native_js_operations!`); the trampolines lie in their own section,
+        /// so the function itself runs nothing.
+        #[doc(hidden)]
+        #[inline(never)]
+        // The labels are the exported symbols themselves, defined once: the one instantiation is
+        // the executable's, never inlined.
+        #[allow(named_asm_labels)]
+        pub fn define_lane_helper_symbols<$host: Host>() {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            // SAFETY: the template only lays out code in another section; it runs no instruction here.
+            unsafe {
+                core::arch::asm!(
+                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
+                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    ".popsection",
+                    $($name = sym $address),+,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+            // SAFETY: as above.
+            unsafe {
+                core::arch::asm!(
+                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
+                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    ".popsection",
+                    $($name = sym $address),+,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+        }
     };
+}
+
+/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`).
+pub(in crate::vm) fn lane_helper_symbol(index: usize) -> Option<String> {
+    LaneHelper::NAMES.get(index).map(|name| format!("quench_lane_helper_{name}"))
 }
 lane_helper_inventory! { H;
     FunctionCapture => function_capture_read_in_lane::<H>,
@@ -1246,6 +1288,19 @@ pub(super) enum LaneHelpers {
     Linked(u32, u32),
     Bound(ir::Value, u32),
 }
+/// Whether an image body (`LaneHelpers::Ahead`) runs a record no row takes as its generic semantic row
+/// (`base_region::steps::generic`) instead of leaving at it. Its semantic entry steps a VM frame (`js_semantic_callout`),
+/// which no lane activation has, and an image's bodies run on the lane runner (`Vm::install_ahead_body`), so they
+/// leave as a JIT body does and the lane's interpreter takes the record.
+const AHEAD_GENERIC_ROWS: bool = false;
+
+impl LaneHelpers {
+    /// Whether a record no row takes runs as the generic semantic row (`AHEAD_GENERIC_ROWS`), which never leaves.
+    pub(super) fn generic_rows(self) -> bool {
+        AHEAD_GENERIC_ROWS && matches!(self, Self::Ahead)
+    }
+}
+
 /// The process helper table a JIT publication binds.
 pub(super) fn process_lane_helpers<H: Host>() -> LaneHelpers {
     LaneHelpers::Process(LaneHelper::addresses::<H>())
@@ -2755,9 +2810,8 @@ unsafe extern "C" fn import_callout<H: Host>(
 /// arguments, result) -> status.
 type WasmEntry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
 
-/// The native-entry ABI of compiled Wasm functions and the public JS function entries
-/// (`NativeJsFunctionEntry`): (context, memory base or locals, memory length or local count,
-/// arguments or registers, result word) -> status.
+/// The native-entry ABI of compiled Wasm functions: (context, memory base or locals, memory
+/// length or local count, arguments or registers, result word) -> status.
 pub(super) fn native_entry_signature(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
@@ -3764,7 +3818,8 @@ pub(super) struct LaneMethod {
     pub(super) stable: lane_region::StableFacts,
     /// The word its code reads at its invalidation points, set when it retires.
     pub(super) invalidation: crate::code_dependencies::Invalidation,
-    _code: CodeMemory,
+    /// Its code, none for a body the system linker placed in the executable (`of_linked_base`).
+    _code: Option<CodeMemory>,
     entry: BodyEntry,
     /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
     /// that proves its numeric arguments calls by the entry cell's `scalar` word.
@@ -4632,61 +4687,6 @@ fn frame_in_lane() -> *mut BodyRunContext {
     unsafe { (*frame).get_or_insert_with(BodyRunContext::new) as *mut BodyRunContext }
 }
 
-
-/// The frame/register/root and exception boundary shared by JIT and linked entries.
-#[cfg(feature = "native-execution")]
-fn run_js_native_entry<H: Host>(
-    entry: super::native_program::NativeJsFunctionEntry, vm: *mut Vm<H>, program: ProgramId, payload: *mut (),
-    interrupt: *const std::sync::atomic::AtomicBool, poll_page: Option<(usize, usize)>,
-) -> Option<(u32, u64)> {
-    // Taking an idle context leaves reentrant entries no access to this live one.
-    let mut context = match unsafe { (*vm).js_native_contexts.pop() } {
-        Some(mut context) => {
-            context.bind_native_adapter(payload, interrupt, poll_page);
-            context
-        }
-        None => Box::new(CallContext::native_adapter(payload, interrupt, poll_page)),
-    };
-    context.vm = vm.cast();
-    context.interrupt_owner = unsafe { &(*vm).execution_interrupt };
-    context.program = program;
-    // Linked entries import their fixed semantic operations directly.
-    if crate::DYNAMIC_EXECUTION_ENABLED {
-        context.callout = js_step_callout::<H> as Callout as usize;
-    }
-    let (native_registers, native_locals, local_count) = unsafe {
-        let dispatch = &mut *payload.cast::<JsStepDispatch>();
-        dispatch.bind_native_storage(vm);
-        (dispatch.native_registers, dispatch.native_locals, dispatch.local_count)
-    };
-    // Frame registers and locals are the canonical tagged homes and remain
-    // rooted while native code runs. Callouts keep only raw pointers; they
-    // must not hold a Rust slice across `Vm::step` or re-entrant calls.
-    let locals = native_locals.cast::<u64>();
-    let arguments = native_registers.cast::<u64>();
-    let mut word = 0u64;
-    // SAFETY: the function's bytecode, frame and adapter payload outlive
-    // the native dispatch. The callout writes only `word` and its payload.
-    let status = unsafe {
-        enter_js_native(
-            &mut context,
-            locals as u64,
-            u64::try_from(local_count).unwrap_or(u64::MAX),
-            arguments,
-            &mut word,
-            entry,
-        )
-    };
-    let raised = context.raised.take();
-    // Idle JS adapters own no guest roots or raised completions.
-    unsafe { (*vm).js_native_contexts.push(context) };
-    match raised {
-        Some(Raised::Panic(panic)) => std::panic::resume_unwind(panic),
-        Some(Raised::Error(_)) => return None,
-        None => {}
-    }
-    Some((status, word))
-}
 
 impl JsStepDispatch {
     /// Construct and consume one owned activation in the entry's scope. The
@@ -7993,27 +7993,6 @@ pub(super) unsafe fn enter_compiled<R>(context: *mut CallContext, call: impl FnO
     returned
 }
 
-/// Runs public JS function `entry` through the host trampoline: its ABI is the Wasm entry's,
-/// typed with the opaque context pointer the AOT driver passes.
-///
-/// # Safety
-/// As `enter_wasm`, for compiled code of the `NativeJsFunctionEntry` signature.
-#[cfg(feature = "native-execution")]
-unsafe fn enter_js_native(
-    context: &mut CallContext,
-    locals: u64,
-    local_count: u64,
-    registers: *const u64,
-    out: *mut u64,
-    entry: super::native_program::NativeJsFunctionEntry,
-) -> u32 {
-    // SAFETY: both entry types are the one `native_entry_signature` ABI, so the pointer the
-    // trampoline calls is the same machine-code address under either type.
-    let entry = unsafe { std::mem::transmute::<super::native_program::NativeJsFunctionEntry, WasmEntry>(entry) };
-    // SAFETY: as the caller promises.
-    unsafe { enter_wasm(context, locals, local_count, registers, out, entry) }
-}
-
 /// The poll page compiled code faults on to stop for `interrupt`: only where the guard
 /// trampoline can resume the fault.
 fn native_poll_page(interrupt: &crate::ExecutionInterrupt) -> Option<(usize, usize)> {
@@ -8302,11 +8281,7 @@ impl<H: Host> Vm<H> {
     fn run_pushed_body(&mut self, program: &ResidualProgram, callee: usize) -> Result<super::FrameOutcome, JsError> {
         let caller_registers = self.active_registers;
         self.active_registers = self.frames[callee].registers.as_mut_ptr();
-        let result = match self.js_linked_frame_entry(callee, 0, None, true) {
-            Some(JsNativeStep { result: Ok(super::StepResult::Return(value)), .. }) => Ok(super::FrameOutcome::Complete(value)),
-            Some(entered) => self.run_frame_general_after(program, callee, entered),
-            None => self.run_frame_general(program, callee),
-        };
+        let result = self.run_frame_general(program, callee);
         self.active_registers = caller_registers;
         result
     }
@@ -9765,59 +9740,6 @@ pub(super) struct TierEntry {
     parameters: smallvec::SmallVec<[Value; 8]>,
     /// The function's entry facts, looked up once per entry (`ProgramStore::js_entry_facts`).
     facts: Rc<super::js_compiled::JsEntryFacts>,
-}
-
-#[cfg(feature = "native-execution")]
-impl<H: Host> Vm<H> {
-    /// A registered program always yields a completed transition or an error;
-    /// a malformed native exit must never select interpreter execution.
-    pub(super) fn js_linked_frame_entry(
-        &mut self, frame: usize, start_pc: usize, stop_pc: Option<usize>, allow_inline_calls: bool,
-    ) -> Option<JsNativeStep> {
-        let program = self.frames[frame].program;
-        let function = self.frames[frame].function;
-        let code = self.programs.native_js_code(program)?.clone();
-        if stop_pc == Some(start_pc) {
-            return Some(JsNativeStep {
-                instruction_pc: start_pc, next_pc: start_pc, result: Ok(StepResult::Continue),
-            });
-        }
-        let failure = |message: String| JsNativeStep {
-            instruction_pc: start_pc, next_pc: start_pc, result: Err(JsError::validation(message)),
-        };
-        JsStepDispatch::with(self, program, frame, start_pc, allow_inline_calls, true, |activation, vm| {
-            // SAFETY: the activation owns the immutable function admitted above.
-            let instruction_count = unsafe { (*activation.body).code.len() };
-            let Some(entry) = code.entries().get(function as usize).copied() else {
-                return Some(failure("linked native function is missing".into()));
-            };
-            let dispatch = &mut *activation;
-            dispatch.bind_captures(vm);
-            dispatch.stop_pc = stop_pc.unwrap_or(JS_NO_STOP_PC);
-            vm.frames[frame].pc = start_pc;
-            vm.frames[frame].pc_is_resume = false;
-            let interrupt = vm.execution_interrupt.attention_flag() as *const _;
-            let poll_page = vm.compiled_poll_page();
-            let exited = run_js_native_entry(entry, vm as *mut Self, program,
-                (dispatch as *mut JsStepDispatch).cast(), interrupt, poll_page);
-            match exited {
-                Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
-                    failure("linked native function stopped without a transition".into()))),
-                Some(exit @ (LANE_BODY_RETURNED | LANE_BODY_THREW, _)) => Some(semantic_stop::unsettle(vm, dispatch, exit)
-                    .unwrap_or_else(|| failure("linked native function threw without an exception".into()))),
-                // The AOT completion: its status names the record that completes, its value is the word.
-                Some((status, word)) => match return_status_pc(status).map(|pc| pc as usize).filter(|&pc| pc < instruction_count) {
-                    Some(pc) => Some(JsNativeStep {
-                        instruction_pc: pc,
-                        next_pc: pc + 1,
-                        result: Ok(StepResult::Return(Value::from_bits(word))),
-                    }),
-                    None => Some(failure(format!("invalid linked native exit: status {status}, continuation {word}"))),
-                },
-                None => Some(failure("linked native entry failed".into())),
-            }
-        }).unwrap_or_else(|| Some(failure("linked native function metadata is missing".into())))
-    }
 }
 
 #[cfg(test)]

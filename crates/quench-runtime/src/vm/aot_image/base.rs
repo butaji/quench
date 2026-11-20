@@ -22,6 +22,8 @@ pub(crate) struct BaseImage {
     pub(crate) pc_offsets: Box<[u32]>,
     /// The records lowered as the generic semantic row, ascending.
     pub(crate) generic: Box<[u32]>,
+    /// The registers past the function's own its rows reach (`ImageBody::scratch`).
+    pub(crate) scratch: u32,
 }
 
 /// `pc_offsets` value of a record nothing outside the body enters.
@@ -53,5 +55,5 @@ pub(crate) fn lower(
         pc_offsets[pc as usize] = u32::try_from(offset).map_err(|_| format!("code offset {offset} past the image's reach"))?;
     }
     let calls = built.calls.iter().map(|&(pc, callee, record)| CallSite { function: id, pc, callee, record }).collect();
-    Ok((BaseImage { code: RelocatableCode { code: built.code.into(), relocations }, pc_offsets: pc_offsets.into(), generic: built.generic }, calls))
+    Ok((BaseImage { code: RelocatableCode { code: built.code.into(), relocations }, pc_offsets: pc_offsets.into(), generic: built.generic, scratch: u32::try_from(built.scratch).map_err(|_| "base body scratch past u32")? }, calls))
 }

@@ -4182,4 +4182,4 @@ enum StringConstantKey<'a> {
 }
 
 #[cfg(feature = "native-execution")]
-pub use compiled::{NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
+pub use compiled::{NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};

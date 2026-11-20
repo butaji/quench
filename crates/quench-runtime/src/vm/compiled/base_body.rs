@@ -61,12 +61,30 @@ impl LaneMethod {
         // `entry_rows` follows `entry_body` (`base_region::rows_entry_offset`).
         let rows = super::base_region::row_entries(memory.pointer().addr(), body.number_guards, body.uses_this);
         Some(Self {
-            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, chains: body.chains, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
+            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, chains: body.chains, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: Some(memory), entry,
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(crate::jit_mode::Tier::Base) || !direct.is_empty(),
             direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
         })
+    }
+}
+
+impl LaneMethod {
+    /// The base body of an AOT image the system linker placed at `entry` (`aot_image::object`), of
+    /// the lane body ABI as a b-jit body's (`base_region::function`), for a function of `registers`
+    /// registers whose rows reach `scratch` past them. It inlines nothing and folds no Stable fact;
+    /// its proven calls read the image's records (`BoundCalls`), and `invalidation` is the image's word.
+    pub(in crate::vm) fn of_linked_base(entry: usize, registers: u16, scratch: usize, invalidation: Invalidation) -> Self {
+        // SAFETY: the object linker places the base body behind `entry_body`, of the lane body ABI.
+        let entry = unsafe { std::mem::transmute::<usize, BodyEntry>(entry) };
+        Self {
+            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &[]), stable: StableFacts::default(), invalidation, _code: None, entry,
+            recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&[]).reaching(scratch), fault_poll: false,
+            names_shapes: false, exits: ExitTable::default(), scratch_width: 0, framed: true,
+            caller_registers: registers, frame_reach: scratch, amortizes: true,
+            direct: Box::new([]), closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(),
+        }
     }
 }
 
@@ -239,6 +257,8 @@ pub(in crate::vm) struct ImageBody {
     pub(in crate::vm) generic: Box<[u32]>,
     /// Each direct call's site PC, proven callee and the record its row reads as planned (`Body::records`).
     pub(in crate::vm) calls: Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>,
+    /// The registers past the function's own its rows reach (`Body::scratch`), which a publication sizes its frame for.
+    pub(in crate::vm) scratch: usize,
 }
 
 /// The base body of `function` for an AOT image, over the program and its closed-world `facts`.
@@ -264,7 +284,7 @@ pub(in crate::vm) fn image_body(program: &ResidualProgram, function: u32, facts:
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
     let built = unsafe { build_body(&region, &spec, &callees, LaneHelpers::Ahead) }?;
     let calls = image_calls(&built, facts.function_facts(function))?;
-    Ok(ImageBody { code: built.code, symbols: built.symbols, entries: built.entries, generic: built.generic, calls })
+    Ok(ImageBody { scratch: built.scratch, code: built.code, symbols: built.symbols, entries: built.entries, generic: built.generic, calls })
 }
 
 /// Each direct row's record with its site and callee: the rows' `Symbol::CallRecord`s in code order are

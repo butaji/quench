@@ -11,8 +11,8 @@ impl ProgramStore {
     /// escape (compiled or linked code names every function of the program).
     pub(in crate::vm) fn accepts_chunks(&self, id: ProgramId, p: &ResidualProgram) -> bool {
         let Some(entry) = self.entry(id) else { return false };
-        #[cfg(feature = "native-execution")]
-        if entry.native_js.is_some() {
+        // A loaded AOT image names every function of the program it was compiled from.
+        if self.ahead_images(id, p).is_some() {
             return false;
         }
         std::ptr::eq(&**entry.residual, p) && entry.compiled.is_none() && entry.wasm_signatures.is_none()

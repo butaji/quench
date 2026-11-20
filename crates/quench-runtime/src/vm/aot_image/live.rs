@@ -24,14 +24,15 @@ const CODE_ALIGNMENT: usize = 16;
 
 /// An image linked into this process: its code placed and every symbol resolved.
 pub(crate) struct LiveImage {
-    /// Every base and lane body, placed once; the addresses below point into it.
-    _code: CodeMemory,
+    /// Every base and lane body, placed once; the addresses below point into it. None for an image
+    /// the system linker placed in the executable (`linked`).
+    _code: Option<CodeMemory>,
     /// The image's one invalidation word, which every body's invalidation points read; it lives
     /// as long as the code, and every lane body published from the image retires through it
     /// (`Vm::install_ahead_body`), so a broken fact of any one stops every fold.
     pub(crate) invalidation: Invalidation,
     /// The operand records the generic rows pass their semantic entries; they live as long as the code.
-    operands: Box<[[u64; 2]]>,
+    operands: std::borrow::Cow<'static, [[u64; 2]]>,
     /// The records the direct rows of proven calls read in place, and their bindings; they live as
     /// long as the code.
     pub(crate) calls: BoundCalls,
@@ -76,7 +77,60 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
     let lanes: Box<[Option<usize>]> = layout.lanes.iter().zip(&linked)
         .map(|(lane, linked)| lane.filter(|_| *linked).map(|at| start + at)).collect();
     let entries = bases.iter().zip(lanes.iter()).map(|(base, lane)| lane.unwrap_or(*base)).collect();
-    Ok(LiveImage { _code: code, invalidation, operands, calls, entries, bases, lanes })
+    Ok(LiveImage { _code: Some(code), invalidation, operands: operands.into_vec().into(), calls, entries, bases, lanes })
+}
+
+/// What the system linker placed of an image in this executable (`object::emit`): each function's
+/// entry and base body, and the image's file, operand records and call records, as its entry table
+/// lists them.
+#[derive(Clone, Copy)]
+pub(crate) struct LinkedTable {
+    pub(crate) entries: &'static [usize],
+    pub(crate) bases: &'static [usize],
+    pub(crate) file: &'static [u8],
+    pub(crate) operands: *const [u64; 2],
+    pub(crate) calls: *mut CallRecord,
+}
+
+impl LinkedTable {
+    /// The table at `table` of an image of `count` functions (`object::entry_table`): the ABI
+    /// header, `count` entries, `count` base bodies, then the file's address and length, the operand
+    /// records' address and the call records' address.
+    ///
+    /// # Safety
+    /// `table` is the aligned entry table symbol of an image of exactly `count` functions, emitted by
+    /// this build's object linker, linked unmodified and alive for the process.
+    pub(crate) unsafe fn read(table: *const u8, count: usize) -> Result<Self, String> {
+        if table.is_null() || !table.addr().is_multiple_of(std::mem::align_of::<usize>()) {
+            return Err("native image table is missing or misaligned".into());
+        }
+        let header = crate::NATIVE_JS_IMAGE_HEADER_WORDS;
+        // SAFETY: the caller's contract supplies the whole table.
+        unsafe {
+            let words = table.cast::<usize>();
+            let entries = std::slice::from_raw_parts(words.add(header), count);
+            let bases = std::slice::from_raw_parts(words.add(header + count), count);
+            let tail = words.add(header + 2 * count);
+            let file = std::slice::from_raw_parts(tail.read() as *const u8, tail.add(1).read());
+            Ok(Self { entries, bases, file, operands: tail.add(2).read() as *const [u64; 2], calls: tail.add(3).read() as *mut CallRecord })
+        }
+    }
+}
+
+/// `image` as the system linker placed it (`table`, the entry table it was read from): no code is
+/// placed or linked; a lane body a VM publishes is relinked from the image against the placed base
+/// bodies and records (`link_lane`).
+pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage, String> {
+    let count = image.functions.len();
+    if table.entries.len() != count || table.bases.len() != count {
+        return Err("native image table does not match its image".into());
+    }
+    // SAFETY: the table names the image's operand records, one per `image.operands`, alive for the
+    // process, and its writable call records (`LinkedTable::read`).
+    let (operands, calls) = unsafe { (std::slice::from_raw_parts(table.operands, image.operands.len()), BoundCalls::linked(image, table.calls)) };
+    let lanes = image.functions.iter().zip(table.entries).map(|(function, entry)| function.lane.as_ref().map(|_| *entry)).collect();
+    Ok(LiveImage { _code: None, invalidation: Invalidation::default(), operands: std::borrow::Cow::Borrowed(operands), calls,
+        entries: table.entries.into(), bases: table.bases.into(), lanes })
 }
 
 /// The lane body of `function` linked against `live`, at address 0 for a copy into a new body

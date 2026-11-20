@@ -291,6 +291,17 @@ impl LocalProofs {
 }
 
 impl State {
+    /// Takes back the tagged views `before` held where one path made its own (`TaggedView::Value`, a word
+    /// it boxed or read): that word is defined in the path's blocks, which a sibling path or the join past
+    /// both does not see. The next read derives the view again where it is made (`frame::register_tagged`).
+    fn drop_path_views(&mut self, before: &State) {
+        for (value, before) in self.values.iter_mut().zip(&before.values) {
+            if matches!(value.tagged, TaggedView::Value(_)) && value.tagged != before.tagged {
+                value.tagged = before.tagged;
+            }
+        }
+    }
+
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
