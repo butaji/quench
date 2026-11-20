@@ -284,7 +284,15 @@ static TsType *cInferReturnType(TsNode *d) {
   d->inferState = 1;
   TsType *r;
   if (!d->body) r = cAnyType;
-  else {
+  else if (d->asteriskToken || (bModifierFlags(d) & TMF_Async)) r = cUnported("inferred return of an async or generator function");
+  else if (d->body->kind != TSK_Block) {
+    /* an arrow function with an expression body: the type of the expression, widened as a return (getReturnTypeFromBody) */
+    TsType *t = cExprType(d->body);
+    if (t->flags & TF_StringLiteral) t = cStringType;
+    else if (t->flags & TF_NumberLiteral) t = cNumberType;
+    else if (t->flags & TF_BooleanLiteral) t = cBooleanType;
+    r = t;
+  } else {
     TsNode **rets = NULL;
     int nr = 0, cap = 0;
     cCollectReturns(d->body, &rets, &nr, &cap);
