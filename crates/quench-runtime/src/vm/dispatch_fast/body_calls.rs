@@ -124,7 +124,15 @@ pub(in crate::vm) unsafe extern "C" fn body_call_helper<H: Host>(_vm: u64, _resi
     let status = native_frames::in_innermost_frame(cx, || unsafe { body_call_in_lane(cx, call_pc) });
     // SAFETY: `context` is the running lane's.
     unsafe { refresh_body_bases::<H>(context) };
+    note_call_status(cx, "call", call_pc, status);
     status
+}
+
+/// With `body-leave` tracing, names a body helper's call that did not complete in place.
+fn note_call_status<H: Host>(cx: *mut LaneContext<H>, helper: &str, call_pc: u64, status: u64) {
+    if status != LANE_CALL_COMPLETED && crate::trace::Channel::BodyLeave.on() {
+        eprintln!("QUENCH_CALL_STATUS helper={helper} function={} pc={call_pc} status={status}", running_function_in_lane(cx));
+    }
 }
 
 /// `body_call_helper` with the context of the running body, which a native callee's frame made the
@@ -223,6 +231,7 @@ pub(in crate::vm) unsafe extern "C" fn body_construct_helper<H: Host>(_vm: u64, 
     // makes no collection due, so it moves no base; anything else may have.
     // SAFETY: `context` is the running lane's.
     if moved { unsafe { refresh_body_bases::<H>(context) }; }
+    note_call_status(cx, "construct", call_pc, status);
     status
 }
 

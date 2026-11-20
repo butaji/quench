@@ -217,7 +217,16 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
 /// As `body_general_step_record`.
 pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
+    let traced = crate::trace::Channel::BodyLeave.on().then(|| {
+        let cx = context as usize as *mut LaneContext<H>;
+        let function = running_function_in_lane(cx);
+        let op = unsafe { &*(*cx).code }.function(function as usize).code.get(call_pc as usize).map(|word| word.op());
+        (function, op, unsafe { self::vm(cx) }.lane_stack.has_frames())
+    });
     let status = unsafe { lane_body_step_record::<H>(vm, residual, context, call_pc) };
+    if let Some((function, op, activations)) = traced && status != super::super::compiled::LANE_CALL_COMPLETED {
+        eprintln!("QUENCH_CALL_STATUS helper=step function={function} pc={call_pc} op={op:?} activations={activations} status={status}");
+    }
     unsafe { refresh_body_bases::<H>(context) };
     // SAFETY: as `lane_body_step_record`; a region the lane runs reads its payload's bases after the step too.
     unsafe { refresh_region_bases_of::<H>(context) };
