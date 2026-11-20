@@ -1402,6 +1402,19 @@ static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsT
   int before = cUnportedCount;
   CInfer ci;
   cInferInit(&ci, tps, n);
+  /* the contextual type of the call infers from the return type at the ReturnType priority (inferTypeArguments). Only the
+   * arguments' candidates decide a type parameter that has them; one with only these candidates is unported below */
+  TsType *ctx = cContextualType(call);
+  if (ctx == cErrorType) return false;
+  if (ctx) {
+    TsType *ret0 = cReturnTypeOf(sig);
+    if (ret0 == cErrorType) return false;
+    if (cCouldContain(ret0)) {
+      ci.priority = 128;   /* InferencePriority.ReturnType */
+      cInferFrom(&ci, ctx, ret0);
+      ci.priority = 0;
+    }
+  }
   bool *notTop = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
   /* the arguments that are not context sensitive first, then the others (the second pass of resolveCall) */
   int *ord = ts_arena_alloc(sizeof(int) * (size_t)(na ? na : 1));
@@ -1505,7 +1518,6 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
     arityOk[c] = na >= pss[c].min && na <= mx;
   }
   /* the return type inference from a contextual type is not ported */
-  if (anyGeneric && cContextualType(e) != NULL) return cUnported("contextual type of a generic call");
   /* the candidate that is applicable first (in declaration order, among those of the right arity) */
   int chosen = -1;
   CSig *chosenSig = NULL;
