@@ -23,7 +23,7 @@ impl Lowering<'_, '_> {
         let function = self.tagged(state, source);
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
         let empty = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.empty_string));
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), gate: Some(self.payload) };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), gate: Some(self.payload) , payload: None};
         let Edge { before, after, slot } = transition.edge();
         let edge = Edge { before: stage.constant(before), after: stage.constant(after), slot: stage.constant(slot) };
         let name = stage.constant(word);

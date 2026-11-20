@@ -604,7 +604,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None };
     if view.uncounted {
         crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -9768,7 +9768,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None };
         let encoded = crate::staged::narrow::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();

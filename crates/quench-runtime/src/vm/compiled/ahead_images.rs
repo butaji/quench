@@ -270,7 +270,12 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn install_ahead_body(&mut self, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
         if entry.is_some() || !generic.is_empty() { return None; }
         let images = self.programs.ahead_images(self.active_program, program)?;
-        let (method, kind) = match self.ahead_lane_method(program, &images, function) {
+        let lanes_allowed = !crate::trace::Dev::AotLanes.on() || crate::trace::Dev::AotLanes.value()
+            .and_then(|range| range.split_once('-'))
+            .and_then(|(low, high)| Some((low.parse::<u32>().ok()?, high.parse::<u32>().ok()?)))
+            .is_some_and(|(low, high)| (low..=high).contains(&function));
+        let lane = if lanes_allowed { self.ahead_lane_method(program, &images, function) } else { None };
+        let (method, kind) = match lane {
             Some(method) => (method, "lane"),
             None => (Self::ahead_base_method(program, &images, function)?, "base"),
         };

@@ -3361,7 +3361,7 @@ impl Lowering<'_, '_> {
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
-        let mut stage = Emit { builder: &mut self.builder, property_values, gate };
+        let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload) };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
             stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
