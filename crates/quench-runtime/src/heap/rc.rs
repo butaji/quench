@@ -103,6 +103,11 @@ macro_rules! for_each_space_mut {
     }};
 }
 
+/// Whether any heap of the process has kept reference counts (`Heap::set_rc`): what a stage that
+/// holds no heap reads for an immediate store (`staged::Stage::immediate_store_open`). Sticky, so a
+/// heap that stops counting leaves it conservatively set.
+pub(crate) static COUNTS_SEEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 impl Heap {
     /// Whether old records keep reference counts.
     pub(crate) fn rc_active(&self) -> bool {
@@ -112,6 +117,9 @@ impl Heap {
     /// Turns counting on, from a recount of the live records, or off.
     pub(crate) fn set_rc(&mut self, on: bool) {
         self.rc_active = on;
+        if on {
+            COUNTS_SEEN.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
         self.refresh_store_watch();
         for_each_space_mut!(self, |space, _handle| space.set_rc(on));
         if on {

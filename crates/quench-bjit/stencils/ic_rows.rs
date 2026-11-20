@@ -154,6 +154,9 @@ fn known_store<const INT: bool, const A: u8, const ADMITTED: bool, const FLAT: b
         let specialized = stage.stores_specialized(payload as u64);
         store_admitted(&mut stage, specialized, ())?;
     }
+    // A Number names no heap record, so it skips the store gate, unless old records keep counts.
+    let open = stage.immediate_store_open();
+    stage.guard(open, ())?;
     let record = known_record::<SET_RECEIVER>(s, &mut stage, payload);
     if !FLAT {
         own_flat_known(&mut stage, record, 0, ())?;

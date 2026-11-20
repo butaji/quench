@@ -33,6 +33,14 @@ impl From<u64> for EmitImm { fn from(bits: u64) -> Self { Self::Const(bits) } }
 impl From<u32> for EmitImm { fn from(bits: u32) -> Self { Self::Const(u64::from(bits)) } }
 
 impl Emit<'_, '_> {
+    /// Whether the dispatch `payload`'s gate word has its counts bit clear (`STORE_WATCH_COUNTS`):
+    /// old records keep no reference counts, so an immediate store needs no barrier log.
+    pub(in crate::vm::compiled) fn counts_clear(&mut self, payload: ir::Value) -> ir::Value {
+        let watch = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.store_watch));
+        let counts = self.and_imm(watch, crate::staged::layout_offsets::STORE_WATCH_COUNTS);
+        self.raw_compare_imm(Relation::Equal, counts, 0)
+    }
+
     /// `Math.round` of the binary64 `value`: the floor, one more where the excess reaches a half;
     /// a negative that rounds to zero is `-0`.
     /// `Math.sign` (`staged::math::float_unary`): `-1` or `1` by the sign bit; NaN and both zeros are the operand.
@@ -118,6 +126,7 @@ impl Stage for Emit<'_, '_> {
     fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Add, a, b) }
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Or, a, b) }
     fn and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
+    fn shr(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::ShiftRightUnsigned, a, b) }
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
         self.add(a, v)
@@ -175,10 +184,10 @@ impl Stage for Emit<'_, '_> {
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(logged);
         let open = self.builder.append_block_param(join, types::I8);
-        let tracked = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.slots_tracked));
+        let tracked = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.store_watch));
         let untracked = self.raw_compare_imm(Relation::Equal, tracked, 0);
         super::super::emit_js_guard(self.builder, untracked, logged);
-        super::super::emit_unlogged_property_store_guard(self.builder, space, payload, record_id, value, logged);
+        super::super::emit_unlogged_property_store_guard(self, super::super::store_mark_list(space), payload, record_id, value, logged);
         let yes = self.raw_const(Lane::I8, 1);
         self.goto(join, &[yes]);
         self.builder.switch_to_block(logged);
@@ -186,6 +195,17 @@ impl Stage for Emit<'_, '_> {
         self.goto(join, &[no]);
         self.builder.switch_to_block(join);
         open
+    }
+    /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
+    /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
+    /// without counts, else closed, and the store leaves at its miss.
+    fn immediate_store_open(&mut self) -> ir::Value {
+        let Some(payload) = self.gate else {
+            let seen = crate::heap::rc::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
+            let counted = self.raw_const(Lane::I8, i64::from(seen));
+            return self.raw_compare_imm(Relation::Equal, counted, 0);
+        };
+        self.counts_clear(payload)
     }
     fn number_operator(&mut self, _operator: EmitImm, _passed: ir::Value, _constant: ir::Value) -> (ir::Value, ir::Value) {
         // Native arithmetic for computed initializer fields is the construct lowering's (thread 13): until it lands the field leaves.

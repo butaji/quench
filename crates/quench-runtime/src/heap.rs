@@ -169,7 +169,7 @@ mod prototypes;
 mod promise_record;
 pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
 mod rc_drop;
-mod rc;
+pub(crate) mod rc;
 mod record_children;
 mod records;
 mod root;
@@ -4497,17 +4497,38 @@ impl Heap {
     ) -> bool {
         // Without `LOGS`, a store the barrier would log is left to the caller, so this one
         // makes no call; the barrier does nothing for any other.
-        if !LOGS && self.object_records.store_logs(record_id, value) {
-            return false;
+        if !LOGS {
+            if self.object_records.store_logs(record_id, value) {
+                return false;
+            }
+            // SAFETY: the caller proves the record live; the barrier admitted the store.
+            return unsafe { self.record_property_set_unlogged(record_id, slot, value, layout) };
         }
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
-        let data = unsafe {
-            if LOGS {
-                self.object_records.get_live_mut_storing(record_id, value, &self.properties)
-            } else {
-                self.object_records.get_live_mut_unbarriered(record_id)
-            }
-        };
+        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value, &self.properties) };
+        let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
+        self.settle_widened();
+        stored
+    }
+
+    /// Whether the write barrier logs a store of `value` into the object record `record_id`
+    /// (`RecordSpace::store_logs`). A caller runs this once per store and passes the verdict
+    /// on: `record_property_set_unlogged` for a store it did not log.
+    #[inline(always)]
+    pub(crate) fn object_store_logs(&self, record_id: u32, value: Value) -> bool {
+        self.object_records.store_logs(record_id, value)
+    }
+
+    /// The store of `value` at `slot` of the object record `record_id` with the barrier already
+    /// run: `record_property_set_flat::<false>` without a second barrier test, for a store
+    /// `object_store_logs` did not log. Changes nothing a barrier would log.
+    ///
+    /// # Safety
+    /// `record_id` names a live object record; `object_store_logs(record_id, value)` is false.
+    #[inline(always)]
+    pub(crate) unsafe fn record_property_set_unlogged(&mut self, record_id: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
+        // SAFETY: the caller's contract; `&mut self` is exclusive.
+        let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
         self.settle_widened();
         stored
@@ -4517,8 +4538,8 @@ impl Heap {
     /// (`Object::hint_shape`) at `slot`: where the record's layout is the hint, its form the
     /// arena's (the payload is the run's start), the barrier logs nothing and the slot's owner
     /// already holds `value`'s class (`ValueArena::held_slot_word`), one owner lookup and one
-    /// class test, no join and no settling. Otherwise `record_property_set_flat::<false>` as
-    /// before; false leaves the logged or widening store to the caller.
+    /// class test, no join and no settling. Otherwise the unbarriered store, as before; false
+    /// leaves the logged or widening store to the caller. The barrier is tested once, here.
     ///
     /// # Safety
     /// `record_id` names a live object record; the hint's slot is one its shape holds.
@@ -4529,27 +4550,30 @@ impl Heap {
         if record.layout_id() != hint {
             return false;
         }
+        // The barrier's one test for this store: a logged store is the caller's.
+        if self.object_store_logs(record_id, value) {
+            return false;
+        }
         if crate::staged::ic::layout_form(hint) == 0
-            // SAFETY: the matched layout's shape holds `slot`, in the arena form.
+            // SAFETY: the matched layout's shape holds `slot`, in the arena form; the barrier admitted the store.
             && unsafe { self.held_arena_store(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
             return true;
         }
-        // SAFETY: as above.
-        unsafe { self.record_property_set_flat::<false>(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
+        // SAFETY: as above; the barrier admitted the store.
+        unsafe { self.record_property_set_unlogged(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
     }
 
     /// The store of `value` at `slot` of the arena-form record `record_id` of exact `shape`
-    /// where the barrier logs nothing and the slot's owner holds `value`'s class: one owner
-    /// lookup, one class test, the encoded write. False changes nothing, for the joining store.
+    /// where the slot's owner holds `value`'s class: one owner lookup, one class test, the
+    /// encoded write. False changes nothing, for the joining store. The barrier is not tested
+    /// here: the caller runs `object_store_logs` and calls this only for a store it did not log.
     ///
     /// # Safety
     /// `record_id` names a live object record of exact `shape` whose values are a plain arena
-    /// run (`Object::plain_arena_start`), and `shape` holds `slot`.
+    /// run (`Object::plain_arena_start`), `shape` holds `slot`, and `object_store_logs(record_id,
+    /// value)` is false.
     #[inline(always)]
     pub(crate) unsafe fn held_arena_store(&mut self, record_id: u32, shape: u32, slot: u16, value: Value) -> bool {
-        if self.object_records.store_logs(record_id, value) {
-            return false;
-        }
         // SAFETY: the caller's contract.
         let Some(ty) = (unsafe { self.properties.held_slot_word(shape, usize::from(slot), value) }) else {
             return false;

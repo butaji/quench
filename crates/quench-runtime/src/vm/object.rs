@@ -1997,11 +1997,21 @@ impl<H: Host> Vm<H> {
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
-        // A plain arena run whose slot already holds the value's class: no join, no settling.
-        if receiver.plain_arena_start().is_some()
-            // SAFETY: the exact shape holds the slot; the record's values are a plain arena run.
-            && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.slot, value) } {
-            return true;
+        // The barrier's one test for this store. Without `LOGS` a logged store is left to the
+        // caller; with it, a logged store takes the barriered store below.
+        let logged = self.heap.object_store_logs(record_id, value);
+        if logged && !LOGS {
+            return false;
+        }
+        if !logged {
+            // A plain arena run whose slot already holds the value's class: no join, no settling.
+            if receiver.plain_arena_start().is_some()
+                // SAFETY: the exact shape holds the slot; the record's values are a plain arena run; the barrier admitted the store.
+                && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.slot, value) } {
+                return true;
+            }
+            // SAFETY: this exact own-data shape proves the slot outside dictionary storage; the barrier admitted the store.
+            return unsafe { self.heap.record_property_set_unlogged(record_id, usize::from(cache.slot), value, layout) };
         }
         // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
         unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, usize::from(cache.slot), value, layout) }

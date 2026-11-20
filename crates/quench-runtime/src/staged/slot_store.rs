@@ -70,11 +70,14 @@ pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_
 
 /// Continues where a store of `value`, which the frame proved of type `fact`, into record
 /// `record_id` needs no barrier log. An immediate type (`Type::IMMEDIATE`) names no heap
-/// record, so the decision folds at specialization and no test is made; any other value asks
-/// the stage's gate.
+/// record, so it asks only whether old records keep counts (`Stage::immediate_store_open`), under
+/// which overwriting a reference still logs; any other value asks the stage's gate.
 #[inline(always)]
 pub(crate) fn gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
-    if fact.is_subtype(Type::IMMEDIATE) { return Some(()); }
+    if fact.is_subtype(Type::IMMEDIATE) {
+        let open = stage.immediate_store_open();
+        return stage.guard(open, miss);
+    }
     let open = stage.store_gate(super::StagedRecordSpace::Object, record_id, value);
     stage.guard(open, miss)
 }
