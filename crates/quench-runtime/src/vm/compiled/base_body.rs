@@ -276,9 +276,12 @@ pub(in crate::vm) fn image_body(program: &ResidualProgram, function: u32, facts:
     let (length, live) = (code.len(), program.shared_register_root_masks(function));
     let reason = if length == 0 { "an empty function" } else { "no liveness masks" };
     let region = LoopRegion::of_whole_function(code, &[], live).ok_or_else(|| format!("function {function} ({length} instructions) has no base span: {reason}"))?;
+    // An image names no heap value by its address: its constant loads take the immediates alone (`undefined`, `null`, a
+    // boolean, a Number), and any other constant is the deleted marker, which no constant row takes (`value_row`).
+    let constants: Vec<Value> = program.constants.iter().map(|constant| super::facts::immediate(constant).unwrap_or(Value::DELETED)).collect();
     let known = Known {
         program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
-        invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
+        invalidation: None, constants: &constants, typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
     let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
