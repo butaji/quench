@@ -92,14 +92,20 @@ pub(in crate::vm) unsafe extern "C" fn body_string_concat<H: Host>(_vm: u64, _re
     }
 }
 
-/// The decision of `left operator right` that runs no guest code and allocates nothing: a strict
-/// equality (`Vm::strict_equal`), `instanceof` by the remembered constructor layout
+/// The decision of `left operator right` that runs no guest code and allocates nothing: a comparison
+/// of two Numbers, a strict equality (`Vm::strict_equal`), a loose one no conversion decides, `instanceof` by the remembered constructor layout
 /// (`Vm::steady_instanceof`) and `in` of a string key in an ordinary object (`Vm::plain_in`);
 /// `None` for any other pair, which the full algorithm decides. The one rule of the interpreter's
 /// staged frame and of the lane's decide helper.
 pub(super) fn comparison_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: Value, right: Value) -> Option<bool> {
+    // Two Numbers: the Number comparison (`operations::number_relation`), which runs no guest code.
+    if let Some((holds, _)) = crate::vm::operations::number_relation(operator, left, right) {
+        return Some(holds);
+    }
     match crate::vm::operations::equality_operator(operator) {
-        Some((strict, negated)) => strict.then(|| vm.strict_equal(left, right) != negated),
+        Some((true, negated)) => Some(vm.strict_equal(left, right) != negated),
+        // A loose equality no conversion decides (`Vm::identity_equality`): nullish values, two objects, one type.
+        Some((false, _)) => vm.identity_equality(operator, left, right),
         None if operator == INSTANCEOF_OPERATOR => vm.steady_instanceof(left, right),
         None => vm.plain_in(operator, left, right).or_else(|| vm.string_relation(operator, left, right)),
     }

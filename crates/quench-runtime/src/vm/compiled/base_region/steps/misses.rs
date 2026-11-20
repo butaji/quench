@@ -1,8 +1,9 @@
 //! An image body's misses (`LaneHelpers::Ahead`): an image has no feedback and no later tier, so a
 //! row whose guard fails before its effects (a field read no site entry answers, a call its helper
 //! refuses, a builtin construction, an element store, an instruction no row takes) makes the record
-//! by the interpreter's own step in place (`LaneHelper::Step`) and continues at the next record,
-//! rather than leaving the body. The step's chain is laid out cold behind the row's run.
+//! by the interpreter's own step in place (`LaneHelper::Step`), or by its opcode's generic semantic
+//! row where the step helper does not make it (a guarded operator or comparison), and continues at
+//! the next record or the record's jump target, rather than leaving the body. The step's chain is laid out cold behind the row's run.
 
 use super::*;
 
@@ -22,7 +23,10 @@ pub(in crate::vm::compiled::base_region) fn stepped_misses(run: Planned, decoded
     if helpers != LaneHelpers::Ahead || decoded.completes || layout.inlined(pc) || run.stop.is_some() { return Ok(run); }
     let record = layout.record(pc);
     let Some(instruction) = layout.span.instruction(record) else { return Ok(run) };
-    if !steps_and_continues(instruction) { return Ok(run); }
+    // A record the step helper does not make (an operator, a comparison jump whose row guards Number operands)
+    // is made by its opcode's generic semantic row, which branches to its jump target where it jumps.
+    let stepped = steps_and_continues(instruction);
+    if !stepped && (!helpers.generic_rows() || instruction.returns_from_frame()) { return Ok(run); }
     let leaves = |exit: &Exit| matches!(*exit, Exit::Spilling(at) if at == pc) || matches!(*exit, Exit::At(at) if at == record);
     let parts = run.pre.len() + 1 + run.post.len();
     let missing = run.pre.iter().chain(std::iter::once(&run)).chain(&run.post).any(|part| part.exits.iter().any(leaves));
@@ -30,7 +34,11 @@ pub(in crate::vm::compiled::base_region) fn stepped_misses(run: Planned, decoded
     // The hot run ends in a jump to the next record, which the layout drops where that record follows;
     // the step's chain sits behind it, its first part at `slow`.
     let slow = parts + 1;
-    let mut chain = super::helper_chain(layout, pc, &layout.spills(pc + 1), (LaneHelper::Step, helpers), None)?;
+    let mut chain = if stepped {
+        super::helper_chain(layout, pc, &layout.spills(pc + 1), (LaneHelper::Step, helpers), None)?
+    } else {
+        super::generic_row(layout, decoded, pc, super::Semantic::of(layout, pc)?)?
+    };
     let mut run = run;
     let retarget = |part: &mut Planned, index: usize| {
         for exit in &mut part.exits {

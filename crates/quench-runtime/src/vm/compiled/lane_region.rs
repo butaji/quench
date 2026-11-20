@@ -3443,11 +3443,36 @@ impl Lowering<'_, '_> {
     fn decided_relation(&mut self, state: &mut State, pc: u32, operator: u32, left: Operand, right: Operand) -> Option<ir::Value> {
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
+        // A relational operator of operands no fact types (a field's value, a call's result): two
+        // int-tagged words compare as int32 in place, as the interpreter's integer path does
+        // (`operations::integer_binary`); any other pair is the helper's.
+        let Some(relation) = super::operations::NumberRelation::from_operator(operator) else {
+            return Some(self.decided_words(left, right, operator, exit));
+        };
+        let (left_int, right_int) = (is_int_tagged(&mut self.builder, left), is_int_tagged(&mut self.builder, right));
+        let ints = self.raw_binary(Binary::And, left_int, right_int);
+        let (int_block, other, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let holds = self.builder.append_block_param(join, types::I8);
+        self.branch_if(ints, (int_block, &[]), (other, &[]));
+        self.builder.switch_to_block(int_block);
+        let (left_bits, right_bits) = (self.raw_unary(Unary::Narrow(Lane::I32), left), self.raw_unary(Unary::Narrow(Lane::I32), right));
+        let int_holds = crate::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left_bits, right_bits, NumberRelationDomain::Int32);
+        self.goto(join, &[int_holds]);
+        self.builder.switch_to_block(other);
+        let decided = self.decided_words(left, right, operator, exit);
+        self.goto(join, &[decided]);
+        self.builder.switch_to_block(join);
+        Some(holds)
+    }
+
+    /// The `Decide` helper's Boolean of `left operator right`, leaving at `exit` where only the
+    /// full algorithm decides it (`comparison_decision`).
+    fn decided_words(&mut self, left: ir::Value, right: ir::Value, operator: u32, exit: ir::Block) -> ir::Value {
         let operator = self.raw_const(Lane::I64, i64::from(operator));
         let holds = self.helper_call(LaneHelper::Decide, &[left, right, operator]);
         let decided = self.raw_compare_imm(Relation::NotEqual, holds, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, decided, exit);
-        Some(self.raw_unary(Unary::Narrow(Lane::I8), holds))
+        self.raw_unary(Unary::Narrow(Lane::I8), holds)
     }
 
     /// `number === other` where `number` is a Number: equal only where `other` is a Number too
