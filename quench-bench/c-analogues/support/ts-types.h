@@ -88,6 +88,9 @@ typedef struct TsType {
   uint8_t varState;
   struct TsType *tpConstraint;
   uint8_t tpConstState;
+  /* classes and interfaces (Reference targets): the this type parameter (getDeclaredTypeOfClassOrInterface) */
+  struct TsType *thisType;
+  bool isThisType;
 } TsType;
 
 struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
@@ -196,16 +199,20 @@ static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
   return l;
 }
 
-/* the declared type of an interface or class symbol (getDeclaredTypeOfClassOrInterface) */
+static bool cIsThislessInterface(TsSymbol *sym);
+
+/* the declared type of an interface or class symbol (getDeclaredTypeOfClassOrInterface, 61868). A class, a
+ * generic interface and an interface that mentions this are references to themselves with a this type
+ * parameter (thisType, constraint: the declared type); the type arguments are the type parameters. */
 static TsType *cDeclaredTypeOfClassOrInterface(TsSymbol *sym) {
   sym = cGetMergedSymbol(sym);
   if (sym->declaredType) return sym->declaredType;
-  /* the type parameters come from the first declaration (getOuterTypeParameters + local ones) */
-  TsNode *first = sym->decls[0];
+  bool isClass = (sym->flags & SF_Class) != 0;
   TsType *t = cNewType(TF_Object);
-  t->objectFlags = (sym->flags & SF_Class) ? OF_Class : OF_Interface;
+  t->objectFlags = isClass ? OF_Class : OF_Interface;
   t->symbol = sym;
   sym->declaredType = t;
+  /* the type parameters come from the first declaration (getOuterTypeParametersOfClassOrInterface + local ones) */
   int ntp = 0;
   for (int d = 0; d < sym->ndecls; d++) {
     TsNode *dn = sym->decls[d];
@@ -223,7 +230,19 @@ static TsType *cDeclaredTypeOfClassOrInterface(TsSymbol *sym) {
       }
     }
   }
-  (void)first;
+  if (ntp || isClass || !cIsThislessInterface(sym)) {
+    t->objectFlags |= OF_Reference;
+    t->target = t;
+    t->args = t->typeParams;
+    t->nargs = t->ntypeParams;
+    t->instsInit = true;
+    cInstAdd(t, t->typeParams, t->ntypeParams, t);   /* target.instantiations: the declared type itself */
+    t->thisType = cNewType(TF_TypeParameter);
+    t->thisType->symbol = sym;
+    t->thisType->isThisType = true;
+    t->thisType->tpConstraint = t;
+    t->thisType->tpConstState = 2;
+  }
   return t;
 }
 
@@ -448,9 +467,43 @@ static TsType *cTypeFromNode(TsNode *n) {
   return t;
 }
 
+/* getThisContainer (not through arrow functions, class computed names or decorators) */
+static TsNode *cThisContainer(TsNode *n) {
+  for (TsNode *p = n->parent; p; p = p->parent) {
+    switch (p->kind) {
+      case TSK_ComputedPropertyName: p = p->parent->parent; break;   /* node = node.parent.parent */
+      case TSK_FunctionDeclaration: case TSK_FunctionExpression: case TSK_ModuleDeclaration: case TSK_ClassStaticBlockDeclaration:
+      case TSK_PropertyDeclaration: case TSK_PropertySignature: case TSK_MethodDeclaration: case TSK_MethodSignature:
+      case TSK_Constructor: case TSK_GetAccessor: case TSK_SetAccessor: case TSK_CallSignature: case TSK_ConstructSignature:
+      case TSK_IndexSignature: case TSK_EnumDeclaration: case TSK_SourceFile:
+        return p;
+      default: break;
+    }
+  }
+  return NULL;
+}
+
+/* getThisType (67621): the this type of the class or interface that contains a non-static member (or a constructor's
+ * body); other this types are an error in TypeScript and are not ported */
+static TsType *cThisTypeOfNode(TsNode *n) {
+  TsNode *c = cThisContainer(n);
+  TsNode *owner = c ? c->parent : NULL;
+  if (owner && (owner->kind == TSK_ClassDeclaration || owner->kind == TSK_ClassExpression || owner->kind == TSK_InterfaceDeclaration) &&
+      owner->symbol) {
+    bool isStatic = c->kind == TSK_ClassStaticBlockDeclaration || (bModifierFlags(c) & TMF_Static) != 0;
+    bool inBody = false;
+    if (c->kind == TSK_Constructor && c->body)
+      for (TsNode *x = n; x && !inBody; x = x->parent) inBody = x == c->body;
+    if (!isStatic && (c->kind != TSK_Constructor || inBody))
+      return cDeclaredTypeOfClassOrInterface(cGetMergedSymbol(owner->symbol))->thisType;
+  }
+  return cUnported("this type outside a class or interface member");
+}
+
 static TsType *cTypeFromNodeWorker(TsNode *n) {
   if (!n) return cErrorType;
   switch (n->kind) {
+    case TSK_ThisType: return cThisTypeOfNode(n);
     case TSK_AnyKeyword: return cAnyType;
     case TSK_UnknownKeyword: return cUnknownType;
     case TSK_NumberKeyword: return cNumberType;
@@ -726,6 +779,73 @@ static TsSymbol *cBaseSymbol(TsNode *loc, TsNode *expr) {
   return NULL;
 }
 
+/* isThislessType (61895): a type node that does not mention this (keywords, literals, arrays and references of such) */
+static bool cIsThislessTypeNode(TsNode *n) {
+  switch (n->kind) {
+    case TSK_AnyKeyword: case TSK_UnknownKeyword: case TSK_StringKeyword: case TSK_NumberKeyword: case TSK_BigIntKeyword:
+    case TSK_BooleanKeyword: case TSK_SymbolKeyword: case TSK_ObjectKeyword: case TSK_VoidKeyword:
+    case TSK_UndefinedKeyword: case TSK_NeverKeyword: case TSK_LiteralType:
+      return true;
+    case TSK_ArrayType: return cIsThislessTypeNode(n->elementType);
+    case TSK_TypeReference:
+      for (int i = 0; n->typeArguments && i < n->typeArguments->n; i++)
+        if (!cIsThislessTypeNode(n->typeArguments->v[i])) return false;
+      return true;
+    default: return false;
+  }
+}
+
+static bool cIsThislessTypeParameterNode(TsNode *tp) { return !tp->constraint || cIsThislessTypeNode(tp->constraint); }
+
+/* isThislessVariableLikeDeclaration (61900) */
+static bool cIsThislessVariableLike(TsNode *d) {
+  if (d->type) return cIsThislessTypeNode(d->type);
+  return !d->initializer;
+}
+
+/* isThislessFunctionLikeDeclaration (61906) */
+static bool cIsThislessFunctionLike(TsNode *d) {
+  bool ok = d->kind == TSK_Constructor || (d->type && cIsThislessTypeNode(d->type));
+  if (!ok) return false;
+  for (int i = 0; d->parameters && i < d->parameters->n; i++)
+    if (!cIsThislessVariableLike(d->parameters->v[i])) return false;
+  for (int i = 0; d->typeParameters && i < d->typeParameters->n; i++)
+    if (!cIsThislessTypeParameterNode(d->typeParameters->v[i])) return false;
+  return true;
+}
+
+/* isThisless (62054): a member whose declaration does not mention this (its type needs no instantiation) */
+static bool cIsThisless(TsSymbol *s) {
+  if (s->ndecls != 1) return false;
+  TsNode *d = s->decls[0];
+  switch (d->kind) {
+    case TSK_PropertyDeclaration: case TSK_PropertySignature: return cIsThislessVariableLike(d);
+    case TSK_MethodDeclaration: case TSK_MethodSignature: case TSK_Constructor: case TSK_GetAccessor: case TSK_SetAccessor:
+      return cIsThislessFunctionLike(d);
+    default: return false;
+  }
+}
+
+/* isThislessInterface (61839): an interface without this in its declarations and with no base that has a this type */
+static bool cIsThislessInterface(TsSymbol *sym) {
+  for (int d = 0; d < sym->ndecls; d++) {
+    TsNode *dn = sym->decls[d];
+    if (dn->kind != TSK_InterfaceDeclaration) continue;
+    if (dn->flags & TNF_ContainsThis) return false;
+    for (int h = 0; dn->heritageClauses && h < dn->heritageClauses->n; h++) {
+      TsNode *hc = dn->heritageClauses->v[h];
+      if (hc->extra != TSK_ExtendsKeyword) continue;
+      for (int e = 0; hc->types && e < hc->types->n; e++) {
+        TsNode *expr = hc->types->v[e]->expression;
+        if (!expr || (expr->kind != TSK_Identifier && expr->kind != TSK_PropertyAccessExpression)) continue;
+        TsSymbol *bs = cBaseSymbol(dn, expr);
+        if (!bs || !(bs->flags & SF_Interface) || cDeclaredTypeOfClassOrInterface(bs)->thisType) return false;
+      }
+    }
+  }
+  return true;
+}
+
 /* getBaseTypes (61714) for interfaces and classes: the types named by the extends clauses */
 static void cResolveBaseTypes(TsType *d) {
   if (d->basesDone) return;
@@ -764,15 +884,52 @@ static void cResolveBaseTypes(TsType *d) {
 
 static void cResolveMembers(TsType *t);
 
-/* resolveObjectTypeMembers (62289): the members of t are the declared members of src, instantiated
- * under m (the identity when m is NULL), then the inherited members of the instantiated base types. */
-static void cResolveObjectMembers(TsType *t, TsType *src, TsMapper *m) {
-  TsSymTable *own = m ? cInstantiateTable(cDeclaredMembers(src), m) : cDeclaredMembers(src);
-  if (!own) own = bTableNew();
+/* getTypeWithThisArgument (62278): a reference gets the this argument as its last type argument (a
+ * reference to a target without a this type, such as a tuple, is returned as it is) */
+static TsType *cGetTypeWithThisArgument(TsType *t, TsType *thisArg) {
+  if (t->flags & TF_Object) {
+    if (!(t->objectFlags & OF_Reference)) return t;
+    TsType *tg = t->target;
+    if (!tg->thisType || tg->ntypeParams != t->nargs) return t;
+    TsType **args = ts_arena_alloc(sizeof(TsType *) * (size_t)(t->nargs + 1));
+    if (t->nargs) memcpy(args, t->args, sizeof(TsType *) * (size_t)t->nargs);
+    args[t->nargs] = thisArg ? thisArg : tg->thisType;
+    return cTypeReference(tg, args, t->nargs + 1);
+  }
+  if (t->flags & TF_Intersection) {
+    bool changed = false;
+    TsType **types = ts_arena_alloc(sizeof(TsType *) * (size_t)(t->ntypes ? t->ntypes : 1));
+    for (int i = 0; i < t->ntypes; i++) {
+      types[i] = cGetTypeWithThisArgument(t->types[i], thisArg);
+      if (types[i] != t->types[i]) changed = true;
+    }
+    return changed ? cGetIntersectionType(types, t->ntypes) : t;
+  }
+  return t;
+}
+
+/* resolveObjectTypeMembers (62289): the members of type are the declared members of src, instantiated under
+ * the mapper from typeParams to typeArgs (the identity when they are equal), then the inherited members of
+ * the base types; the last type argument is the this argument of the bases. */
+static void cResolveObjectMembers(TsType *t, TsType *src, TsType **typeParams, TsType **typeArgs, int n) {
+  bool identity = true;
+  for (int i = 0; identity && i < n; i++) identity = typeParams[i] == typeArgs[i];
+  TsMapper *m = NULL;
+  TsSymTable *own;
+  if (identity) {
+    own = cDeclaredMembers(src);
+    if (!own) own = bTableNew();
+  } else {
+    m = cCreateTypeMapper(typeParams, typeArgs, n);
+    /* createInstantiatedSymbolTable: with a single type parameter (this) the thisless members are shared */
+    own = cInstantiateMembers(cDeclaredMembers(src), m, n == 1);
+  }
   cResolveBaseTypes(src);
   TsSymTable *res = src->nbases ? cTableCopy(own) : own;
+  TsType *thisArg = n ? typeArgs[n - 1] : NULL;
   for (int i = 0; i < src->nbases; i++) {
     TsType *bi = m ? cInstantiate(src->bases[i], m) : src->bases[i];
+    if (thisArg) bi = cGetTypeWithThisArgument(bi, thisArg);
     if (bi == cErrorType) continue;
     cResolveMembers(bi);
     if (!bi->members) continue;
@@ -855,11 +1012,22 @@ static void cResolveMembers(TsType *t) {
   t->resolved = true;
   if (t->objectFlags & OF_Mapped) { cResolveMappedMembers(t); return; }
   if (t->objectFlags & OF_Reference) {
-    /* resolveTypeReferenceMembers (62338): the identity when the arguments are the type's parameters */
+    /* resolveTypeReferenceMembers (62338): the type parameters and the this type of the target, and the type
+     * arguments padded with the type itself as the this argument */
     TsType *tg = t->target;
-    bool identity = t->nargs == tg->ntypeParams;
-    for (int i = 0; identity && i < t->nargs; i++) identity = t->args[i] == tg->typeParams[i];
-    cResolveObjectMembers(t, tg, identity ? NULL : cCreateTypeMapper(tg->typeParams, t->args, t->nargs));
+    int ntp = tg->ntypeParams + (tg->thisType ? 1 : 0);
+    TsType **tps = ts_arena_alloc(sizeof(TsType *) * (size_t)(ntp ? ntp : 1));
+    memcpy(tps, tg->typeParams, sizeof(TsType *) * (size_t)tg->ntypeParams);
+    if (tg->thisType) tps[ntp - 1] = tg->thisType;
+    TsType **args = t->args;
+    int nargs = t->nargs;
+    if (nargs != ntp) {
+      args = ts_arena_alloc(sizeof(TsType *) * (size_t)(nargs + 1));
+      if (nargs) memcpy(args, t->args, sizeof(TsType *) * (size_t)nargs);
+      args[nargs] = t;
+      nargs++;
+    }
+    cResolveObjectMembers(t, tg, tps, args, ntp);
     return;
   }
   if (t->target) {
@@ -874,7 +1042,7 @@ static void cResolveMembers(TsType *t) {
     return;
   }
   if (t->objectFlags & (OF_Interface | OF_Class)) {
-    cResolveObjectMembers(t, t, NULL);
+    cResolveObjectMembers(t, t, NULL, NULL, 0);
     return;
   }
   if (t->symbol && (t->symbol->flags & SF_Class)) { t->members = t->symbol->exports; return; }
@@ -1243,10 +1411,8 @@ static bool cIdentical(TsType *s, TsType *t) {
   if ((s->objectFlags & OF_Reference) && (t->objectFlags & OF_Reference) && s->target == t->target) {
     r = true;
     for (int i = 0; i < s->nargs && r; i++) r = cIdentical(s->args[i], t->args[i]);
-  } else if ((s->objectFlags | t->objectFlags) & OF_Reference) {
-    cUnported("identity of references with different targets");
-    r = true;
   } else {
+    /* other references (different targets) compare structurally */
     r = cIdentityStructural(s, t);
   }
   cIdDepth--;

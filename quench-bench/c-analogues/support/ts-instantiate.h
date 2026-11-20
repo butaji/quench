@@ -21,6 +21,8 @@ enum { MK_Simple = 0, MK_Array = 1, MK_Composite = 4, MK_Merged = 5 };
 typedef struct TsMapper TsMapper;
 struct TsMapper { int kind; TsType **src, **tgt; int n; TsMapper *m1, *m2; };
 
+static bool cIsThisless(TsSymbol *s);
+static TsType *cDeclaredTypeOfClassOrInterface(TsSymbol *sym);
 static int cInstTotal;              /* totalInstantiationCount (getInstantiationCount) */
 static int cInstDepth;              /* instantiationDepth */
 
@@ -148,31 +150,31 @@ static TsType *cTypeFromNodeM(TsNode *n, TsMapper *m) {
 static BName cNameOfTP(TsType *tp) { return tp->symbol->name; }
 
 /* the children of a node that can hold a reference to a type parameter (forEachChild) */
-static bool cContainsTypeRef(TsNode *n, BName name);
+static bool cContainsTypeRef(TsNode *n, TsType *tp);
 
-static bool cListHasRef(TsList *l, BName name) {
+static bool cListHasRef(TsList *l, TsType *tp) {
   for (int i = 0; l && i < l->n; i++)
-    if (cContainsTypeRef(l->v[i], name)) return true;
+    if (cContainsTypeRef(l->v[i], tp)) return true;
   return false;
 }
 
 /* containsReference (68008): a type reference to the name, or a method whose signature mentions it */
-static bool cContainsTypeRef(TsNode *n, BName name) {
+static bool cContainsTypeRef(TsNode *n, TsType *tp) {
   if (!n) return false;
   switch (n->kind) {
-    case TSK_ThisType: return false;
+    case TSK_ThisType: return tp->isThisType;
     case TSK_Identifier:
       /* a bare type reference to the name (maybeTypeParameterReference: not a generic reference's name) */
-      return n->parent && n->parent->kind == TSK_TypeReference && n->parent->typeName == n && !n->parent->typeArguments &&
-             bnEq(bnEscapeText(n->text, n->textLen), name);
+      return !tp->isThisType && n->parent && n->parent->kind == TSK_TypeReference && n->parent->typeName == n &&
+             !n->parent->typeArguments && bnEq(bnEscapeText(n->text, n->textLen), cNameOfTP(tp));
     case TSK_TypeQuery: return true;
     case TSK_MethodDeclaration: case TSK_MethodSignature:
-      return (!n->type && n->body) || cListHasRef(n->typeParameters, name) || cListHasRef(n->parameters, name) ||
-             (n->type && cContainsTypeRef(n->type, name));
+      return (!n->type && n->body) || cListHasRef(n->typeParameters, tp) || cListHasRef(n->parameters, tp) ||
+             (n->type && cContainsTypeRef(n->type, tp));
     default: break;
   }
-#define TS_CHILD(f) if (n->f && cContainsTypeRef(n->f, name)) return true;
-#define TS_LIST(f) if (cListHasRef(n->f, name)) return true;
+#define TS_CHILD(f) if (n->f && cContainsTypeRef(n->f, tp)) return true;
+#define TS_LIST(f) if (cListHasRef(n->f, tp)) return true;
   TS_CHILD(name) TS_CHILD(expression) TS_CHILD(initializer) TS_CHILD(type) TS_CHILD(body) TS_CHILD(questionToken)
   TS_CHILD(exclamationToken) TS_CHILD(asteriskToken) TS_CHILD(dotDotDotToken) TS_CHILD(literal) TS_CHILD(left)
   TS_CHILD(right) TS_CHILD(operatorToken) TS_CHILD(condition) TS_CHILD(whenTrue) TS_CHILD(whenFalse)
@@ -204,14 +206,14 @@ static bool cPossiblyReferenced(TsType *tp, TsNode *node) {
     TsNode *container = ts->decls[0]->parent;
     for (TsNode *x = node; x != container; x = x->parent)
       if (!x || x->kind == TSK_Block) return true;
-    return cContainsTypeRef(node, cNameOfTP(tp));
+    return cContainsTypeRef(node, tp);
   }
   return true;
 }
 
 /* getOuterTypeParameters (61510) without this types: the type parameters of the enclosing declarations,
  * outermost first, each declaration's own list appended without duplicates */
-static TsType **cOuterTypeParamsOf(TsNode *node, int *count) {
+static TsType **cOuterTypeParamsOf(TsNode *node, bool includeThis, int *count) {
   for (TsNode *p = node->parent; p; p = p->parent) {
     switch (p->kind) {
       case TSK_ClassDeclaration: case TSK_ClassExpression: case TSK_InterfaceDeclaration: case TSK_CallSignature:
@@ -219,9 +221,12 @@ static TsType **cOuterTypeParamsOf(TsNode *node, int *count) {
       case TSK_FunctionDeclaration: case TSK_MethodDeclaration: case TSK_FunctionExpression: case TSK_ArrowFunction:
       case TSK_TypeAliasDeclaration: {
         int n = 0;
-        TsType **outer = cOuterTypeParamsOf(p, &n);
+        TsType **outer = cOuterTypeParamsOf(p, includeThis, &n);
         int own = p->typeParameters ? p->typeParameters->n : 0;
-        TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)(n + own + 1));
+        TsType *thisTp = NULL;   /* getOuterTypeParameters: the this type of a class or interface (includeThisTypes) */
+        if (includeThis && (p->kind == TSK_ClassDeclaration || p->kind == TSK_ClassExpression || p->kind == TSK_InterfaceDeclaration) && p->symbol)
+          thisTp = cDeclaredTypeOfClassOrInterface(cGetMergedSymbol(p->symbol))->thisType;
+        TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)(n + own + 2));
         if (n) memcpy(v, outer, sizeof(TsType *) * (size_t)n);
         int cnt = n;
         for (int i = 0; i < own; i++) {
@@ -232,6 +237,7 @@ static TsType **cOuterTypeParamsOf(TsNode *node, int *count) {
           for (int k = 0; k < cnt && !seen; k++) seen = v[k] == tp;
           if (!seen) v[cnt++] = tp;
         }
+        if (thisTp) v[cnt++] = thisTp;
         *count = cnt;
         return v;
       }
@@ -252,7 +258,7 @@ static void cEnsureOuterTypeParams(TsType *target) {
   TsSymbol *s = target->symbol;
   if (!s || !s->ndecls) { cUnported("anonymous type without declaration"); return; }
   int n = 0;
-  TsType **tps = cOuterTypeParamsOf(s->decls[0], &n);
+  TsType **tps = cOuterTypeParamsOf(s->decls[0], true, &n);
   if (n && (s->flags & (SF_Method | SF_TypeLiteral))) {
     int k = 0;
     for (int i = 0; i < n; i++) {
@@ -549,16 +555,18 @@ static TsSymbol *cInstantiateSymbol(TsSymbol *sym, TsMapper *m) {
 
 /* the members of an instantiated type: each value symbol is instantiated (instantiateSymbol); the other
  * symbols are shared, their types are instantiated with the signature mapper of the type */
-static TsSymTable *cInstantiateTable(TsSymTable *src, TsMapper *m) {
+static TsSymTable *cInstantiateMembers(TsSymTable *src, TsMapper *m, bool thisOnly) {
   TsSymTable *r = bTableNew();
   if (!src) return r;
   for (int i = 0; i < src->n; i++) {
     TsSymbol *s = src->e[i].sym;
     /* createInstantiatedSymbolTable maps the properties; signatures and type parameters stay as they are */
-    bool keep = cIsSignatureName(src->e[i].key) || !(s->flags & SF_Value);
+    bool keep = cIsSignatureName(src->e[i].key) || !(s->flags & SF_Value) || (thisOnly && cIsThisless(s));
     bTableSet(r, src->e[i].key, keep ? s : cInstantiateSymbol(s, m));
   }
   return r;
 }
+
+static TsSymTable *cInstantiateTable(TsSymTable *src, TsMapper *m) { return cInstantiateMembers(src, m, false); }
 
 #endif

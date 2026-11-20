@@ -87,6 +87,7 @@ static TsNode *bFile;
 static const char *bFileName;
 static TsNode *bParent;
 static TsNode *bContainer;
+static bool bSeenThis;   /* seenThisKeyword: a this type was bound in the current interface */
 static TsNode *bBlockScopeContainer;
 static bool bInStrictMode;
 static int32_t bSymbolCount;
@@ -1697,6 +1698,13 @@ static void bBindContainer(TsNode *node, uint32_t cf) {
     bExceptionTarget = saveExc;
     bActiveLabels = saveActive;
     bHasExplicitReturn = saveHasExplicitReturn;
+  } else if (cf & CF_IsInterface) {
+    /* the binder's interface container: ContainsThis is set when a this type was bound inside it (61839) */
+    bool saveSeen = bSeenThis;
+    bSeenThis = false;
+    bBindChildren(node);
+    node->flags = bSeenThis ? (node->flags | TNF_ContainsThis) : (node->flags & ~(uint32_t)TNF_ContainsThis);
+    bSeenThis = saveSeen;
   } else {
     bBindChildren(node);
   }
@@ -1849,6 +1857,7 @@ static void bBind(TsNode *node) {
 
 static void bBindWorker(TsNode *node) {
   switch (node->kind) {
+    case TSK_ThisType: bSeenThis = true; return;
     case TSK_ClassExpression: case TSK_ClassDeclaration:
       bInStrictMode = true;
       bBindClassLikeDeclaration(node);

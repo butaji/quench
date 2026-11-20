@@ -370,7 +370,8 @@ static int cRelateVariances(TsType *s, TsType *t, uint8_t *v) {
   int result = RR_True;
   for (int i = 0; i < s->nargs; i++) {
     int r;
-    uint8_t vi = v[i];
+    /* typeArgumentsRelatedTo: the arguments past the type parameters (this) are covariant */
+    uint8_t vi = i < s->target->ntypeParams ? v[i] : VF_Covariant;
     if (vi & VF_Independent) continue;
     TsType *sa = s->args[i], *ta = t->args[i];
     if (vi == VF_Covariant) r = cIsRelatedTo(sa, ta, IS_None);
