@@ -23,7 +23,10 @@
 #include <string.h>
 #include <time.h>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 #include "support/ts-parser.h"
+#pragma GCC diagnostic pop
 #include "support/ts-immer-expected.h"
 
 #define FAIL(...)                  \
