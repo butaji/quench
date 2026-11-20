@@ -2688,6 +2688,24 @@ macro_rules! row_decode {
     };
 }
 
+/// The first `FLAG` of a comparison jump whose operator its instance fixes (`compare_jump_row`):
+/// `FLAG_COMPARE + operator`, past every other flag.
+const FLAG_COMPARE: u8 = 200;
+/// The operators a comparison jump's instance fixes: every binary operator code (`binary_operator`).
+const COMPARE_OPERATORS: u8 = 22;
+
+/// The operator a comparison jump's `flag` fixes, `None` for any other flag.
+const fn compare_flag(flag: u8) -> Option<u32> {
+    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { Some((flag - FLAG_COMPARE) as u32) } else { None }
+}
+
+/// The instance of the comparison jump row whose comparison is `operator`'s, `None` past the codes.
+fn compare_jump_row<H: Host, const BACKWARD: bool>(operator: u32) -> Option<Handler> {
+    macro_rules! rows { ($($n:literal)+) => { [$(row_jump::<H, { crate::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { FLAG_COMPARE + $n }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler),+] } }
+    let table: [Handler; COMPARE_OPERATORS as usize] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21);
+    table.get(operator as usize).copied()
+}
+
 lane_handler! {
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
@@ -2709,9 +2727,32 @@ lane_handler! {
             let header = unsafe { ip.byte_offset(site.jump) };
             next!(cx, r, header, Carried::script_in(cx, view))
         }
+        // A comparison jump's operator is a constant of its record: its first run moves the record to
+        // the instance whose `FLAG` names the operator (`compare_jump_row`), where the comparison is a
+        // constant and its row folds to that operator's test rather than matching every comparison.
+        if const { OP == crate::bytecode::Op::JumpBinaryFalse as u16 && FLAG == FLAG_UNREAD
+            && PREFIX == crate::staged::NO_LINK && COPY == crate::staged::NO_LINK && TEST == crate::staged::NO_LINK } {
+            // The operator is the record's field A (`binary_operator_field`); the instance is taken only
+            // where that operator names the comparison the record decodes to.
+            let operator = u32::from(i.a);
+            let decodes_so = matches!(Operation::<u64, ()>::decode_generic(crate::staged::Fields::wide(LaneFields::<OP>(i))),
+                Some(Operation::CompareJump { comparison, .. }) if comparison == crate::staged::Comparison::of_operator(operator));
+            if decodes_so && let Some(handler) = compare_jump_row::<H, BACKWARD>(operator) {
+                requicken::<H>(ip, handler);
+                sibling!(handler, r, ip, view)
+            }
+        }
         let fields = LaneFields::<OP>(i);
         // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
-        let decoded = if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+        let decoded = if const { compare_flag(FLAG).is_some() } {
+            match Operation::decode_generic(crate::staged::Fields::wide(fields)) {
+                Some(Operation::CompareJump { left, right, negate, .. }) => Some(Operation::CompareJump {
+                    comparison: crate::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
+                    left, right, negate,
+                }),
+                other => other,
+            }
+        } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             Operation::decode_names(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
             Operation::decode_generic(crate::staged::Fields::wide(fields))
