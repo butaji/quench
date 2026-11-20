@@ -11,9 +11,9 @@
 //! The b-jit leave stubs (`base_region::link`) emit `LaneExit::Entry.word()` and so share the
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
-use super::{lane_unit, LaneExit, LoopRegion, RETURN_STATUS_BASE};
+use super::{lane_unit, LaneExit, LoopRegion};
 use crate::value::Value;
-use quench_bjit::call_record::LaneStatus;
+use quench_bjit::call_record::{return_status_pc, LaneStatus};
 
 /// What a leave is, which a leave word holds in its top two bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,7 +79,17 @@ impl LaneExit {
     }
 
     /// How a native run that returned `status` and wrote `word` ended: the one reader of the
-    /// result. `returned_pc` names the record that completes the activation, read only then.
+    /// status word. `returned_pc` names the record that completes the activation, read only then.
+    ///
+    /// The AOT completion path: the ahead trampoline (`ahead_entry`) returns a completion as
+    /// `return_status(pc)`, which is read here as `At(pc)`, and its value is in the entry's result
+    /// slot, the `word` the caller passes. `At` carries no value, so the value is read from that
+    /// slot by the caller that holds it: `run_js_native_entry`'s linked step (`compiled.rs`).
+    ///
+    /// Readers of the status word, the ones that decode it: this function (lane bodies, OSR
+    /// regions and bare stencils, through `entry_protocol::exit`); the linked step in `compiled.rs`
+    /// (`return_status_pc`, the AOT completion's PC); `lane_body_run.rs` and `lane_region/call_frames.rs`
+    /// and `stencils/call_rows.rs`, which test a call's `LaneStatus` without decoding a leave.
     pub(super) fn read(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
         match LaneStatus::of(status) {
             Some(LaneStatus::Terminated) => Self::Terminated,
@@ -87,9 +97,8 @@ impl LaneExit {
             Some(LaneStatus::Threw) => Self::Threw { pc: returned_pc() },
             Some(LaneStatus::NativeJsStopped) => Self::decode(word),
             Some(LaneStatus::NotEntered) => Self::Stub,
-            None if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
-            None => Self::At(0),
+            None => Self::At(return_status_pc(status).map_or(0, |pc| pc as usize)),
         }
     }
 
@@ -256,6 +265,7 @@ impl ExitTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quench_bjit::call_record::return_status;
 
     const EXITS: [LaneExit; 7] = [
         LaneExit::At(0), LaneExit::At(u32::MAX as usize), LaneExit::Inlined { frame: 0, pc: 0 },
@@ -293,10 +303,20 @@ mod tests {
     fn each_named_status_round_trips_and_no_return_status_is_named() {
         for status in LaneStatus::ALL {
             assert_eq!(LaneStatus::of(status as u32), Some(status));
-            assert!((status as u32) < RETURN_STATUS_BASE, "a named status is below every return status");
+            assert!((status as u32) < return_status(0), "a named status is below every return status");
         }
-        assert_eq!(LaneStatus::of(RETURN_STATUS_BASE), None);
+        assert_eq!(LaneStatus::of(return_status(0)), None);
         assert_eq!(LaneStatus::of(0), None);
+    }
+
+    /// The AOT completion's status decodes to the record it names, and only return statuses name one.
+    #[test]
+    fn an_aot_completion_reads_as_the_leave_at_its_record() {
+        for pc in [0, 1, 2047] {
+            assert_eq!(return_status_pc(return_status(pc)), Some(pc));
+            assert_eq!(LaneExit::read(return_status(pc), Value::UNDEFINED.to_bits(), || unreachable!()), LaneExit::At(pc as usize));
+        }
+        assert_eq!(return_status_pc(LaneStatus::Threw as u32), None);
     }
 
     /// Every producer of a leave word stops with `NATIVE_JS_STOPPED` (the stencil entry thunks
