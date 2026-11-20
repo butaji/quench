@@ -43,9 +43,13 @@ ASYNC_HELPERS = """JetStream.getBinary = async function (path) {
 };
 JetStream.getString = async function (path) { return __jsRowBytes(path).toString("utf8"); };
 """
-# Runs the program as a classic script in the global realm, as JetStream's shells do: `this` is
-# (the shell runs files as scripts; this runs the same text as a CommonJS entry, as quench compile does)
-RUNNER = "require('vm').runInThisContext(require('fs').readFileSync(process.argv[1], 'utf8'), { filename: process.argv[1] });"
+# The composed program is a classic global script, as JetStream's shells run it: `this` is the global
+# object, top-level declarations are global, and no module wrapper is around it. Node and bun start
+# a CommonJS file, so the host runner sets `require` as a global (the host surface the program's
+# readers use) and evaluates the program's text in the global realm.
+RUNNER = """globalThis.require = require;
+require('vm').runInThisContext(require('fs').readFileSync(process.argv[2], 'utf8'), { filename: process.argv[2] });
+"""
 # The shell's Worker: each worker runs its script in its own realm (a vm context, as a browser worker
 # has its own global), with postMessage delivered to the parent's onmessage on a later turn.
 WORKER_SHIM = """(() => {
@@ -173,9 +177,9 @@ def file_text(a, file):
 
 
 def namespace_text(a, file):
-    """After a UMD bundle that runs as a CommonJS entry, its namespace is `module.exports`: the
-    global that the bundle sets in a shell (`this` is the global object there) is bound from it."""
-    return "".join(f"globalThis.{name} = module.exports;\n" for name, bundle in a["namespaces"] if bundle == file)
+    """A UMD bundle that sees a CommonJS `module` sets its namespace there and not on the global; in
+    the global script the bundle sets its own global, so this binds nothing unless `module` exists."""
+    return "".join(f"if (typeof module !== \"undefined\") globalThis.{name} = module.exports;\n" for name, bundle in a["namespaces"] if bundle == file)
 
 
 def expose_text(a, file):
@@ -251,8 +255,10 @@ def main(argv):
         node = argv[4] if len(argv) > 4 else "/opt/node22/bin/node"
         with tempfile.TemporaryDirectory() as directory:
             script = os.path.join(directory, "program.js")
+            runner = os.path.join(directory, "runner.js")
             open(script, "w", encoding="utf8").write(text)
-            result = subprocess.run([node, script], capture_output=True, text=True)
+            open(runner, "w", encoding="utf8").write(RUNNER)
+            result = subprocess.run([node, runner, script], capture_output=True, text=True)
             sys.stdout.write(result.stdout[-400:])
             sys.stderr.write(result.stderr[-1500:])
             return result.returncode

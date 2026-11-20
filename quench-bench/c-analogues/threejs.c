@@ -1,7 +1,7 @@
 // jetstream-row: threejs
 // jetstream-files: threejs/three.js threejs/benchmark.js
 // iterations: 120
-// jetstream-driver: deterministic=true namespace=THREE@threejs/three.js
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream's threejs row (three.js r178 benchmark.js): 8000 particles, each a
  * Group holding a CircleGeometry mesh and a LineLoop outline, animated in place and rendered
  * once per iteration. The C code does the same work per frame as the three.js path the row

@@ -30,8 +30,8 @@ const SEEDED_RANDOM: &str = "(() => {
 ";
 
 /// The shell's globals: `print`, `self`, and a failed `console.assert` as a thrown validation
-/// failure. The entry runs as a CommonJS module (as `quench compile` compiles it), so a UMD bundle's
-/// `this` is `module.exports`; `namespace=` binds that to the global the bundle sets in a shell.
+/// failure. The program is a classic global script, as the shell runs it: no module wrapper, and
+/// `require` is the host's global that the readers use.
 const HOST_SURFACE: &str = "globalThis.print = globalThis.print ?? console.log;
 const __jsRowLog = console.log.bind(console);
 globalThis.self = globalThis;
@@ -192,7 +192,9 @@ fn namespace_text(driver: &Driver, file: &str) -> String {
         .namespaces
         .iter()
         .filter(|(_, bundle)| bundle == file)
-        .map(|(global, _)| format!("globalThis.{global} = module.exports;\n"))
+        .map(|(global, _)| {
+            format!("if (typeof module !== \"undefined\") globalThis.{global} = module.exports;\n")
+        })
         .collect()
 }
 
