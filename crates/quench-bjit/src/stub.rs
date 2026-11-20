@@ -5,10 +5,13 @@
 pub use crate::class::JMP_REL32;
 use crate::class::BRANCH26;
 use crate::patch::{INSN_BYTES, PatchError, patch_branch, patch_movw};
+use crate::JMP_REL32_LEN;
 
 /// x86-64: `push imm32` then `jmp rel32`.
 const PUSH_IMM32: u8 = 0x68;
-const X86_STUB_LEN: usize = 2 * (1 + size_of::<u32>());
+/// The `push imm32`: its opcode, then the pc.
+const PUSH_IMM32_LEN: usize = 1 + size_of::<u32>();
+const X86_STUB_LEN: usize = PUSH_IMM32_LEN + JMP_REL32_LEN;
 
 /// AArch64: `movz w16, #pc` / `movk w16, #pc>>16, lsl 16` / `str x16, [sp, #-16]!` / `b routine`.
 /// x16 is the linker's scratch register (IP0): `preserve_none` never passes an argument in it, so

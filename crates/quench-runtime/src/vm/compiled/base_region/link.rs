@@ -17,7 +17,7 @@ use exits::{append_routines, exit_addresses, exit_targets, Leave, Leaves};
 #[cfg(target_arch = "x86_64")]
 pub(super) use quench_bjit::stub::JMP_REL32;
 #[cfg(target_arch = "x86_64")]
-pub(super) const JUMP_LEN: usize = 1 + std::mem::size_of::<u32>();
+pub(super) const JUMP_LEN: usize = quench_bjit::JMP_REL32_LEN;
 /// `b`: a resume stub's last row, which branches to its PC's first row.
 #[cfg(target_arch = "aarch64")]
 pub(super) const JUMP_LEN: usize = quench_bjit::patch::INSN_BYTES;

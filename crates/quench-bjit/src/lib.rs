@@ -46,8 +46,9 @@ pub const FRAME_HEADER_WORDS: u64 = 3;
 pub const PINNED: usize = 4;
 pub const PINNED_F: usize = 8;
 
-/// `jmp rel32`: the opcode byte, then the displacement a relocation patches.
-const JMP_REL32_LEN: usize = 5;
+/// `jmp rel32`: the opcode byte, then the displacement a relocation patches. The one home of the
+/// length: the stitcher's jump drop, the exit stub and a resume stub's jump all derive from it.
+pub const JMP_REL32_LEN: usize = 1 + size_of::<u32>();
 /// The pc-relative addend of a rel32 field that ends its instruction.
 const REL32_ADDEND: i64 = -4;
 
@@ -118,7 +119,8 @@ fn layout(rows: &[Row]) -> Layout {
     let (mut hot, mut hot_sizes, mut len) = (vec![0; n], vec![0; n], 0);
     for &k in &order {
         hot[k] = len;
-        let drop = match trailing_jump(rows[k].stencil) {
+        let stencil = rows[k].stencil;
+        let drop = match trailing_jump(&stencil.code, &stencil.relocs, stencil.hot_len) {
             Some((NEXT, tail)) if k + 1 < n && follows[k] == Some(k + 1) => tail,
             Some((TAKEN, tail)) if follows[k].is_some() && follows[k] == Some(rows[k].taken.unwrap_or(k + 1)) => tail,
             _ => 0,
@@ -134,17 +136,18 @@ fn layout(rows: &[Row]) -> Layout {
     Layout { hot, hot_sizes, cold, len }
 }
 
-/// The successor the unconditional jump ending a stencil's hot part names (`NEXT` or `TAKEN`) and
-/// its length: the stitcher drops it where the row it names is placed right behind.
-fn trailing_jump(stencil: &Stencil) -> Option<(u32, usize)> {
-    if stencil.next_jump.is_some() {
-        return Some((NEXT, stencil.tail_len));
-    }
-    stencil.relocs.iter().filter(|r| r.index == TAKEN).find_map(|r| {
+/// The successor the unconditional jump ending a hot part names (`NEXT` or `TAKEN`) and its length:
+/// the jump is the hot part's last bytes, so it starts `len` bytes before `hot_len`. A rel32 counts
+/// only after the `0xE9` opcode and a `b` only with the branch encoding, so a rel32 that is the tail
+/// of some other instruction (a `jcc rel32`) is never taken for a jump and its bytes are never
+/// dropped. The stitcher drops it where the row it names is placed right behind; `rustc` uses the
+/// same check for a stencil's `next_jump`.
+fn trailing_jump(code: &[u8], relocs: &[Reloc], hot_len: usize) -> Option<(u32, usize)> {
+    relocs.iter().filter(|r| r.index == NEXT || r.index == TAKEN).find_map(|r| {
         let at = r.offset as usize;
         match r.class {
-            class::REL32 if at + IMM32_WIDTH == stencil.hot_len && at >= 1 && stencil.code[at - 1] == class::JMP_REL32 => Some((TAKEN, JMP_REL32_LEN)),
-            class::BRANCH26 if at + patch::INSN_BYTES == stencil.hot_len && stencil.code[at + 3] & 0xfc == 0x14 => Some((TAKEN, patch::INSN_BYTES)),
+            class::REL32 if at + IMM32_WIDTH == hot_len && at >= 1 && code[at - 1] == class::JMP_REL32 => Some((r.index, JMP_REL32_LEN)),
+            class::BRANCH26 if at + patch::INSN_BYTES == hot_len && code[at + 3] & 0xfc == 0x14 => Some((r.index, patch::INSN_BYTES)),
             _ => None,
         }
     })
@@ -252,8 +255,7 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
 
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
 pub mod rustc {
-    use super::{class, Imm32, Reloc, Stencil, JMP_REL32_LEN, NEXT};
-    use crate::patch::INSN_BYTES;
+    use super::{class, trailing_jump, Imm32, Reloc, Stencil, NEXT};
 
     /// A stencil as `build.rs` read it from the object: relocations as (offset, class, index, addend).
     pub(crate) struct RawStencil {
@@ -317,21 +319,11 @@ pub mod rustc {
             }
         }
         let len = raw.code.len();
-        let (next_jump, tail_len) = trailing_next_jump(&relocs, raw.hot_len).map_or((None, 0), |(at, tail)| (Some(at), tail));
+        let (next_jump, tail_len) = match trailing_jump(raw.code, &relocs, raw.hot_len) {
+            Some((NEXT, tail)) => (Some(raw.hot_len - tail), tail),
+            _ => (None, 0),
+        };
         Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len, hot_len: raw.hot_len })
-    }
-
-    /// Where the jump to the next row starts and its length, when it is the hot part's last
-    /// instruction: `jmp rel32` (the relocation is its last four bytes) or AArch64 `b`.
-    fn trailing_next_jump(relocs: &[Reloc], hot_len: usize) -> Option<(usize, usize)> {
-        relocs.iter().filter(|r| r.index == NEXT).find_map(|r| {
-            let at = r.offset as usize;
-            match r.class {
-                class::REL32 if at + size_of::<i32>() == hot_len => Some((at - 1, JMP_REL32_LEN)),
-                class::BRANCH26 if at + INSN_BYTES == hot_len => Some((at, INSN_BYTES)),
-                _ => None,
-            }
-        })
     }
 }
 
