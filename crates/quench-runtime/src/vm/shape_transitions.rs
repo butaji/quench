@@ -131,11 +131,13 @@ mod tests {
         let key = PropertyKey::string(0);
         let attributes = DEFAULT_SHAPE_ATTRIBUTES.data().unwrap();
         let added = shapes.len() as u32;
+        let parent_facts = shapes[parent as usize].facts;
         push_child(&mut shapes, Shape::child(Some(parent), ShapeTransition::Add { key, slot: 0, attributes },
-            1, None, shapes[parent as usize].facts));
+            1, None, parent_facts));
         let dictionary = shapes.len() as u32;
+        let added_facts = shapes[added as usize].facts;
         push_child(&mut shapes, Shape::child(Some(added), ShapeTransition::Dictionary { trigger: DictionaryTrigger::PropertyCount },
-            1, Some(DictionaryTrigger::PropertyCount), shapes[added as usize].facts));
+            1, Some(DictionaryTrigger::PropertyCount), added_facts));
         for child in [added, dictionary] {
             let mut index = ShapeTransitionIndex::default();
             assert!(!index.try_insert_child(&shapes, u32::MAX));

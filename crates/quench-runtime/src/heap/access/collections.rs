@@ -3,7 +3,7 @@
 //! storage behind these accessors can move without touching a single call site. Each of
 //! them is a record of its own family (`Heap::collection_records`, `Heap::symbol_records`).
 
-use super::super::{CollectionRecord, CollectionStorage, Entries, Heap, Object, SymbolData};
+use super::super::{CollectionRecord, CollectionStorage, Entries, Heap, Object, SymbolData, WasmGcRecord};
 use crate::value::Value;
 
 impl Heap {
