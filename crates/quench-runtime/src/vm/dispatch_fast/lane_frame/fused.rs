@@ -516,6 +516,11 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
         let Some((_, _, backward, mode, numbers, number_b, fused)) = pairs.iter().find(|(a, b, _, _, _, _, _)| a(first) && b(second)) else {
             continue;
         };
+        // An arithmetic `Binary` runs its own operator row (`specialize_plain_operators`), whose operator is a
+        // parameter of the instantiation: a pair would decode and dispatch on it at run time instead.
+        if [pc, pc + 1].into_iter().any(|at| super::super::arithmetic_binary(decoded[at])) {
+            continue;
+        }
         let direction = usize::from(backward(second));
         // A move or an add of a constant at a hot OSR latch stays its own record, which
         // `install_loop_sites` read as the latch's (`derive_lane_view`'s `then_fuses`).
