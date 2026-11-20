@@ -5,7 +5,7 @@
 # analogue's default run from c-analogues.tsv. Host: Apple M4, macOS, arm64.
 row	iterations	aot_ms	node_ms	bun_ms	c_ms	aot_over_c	node_over_c	bun_over_c	status
 Basic	120	5267.699	214.261	180.168	510	10.33	0.42	0.35	ok
-ML	120	-	-	-	210	-	-	-	compile-failed
+ML	60	-	-	-	210	-	-	-	timeout-600s
 UniPoker	120	4714.190	482.076	278.848	900	5.24	0.54	0.31	ok
 ai-astar	120	2826.949	371.103	293.092	580	4.87	0.64	0.51	ok
 air	120	4098.483	258.552	200.211	-	-	-	-	ok
