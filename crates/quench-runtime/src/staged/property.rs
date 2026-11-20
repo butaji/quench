@@ -580,7 +580,7 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
     match rest {
         [IcOp::LoadSlot { slot, form, storage_len, rep }] =>
             kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
-        _ => ic::run(stage, rest, at, records, miss),
+        _ => ic::run_unrolled(stage, rest, at, records, miss),
     }
 }
 

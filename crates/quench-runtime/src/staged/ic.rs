@@ -96,10 +96,24 @@ impl<W, C> Reached<W, C> {
 #[inline(always)]
 pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
+    for op in ops {
+        if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
+    }
+    None
+}
+
+/// `run` with its first ops written out one by one, for the read after a receiver's shape guard
+/// (`property::run_owned`), whose list a stencil row holds as a constant of a few ops. Each step
+/// folds to its op's arm, so the row makes no call and counts its holes at specialization; a loop
+/// there kept every arm and counted holes at run time. Only that site unrolls: inlined at every
+/// `run`, the copies tripled the compile time of a heap shard.
+#[inline(always)]
+pub(crate) fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
+    miss: S::Miss) -> Option<S::Word> {
     // The first ops one by one, then any rest in a loop: a stencil row's list is a constant of at most
     // `UNROLLED` ops, so each step folds to its op's arm and the row makes no call (a loop over the list
     // would keep every arm, and the holes each arm takes would be counted at run time).
-    const UNROLLED: usize = 6;
+    const UNROLLED: usize = 4;
     macro_rules! step {
         ($index:expr) => {
             if let Some(op) = ops.get($index) {
@@ -109,7 +123,7 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             }
         };
     }
-    step!(0); step!(1); step!(2); step!(3); step!(4); step!(5);
+    step!(0); step!(1); step!(2); step!(3);
     for op in ops.get(UNROLLED..).unwrap_or(&[]) {
         if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
     }

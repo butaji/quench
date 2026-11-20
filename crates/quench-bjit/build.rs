@@ -137,7 +137,8 @@ fn main() {
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
-    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu))).collect();
+    let sources = sources_digest(manifest);
+    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu, sources))).collect();
     // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
     if env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() != "apple" {
         for (name, (rows, _)) in &built {
@@ -190,7 +191,7 @@ type Rows = Vec<(String, String)>;
 
 /// Compiles every shard for `cpu` (at most `shards::workers` rustc processes at once), reads each
 /// object's rows, and merges them into the sorted library with its counts.
-fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
+fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>, sources: u64) -> (Rows, Counts) {
     // `QUENCH_STENCIL_WORKERS` caps the rustc processes on a box whose memory, not its cores, bounds them.
     // Unset, one worker per core that the box's available memory holds a shard's rustc for (`SHARD_MEMORY`).
     let parallelism = env::var("QUENCH_STENCIL_WORKERS").ok().and_then(|jobs| jobs.parse().ok())
@@ -207,10 +208,18 @@ fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Ve
                             return done;
                         }
                         // A shard of heap rows takes the most memory: one compiles at a time (`HEAVY_SHARD`).
-                        let heavy = fs::read_to_string(instance_file(out, shard)).is_ok_and(|rows| rows.contains("heap_row!"));
-                        let guard = heavy.then(|| HEAVY_SHARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-                        let object = compile(out, shard, cpu);
-                        drop(guard);
+                        let rows = fs::read_to_string(instance_file(out, shard)).unwrap_or_default();
+                        let cached = cached_object(out, shard, cpu, sources, &rows);
+                        let object = if cached.exists() {
+                            cached
+                        } else {
+                            let heavy = rows.contains("heap_row!");
+                            let guard = heavy.then(|| HEAVY_SHARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+                            let object = compile(out, shard, cpu);
+                            drop(guard);
+                            keep_object(&object, &cached);
+                            object
+                        };
                         done.push(stencil_rows(arch, read(&fs::read(object).unwrap())));
                     }
                 })
@@ -224,6 +233,53 @@ fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Ve
     drop(failed);
     let counts = built.iter().fold(Counts::default(), |sum, (_, c)| Counts { framed: sum.framed + c.framed, unchained: sum.unchained + c.unchained });
     (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
+}
+
+/// The digest of every stencil source (`sources::watched`), the flags file and the opcode catalog,
+/// by content: the part of a shard object's key that every shard shares.
+fn sources_digest(manifest: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut files: Vec<PathBuf> = sources::watched(manifest).into_iter().filter(|path| path.is_file()).collect();
+    files.push(manifest.join(RUSTC_FLAGS_FILE));
+    files.push(manifest.join("../quench-runtime/src/bytecode.rs"));
+    files.push(manifest.join("supernodes.txt"));
+    files.sort();
+    for file in files {
+        file.hash(&mut hasher);
+        fs::read(&file).unwrap_or_default().hash(&mut hasher);
+    }
+    env::var("RUSTC").unwrap_or_default().hash(&mut hasher);
+    env::var("TARGET").unwrap_or_default().hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Where the object of `shard` (its instance text `rows`) is kept once built: a store outside
+/// `OUT_DIR`, keyed by the sources, the CPU and the rows, so a rerun with the same inputs (one that
+/// timed out, or one whose crate hash moved for an edit no stencil reads) copies the object instead
+/// of recompiling it. Sound because a shard object is a function of exactly those inputs: rustc,
+/// the target and the flags are in `sources`, and `fixed_rows` follows the shard index, which is keyed too.
+/// `QUENCH_STENCIL_CACHE` names the store; unset, it is `stencil-cache` beside the build's `target` profile dirs.
+fn cached_object(out: &Path, shard: usize, cpu: Option<&str>, sources: u64, rows: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (sources, cpu, shard == FIXED_ROWS_SHARD, rows).hash(&mut hasher);
+    let store = env::var_os("QUENCH_STENCIL_CACHE").map(PathBuf::from).unwrap_or_else(|| {
+        // OUT_DIR is target/<profile>/build/<crate-hash>/out.
+        out.ancestors().nth(4).unwrap_or(out).join("stencil-cache")
+    });
+    store.join(format!("{:016x}.o", hasher.finish()))
+}
+
+/// Keeps a copy of the built `object` at `cached`, written whole before it is named, so a run cut
+/// off midway leaves no partial object under a key.
+fn keep_object(object: &Path, cached: &Path) {
+    let Some(store) = cached.parent() else { return };
+    if fs::create_dir_all(store).is_err() { return; }
+    let partial = cached.with_extension(format!("{}.part", std::process::id()));
+    if fs::copy(object, &partial).is_ok() {
+        let _ = fs::rename(&partial, cached);
+    }
 }
 
 fn compile(out: &Path, shard: usize, cpu: Option<&str>) -> PathBuf {
