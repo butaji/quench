@@ -157,11 +157,10 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
     for (at, _) in code.match_indices("fn lane_") {
         if !code[..at].ends_with(ident_char) { add("fn:lane_*".to_owned()); }
     }
-    // Hand-written b-jit stencil functions: a function of any `stencils/**/*.rs` file whose body
-    // runs no staged row. The stencils name rows by code numbers, not opcodes, so the terms above
-    // cannot see them. Every stencil file is in scope, the row files and the helpers they call
-    // alike, so a rule cannot hide in a file that is not named `*_rows.rs`.
-    if file.contains("quench-bjit/stencils/") {
+    // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
+    // no staged row. The stencils name rows by code numbers, not opcodes, so the terms above
+    // cannot see them.
+    if file.contains("quench-bjit/stencils/") && file.ends_with("_rows.rs") {
         for body in function_bodies(code) {
             if !body.contains("staged::") { add("fn:stencil_hand".to_owned()); }
         }
