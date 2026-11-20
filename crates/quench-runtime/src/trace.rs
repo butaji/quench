@@ -177,8 +177,8 @@ setting! {
         /// counts (`--dump-before=quench_ir_mark`): the per-primitive instruction budget
         /// (`quench-gate`'s `ir-budget` step) measures each primitive between two marks.
         IrMark = "ir-mark",
-        /// Emitted direct calls push native headers (one-frame-one-call.md F5) instead of taking
-        /// the helper row, to verify the emitted push and its readers before it is the default.
-        NativeFrames = "native-frames",
+        /// Emitted direct calls take the helper row instead of pushing native headers
+        /// (one-frame-one-call.md F5), which is the default: to compare against the old path.
+        NoNativeFrames = "no-native-frames",
     }
 }
