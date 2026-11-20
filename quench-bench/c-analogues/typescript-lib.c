@@ -31,6 +31,8 @@
 #include "support/ts-immer-expected.h"
 #include "support/ts-binder.h"
 #include "support/ts-binder-expected.h"
+#include "support/ts-checker.h"
+#include "support/ts-checker-expected.h"
 
 #define FAIL(...)                  \
   do {                             \
@@ -176,18 +178,22 @@ static void loadFilesJson(const char *path) {
   free(src);
 }
 
-/* Parses and binds every file once; with verify set, compares each file with node and returns the
- * number of files that differ. */
-static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents, long *sumSymbols, long *sumFlows) {
+/* Parses and binds every file, in program order, into one arena (the checker needs all of them).
+ * With verify set, compares each file with node. Returns the number of files that differ. */
+static TsNode *programFiles[EXPECTED_PROGRAM_FILES];
+static TsNode *srcSf[EXPECTED_FILE_COUNT + 8];
+
+static int parseProgram(int verify, long *sumNodes, long *sumIdents, long *sumSymbols, long *sumFlows) {
   int bad = 0;
   *sumNodes = 0;
   *sumIdents = 0;
   *sumSymbols = 0;
   *sumFlows = 0;
+  ts_arena_reset();
   for (int i = 0; i < sourceCount; i++) {
-    ts_arena_reset();
     TsNode *sf = parseSourceFile(sources[i].name, sources[i].text, sources[i].len, sources[i].kind, 0);
     tsBindSourceFile(sf, sources[i].name);
+    srcSf[i] = sf;
     *sumNodes += P.nodeCount;
     *sumIdents += P.identifierCount;
     *sumSymbols += sf->binderSymbolCount;
@@ -214,7 +220,58 @@ static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents, long *s
       bad++;
     }
   }
+  /* program order: getSourceFiles() of node (support/ts-checker-expected.h) */
+  for (int k = 0; k < EXPECTED_PROGRAM_FILES; k++) {
+    programFiles[k] = NULL;
+    for (int i = 0; i < sourceCount; i++)
+      if (strcmp(sources[i].name, expectedProgramOrder[k]) == 0) { programFiles[k] = srcSf[i]; break; }
+    if (!programFiles[k]) { printf("NOT IN PROGRAM %s\n", expectedProgramOrder[k]); bad++; }
+  }
   return bad;
+}
+
+/* ---- checker run: initializeTypeChecker, then the diagnostics of getPreEmitDiagnostics ---- */
+static long checkerSymbolCount;
+
+static int cmpDiagOrder(const void *pa, const void *pb) {
+  const CDiag *a = pa, *b = pb;
+  if (a->file != b->file) {
+    if (!a->file) return -1;
+    if (!b->file) return 1;
+    int c = strcmp(a->file->fileName, b->file->fileName);
+    if (c) return c;
+  }
+  if (a->start != b->start) return a->start < b->start ? -1 : 1;
+  return a->code < b->code ? -1 : a->code > b->code;
+}
+
+/* Compares the diagnostics with node's list (sorted as getPreEmitDiagnostics sorts them). */
+static int compareDiagnostics(int verbose) {
+  qsort(cDiags, (size_t)cDiagCount, sizeof(CDiag), cmpDiagOrder);
+  int mismatch = 0, matched = 0;
+  for (int i = 0; i < EXPECTED_DIAG_COUNT || i < cDiagCount; i++) {
+    const ExpectedDiag *e = i < EXPECTED_DIAG_COUNT ? &expectedDiags[i] : NULL;
+    const CDiag *d = i < cDiagCount ? &cDiags[i] : NULL;
+    int line = 0, col = 0;
+    if (d && d->file) cLineCol(d->file, d->start, &line, &col);
+    bool same = e && d && d->code == e->code && line == e->line && col == e->column &&
+                ((e->file == NULL && d->file == NULL) || (e->file && d->file && strcmp(e->file, d->file->fileName) == 0));
+    if (same) { matched++; continue; }
+    mismatch++;
+    if (verbose)
+      printf("DIAG MISMATCH #%d expected %s %d:%d %d, got %s %d:%d %d\n", i,
+             e ? (e->file ? e->file : "-") : "(none)", e ? e->line : 0, e ? e->column : 0, e ? e->code : 0,
+             d ? (d->file ? d->file->fileName : "-") : "(none)", line, col, d ? d->code : 0);
+  }
+  if (verbose) printf("diagnostics matched %d of %d (produced %d)\n", matched, EXPECTED_DIAG_COUNT, cDiagCount);
+  return mismatch;
+}
+
+static void runChecker(void) {
+  cDiagCount = 0;
+  cNDupPairs = 0;
+  cInitializeGlobals(programFiles, EXPECTED_PROGRAM_FILES);
+  cReportAmalgamatedDuplicates();
 }
 
 int main(int argc, char **argv) {
@@ -226,18 +283,26 @@ int main(int argc, char **argv) {
   if (sourceCount != EXPECTED_FILE_COUNT) FAIL("expected %d files, found %d", EXPECTED_FILE_COUNT, sourceCount);
 
   long sumNodes = 0, sumIdents = 0, sumSymbols = 0, sumFlows = 0;
-  int bad = parseAllAndCheck(1, &sumNodes, &sumIdents, &sumSymbols, &sumFlows);
+  int bad = parseProgram(1, &sumNodes, &sumIdents, &sumSymbols, &sumFlows);
   if (bad) FAIL("%d files differ from node", bad);
+  runChecker();
+  checkerSymbolCount = cSymbolCount;
+  printf("checker init: symbols %ld (node %d), diagnostics produced %d\n", sumSymbols + checkerSymbolCount,
+         EXPECTED_SYMBOLS_AFTER_INIT, cDiagCount);
+  int diagBad = compareDiagnostics(1);
 
   double elapsed = 0;
   for (int it = 0; it < iterations; it++) {
     double start = now_ms();
-    parseAllAndCheck(0, &sumNodes, &sumIdents, &sumSymbols, &sumFlows);
+    parseProgram(0, &sumNodes, &sumIdents, &sumSymbols, &sumFlows);
+    runChecker();
     elapsed += now_ms() - start;
   }
   printf("typescript-lib %d iterations %.3f ms\n", iterations, elapsed);
   printf("validated: %d files match node (nodeCount, identifierCount, binder symbolCount and flow node count); sum nodes %ld "
-         "identifiers %ld symbols %ld flow nodes %ld; checker not yet ported\n",
+         "identifiers %ld symbols %ld flow nodes %ld\n",
          sourceCount, sumNodes, sumIdents, sumSymbols, sumFlows);
-  return 0;
+  if (diagBad) printf("validation FAILED: %d diagnostics differ from node\n", diagBad);
+  else printf("validation ok\n");
+  return diagBad ? 1 : 0;
 }

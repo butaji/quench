@@ -3245,6 +3245,7 @@ static TsNode *parseAmbientExternalModuleDeclaration(int pos, bool hasJSDoc, TsL
   node->name = name;
   node->body = body;
   node->extra = flags;
+  node->flags |= (uint32_t)flags; /* NodeFlags.GlobalAugmentation (2048) */
   return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
 }
 
@@ -4604,6 +4605,9 @@ static TsNode *parseSourceFile(const char *fileName, const char *text, int len, 
   sf->pos = 0;
   sf->end = len;
   sf->isDeclarationFile = isDeclarationFile;
+  sf->text = text;
+  sf->textLen = len;
+  sf->fileName = fileName;
   return sf;
 }
 

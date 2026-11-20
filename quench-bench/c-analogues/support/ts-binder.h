@@ -67,10 +67,15 @@ typedef struct TsSymbol {
   TsNode **decls;
   int ndecls, declCap;
   bool constEnumOnlyModule;
+  /* checker (ts-checker.h) */
+  TsNode *valueDeclaration;
+  struct TsSymbol *mergedInto;   /* recordMergedSymbol: the symbol this one was merged into */
+  struct TsType *declaredType, *type;
+  uint32_t checkFlags;
 } TsSymbol;
 
-typedef struct TsSymEntry { BName key; TsSymbol *sym; bool used; } TsSymEntry;
-typedef struct TsSymTable { TsSymEntry *e; int cap, n; } TsSymTable;
+typedef struct TsSymEntry { BName key; TsSymbol *sym; } TsSymEntry;
+typedef struct TsSymTable { TsSymEntry *e; int cap, n; int *slot; int slotCap; } TsSymTable;
 
 /* binder state (one file at a time) */
 static TsNode *bFile;
@@ -144,45 +149,55 @@ static TsSymTable *bTableNew(void) {
   TsSymTable *t = ts_arena_zalloc(sizeof(TsSymTable));
   t->cap = 8;
   t->e = ts_arena_zalloc(sizeof(TsSymEntry) * (size_t)t->cap);
+  t->slotCap = 16;
+  t->slot = ts_arena_zalloc(sizeof(int) * (size_t)t->slotCap);
   return t;
 }
 
-static TsSymEntry *bTableFind(TsSymTable *t, BName k) {
-  uint32_t mask = (uint32_t)t->cap - 1, i = bHash(k) & mask;
-  while (t->e[i].used) {
-    if (bnEq(t->e[i].key, k)) return &t->e[i];
+/* index of key k in t->e, or -1 */
+static int bTableIndex(TsSymTable *t, BName k) {
+  uint32_t mask = (uint32_t)t->slotCap - 1, i = bHash(k) & mask;
+  while (t->slot[i]) {
+    if (bnEq(t->e[t->slot[i] - 1].key, k)) return t->slot[i] - 1;
     i = (i + 1) & mask;
   }
-  return NULL;
+  return -1;
 }
 
 static TsSymbol *bTableGet(TsSymTable *t, BName k) {
-  TsSymEntry *e = bTableFind(t, k);
-  return e ? e->sym : NULL;
+  int i = bTableIndex(t, k);
+  return i >= 0 ? t->e[i].sym : NULL;
 }
 
-static void bTableInsertNew(TsSymTable *t, BName k, TsSymbol *sym) {
-  uint32_t mask = (uint32_t)t->cap - 1, i = bHash(k) & mask;
-  while (t->e[i].used) i = (i + 1) & mask;
-  t->e[i].used = true;
-  t->e[i].key = k;
-  t->e[i].sym = sym;
-  t->n++;
+/* Entries keep insertion order (a JavaScript Map): iteration is t->e[0..n). */
+static void bTableAppend(TsSymTable *t, BName k, TsSymbol *sym) {
+  if (t->n == t->cap) {
+    TsSymEntry *ne = ts_arena_zalloc(sizeof(TsSymEntry) * (size_t)t->cap * 2);
+    memcpy(ne, t->e, sizeof(TsSymEntry) * (size_t)t->n);
+    t->e = ne;
+    t->cap *= 2;
+  }
+  if ((t->n + 1) * 2 > t->slotCap) {
+    t->slotCap *= 2;
+    t->slot = ts_arena_zalloc(sizeof(int) * (size_t)t->slotCap);
+    uint32_t mask = (uint32_t)t->slotCap - 1;
+    for (int j = 0; j < t->n; j++) {
+      uint32_t i = bHash(t->e[j].key) & mask;
+      while (t->slot[i]) i = (i + 1) & mask;
+      t->slot[i] = j + 1;
+    }
+  }
+  t->e[t->n].key = k;
+  t->e[t->n].sym = sym;
+  uint32_t mask = (uint32_t)t->slotCap - 1, i = bHash(k) & mask;
+  while (t->slot[i]) i = (i + 1) & mask;
+  t->slot[i] = ++t->n;
 }
 
 static void bTableSet(TsSymTable *t, BName k, TsSymbol *sym) {
-  TsSymEntry *e = bTableFind(t, k);
-  if (e) { e->sym = sym; return; }
-  if ((t->n + 1) * 2 > t->cap) {
-    TsSymEntry *old = t->e;
-    int oldCap = t->cap;
-    t->cap *= 2;
-    t->e = ts_arena_zalloc(sizeof(TsSymEntry) * (size_t)t->cap);
-    t->n = 0;
-    for (int i = 0; i < oldCap; i++)
-      if (old[i].used) bTableInsertNew(t, old[i].key, old[i].sym);
-  }
-  bTableInsertNew(t, k, sym);
+  int i = bTableIndex(t, k);
+  if (i >= 0) { t->e[i].sym = sym; return; }
+  bTableAppend(t, k, sym);
 }
 
 static TsSymbol *bCreateSymbol(uint32_t flags, BName name) {
@@ -362,10 +377,18 @@ static BName bGetDeclarationName(TsNode *node) {
 }
 
 /* ---- declarations and symbols ---- */
+/* setValueDeclaration (TypeScript sources only: the JS assignment-declaration cases do not apply) */
+static void bSetValueDeclaration(TsSymbol *sym, TsNode *node) {
+  if (!sym->valueDeclaration || (sym->valueDeclaration->kind != node->kind &&
+      (sym->valueDeclaration->kind == TSK_ModuleDeclaration || sym->valueDeclaration->kind == TSK_Identifier)))
+    sym->valueDeclaration = node;
+}
+
 static void bAddDeclarationToSymbol(TsSymbol *sym, TsNode *node, uint32_t symbolFlags) {
   sym->flags |= symbolFlags;
   node->symbol = sym;
   bAddDecl(sym, node);
+  if (symbolFlags & SF_Value) bSetValueDeclaration(sym, node);
   if ((symbolFlags & (SF_Class | SF_Enum | SF_Module | SF_Variable)) && !sym->exports) sym->exports = bTableNew();
   if ((symbolFlags & (SF_Class | SF_Interface | SF_TypeLiteral | SF_ObjectLiteral)) && !sym->members) sym->members = bTableNew();
 }
