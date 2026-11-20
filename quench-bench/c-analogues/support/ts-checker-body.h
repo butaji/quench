@@ -2495,13 +2495,49 @@ static TsType *cExprTypeWithContext(TsNode *arg, TsType *ptype) {
   return t;
 }
 
-/* chooseOverload with context-sensitive function arguments (5.9.2): each candidate is first checked with those arguments
- * left out (anyFunctionType, related to any function-like target); the applicable one then has its arguments checked with
- * its parameter types, which fix the parameters of the arguments for good, and is checked again. Returns NULL when no
- * candidate is applicable; *err is set when a parameter type is not ported. */
+/* an argument whose type can depend on the contextual type, which is the parameter type of the candidate in an overloaded
+ * call (getContextualType of a call argument with several signatures): everything but the expressions that never do */
+static bool cArgNeedsContext(TsNode *a) {
+  TsNode *c = cSkipParens(a);
+  switch (c->kind) {
+    case TSK_Identifier: case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
+    case TSK_NullKeyword: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_PropertyAccessExpression:
+      return false;
+    default: return true;
+  }
+}
+
+/* getSignatureApplicabilityError of one candidate for chooseOverload: the arguments are related in order and the first
+ * failure ends it. A deferred argument is checked with the parameter type of the candidate (checkExpressionWithContextualType);
+ * in skip mode a context-sensitive function is anyFunctionType. Returns 1 when applicable, 0 when not, -1 when the
+ * parameter type is not ported. */
+static int cCandidateApplicable(CSig *sig, CParams *ps, TsType **at, bool *deferred, TsNode **args, int na, int rel, bool skipMode) {
+  for (int i = 0; i < na; i++) {
+    TsType *a;
+    if (!deferred[i]) {
+      a = at[i];
+    } else {
+      bool ok;
+      TsType *pt = cSigParamType(sig, ps, i, &ok);
+      if (!ok || pt == cErrorType) return -1;
+      a = skipMode && cIsContextSensitiveFn(args[i]) ? cAnyFunctionType : cExprTypeWithContext(args[i], pt);
+    }
+    if (a == cErrorType) continue;
+    bool ok;
+    TsType *pt = cSigParamType(sig, ps, i, &ok);
+    if (!ok || pt == cErrorType) continue;
+    if (!cIsRelatedWith(a, pt, rel)) return 0;
+  }
+  return 1;
+}
+
+/* chooseOverload of a call with deferred arguments (5.9.2). argCheckMode is shared by the candidates and by both relation
+ * passes of resolveCall: it stays SkipContextSensitive until a candidate passes the skip check, then it is Normal for the rest
+ * of the call. Returns NULL when no candidate is applicable; *err is set when a candidate is not ported (a generic one, or a
+ * parameter type that is not ported). */
 static CSig *cChooseDeferredOverload(CSig *sigs, CParams *pss, bool *arityOk, bool *generic, int ns, TsType **at, bool *deferred,
                                      TsNode **args, int na, bool *err) {
-  TsType **skip = ts_arena_alloc(sizeof(TsType *) * (size_t)(na ? na : 1));
+  bool skipMode = true;
   for (int pass = 0; pass < 2; pass++) {
     int rel = pass == 0 ? REL_Subtype : REL_Assignable;
     for (int c = 0; c < ns; c++) {
@@ -2509,17 +2545,15 @@ static CSig *cChooseDeferredOverload(CSig *sigs, CParams *pss, bool *arityOk, bo
       /* a generic candidate is reached only when the candidates before it fail (chooseOverload returns the first one that
        * passes): its inference with context-sensitive arguments is not ported */
       if (generic[c]) { *err = true; return NULL; }
-      for (int i = 0; i < na; i++) skip[i] = deferred[i] ? cAnyFunctionType : at[i];
-      if (!cArgsApplicable(&pss[c], skip, na, &sigs[c], rel)) continue;
-      for (int i = 0; i < na; i++) {
-        if (!deferred[i]) continue;
-        bool ok;
-        TsType *pt = cSigParamType(&sigs[c], &pss[c], i, &ok);
-        if (!ok || pt == cErrorType) { *err = true; return NULL; }
-        at[i] = cExprTypeWithContext(args[i], pt);
+      if (skipMode) {
+        int r = cCandidateApplicable(&sigs[c], &pss[c], at, deferred, args, na, rel, true);
+        if (r < 0) { *err = true; return NULL; }
+        if (r == 0) continue;
+        skipMode = false;
       }
-      if (!cArgsApplicable(&pss[c], at, na, &sigs[c], rel)) continue;
-      return &sigs[c];
+      int r = cCandidateApplicable(&sigs[c], &pss[c], at, deferred, args, na, rel, false);
+      if (r < 0) { *err = true; return NULL; }
+      if (r == 1) return &sigs[c];
     }
   }
   return NULL;
@@ -2548,7 +2582,7 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
   /* the context-sensitive function arguments of several candidates are typed per candidate (chooseOverload) */
   bool *deferred = ts_arena_zalloc(sizeof(bool) * (size_t)(na ? na : 1));
   bool anyDeferred = false;
-  if (ns > 1) for (int i = 0; i < na; i++) if (cIsContextSensitiveFn(e->arguments->v[i])) { deferred[i] = true; anyDeferred = true; }
+  if (ns > 1) for (int i = 0; i < na; i++) if (cArgNeedsContext(e->arguments->v[i])) { deferred[i] = true; anyDeferred = true; }
   for (int i = 0; i < na; i++) if (!deferred[i]) at[i] = cExprType(e->arguments->v[i]);
   CParams *pss = ts_arena_alloc(sizeof(CParams) * (size_t)ns);
   bool *arityOk = ts_arena_alloc(sizeof(bool) * (size_t)ns);
