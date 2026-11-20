@@ -528,8 +528,6 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
                 }
             })
         }
-        Slots::Either { packed, inline, flat } => stage.choose(inline,
-            |stage| packed_read(stage, packed, slot, rep), |stage| flat_read(stage, flat, slot, rep)),
         Slots::Narrow(base) => narrow_read(stage, base, slot, rep),
     }
 }

@@ -144,8 +144,6 @@ impl ConcreteString<'_> {
                 let (base, length) = match units {
                     Units::Ascii(bytes) | Units::Latin1(bytes) => (bytes.as_ptr() as u64, bytes.len() as u64),
                     Units::Wide(units) => (units.as_ptr() as u64, units.len() as u64),
-                    // Latin-1 is no native row's form: the row leaves at its miss.
-                    Units::Latin1(_) => return None,
                 };
                 Some(FlatString { units: base, length, wide })
             }

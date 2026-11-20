@@ -101,7 +101,6 @@ fn languages(ty: &TSType<'_>, names: &TypeNames<'_>, depth: u8) -> u16 {
         },
         TSType::TSParenthesizedType(inner) => languages(&inner.type_annotation, names, depth),
         TSType::TSUnionType(union) => union.types.iter().fold(0, |set, member| set | languages(member, names, depth)),
-        TSType::TSTypeReference(reference) => reference_languages(reference, names, depth),
         _ => DECLARED_ANY,
     }
 }

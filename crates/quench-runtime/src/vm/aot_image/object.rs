@@ -69,7 +69,7 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
         if imports.contains_key(&key) {
             continue;
         }
-        let import = match SymbolTable::decode(key.0, key.1) {
+        let import = match SymbolTable::decode(&image.labels, key.0, key.1) {
             Some(Symbol::Helper(helper)) => helper_import(isa, helper),
             Some(Symbol::SemanticEntry(op)) => operation_import(isa, op),
             Some(Symbol::BasePc { .. }) => continue,
@@ -136,7 +136,7 @@ fn definition(name: String, code: &RelocatableCode, targets: &Targets<'_>) -> Re
 impl Targets<'_> {
     /// The declaration and addend of symbol `(namespace, key)` under `addend`.
     fn of(&self, namespace: u32, key: u32, addend: i64) -> Result<(u32, i64), String> {
-        match SymbolTable::decode(namespace, key) {
+        match SymbolTable::decode(&self.image.labels, namespace, key) {
             Some(Symbol::BasePc { function, pc }) => {
                 let offset = self.image.functions.get(function as usize)
                     .and_then(|body| body.base.pc_offsets.get(pc as usize).copied())

@@ -324,7 +324,7 @@ fn seeds_operands(operator: u32) -> bool {
 /// string operand is what the site notes), else the Number pair an int32 and a double make.
 /// `NONE` for any other site.
 fn declared_operand_kinds(function: &crate::bytecode::Function, instruction: WideInstruction) -> OperandKinds {
-    let Some(operator) = site_operator(instruction).filter(|operator| seeds_operands(*operator)) else {
+    let Some(_operator) = site_operator(instruction).filter(|operator| seeds_operands(*operator)) else {
         return OperandKinds::NONE;
     };
     let languages = |register: Option<u16>| register.and_then(|register| declared_parameter_languages(function, register));

@@ -2225,8 +2225,8 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         let entry = EntryHost {
             cx: cx.cast(),
             ip,
-            tier: |context, r, view, function, parameters| unsafe { tier_prologue_resumed::<H>(context.cast(), r, view, function, parameters) },
-            body: |context, ip, r, view, function, binds_this| unsafe { body_entry_resumed::<H>(context.cast(), ip, r, view, function, binds_this) },
+            tier: |context, r, view, function, parameters| tier_prologue_resumed::<H>(context.cast(), r, view, function, parameters),
+            body: |context, ip, r, view, function, binds_this| body_entry_resumed::<H>(context.cast(), ip, r, view, function, binds_this),
         };
         return LaneFrame::<ACC> { entry: Some(entry), ..LaneFrame::<ACC>::new(r, view) };
     }

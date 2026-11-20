@@ -1700,7 +1700,7 @@ pub(super) fn lower_body(
 /// body's `Symbol::BasePc` the origin there names, `None` where the base body enters no record.
 /// Present, a leave tail-jumps to that entry instead of returning its exit word (`exits.rs`).
 #[derive(Clone, Copy)]
-pub(super) struct AheadLeaves<'a> {
+pub(crate) struct AheadLeaves<'a> {
     pub(super) targets: &'a [Option<(u32, u32)>],
 }
 

@@ -3529,7 +3529,7 @@ unsafe fn resume_lane_binding<H: Host>(context: *mut ()) {
 /// (`push_passed_in_lane`), so they stay adjacent, and the Wasm tier's rarely read counters
 /// come last.
 #[repr(C)]
-struct LaneContext<H: Host> {
+pub(crate) struct LaneContext<H: Host> {
     binding: LaneBinding,
     vm: *mut Vm<H>,
     /// The executing program, which every inline call stays within.
@@ -4295,7 +4295,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, protocol_miss, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE, NameBinding, NameRead, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE, };
 
 
 mod capture_append;

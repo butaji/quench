@@ -29,7 +29,7 @@ pub(in crate::vm) struct Relocation {
 
 /// Position-independent machine code and the relocations that link it.
 #[derive(Debug)]
-pub(in crate::vm) struct RelocatableCode {
+pub(crate) struct RelocatableCode {
     pub(in crate::vm) code: Box<[u8]>,
     pub(in crate::vm) relocations: Box<[Relocation]>,
 }

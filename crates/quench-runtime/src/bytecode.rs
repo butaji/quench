@@ -238,6 +238,7 @@ pub(crate) enum FieldLayout {
     /// A 16-bit two's-complement operand carried in the instruction.
     SignedConstant,
     /// The payload type a Wasm exception field read carries (`staged::wasm_exception::PayloadType`).
+    #[allow(dead_code)] // a Wasm exception-payload code names it; this build lowers no such field
     WasmPayloadType,
 }
 
@@ -304,6 +305,7 @@ impl FieldLayout {
 impl ImmediateRole {
     /// A layout-encoded immediate packs register windows or capture slots
     /// unless it is a plain scalar.
+    #[allow(dead_code)] // the row's meaning replaces it; the compiler path still names it
     pub(crate) const fn binding_time(self, layout: ImmediateLayout) -> BindingTime {
         match self {
             Self::LayoutEncoded => match layout {
@@ -320,6 +322,7 @@ impl ImmediateRole {
             | Self::RegExpLiteralSiteIndex
             | Self::MethodSiteIndex
             | Self::ObjectSiteIndex
+            | Self::GlobalLexicalIndex
             | Self::FieldLookup => BindingTime::Site,
             Self::Unused
             | Self::ConstantIndex
@@ -370,6 +373,7 @@ impl ImmediateRole {
 impl Op {
     /// The binding time of each input, in field order `a`, `b`, `c`, then the
     /// immediate: Ershov's division of this instruction.
+    #[allow(dead_code)]
     pub(crate) const fn input_binding_times(self) -> [BindingTime; 4] {
         [
             self.field_layout(InstructionField::A).binding_time(),

@@ -86,9 +86,9 @@ pub struct AheadImages {
 
 /// The images of each program stored while recording (`start_recording`); the entry may run
 /// on a worker thread, so this is process-wide.
-static RECORDED: std::sync::Mutex<Option<Vec<AheadImages>>> = std::sync::Mutex::new(None);
+static RECORDED: std::sync::Mutex<Option<Vec<Vec<u8>>>> = std::sync::Mutex::new(None);
 
-fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AheadImages>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<Vec<u8>>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
 
 impl AheadImages {
     /// The image of `program`, lowered under its closed-world facts for the baseline ISA.
@@ -130,11 +130,13 @@ impl AheadImages {
     pub(in crate::vm) fn record(program: &ResidualProgram) {
         if recorded().is_none() { return; }
         let Ok(images) = Self::compile(program) else { return };
-        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images); } }
+        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.to_bytes()); } }
     }
 
     /// What was recorded since `start_recording`, which stops.
-    pub fn finish_recording() -> Vec<AheadImages> { recorded().take().unwrap_or_default() }
+    pub fn finish_recording() -> Vec<AheadImages> {
+        recorded().take().unwrap_or_default().into_iter().filter_map(|file| Self::from_bytes(&file).ok()).collect()
+    }
 
     /// A file of several programs' images: each as `to_bytes` wrote it, after its length.
     pub fn bundle(all: &[AheadImages]) -> Vec<u8> {

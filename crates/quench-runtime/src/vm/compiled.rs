@@ -186,7 +186,7 @@ mod wasm_simd_stage;
 mod wasm_stitch;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
 mod wasm_codes_check;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod wasm_call_vm;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(test)]

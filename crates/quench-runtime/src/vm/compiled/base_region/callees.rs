@@ -77,7 +77,7 @@ pub(in crate::vm::compiled) struct Callees {
 /// (its change retires the body), or a captured declaration whose identity the body's entry checks once
 /// (`Captured`, `base_region::link::entry_rows`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::vm::compiled) enum Held {
+pub(crate) enum Held {
     Global(GlobalFact),
     /// The depth-0 capture at `slot` holds `callee` (its word) at every entry of the body.
     Captured { slot: u16, callee: u64 },

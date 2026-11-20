@@ -281,8 +281,6 @@ fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     Step::Value(result)
 }
 
-/// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
-#[inline(always)]
 /// The case slot of `source` in a `switch` over the dense int labels `minimum..=maximum` (`count` slots). A value
 /// is its own label's slot where it is an int32 or an integral double in the run; every other value (a string,
 /// an object, a fraction) takes `count`, the default. The int32 word is ToInt32 of the Number, which is exact

@@ -1,3 +1,6 @@
+// The derived-row design reads successors from the row; this relation stays for the callers
+// that still spell them while the compiler path is replaced.
+#![allow(dead_code)]
 use super::{ControlFlowLayout, Function, Instr, WideInstruction};
 
 /// `Function::widened` of a packed instruction not yet validated: `None` where its wide index
