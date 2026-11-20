@@ -2117,6 +2117,118 @@ static TsType *cArrayElementContext(TsType *ac) {
   return cUnported("contextual element without a number index");
 }
 
+/* isLiteralType: a boolean, an enum literal union, a union of unit types, or a unit type */
+static bool cIsLiteralTypeOf(TsType *t) {
+  if (t->flags & TF_Boolean) return true;
+  if (t->flags & TF_Union) {
+    if (t->flags & TF_EnumLiteral) return true;
+    for (int i = 0; i < t->ntypes; i++) if (!cIsUnitType(t->types[i])) return false;
+    return true;
+  }
+  return cIsUnitType(t);
+}
+
+/* isPossiblyDiscriminantValue: a literal, an identifier, a template expression or a property access of one */
+static bool cPossiblyDiscriminantValue(TsNode *v) {
+  switch (v->kind) {
+    case TSK_StringLiteral: case TSK_NumericLiteral: case TSK_BigIntLiteral: case TSK_NoSubstitutionTemplateLiteral:
+    case TSK_TemplateExpression: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_NullKeyword: case TSK_Identifier:
+      return true;
+    case TSK_PropertyAccessExpression: case TSK_ParenthesizedExpression: return cPossiblyDiscriminantValue(v->expression);
+    default: return false;
+  }
+}
+
+/* discriminateContextualTypeByObjectMembers over a union contextual type of an object literal: the properties of the literal
+ * that are discriminants of the union (isDiscriminantProperty: the members' types differ and one is a literal type) with
+ * their value types narrow the members (discriminateTypeByDiscriminableItems, related by assignability). A member that
+ * lacks a discriminant property is not ported. Returns u itself when nothing is excluded. */
+static TsType *cDiscriminatedUnion(TsType *u, TsNode *lit) {
+  int nt = u->ntypes;
+  int *incl = ts_arena_alloc(sizeof(int) * (size_t)(nt ? nt : 1));   /* 1 included, 0 excluded, 2 maybe */
+  for (int k = 0; k < nt; k++) {
+    if (!(u->types[k]->flags & TF_Object)) return cUnported("discriminant of a union with a non-object member");
+    incl[k] = 1;
+  }
+  if (!lit->properties) return u;
+  for (int i = 0; i < lit->properties->n; i++) {
+    TsNode *pr = lit->properties->v[i];
+    bool cand = pr->kind == TSK_ShorthandPropertyAssignment ||
+                (pr->kind == TSK_PropertyAssignment && pr->initializer && cPossiblyDiscriminantValue(pr->initializer));
+    if (!cand) continue;
+    if (!pr->name || pr->name->kind != TSK_Identifier) return cUnported("discriminant of an object literal");
+    BName name = bnEscapeText(pr->name->text, pr->name->textLen);
+    /* isDiscriminantProperty over every member (a member without the property is not ported) */
+    TsType *first = NULL;
+    bool nonUniform = false, literal = false;
+    for (int k = 0; k < nt; k++) {
+      TsSymbol *ps = cPropertyOf(u->types[k], name);
+      if (!ps) { cResolveIndexInfos(u->types[k]); if (u->types[k]->nindex) return cUnported("discriminant of a union with an index signature"); return cUnported("discriminant of a union with a partial property"); }
+      TsType *t = cTypeOfSymbol(ps);
+      if (t == cErrorType) return t;
+      if (first && !cIdentical(t, first)) nonUniform = true;
+      if (!first) first = t;
+      if (cIsLiteralTypeOf(t)) literal = true;
+    }
+    if (!(nonUniform && literal)) continue;
+    /* the value type of the discriminant (getContextFreeTypeOfExpression of the initializer or the name) */
+    TsType *vt = cExprType(pr->kind == TSK_ShorthandPropertyAssignment ? pr->name : pr->initializer);
+    if (vt == cErrorType) return vt;
+    bool matched = false;
+    for (int k = 0; k < nt; k++) {
+      if (!incl[k]) continue;
+      TsSymbol *ps = cPropertyOf(u->types[k], name);
+      TsType *target = cTypeOfSymbol(ps);
+      if (cIsRelatedWith(vt, target, REL_Assignable)) matched = true;
+      else incl[k] = 2;
+    }
+    for (int k = 0; k < nt; k++) if (incl[k] == 2) incl[k] = matched ? 0 : 1;
+  }
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(nt ? nt : 1));
+  int n = 0;
+  for (int k = 0; k < nt; k++) if (incl[k]) kept[n++] = u->types[k];
+  if (n == nt || n == 0) return u;
+  return n == 1 ? kept[0] : cGetUnionType(kept, n);
+}
+
+/* getTypeOfPropertyOfContextualType over a union contextual type of an object literal (after its discriminants): the union of
+ * the members' property types with that name (a member without it adds nothing). A member with an index signature that could
+ * apply is not ported. */
+static TsType *cUnionPropertyContext(TsType *u, BName name) {
+  TsType **types = ts_arena_alloc(sizeof(TsType *) * (size_t)(u->ntypes ? u->ntypes : 1));
+  int n = 0;
+  for (int k = 0; k < u->ntypes; k++) {
+    TsType *m = u->types[k];
+    TsSymbol *ps = cPropertyOf(m, name);
+    if (ps) {
+      TsType *t = cTypeOfSymbol(ps);
+      if (t == cErrorType) return t;
+      types[n++] = t;
+    } else {
+      cResolveIndexInfos(m);
+      if (m->nindex) return cUnported("contextual type of a property of a union with an index signature");
+    }
+  }
+  if (n == 0) return NULL;
+  return n == 1 ? types[0] : cGetUnionType(types, n);
+}
+
+/* the contextual type of the property named by a member of an object literal whose contextual type is oc */
+static TsType *cObjectMemberContext(TsType *oc, TsNode *lit, TsNode *nameNode) {
+  if (oc->flags & TF_Any) return NULL;   /* a property of any is not a structured type's property: no contextual type */
+  BName name = bnEscapeText(nameNode->text, nameNode->textLen);
+  if (oc->flags & TF_Union) {
+    TsType *d = cDiscriminatedUnion(oc, lit);
+    if (d == cErrorType) return d;
+    if (d->flags & TF_Union) return cUnionPropertyContext(d, name);
+    oc = d;
+  }
+  if (oc->flags & TF_Any) return NULL;
+  if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
+  TsSymbol *ps = cPropertyOf(oc, name);
+  return ps ? cTypeOfSymbol(ps) : NULL;
+}
+
 static TsType *cContextualType(TsNode *e) {
   if (cCandFn && e == cCandFn) return cCandType;
   TsNode *c = e, *p = e->parent;
@@ -2211,10 +2323,7 @@ static TsType *cContextualType(TsNode *e) {
       if (c->kind != TSK_MethodDeclaration || !c->name || c->name->kind != TSK_Identifier) return cUnported("contextual type of an object literal member");
       TsType *oc = cContextualType(p);
       if (oc == NULL || oc == cErrorType) return oc;
-      if (oc->flags & TF_Any) return NULL;   /* a property of any is not a structured type's property: no contextual type */
-      if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
-      TsSymbol *ps = cPropertyOf(oc, bnEscapeText(c->name->text, c->name->textLen));
-      return ps ? cTypeOfSymbol(ps) : NULL;
+      return cObjectMemberContext(oc, p, c->name);
     }
     case TSK_PropertyAccessExpression: case TSK_ElementAccessExpression:
       return NULL;   /* getContextualType2 has no case for an access: its object and its argument have none */
@@ -2225,10 +2334,7 @@ static TsType *cContextualType(TsNode *e) {
         return cUnported("contextual type of a property name");
       TsType *oc = cContextualType(p->parent);
       if (oc == NULL || oc == cErrorType) return oc;
-      if (oc->flags & TF_Any) return NULL;   /* a property of any is not a structured type's property: no contextual type */
-      if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
-      TsSymbol *ps = cPropertyOf(oc, bnEscapeText(p->name->text, p->name->textLen));
-      return ps ? cTypeOfSymbol(ps) : NULL;
+      return cObjectMemberContext(oc, p->parent, p->name);
     }
     case TSK_ArrayLiteralExpression: {
       TsType *ac = cContextualType(p);
