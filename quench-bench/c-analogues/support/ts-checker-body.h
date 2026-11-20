@@ -3075,14 +3075,24 @@ static CSig *cGetSignatureInstance(CSig *base, TsType **args, int n) {
 }
 
 /* isTypeParameterAtTopLevel for the unions and intersections of a parameter type (a conditional is unported) */
-static bool cTypeParamAtTop(TsType *t, TsType *tp, bool *unp) {
+static bool cTypeParamAtTopAt(TsType *t, TsType *tp, int depth, bool *unp) {
   if (t == tp) return true;
-  if (t->flags & TF_Conditional) { *unp = true; return false; }
+  if (t->flags & TF_Conditional) {
+    /* the true and the false type of a conditional type, up to three levels (isTypeParameterAtTopLevel) */
+    if (depth >= 3) return false;
+    TsNode *cn = t->root->node;
+    TsType *tt = cInstantiate(cTypeFromNode(cn->trueType), t->condMapper);
+    TsType *ft = cInstantiate(cTypeFromNode(cn->falseType), t->condMapper);
+    if (tt == cErrorType || ft == cErrorType) { *unp = true; return false; }
+    return cTypeParamAtTopAt(tt, tp, depth + 1, unp) || cTypeParamAtTopAt(ft, tp, depth + 1, unp);
+  }
   if (t->flags & (TF_Union | TF_Intersection)) {
-    for (int i = 0; i < t->ntypes; i++) if (cTypeParamAtTop(t->types[i], tp, unp)) return true;
+    for (int i = 0; i < t->ntypes; i++) if (cTypeParamAtTopAt(t->types[i], tp, depth, unp)) return true;
   }
   return false;
 }
+
+static bool cTypeParamAtTop(TsType *t, TsType *tp, bool *unp) { return cTypeParamAtTopAt(t, tp, 0, unp); }
 
 /* whether a type mentions a type parameter (the shapes that are not ported are unported) */
 static bool cMentionsTypeParam(TsType *t, TsType *tp, bool *unp) {
