@@ -12,7 +12,8 @@
 //! - completion: the callee's value, or a construction's receiver, once it returned
 //!   (`complete_call`), every other status leaving at the caller's miss edge.
 //!
-//! The record a call saves and its return reads is `call::Record`; the receiver rule of a
+//! The record a call saves and its return reads is the frame (`staged::frame`, its header words
+//! and the lane's activation record); the receiver rule of a
 //! construction through an initializer is `construct`.
 
 use super::call::admit_room;
