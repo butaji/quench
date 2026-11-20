@@ -370,21 +370,21 @@ const fn float_width(float: Float) -> u32 {
 /// Each lane's float operator (`float_binary`: the canonical NaN for an extremum with a NaN operand).
 #[inline(always)]
 fn float_lanes(left: u128, right: u128, float: Float, operator: FloatBinary) -> u128 {
-    zip(left, right, float_width(float), |x, y| float_binary(&mut ConcreteWasm, operator, float, x, y))
+    zip(left, right, float_width(float), #[inline(always)] |x, y| float_binary(&mut ConcreteWasm, operator, float, x, y))
 }
 
 /// Each lane's comparison, all ones where it holds.
 #[inline(always)]
 fn float_compare(left: u128, right: u128, float: Float, operator: FloatBinary) -> u128 {
     let width = float_width(float);
-    zip(left, right, width, |x, y| when(float_binary(&mut ConcreteWasm, operator, float, x, y) != 0, width))
+    zip(left, right, width, #[inline(always)] |x, y| when(float_binary(&mut ConcreteWasm, operator, float, x, y) != 0, width))
 }
 
 /// Each lane's pseudo-min or -max: the right lane where `comparison` holds, else the left; the bits
 /// are the operands', not the comparison's.
 #[inline(always)]
 fn float_pseudo(left: u128, right: u128, float: Float, comparison: FloatBinary) -> u128 {
-    zip(left, right, float_width(float), |x, y| {
+    zip(left, right, float_width(float), #[inline(always)] |x, y| {
         if float_binary(&mut ConcreteWasm, comparison, float, x, y) != 0 { y } else { x }
     })
 }
