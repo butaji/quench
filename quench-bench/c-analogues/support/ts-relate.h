@@ -437,8 +437,8 @@ static bool cCompareSignaturesRelated(CSig *src, CSig *tgt) {
       if (st == cErrorType || tt == cErrorType) continue;
     } else {
       bool okS, okT;
-      st = cParamTypeAt(&ps, i, &okS, src->mapper);
-      tt = cParamTypeAt(&pt, i, &okT, tgt->mapper);
+      st = cSigParamType(src, &ps, i, &okS);
+      tt = cSigParamType(tgt, &pt, i, &okT);
       if (!okS || !okT) continue;
       if (st == cErrorType || tt == cErrorType) { cUnported("parameter type of a relation"); continue; }
     }
@@ -483,6 +483,7 @@ static CSig cErasedSignature(CSig *sig) {
   TsType **anys = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
   for (int i = 0; i < n; i++) anys[i] = cAnyType;
   CSig r = *sig;
+  r.ptc = NULL;
   r.mapper = cCombineMappers(sig->mapper, cCreateTypeMapper(tps, anys, n));
   r.erased = true;
   if (cEraseN == cEraseCap) {
@@ -662,8 +663,8 @@ static bool cInferSignature(CInfer *c, CSig *src, CSig *tgt) {
   int np = ps.n < pt.n ? ps.n : pt.n;
   for (int i = 0; i < np; i++) {
     bool okS, okT;
-    TsType *st = cParamTypeAt(&ps, i, &okS, src->mapper);
-    TsType *tt = cParamTypeAt(&pt, i, &okT, tg.mapper);
+    TsType *st = cSigParamType(src, &ps, i, &okS);
+    TsType *tt = cSigParamType(&tg, &pt, i, &okT);
     if (!okS || !okT) continue;
     cInferContra(c, tt, st);
   }
@@ -787,8 +788,8 @@ static bool cSigInContextOf(CSig *src, CSig *tgt, CSig *out) {
   int np = ps.n < pt.n ? ps.n : pt.n;
   for (int i = 0; i < np; i++) {
     bool okS, okT;
-    TsType *tt = cParamTypeAt(&pt, i, &okT, tgt->mapper);
-    TsType *st = cParamTypeAt(&ps, i, &okS, src->mapper);
+    TsType *tt = cSigParamType(tgt, &pt, i, &okT);
+    TsType *st = cSigParamType(src, &ps, i, &okS);
     if (!okS || !okT) continue;
     if (tt == cErrorType || st == cErrorType) return false;
     cInferFrom(&ci, tt, st);
@@ -833,6 +834,7 @@ static bool cSigInContextOf(CSig *src, CSig *tgt, CSig *out) {
   out->decl = src->decl;
   out->isConstruct = src->isConstruct;
   out->thisType = src->thisType;
+  out->ptc = NULL;
   out->mapper = cCombineMappers(src->mapper, cCreateTypeMapper(tps, args, n));
   out->erased = true;
   return true;

@@ -121,7 +121,7 @@ typedef struct TsType {
 
 /* erased: the type parameters are instantiated to any (getErasedSignature, or an instantiation in context), so the
  * signature has none of its own */
-struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; bool erased; };
+struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; bool erased; TsType **ptc; };   /* ptc: the instantiated parameter types of this signature instance (cSigParamType) */
 
 /* createType counts (typeCount) */
 static int cTypeCount;
@@ -1729,9 +1729,9 @@ static void cResolveSignatures(TsType *t) {
     t->ncall = t->target->ncall;
     t->nconstruct = t->target->nconstruct;
     t->call = ts_arena_zalloc(sizeof(CSig) * (size_t)(t->ncall ? t->ncall : 1));
-    for (int i = 0; i < t->ncall; i++) { t->call[i] = t->target->call[i]; t->call[i].mapper = t->mapper; }
+    for (int i = 0; i < t->ncall; i++) { t->call[i] = t->target->call[i]; t->call[i].mapper = t->mapper; t->call[i].ptc = NULL; }
     t->construct = ts_arena_zalloc(sizeof(CSig) * (size_t)(t->nconstruct ? t->nconstruct : 1));
-    for (int i = 0; i < t->nconstruct; i++) { t->construct[i] = t->target->construct[i]; t->construct[i].mapper = t->mapper; }
+    for (int i = 0; i < t->nconstruct; i++) { t->construct[i] = t->target->construct[i]; t->construct[i].mapper = t->mapper; t->construct[i].ptc = NULL; }
     return;
   }
   TsSymbol *callSym = NULL, *newSym = NULL;
@@ -2036,6 +2036,19 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
   }
   TsType *t = cTypeFromNodeM(p->type, m);
   if (p->questionToken) t = cAddOptionality(t);
+  return t;
+}
+
+/* the type of a parameter of a signature instance: the parameter symbols of an instantiated signature keep their
+ * types (getTypeOfSymbol), so each parameter is instantiated once per signature instance; the rest parameter is
+ * slot 64 */
+static TsType *cSigParamType(CSig *sig, CParams *cp, int pos, bool *ok) {
+  if (!sig->mapper) return cParamTypeAt(cp, pos, ok, NULL);
+  int slot = pos < cp->n ? pos : 64;
+  if (!sig->ptc) sig->ptc = ts_arena_zalloc(sizeof(TsType *) * 65);
+  if (sig->ptc[slot]) { *ok = true; return sig->ptc[slot]; }
+  TsType *t = cParamTypeAt(cp, pos, ok, sig->mapper);
+  if (*ok && t != cErrorType) sig->ptc[slot] = t;
   return t;
 }
 
