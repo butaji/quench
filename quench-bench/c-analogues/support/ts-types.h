@@ -262,7 +262,8 @@ static int cAliasDepth;
 static TsType *cDeclaredTypeOfTypeAlias(TsSymbol *sym) {
   if (sym->declaredType) return sym->declaredType;
   TsNode *d = sym->decls[0];
-  if (d->typeParameters && d->typeParameters->n) return cUnported("generic type alias");
+  /* a generic alias declares its body with its own type parameters (getDeclaredTypeOfTypeAlias); the
+   * references instantiate that body (cGenericAliasReference) */
   for (int i = 0; i < cAliasDepth; i++) if (cAliasStack[i] == sym) return cUnported("circular type alias");
   if (cAliasDepth == 64) return cUnported("alias depth");
   cAliasStack[cAliasDepth++] = sym;
