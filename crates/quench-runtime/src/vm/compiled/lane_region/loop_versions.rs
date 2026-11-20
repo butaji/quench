@@ -1,5 +1,6 @@
 //! What a loop's entering edge establishes once for its body, over the facts rows (`IntRanges`):
-//! the pure integer operations its operands leave invariant (`hoists`), the bounds of its accesses
+//! the pure integer operations its operands leave invariant (`hoists`), the registers its int32
+//! counters are ordered against, proved int32 once (`hoist_bounds`), the bounds of its accesses
 //! (below), and the products of its counters it advances by a step instead (`inductions`).
 //!
 //! Bounds by versioning: an element access in a counted loop whose index is `base + counter * scale`
@@ -84,6 +85,15 @@ pub(super) struct Decision {
     pub(super) sources: [Register; 2],
 }
 
+/// The register an int32 counter is ordered against in a loop, which the loop's entry proves int32
+/// once (`Lowering::hoist_bounds`): no instruction of the loop writes it, and no int32 proves it at
+/// the relation. Its entry guard leaves at `header` where the register is no int32.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Bound {
+    pub(super) header: usize,
+    pub(super) register: Register,
+}
+
 /// The product at `multiply` of `counter` and `scale`, which the entry of the loop `span` holds as a
 /// word that advances by `scale` at each step of the counter (every write of it in the loop).
 #[derive(Clone, Copy, Debug)]
@@ -101,6 +111,7 @@ impl Lowering<'_, '_> {
     pub(super) fn hoist_entry(&mut self, state: &mut State, header: usize) {
         self.hoist_pure(state, header);
         self.hoist_decisions(state, header);
+        self.hoist_bounds(state, header);
         // Before the views: a scalar native's allocation reloads the arena the views' bases come from.
         self.hoist_scalar_calls(state, header);
         self.hoist_arrays(state, header, false);

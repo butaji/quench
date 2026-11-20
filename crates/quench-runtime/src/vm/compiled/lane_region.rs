@@ -489,14 +489,12 @@ pub(super) struct LoweredRegion {
     pub(super) exits: ExitTable,
 }
 
-/// What a published lane body assumes of its arguments and what its activation returns natively,
-/// so a direct caller types the call's result with it (`call_results`). The parameters are the
-/// entry types the body's entry guards admit (`ANY` where the body guards none); the result is the
-/// join of the types its own activation returns, from the facts at each return. A value a leave
-/// returns to the caller is not in the result: the caller guards the result at its completion.
+/// What a published lane body's activation returns natively, so a direct caller types the call's
+/// result with it (`call_results`): the join of the types its own activation returns, from the facts
+/// at each return. A value a leave returns to the caller is not in the result: the caller guards the
+/// result at its completion.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::vm) struct TypeSummary {
-    pub(in crate::vm) params: Vec<Type>,
     pub(in crate::vm) result: Type,
 }
 
@@ -2202,15 +2200,7 @@ pub(super) fn lower(
         lowering.proving_entry = false;
         lowering.goto(target, &[]);
     }
-    // The parameters' entry types, as the entry block guards them (`entry_conform` conforms each live
-    // register to the entry's fact): a summary's arguments (`TypeSummary::params`).
-    let summary_params = (completion == Completion::Body && matches!(coverage, Coverage::Prefix)).then(|| {
-        let types = lowering.facts.at(entry_pc).unwrap_or(&[]);
-        (0..usize::from(function.params)).map(|register| match types.get(register) {
-            Some(ty) if lowering.is_live(entry_pc, register as Register) => *ty,
-            _ => Type::ANY,
-        }).collect::<Vec<Type>>()
-    });
+    let summarized = completion == Completion::Body && matches!(coverage, Coverage::Prefix);
     let mut census = clif_census::Census::new();
     let emitted = |lowering: &Lowering<'_, '_>| lowering.builder.func.dfg.num_insts();
     let mut mark = emitted(&lowering);
@@ -2311,7 +2301,7 @@ pub(super) fn lower(
         return None;
     }
     let number_result = numeric.then(|| lowering.finish_number_returns());
-    let summary = summary_params.map(|params| TypeSummary { params, result: lowering.returned_type(&instructions, &leaders, &writes) });
+    let summary = summarized.then(|| TypeSummary { result: lowering.returned_type(&instructions, &leaders, &writes) });
     let native_count = lowering.native;
     let hoists_arrays = !lowering.loop_arrays.is_empty();
     let mut polls = std::mem::take(&mut lowering.polls);
@@ -3461,7 +3451,9 @@ impl Lowering<'_, '_> {
         let both = self.raw_binary(Binary::And, left_number, right_number);
         self.branch_if(both, (numbers, &[]), (others, &[]));
         self.builder.switch_to_block(numbers);
-        let (left_value, right_value) = (emit_js_tagged_number(&mut self.builder, left, exit), emit_js_tagged_number(&mut self.builder, right, exit));
+        // A Number a test already projected in this block is reused; the decode is only for the rest.
+        let left_value = match frame::known_number(&self.builder, state, left) { Some(number) => number, None => emit_js_tagged_number(&mut self.builder, left, exit) };
+        let right_value = match frame::known_number(&self.builder, state, right) { Some(number) => number, None => emit_js_tagged_number(&mut self.builder, right, exit) };
         let number_equal = self.raw_compare(Relation::FloatEqual, left_value, right_value);
         self.goto(join, &[number_equal]);
         self.builder.switch_to_block(others);
@@ -3564,7 +3556,8 @@ impl Lowering<'_, '_> {
         let int_holds = crate::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left_bits, right_bits, NumberRelationDomain::Int32);
         self.goto(join, &[int_holds]);
         self.builder.switch_to_block(number_block);
-        let (left, right) = (emit_js_tagged_number(&mut self.builder, left, exit), emit_js_tagged_number(&mut self.builder, right, exit));
+        let left = match frame::known_number(&self.builder, state, left) { Some(number) => number, None => emit_js_tagged_number(&mut self.builder, left, exit) };
+        let right = match frame::known_number(&self.builder, state, right) { Some(number) => number, None => emit_js_tagged_number(&mut self.builder, right, exit) };
         let number_holds = crate::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left, right, NumberRelationDomain::Float64);
         self.goto(join, &[number_holds]);
         self.builder.switch_to_block(join);
@@ -3724,11 +3717,19 @@ impl Lowering<'_, '_> {
         let returns = callees.iter().filter(|_| !site.constructs())
             .map(|callee| declared::declared_return(self.program, callee.target.function))
             .reduce(|first, next| if first == next { first } else { None }).flatten();
+        // The result a bound callee's summary types (`call_results`): its native return continues at `returned` with
+        // the word, and the helper's completion tests it (`typed_completion`).
+        let mut typed = None;
         match site.callee {
             crate::staged::forms::Callee::Register(register) if callees.len() >= 2 && !site.constructs() =>
                 self.polymorphic_call(state, site, record, register, &callees, (completed, missed, raised)),
             _ => {
                 let callee = callees.first().copied();
+                if callee.is_some() && !site.returns && !site.constructs() && let Some(ty) = self.observed.at(pc).filter(|ty| self.typed_native_result(pc, *ty)) {
+                    let returned = self.builder.create_block();
+                    self.builder.append_block_param(returned, types::I64);
+                    typed = Some((ty, returned));
+                }
                 let generic = self.builder.create_block();
                 // A construction of a stores-only constructor, whose arguments are a window of the caller's
                 // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
@@ -3739,7 +3740,8 @@ impl Lowering<'_, '_> {
                         if site.constructs() && callee.forwarder.is_none() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
                     _ => None,
                 };
-                let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
+                let returned = typed.map(|(_, returned)| returned);
+                let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, returned, missed, raised,
                     stop: self.call_out_stop(), leave: self.leave_site(), initializing };
                 self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
             }
@@ -3752,13 +3754,61 @@ impl Lowering<'_, '_> {
             return self.return_register(state, record, site.result);
         }
         state.call_effect();
+        // A direct call whose callee's summary types its result (`call_results`): the facts assume that type after
+        // the call. The helper's completion checks it on its own path; the native return already holds it.
+        let typed = typed.map(|(ty, returned)| (ty, self.typed_completion(state, pc, site.result, ty, returned)));
         self.reload_property_arena();
-        self.reload_result(state, site.result);
+        match typed {
+            Some((ty, value)) => self.define_typed_result(state, site.result, value, ty),
+            None => self.reload_result(state, site.result),
+        }
         if let Some(ty) = returns { self.conform_declared_result(state, pc, site.result, ty); }
-        // A direct call whose callee's summary types its result (`call_results`): the facts assume that
-        // type after the call, so the completion checks it once, whichever path completed it.
-        if let Some(ty) = self.observed.at(pc) { self.conform_declared_result(state, pc, site.result, ty); }
+        // Any other call's result is checked once where the call completes, whichever path completed it.
+        if typed.is_none() && let Some(ty) = self.observed.at(pc) { self.conform_declared_result(state, pc, site.result, ty); }
         true
+    }
+
+    /// Whether a direct call's completion takes the result `ty` its callee's summary types without a test on the native
+    /// return (`typed_completion`): the resumed point is a completion, and the fact is a Number or a tagged type the
+    /// completion's test checks by its tag. An int32 keeps its test, as an integral double is a Number and not its tag.
+    fn typed_native_result(&self, pc: usize, ty: Type) -> bool {
+        self.resumes_after(pc) && ty.object_shape().is_none() && ty != Type::DIRECT_OBJECT_FAMILY
+            && (ty == Type::NUMBER || number_domains::target_representation(ty) == Representation::Tagged)
+    }
+
+    /// Joins a direct call's native return and its helper's completion, both continuing with the call's result in the
+    /// representation `ty` takes. The native return's word is the callee's, which its summary types, so it is only
+    /// decoded; the helper's completion tests the result on its own path, from a copy of the state. Continues in the join,
+    /// whose parameter is the result's value.
+    fn typed_completion(&mut self, state: &State, pc: usize, result: Register, ty: Type, returned: ir::Block) -> ir::Value {
+        let float = number_domains::target_representation(ty) == Representation::Float64;
+        let join = self.builder.create_block();
+        let param = self.builder.append_block_param(join, if float { types::F64 } else { types::I64 });
+        let base = self.registers_base;
+        let bits = self.raw_load(Lane::I64, regions::frame(), base, register_offset(result));
+        let mut helper = state.clone();
+        helper.call_effect();
+        self.set_tagged(&mut helper, result, bits);
+        self.conform_register(&mut helper, pc + 1, result, ty);
+        let helper_value = if float {
+            let variable = self.float_var(usize::from(result));
+            self.builder.use_var(variable)
+        } else { bits };
+        self.goto(join, &[helper_value]);
+        self.reentries.push(returned);
+        self.builder.switch_to_block(returned);
+        let word = self.builder.block_params(returned)[0];
+        let native = if float { emit_known_number(&mut self.builder, word) } else { word };
+        self.goto(join, &[native]);
+        self.builder.switch_to_block(join);
+        param
+    }
+
+    /// Defines a direct call's result `value` as its typed fact `ty` (`typed_completion`).
+    fn define_typed_result(&mut self, state: &mut State, result: Register, value: ir::Value, ty: Type) {
+        let representation = number_domains::target_representation(ty);
+        self.define(state, result, value, RegisterFact::definition(ty, representation));
+        state.proofs.homed.insert(usize::from(result));
     }
 
     /// A call of a register callee that one of `callees` may be (several direct candidates of the
@@ -3784,13 +3834,13 @@ impl Lowering<'_, '_> {
             self.branch_if(matched, (arm, &[]), (next, &[]));
             self.builder.switch_to_block(arm);
             let miss = cold_block(&mut self.builder);
-            let call = CallSite { callee: Some(callee), record, context, registers, completed, missed, raised, stop, leave, initializing: None };
+            let call = CallSite { callee: Some(callee), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
             self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
         }
         // No candidate's identity: the VM's call alone, as a site with no direct entry makes it.
         self.builder.switch_to_block(fallback);
         let miss = cold_block(&mut self.builder);
-        let call = CallSite { callee: None, record, context, registers, completed, missed, raised, stop, leave, initializing: None };
+        let call = CallSite { callee: None, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
         self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 
