@@ -53,7 +53,7 @@
  *   Still behind node: subtype and strictSubtype pairs (body checks: array literal and return type reduction,
  *   variable initializers), overload consistency of functions (checkFunctionOrConstructorSymbol), enum and module
  *   declaration checks, static and class index constraints, and checkTypeOperator and conditional type checks
- *   (no relation pairs in the corpus, but not ported). Unported requests remain in body checks (634 of them).
+ *   (no relation pairs in the corpus, but not ported). Unported requests remain in body checks (about 630 of them; generic calls with context-sensitive arguments, narrowing and contextual typing are the main causes).
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
