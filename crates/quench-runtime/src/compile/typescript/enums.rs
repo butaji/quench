@@ -77,7 +77,7 @@ fn unary_fold(unary: &UnaryExpression<'_>, enum_name: &str, known: &FxHashMap<St
     Some(Value::Number(match unary.operator {
         UnaryOperator::UnaryPlus => value,
         UnaryOperator::UnaryNegation => -value,
-        UnaryOperator::BitwiseNot => f64::from(!to_int32(value)),
+        UnaryOperator::BitwiseNot => f64::from(!crate::value::number_to_i32(value)),
         _ => return None,
     }))
 }
@@ -91,7 +91,7 @@ fn binary_fold(binary: &BinaryExpression<'_>, enum_name: &str, known: &FxHashMap
         return Some(Value::String(format!("{}{}", display(&left)?, display(&right)?)));
     }
     let (Value::Number(a), Value::Number(b)) = (left, right) else { return None };
-    let (ia, ib) = (to_int32(a), to_int32(b));
+    let (ia, ib) = (crate::value::number_to_i32(a), crate::value::number_to_i32(b));
     let shift = (b as i64 & 31) as u32;
     Some(Value::Number(match binary.operator {
         BinaryOperator::Addition => a + b,
@@ -108,11 +108,6 @@ fn binary_fold(binary: &BinaryExpression<'_>, enum_name: &str, known: &FxHashMap
         BinaryOperator::ShiftRightZeroFill => f64::from((ia as u32).wrapping_shr(shift)),
         _ => return None,
     }))
-}
-
-fn to_int32(value: f64) -> i32 {
-    if !value.is_finite() { return 0; }
-    (value.trunc().rem_euclid(4_294_967_296.0) as u32) as i32
 }
 
 /// The JavaScript text of a folded value, when it is exact without runtime help

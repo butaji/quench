@@ -40,9 +40,15 @@ pub(super) struct LoopTier {
     /// picked (`loop_model::base_region`), which moves to u-jit once its iterations repay that
     /// compile (`promote`).
     pub(super) base: bool,
+    /// The iterations at which a b-jit region is due to move to u-jit (`loop_model::promotion_taken`),
+    /// where the default mode picked b-jit for the region; none where u-jit never gets ahead.
+    promote_at: Option<u64>,
     /// Whether the site moves from its b-jit region to u-jit (`promote`): the stencil code runs
     /// until the u-jit region publishes in its place.
     promoting: bool,
+    /// The entries up to which the site is known to repay its native code (`LoopSite::settle`):
+    /// the iterations only add, so until the entries pass this count the check is not due.
+    pub(super) settle_at: u64,
 }
 
 impl LoopTier {
@@ -52,12 +58,12 @@ impl LoopTier {
         self.iterations = self.iterations.saturating_add(backedges);
     }
 
-    /// Moves a b-jit region the default mode picked to u-jit once the loop's iterations repay
-    /// the u-jit compile over it (`loop_model::promotes`): the stencil code goes, and the next
-    /// entry compiles the u-jit region, where a compilation remains.
-    pub(super) fn promote(&mut self, tiers: &Tiers, span: u64) {
-        if !self.base || self.compilations >= tiers.loops.max_compilations
-            || !super::super::compiled::loop_model::promotes(tiers, span, self.iterations) { return; }
+    /// Moves a b-jit region the default mode picked to u-jit once the loop's iterations reach
+    /// `promote_at` (`loop_model::promotion_taken`): the stencil code goes, and the next entry compiles
+    /// the u-jit region, where a compilation remains.
+    pub(super) fn promote(&mut self, tiers: &Tiers) {
+        let due = self.promote_at.is_some_and(|at| self.iterations >= at);
+        if !self.base || self.compilations >= tiers.loops.max_compilations || !due { return; }
         // The stencil code keeps running while the u-jit region compiles (`promoting`): the
         // entry that finds it ready publishes it in the stencil code's place.
         self.base = false;
@@ -67,9 +73,9 @@ impl LoopTier {
     /// The backward edges a run of the current code may take before it leaves to move to u-jit
     /// (`LoopEntry::set_backedge_budget`): for a b-jit region the default mode picked, the
     /// iterations left until the u-jit region is ahead of it; none otherwise.
-    pub(super) fn backedge_budget(&self, tiers: &Tiers, span: u64) -> Option<u64> {
+    pub(super) fn backedge_budget(&self, tiers: &Tiers) -> Option<u64> {
         if !self.base || self.compilations >= tiers.loops.max_compilations { return None; }
-        super::super::compiled::loop_model::promotion_taken(tiers, span).map(|at| at.saturating_sub(self.iterations))
+        self.promote_at.map(|at| at.saturating_sub(self.iterations))
     }
 
     /// Whether the u-jit region of a promoted site is still to start compiling.
@@ -295,6 +301,7 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let base = super::super::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
         u64::from(site.taken.get()).saturating_add(tier.iterations));
     tier.base = base && !crate::jit_mode::base_regions();
+    tier.promote_at = super::super::compiled::loop_model::promotion_taken(machine.programs.tiers(), site.span());
     let program = machine.programs.get(machine.active_program);
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();

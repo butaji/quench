@@ -14,6 +14,7 @@ use super::*;
 use super::super::declared_checks::{entry_checks, ARRAY, BASE_TESTED, EntryCheck, OBJECT_PLAIN, STRING};
 use super::super::lane_region::scalar::parameter_register;
 use crate::bytecode::{Function, Operand};
+use crate::staged::value::language_typeof_index;
 use crate::staged::{DecodeContext, Operation};
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -175,12 +176,8 @@ pub(super) fn typeof_fold(function: &Function, instruction: WideInstruction) -> 
         return None;
     }
     let (index, negated) = crate::bytecode::typeof_test(instruction.unary_operator())?;
-    let name = match guard_languages(function, instruction.register_b())? {
-        languages if languages == language(ValueType::Function) => "function",
-        languages if languages & !(OBJECT_PLAIN | ARRAY) == 0 => "object",
-        _ => return None,
-    };
-    let holds = (index == crate::bytecode::typeof_name_index(name)?) != negated;
+    let name = language_typeof_index(guard_languages(function, instruction.register_b())?)?;
+    let holds = (index as u64 == name) != negated;
     Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(Value::boolean(holds).to_bits())), None, None))
 }
 

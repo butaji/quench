@@ -1241,6 +1241,23 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     push: InLoopPush::Body,
     construct: ConstructKind::No,
 };
+/// A user function `new` may push in place, cached beside the call targets (`Vm::in_loop_constructor`),
+/// with the same lifetime: its program, function and environment, and which in-place [[Construct]]
+/// its body admits (`CONSTRUCT_BASE`, `CONSTRUCT_DERIVED`).
+#[derive(Clone, Copy)]
+struct ConstructTarget {
+    callee: Value,
+    program: ProgramId,
+    function: u32,
+    env: Value,
+    admits: u8,
+}
+/// A base constructor body (`Vm::inline_constructible`).
+const CONSTRUCT_BASE: u8 = 1;
+/// A derived constructor body (`Vm::inline_derived_constructible`).
+const CONSTRUCT_DERIVED: u8 = 2;
+const EMPTY_CONSTRUCT_TARGET: ConstructTarget =
+    ConstructTarget { callee: Value::UNDEFINED, program: ProgramId::MAIN, function: 0, env: Value::UNDEFINED, admits: 0 };
 /// A table of empty targets, which no binding matches: its function is the root, never a callee.
 static NO_CALL_TARGETS: [InLoopCallTarget; CALL_TARGET_CACHE_SIZE] = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
 /// The code units below which a unit is ASCII.
@@ -2344,6 +2361,7 @@ pub(crate) struct Vm<H> {
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
+    construct_targets: Box<[ConstructTarget; CALL_TARGET_CACHE_SIZE]>,
     frameless: compiled::Frameless,
     field_caches: site_table::CacheSiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
@@ -2572,7 +2590,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// Retire weak callee bindings and frameless admissions at their lifetime-changing edge.
-    fn clear_call_targets(&mut self) { self.call_targets.fill(EMPTY_CALL_TARGET); self.frameless.clear(); }
+    fn clear_call_targets(&mut self) {
+        self.call_targets.fill(EMPTY_CALL_TARGET);
+        self.construct_targets.fill(EMPTY_CONSTRUCT_TARGET);
+        self.frameless.clear();
+    }
 
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
