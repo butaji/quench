@@ -138,6 +138,8 @@ impl LaneView {
         }
         let exits = self.entry.note_leave();
         name_leave(leaves_at, exit, method, left_new);
+        // An ahead image's body stays: nothing would replace it but the interpreter.
+        if method.lease().is_some_and(|body| body.ahead) { return false; }
         // Leaves past the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
         let (completions, _) = self.entry.evidence();
         let (leaves, runs) = (exits, exits + completions);

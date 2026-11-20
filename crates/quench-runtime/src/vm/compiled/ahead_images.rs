@@ -268,8 +268,15 @@ impl<H: Host> Vm<H> {
     /// lane body linked to this VM, or where it has none (or none this VM can take) its base body
     /// where the image placed it.
     pub(in crate::vm) fn install_ahead_body(&mut self, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
-        if entry.is_some() || !generic.is_empty() { return None; }
-        let images = self.programs.ahead_images(self.active_program, program)?;
+        let traced = crate::trace::Channel::AotLanes.on();
+        if entry.is_some() || !generic.is_empty() {
+            if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}, {} generic leaves", generic.len()); }
+            return None;
+        }
+        let Some(images) = self.programs.ahead_images(self.active_program, program) else {
+            if traced { eprintln!("aot-lanes: install function {function}: refused, no image for the program"); }
+            return None;
+        };
         let within = |setting: crate::trace::Dev| !setting.on() || setting.value()
             .and_then(|range| range.split_once('-'))
             .and_then(|(low, high)| Some((low.parse::<u32>().ok()?, high.parse::<u32>().ok()?)))
@@ -277,9 +284,15 @@ impl<H: Host> Vm<H> {
         if !within(crate::trace::Dev::AotBodies) { return None; }
         let lanes_allowed = within(crate::trace::Dev::AotLanes);
         let lane = if lanes_allowed { self.ahead_lane_method(program, &images, function) } else { None };
-        let (method, kind) = match lane {
+        let (mut method, kind) = match lane {
             Some(method) => (method, "lane"),
-            None => (Self::ahead_base_method(program, &images, function)?, "base"),
+            None => match Self::ahead_base_method(program, &images, function) {
+                Some(method) => (method, "base"),
+                None => {
+                    if traced { eprintln!("aot-lanes: install function {function}: refused, no base body"); }
+                    return None;
+                }
+            },
         };
         if crate::trace::Channel::AotLanes.on() {
             let name = program.functions.get(function as usize)
@@ -287,6 +300,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|atom| program.atoms.get(atom as usize)).map_or("", |name| &name[..]);
             eprintln!("aot-lanes: install function {function} ({name}): {kind} body");
         }
+        method.ahead = true;
         let published = self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
         for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, &mut self.heap); }

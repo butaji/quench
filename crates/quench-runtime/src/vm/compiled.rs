@@ -3876,6 +3876,9 @@ pub(super) struct LaneMethod {
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
     /// types no call, so its summary is not read.
     withdrawn: std::cell::Cell<bool>,
+    /// Whether it is an ahead image's body (`Vm::install_ahead_body`): nothing replaces it, so no leave
+    /// retires it (`LaneView::note_lane_body_end`).
+    pub(in crate::vm) ahead: bool,
 }
 
 impl LaneMethod {
