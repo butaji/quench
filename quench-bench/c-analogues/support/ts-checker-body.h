@@ -2087,6 +2087,7 @@ static TsType *cContextualType(TsNode *e) {
       TsType *pt = cSigParamType(sig, &ps, idx, &ok);
       return ok ? pt : NULL;
     }
+    case TSK_TemplateSpan: return NULL;   /* a template span has no contextual type */
     case TSK_PropertyAssignment: {
       /* the property of the contextual type of the object literal */
       if (p->initializer != c || !p->name || p->name->kind != TSK_Identifier || !p->parent || p->parent->kind != TSK_ObjectLiteralExpression)
@@ -3496,6 +3497,108 @@ static TsType *cBinaryType(TsNode *e) {
   return cUnported("binary operator");
 }
 
+/* ---- template expressions (checkTemplateExpression, 84988) ---- */
+/* a span that node's evaluate (23423) may fold to a value: a literal, a template whose spans may all fold, a binary
+ * operator of two such operands, a unary + - ~ of one, an entity name (a const variable, an enum member, Infinity, NaN)
+ * or an access of a name. The other expressions give no value (evaluate gives undefined). */
+static bool cSpanMayEvaluate(TsNode *e) {
+  e = cSkipParens(e);
+  switch (e->kind) {
+    case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral: return true;
+    case TSK_TemplateExpression:
+      for (int i = 0; e->spans && i < e->spans->n; i++) if (!cSpanMayEvaluate(e->spans->v[i]->expression)) return false;
+      return true;
+    case TSK_BinaryExpression: return cSpanMayEvaluate(e->left) && cSpanMayEvaluate(e->right);
+    case TSK_PrefixUnaryExpression:
+      return (e->extra == TSK_PlusToken || e->extra == TSK_MinusToken || e->extra == TSK_TildeToken) && cSpanMayEvaluate(e->operand);
+    case TSK_PropertyAccessExpression: {
+      TsNode *r = e;
+      while (r->kind == TSK_PropertyAccessExpression) r = cSkipParens(r->expression);
+      return r->kind == TSK_Identifier;
+    }
+    case TSK_ElementAccessExpression: return true;
+    case TSK_Identifier: {
+      if (e->textLen == 8 && memcmp(e->text, "Infinity", 8) == 0) return true;
+      if (e->textLen == 3 && memcmp(e->text, "NaN", 3) == 0) return true;
+      TsSymbol *s = cResolveValueName(e, bnEscapeText(e->text, e->textLen));
+      if (!s) return false;
+      if (s->flags & SF_EnumMember) return true;
+      TsNode *d = cFirstDeclOf(s);
+      return d && d->kind == TSK_VariableDeclaration && cIsConstVariableDecl(d);
+    }
+    default: return false;
+  }
+}
+
+/* isTemplateLiteralContext: a parenthesized expression of one, or the argument of an element access */
+static bool cIsTemplateLiteralCtx(TsNode *n) {
+  TsNode *p = n->parent;
+  if (p && p->kind == TSK_ParenthesizedExpression) return cIsTemplateLiteralCtx(p);
+  return p && p->kind == TSK_ElementAccessExpression && p->argumentExpression == n;
+}
+
+/* isConstContext: 1 in a const context, 0 out of one, -1 when an assertion on the way up is not ported */
+static int cIsConstContextState(TsNode *n) {
+  TsNode *p = n->parent;
+  if (!p) return 0;
+  switch (p->kind) {
+    case TSK_AsExpression: case TSK_TypeAssertionExpression: return -1;
+    case TSK_ParenthesizedExpression: case TSK_ArrayLiteralExpression: case TSK_SpreadElement: return cIsConstContextState(p);
+    case TSK_PropertyAssignment: case TSK_ShorthandPropertyAssignment: case TSK_TemplateSpan:
+      return p->parent ? cIsConstContextState(p->parent) : 0;
+    default: return 0;
+  }
+}
+
+/* checkTemplateExpression: each span is checked in order and related to the template constraint (a span that is not is
+ * string). The template literal type is kept in a const context, in a template literal context, or under a contextual type
+ * with a literal or template member; otherwise the type is string. A template whose spans may all fold to a value is not
+ * ported (evaluate), and neither is a span of a symbol type or a generic contextual type. */
+static TsType *cTemplateExprType(TsNode *e) {
+  int ns = e->spans ? e->spans->n : 0;
+  CStr *texts = ts_arena_alloc(sizeof(CStr) * (size_t)(ns + 1));
+  TsType **types = ts_arena_alloc(sizeof(TsType *) * (size_t)(ns ? ns : 1));
+  texts[0].s = e->head->text;
+  texts[0].n = e->head->textLen;
+  bool err = false, allMaybe = ns > 0;
+  TsType *tc = cGetUnionType((TsType *[]){cStringType, cNumberType, cBigIntType, cBooleanType, cNullType, cUndefinedType}, 6);
+  for (int i = 0; i < ns; i++) {
+    TsNode *sp = e->spans->v[i];
+    TsType *t = cExprType(sp->expression);
+    if (!cSpanMayEvaluate(sp->expression)) allMaybe = false;
+    texts[i + 1].s = sp->literal->text;
+    texts[i + 1].n = sp->literal->textLen;
+    if (t == cErrorType) { err = true; types[i] = cErrorType; continue; }
+    int nm = (t->flags & TF_Union) ? t->ntypes : 1;
+    for (int k = 0; k < nm; k++) {
+      TsType *m = (t->flags & TF_Union) ? t->types[k] : t;
+      if (m->flags & (TF_ESSymbol | TF_UniqueESSymbol)) return cUnported("template of a symbol");
+    }
+    types[i] = cIsRelatedWith(t, tc, REL_Assignable) ? t : cStringType;
+  }
+  if (err) return cErrorType;
+  for (int i = 0; i <= ns; i++) if (cHasEscapeOrNonAscii(texts[i].s, texts[i].n)) return cUnported("template with an escape");
+  if (allMaybe) return cUnported("template that may fold to a value");
+  bool lit = false;
+  int cs = cIsConstContextState(e);
+  if (cs < 0) return cUnported("template in an assertion");
+  lit = cs > 0 || cIsTemplateLiteralCtx(e);
+  if (!lit) {
+    TsType *cx = cContextualType(e);
+    if (cx == cErrorType) return cx;
+    if (cx) {
+      int n = (cx->flags & TF_Union) ? cx->ntypes : 1;
+      for (int i = 0; i < n; i++) {
+        TsType *m = (cx->flags & TF_Union) ? cx->types[i] : cx;
+        if (m->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Conditional)) return cUnported("template with a generic contextual type");
+        if (m->flags & (TF_StringLiteral | TF_TemplateLiteral)) lit = true;
+      }
+    }
+  }
+  if (!lit) return cStringType;
+  return cGetTemplateLiteralType(texts, types, ns);
+}
+
 static TsType *cExprWorker(TsNode *e) {
   switch (e->kind) {
     case TSK_ParenthesizedExpression: return cExprType(e->expression);
@@ -3552,6 +3655,7 @@ static TsType *cExprWorker(TsNode *e) {
     case TSK_ElementAccessExpression: return cElementAccessType(e);
     case TSK_CallExpression: return cCallType(e);
     case TSK_NewExpression: return cNewType2(e);
+    case TSK_TemplateExpression: return cTemplateExprType(e);
     case TSK_ArrayLiteralExpression: {
       TsType *ac = cContextualType(e);
       if (ac == cErrorType) return ac;
