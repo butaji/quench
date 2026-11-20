@@ -5,6 +5,8 @@
 //! or a `b`/`b.cond` (AArch64). Stencils use `rust-preserve-none`; the register map (frame,
 //! context and pins) is `stencils/rows.rs`'s, assigned by LLVM, and `PINNED` and `PINNED_F`
 //! count the pins while their indexes stay abstract (`stencils/codes.rs`).
+// The crate mounts runtime sources (staged rows, operations) of which it uses a part.
+#![allow(dead_code)]
 
 #[macro_use]
 #[path = "../stencils/row_catalog.rs"]

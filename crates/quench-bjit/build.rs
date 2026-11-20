@@ -238,6 +238,16 @@ fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
     let mut counts = Counts::default();
     let rows = rows
         .iter()
+        // A row whose code still calls or reads a symbol no hole names (an out-of-line helper, a
+        // constant pool) cannot be copied: it stays out of the library, and its op runs as a
+        // `--b-jit` without the row does (the lookup answers none).
+        .filter(|row| {
+            let clean = row.relocs.iter().all(|reloc| reloc.symbol.starts_with("HOLE_"));
+            if !clean {
+                println!("cargo::warning=stencil {} left out: a relocation no hole names", row.name);
+            }
+            clean
+        })
         .map(|row| {
             check_no_return(arch, &row.name, &row.code);
             check_call(arch, &row.name, &row.code);

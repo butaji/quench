@@ -105,7 +105,7 @@ mod representation;
 /// `Representation` the interpreter and the u-jit use, so a row folds the same facts.
 pub(crate) mod typed_ir {
     pub(crate) use super::int_range::IntRange;
-    pub(crate) use super::lattice::{Type, TypeKind};
+    pub(crate) use super::lattice::{Type, TypeKind, language_bit};
     pub(crate) use super::representation::Representation;
 }
 

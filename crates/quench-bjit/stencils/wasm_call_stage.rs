@@ -103,6 +103,14 @@ impl WasmTable for TableStage {
         self.row(index) as u64
     }
 
+    type Row = usize;
+
+    /// The element's row address, which the fast path reads its body and instance from.
+    #[inline(always)]
+    fn element_row(&mut self, index: u64) -> usize {
+        self.row(index)
+    }
+
     /// Never reached: `unless_equal` defers every other signature to the VM, which relates it.
     #[inline(always)]
     fn signature_accepts(&mut self, _reference: u64, _signature: u64, _expected: u64) -> u64 {
