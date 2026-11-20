@@ -287,7 +287,7 @@ fn loop_coverage_lowers_only_the_loop() {
         helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
         fields: &[], global_reads: &Default::default(), facts: VmFacts::STATIC,
         generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
         plan: RegionPlan { entry_bounds: true, coverage: Coverage::Loop { header, backedge, poll: true },
             completion: Completion::Body, views: ElementViews::Dense } }
         .specialize(&program).expect("the loop lowers");

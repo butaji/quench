@@ -310,6 +310,10 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (native_field_loads, store_loads) = (native_field_loads(machine, own.filter(|_| !base), region), native_store_loads(machine, region));
     let types = entry_types(region, r);
+    // A loop array's base is no entry register of the region: its string is sampled here too.
+    let strings: Vec<crate::bytecode::Register> = region.entry_registers()
+        .chain(region.arrays.iter().filter(|array| array.field.is_none()).map(|array| array.register))
+        .filter(|register| machine.heap.is_string(r.get(*register))).collect();
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
@@ -317,7 +321,7 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let construct_plans = |function: u32, pc: u32| super::unit_targets_in_lane(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        entry_types: &types, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
+        entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
@@ -400,7 +404,7 @@ fn native_store_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled:
 /// in place (`Vm::try_replace_record_element`), no prototype claiming an index of it; or every
 /// one a typed array a register holds whose elements the loop may address in place
 /// (`Vm::typed_array_elements_in_lane`), which its code views at the loop's header. A mix, or
-/// any other value, declines the entry.
+/// any other value, declines the entry; a string the loop only reads holds an empty slot.
 pub(super) fn loop_arrays_in_lane<H: Host>(vm: &mut Vm<H>, r: Registers, region: &LoopRegion, entry: &mut LoopEntry)
     -> Option<ElementViews> {
     let value_of = |(register, field): (crate::bytecode::Register, Option<usize>), entry: &LoopEntry| match field {
@@ -413,6 +417,12 @@ pub(super) fn loop_arrays_in_lane<H: Host>(vm: &mut Vm<H>, r: Registers, region:
     let mut views = None;
     for array in &region.arrays {
         let value = value_of((array.register, array.field), &*entry);
+        // A string the loop only reads is no array: its element reads take the string row
+        // (`Lowering::string_or_row`), and its slot holds no view, so the others keep their places.
+        if !array.written && vm.heap.is_string(value) {
+            entry.push_array(std::ptr::null_mut::<u64>(), 0, 0)?;
+            continue;
+        }
         let found = if vm.heap.record_array(value).is_some() && doubles {
             push_double_array(vm, value, array.written, entry)?;
             ElementViews::Double

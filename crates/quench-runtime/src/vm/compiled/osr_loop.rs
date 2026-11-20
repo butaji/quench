@@ -2323,6 +2323,9 @@ pub(crate) struct Observation<'a> {
     /// The type each register held where the compile began, by register (`Type::INT32` for an int32,
     /// `Type::NUMBER` for another Number, `Type::ANY` otherwise); a register past the slice is `Type::ANY`.
     pub(crate) entry_types: &'a [Type],
+    /// The registers holding strings where the compile began: a loop's element read through one
+    /// takes the string row, with no hoisted view (`RegionSpecializer::string_entries`).
+    pub(crate) string_entries: &'a [Register],
     /// What each instruction of the region, from its header, met where its int32 handler
     /// declined (`Vm::region_operand_kinds`): the feedback the representations start from,
     /// which the sample of the live registers above completes.
