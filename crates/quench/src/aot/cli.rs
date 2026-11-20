@@ -14,7 +14,7 @@ const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile release|iteration] [--sdk-report FILE] [--support-dir DIR] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration] [--sdk-report FILE] [--support-dir DIR] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -112,8 +112,8 @@ impl Options {
         if strict && matches!(support, Some(SourceSupport::Dynamic)) {
             return Err("--strict-aot excludes --dynamic-source".into());
         }
-        if !matches!(profile.as_str(), "release" | "iteration") {
-            return Err("compile profile must be release or iteration".into());
+        if !matches!(profile.as_str(), "experiment" | "release" | "iteration") {
+            return Err("compile profile must be experiment, release or iteration".into());
         }
         Ok(Self {
             entry: entry.ok_or(USAGE)?,
@@ -279,8 +279,9 @@ fn compile(options: Options) -> Result<(), String> {
         }
         None => {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().map_err(|error| format!("automatic support build requires the compiler checkout: {error}; use --sdk-report with existing support artifacts"))?;
+            // The `experiment` profile takes nightly flags, as the standard build does (`RUSTC_BOOTSTRAP`).
             let mut cargo = Command::new("cargo");
-            cargo.current_dir(&workspace).args([
+            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args([
                 "build",
                 "--locked",
                 "--profile",
