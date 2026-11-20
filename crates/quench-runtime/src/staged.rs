@@ -907,10 +907,11 @@ pub(crate) const fn checked_local(op: Op) -> bool {
 /// store has no result register, and answers the source word it stored; a store's result is its
 /// `b` register and an InitializeTdz has none.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
-    // A Wasm row writes its result register only where its record has one: a store, a global
-    // store and a fill define none.
+    // A Wasm row writes the result register its record names, if any. A store, a global store and
+    // a fill name none: the lane must not write the answered word into their record's `a`, which
+    // a fill leaves at register 0 (`wasm_emit`'s fill emission).
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
-        return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
+        return true;
     }
     // A keyed read's answer is written by the lane (its record's result register, as every
     // producer writes it beside the carried value).
