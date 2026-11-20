@@ -556,6 +556,8 @@ fn tagged_registers_with_failure(
                 .then_some(destination)
         }))
         .chain(held.iter().copied())
+        // A call's callee holds a function (a native one the region calls in place).
+        .chain(instructions.iter().filter(|instruction| crate::staged::calls_ordinary(instruction.op())).map(|instruction| instruction.register_b()))
         // A field receiver the region's field or element reads give holds an object.
         .chain(instructions.iter().filter(|instruction| crate::staged::reads_named_field(instruction.op())).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;

@@ -49,7 +49,7 @@ mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
 #[path = "lane_region/data_view_calls.rs"] mod data_view_calls;
-pub(in crate::vm) use native_calls::{inlines_in_loop, inlines_in_loop_call, native_method_call};
+pub(in crate::vm) use native_calls::{inlines_in_loop, inlines_in_loop_call, native_method_call, IN_PLACE_CALL};
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]

@@ -217,6 +217,16 @@ pub(super) const fn runs_no_guest_code(native: Native) -> bool {
     IN_PLACE_FAMILIES[native as usize] != 0
 }
 
+/// Whether a compiled loop may call `native` in place, through its in-place body, and go on
+/// (`lane_region::native_calls::Inline::InPlace`): the body runs no guest code, raises nothing
+/// and observes no frame (`runs_no_guest_code`), and changes no array's elements, which a loop's
+/// hoisted views and folded facts do not survive.
+pub(super) const fn in_place_in_loop(native: Native) -> bool {
+    let families = IN_PLACE_FAMILIES[native as usize];
+    families != 0 && families & ARRAY == 0
+        && !matches!(native, Native::ArrayPush | Native::ArrayPop | Native::Uint8ArrayFill)
+}
+
 /// `in_place_families` of every native, by discriminant.
 const IN_PLACE_FAMILIES: [u16; Native::COUNT as usize] = {
     let mut table = [0; Native::COUNT as usize];

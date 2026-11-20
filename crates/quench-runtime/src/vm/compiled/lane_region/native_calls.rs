@@ -34,10 +34,16 @@ pub(super) enum Inline {
     Scalar,
     /// A DataView getter or setter of a fixed-width element, run on the view's bytes (`data_view_calls`).
     DataView(DataViewCall),
+    /// Any other native whose in-place body a loop may call and go on (`dispatch_fast::in_place_in_loop`):
+    /// called by the scalar natives' helper with the call's receiver (`Lowering::scalar_native_call`).
+    InPlace,
 }
 
 /// The argument count of a scalar native's binary form, and of the scalar call that takes two.
 const BINARY_ARGUMENTS: u16 = 2;
+
+/// The bit of the scalar natives' helper's count that marks an in-place native's call (`Inline::InPlace`).
+pub(in crate::vm) const IN_PLACE_CALL: u64 = 1 << 32;
 
 impl Inline {
     /// The operation `native` runs inline, if any: the Math row `number::math_call` derives for
@@ -47,17 +53,18 @@ impl Inline {
             .or_else(|| Builtin::of(native).map(Self::Builtin))
             .or_else(|| scalar_native(native).then_some(Self::Scalar))
             .or_else(|| DataViewCall::of(native).map(Self::DataView))
+            .or_else(|| crate::vm::dispatch_fast::in_place_in_loop(native).then_some(Self::InPlace))
     }
 
     /// The arguments the inline operation reads; a call passing another count takes the native.
     const fn arguments(self) -> u16 {
-        match self { Self::Scalar => BINARY_ARGUMENTS, Self::Math(call) => call.arity(), Self::Builtin(builtin) => builtin.arguments(), Self::DataView(call) => call.required() }
+        match self { Self::Scalar | Self::InPlace => BINARY_ARGUMENTS, Self::Math(call) => call.arity(), Self::Builtin(builtin) => builtin.arguments(), Self::DataView(call) => call.required() }
     }
 
     /// Whether a call passing `count` arguments runs the operation inline: a scalar native takes one or two (`parseInt(s)`,
     /// `parseInt(s, 10)`), every other operation exactly `arguments`.
     const fn accepts(self, count: u16) -> bool {
-        match self { Self::Scalar => count == 1 || count == BINARY_ARGUMENTS, Self::DataView(call) => call.accepts(count), _ => count == self.arguments() }
+        match self { Self::Scalar => count == 1 || count == BINARY_ARGUMENTS, Self::InPlace => count <= BINARY_ARGUMENTS, Self::DataView(call) => call.accepts(count), _ => count == self.arguments() }
     }
 
     /// Whether the operation may change an array's elements, which a loop's hoisted views
@@ -198,14 +205,25 @@ impl Lowering<'_, '_> {
         // The callee's identity is held by its holder, a dependency that retires this code
         // before the function can die and its id be reused.
         if !self.holds_holders() { return false; }
+        // An in-place native reads its receiver: a register's value, or none for a plain call.
+        let receiver = match crate::staged::Invocation::of(instruction, crate::staged::DecodeContext::EMPTY).map(|call| call.receiver) {
+            _ if !matches!(inline, Inline::InPlace) => None,
+            Some(crate::staged::Receiver::Register(register)) => Some(register),
+            Some(crate::staged::Receiver::Undefined) => None,
+            _ => return false,
+        };
         let exit = self.guard_exit(state, pc as u32);
-        self.hold_holder_any(state, exit, holder);
         let held = self.tagged(state, instruction.register_b());
-        let same = self.is_identity(held, callee);
-        emit_js_guard(&mut self.builder, same, exit);
+        // An in-place native's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
+        if !matches!(inline, Inline::InPlace) {
+            self.hold_holder_any(state, exit, holder);
+            let same = self.is_identity(held, callee);
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         match inline {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
-            Inline::Scalar => self.scalar_native_call(state, pc, instruction, held, exit),
+            Inline::Scalar => self.scalar_native_call(state, pc, instruction, held, None, exit),
+            Inline::InPlace => self.scalar_native_call(state, pc, instruction, held, Some(receiver), exit),
             Inline::Math(call) => self.math_call(state, instruction, call, exit),
             Inline::DataView(call) => self.data_view_call(state, instruction, call, exit),
         }
@@ -216,7 +234,7 @@ impl Lowering<'_, '_> {
     /// case on the arguments (`lane_allocations::scalar_native_in_lane`), which reads the native from the callee. The call
     /// leaves at `exit`, before it changes anything, where that case does not complete (an object argument, an error, a
     /// due collection).
-    fn scalar_native_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, held: ir::Value, exit: ir::Block) {
+    fn scalar_native_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, held: ir::Value, receiver: Option<Option<Register>>, exit: ir::Block) {
         // The value the loop's entry computed (`hoist_scalar_calls`), where the callee's identity guard at this call holds.
         if let Some(hoisted) = self.scalar_values.get(&pc).copied() {
             let value = self.builder.use_var(hoisted.value);
@@ -227,9 +245,17 @@ impl Lowering<'_, '_> {
         let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
         let undefined = self.builder.ins().iconst(ir::types::I64, Value::UNDEFINED.to_bits() as i64);
         let count = self.builder.ins().iconst(ir::types::I64, i64::from(argc));
-        let first = self.tagged(state, window);
+        let first = if argc >= 1 { self.tagged(state, window) } else { undefined };
         let second = if argc == 2 { self.tagged(state, window + 1) } else { undefined };
-        let value = self.helper_call(LaneHelper::ScalarNative, &[held, count, undefined, first, second]);
+        // An in-place native's receiver (`Inline::InPlace`), and its flag to the helper in the count's high bit.
+        let (this, count) = match receiver {
+            Some(register) => {
+                let this = register.map_or(undefined, |register| self.tagged(state, register));
+                (this, self.builder.ins().iconst(ir::types::I64, i64::from(argc) | IN_PLACE_CALL as i64))
+            }
+            None => (undefined, count),
+        };
+        let value = self.helper_call(LaneHelper::ScalarNative, &[self.payload, held, count, this, first, second]);
         let done = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, done, exit);
         // A Number or other primitive argument may allocate its text, which a body's proofs of object layouts do not survive.
@@ -337,7 +363,7 @@ impl Lowering<'_, '_> {
         let undefined = self.builder.ins().iconst(ir::types::I64, Value::UNDEFINED.to_bits() as i64);
         let count = self.builder.ins().iconst(ir::types::I64, i64::from(argc));
         let second = if argc == 2 { values[1] } else { undefined };
-        let value = self.helper_call(LaneHelper::ScalarNative, &[entry, count, undefined, values[0], second]);
+        let value = self.helper_call(LaneHelper::ScalarNative, &[self.payload, entry, count, undefined, values[0], second]);
         let done = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, done, exit);
         // As the call does in the loop, a primitive argument may allocate its text.
