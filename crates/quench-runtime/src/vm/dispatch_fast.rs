@@ -4608,6 +4608,22 @@ lane_handler! {
     }
 }
 
+script_handler! {
+    /// A `Binary` row its words leave (an operator past the Number rows: `instanceof`, `in`, `**`, a
+    /// string comparison): the lane's pure operation (`binary_value`) answers it in place, which
+    /// runs no guest code, before the general step; the step beside activations would make them
+    /// frames, and every return into them would leave the lane again.
+    #[inline(never)]
+    fn binary_miss_in_lane<>(cx, r, ip, i, view) {
+        if let Some(value) = unsafe { binary_value(cx, r, i) } {
+            note_allocation(unsafe { vm(cx) });
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..Carried::script_in(cx, view) })
+        }
+        sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
+    }
+}
+
 /// The memory view the record after a general step carries: a Wasm run's frame memory, read again
 /// as a call's return reads it (`complete_call`: the step may have grown it), never the script
 /// view `Carried::stepped` makes. A Wasm record addressing through the script view wrote and read
@@ -4858,6 +4874,12 @@ unsafe fn binary_values<H: Host>(
         {
             relation_outcome::<H>(operator, left, right)
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
+        }
+        // `**` of two Numbers (raytrace's `x ** 2`), which `number_binary` leaves.
+        None if operator == oxc_ast::ast::BinaryOperator::Exponential as u32
+            && let (Some(base), Some(exponent)) = (left.as_number(), right.as_number()) =>
+        {
+            Some(Value::number(super::operations::exponentiate(base, exponent)))
         }
         None => bigint_value(cx, operator, left, right),
     }

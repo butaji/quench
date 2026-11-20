@@ -1106,7 +1106,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
-        Value::from_bits(self.read(stage, register)).truthiness()
+        let value = Value::from_bits(self.read(stage, register));
+        match value.truthiness() {
+            Some(truthy) => Some(truthy),
+            // A string or another cell the word leaves: its cell decides it in place, where the
+            // row carries the heap (a truthiness jump's, `row_frame_of`).
+            // SAFETY: the heap outlives the row's step.
+            None => self.heap.map(|heap| crate::vm::coercion::heap_cell_truthy_in(unsafe { &*heap }, value)),
+        }
     }
 
     #[inline(always)]
@@ -2214,6 +2221,11 @@ fn row_frame_of<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut 
         let complete: unsafe fn(*mut (), Value) -> Option<Resumed> = |context, value| super::lane_complete_wasm_activation::<H>(context.cast(), value);
         return LaneFrame::<ACC> { wasm_return: Some((cx.cast(), complete)), ..LaneFrame::<ACC>::new(r, view) };
     }
+    if const { LaneFields::<OP>::OPCODE.is_truthiness_jump() } {
+        // A jump on a string's (or another cell's) truth decides it from the heap (`truthiness`).
+        let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
+        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
+    }
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
@@ -2431,6 +2443,10 @@ pub(in crate::vm::dispatch_fast) fn checked_local_hand<H: Host>(op: Op) -> Handl
 /// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
 /// (`store_name_first_miss`).
 pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
+    // A `Binary` the row leaves tries the lane's pure operation before the general step.
+    if matches!(op, Op::Binary) && matches!(crate::staged::miss(op), crate::staged::Miss::General) {
+        return super::binary_miss_in_lane::<H>;
+    }
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::load_capture_walk_miss::<H>,
         crate::staged::Miss::StoreNameFirst => match FLAG {
