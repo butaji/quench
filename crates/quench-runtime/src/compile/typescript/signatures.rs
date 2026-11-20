@@ -97,13 +97,21 @@ impl<'a> Visit<'a> for Collect<'a, '_> {
 
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
         if !self.loop_head {
-            self.local(declarator.id.get_identifier_name().map(|name| name.as_str()), declarator.type_annotation.as_deref());
+            let name = declarator.id.get_identifier_name().map(|name| name.as_str());
+            // An unannotated `const x = e as T` (or `<T>e`) is typed as if written `const x: T = e`.
+            // `satisfies` keeps the expression's own type, and `x!` names no type: neither is recorded.
+            let ty = match (&declarator.type_annotation, &declarator.init) {
+                (Some(annotation), _) => Some(&annotation.type_annotation),
+                (None, Some(init)) => asserted_type(init),
+                (None, None) => None,
+            };
+            self.local(name, ty);
         }
         walk::walk_variable_declarator(self, declarator);
     }
 
     fn visit_catch_parameter(&mut self, parameter: &CatchParameter<'a>) {
-        self.local(parameter.pattern.get_identifier_name().map(|name| name.as_str()), parameter.type_annotation.as_deref());
+        self.local(parameter.pattern.get_identifier_name().map(|name| name.as_str()), parameter.type_annotation.as_deref().map(|annotation| &annotation.type_annotation));
         walk::walk_catch_parameter(self, parameter);
     }
 
@@ -183,21 +191,40 @@ impl<'a> Collect<'a, '_> {
         self.declarations.declare_parameter(function, index, languages);
     }
 
-    /// Record a local binding of a plain identifier with a type annotation, in the innermost function.
+    /// Record a local binding of a plain identifier with a declared type (an annotation, or an
+    /// assertion initializer's type), in the innermost function.
     /// An array annotation is recorded for its element types even where its own languages are open.
     /// An object-shaped annotation (a literal, or an interface or alias the program declares) also
     /// records its properties for the local (`DeclaredTypes::declare_local_member`).
-    fn local(&mut self, name: Option<&str>, annotation: Option<&TSTypeAnnotation<'_>>) {
-        let (Some(function), Some(name), Some(annotation)) = (self.function, name, annotation) else { return };
-        let languages = declared_language_in(&annotation.type_annotation, self.names);
-        let elements = element_languages(&annotation.type_annotation, self.names);
+    fn local(&mut self, name: Option<&str>, ty: Option<&TSType<'_>>) {
+        let (Some(function), Some(name), Some(ty)) = (self.function, name, ty) else { return };
+        let languages = declared_language_in(ty, self.names);
+        let elements = element_languages(ty, self.names);
         if languages != DECLARED_ANY || elements != DECLARED_ANY {
             self.declarations.declare_local(function, name, languages, elements);
         }
-        for (member, languages) in self.object_members(&annotation.type_annotation) {
+        for (member, languages) in self.object_members(ty) {
             self.declarations.declare_local_member(function, name, &member, languages);
         }
     }
+}
+
+/// The type an initializer asserts, for a local without an annotation: `e as T` and `<T>e`, through
+/// parentheses. `as const` names no type, and `satisfies` and `e!` keep the operand's own type, so
+/// they assert nothing here.
+fn asserted_type<'b, 'a>(init: &'b Expression<'a>) -> Option<&'b TSType<'a>> {
+    match init {
+        Expression::ParenthesizedExpression(inner) => asserted_type(&inner.expression),
+        Expression::TSAsExpression(value) if !is_const_assertion(&value.type_annotation) => Some(&value.type_annotation),
+        Expression::TSTypeAssertion(value) => Some(&value.type_annotation),
+        _ => None,
+    }
+}
+
+/// Whether `ty` is the `const` of an `as const` assertion (a type reference named `const`).
+fn is_const_assertion(ty: &TSType<'_>) -> bool {
+    matches!(ty, TSType::TSTypeReference(reference)
+        if matches!(&reference.type_name, TSTypeName::IdentifierReference(name) if name.name.as_str() == "const"))
 }
 
 /// The return type's languages. An `async` function returns a Promise and a generator returns
@@ -253,6 +280,20 @@ mod tests {
         assert_eq!(declared.declared_local(f, "s"), Some(bit(V::String)));
         assert_eq!(declared.declared_local(f, "a"), None);
         assert_eq!(declared.declared_local(u32::MAX, "x"), None);
+    }
+
+    #[test]
+    fn asserted_initializers_declare_their_locals_like_annotations() {
+        let source = "function f() { const x = foo() as number; const y: number = foo(); const z = <string>bar(); \
+            const w = baz() satisfies string; const v = qux()!; const u = quux() as const; }";
+        let declared = declared_of(source, "asserted.cts");
+        let f = source.find("function f").unwrap() as u32;
+        assert_eq!(declared.declared_local(f, "x"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_local(f, "x"), declared.declared_local(f, "y"));
+        assert_eq!(declared.declared_local(f, "z"), Some(bit(V::String)));
+        assert_eq!(declared.declared_local(f, "w"), None);
+        assert_eq!(declared.declared_local(f, "v"), None);
+        assert_eq!(declared.declared_local(f, "u"), None);
     }
 
     #[test]
