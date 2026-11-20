@@ -249,6 +249,16 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
     (layout.len, layout.hot)
 }
 
+/// The code length and each row's start offset that [`copy_patch`] gives `rows`, without copying or
+/// patching anything. Sound because `copy_patch` places its rows by the same [`layout`], which reads
+/// only each row's stencil, its `cold` flag and its `taken` target, never its hole values or exit
+/// addresses; so a caller may size and lay out the buffer's tail before copying, and check the
+/// starts `copy_patch` returns against these.
+pub fn placement(rows: &[Row]) -> (usize, Vec<usize>) {
+    let layout = layout(rows);
+    (layout.len, layout.hot)
+}
+
 /// A value field `symbolic_fields` names: the row and hole it takes, the offset of the field in the
 /// code `copy_patch` writes (from its `out`), and the relocation class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

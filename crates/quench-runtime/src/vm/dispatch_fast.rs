@@ -4821,25 +4821,8 @@ pub(super) fn proof_index(key: Value) -> Option<usize> {
     usize::try_from(key.as_int()?).ok()
 }
 
-/// A `Binary` record's value where it runs no guest code: Number arithmetic and
-/// relations, then identity equality, an ordinary `instanceof` and an `in` whose key
-/// and receiver (`Vm::plain_in`) need no guest code.
-///
-/// # Safety
-/// `cx` is the running lane's context and `r` its registers.
-#[inline(always)]
-unsafe fn binary_value<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    i: &LaneInstruction,
-) -> Option<Value> {
-    let left = operand_value_in_lane(cx, r, i.b)?;
-    let right = operand_value_in_lane(cx, r, i.c)?;
-    unsafe { binary_values::<H>(cx, i.imm(), left, right) }
-}
-
-/// The value of `left operator right` where it runs no guest code (`binary_value`'s pure
-/// part, which the lane frame answers a row's `Binary` or `Equality` call-out with).
+/// The value of `left operator right` where it runs no guest code (the pure part of a returning
+/// `Binary`, which the lane frame answers a row's `Binary` or `Equality` call-out with).
 ///
 /// # Safety
 /// `cx` is the running lane's context.
@@ -4850,7 +4833,24 @@ unsafe fn binary_values<H: Host>(
     left: Value,
     right: Value,
 ) -> Option<Value> {
-    match unsafe { vm(cx) }.number_binary(operator, left, right) {
+    unsafe { binary_values_classified::<H>(cx, operator, left, right, Value::numeric_pair(left, right)) }
+}
+
+/// `binary_values` of operands whose classification `pair` is `Value::numeric_pair(left,
+/// right)`, which a caller that has classified them already passes so the Number path
+/// does not classify them again. The same value as `binary_values` for the same operands.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn binary_values_classified<H: Host>(
+    cx: *mut LaneContext<H>,
+    operator: u32,
+    left: Value,
+    right: Value,
+    pair: crate::value::NumericPair,
+) -> Option<Value> {
+    match unsafe { vm(cx) }.number_binary_classified(operator, left, right, pair) {
         Some(value) => Some(value),
         // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
         // element or an emulator's `flag & mask`; a string key's `"k" + i` first.
@@ -4883,37 +4883,40 @@ fn concat_or_immediate<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Va
     unsafe { vm(cx) }.immediate_binary(operator, left, right)
 }
 
-/// `binary_value` of a returning `Binary`, which keeps its operands encoded: two
-/// integer registers decide it in place (`integer_binary`), as the operator-specialized
-/// records decide theirs; any other operands take the general value.
+/// The value of a returning `Binary`, which keeps its operands encoded: each operand is read
+/// once (`operand_value_in_lane`, so a register, a folded constant or a plain local), after two
+/// integer registers are tried as they stand. Two int32 operands decide it in place (`integer_binary`), as the operator-specialized records decide
+/// theirs; the other operands are classified once (`Value::numeric_pair`) for the general value.
 ///
 /// # Safety
-/// As for `binary_value`.
+/// `cx` is the running lane's context and `r` its registers.
 #[inline(always)]
 unsafe fn returning_binary_value_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
+    // Two integer registers decide it without decoding the operands further.
     let register = |encoded: u16| {
         let operand = crate::bytecode::Operand(encoded);
         (operand.kind() == Some(crate::bytecode::OperandKind::Register)).then(|| r.get(operand.payload()))
     };
     if let (Some(left), Some(right)) = (register(i.b), register(i.c))
-        && let Some((left, right)) = Value::int_pair(left, right)
-        && let Some(value) = super::operations::integer_binary(i.imm(), left, right)
+        && let Some((a, b)) = Value::int_pair(left, right)
+        && let Some(value) = super::operations::integer_binary(i.imm(), a, b)
     {
         return Some(value);
     }
-    // A folded constant operand (`binding_time`) takes the integer path a register's
-    // value does, decoded as any operand is (`operand_value_in_lane`).
-    if let (Some(left), Some(right)) = (operand_value_in_lane(cx, r, i.b), operand_value_in_lane(cx, r, i.c))
-        && let Some((left, right)) = Value::int_pair(left, right)
-        && let Some(value) = super::operations::integer_binary(i.imm(), left, right)
+    let left = operand_value_in_lane(cx, r, i.b)?;
+    let right = operand_value_in_lane(cx, r, i.c)?;
+    // A folded constant takes the integer path a register's value does; any other pair is
+    // classified once, and the Number path reuses that classification.
+    if let Some((a, b)) = Value::int_pair(left, right)
+        && let Some(value) = super::operations::integer_binary(i.imm(), a, b)
     {
         return Some(value);
     }
-    unsafe { binary_value(cx, r, i) }
+    unsafe { binary_values_classified::<H>(cx, i.imm(), left, right, Value::numeric_pair(left, right)) }
 }
 
 /// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
@@ -17060,7 +17063,7 @@ const fn returning_operator_miss_of<H: Host, const LEAF: u8>(operator: u8) -> Op
 
 script_handler! {
     /// `returning_operator_miss` of operands other than two integers: other Numbers, then the
-    /// concatenation and BigInt values `binary_value` decides; any other takes the
+    /// concatenation and BigInt values `returning_binary_value_in_lane` decides; any other takes the
     /// general path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
     fn returning_operator_other_in_lane<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
