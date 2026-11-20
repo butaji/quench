@@ -77,8 +77,11 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &crate::vm::global_facts::GlobalReads))
     -> Result<(RelocatableCode, bool), &'static str> {
+    // An image has no feedback and no later tier: every record lowers as one a previous body left
+    // at (`generic`), by the form whose miss calls the VM's own operation rather than leaving.
+    let generic: Vec<usize> = (0..unit.instructions.len()).collect();
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
+        global_reads, facts, &generic, &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
