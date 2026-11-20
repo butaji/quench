@@ -1372,6 +1372,7 @@ static TsSymbol *cUnionProperty(TsType *u, BName name) {
   TsSymbol *single = NULL;
   TsSymbol **set = NULL;
   int nset = 0;
+  bool merged = false;   /* mergedInstantiations: instances of one generic declaration with the same type */
   for (int i = 0; i < u->ntypes; i++) {
     TsType *m = u->types[i];
     if (!(m->flags & TF_Object)) return NULL;
@@ -1387,7 +1388,7 @@ static TsSymbol *cUnionProperty(TsType *u, BName name) {
     if (ta == tb && cTypeOfSymbol(p) == cTypeOfSymbol(single) && ((p->flags ^ single->flags) & SF_Optional) == 0) {
       /* the same property of the same declaration with the same type (compareProperties on the identical types) */
       TsNode *owner = single->parent && single->parent->valueDeclaration ? single->parent->valueDeclaration : NULL;
-      if (owner && owner->typeParameters && owner->typeParameters->n) return NULL;
+      merged = owner && owner->typeParameters && owner->typeParameters->n;
       continue;
     }
     if (!set) { set = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)u->ntypes); set[nset++] = single; }
@@ -1397,7 +1398,18 @@ static TsSymbol *cUnionProperty(TsType *u, BName name) {
   }
   if (!single) return NULL;
   TsSymbol *result = single;
-  if (set) {
+  if (!set && merged) {
+    /* the clone of createUnionOrIntersectionProperty: a transient symbol of the same type whose parent is the declaring
+     * symbol of the declaration (createSymbolWithType) */
+    TsNode *vd = single->valueDeclaration;
+    result = cCreateSymbol(single->flags, name);
+    result->decls = single->decls;
+    result->ndecls = single->ndecls;
+    result->declCap = single->declCap;
+    result->valueDeclaration = vd;
+    result->parent = vd && vd->symbol ? vd->symbol->parent : NULL;
+    result->type = cTypeOfSymbol(single);
+  } else if (set) {
     TsType **pts = ts_arena_alloc(sizeof(TsType *) * (size_t)nset);
     for (int k = 0; k < nset; k++) {
       pts[k] = cTypeOfSymbol(set[k]);
