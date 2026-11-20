@@ -6960,7 +6960,7 @@ fn length_read<H: Host>(vm: &mut Vm<H>, receiver: Value) -> Option<Value> {
 /// The cache tier a single-read `GetField` site's entries call for, to which a miss of its
 /// single-entry handler moves the record (`row_get_field_miss`, `row_returning_field_miss`).
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum FieldSiteTier {
+pub(super) enum FieldSiteTier {
     /// A nested read whose steps hit primary own entries, or an array's own `length`
     /// (`lane_nested_value`).
     Nested,
@@ -6993,16 +6993,10 @@ fn field_site_tier_in_lane<H: Host>(
                 })
         });
         if nested_own { FieldSiteTier::Nested } else { FieldSiteTier::General }
-    } else if vm.field_site_getter(i.c) {
-        FieldSiteTier::Getter
-    } else if vm.field_site_polymorphic(i.c) {
-        FieldSiteTier::Polymorphic
-    } else if vm.field_site_holder(i.c) {
-        FieldSiteTier::Holder
-    } else if vm.field_site_inherited(i.c) {
-        FieldSiteTier::Inherited
     } else {
-        FieldSiteTier::Own
+        // The entry tiers come from one cache index (`Vm::field_site_tier`), not one lookup per
+        // predicate, since a held or inherited local read classifies its site on every read.
+        vm.field_site_tier(i.c)
     }
 }
 
