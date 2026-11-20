@@ -1701,10 +1701,26 @@ static void cResolveMappedMembers(TsType *t) {
   TsType **keys = c->flags & TF_Union ? c->types : &c;
   int nk = c->flags & TF_Union ? c->ntypes : 1;
   TsType *mod = mn->questionToken ? NULL : cMappedModifiersType(tp, t->mapper);
+  /* the index signatures of the string and number keys (addMemberForKeyType): the template with the key bound to the key type */
+  CIndexInfo *ix = ts_arena_alloc(sizeof(CIndexInfo) * (size_t)(nk ? nk : 1));
+  int nix = 0;
   for (int i = 0; i < nk; i++) {
     TsType *k = keys[i];
-    if (!(k->flags & TF_StringLiteral)) { cUnported("mapped type over a non-literal key"); return; }
-    BName key = cLiteralKey(k);
+    if (k->flags & (TF_String | TF_Number)) {
+      if (mn->readonlyToken) { cUnported("readonly mapped type over an index key"); return; }
+      TsMapper *mi = cCombineMappers(t->mapper, cCreateTypeMapper(&P, &k, 1));
+      CIndexInfo ii;
+      ii.keyType = k;
+      ii.type = cMappedTemplate(mn->type, mi);
+      ii.isReadonly = false;
+      ii.decl = NULL;
+      if (ii.type == cErrorType) return;
+      ix[nix++] = ii;
+      continue;
+    }
+    /* a unique symbol key is the property named by its symbol (isTypeUsableAsPropertyName), as an element access reads it */
+    if (!(k->flags & (TF_StringLiteral | TF_UniqueESSymbol))) { cUnported("mapped type over a non-literal key"); return; }
+    BName key = (k->flags & TF_UniqueESSymbol) ? (BName){ k->text, k->textLen } : cLiteralKey(k);
     TsSymbol *sym = cCreateSymbol(SF_Property, key);
     if (mn->questionToken) sym->flags |= SF_Optional;
     else if (mod && (mod->flags & TF_Object)) {
@@ -1715,6 +1731,7 @@ static void cResolveMappedMembers(TsType *t) {
     sym->type = cMappedTemplate(mn->type, mm);
     bTableSet(t->members, key, sym);
   }
+  if (nix) { t->index = ix; t->nindex = nix; }
 }
 
 /* resolved members of an object type (resolveStructuredTypeMembers) */
