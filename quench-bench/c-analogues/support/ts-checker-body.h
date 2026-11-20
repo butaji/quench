@@ -2542,8 +2542,8 @@ static bool cArgsApplicable(CParams *ps, TsType **at, int na, CSig *sig, int rel
 /* ---- generic calls (resolveCall with inferTypeArguments and getSignatureInstantiation, TypeScript 5.9.2) ----
  * Ported subset: a call without type arguments and without a contextual type, whose arguments are not context
  * sensitive (their types come without a contextual type, see cContextualType), and whose generic candidates have no
- * this or rest parameter, no default type parameter, no const modifier, and constraints that do not mention type
- * parameters and are not primitive. Candidates keep the candidate order of chooseOverload; the inference of each
+ * this or rest parameter, no default type parameter, no const modifier, and constraints that are not primitive. A constraint
+ * that mentions other type parameters is instantiated with the inferences of those parameters (cInferredOne). Candidates keep the candidate order of chooseOverload; the inference of each
  * candidate runs again for each relation, as chooseOverload does. */
 
 static const uint32_t cPrimitiveFlagMask = TF_String | TF_Number | TF_BigInt | TF_Boolean | TF_Enum | TF_StringLiteral |
@@ -2601,6 +2601,25 @@ static bool cTypeParamAtTop(TsType *t, TsType *tp, bool *unp) {
 static bool cMentionsTypeParam(TsType *t, TsType *tp, bool *unp) {
   if (!cCouldContain(t)) return false;
   if (t == tp) return true;
+  if (t->flags & TF_TypeParameter) return false;   /* another type parameter */
+  if ((t->flags & TF_Object) && (t->objectFlags & OF_Anonymous) && t->symbol && (t->symbol->flags & SF_TypeLiteral) &&
+      t->typeNode && t->typeNode->kind == TSK_TypeLiteral) {
+    /* a type literal: its properties and index signatures (its call and construct signatures are not ported) */
+    cResolveSignatures(t);
+    if (t->ncall || t->nconstruct) { *unp = true; return false; }
+    TsSymbol **props;
+    int np = cPropertiesOf(t, &props);
+    for (int k = 0; k < np; k++) {
+      if (cMentionsTypeParam(cTypeOfSymbol(props[k]), tp, unp)) return true;
+      if (*unp) return false;
+    }
+    cResolveIndexInfos(t);
+    for (int k = 0; k < t->nindex; k++) {
+      if (cMentionsTypeParam(t->index[k].keyType, tp, unp) || cMentionsTypeParam(t->index[k].type, tp, unp)) return true;
+      if (*unp) return false;
+    }
+    return false;
+  }
   if (t->flags & (TF_Union | TF_Intersection)) {
     for (int i = 0; i < t->ntypes; i++) if (cMentionsTypeParam(t->types[i], tp, unp)) return true;
     return false;
@@ -2764,6 +2783,7 @@ static TsType *cExprTypeWithContext(TsNode *arg, TsType *ptype);
  * the type of a fixed parameter; later candidates do not change it) */
 typedef struct CCallInfer {
   TsNode *call; CSig *sig; CParams ps; TsType **tps; int n; bool *prim; CInfer ci; bool *notTop; bool *fixed; TsType **fixedT;
+  bool *busy;   /* getInferredType in progress for the parameter (a constraint that refers to another parameter) */
   int before;   /* cUnportedCount at the start: a refusal inside the inference ends it */
 } CCallInfer;
 
@@ -2780,7 +2800,6 @@ static bool cInferBegin(CCallInfer *ic, TsNode *call, CSig *sig) {
     TsType *c = cConstraintOf(tps[k]);
     if (c) {
       bool unp = false;
-      if (cCouldContain(c)) { cUnported("generic call with a constraint of type parameters"); return false; }
       ic->prim[k] = cMaybePrimitive(c, &unp);
       if (unp) { cUnported("generic call with a primitive constraint"); return false; }
     }
@@ -2802,6 +2821,7 @@ static bool cInferBegin(CCallInfer *ic, TsNode *call, CSig *sig) {
   ic->notTop = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
   ic->fixed = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
   ic->fixedT = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  ic->busy = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
   return cUnportedCount == ic->before;
 }
 
@@ -2826,7 +2846,20 @@ static bool cInferAddArg(CCallInfer *ic, TsType *argT, TsType *pt, bool skipFixe
 }
 
 /* getCovariantInference and getInferredType of one type parameter from its candidates (no fixing). NULL when not ported */
+static TsType *cInferredOneCore(CCallInfer *ic, int k);
+
+/* getInferredType of parameter k of the context (without fixing it). A constraint that refers to another parameter is
+ * instantiated through the non-fixing mapper (makeNonFixingMapperForContext) of the parameters it mentions; a cycle
+ * through the constraints is not ported */
 static TsType *cInferredOne(CCallInfer *ic, int k) {
+  if (ic->busy[k]) { cUnported("generic call with a cyclic constraint"); return NULL; }
+  ic->busy[k] = true;
+  TsType *r = cInferredOneCore(ic, k);
+  ic->busy[k] = false;
+  return r;
+}
+
+static TsType *cInferredOneCore(CCallInfer *ic, int k) {
   CInfer *ci = &ic->ci;
   TsType *tp = ic->tps[k];
   if (ci->prio[k] >= 0 && (ci->prio[k] & 416)) { cUnported("inference with a combining priority"); return NULL; }
@@ -2869,7 +2902,30 @@ static TsType *cInferredOne(CCallInfer *ic, int k) {
     inferred = cCommonSupertype(base, nc);
     if (inferred == cErrorType) return NULL;
   }
-  if (c && !cIsRelatedWith(inferred, c, REL_Assignable)) inferred = c;
+  if (c) {
+    TsType *inst = c;
+    if (cCouldContain(c)) {
+      bool unp = false;
+      bool self = cMentionsTypeParam(c, ic->tps[k], &unp);
+      if (unp) { cUnported("generic call with a constraint of an unported shape"); return NULL; }
+      if (self) { cUnported("generic call with a constraint that refers to its own parameter"); return NULL; }
+      /* instantiateType(constraint, context.nonFixingMapper): only the parameters the constraint mentions are evaluated */
+      int m = 0;
+      TsType **src = ts_arena_alloc(sizeof(TsType *) * (size_t)(ic->n ? ic->n : 1)), **tgt = ts_arena_alloc(sizeof(TsType *) * (size_t)(ic->n ? ic->n : 1));
+      for (int j = 0; j < ic->n; j++) {
+        if (!cMentionsTypeParam(c, ic->tps[j], &unp)) continue;
+        if (unp) { cUnported("generic call with a constraint of an unported shape"); return NULL; }
+        TsType *v = ic->fixed[j] ? ic->fixedT[j] : cInferredOne(ic, j);
+        if (!v) return NULL;
+        src[m] = ic->tps[j];
+        tgt[m] = v;
+        m++;
+      }
+      inst = cInstantiate(c, cCreateTypeMapper(src, tgt, m));
+      if (inst == cErrorType) return NULL;
+    }
+    if (!cIsRelatedWith(inferred, inst, REL_Assignable)) inferred = inst;
+  }
   return inferred;
 }
 
