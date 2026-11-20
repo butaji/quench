@@ -397,6 +397,35 @@ static bool cCalleeHasPredicate(TsNode *call, bool *known) {
   return false;
 }
 
+/* narrowTypeByTypePredicate: a call with one signature whose return is a type predicate `x is T` of an identifier parameter,
+ * where the reference is that argument. Ported for an any or unknown reference (getNarrowedType: the predicate type when true, the
+ * reference type when false); the other references are not ported. */
+static TsType *cNarrowByPredicate(TsNode *c, bool truthy, TsType *t, CFlowRef *r) {
+  TsType *f = cExprType(c->expression);
+  if (f == cErrorType || !(f->flags & TF_Object)) return cUnported("narrowing by a call");
+  cResolveSignatures(f);
+  if (f->ncall != 1) return cUnported("narrowing by a call");
+  TsNode *d = f->call[0].decl;
+  TsNode *pred = d->type;
+  if ((d->typeParameters && d->typeParameters->n) || !pred || pred->assertsModifier || !pred->type || !pred->parameterName ||
+      pred->parameterName->kind != TSK_Identifier) return cUnported("narrowing by a call");
+  CParams ps;
+  if (!cSplitParams(d, &ps) || ps.thisParam || ps.rest) return cUnported("narrowing by a call");
+  int idx = -1;
+  for (int k = 0; k < ps.n; k++) {
+    TsNode *pn = ps.params[k]->name;
+    if (pn && pn->kind == TSK_Identifier && pn->textLen == pred->parameterName->textLen &&
+        memcmp(pn->text, pred->parameterName->text, (size_t)pn->textLen) == 0) idx = k;
+  }
+  if (idx < 0 || !c->arguments || idx >= c->arguments->n) return cUnported("narrowing by a call");
+  if (!cMatchesRefTree(cSkipParens(c->arguments->v[idx]), r)) return cUnported("narrowing by a call");
+  TsType *cand = cTypeFromNode(pred->type);
+  if (cand == cErrorType || (cand->flags & (TF_Any | TF_Unknown))) return cUnported("narrowing by a call");
+  if (t == cErrorType) return t;
+  if (!(t->flags & (TF_Any | TF_Unknown)) || t == cand) return cUnported("predicate narrowing of a reference that is not any");
+  return truthy ? cand : t;
+}
+
 /* the flow type of a reference narrowed by a condition (narrowType): the reference is matched directly, through `!`,
  * by equality with undefined or null, by a typeof comparison, and by calls whose arguments include it (without a type
  * predicate). Discriminants, instanceof, in, literal equality and type predicates are not ported. A condition that does
@@ -452,6 +481,7 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
     bool known;
     bool pred = cCalleeHasPredicate(c, &known);
     if (known && !pred) return t;
+    if (known && pred) return cNarrowByPredicate(c, truthy, t, r);
     return cUnported("narrowing by a call");
   }
   if (c->kind == TSK_PropertyAccessExpression || c->kind == TSK_ElementAccessExpression) {
@@ -744,6 +774,17 @@ static TsType *cContextualType(TsNode *e) {
       cResolveSignatures(f);
       int ns = p->kind == TSK_NewExpression ? f->nconstruct : f->ncall;
       CSig *sigs = p->kind == TSK_NewExpression ? f->construct : f->call;
+      if (ns > 1) {
+        /* the parameter of the chosen signature is only known after the overload is resolved: an argument whose type does not
+         * depend on its contextual type has none (an identifier, a literal, a property access) */
+        TsNode *ca = cSkipParens(c);
+        switch (ca->kind) {
+          case TSK_Identifier: case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
+          case TSK_NullKeyword: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_PropertyAccessExpression:
+            return NULL;
+          default: return cUnported("contextual type of a call with several signatures");
+        }
+      }
       if (ns != 1) return cUnported("contextual type of a call with several signatures");
       CSig *sig = &sigs[0];
       if (sig->decl->typeParameters && sig->decl->typeParameters->n) {
