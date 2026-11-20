@@ -1,0 +1,757 @@
+# Quench: full text for LLMs
+
+> JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables.
+
+Site: https://quench.run/ · Source: https://github.com/butaji/quench · Generated 2026-11-20
+
+
+---
+URL: https://quench.run/benchmarks/
+
+BENCHMARKSNOVEMBER 2026
+
+quench.run / updated 17 November 2026
+
+# Quench benchmarks
+
+Every number Quench publishes, with its date, configuration and the tests where Quench loses.
+
+With the JIT off in every engine, Quench scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks, at 0.28x to 0.55x their peak memory on 7 of 8. On the broader JetStream 3 suite it scores 34.3 against Node 39.7 and Bun 32.2, at 28.5 MB peak memory against 110.1 MB and 47.7 MB. The JIT tiers and AOT have no published speed numbers yet.
+
+## V8-v7, JIT off (14 November 2026)
+
+Interpreter only in every engine: quench --no-jit, node --jitless, and Bun with BUN_JSC_useJIT=0. Score is the suite's own score (higher is better). Memory is peak RSS (lower is better). "vs best" divides by the better of Node and Bun on that row.
+
+Benchmark | Quench | Node --jitless | Bun JIT off | Score vs best | Quench RSS | Node RSS | Bun RSS | RSS vs best | 
+richards | 2,759 | 1,220 | 1,529 | 1.80x | 6.4 MB | 43.5 MB | 15.9 MB | 0.40x | 
+deltablue | 2,237 | 1,488 | 1,200 | 1.50x | 6.9 MB | 45.4 MB | 24.5 MB | 0.28x | 
+crypto | 3,520 | 1,232 | 1,706 | 2.06x | 8.2 MB | 43.6 MB | 25.4 MB | 0.32x | 
+raytrace | 8,084 | 3,780 | 2,711 | 2.14x | 7.1 MB | 50.1 MB | 25.8 MB | 0.28x | 
+earley-boyer | 8,365 | 5,600 | 4,686 | 1.49x | 15.8 MB | 74.2 MB | 28.7 MB | 0.55x | 
+regexp | 5,179 | 3,049 | 709 | 1.70x | 16.2 MB | 64.5 MB | 32.6 MB | 0.50x | 
+splay | 6,940 | 3,722 | 2,995 | 1.86x | 58.7 MB | 326.0 MB | 54.9 MB | 1.07x | 
+navier-stokes | 7,166 | 1,723 | 2,788 | 2.57x | 7.6 MB | 49.9 MB | 20.2 MB | 0.38x | 
+
+Geometric means over the 8 rows: Quench 4,980 at 11.4 MB, Node 2,349 at 65.4 MB, Bun 1,979 at 26.8 MB. The geometric mean of Quench's per-row ratio to the better engine is 1.86x.
+
+Weak spots: splay peaks at 58.7 MB, slightly above Bun's 54.9 MB (1.07x). earley-boyer is 1.49x, just under the project's 1.5x goal, and deltablue is exactly 1.50x.
+
+## JetStream 3, JIT off (17 November 2026)
+
+JetStream 3 has 75 tests in our harness. All three engines finish 56 of them, and only those 56 are compared, because a geometric mean over different test sets is not a comparison.
+
+ | Quench | Node --jitless | Bun JIT off | 
+Score, geomean (higher is better) | 34.3 | 39.7 | 32.2 | 
+Peak RSS, geomean (lower is better) | 28.5 MB | 110.1 MB | 47.7 MB | 
+
+On speed Quench is 0.86 times Node and 1.07 times Bun. On memory it uses 26% of Node's peak and 60% of Bun's, and has the lowest peak memory of the three on 51 of the 56 tests. Single-test noise is about 20%, so only the geometric means are meaningful.
+
+### Best and worst rows (score vs the better of Node and Bun)
+
+Best | Ratio | Worst | Ratio | 
+gaussian-blur | 3.53x | babylonjs-scene | 0.44x | 
+navier-stokes | 2.13x | babel-wtb | 0.39x | 
+mandreel | 2.07x | chai-wtb | 0.39x | 
+crypto | 1.89x | WSL | 0.38x | 
+gbemu | 1.63x | async-fs | 0.36x | 
+splay | 1.6x | validatorjs | 0.35x | 
+earley-boyer | 1.6x | proxy-mobx | 0.25x | 
+ | | octane-code-load | 0.23x | 
+
+Quench wins on long-running hot loops: numeric kernels, emulators and the classic object-oriented benchmarks. It loses on tests dominated by loading and compiling code, by promises and async functions, and by proxies.
+
+### Memory outliers outside the compared set
+
+Test | Quench | Bun | Note | 
+jsdom-d3-startup | 602 MB | 776 MB | Node did not finish it with the JIT off | 
+babylonjs-startup-es6 | 562 MB | 339 MB | Node did not finish it with the JIT off | 
+Kotlin-compose-wasm | 450 MB | did not finish | only Quench finished | 
+babylonjs-scene-es6 | 226 MB | 189 MB | Node 210 MB | 
+
+Details: Where Quench stands: JetStream 3 with the JIT off.
+
+## Conformance
+
+Suite | Result | 
+Test262 (ECMAScript) | 53,353 passing, 0 failing, 53 waived; JIT off and on | 
+WebAssembly spec suite | 67,124 of 67,124 | 
+
+The 53 waived Test262 cases fail exactly the way Node fails them; each is listed with a reason in node-waivers.json and stays counted as a failure in every report.
+
+## What is not measured yet
+
+- Deno. Not in our harness yet, so no Deno numbers are published.
+
+- JIT tiers. b-jit and u-jit are not yet competitive with V8 or JavaScriptCore with their JITs on; no comparison is published.
+
+- AOT executables. No speed numbers are published for AOT-compiled programs. The goal is within 5x of equivalent C.
+
+## Method
+
+One 4-core Linux machine, each test pinned to a core. Peak memory is the maximum resident set size of the process. The harness and raw results are in the repository; every number on this page can be rerun from it.
+
+## About Quench
+
+Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: github.com/butaji/quench. Machine-readable summary: llms.txt.
+
+Related: benchmarks · JavaScript runtime in Rust · low-memory Node.js alternative · compile JavaScript to a native executable · Test262 conformance · JavaScript for AI agents
+
+---
+URL: https://quench.run/fastest-javascript-runtime-in-rust/
+
+RUST RUNTIMENOVEMBER 2026
+
+quench.run / updated 20 November 2026
+
+# A fast JavaScript runtime written in Rust
+
+What Quench is, how fast it is today, and where it is still slower.
+
+Quench is a JavaScript, TypeScript and WebAssembly runtime whose whole engine is written in Rust. With JIT turned off in every engine, it scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks, at a fraction of their memory. On JetStream 3 with JIT off it sits between them (34.3 vs Node 39.7 and Bun 32.2). Its JIT tiers are not yet competitive with Node or Bun with their JITs on.
+
+## Quench vs Node.js, Bun and Deno
+
+ | Quench | Node.js | Bun | Deno | 
+Written in | Rust (engine and runtime) | C++ (V8) and JavaScript | Zig, C++ (JavaScriptCore) | Rust runtime, C++ engine (V8) | 
+V8-v7 score, JIT off, geomean of 8 | 4,980 | 2,349 | 1,979 | not measured | 
+V8-v7 peak memory, JIT off, geomean | 11.4 MB | 65.4 MB | 26.8 MB | not measured | 
+JetStream 3 score, JIT off, 56 tests | 34.3 | 39.7 | 32.2 | not measured | 
+JetStream 3 peak memory, JIT off | 28.5 MB | 110.1 MB | 47.7 MB | not measured | 
+Test262 | 53,353 passing, 0 failing, 53 waived | not measured | not measured | not measured | 
+JIT performance | JIT tiers not yet competitive | mature JIT | mature JIT | mature JIT (V8) | 
+Packaged releases | no, build from source | yes | yes | yes | 
+
+Benchmark rows: interpreter only in every engine (quench --no-jit, node --jitless, Bun with BUN_JSC_useJIT=0), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. Full tables and method.
+
+## What is written in Rust
+
+Everything that executes your program: the OXC-based front end, a register-bytecode interpreter with one 64-bit word per value, the object model and garbage collector, b-jit (copy-and-patch), u-jit (Cranelift) and the AOT compiler. Each tier is derived from one shared definition of each opcode, so the tiers agree on what a program means. Node-compatible node: APIs are also implemented in Rust.
+
+## Where it is fast and where it is not
+
+Quench is fastest on long-running hot loops: on JetStream 3 with JIT off, gaussian-blur runs at 3.53x the better of Node and Bun, navier-stokes at 2.13x, mandreel at 2.07x. It is slowest where code is loaded and compiled cold, on promise-heavy async code and on proxies: octane-code-load at 0.23x, proxy-mobx at 0.25x, async-fs at 0.36x. See benchmarks.
+
+## Try it
+
+git clone https://github.com/butaji/quench
+cd quench
+cargo build --release -p quench # interpreter + JIT tiers
+cargo build --release -p quench --features aot # adds the AOT compiler
+./target/release/quench app.ts
+
+## Questions
+
+### What is the fastest JavaScript runtime written in Rust?
+Quench is a JavaScript, TypeScript and WebAssembly runtime whose engine is written in Rust. With JIT disabled in all engines, it scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks (14 November 2026). It has not been benchmarked against other Rust engines such as Boa, so we do not claim it is the fastest of them.
+
+### Is Deno written in Rust?
+Deno's runtime layer is written in Rust, but it executes JavaScript with V8, which is written in C++. Quench's engine itself (parser via OXC, interpreter, object model, garbage collector, JIT tiers and AOT compiler) is Rust.
+
+### Is Quench faster than Node.js?
+With JIT off: yes on all 8 V8-v7 benchmarks, and no on the JetStream 3 geometric mean (34.3 vs 39.7). With JIT on, Node is faster; Quench's JIT tiers are not yet competitive.
+
+## About Quench
+
+Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: github.com/butaji/quench. Machine-readable summary: llms.txt.
+
+Related: benchmarks · JavaScript runtime in Rust · low-memory Node.js alternative · compile JavaScript to a native executable · Test262 conformance · JavaScript for AI agents
+
+---
+URL: https://quench.run/low-memory-nodejs-alternative/
+
+LOW MEMORYNOVEMBER 2026
+
+quench.run / updated 20 November 2026
+
+# A Node.js alternative with low memory use
+
+Peak memory measured against Node and Bun, including the tests where Quench uses more.
+
+Quench is a JavaScript and TypeScript runtime with Node-compatible APIs, written in Rust. With JIT off, its geometric-mean peak memory on 56 JetStream 3 tests is 28.5 MB, against 110.1 MB for Node --jitless and 47.7 MB for Bun: 26% of Node's and 60% of Bun's. It has the lowest peak memory of the three on 51 of the 56 tests. It is early and has no packaged releases.
+
+## Quench vs Node.js, Bun and Deno
+
+ | Quench | Node.js | Bun | Deno | 
+Written in | Rust (engine and runtime) | C++ (V8) and JavaScript | Zig, C++ (JavaScriptCore) | Rust runtime, C++ engine (V8) | 
+V8-v7 score, JIT off, geomean of 8 | 4,980 | 2,349 | 1,979 | not measured | 
+V8-v7 peak memory, JIT off, geomean | 11.4 MB | 65.4 MB | 26.8 MB | not measured | 
+JetStream 3 score, JIT off, 56 tests | 34.3 | 39.7 | 32.2 | not measured | 
+JetStream 3 peak memory, JIT off | 28.5 MB | 110.1 MB | 47.7 MB | not measured | 
+Test262 | 53,353 passing, 0 failing, 53 waived | not measured | not measured | not measured | 
+JIT performance | JIT tiers not yet competitive | mature JIT | mature JIT | mature JIT (V8) | 
+Packaged releases | no, build from source | yes | yes | yes | 
+
+Benchmark rows: interpreter only in every engine (quench --no-jit, node --jitless, Bun with BUN_JSC_useJIT=0), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. Full tables and method.
+
+## Peak memory per V8-v7 benchmark (JIT off, 14 November 2026)
+
+Benchmark | Quench | Node --jitless | Bun JIT off | 
+richards | 6.4 MB | 43.5 MB | 15.9 MB | 
+deltablue | 6.9 MB | 45.4 MB | 24.5 MB | 
+crypto | 8.2 MB | 43.6 MB | 25.4 MB | 
+raytrace | 7.1 MB | 50.1 MB | 25.8 MB | 
+earley-boyer | 15.8 MB | 74.2 MB | 28.7 MB | 
+regexp | 16.2 MB | 64.5 MB | 32.6 MB | 
+splay | 58.7 MB | 326.0 MB | 54.9 MB | 
+navier-stokes | 7.6 MB | 49.9 MB | 20.2 MB | 
+
+## Where Quench uses more memory
+
+On V8-v7 splay Quench peaks at 58.7 MB against Bun's 54.9 MB. On large startup workloads it can use much more: babylonjs-startup-es6 peaks at 562 MB against Bun's 339 MB, because programs from earlier iterations stay reachable and an idle function costs about 2.8 KB. Inside the 56 compared JetStream 3 tests, Quench is above the lowest engine on Sunspider, mandreel, the two doxbee tests and babylonjs-scene. Making function bodies lazy is the current fix.
+
+## Why it is small
+
+One 64-bit word per value, compact object layouts, a register-bytecode interpreter, and compiling a function body only on its first call.
+
+## Try it
+
+git clone https://github.com/butaji/quench
+cd quench
+cargo build --release -p quench # interpreter + JIT tiers
+cargo build --release -p quench --features aot # adds the AOT compiler
+./target/release/quench app.ts
+
+## Questions
+
+### What is a Node.js alternative with low memory use?
+Quench is a JavaScript, TypeScript and WebAssembly runtime with Node-compatible APIs, written in Rust. With JIT off, its geometric-mean peak memory on JetStream 3 is 28.5 MB, against 110.1 MB for Node --jitless and 47.7 MB for Bun (17 November 2026).
+
+### How much memory does Quench use for a small program?
+On V8-v7 with JIT off, richards peaks at 6.4 MB, deltablue at 6.9 MB and raytrace at 7.1 MB, where Node --jitless needs 43.5 to 50.1 MB (14 November 2026).
+
+### Can Quench replace Node.js today?
+Not for production yet. Quench has no packaged releases and its Node API compatibility is still being built out, so expect gaps.
+
+## About Quench
+
+Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: github.com/butaji/quench. Machine-readable summary: llms.txt.
+
+Related: benchmarks · JavaScript runtime in Rust · low-memory Node.js alternative · compile JavaScript to a native executable · Test262 conformance · JavaScript for AI agents
+
+---
+URL: https://quench.run/compile-javascript-to-native-executable/
+
+AOTNOVEMBER 2026
+
+quench.run / updated 20 November 2026
+
+# Compile JavaScript to a native executable
+
+Quench's AOT compiler turns a JavaScript or TypeScript program into machine code, not a bundled script.
+
+Quench compiles a JavaScript or TypeScript entry file and its imports ahead of time into one native executable: quench --build-aot app.ts -o app. The program is lowered to machine code with the same meaning as Quench's interpreter; the full interpreter and JITs are left out unless the program uses eval or new Function. AOT is experimental and no AOT speed numbers are published yet.
+
+## Usage
+
+cargo build --release -p quench --features aot
+./target/release/quench --build-aot app.ts -o app
+./app
+
+## How it compares
+
+ | Quench AOT | Node.js SEA | bun build --compile | deno compile | 
+What goes into the binary | program compiled to machine code, plus runtime | script embedded in the node binary | bundle embedded in the Bun binary | program embedded in the Deno binary | 
+Code runs as | precompiled native code | V8 interpreter and JIT at run time | JavaScriptCore at run time | V8 at run time | 
+Full interpreter in the binary | only if eval or new Function is used | always | always | always | 
+Published speed numbers | not measured | not measured | not measured | not measured | 
+Maturity | experimental, build from source | stable | stable | stable | 
+
+Quench has not benchmarked its AOT output against these tools, so this table describes mechanism only.
+
+## One semantics
+
+Each opcode's meaning is written once. The interpreter runs it directly, the JITs and the AOT compiler emit it as machine code. That is the interpreter specialized to what is known about the program (a Futamura projection), so an AOT-compiled program and an interpreted one agree. Background: AOT without a second compiler.
+
+## Limits today
+
+- Built and tested on Linux, from a source build with --features aot.
+
+- No published speed numbers; the target is within 5x of equivalent C on every JetStream benchmark.
+
+- Node API compatibility is still being built out.
+
+## The runtime around it
+
+ | Quench | Node.js | Bun | Deno | 
+Written in | Rust (engine and runtime) | C++ (V8) and JavaScript | Zig, C++ (JavaScriptCore) | Rust runtime, C++ engine (V8) | 
+V8-v7 score, JIT off, geomean of 8 | 4,980 | 2,349 | 1,979 | not measured | 
+V8-v7 peak memory, JIT off, geomean | 11.4 MB | 65.4 MB | 26.8 MB | not measured | 
+JetStream 3 score, JIT off, 56 tests | 34.3 | 39.7 | 32.2 | not measured | 
+JetStream 3 peak memory, JIT off | 28.5 MB | 110.1 MB | 47.7 MB | not measured | 
+Test262 | 53,353 passing, 0 failing, 53 waived | not measured | not measured | not measured | 
+JIT performance | JIT tiers not yet competitive | mature JIT | mature JIT | mature JIT (V8) | 
+Packaged releases | no, build from source | yes | yes | yes | 
+
+Benchmark rows: interpreter only in every engine (quench --no-jit, node --jitless, Bun with BUN_JSC_useJIT=0), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. Full tables and method.
+
+## Questions
+
+### How do I compile JavaScript or TypeScript to a native executable?
+With Quench built with the aot feature, run quench --build-aot app.ts -o app, then ./app. The entry file and the modules it imports are compiled ahead of time into one native executable.
+
+### Is the Quench AOT compiler faster than Node?
+No AOT speed numbers are published yet. The goal is AOT code within 5x of the equivalent C program, and it is not yet met on every benchmark.
+
+### Does an AOT-compiled Quench program include an interpreter?
+The full interpreter and the JIT tiers are left out of the executable unless the program uses eval or new Function, which need to compile code at run time.
+
+## About Quench
+
+Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: github.com/butaji/quench. Machine-readable summary: llms.txt.
+
+Related: benchmarks · JavaScript runtime in Rust · low-memory Node.js alternative · compile JavaScript to a native executable · Test262 conformance · JavaScript for AI agents
+
+---
+URL: https://quench.run/test262-compliant-javascript-engine/
+
+TEST262NOVEMBER 2026
+
+quench.run / updated 20 November 2026
+
+# A Test262 compliant JavaScript engine
+
+How Quench reports conformance, and what the 53 waivers are.
+
+Quench passes 53,353 Test262 tests with 0 failing, with the JIT off and on. 53 cases are waived because they fail exactly the way Node.js fails them; they are listed with reasons and still counted as failures in every report. The WebAssembly spec suite passes 67,124 of 67,124.
+
+## Results
+
+Suite | Passing | Failing | Waived | Modes | 
+Test262 | 53,353 | 0 | 53 | JIT off and JIT on | 
+WebAssembly spec | 67,124 | 0 | 0 | | 
+
+## How conformance is enforced
+
+The Test262 runner in crates/quench-test262 reports every raw outcome. Test262 runs in interpreter and JIT modes before changes merge. A waiver must name a case that Node fails in the same way; it is rejected the moment the case starts passing or fails differently. The list: node-waivers.json. History: Test262 and the skip list.
+
+## Quench vs Node.js, Bun and Deno
+
+ | Quench | Node.js | Bun | Deno | 
+Written in | Rust (engine and runtime) | C++ (V8) and JavaScript | Zig, C++ (JavaScriptCore) | Rust runtime, C++ engine (V8) | 
+V8-v7 score, JIT off, geomean of 8 | 4,980 | 2,349 | 1,979 | not measured | 
+V8-v7 peak memory, JIT off, geomean | 11.4 MB | 65.4 MB | 26.8 MB | not measured | 
+JetStream 3 score, JIT off, 56 tests | 34.3 | 39.7 | 32.2 | not measured | 
+JetStream 3 peak memory, JIT off | 28.5 MB | 110.1 MB | 47.7 MB | not measured | 
+Test262 | 53,353 passing, 0 failing, 53 waived | not measured | not measured | not measured | 
+JIT performance | JIT tiers not yet competitive | mature JIT | mature JIT | mature JIT (V8) | 
+Packaged releases | no, build from source | yes | yes | yes | 
+
+Benchmark rows: interpreter only in every engine (quench --no-jit, node --jitless, Bun with BUN_JSC_useJIT=0), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. Full tables and method.
+
+We run Test262 only on Quench. For other engines' Test262 results see test262.fyi.
+
+## Questions
+
+### Which JavaScript engine passes Test262?
+Quench, a JavaScript runtime written in Rust, passes 53,353 Test262 tests with 0 failing and 53 waived, with the JIT off and on. The 53 waived cases fail exactly the way Node fails them and stay counted as failures in every report.
+
+### What are the 53 waived Test262 tests?
+Cases where Node.js itself fails in the same way, for example Node has no Error.prototype.stack accessor. Each is listed with a reason in node-waivers.json, and a waiver is rejected as soon as its case starts passing or fails differently.
+
+### Does Quench pass the WebAssembly spec tests?
+Yes: 67,124 of 67,124 WebAssembly spec suite cases.
+
+## About Quench
+
+Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: github.com/butaji/quench. Machine-readable summary: llms.txt.
+
+Related: benchmarks · JavaScript runtime in Rust · low-memory Node.js alternative · compile JavaScript to a native executable · Test262 conformance · JavaScript for AI agents
+
+---
+URL: https://quench.run/javascript-engine-for-ai-agents/
+
+AGENTSNOVEMBER 2026
+
+quench.run / updated 20 November 2026
+
+# A JavaScript engine for AI agent Code Mode
+
+Running model-written code inside the harness: embedded, small, no JIT, full JavaScript and TypeScript.
+
+Quench is a JavaScript and TypeScript engine written in Rust that embeds in an agent harness as a library and runs interpreter only, with no JIT. With the JIT off it scores 1.49x to 2.57x the best of Node --jitless and Bun on all 8 V8-v7 benchmarks, and five of them peak at 6.4 to 8.2 MB. Test262: 53,353 passing, 0 failing.
+
+## What Code Mode needs
+
+In Code Mode an agent writes a program and the harness runs it, instead of the model calling tools one at a time. A machine can host hundreds of such agents, each running code nobody reviewed. The engine has to live inside the harness, stay small per instance, run without a JIT, and run whatever the model wrote.
+
+## The QuickJS slot, with more speed
+
+Today the usual split is QuickJS for simple scripts and V8 for complex ones. Quench aims at QuickJS's place (small, embedded, interpreter only) with an interpreter well ahead of the ones in V8 and JavaScriptCore. Quench has not been benchmarked against QuickJS yet; that comparison is next and will be published either way.
+
+V8-v7, JIT off | Quench RSS | Node --jitless RSS | Bun JIT off RSS | Quench score vs best | 
+richards | 6.4 MB | 43.5 MB | 15.9 MB | 1.80x | 
+deltablue | 6.9 MB | 45.4 MB | 24.5 MB | 1.50x | 
+raytrace | 7.1 MB | 50.1 MB | 25.8 MB | 2.14x | 
+navier-stokes | 7.6 MB | 49.9 MB | 20.2 MB | 2.57x | 
+crypto | 8.2 MB | 43.6 MB | 25.4 MB | 2.06x | 
+
+Peak RSS per process and score relative to the faster of Node and Bun, interpreter only in every engine (quench --no-jit, node --jitless, Bun with BUN_JSC_useJIT=0), one 4-core Linux machine, 14 November 2026. The other three benchmarks use more memory (earley-boyer 15.8 MB, regexp 16.2 MB, splay 58.7 MB against Bun's 54.9 MB). All rows and method.
+
+## Embeddable and Rust-native
+
+quench-runtime is a Rust library. The harness creates a Runtime with its own Host, exposes its tools to the generated code as host functions, and can stop runaway code from another thread with an execution interrupt. Generated code runs in the harness's own process, with no subprocess and no IPC. It is not on crates.io yet and the API will still change.
+
+## No JIT required
+
+--no-jit, which is also the library's default mode, runs the interpreter only, WebAssembly included. No machine code is generated while untrusted code runs. That takes JIT compiler bugs off the attack surface and leaves an attacker far less control over the machine code that executes, which Spectre-style attacks rely on. Every speed number on this page is with the JIT off. Quench is still not a sandbox on its own: isolation and resource limits come from your host.
+
+## Full JavaScript and TypeScript
+
+Test262 passes 53,353 tests with 0 failing (details). TypeScript runs directly with no build step, and Node-compatible node: APIs are available. Code a model writes just runs, with no "Lua needs a C extension for that" step, and models write JavaScript and TypeScript far better than Lua.
+
+## Limits today
+
+Quench is early: no packaged releases, Linux, built from source with Cargo. The embedding API is unstable. The per-instance memory of many runtimes in one process, and a comparison with QuickJS, are not published yet. On the broader JetStream 3 suite with the JIT off, Quench scores 34.3 against Node's 39.7 and Bun's 32.2, at 28.5 MB against 110.1 MB and 47.7 MB.
+
+## Questions
+
+### What is a good JavaScript engine for AI agent Code Mode?
+Code Mode needs an engine that embeds in the harness, stays small per instance, can run without a JIT, and runs full JavaScript and TypeScript. Quench is built for that: a Rust library, interpreter only by default, Test262 53,353 passing and 0 failing. With the JIT off it scores 1.49x to 2.57x the best of Node --jitless and Bun on V8-v7.
+
+### Is Quench faster than QuickJS?
+Not measured yet. Quench aims at the slot QuickJS fills (small, embedded, interpreter only) with more speed, and its interpreter already beats the interpreters in V8 and JavaScriptCore on all 8 V8-v7 benchmarks. A QuickJS comparison is next and will be published either way.
+
+### Why run agent code without a JIT?
+A JIT writes new machine code at run time, shaped by the program it runs. Without one, JIT compiler bugs are off the attack surface and an attacker has far less control over the machine code that executes, which Spectre-style attacks rely on. The engine is still not a sandbox on its own: isolation and limits come from the host.
+
+### How much memory does each Quench run use?
+With the JIT off, five of the eight V8-v7 benchmarks peak at 6.4 to 8.2 MB of RSS per process, against 43 to 50 MB for Node --jitless and 16 to 26 MB for Bun. The per-instance cost of many runtimes embedded in one process has not been published yet.
+
+## About Quench
+
+Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: github.com/butaji/quench. Machine-readable summary: llms.txt.
+
+Related: benchmarks · JavaScript runtime in Rust · low-memory Node.js alternative · compile JavaScript to a native executable · Test262 conformance · JavaScript for AI agents
+
+---
+URL: https://quench.run/blog/where-quench-stands/
+
+JETSTREAM 3NOVEMBER 2026
+
+blog / 17 November 2026 · 4 min read · status
+
+# Where Quench stands: JetStream 3 with the JIT off
+
+Against Node and Bun with all JITs disabled, Quench sits between them on speed and well below both on memory. The full picture, including the tests where its memory is far too high.
+
+This is a status report. It covers one configuration, measured on 17 November 2026: every JetStream 3 test, with the JIT turned off in Quench, in Node (--jitless) and in Bun (BUN_JSC_useJIT=0).
+
+Why JIT off? Because that is where Quench is closest to its goals today, and because interpreter performance and memory are what matter for short-lived processes and constrained environments. The JIT tiers are covered in other posts, and they are not competitive yet.
+
+## The headline
+
+JetStream 3 has 75 tests in our harness. All three engines finish 56 of them. The comparison uses only those 56, because a geomean over different test sets per engine is not a comparison.
+
+34.3
+Quench score
+Node 39.7 · Bun 32.2
+
+28.5 MB
+Quench peak memory
+Node 110.1 · Bun 47.7
+
+56
+tests compared
+of 75; all three engines finish them
+
+Geometric means over 56 tests, JIT offQuenchNode --jitlessBun, JIT offscore (higher is better)34.339.732.2peak RSS, MB (lower is better)28.511047.7
+One 4-core Linux machine, each test pinned to a core. Single-test noise is about 20%, so only the geomeans are meaningful.
+On speed Quench is 0.86 times Node and 1.07 times Bun. On memory it uses 26% of Node's peak and 60% of Bun's.
+
+The goal for this mode is 1.5 times the score of the better engine at half its memory. That means a score near 60 and memory near 24 MB. Memory is close. Speed needs about 1.7 times more.
+
+## Test by test
+
+Quench score relative to the better of Node and Bun (1.0 = equal), selected testsgaussian-blur3.53xnavier-stokes2.13xmandreel2.07xcrypto1.89xgbemu1.63xsplay1.6xearley-boyer1.6xbabylonjs-scene0.44xbabel-wtb0.39xchai-wtb0.39xWSL0.38xasync-fs0.36xvalidatorjs0.35xproxy-mobx0.25xoctane-code-load0.23x- parity
+The seven best and the eight worst rows among the 56 compared tests.
+The pattern is clear. Quench wins on tests that run a hot loop for a long time: numeric kernels, emulators, the classic object-oriented benchmarks. It loses on tests dominated by loading and compiling code, by promises and async functions, and by proxies.
+
+## What the losses are made of
+
+Cold code. octane-code-load evaluates a large script repeatedly. Each evaluation compiles about 380 functions. On a cold run of EarleyBoyer, 28% of all instructions were in the front end (parsing, analysis and bytecode generation) and one analysis pass ran three to five times per function.
+
+The principle we are working to is that cold cost should be proportional to the code that runs, not the code that loads. The first step was making class methods lazy and compiling a function's body on its first call:
+
+babylonjs-startup, cold run, instructions executedbefore lazy methods20.1 Gafter9.32 Gafter two follow-ups9.01 G
+Billions of instructions, interpreter only. A 54% reduction from not compiling methods that are never called.
+Async and boundary crossings. A callback from native code into JavaScript (a forEach callback, for example) cost 827 instructions where Node's interpreter spends 385.
+
+Proxies and dynamic objects. proxy-mobx exercises exactly the paths a shape-based object model is worst at. A trapped read went from 777 to 186 nanoseconds in one change and it is still one of the two slowest rows.
+
+## The memory outliers
+
+The memory geomean covers the 56 tests every engine finishes. Outside that set there are tests where Quench's memory is plainly too high, and they should be shown.
+
+Test | Quench | Bun | Note | 
+jsdom-d3-startup | 602 MB | 776 MB | Node did not finish it with the JIT off | 
+babylonjs-startup-es6 | 562 MB | 339 MB | Node did not finish it with the JIT off | 
+Kotlin-compose-wasm | 450 MB | did not finish | only Quench finished | 
+babylonjs-scene-es6 | 226 MB | 189 MB | Node 210 MB | 
+
+On babylonjs-startup Quench's memory grows by about 54 MB per iteration: 97 MB after one iteration and 478 MB after eight. Part of it is retention: programs from earlier iterations stay reachable until the job ends. Part is how much an idle function costs. Quench holds about 2.8 KB per function across 18,655 functions, where V8 holds about 100 bytes for a function it has not needed yet. Laziness helps speed and memory at once here, which is why it is the current focus.
+
+Inside the compared set, five tests have Quench above the lowest engine: Sunspider, mandreel, the two doxbee tests and babylonjs-scene.
+
+## What is solid
+
+- Conformance. test262 passes 53,353 tests with 53 waived and none failing, with the JIT off and on. The WebAssembly spec suite passes 67,124 of 67,124.
+- Memory on ordinary programs. On 51 of the 56 compared tests Quench has the lowest peak memory of the three engines.
+- Typical small-program footprint. Classic benchmarks such as Richards, DeltaBlue and Crypto peak at 12 to 14 MB, where Node needs 43 to 47 MB.
+
+## What is next
+
+In priority order for the interpreter:
+
+- Pay for code only when it runs: lazy bodies everywhere, one analysis pass, smaller idle functions.
+- Make a call a frame push and a return a pop, with one frame layout shared by every tier.
+- Make crossing between native code and JavaScript cost no more than a JavaScript call.
+- Bring every primitive operation inside its instruction budget.
+
+And for the tiers above it: every tier faster than the one below on every test, and the optimizing tier within five times of C.
+
+If any of this is the kind of problem you like, the repository is open and every number in this post can be reproduced from it.
+
+---
+URL: https://quench.run/blog/one-interpreter-four-outputs/
+
+FUTAMURAPROJECTIONS
+
+blog / 12 November 2026 · 5 min read · architecture
+
+# One interpreter, four outputs: Futamura projections in a JavaScript engine
+
+Quench writes the meaning of each JavaScript operation once and derives the interpreter, a copy-and-patch JIT, an optimizing JIT and an AOT compiler from it. How that works, and an honest count of how far the code is from the design.
+
+In 1971 Yoshihiko Futamura observed that if you have a program specializer and an interpreter, then specializing the interpreter to a particular source program gives you a compiled program. You never write a compiler. You write an interpreter and a specializer, and the compiler falls out.
+
+It is one of the most elegant ideas in programming languages and it has mostly stayed in papers, with a few notable exceptions such as Truffle and, recently, weval for WebAssembly. Quench is built on it. This post explains how, and how much of it is real so far.
+
+## The problem it solves
+
+A JavaScript engine with an interpreter and two JIT tiers normally has three implementations of every operation. a + b is written once in the interpreter, once in the baseline compiler, and once in the optimizing compiler. They are supposed to agree. Engines have whole teams and fuzzers dedicated to finding where they do not.
+
+Our own history shows the cost. In early November our JIT was slower than our interpreter on several benchmarks, and an audit found that that each improvement to the interpreter had to be made again, by hand, in each tier.
+
+## One row per operation
+
+In Quench the meaning of an operation is one generic function, called a row. It is written against an interface called a stage, which supplies the primitive steps: load a register, test a tag, add two integers, branch.
+
+// Simplified. One definition of integer add with overflow check.
+fn add<S: Stage>(s: &mut S, dst: Reg, a: Reg, b: Reg) {
+ let x = s.read(a);
+ let y = s.read(b);
+ if s.both_int32(x, y) {
+ let (sum, overflow) = s.add_overflow(x, y);
+ s.branch_cold(overflow, |s| s.generic_add(dst, x, y));
+ s.write_int32(dst, sum);
+ } else {
+ s.generic_add(dst, x, y);
+ }
+}
+
+What that function does depends on which stage runs it.
+
+One row, four stagesfn row<S: Stage>the only place the operation's meaning is writtenConcretecomputes the resultStenciloperands become holesEmitwrites compiler IREmit + relocIR, relocatableinterpreterknows nothingb-jitcopy-and-patchu-jitCranelift, optimizingAOTnative executable
+Run on Concrete, the row is an interpreter handler. Run on the others, it generates code that does what the handler would have done.
+- On the Concrete stage, s.read(a) reads a register and s.add_overflow adds. The row is the interpreter's handler.
+- On the Stencil stage, at build time, operands are left as holes. The compiler produces a snippet of machine code per operation, and the b-jit later copies snippets end to end and patches the holes. That is copy-and-patch compilation, and compiling this way costs little more than a memcpy.
+- On the Emit stage, s.add_overflow does not add anything. It appends an add instruction to Cranelift's intermediate representation. Run over a whole function, the rows write out an optimizing compiler's input.
+- The same Emit stage with relocatable constants produces code that can be written to disk, which is AOT.
+
+## Binding times: what each tier is allowed to know
+
+The tiers differ only in how much they know when they generate code. We classify every operand by its binding time, the earliest moment its value is fixed.
+
+Binding time | Example | Folded by | 
+Static | register numbers, constants, jump targets | every native tier | 
+Stable | an object's shape, a prototype, which function a name refers to | u-jit and AOT, under a registered dependency | 
+Site | the type seen at one call site | u-jit, under one guard hoisted to where it is first proved | 
+Dynamic | the actual number in a register | nothing; stays a run-time value | 
+
+A Stable fact is the interesting one. It is not checked with a guard on every use. The compiled code registers a dependency, and if the fact ever changes (a prototype is modified, a function is reassigned) the code that relied on it is invalidated. Users of the fact pay nothing per use. The project's rule for this is "reactive, not guarded".
+
+## Replacing thresholds with a price
+
+When should a function move up a tier? Most engines use counters and constants. We had about thirty of them: warm up after 400 entries, re-optimize after 64 exits, inline up to 96 instructions.
+
+The replacement is a single estimate of whether compiling pays for itself:
+
+// simplified: the full rule also charges a per-entry cost
+net(f, t) = remaining_work(f) × (1 − cost_ratio(t)) × interpreter_cost
+ − compile_cost(f, t) × (1 + expected_deopts(f, t))
+
+Remaining work is estimated from how often the function has run so far, on the assumption that code which has run n times will run about n more. For the irreversible decision to compile, a pessimistic bound of n/4 is used. Compile cost is a running fit of microseconds per instruction of IR. The tier with the highest positive net wins. Because the rule only chooses which tier runs and never changes the output, a wrong choice costs time and never correctness.
+
+This is running as a shadow log beside the old thresholds, and on one benchmark it disagrees with them on 15 of 25 decisions. Working out which side is right is the current step.
+
+## How far the code is from the design
+
+Here is the honest count, from the repository's own census in mid-November.
+
+46 / 268
+opcodes
+with their meaning in a shared row
+
+~400
+hand-written arms
+of opcode logic still inside the tiers
+
+601
+fast-path handlers
+37,800 lines, written by hand
+
+An audit on 17 November put it more sharply: Futamura "holds on paper only". The meaning of an operation existed in four places: the general interpreter loop, 601 hand-written fast handlers, the shared rows, and a runtime operations module. The check that was supposed to stop tiers from re-implementing semantics counted opcode names, not logic, so logic could move under a different name and pass.
+
+That audit is why the work now in progress has a simple target: one row per opcode, the interpreter's handler being that row on the Concrete stage, and a shrink-only count of every per-opcode decision that lives anywhere else. The list of hand-written arms can only get shorter.
+
+## Why bother
+
+Because the alternative does not converge. With three hand-written implementations, every optimization is three pieces of work and every bug fix is three chances to miss one. With one, an interpreter improvement is automatically a JIT improvement and an AOT improvement. The design does not make any single tier faster by itself. It makes the engine something a small team can keep correct while making it fast.
+
+## Further reading
+
+- Futamura, "Partial evaluation of computation process: an approach to a compiler-compiler" (1971)
+- Würthinger et al., "Practical partial evaluation for high-performance dynamic language runtimes" (PLDI 2017)
+- Xu and Kjolstad, "Copy-and-patch compilation" (OOPSLA 2021, arXiv 2011.13127)
+- Xu and Kjolstad, "Deegen: a JIT-capable VM generator for dynamic languages" (arXiv 2411.11469)
+- Fallin and Bernstein, "Partial evaluation, whole-program compilation" (weval, PLDI 2025, arXiv 2411.10559)
+
+---
+URL: https://quench.run/blog/aot-without-a-second-compiler/
+
+AHEAD OF TIMECOMPILATION
+
+blog / 7 November 2026 · 4 min read · aot
+
+# AOT without a second compiler
+
+We built a closed-world JavaScript-to-native compiler, measured it, and threw it away. Quench's ahead-of-time mode is the interpreter specialized to what is known at build time, and this is why.
+
+Ahead-of-time compilation for JavaScript is an old wish: hand the tool a program, get back one native executable that starts instantly and needs no runtime installed. Quench has a mode for it.
+
+$ quench --build-aot app.ts -o app
+$ ./app
+
+This post is about the design behind that command, and the version of it we discarded on 7 November 2026.
+
+## The prototype we threw away
+
+The first AOT design was a separate closed-world compiler. It read the whole program, assumed nothing could change at run time, and translated JavaScript to native code through its own lowering, independent of the interpreter and the JIT.
+
+It worked, and it ran Richards at a score of 5,846. That was slower than our own JIT on the same program.
+
+The reason was not subtle. The prototype knew the whole program but not the things that make code fast: which numbers are integers, what shape each object has, which function a call reaches. Numbers stayed boxed. Without those facts, "compiled" just means the interpreter's work unrolled into a longer listing.
+
+And it was a second implementation of JavaScript semantics. Every language feature would need to be written, tested and kept in sync twice.
+
+## The reversal
+
+So we reversed the design. There is no separate AOT compiler in Quench.
+
+AOT is the interpreter specialized to build-time facts. The JIT is the same specializer applied to run-time facts.
+One specializer, two sources of factsJITAOTJS / TS / Wasmsourcebytecodeone record per opspecializerinterpreter rowsJIT codein memorybuild-time factscallees, shapes, int fieldsrun-time factsobserved types, hot sitesnative executablerelocatable image
+The same code generator (Cranelift, driven by the interpreter's own operation definitions) produces both outputs. Only where the facts come from differs.
+The whole-program knowledge that the prototype had is still used. It just becomes an input to the specializer:
+
+- Callee identity. If only one function in the program is ever stored under a property name, a call through that name can bind to it.
+- Build-time shapes. Object layouts that are fixed by the program text are known before it runs.
+- Unboxed integer fields. A field only ever assigned integers can be stored as one.
+
+TypeScript types belong on that list too. Quench parses TypeScript natively and keeps the types instead of erasing them, and the design is for them to drive specialization: a declared type picks the specialized code up front, and is checked once where a value enters typed code, since a cast or an any can make a declaration wrong at run time. After that one check the type is relied on like any other proven fact. This is being built out now.
+
+## What happens to eval
+
+A closed-world compiler has to refuse eval and new Function. Quench does not refuse them. The rule is static: if the program can reach eval or Function, the interpreter is linked into the executable, and dynamic code runs through it. If it cannot, the interpreter is left out.
+
+Guards work the same way. In the JIT, a failed guard deoptimizes back to the interpreter. In an AOT image, the cold side of a guard goes to a compiled generic path, so the program keeps running native code even when an assumption fails.
+
+## Where it stands
+
+Honestly: it works and it is not fast yet.
+
+Wall time, 7 November 2026 (ms, lower is better)Quench AOTQuench JITNodeRichards1,234 ms537 ms103 msNavierStokes1,263 ms385 ms412 ms
+Production AOT build against the JIT of the same day and Node. AOT was 2.3 to 3.3 times slower than our own JIT.
+16 / 16
+V8-v7 images
+link and pass with the source deleted
+
+50,808
+test262
+of 53,406 pass as AOT images
+
+36 / 46
+primitives
+more than 5x the C equivalent
+
+Correctness came first. Every one of the sixteen JavaScript and TypeScript benchmark programs builds to an executable that runs correctly with the source files deleted. Speed is behind: on 7 November, 36 of 46 primitive operations took more than five times the instructions of the equivalent C, and a few (spread and destructuring, string building) took hundreds of times more.
+
+The goal is an executable where every function is compiled and the code is within five times of C. Because AOT is the same specializer as the JIT, it does not have its own performance work. Every improvement to how the interpreter's operations specialize shows up in both. That was the point of the reversal.
+
+## Why this is the right shape
+
+A second compiler is two sets of bugs and two sets of performance work, forever. One specializer with two fact sources means:
+
+- Identical behavior by construction. There is one definition of what a + b means.
+- AOT inherits every JIT improvement and the other way round.
+- The fallback is always there. Anything the specializer cannot prove still runs, through the same generic operation the interpreter uses.
+
+The next post in this series covers the mechanism that makes "one definition" possible.
+
+---
+URL: https://quench.run/blog/test262-and-the-skip-list/
+
+TEST262CONFORMANCE
+
+blog / 23 July 2026 · 3 min read · conformance
+
+# 4,367 class tests in two days, and what a skip list hides
+
+Driving one test262 directory from 44 passing tests to all 4,367 taught us more about denominators than about classes.
+
+test262 is the official ECMAScript conformance suite: more than 50,000 files, each one a small program that must run, throw, or fail to parse in a precisely specified way. In July 2026 Quench was a tree-walking interpreter with one rule: no bytecode, no JIT, nothing clever until conformance is done.
+
+We split the suite into stages, one per directory, and worked through them in order. Stage 16 is the class statement tests.
+
+test262 stage 16 (class statements), passing tests- 0- 1,175- 2,350- 3,525- 4,70021 Jul22 Jul23 Jul23 Jul23 Jul23 Jultests passing, by commit- 4,367
+Pass counts as written in commit messages, 21 to 23 July 2026. The third point is 798 of 844: for most of 22 July the runner only saw 844 of the tests.
+Forty-four to 4,367 in two days looks like a hockey stick. It is partly real work and partly a lesson.
+
+## What the real work was
+
+Class tests are a stress test for everything around classes. Private names, static blocks, computed keys, accessors, super in every position, and generator and async methods. A few of the fixes from those two days:
+
+- Deep recursion. The interpreter had been recursive in Rust, so deep JavaScript recursion overflowed the native stack. On 9 July it moved to an explicit work stack (a Vec of pending steps).
+- Generators by replay. One commit is titled "Count nested yields in generator replay". The title suggests that at that point a generator resumed by re-running its body and skipping the yields it had already passed. It was slow and it was correct enough to pass, which was the goal that month.
+- Thrown values out of band. A fix on 12 July snapshots the pending thrown value around ToPrimitive, because a stale exception from an earlier conversion was leaking into a later one.
+
+## What the lesson was
+
+Look at the middle of the chart. On 22 July the count goes 511 of 4,367, then 644 of 862, then 798 of 844. The numerator rose and the denominator fell. The runner was skipping whole groups of files, so "94.5%" that evening meant 94.5% of the tests we had chosen to look at.
+
+It had happened at a larger scale two days earlier. On 20 July a commit announced that all 93 stages were at 100%. That commit changed one file: the skip list. On 22 July we added a tool that counted honestly across every directory, and its first report read:
+
+23/122 stages done, 1870/48581 tests passing (3.8%)
+
+Both statements were true. Every stage passed every test it ran, and the engine passed 3.8% of the suite.
+
+100%
+20 July
+stages passing, with skips
+
+3.8%
+22 July
+of all 48,581 tests
+
+4,367
+23 July
+class tests, none skipped
+
+## The rules that came out of it
+
+Three habits date from that week and are still how Quench counts conformance:
+
+- The denominator is the suite. A pass rate is reported against every file in the directory. Skipped is a failure with a name.
+- Skips carry a reason and an owner. The skip list records why each entry is there, and the list may only shrink. The same shrink-only rule later spread to every debt list in the repository.
+- A passing test never starts failing. A change that turns a green test red does not land, whatever else it fixes.
+
+By 23 July stage 16 was at 4,367 of 4,367 with nothing skipped. The interpreter underneath was still slow, and still a tree walker. That was fine. The plan was to make it correct first, and August was about to make "first" a lot more interesting.

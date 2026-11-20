@@ -1,0 +1,85 @@
+[package]
+name = "quench"
+version = "0.1.0"
+edition = "2021"
+autobins = false
+
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
+[[bin]]
+name = "quench"
+path = "src/bin/quench.rs"
+
+[features]
+default = ["jit", "bundled-sources", "native-execution"]
+# Test-only direct host-primitive measurements; contract/evidence: Linear TOD-123.
+bench-primitives = []
+jit = ["quench-runtime/jit", "quench-wasm/jit"]
+bundled-sources = []
+native-execution = ["quench-runtime/native-execution"]
+# Compatibility alias: AOT code is always compiled.
+aot = ["bundled-sources", "native-execution"]
+profile-memory = ["quench-runtime/profile-memory"]
+profile-gc-time = ["quench-runtime/profile-gc-time"]
+profile-native-ops = ["native-execution", "quench-runtime/profile-native-ops"]
+verify-replay = ["quench-runtime/verify-replay"]
+tier-stress = ["quench-runtime/tier-stress"]
+profile-allocator = ["quench-runtime/profile-allocator"]
+
+[dependencies]
+quench-js-check = { path = "../quench-js-check" }
+quench-runtime = { path = "../quench-runtime", default-features = false }
+quench-wasm = { path = "../quench-wasm", default-features = false }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf-literal", "perf-onepass", "perf-backtrack"] }
+sha1 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+memchr = "2"
+rustc-hash = "2.1"
+foldhash = "0.2"
+openssl = "0.10"
+openssl-sys = "0.9"
+foreign-types = "0.3"
+oxc_resolver = "11"
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_ast_visit = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_semantic = { workspace = true }
+oxc_span = { workspace = true }
+oxc_syntax = { workspace = true }
+quench-stack = { path = "../quench-stack" }
+url = { version = "2", features = ["expose_internals"] }
+brotli = "7"
+encoding_rs = "0.8"
+crc32fast = "1"
+idna = "1"
+unicode-normalization = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+libc = "0.2"
+socket2 = { version = "0.6", features = ["all"] }
+zstd = { version = "0.13", features = ["zstdmt"] }
+libz-rs-sys = "0.6.8"
+turso_core = { workspace = true, features = ["fs"] }
+turso_parser = { workspace = true }
+
+[build-dependencies]
+pkg-config = "0.3"
+
+# The global allocator on unix; the memory policy decides whether it serves small requests
+# (`shared_run::apply_allocator_policy`). On macOS the reservation is granted as PROT_NONE
+# address space and pages are faulted on use; paired M4 screens against the system allocator
+# measured 0.7-2.1% lower maximum RSS and 2.6-4.7% higher throughput (TOD-173 npm rows).
+[target.'cfg(unix)'.dependencies]
+quench-alloc = { path = "../quench-alloc" }
+
+# Darwin reads the shared native OS facts directly; retain other platforms' backend.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+sysinfo = "0.32"
+
+[lints]
+workspace = true

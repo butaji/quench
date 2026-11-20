@@ -6,8 +6,8 @@ use super::*;
 use crate::bytecode::Op;
 
 /// The lane unit's frames for an inlining region's inlined callees.
-pub(super) fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) -> Vec<lane_unit::Frame> {
-    inlining.frames.iter().map(|frame| lane_unit::Frame {
+pub(super) fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) -> Vec<lane_unit::InlinedCall> {
+    inlining.frames.iter().map(|frame| lane_unit::InlinedCall {
         recovery: lane_unit::CallRecovery::Materialize,
         parent: None,
         call: frame.call,
@@ -33,7 +33,7 @@ pub(super) fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) ->
 
 /// Where each inlined frame's call marker goes: its first instruction's position and the PC
 /// to resume at, where a failed identity guard must rerun the callee's read too.
-pub(super) fn marker_sites(origins: &[lane_unit::Origin], frames: &[lane_unit::Frame]) -> Vec<(usize, u32)> {
+pub(super) fn marker_sites(origins: &[lane_unit::Origin], frames: &[lane_unit::InlinedCall]) -> Vec<(usize, u32)> {
     (0..frames.len()).filter_map(|frame| {
         let at = origins.iter().position(|origin|
             matches!(origin, lane_unit::Origin::Inlined { frame: at, .. } if *at == frame))?;
@@ -78,7 +78,7 @@ pub(super) fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgra
 /// parameter moves precede the marker and write the same registers. Returns the insertions
 /// (position, resume PC) and the markers' unit PCs.
 pub(super) fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lane_unit::Origin>,
-    frames: &[lane_unit::Frame]) -> (Vec<(usize, u32)>, Vec<usize>) {
+    frames: &[lane_unit::InlinedCall]) -> (Vec<(usize, u32)>, Vec<usize>) {
     let mut inserted = marker_sites(origins, frames);
     inserted.sort_unstable_by_key(|(at, _)| *at);
     inserted.dedup_by_key(|(at, _)| *at);

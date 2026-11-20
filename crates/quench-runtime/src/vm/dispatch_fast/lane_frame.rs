@@ -2165,7 +2165,14 @@ fn scope_reads<H: Host, const FLAG: u8>(cx: *mut LaneContext<H>, ip: super::Ip, 
 fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
     let mut frame = row_frame_of::<H, OP, ACC, FLAG>(cx, r, ip, i, view);
     if ACC == ACC_B {
-        frame.accumulated = i.b;
+        // Field B's register as the row decodes it: an operand or a field base names its
+        // register within its encoding.
+        use crate::bytecode::FieldLayout as L;
+        frame.accumulated = match LaneFields::<OP>::OPCODE.field_layout(crate::bytecode::InstructionField::B) {
+            L::Operand | L::NumericIndexOperand => crate::bytecode::Operand(i.b).register_index(),
+            L::FieldBase => crate::bytecode::FieldBase(i.b).register_index(),
+            _ => Some(i.b),
+        }.unwrap_or(NO_ACCUMULATOR);
     }
     frame
 }

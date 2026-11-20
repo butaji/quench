@@ -1,8 +1,6 @@
 use std::cmp::Ordering;
 use crate::heap::ProtoLink;
 
-use num_bigint::{BigInt, Sign};
-
 impl<H: Host> Vm<H> {
     pub(super) fn compare_relational(
         &mut self,
@@ -685,7 +683,10 @@ fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Optio
     }
 }
 
-fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Option<Ordering>> {
+/// The ordering of two BigInt values, or of a BigInt and a Number (`None` for a NaN
+/// Number); `None` outside those pairs. Shared by the relational operators and by
+/// `bigint_relation`, the fast path of the operators in `dispatch_fast`.
+pub(super) fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Option<Ordering>> {
     match (
         heap.get(left),
         heap.get(right),
@@ -694,50 +695,12 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
     ) {
         (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(left.cmp(right))),
         (Some(Cell::BigInt(bigint)), _, _, Some(number)) => {
-            Some(bigint_number_ordering(&bigint.to_num(), number))
+            Some(crate::staged::bigint_small::number_ordering(bigint, number))
         }
         (_, Some(Cell::BigInt(bigint)), Some(number), _) => {
-            Some(bigint_number_ordering(&bigint.to_num(), number).map(Ordering::reverse))
+            Some(crate::staged::bigint_small::number_ordering(bigint, number).map(Ordering::reverse))
         }
         _ => None,
-    }
-}
-
-fn bigint_number_ordering(integer: &BigInt, number: f64) -> Option<Ordering> {
-    if number.is_nan() {
-        return None;
-    }
-    if number == f64::INFINITY {
-        return Some(Ordering::Less);
-    }
-    if number == f64::NEG_INFINITY {
-        return Some(Ordering::Greater);
-    }
-    let sign = integer.sign();
-    if number == 0.0 {
-        return Some(integer.cmp(&BigInt::ZERO));
-    }
-    if sign == Sign::Minus && number.is_sign_positive() {
-        return Some(Ordering::Less);
-    }
-    if sign != Sign::Minus && number.is_sign_negative() {
-        return Some(Ordering::Greater);
-    }
-    let ordering = compare_positive_bigint_number(BigInt::from(integer.magnitude().clone()), number.abs());
-    Some(if number.is_sign_negative() {
-        ordering.reverse()
-    } else {
-        ordering
-    })
-}
-
-fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
-    let (significand, exponent) = crate::float_layout::binary64_parts(number);
-    let significand = BigInt::from(significand);
-    if exponent >= 0 {
-        integer.cmp(&(significand << exponent as usize))
-    } else {
-        (integer << (-exponent) as usize).cmp(&significand)
     }
 }
 

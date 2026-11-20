@@ -441,7 +441,8 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
-    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held })?;
+    let pinned = arguments.iter().any(|&place| place != Place::Mem.code());
+    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held, pinned })?;
     let mut holes = [0; HOLES];
     holes[DirectHole::Record as usize] = std::ptr::from_ref(&*record).addr() as u64;
     holes[DirectHole::CallPc as usize] = u64::from(shape.call_pc);

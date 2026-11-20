@@ -29,6 +29,10 @@ impl WasmGc for Probe {
         self.gc_record("field_slot")
     }
 
+    fn field_slot_for_write(&mut self, _: usize, _: usize) -> usize {
+        self.gc_record("field_slot_for_write")
+    }
+
     fn field_count(&mut self, _: usize) -> usize {
         self.gc_record("field_count")
     }

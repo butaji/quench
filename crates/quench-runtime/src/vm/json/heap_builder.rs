@@ -203,37 +203,6 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
         }
     }
 
-    pub(super) fn materialize(&mut self, value: &JsonValue) -> Result<Value, JsError> {
-        let _stack = self.vm.enter_stack()?;
-        Ok(match value {
-            JsonValue::Null => self.literal(JsonLiteral::Null),
-            JsonValue::Bool(true) => self.literal(JsonLiteral::True),
-            JsonValue::Bool(false) => self.literal(JsonLiteral::False),
-            JsonValue::Number(value) => self.number(*value),
-            JsonValue::String(value) => self.vm.heap.alloc_string(value.clone()),
-            JsonValue::Source(value, _) => self.materialize(value)?,
-            JsonValue::Array(values) => {
-                let mut values = values
-                    .iter()
-                    .map(|value| self.materialize(value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                self.array(values.drain(..))
-            }
-            JsonValue::Object(entries) => {
-                let mut layout = self.layout(None);
-                let mut keys = Vec::with_capacity(entries.len());
-                let mut values = Vec::with_capacity(entries.len());
-                for (key, value) in entries {
-                    let key = self.vm.intern_js_atom(key);
-                    self.advance(&mut layout, key);
-                    keys.push(key);
-                    values.push(self.materialize(value)?);
-                }
-                self.object(layout, keys.drain(..), values.drain(..))
-            }
-        })
-    }
-
     /// The atom of key `units`.
     fn atom(&mut self, units: Units<'_>) -> Atom {
         let Units::Ascii(bytes) = units else {
@@ -439,7 +408,7 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
             .heap
             .alloc_object_with_properties(self.object_prototype, shape, values.as_slice())
     }
-    fn primitive(&mut self, value: Value, _source: Units<'_>) -> Value {
+    fn primitive(&mut self, value: Value, _source: Range<usize>) -> Value {
         value
     }
     fn stacks(&mut self) -> JsonStacks<Value, Atom, JsonObjectLayout> {
@@ -451,3 +420,203 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     }
 }
 
+/// A node of the parse-time snapshot (`JsonSnapshot`): a primitive, or a container whose
+/// children are a range of the snapshot's flat arrays.
+enum JsonNode {
+    /// A primitive's parse-time value, and the range of its token in the text the parse read:
+    /// UTF-8 bytes of an unflattened host text, else code units.
+    Primitive { value: Value, source: Range<usize> },
+    /// An array: its children's range in `JsonSnapshot::children`, by index.
+    Array(Range<usize>),
+    /// An object: its (key, child) range in `JsonSnapshot::members`, in source order. A key
+    /// the text repeats appears more than once, and the last of its entries wins.
+    Object(Range<usize>),
+}
+
+/// The parse-time snapshot of a JSON text that a reviver walks (`json_internalize`), taken by the
+/// same parse that builds the heap values. Nodes are indices into one arena, and a container's
+/// children are contiguous in the flat arrays, so the snapshot holds no boxed trees. A string
+/// primitive's value is rooted (`roots`) until the walk ends, because the reviver may collect.
+pub(super) struct JsonSnapshot {
+    /// The text parsed, which the source text of a primitive is sliced from.
+    text: JsString,
+    nodes: Vec<JsonNode>,
+    children: Vec<u32>,
+    members: Vec<(Atom, u32)>,
+    /// The roots of the string primitives' values; the caller releases them.
+    pub(super) roots: Vec<crate::heap::RootId>,
+    /// The node of the parse's root value.
+    pub(super) root: u32,
+}
+
+impl JsonSnapshot {
+    /// The value and the source range of the primitive at `node`; `None` for a container.
+    pub(super) fn primitive(&self, node: u32) -> Option<(Value, Range<usize>)> {
+        match &self.nodes[node as usize] {
+            JsonNode::Primitive { value, source } => Some((*value, source.clone())),
+            JsonNode::Array(_) | JsonNode::Object(_) => None,
+        }
+    }
+
+    /// The child of the array at `node` at `index`; `None` for a primitive or an object.
+    pub(super) fn array_child(&self, node: u32, index: usize) -> Option<u32> {
+        match &self.nodes[node as usize] {
+            JsonNode::Array(range) => self.children[range.clone()].get(index).copied(),
+            JsonNode::Primitive { .. } | JsonNode::Object(_) => None,
+        }
+    }
+
+    /// The child of the object at `node` for `key`: the last entry of that key, as the object's
+    /// value for it is; `None` for a primitive or an array.
+    pub(super) fn object_child(&self, node: u32, key: Atom) -> Option<u32> {
+        match &self.nodes[node as usize] {
+            JsonNode::Object(range) => self.members[range.clone()]
+                .iter()
+                .rev()
+                .find(|(name, _)| *name == key)
+                .map(|(_, child)| *child),
+            JsonNode::Primitive { .. } | JsonNode::Array(_) => None,
+        }
+    }
+
+    /// The source text of the token `source` spans, sliced from the text parsed. Only a
+    /// reviver that is handed the source makes this string.
+    pub(super) fn source_text(&self, source: Range<usize>) -> JsString {
+        match self.text.unflattened_host() {
+            Some(host) => JsString::from_str(&host[source]),
+            None => JsString::from_unit_run(self.text.units().slice(source)),
+        }
+    }
+}
+
+/// Builds the heap values of a parse that a reviver walks: every value is made by the wrapped
+/// `JsonHeapBuilder`, so each heap value is built once, and this builder records the snapshot
+/// of the same parse beside it. A node is pushed when its value completes. `pending` holds the
+/// nodes no container has taken yet, so the top `n` of it are the children of a container of `n`
+/// members, in source order.
+pub(super) struct JsonRevivalBuilder<'v, H: Host> {
+    heap: JsonHeapBuilder<'v, H>,
+    nodes: Vec<JsonNode>,
+    children: Vec<u32>,
+    members: Vec<(Atom, u32)>,
+    pending: Vec<u32>,
+    roots: Vec<crate::heap::RootId>,
+}
+
+impl<'v, H: Host> JsonRevivalBuilder<'v, H> {
+    pub(super) fn new(vm: &'v mut Vm<H>) -> Self {
+        Self {
+            heap: JsonHeapBuilder::new(vm),
+            nodes: Vec::new(),
+            children: Vec::new(),
+            members: Vec::new(),
+            pending: Vec::new(),
+            roots: Vec::new(),
+        }
+    }
+
+    /// The heap values and the snapshot of a parse that `parsed` ends with, of `text`.
+    pub(super) fn finish(
+        mut self,
+        parsed: Result<Value, JsonParseError>,
+        text: JsString,
+    ) -> Result<(Value, JsonSnapshot), JsonBuildError> {
+        let value = match parsed {
+            Ok(value) => value,
+            Err(error) => {
+                self.release_roots();
+                return Err(JsonBuildError::Parse(error));
+            }
+        };
+        if let Some(error) = self.heap.error.take() {
+            self.release_roots();
+            return Err(JsonBuildError::Runtime(error));
+        }
+        let root = self.pending.pop().expect("a parse that completes leaves its root pending");
+        let snapshot = JsonSnapshot {
+            text,
+            nodes: std::mem::take(&mut self.nodes),
+            children: std::mem::take(&mut self.children),
+            members: std::mem::take(&mut self.members),
+            roots: std::mem::take(&mut self.roots),
+            root,
+        };
+        Ok((value, snapshot))
+    }
+
+    /// Releases the roots a parse that failed made.
+    fn release_roots(&mut self) {
+        for root in self.roots.drain(..) {
+            self.heap.vm.heap.release_root(root);
+        }
+    }
+
+    /// Pushes `node` as pending, after the nodes already pending.
+    fn push_node(&mut self, node: JsonNode) {
+        self.nodes.push(node);
+        self.pending.push((self.nodes.len() - 1) as u32);
+    }
+}
+
+impl<H: Host> JsonBuilder for JsonRevivalBuilder<'_, H> {
+    type Value = Value;
+    type Key = Atom;
+    type Layout = JsonObjectLayout;
+    const KEEPS_SOURCE: bool = true;
+    fn literal(&mut self, value: JsonLiteral) -> Value {
+        self.heap.literal(value)
+    }
+    fn number(&mut self, value: f64) -> Value {
+        self.heap.number(value)
+    }
+    fn integer(&mut self, value: i32) -> Value {
+        self.heap.integer(value)
+    }
+    fn string(&mut self, units: JsonStringUnits<'_>) -> Value {
+        self.heap.string(units)
+    }
+    fn layout(&mut self, parent: Option<&JsonObjectLayout>) -> JsonObjectLayout {
+        self.heap.layout(parent)
+    }
+    fn expected_key(&mut self, layout: &mut JsonObjectLayout, matches: impl Fn(&[u8]) -> bool) -> Option<(Atom, usize)> {
+        self.heap.expected_key(layout, matches)
+    }
+    fn key(&mut self, layout: &mut JsonObjectLayout, units: Units<'_>) -> Atom {
+        self.heap.key(layout, units)
+    }
+    /// An array of the gathered `values`, whose nodes are the top pending ones.
+    fn array(&mut self, values: std::vec::Drain<'_, Value>) -> Value {
+        let first = self.pending.len() - values.len();
+        let value = self.heap.array(values);
+        let start = self.children.len();
+        self.children.extend(self.pending.drain(first..));
+        self.push_node(JsonNode::Array(start..self.children.len()));
+        value
+    }
+    /// An object of `layout`, whose `keys` pair with the top pending nodes in source order.
+    fn object(&mut self, layout: JsonObjectLayout, keys: std::vec::Drain<'_, Atom>, values: std::vec::Drain<'_, Value>) -> Value {
+        let first = self.pending.len() - keys.len();
+        let start = self.members.len();
+        self.members
+            .extend(keys.as_slice().iter().copied().zip(self.pending[first..].iter().copied()));
+        let value = self.heap.object(layout, keys, values);
+        self.pending.truncate(first);
+        self.push_node(JsonNode::Object(start..self.members.len()));
+        value
+    }
+    /// A primitive, with the range of its source. A string's value is rooted for the walk.
+    fn primitive(&mut self, value: Value, source: Range<usize>) -> Value {
+        if self.heap.vm.heap.string(value).is_some() {
+            let root = self.heap.vm.heap.root(value);
+            self.roots.push(root);
+        }
+        self.push_node(JsonNode::Primitive { value, source });
+        value
+    }
+    fn stacks(&mut self) -> JsonStacks<Value, Atom, JsonObjectLayout> {
+        self.heap.stacks()
+    }
+    fn keep_stacks(&mut self, stacks: JsonStacks<Value, Atom, JsonObjectLayout>) {
+        self.heap.keep_stacks(stacks);
+    }
+}

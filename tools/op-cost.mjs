@@ -15,7 +15,7 @@
 // clear; the C column is the work a C programmer's loop does for the same body, the bar of
 // the native tiers. Peer costs do not change with Quench builds: --peers caches them.
 //
-// Usage: tools/op-cost.mjs <quench-node> [--modes no-jit,jit] [--peers file.json]
+// Usage: tools/op-cost.mjs <quench> [--modes no-jit,jit] [--peers file.json]
 //        [--baseline file.json] [--save file.json] [ops...]
 
 import { execFileSync, spawn } from "node:child_process";

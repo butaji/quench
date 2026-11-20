@@ -1,0 +1,586 @@
+//! Shared-runtime Node host state and entry configuration.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::shared_run::EntryGoal;
+
+mod snapshot;
+
+/// Output callback owned by the canonical Node host boundary.
+pub type NodeOutputSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
+#[derive(Clone, Copy, Default)]
+pub(crate) enum InlineSource {
+    #[default]
+    Eval,
+    Stdin,
+}
+impl InlineSource {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Eval => "[eval]",
+            Self::Stdin => "[stdin]",
+        }
+    }
+    pub(crate) fn compilation_name(self) -> &'static str {
+        match self {
+            Self::Eval => "<eval>",
+            Self::Stdin => "[stdin]",
+        }
+    }
+}
+
+#[cfg(feature = "native-execution")]
+pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, quench_runtime::NativeSourceError>;
+
+pub struct NodeHost {
+    #[cfg(feature = "native-execution")]
+    pub(crate) module_assets: crate::aot::ModuleAssetState,
+    #[cfg(feature = "native-execution")]
+    pub(crate) native_program_resolver: Option<Box<NativeProgramResolver>>,
+    /// Compiled library modules kept across runs (`compile_cache`).
+    pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
+    /// Whether bootstrap has finished (`Host::initialize`, or `Host::resume` from a startup
+    /// snapshot): bootstrap's own programs decode back to back (`cached_program_decoded`).
+    pub(crate) bootstrapped: bool,
+    pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
+    pub(crate) commonjs_entry: Option<CommonJsEntry>,
+    pub(crate) inline_source: InlineSource,
+    pub(crate) eval_builtin_globals: bool,
+    /// Node's default argument slice uses the normalized, nonempty eval source.
+    pub(crate) eval_source_nonempty: bool,
+    /// `--print`'s source, which the host evaluates as the entry (`eval_globals_shared_vm::print`).
+    pub(crate) eval_print: Option<String>,
+    /// Whether CommonJS eval source binds `crypto` to `node:crypto` (`names_crypto`).
+    pub(crate) eval_crypto: bool,
+    pub(crate) net_pending_writes: Vec<(u64, Vec<u8>, bool)>,
+    pub(crate) net_pending_ends: Vec<(u64, bool)>,
+    pub(crate) net_pending_destroys: Vec<(u64, bool)>,
+    /// The kind of startup snapshot this host builds, ending `initialize` at its point.
+    pub(crate) building_snapshot: Option<crate::host::startup_snapshot::SnapshotKind>,
+    /// Each referrer's resolved import specifiers (`NodeHost::import_location`).
+    pub(crate) resolved_imports: rustc_hash::FxHashMap<
+        Box<str>,
+        rustc_hash::FxHashMap<Box<str>, Rc<crate::host::shared_vm::ImportLocation>>,
+    >,
+    /// The files `require(esm)` loaded as modules. Node's module map then serves an `import`
+    /// of one of them, even under an extension the loader has no format for.
+    pub(crate) esm_required: rustc_hash::FxHashSet<std::path::PathBuf>,
+}
+
+impl NodeHost {
+    /// Resolve linked code by the loader's exact name, source and shaping inputs.
+    #[cfg(feature = "native-execution")]
+    pub fn with_native_programs(mut self, resolver: impl FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> + 'static) -> Self {
+        self.native_program_resolver = Some(Box::new(resolver));
+        self
+    }
+
+    /// `path`'s real path through the loaders' known-real paths (`real_path`); a path that
+    /// cannot be resolved is returned as it is.
+    pub(crate) fn real_path(&mut self, path: std::path::PathBuf) -> std::path::PathBuf {
+        crate::host::real_path::real_path(&path).unwrap_or(path)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct CommonJsEntry {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) goal: EntryGoal,
+}
+
+/// Before node:module is built the loader owns its cache directly. Thereafter
+/// Module._cache is authoritative, including guest replacement of that property.
+#[derive(Clone, Copy)]
+pub(crate) enum CommonJsCache {
+    Bootstrap(quench_runtime::RootId),
+    Module(quench_runtime::RootId),
+}
+
+/// Host-owned state and lifecycle data for the shared VM path.
+pub(crate) struct SharedNodeState {
+    pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
+    pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
+    pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
+    pub(crate) dns: crate::modules::cares_binding::State,
+    pub(crate) performance_native: crate::modules::performance_binding_shared_vm::State,
+    pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
+    pub(crate) fs: crate::modules::fs_state::FsState,
+    pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
+    pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
+    pub(crate) sqlite: crate::modules::sqlite_shared_vm::State,
+    #[cfg(quench_icu)]
+    pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
+    pub(crate) fs_classes: crate::modules::fs_shared_vm::classes::State,
+    pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
+    pub(crate) cwd: crate::modules::process_state::ProcessCwd,
+    pub(crate) module_parent_api: Option<quench_runtime::RootId>,
+    pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) module_require_trace_active: bool,
+    pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    /// Buffer's allocation pool while the host holds it for `buffer.js` to adopt.
+    pub(crate) buffer_pool: crate::modules::buffer_shared_vm::PoolOwner,
+    pub(crate) commonjs_cache: Option<CommonJsCache>,
+    pub(crate) event_targets_api: Option<quench_runtime::RootId>,
+    pub(crate) trace: crate::modules::trace_state::TraceState,
+    pub(crate) util_intrinsics: Option<crate::modules::util_shared_vm::UtilIntrinsics>,
+    pub(crate) node_error_api: Option<crate::modules::node_errors_shared_vm::NodeErrorApi>,
+    /// Immutable startup arguments used to build guest process.argv.
+    pub(crate) process_argv: crate::modules::process_state::ProcessArgs,
+    pub(crate) process_control: crate::modules::process_state::ProcessControl,
+    pub(crate) process_signals: crate::modules::process_signals_state::SignalState,
+    pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
+    pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
+    pub(crate) node_test: crate::modules::test_runner::State,
+    pub(crate) cluster: crate::modules::cluster::State,
+    /// The application module graph under `--hmr` (`crate::host::hmr`).
+    pub(crate) hmr: Option<crate::host::hmr::HmrState>,
+    /// REPL inputs evaluated so far: each is the resource `REPL<n>`.
+    pub(crate) repl_resources: u32,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
+    pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto: crate::modules::crypto_node::State,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto_signatures: crate::modules::crypto_signature_shared_vm::State,
+    pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
+    pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
+    pub(crate) messaging: crate::modules::worker_shared_vm::State,
+    /// Pure-Rust resolver channels for `cares_wrap` when c-ares is not linked.
+    pub(crate) dns_channels: crate::modules::dns_shared_vm::State,
+    pub(crate) serdes: crate::modules::serdes_shared_vm::State,
+    pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
+    pub(crate) output: Option<NodeOutputSink>,
+    /// Optional stdout-only sink. Worker stdio pipes use this to keep stdout
+    /// separate from diagnostic and stderr output.
+    pub(crate) stdout_output: Option<NodeOutputSink>,
+    pub(crate) net_auto_select_family_attempt_timeout: u64,
+    pub(crate) net_auto_select_family: bool,
+    pub(crate) process_module: Option<quench_runtime::RootId>,
+    pub(crate) process_capture_state: Option<quench_runtime::RootId>,
+    pub(crate) path_module: Option<quench_runtime::RootId>,
+    pub(crate) timer_handle_api: Option<crate::modules::timers_shared_vm::TimerHandleApi>,
+    /// The emitter configuration's fixed keys and constructor (`event_constructor_shared_vm`).
+    pub(crate) emitter_keys: Option<crate::modules::event_constructor_shared_vm::EmitterKeys>,
+    /// The internal invocation every receiverless next tick shares (`queue_next_tick`).
+    pub(crate) tick_invocation: Option<quench_runtime::RootId>,
+    /// The string `"error"`, which every EventEmitter `emit` compares its event with.
+    pub(crate) error_event_name: Option<quench_runtime::RootId>,
+    /// The `stream` module's symbols, classes and scheduled operations (`stream_shared_vm`).
+    pub(crate) stream_intrinsics: Option<crate::modules::stream_shared_vm::Intrinsics>,
+    /// The high water marks `stream.getDefaultHighWaterMark` returns.
+    pub(crate) stream_high_water_marks: crate::modules::stream_shared_vm::state::DefaultHighWaterMarks,
+    pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
+    /// Invocation flags supplied by the embedder for this logical process.
+    pub(crate) exec_argv: Vec<String>,
+    pub(crate) cli_options: crate::modules::cli_options::CliOptions,
+    pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
+    initial_node_options: Option<String>,
+    initial_pending_deprecation: bool,
+    pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
+    pub(crate) http: crate::modules::http_shared_vm::State,
+    pub(crate) http2: crate::modules::http2_shared_vm::State,
+    pub(crate) tcp: crate::modules::net_shared_vm::Transport,
+    pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
+    pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
+    pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
+    pub(crate) udp: crate::modules::udp_binding::State,
+    pub(crate) native_async_wrap: crate::modules::native_async_wrap::State,
+    pub(crate) native_pipe: crate::modules::pipe_binding::State,
+    pub(crate) native_stream: crate::modules::stream_binding::State,
+    pub(crate) native_tcp_listeners: std::collections::HashMap<u64, quench_runtime::RootId>,
+    pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
+    pub(crate) child_process_shell_args_warning_emitted: bool,
+    pub(crate) child_processes: std::collections::HashMap<u64, SharedChildProcess>,
+    pub(crate) net_socket_constructor: Option<quench_runtime::RootId>,
+    pub(crate) net_handle_owner_symbol: Option<quench_runtime::RootId>,
+    pub(crate) net_server_on_connection: Option<quench_runtime::RootId>,
+    pub(crate) net_handle_onclose_symbol: Option<quench_runtime::RootId>,
+    pub(crate) net_socket_option_keys: Option<quench_runtime::RootId>,
+    pub(crate) net_handle_identities: Vec<(quench_runtime::HostWeakRoot, u64)>,
+    pub(crate) net_handle_close_callbacks: std::collections::HashMap<u64, quench_runtime::RootId>,
+}
+
+pub(crate) struct NetSocket {
+    pub(crate) root: quench_runtime::RootId,
+    pub(crate) encoding: Option<String>,
+    pub(crate) parent_server: Option<u64>,
+    pub(crate) write_callbacks: std::collections::VecDeque<quench_runtime::RootId>,
+}
+
+pub(crate) struct NetServer {
+    pub(crate) root: quench_runtime::RootId,
+    pub(crate) listener: u64,
+    pub(crate) connections: std::collections::HashSet<u64>,
+    pub(crate) closing: bool,
+    pub(crate) listening_pending: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChildHandlePhase {
+    Open,
+    Closing,
+    Closed,
+}
+
+pub(crate) struct SharedChildProcess {
+    pub(crate) cancel: crate::modules::child_process_shared_vm::Cancellation,
+    pub(crate) handle_phase: ChildHandlePhase,
+    pub(crate) referenced: bool,
+    pub(crate) close_dispatched: bool,
+    pub(crate) child: Option<quench_runtime::RootId>,
+    pub(crate) stdout: Option<quench_runtime::RootId>,
+    pub(crate) stderr: Option<quench_runtime::RootId>,
+    #[cfg(unix)]
+    pub(crate) stdout_pipe: crate::modules::child_process_output_shared_vm::Output,
+    #[cfg(unix)]
+    pub(crate) stderr_pipe: crate::modules::child_process_output_shared_vm::Output,
+    pub(crate) stdin_stream: Option<quench_runtime::RootId>,
+    pub(crate) stdin: crate::modules::child_process_input_shared_vm::Input,
+    #[cfg(unix)]
+    pub(crate) extra_inputs: Vec<(usize, crate::modules::child_process_input_shared_vm::Input)>,
+    #[cfg(unix)]
+    pub(crate) extra_outputs: Vec<(
+        usize,
+        crate::modules::child_process_output_shared_vm::Output,
+    )>,
+    pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
+    pub(crate) ipc_pipe: Option<u64>,
+    pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
+    /// Held until the loop delivers the child's exit; dropping it lets the waiter reap the
+    /// child, which stays signalable as a zombie until then, as under Node.
+    pub(crate) reap: Option<std::sync::mpsc::Sender<()>>,
+    pub(crate) stdout_terminal: bool,
+    pub(crate) stderr_terminal: bool,
+    pub(crate) exit: Option<(Option<i32>, Option<String>)>,
+}
+
+pub(crate) enum ChildProcessEvent {
+    Stdout(Vec<u8>),
+    Stderr(Vec<u8>),
+    ExtraStdout(usize, Vec<u8>),
+    StdoutEnd,
+    StderrEnd,
+    ExtraStdoutEnd(usize),
+    Exit(Option<i32>, Option<String>),
+}
+
+impl SharedNodeState {
+    /// Child output pipes with pending guest demand. The event loop polls them
+    /// with the transport descriptors, so a child's write wakes the loop at once
+    /// instead of being found on the fallback poll interval.
+    #[cfg(unix)]
+    pub(crate) fn child_output_descriptors(&self) -> Vec<std::os::fd::RawFd> {
+        let mut descriptors = Vec::new();
+        for process in self.child_processes.values() {
+            for pipe in [&process.stdout_pipe, &process.stderr_pipe] {
+                if pipe.wants_read() {
+                    if let Some(fd) = pipe.descriptor() {
+                        descriptors.push(fd);
+                    }
+                }
+            }
+        }
+        descriptors
+    }
+
+    /// Forget cached guest handles before bootstrapping a replacement VM heap.
+    pub(crate) fn reset_cached_vm_roots(&mut self) {
+        self.performance_native = Default::default();
+        self.vm_scripts = Default::default();
+        self.builtin_cache.clear();
+        self.diagnostics = Default::default();
+        self.buffer_pool = Default::default();
+        self.messaging.reset();
+        self.dns_channels.reset();
+        self.serdes.reset();
+        self.commonjs_cache = None;
+        self.module_parent_api = None;
+        self.active_esm_requires.clear();
+        self.module_require_trace_active = false;
+        self.event_targets_api = None;
+        self.process_module = None;
+        self.process_capture_state = None;
+        self.path_module = None;
+        self.timer_handle_api = None;
+        self.tick_invocation = None;
+        self.error_event_name = None;
+        self.stream_intrinsics = None;
+        self.stream_high_water_marks = Default::default();
+        self.emitter_keys = None;
+        self.timer_duration_warnings = Default::default();
+        self.net_socket_constructor = None;
+        self.net_handle_owner_symbol = None;
+        self.net_server_on_connection = None;
+        self.net_handle_onclose_symbol = None;
+        self.net_socket_option_keys = None;
+        self.udp = Default::default();
+        self.native_async_wrap = Default::default();
+        self.native_pipe = Default::default();
+        self.native_stream = Default::default();
+        self.native_tcp_listeners.clear();
+        self.net_handle_identities.clear();
+        self.net_handle_close_callbacks.clear();
+        self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
+        self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
+        #[cfg(quench_icu)]
+        {
+            self.icu_converters = crate::modules::icu_binding_shared_vm::State::default();
+        }
+        self.fs_classes = crate::modules::fs_shared_vm::classes::State::default();
+        self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
+    }
+
+    fn new(
+        fs: crate::modules::fs_state::FsState,
+        cwd: crate::modules::process_state::ProcessCwd,
+        process_argv: crate::modules::process_state::ProcessArgs,
+        process_control: crate::modules::process_state::ProcessControl,
+        async_identity: crate::modules::async_hooks_state::AsyncIdentity,
+    ) -> Self {
+        Self {
+            vm_scripts: Default::default(),
+            async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState::new(
+                async_identity,
+            ),
+            native_tasks: Default::default(),
+            dns: Default::default(),
+            performance_native: Default::default(),
+            scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
+            fs,
+            fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
+            tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
+            sqlite: crate::modules::sqlite_shared_vm::State::default(),
+            #[cfg(quench_icu)]
+            icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
+            fs_classes: crate::modules::fs_shared_vm::classes::State::default(),
+            fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
+            cwd,
+            builtin_cache: std::collections::HashMap::new(),
+            buffer_pool: Default::default(),
+            commonjs_cache: None,
+            module_parent_api: None,
+            active_esm_requires: std::collections::HashMap::new(),
+            module_require_trace_active: false,
+            event_targets_api: None,
+            util_intrinsics: None,
+            node_error_api: None,
+            trace: crate::modules::trace_state::TraceState::default(),
+            process_argv,
+            process_control,
+            // SignalState carries resources on Linux and is a unit state elsewhere.
+            #[allow(clippy::default_constructed_unit_structs)]
+            process_signals: crate::modules::process_signals_state::SignalState::default(),
+            stdin: crate::modules::process_stdin_shared_vm::State::default(),
+            process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
+            node_test: crate::modules::test_runner::State::default(),
+            cluster: crate::modules::cluster::State::default(),
+            hmr: None,
+            repl_resources: 0,
+            #[cfg(quench_openssl_provider)]
+            crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto: crate::modules::crypto_node::State::default(),
+            crypto_key_material: crate::modules::crypto_key_material_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto_signatures: crate::modules::crypto_signature_shared_vm::State::default(),
+            crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
+            zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
+            messaging: crate::modules::worker_shared_vm::State::default(),
+            dns_channels: crate::modules::dns_shared_vm::State::default(),
+            serdes: crate::modules::serdes_shared_vm::State::default(),
+            unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
+            output: None,
+            stdout_output: None,
+            net_auto_select_family: crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY,
+            net_auto_select_family_attempt_timeout:
+                crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT,
+            process_module: None,
+            process_capture_state: None,
+            path_module: None,
+            timer_handle_api: None,
+            tick_invocation: None,
+            error_event_name: None,
+            stream_intrinsics: None,
+            stream_high_water_marks: Default::default(),
+            emitter_keys: None,
+            timer_duration_warnings: Default::default(),
+            exec_argv: Vec::new(),
+            cli_options: Default::default(),
+            report_config: Default::default(),
+            initial_node_options: std::env::var("NODE_OPTIONS").ok(),
+            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()
+                == Ok("1"),
+            diagnostics:
+                crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
+            http: crate::modules::http_shared_vm::State::new(),
+            http2: crate::modules::http2_shared_vm::State::new(),
+            tcp: crate::modules::net_shared_vm::Transport::new(),
+            net_sockets: std::collections::HashMap::new(),
+            net_closing_sockets: std::collections::HashMap::new(),
+            net_socket_close_completed: None,
+            udp: Default::default(),
+            native_async_wrap: Default::default(),
+            native_pipe: Default::default(),
+            native_stream: Default::default(),
+            native_tcp_listeners: std::collections::HashMap::new(),
+            net_servers: std::collections::HashMap::new(),
+            child_process_shell_args_warning_emitted: false,
+            child_processes: std::collections::HashMap::new(),
+            net_socket_constructor: None,
+            net_handle_owner_symbol: None,
+            net_server_on_connection: None,
+            net_handle_onclose_symbol: None,
+            net_socket_option_keys: None,
+            net_handle_identities: Vec::new(),
+            net_handle_close_callbacks: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl NodeHost {
+    #[cfg(feature = "native-execution")]
+    pub(crate) fn accepts_native_bootstrap(&self) -> bool {
+        let state = self.shared_state.borrow();
+        state.exec_argv.is_empty() && state.initial_node_options.is_none()
+            && !state.initial_pending_deprecation
+            && crate::host::startup_snapshot::native_bootstrap_environment_is_compatible()
+    }
+
+    pub fn new(argv: Vec<String>) -> Self {
+        #[cfg(feature = "profile-memory")]
+        crate::shared_run::profile_startup_boundary("node_host_begin");
+        // The Node test common/tmpdir helper exposes a per-process host path.
+        // Under the test runner, materialize that parent at host construction so
+        // fixtures can create files there even when the helper's JS-side refresh
+        // hook is absent from a reduced bootstrap realm. Other runs create nothing:
+        // every process had left an empty directory in /tmp.
+        if std::env::var_os(crate::shared_run::CHILD_RUNNER_ENV).is_some() {
+            let tmp = std::path::PathBuf::from(format!("/tmp/quench-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(tmp);
+        }
+        let fs = crate::modules::fs_state::FsState::new();
+        let argv = crate::modules::process_state::ProcessArgs::new(argv);
+        let async_identity = crate::modules::async_hooks_state::AsyncIdentity::new();
+        #[cfg(feature = "profile-memory")]
+        crate::shared_run::profile_startup_boundary("node_host_arguments_ready");
+        let process_control = crate::modules::process_state::ProcessControl::new();
+        #[cfg(feature = "profile-memory")]
+        crate::shared_run::profile_startup_boundary("node_host_process_control_ready");
+        let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
+        #[cfg(feature = "profile-memory")]
+        crate::shared_run::profile_startup_boundary("node_host_cwd_ready");
+        Self {
+            #[cfg(feature = "native-execution")]
+            module_assets: Default::default(),
+            compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
+            #[cfg(feature = "native-execution")]
+            native_program_resolver: None,
+            bootstrapped: false,
+            shared_state: Rc::new(RefCell::new(SharedNodeState::new(
+                fs,
+                cwd,
+                argv,
+                process_control,
+                async_identity,
+            ))),
+            commonjs_entry: None,
+            inline_source: InlineSource::default(),
+            eval_builtin_globals: false,
+            eval_source_nonempty: false,
+            eval_print: None,
+            eval_crypto: false,
+            resolved_imports: Default::default(),
+            esm_required: Default::default(),
+            net_pending_writes: Vec::new(),
+            net_pending_ends: Vec::new(),
+            net_pending_destroys: Vec::new(),
+            building_snapshot: None,
+        }
+    }
+
+    /// Select Node's Script/Module parse goal from its filename and package type.
+    pub fn source_kind(path: &std::path::Path) -> Result<quench_runtime::SourceKind, String> {
+        super::shared_vm::source_kind(path)
+    }
+
+    /// Execute a file through the CommonJS loader during shared-VM initialization.
+    pub fn with_commonjs_entry(mut self, path: std::path::PathBuf) -> Self {
+        self.commonjs_entry = Some(CommonJsEntry {
+            path,
+            goal: EntryGoal::Node,
+        });
+        self
+    }
+
+    pub fn with_commonjs_entry_goal(mut self, path: std::path::PathBuf, goal: EntryGoal) -> Self {
+        self.commonjs_entry = Some(CommonJsEntry { path, goal });
+        self
+    }
+
+    /// Retain the Node invocation flags supplied by the fixture adapter.
+    pub fn with_exec_argv(self, exec_argv: Vec<String>) -> Result<Self, String> {
+        let (cwd, node_options) = {
+            let shared = self.shared_state.borrow();
+            (shared.cwd.path(), shared.initial_node_options.clone())
+        };
+        crate::modules::util_env::load_startup_env_files(node_options.as_deref(), &exec_argv, &cwd);
+        let mode =
+            crate::modules::process_state::UnhandledRejectionMode::from_exec_argv(&exec_argv)?;
+        let net_timeout =
+            crate::modules::net_config::auto_select_family_attempt_timeout_from_exec_argv(
+                &exec_argv,
+            );
+        let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
+        let mut shared = self.shared_state.borrow_mut();
+        let node_options = std::env::var("NODE_OPTIONS")
+            .ok()
+            .or_else(|| shared.initial_node_options.clone());
+        shared.cli_options = crate::modules::cli_options::CliOptions::parse(
+            node_options.as_deref(),
+            &exec_argv,
+            shared.initial_pending_deprecation,
+        )?;
+        shared.initial_node_options = std::env::var("NODE_OPTIONS").ok();
+        shared.report_config = crate::modules::report_configuration_shared_vm::State::from_options(
+            &shared.cli_options,
+        );
+        shared.trace.configure(&exec_argv);
+        shared.exec_argv = exec_argv;
+        shared.unhandled_rejection_mode = mode;
+        if let Some(enabled) = net_family {
+            shared.net_auto_select_family = enabled;
+        }
+        if let Some(net_timeout) = net_timeout {
+            shared.net_auto_select_family_attempt_timeout = net_timeout;
+        }
+        drop(shared);
+        Ok(self)
+    }
+
+    pub fn with_output_sink(self, sink: NodeOutputSink) -> Self {
+        self.shared_state.borrow_mut().output = Some(sink);
+        self
+    }
+
+    pub fn with_stdout_sink(self, sink: NodeOutputSink) -> Self {
+        self.shared_state.borrow_mut().stdout_output = Some(sink);
+        self
+    }
+
+    pub fn with_initial_node_options(self, options: Option<String>) -> Self {
+        self.shared_state.borrow_mut().initial_node_options = options;
+        self
+    }
+
+    pub(crate) fn shared_state(&self) -> Rc<RefCell<SharedNodeState>> {
+        self.shared_state.clone()
+    }
+
+    /// Exit code recorded by `process.exit`, if any.
+    pub fn exit_code(&self) -> Option<i32> {
+        self.shared_state.borrow().process_control.exit_code()
+    }
+}

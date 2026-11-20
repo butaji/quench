@@ -531,4 +531,5 @@ impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
     fn miss(&self) {}
     fn int_fact(&self) {}
     fn number_fact(&self) {}
+
 }

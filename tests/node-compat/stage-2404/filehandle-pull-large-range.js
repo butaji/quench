@@ -1,7 +1,7 @@
 // Flags: --experimental-stream-iter
 const assert = require("assert");
 const fs = require("fs");
-const path = `/tmp/quench-node-stage-2404-${process.pid}`;
+const path = `/tmp/quench-stage-2404-${process.pid}`;
 
 (async () => {
   const input = Buffer.alloc(300 * 1024, "x");

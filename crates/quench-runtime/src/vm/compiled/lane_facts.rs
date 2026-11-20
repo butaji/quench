@@ -4,9 +4,10 @@
 use super::*;
 use std::collections::BTreeMap;
 
-/// The unit PCs of a previous body's leaves: the specialization's feedback.
+/// The unit PCs of a previous body's leaves: the specialization's feedback. Only the table's
+/// places are read here, so no leave's stored values are asked for.
 pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
-    let exits = ExitTable::of_unit(unit);
+    let exits = ExitTable::of_unit(unit, |_, _| Vec::new());
     generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc as usize)).collect()
 }
 
@@ -62,7 +63,7 @@ pub(super) fn numeric_callee(program: &ResidualProgram, function: u32) -> bool {
 /// function does.
 pub(super) fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body|
-        lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>()))
+        lane_region::restartable_numeric_function(program, body, body.instructions()))
 }
 
 /// `targets`, each once, in first-seen order.
@@ -82,18 +83,14 @@ pub(super) fn closes_loop(code: &[crate::bytecode::WideInstruction]) -> bool {
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc)
 }
 
-/// Whether a body has work that amortizes an entry, which costs a few hundred instructions
-/// the lane's own run of a short leaf never pays: a loop, an inlined call, a call of itself
-/// (its recursion runs natively inside the entry), or length (`Tiers::amortizing_instructions`).
+/// Whether one entry of `unit` repays the body's entry cost (`Priors::body_entry_ns`): the one
+/// such predicate, shared by every compile gate and by the published method. A body has work
+/// that amortizes an entry, which costs a few hundred instructions the lane's own run of a short
+/// leaf never pays: a loop, an inlined call, a call of itself (its recursion runs natively inside
+/// the entry), or length (`Tiers::amortizing_instructions`, which counts the inlined callees'
+/// instructions too, as they are in `unit.instructions`).
 pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
-}
-
-/// Whether one entry of `unit` saves more interpreter time than the body's entry costs
-/// (`Priors::body_entry_ns`), its inlined callees' work included: a unit with a loop does, and
-/// so does one that calls itself (`calls_itself`).
-pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    closes_loop(&unit.instructions) || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
 }
 
 use tier_policy::RECURSION_DEPTH;
@@ -109,14 +106,13 @@ pub(super) fn recursion_cycle(program: &ResidualProgram, function: u32, targets:
     };
     // The call graph out of `function`, as far as `RECURSION_DEPTH` calls.
     let mut edges: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
-    let mut frontier = vec![function];
+    let mut frontier = std::collections::BTreeSet::from([function]);
     for _ in 0..RECURSION_DEPTH {
-        let mut next = Vec::new();
+        let mut next = std::collections::BTreeSet::new();
         for caller in frontier {
-            if edges.contains_key(&caller) { continue; }
-            let out = callees(caller);
-            next.extend(out.iter().copied().filter(|callee| !edges.contains_key(callee)));
-            edges.insert(caller, out);
+            let std::collections::btree_map::Entry::Vacant(slot) = edges.entry(caller) else { continue };
+            let out = slot.insert(callees(caller));
+            next.extend(out.iter().copied());
         }
         frontier = next;
     }
@@ -140,12 +136,6 @@ pub(super) fn recursion_cycle(program: &ResidualProgram, function: u32, targets:
 /// `recursion_cycle`'s.
 fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
     direct.iter().any(|callee| callee.target.function == function)
-}
-
-/// Whether a straight-line unit of `instructions` instructions repays its entry: the share of
-/// its interpreted time the body keeps exceeds the body's entry cost.
-fn straight_line_repays(priors: &tier_policy::Priors, instructions: usize) -> bool {
-    instructions >= priors.repaying_length(priors.body_share)
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
@@ -247,9 +237,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_straight_line_unit_repays_its_entry_from_48_instructions() {
+    fn a_straight_line_unit_repays_its_entry_from_the_tier_length() {
+        // The length threshold is `Tiers::amortizing_instructions`, checked per tier by
+        // `tier_policy`'s `each_lane_body_tier_has_its_own_amortizing_length`.
         let priors = &tier_policy::TEST_PRIORS;
-        assert!(!straight_line_repays(priors, 47));
-        assert!(straight_line_repays(priors, 48));
+        assert_eq!(priors.repaying_length(priors.body_share), 48);
     }
 }

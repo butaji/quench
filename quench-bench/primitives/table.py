@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Primitive-op table: ns/iteration per engine (taskset single core, median of RUNS processes).
-usage: table.py OUT.json [op ...]   env: QN=path to quench-node, CORE=1, RUNS=7, N=5000000"""
+usage: table.py OUT.json [op ...]   env: QN=path to quench, CORE=1, RUNS=7, N=5000000"""
 import json, os, re, subprocess, statistics, sys
 here = os.path.dirname(os.path.abspath(__file__))
-qn = os.environ.get("QN", os.path.join(here, "../../target/release/quench-node"))
+qn = os.environ.get("QN", os.path.join(here, "../../target/release/quench"))
 core, runs, n = os.environ.get("CORE", "1"), int(os.environ.get("RUNS", "7")), os.environ.get("N", "5000000")
 inner = os.environ.get("INNER", "0")  # INNER=1000: many short calls (lane body entries) instead of one long call (OSR)
 engines = {

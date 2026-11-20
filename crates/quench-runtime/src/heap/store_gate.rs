@@ -26,8 +26,26 @@ impl Heap {
         self.store_watched = self.rc_active || self.properties.tracks();
     }
 
-    /// Whether the property arena records its slots' value classes (`ValueArena::tracks`), which
-    /// native stores read (`JsStepDispatch::slots_tracked`) as the gate's observation test.
+    /// The word native stores read as their gate (`JsStepHead::store_watch`): `store_watched`,
+    /// split into its inputs, slot observation (`STORE_WATCH_TRACKS`) and reference counts
+    /// (`STORE_WATCH_COUNTS`). Zero exactly when `store_watched` is clear.
+    #[inline(always)]
+    pub(crate) fn store_watch_word(&self) -> usize {
+        use crate::staged::layout_offsets::{STORE_WATCH_COUNTS, STORE_WATCH_TRACKS};
+        let tracks = if self.properties.tracks() { STORE_WATCH_TRACKS } else { 0 };
+        let counts = if self.rc_active { STORE_WATCH_COUNTS } else { 0 };
+        (tracks | counts) as usize
+    }
+
+    /// Whether a store of a value that names no heap record needs no barrier log: always, unless
+    /// old records keep counts (`RecordSpace::store_logs`). What a staged store proved immediate
+    /// still asks (`staged::Stage::immediate_store_open`).
+    #[inline(always)]
+    pub(crate) fn immediate_store_unlogged(&self) -> bool {
+        !self.rc_active
+    }
+
+    /// Whether the property arena records its slots' value classes (`ValueArena::tracks`).
     #[inline(always)]
     pub(crate) fn tracks_slot_values(&self) -> bool {
         self.properties.tracks()

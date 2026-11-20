@@ -451,16 +451,23 @@ impl<H: Host> Vm<H> {
                         .unwrap_or_default()
                         .min(length)
                 };
-                let found = (from..current_length).find(|index| {
-                    let Some(value) = self.typed_array_get(this, *index) else {
-                        return false;
-                    };
-                    if native == Native::Uint8ArrayIncludes {
-                        self.same_value_zero(value, search)
-                    } else {
-                        self.strict_equal(value, search)
+                // A Number search over a Number kind is the staged search over the elements
+                // (`typed_array_find_number`); any other search takes the general comparison.
+                let found = match search.as_number() {
+                    Some(number) if self.typed_array_kind(this).is_some_and(|kind| !kind.is_bigint()) => {
+                        self.typed_array_find_number(this, from, current_length, number, native == Native::Uint8ArrayIncludes)
                     }
-                });
+                    _ => (from..current_length).find(|index| {
+                        let Some(value) = self.typed_array_get(this, *index) else {
+                            return false;
+                        };
+                        if native == Native::Uint8ArrayIncludes {
+                            self.same_value_zero(value, search)
+                        } else {
+                            self.strict_equal(value, search)
+                        }
+                    }),
+                };
                 if native == Native::Uint8ArrayIncludes {
                     Ok(if found.is_some() {
                         Value::TRUE
@@ -791,9 +798,10 @@ impl<H: Host> Vm<H> {
         }
         let length = self.typed_array_length(this).unwrap_or_default();
         if native == Native::TypedArrayAt {
-            return Ok(self
-                .indexed_at_index(p, args.first().copied().unwrap_or(Value::UNDEFINED), length)?
-                .and_then(|index| self.typed_array_get(this, index))
+            let index = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            let index = crate::units::to_integer_or_infinity(index);
+            return Ok(crate::staged::typed_elements::element_at(index, length)
+                .and_then(|position| self.typed_array_get(this, position))
                 .unwrap_or(Value::UNDEFINED));
         }
         if native == Native::TypedArrayWith {
@@ -1066,16 +1074,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         let Some(value) = value else { return Ok(0) };
         Ok(crate::units::relative_index(self.to_number(p, *value)?, length))
-    }
-
-    /// ToUint8: the low bits of ToUint32, as 2^8 divides 2^32.
-    pub(super) fn uint8_from_value(number: f64) -> u8 {
-        crate::value::number_to_u32(number) as u8
-    }
-
-    /// ToUint16: the low bits of ToUint32, as 2^16 divides 2^32.
-    pub(super) fn uint16_from_value(number: f64) -> u16 {
-        crate::value::number_to_u32(number) as u16
     }
 
     pub(super) fn uint32_from_value(number: f64) -> u32 {

@@ -58,8 +58,7 @@ impl Drop for StoppedCellDrop {
 fn always_shares_rc_payload(cell: &Cell) -> bool {
     matches!(
         cell,
-        Cell::WasmGc { .. }
-            | Cell::WasmGlobal { .. }
+        Cell::WasmGlobal { .. }
             | Cell::WasmInstance(_)
             | Cell::WasmTable { .. }
             | Cell::WasmTag { .. }

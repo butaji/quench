@@ -3,7 +3,7 @@
 Quench implements JavaScript semantics and Node-compatible APIs.
 
 - Use Rust for implementation and Rust macros for code generation. JavaScript is guest/fixture input; existing measurement tools remain usable.
-- Keep Node host/API behavior in `quench-node` and JavaScript semantics in `quench-runtime`. OXC owns JavaScript syntax.
+- Keep Node host/API behavior in `quench` and JavaScript semantics in `quench-runtime`. OXC owns JavaScript syntax.
 - Share semantics across interpreter, specialized, and native execution. Optimizations require proven assumptions, dependencies whose change invalidates the code that relied on them, or a guard proved once with exact fallback (see Execution laws).
 - Verify changed Node behavior against the local Node oracle and relevant upstream source: values, descriptors, identity, ordering, errors, exit status and host effects.
 - Production behavior must never depend on benchmark identity, fixture source, scores, checksums, suite markers or the comparison engine.

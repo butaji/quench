@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::staged::wasm_call::indirect_target;
+use super::wasm_table::table_index_type;
 use crate::staged::wasm_machine::ConcreteTable;
 use crate::heap::{TableTarget, WasmTableElements};
 use super::compiled::InstanceContext;
@@ -94,7 +95,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::WasmTable { elements, table64, .. }) = self.heap.get(table) else {
             return Err(JsError::validation("invalid Wasm table binding".into()));
         };
-        let index = self.wasm_index_operand(operand, if *table64 { crate::WasmType::I64 } else { crate::WasmType::I32 })?;
+        let index = self.wasm_index_operand(operand, table_index_type(*table64))?;
         self.wasm_indirect_element(pool, elements, index, expected_index)
     }
 
@@ -126,9 +127,8 @@ impl<H: Host> Vm<H> {
             targets: elements.targets(),
             related: &mut related,
         };
-        let reference =
+        let (reference, row) =
             indirect_target(&mut stage, index, expected).map_err(JsError::wasm_trap_error)?;
-        let row = elements.targets()[index as usize];
         failure.map_or(Ok((Value::from_bits(reference), row)), Err)
     }
 }

@@ -759,10 +759,6 @@ impl Engine {
             } else if position == 0 {
                 // A lazily lowered module keeps its first record: an environment's root
                 // function is read without a call.
-                let mut function = function;
-                let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
-                function.register_roots =
-                    crate::compile::liveness::register_roots(&function, no_method_sites, &[], &[]);
                 slots.push(crate::bytecode::FunctionSlot::compiled(function));
             } else {
                 // Kept by its first call; this lowering settled what it interns.
@@ -772,8 +768,6 @@ impl Engine {
             }
         }
         let facts = plan.facts();
-        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
-        crate::compile::liveness::mark_register_roots(&mut functions, no_method_sites, &[], &[]);
         let signatures = Rc::new(signature_pool);
         let globals: Rc<[WasmGlobal]> = globals.into();
         let memories: Rc<[WasmMemory]> = memories.into();
@@ -1362,7 +1356,7 @@ impl WasmLazy {
             tags: &self.tags,
         };
         let mut constants = self.constants.borrow_mut();
-        let mut function = bindings
+        let function = bindings
             .lower_defined(index, &plan, SignaturePool::Finished(&self.signatures), &mut constants, program_constants)
             .unwrap_or_else(|error| panic!("Wasm function {index} of {} lowered at compile but not again: {error:?}", self.name));
         assert_eq!(
@@ -1371,9 +1365,6 @@ impl WasmLazy {
             "Wasm function {index} of {} interned a constant its compile did not",
             self.name
         );
-        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
-        function.register_roots =
-            crate::compile::liveness::register_roots(&function, no_method_sites, &[], &[]);
         function
     }
 }
@@ -1557,7 +1548,11 @@ impl ModuleBindings<'_> {
             matches!(lowering_constants.get(settled, index), Some(Constant::WasmBits64(bits)) if crate::Value::from_bits64(*bits).is_some())
         };
         let returns_wide = matches!(signature.results.as_slice(), [WasmType::I64 | WasmType::F64]);
-        crate::compile::liveness::raw_webs::use_raw_forms(&mut function, &constant_neutral, returns_wide);
+        // The raw switch solved the function's live sets; its root masks are built from them,
+        // so the function is solved once.
+        let solved = crate::compile::liveness::raw_webs::use_raw_forms(&mut function, &constant_neutral, returns_wide);
+        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+        function.register_roots = crate::compile::liveness::register_roots_from(&function, no_method_sites, &[], &[], solved);
         *constants = lowering_constants;
         Ok(function)
     }

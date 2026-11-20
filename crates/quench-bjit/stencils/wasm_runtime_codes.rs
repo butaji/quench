@@ -27,7 +27,7 @@ simd_operator_list!(simd_tag_enum);
 
 pub const T_F64: u8 = AccessType::F64 as u8;
 
-pub const FRAME_RESULT_WORD: usize = FrameWord::Result as usize;
+pub const FRAME_RESULT_WORD: usize = WASM_RESULT_WORD;
 
 pub const TARGET_ENTRY_AT: usize = core::mem::offset_of!(TableTargetLayout, entry);
 

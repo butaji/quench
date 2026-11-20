@@ -1,11 +1,12 @@
-//! The store barrier's mark test, written once over the machine primitives: whether a store of a
-//! value into object record `record_id` needs no barrier log (`RecordSpace::store_logs`): an
-//! immediate value names no heap record, and a heap value joins the log only where its owner is
-//! marked. The one place a specializer reads the mark blocks' layout.
+//! The store barrier's mark test, written once over `Stage`: the owner of an object record is
+//! unmarked where its mark block exists and its mark bit is clear, which is when a store of a heap
+//! value into the record needs no barrier log (`RecordSpace::store_logs`). Each caller decides the
+//! immediate case itself, since that is a branch in one stage and a return in another. The one
+//! place the mark blocks' layout is read; the b-jit stencil build mounts this file too.
 
-use super::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
+use super::region::Region;
+use super::stage::Stage;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-use crate::value::ValueLayout;
 
 /// Where a record space's mark block list lies in the dispatch payload: the byte offsets of its
 /// block table pointer and of its block count.
@@ -15,47 +16,25 @@ pub(crate) struct MarkList {
     pub(crate) count: usize,
 }
 
-/// The 64-bit constant `bits`.
-fn word<M: MachineScalar>(machine: &mut M, bits: u64) -> M::Word {
-    machine.raw_const(Lane::I64, bits as i64)
-}
-
-/// `row` of `a` and the constant `bits`.
-fn with<M: MachineScalar>(machine: &mut M, row: Binary, a: M::Word, bits: u64) -> M::Word {
-    let b = word(machine, bits);
-    machine.raw_binary(row, a, b)
-}
-
-/// Continues where a store of `value` into object record `record_id` needs no barrier log, and
-/// hands `guard` each condition that must hold for it: the owner's mark block exists, and its mark
-/// bit is clear. `flags` are the accesses of the payload's words and of the mark words;
-/// `payload` is the dispatch payload `list` offsets into.
-pub(crate) fn unlogged_store<M: MachineAccess + MachineFlow>(machine: &mut M, flags: (M::Flags, M::Flags),
-    payload: M::Word, list: MarkList, (record_id, value): (M::Word, M::Word), mut guard: impl FnMut(&mut M, M::Word)) {
-    let (payload_flags, mark_flags) = flags;
-    let tag = with(machine, Binary::And, value, ValueLayout::TAG_MASK);
-    let immediate = machine.raw_compare_imm(Relation::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-    let (heap, write) = (machine.new_block(), machine.new_block());
-    machine.branch_if(immediate, (write, &[]), (heap, &[]));
-    machine.enter(heap);
-    let blocks = machine.raw_load(Lane::I64, payload_flags, payload, list.blocks as i32);
-    let count = machine.raw_load(Lane::I64, payload_flags, payload, list.count as i32);
-    let block = with(machine, Binary::ShiftRightUnsigned, record_id, u64::from(OBJECT.mark_records_per_block.trailing_zeros()));
-    let live = machine.raw_compare(Relation::UnsignedLess, block, count);
-    guard(machine, live);
-    let block_offset = with(machine, Binary::Mul, block, OBJECT.mark_block_size as u64);
-    let block_address = machine.raw_binary(Binary::Add, blocks, block_offset);
-    let within = with(machine, Binary::And, record_id, (OBJECT.mark_records_per_block - 1) as u64);
-    let word_index = with(machine, Binary::ShiftRightUnsigned, within, u64::from(OBJECT.mark_word_bits.trailing_zeros()));
-    let word_offset = with(machine, Binary::Mul, word_index, size_of::<u64>() as u64);
-    let word_address = machine.raw_binary(Binary::Add, block_address, word_offset);
-    let marks = machine.raw_load(Lane::I64, mark_flags, word_address, OBJECT.mark_offset as i32);
-    let bit_index = with(machine, Binary::And, within, (OBJECT.mark_word_bits - 1) as u64);
-    let one = word(machine, 1);
-    let mask = machine.raw_binary(Binary::ShiftLeft, one, bit_index);
-    let marked = machine.raw_binary(Binary::And, marks, mask);
-    let unmarked = machine.raw_compare_imm(Relation::Equal, marked, 0);
-    guard(machine, unmarked);
-    machine.goto(write, &[]);
-    machine.enter(write);
+/// Continues where the record `record_id` is unmarked: its block lies below the count `list` names
+/// in the dispatch `payload`, and its mark bit is clear. A failed condition leaves at `miss`.
+pub(crate) fn unmarked<S: Stage>(stage: &mut S, payload: S::Word, list: MarkList, record_id: S::Word,
+    miss: S::Miss) -> Option<()> {
+    let blocks = stage.load_u64(Region::Dispatch.mutable(), payload, list.blocks as i32);
+    let count = stage.load_u64(Region::Dispatch.mutable(), payload, list.count as i32);
+    let block = stage.shr_imm(record_id, u64::from(OBJECT.mark_records_per_block.trailing_zeros()));
+    let live = stage.ult(block, count);
+    stage.guard(live, miss)?;
+    let block_offset = stage.mul_imm(block, OBJECT.mark_block_size as u64);
+    let block_address = stage.add(blocks, block_offset);
+    let within = stage.and_imm(record_id, (OBJECT.mark_records_per_block - 1) as u64);
+    let word_index = stage.shr_imm(within, u64::from(OBJECT.mark_word_bits.trailing_zeros()));
+    let word_offset = stage.mul_imm(word_index, size_of::<u64>() as u64);
+    let word_address = stage.add(block_address, word_offset);
+    let marks = stage.load_u64(Region::HeapMeta.mutable(), word_address, OBJECT.mark_offset as i32);
+    let bit_index = stage.and_imm(within, (OBJECT.mark_word_bits - 1) as u64);
+    let marked = stage.shr(marks, bit_index);
+    let bit = stage.and_imm(marked, 1_u64);
+    let unset = stage.eq_imm(bit, 0_u64);
+    stage.guard(unset, miss)
 }

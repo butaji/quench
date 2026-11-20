@@ -12,24 +12,29 @@
 //! split in `ir_budget_handlers.txt`; an op that grows is reported with the handlers that grew
 //! against that record, and the report ranks handlers by their instructions summed over all ops.
 //!
-//! `QUENCH_IR_BUDGET_MODE=tiers` measures every op under `--no-jit`, `--b-jit` and `--u-jit`
-//! and reports the tier order the design asks for, no-jit >= b-jit >= u-jit, with u-jit within
-//! its budget (3x C + 6, the design target for u-jit). Each op that breaks the order is held by
-//! `tier_inversions.txt`, each u-jit count past its budget by `ujit_over_budget.txt`, and each
-//! interpreter count past its budget by `interpreter_over_budget.txt`. These are shrink-only debt
-//! lists: an unlisted fault fails the step, and a listed entry that no longer faults fails it too
-//! ("remove it"). `QUENCH_DEBT_WRITE=1` on a full run rewrites them from the measured values.
+//! The default run (`QUENCH_IR_BUDGET_MODE=tiers`) measures every op under `--no-jit`, `--b-jit`
+//! and `--u-jit`, and fails the step on either fault:
+//! - tier order: each tier costs no more than the tier below it, no-jit >= b-jit >= u-jit, beyond
+//!   the same-count tolerance. A higher tier that costs more is an inversion.
+//! - the design target: u-jit within its budget, 3x C + 6, on every op.
+//! The interpreter's budget is checked too. Each inversion is held by `tier_inversions.txt`, each
+//! u-jit count past its budget by `ujit_over_budget.txt`, and each interpreter count past its
+//! budget by `interpreter_over_budget.txt`. These are shrink-only debt lists: an unlisted fault
+//! fails the step, and a listed entry that no longer faults fails it too ("remove it").
+//! `QUENCH_DEBT_WRITE=1` on a full run only shrinks a list: entries that no longer fault are
+//! removed, and an empty (header-only) list is seeded with the faults measured now. A new fault
+//! still fails; nothing is added to a list that has entries.
 //!
 //! The C floor (`ir_floor`, `crates/quench-tier-corpus/ir_floor.txt`): C-shaped code runs as C.
 //! The interpreter may add to the C twin only a dispatch and decode allowance per record it
-//! dispatches, and the records per op only shrink; a run of every op also measures b-jit and
-//! u-jit against ceilings that ratchet toward their budgets, 3x C + 6 (`QUENCH_IR_BUDGET_TIERS=off`
-//! skips them).
+//! dispatches, and the records per op only shrink; a full run also ratchets the b-jit and u-jit
+//! ceilings toward their budgets, 3x C + 6 (`QUENCH_IR_BUDGET_TIERS=off` skips the ceilings).
 //! Every row above its floor names the thread that owns its largest handler.
 //!
-//! Alone: `quench-gate --only ir-budget`. `QUENCH_IR_BUDGET_OPS=a,b` measures only those ops,
-//! `QUENCH_IR_BUDGET_MODE=b-jit` (or `u-jit`) measures a JIT tier against the same budgets
-//! without touching the ceilings, which hold for the interpreter.
+//! Alone: `quench-gate --only ir-budget`. `QUENCH_IR_BUDGET_OPS=a,b` measures only those ops.
+//! `QUENCH_IR_BUDGET_MODE=no-jit` runs the interpreter alone (its ceilings, floor and debt, with
+//! no tier verdict); `b-jit` or `u-jit` measures one JIT tier against the same budgets without
+//! touching the ceilings, which hold for the interpreter.
 
 use std::{collections::{BTreeMap, BTreeSet}, env, fs, path::Path};
 
@@ -61,6 +66,8 @@ const MARKS_PER_OP: usize = 4;
 const COLLECT: bool = true;
 const OPS_VARIABLE: &str = "QUENCH_IR_BUDGET_OPS";
 const MODE_VARIABLE: &str = "QUENCH_IR_BUDGET_MODE";
+/// The default mode: a full run measures every op under all three tiers.
+const TIERS: &str = "tiers";
 const LINE_PREFIX: &str = "IRBUDGET ";
 /// A count within this many instructions per iteration of its ceiling is the same count...
 const SAME_COUNT: f64 = 0.5;
@@ -118,7 +125,7 @@ struct Dump {
 fn short_name(full: &str) -> String {
     if full.starts_with("0x") { return "(jit code)".to_owned() }
     let full = full.split('\'').next().unwrap_or(full);
-    let full = full.replace("::<", "<").replace("<quench_node::host::node_host::NodeHost, ", "<").replace("<quench_node::host::node_host::NodeHost>", "");
+    let full = full.replace("::<", "<").replace("<quench::host::node_host::NodeHost, ", "<").replace("<quench::host::node_host::NodeHost>", "");
     // The path's segments at angle depth 0: the item is the last, its impl type (`<Vm>::f`) or its
     // function (`f::{{closure}}`) the one before.
     let (mut segments, mut depth, mut start) = (Vec::new(), 0usize, 0usize);
@@ -355,7 +362,7 @@ fn ratchet(config: &Config, measured: &[Measured], rows: &mut BTreeMap<String, R
 }
 
 
-/// Whether this run rewrites the debt lists from its measurements instead of failing on them:
+/// Whether this run shrinks the debt lists from its measurements instead of failing on them:
 /// `QUENCH_DEBT_WRITE=1` on a full run (a subset would drop the entries of the ops it skipped).
 fn debt_write(ops: &[String]) -> bool {
     ops.is_empty() && env::var(DEBT_WRITE).as_deref() == Ok("1")
@@ -366,48 +373,108 @@ fn debt_entries(text: &str) -> BTreeSet<String> {
     text.lines().filter(|line| !line.starts_with('#')).map(|line| line.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|entry| !entry.is_empty()).collect()
 }
 
-/// Holds the debt list at `path` to the faults measured now. A fault the list does not hold is a
-/// failure; a listed entry for a measured op that no longer faults is a failure too, so the list
-/// only shrinks. With `write`, the list is rewritten to the faults and nothing fails.
+/// What holding a debt list to the faults measured now comes to: the failures, and the entries
+/// the list keeps.
+#[derive(Debug, PartialEq)]
+struct Debt {
+    failures: Vec<String>,
+    kept: BTreeSet<String>,
+}
+
+/// Holds a debt list (`listed`) to the `faults` measured now, among the `measured` ops. A fault
+/// the list does not hold fails. A listed entry for a measured op that no longer faults fails
+/// too, so the list only shrinks; with `write` that entry is removed instead. Nothing is added to
+/// a list that has entries: `write` only seeds an empty (header-only) list with the faults.
+fn judge_debt(listed: &BTreeSet<String>, faults: &BTreeSet<String>, measured: &BTreeSet<String>, path: &str, write: bool) -> Debt {
+    if write && listed.is_empty() {
+        return Debt { failures: Vec::new(), kept: faults.clone() };
+    }
+    // An entry names its op first; an entry for an op this run did not measure is not judged.
+    let stale = |entry: &String| !faults.contains(entry) && measured.contains(entry.split(' ').next().unwrap_or_default());
+    let mut failures: Vec<String> = faults.difference(listed).map(|fault| format!("{fault}: not listed in {path}")).collect();
+    let kept = if write {
+        listed.iter().filter(|&entry| !stale(entry)).cloned().collect()
+    } else {
+        failures.extend(listed.iter().filter(|&entry| stale(entry)).map(|entry| format!("{entry}: no longer faults; remove it from {path}")));
+        listed.clone()
+    };
+    Debt { failures, kept }
+}
+
+/// Holds the debt list at `path` to the faults measured now (see `judge_debt`). With `write`, the
+/// list is rewritten only when it changes, and only by removing or seeding entries.
 fn hold_debt(config: &Config, path: &str, faults: &BTreeSet<String>, measured: &BTreeSet<String>, write: bool) -> Result<Vec<String>, String> {
     let file = config.root.join(path);
     let before = fs::read_to_string(&file).map_err(|error| format!("{}: {error}", file.display()))?;
-    if write {
-        let body: String = faults.iter().map(|fault| format!("{fault}\n")).collect();
-        let after = format!("{}{body}", header(&before));
-        if after != before {
-            fs::write(&file, after).map_err(|error| format!("{}: {error}", file.display()))?;
-        }
-        return Ok(Vec::new());
-    }
     let listed = debt_entries(&before);
-    let mut failures: Vec<String> = faults.difference(&listed).map(|fault| format!("{fault}: not listed in {path}")).collect();
-    // An entry names its op first; an entry for an op this run did not measure is not judged.
-    failures.extend(listed.iter().filter(|entry| !faults.contains(*entry) && measured.contains(entry.split(' ').next().unwrap_or_default()))
-        .map(|entry| format!("{entry}: no longer faults; remove it from {path}")));
-    Ok(failures)
+    let debt = judge_debt(&listed, faults, measured, path, write);
+    if write && debt.kept != listed {
+        let body: String = debt.kept.iter().map(|entry| format!("{entry}\n")).collect();
+        fs::write(&file, format!("{}{body}", header(&before))).map_err(|error| format!("{}: {error}", file.display()))?;
+    }
+    Ok(debt.failures)
 }
 
-/// The tier report: each op's count per tier, worst u-jit-to-C ratio first, with the order it
-/// breaks. Fails on any tier inversion or u-jit past budget that its debt list does not hold.
-fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>) -> Verdict {
+/// Each op's counts under the three tiers, `[no-jit, b-jit, u-jit]`, from the three runs. An op
+/// a run did not measure is NaN in that tier.
+fn tier_counts(runs: [&[Measured]; 3]) -> BTreeMap<String, [f64; 3]> {
     let mut counts: BTreeMap<String, [f64; 3]> = BTreeMap::new();
-    for (index, mode) in [INTERPRETER, "--b-jit", "--u-jit"].into_iter().enumerate() {
-        for (name, count, _, _) in measure(config, mode, ops)? {
-            counts.entry(name).or_insert([f64::NAN; 3])[index] = count;
+    for (index, run) in runs.into_iter().enumerate() {
+        for (name, count, _, _) in run {
+            counts.entry(name.clone()).or_insert([f64::NAN; 3])[index] = *count;
         }
     }
-    let mut lines: Vec<(f64, String)> = Vec::new();
+    counts
+}
+
+/// The faults one op's counts show: a tier that costs more than the tier below it, beyond the
+/// same-count tolerance, and u-jit past its budget.
+#[derive(Debug, Default, PartialEq)]
+struct TierFault {
+    b_jit_over_no_jit: bool,
+    u_jit_over_b_jit: bool,
+    u_jit_over_budget: bool,
+}
+
+impl TierFault {
+    fn inverted(&self) -> bool {
+        self.b_jit_over_no_jit || self.u_jit_over_b_jit
+    }
+
+    fn labels(&self) -> Vec<&'static str> {
+        [(self.b_jit_over_no_jit, "b-jit>no-jit"), (self.u_jit_over_b_jit, "u-jit>b-jit"), (self.u_jit_over_budget, "u-jit>budget")]
+            .into_iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, label)| label)
+            .collect()
+    }
+}
+
+/// One op's fault, from its counts `[no-jit, b-jit, u-jit]` and its budget (3x C + 6) if it has one.
+fn tier_fault([interpreter, baseline, optimized]: [f64; 3], budget: Option<f64>) -> TierFault {
+    TierFault {
+        b_jit_over_no_jit: baseline > interpreter + tolerance(interpreter),
+        u_jit_over_b_jit: optimized > baseline + tolerance(baseline),
+        // The design target: u-jit within the op's budget.
+        u_jit_over_budget: budget.is_some_and(|budget| optimized > budget + SAME_COUNT),
+    }
+}
+
+/// The tier verdict over the three runs (`[no-jit, b-jit, u-jit]`): the faults its debt lists do
+/// not hold, and the report, each op's counts with the faults it breaks, worst u-jit-to-C first.
+fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>, runs: [&[Measured]; 3]) -> Result<(Vec<String>, String), String> {
+    let counts = tier_counts(runs);
     let (mut broken, mut inversions, mut over_budget) = (0, BTreeSet::new(), BTreeSet::new());
-    for (name, [interpreter, baseline, optimized]) in &counts {
+    let mut lines: Vec<(f64, String)> = Vec::new();
+    for (name, &[interpreter, baseline, optimized]) in &counts {
         let c = rows.get(name).map_or(f64::NAN, |row| row.c);
-        let mut faults = Vec::new();
-        if *baseline > interpreter + tolerance(*interpreter) { faults.push("b-jit>no-jit"); inversions.insert(format!("{name} b-jit")); }
-        if *optimized > baseline + tolerance(*baseline) { faults.push("u-jit>b-jit"); inversions.insert(format!("{name} u-jit")); }
-        if !faults.is_empty() { broken += 1 }
-        // The design target: u-jit within the op's budget (3x C + 6).
-        if rows.get(name).is_some_and(|row| *optimized > row.budget + SAME_COUNT) { faults.push("u-jit>budget"); over_budget.insert(name.clone()); }
-        lines.push((optimized / c.max(1.0), format!("{name:<16}{interpreter:>10.1}{baseline:>10.1}{optimized:>10.1}{c:>7.1}{:>7.1}x  {}", optimized / c.max(1.0), faults.join(" "))));
+        let fault = tier_fault([interpreter, baseline, optimized], rows.get(name).map(|row| row.budget));
+        if fault.b_jit_over_no_jit { inversions.insert(format!("{name} b-jit")); }
+        if fault.u_jit_over_b_jit { inversions.insert(format!("{name} u-jit")); }
+        if fault.u_jit_over_budget { over_budget.insert(name.clone()); }
+        if fault.inverted() { broken += 1; }
+        let labels = fault.labels().join(" ");
+        lines.push((optimized / c.max(1.0), format!("{name:<16}{interpreter:>10.1}{baseline:>10.1}{optimized:>10.1}{c:>7.1}{:>7.1}x  {labels}", optimized / c.max(1.0))));
     }
     lines.sort_by(|a, b| b.0.total_cmp(&a.0));
     let head = format!("{:<16}{:>10}{:>10}{:>10}{:>7}{:>8}  {}", "op", "no-jit", "b-jit", "u-jit", "C", "u/C", "breaks");
@@ -417,40 +484,42 @@ fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>) -> Verdi
     let mut failures = hold_debt(config, TIER_INVERSIONS, &inversions, &measured, write)?;
     failures.extend(hold_debt(config, UJIT_OVER, &over_budget, &measured, write)?);
     let report = format!("tiers: {broken} of {} ops out of order, {} with u-jit past its budget (3x C + 6)\n{table}", counts.len(), over_budget.len());
-    if failures.is_empty() { return Ok(report) }
-    Err(format!("{}\n\n{report}", failures.join("\n")))
+    Ok((failures, report))
 }
 
-/// Whether a run of every op measures the JIT tiers against their C ceilings too (on unless
-/// `QUENCH_IR_BUDGET_TIERS=off`).
+/// Whether a run of every op ratchets the JIT ceilings too (on unless `QUENCH_IR_BUDGET_TIERS=off`).
 const TIERS_VARIABLE: &str = "QUENCH_IR_BUDGET_TIERS";
 
-/// The C floor (`ir_floor`): the interpreter's waste above C + dispatch, its records ratchet, and
-/// on a run of every op the b-jit and u-jit ceilings. Returns the report, the rows that grew, and
-/// the floor file's text before and its rows after, which the caller writes only on a passing run.
-fn c_floor(config: &Config, ops: &[String], measured: &[Measured], rows: &BTreeMap<String, Row>) -> Result<(String, Vec<String>, String, BTreeMap<String, ir_floor::Floor>), String> {
+/// The C floor (`ir_floor`): the interpreter's waste above C + dispatch and its records ratchet.
+/// With the JIT runs (`jit`: b-jit, u-jit) on a run of every op, their ceilings ratchet too.
+/// Returns the report, the rows that grew, and the floor file's text before and its rows after,
+/// which the caller writes only on a passing run.
+fn c_floor(config: &Config, ops: &[String], measured: &[Measured], jit: Option<[&[Measured]; 2]>, rows: &BTreeMap<String, Row>) -> (String, Vec<String>, String, BTreeMap<String, ir_floor::Floor>) {
     let (before, mut floors) = ir_floor::read(config);
     let c: BTreeMap<String, f64> = rows.iter().map(|(name, row)| (name.clone(), row.c)).collect();
     let budgets: BTreeMap<String, f64> = rows.iter().map(|(name, row)| (name.clone(), row.budget)).collect();
     let interpreted: Vec<ir_floor::Op> = measured.iter().map(|(name, count, split, records)| ir_floor::Op { name, count: *count, split, records: *records }).collect();
     let (mut report, mut grown) = ir_floor::interpreter(&interpreted, &c, &mut floors, ops.is_empty());
-    if ops.is_empty() && env::var(TIERS_VARIABLE).as_deref() != Ok("off") {
-        let measured_names: BTreeSet<String> = measured.iter().map(|(name, ..)| name.clone()).collect();
-        for (index, mode) in ["--b-jit", "--u-jit"].into_iter().enumerate() {
-            let tier = measure(config, mode, ops)?;
-            if index == 1 {
-                let over: BTreeSet<String> = tier.iter().filter(|(name, count, _, _)| rows.get(name).is_some_and(|row| *count > row.budget + SAME_COUNT)).map(|(name, ..)| name.clone()).collect();
-                grown.extend(hold_debt(config, UJIT_OVER, &over, &measured_names, debt_write(ops))?);
-            }
+    if let Some(jit) = jit.filter(|_| ops.is_empty() && env::var(TIERS_VARIABLE).as_deref() != Ok("off")) {
+        for (index, (mode, tier)) in ["--b-jit", "--u-jit"].into_iter().zip(jit).enumerate() {
             let shares: Vec<(String, f64, &[(String, f64)])> = tier.iter().map(|(name, count, split, _)| (name.clone(), *count, split.as_slice())).collect();
             let (table, tier_grown) = ir_floor::jit(index, mode, &shares, &c, &budgets, &mut floors, true);
             report = format!("{report}\n\n{table}");
             grown.extend(tier_grown);
         }
     }
-    Ok((report, grown, before, floors))
+    (report, grown, before, floors)
 }
 
+/// The report of a run: every measured op's budget row, the handler ranking, the slow paths.
+fn measured_report(measured: &[Measured], rows: &BTreeMap<String, Row>) -> String {
+    format!("{}\n\n{}\n\n{}", table(measured, rows), ranking(measured), waste(measured))
+}
+
+/// The step. The default (`tiers`) measures every op under all three tiers and fails on a tier
+/// inversion or a u-jit count past its budget that its debt list does not hold, as well as on the
+/// interpreter's ceilings, floor and budget debt. `no-jit` runs the interpreter alone; `b-jit` and
+/// `u-jit` report one JIT tier against the budgets.
 pub fn run(config: &Config) -> Verdict {
     let path = config.root.join(BUDGETS);
     let before = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -459,23 +528,32 @@ pub fn run(config: &Config) -> Verdict {
     let handlers_before = fs::read_to_string(&handlers_path).unwrap_or_default();
     let mut recorded = parse_splits(&handlers_before);
     let ops: Vec<String> = env::var(OPS_VARIABLE).unwrap_or_default().split(',').filter(|op| !op.is_empty()).map(str::to_owned).collect();
-    if env::var(MODE_VARIABLE).as_deref() == Ok("tiers") {
-        return tiers(config, &ops, &rows);
+    let mode = env::var(MODE_VARIABLE).unwrap_or_else(|_| TIERS.to_owned());
+    match mode.as_str() {
+        TIERS | "no-jit" => {}
+        "b-jit" | "u-jit" => {
+            let measured = measure(config, &format!("--{mode}"), &ops)?;
+            let over = measured.iter().filter(|(name, count, _, _)| rows.get(name).is_some_and(|row| *count > row.budget + SAME_COUNT)).count();
+            return Ok(format!("{mode}: {over} of {} ops over budget (ceilings hold for --no-jit only)\n{}", measured.len(), measured_report(&measured, &rows)));
+        }
+        other => return Err(format!("{MODE_VARIABLE}={other}: expected tiers (the default), no-jit, b-jit or u-jit")),
     }
-    let mode = env::var(MODE_VARIABLE).map_or_else(|_| INTERPRETER.to_owned(), |mode| format!("--{mode}"));
-    let measured = measure(config, &mode, &ops)?;
-    let report = format!("{}\n\n{}\n\n{}", table(&measured, &rows), ranking(&measured), waste(&measured));
+    let tiered = mode == TIERS;
+    let measured = measure(config, INTERPRETER, &ops)?;
+    let (baseline, optimized) = if tiered { (measure(config, "--b-jit", &ops)?, measure(config, "--u-jit", &ops)?) } else { (Vec::new(), Vec::new()) };
+    let (tier_failures, tier_report) = if tiered { tiers(config, &ops, &rows, [measured.as_slice(), baseline.as_slice(), optimized.as_slice()])? } else { (Vec::new(), String::new()) };
     let over_budget: BTreeSet<String> = measured.iter().filter(|(name, count, _, _)| rows.get(name).is_some_and(|row| *count > row.budget + SAME_COUNT)).map(|(name, ..)| name.clone()).collect();
     let over = over_budget.len();
-    if mode != INTERPRETER {
-        return Ok(format!("{mode}: {over} of {} ops over budget (ceilings hold for --no-jit only)\n{report}", measured.len()));
-    }
     let mut grown = ratchet(config, &measured, &mut rows, &recorded, ops.is_empty());
-    let (floor_report, floor_grown, floors_before, floors) = c_floor(config, &ops, &measured, &rows)?;
+    let (floor_report, floor_grown, floors_before, floors) = c_floor(config, &ops, &measured, tiered.then_some([baseline.as_slice(), optimized.as_slice()]), &rows);
+    grown.extend(tier_failures);
     grown.extend(floor_grown);
     let measured_names: BTreeSet<String> = measured.iter().map(|(name, ..)| name.clone()).collect();
     grown.extend(hold_debt(config, INTERPRETER_OVER, &over_budget, &measured_names, debt_write(&ops))?);
-    let report = format!("{report}\n\n{floor_report}");
+    let mut report = format!("{}\n\n{floor_report}", measured_report(&measured, &rows));
+    if tiered {
+        report = format!("{report}\n\n{tier_report}");
+    }
     // A failing run records nothing: a ceiling it lowered would hide the trade it made.
     if !grown.is_empty() {
         return Err(format!("{}\n\n{report}", grown.join("\n")));
@@ -496,4 +574,101 @@ pub fn run(config: &Config) -> Verdict {
         fs::write(&handlers_path, &handlers_after).map_err(|error| format!("{}: {error}", handlers_path.display()))?;
     }
     Ok(format!("{} ops within their Ir ceilings; {over} over budget\n{report}", measured.len()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set(entries: &[&str]) -> BTreeSet<String> {
+        entries.iter().map(|entry| (*entry).to_owned()).collect()
+    }
+
+    fn run_of(counts: &[(&str, f64)]) -> Vec<Measured> {
+        counts.iter().map(|(name, count)| ((*name).to_owned(), *count, Vec::new(), 0.0)).collect()
+    }
+
+    #[test]
+    fn tiers_in_order_pass() {
+        assert_eq!(tier_fault([10.0, 8.0, 5.0], Some(30.0)), TierFault::default());
+        // Equal counts are the same count, not an inversion.
+        assert_eq!(tier_fault([10.0, 10.0, 10.0], Some(30.0)), TierFault::default());
+    }
+
+    #[test]
+    fn a_higher_tier_costing_more_is_an_inversion() {
+        let fault = tier_fault([10.0, 12.0, 5.0], None);
+        assert!(fault.b_jit_over_no_jit && !fault.u_jit_over_b_jit);
+        assert_eq!(fault.labels(), vec!["b-jit>no-jit"]);
+        let fault = tier_fault([10.0, 8.0, 9.0], None);
+        assert!(fault.u_jit_over_b_jit && !fault.b_jit_over_no_jit);
+        assert_eq!(fault.labels(), vec!["u-jit>b-jit"]);
+    }
+
+    #[test]
+    fn a_difference_within_tolerance_is_not_an_inversion() {
+        // The tolerance at 10 Ir/iter is 0.5.
+        assert_eq!(tier_fault([10.0, 10.4, 5.0], None), TierFault::default());
+    }
+
+    #[test]
+    fn u_jit_past_three_c_plus_six_is_over_budget() {
+        // C = 5, so the budget is 3 * 5 + 6 = 21.
+        assert!(tier_fault([30.0, 20.0, 22.0], Some(21.0)).u_jit_over_budget);
+        assert!(!tier_fault([30.0, 20.0, 21.4], Some(21.0)).u_jit_over_budget);
+        // An op with no budget row has nothing to be over.
+        assert!(!tier_fault([30.0, 20.0, 99.0], None).u_jit_over_budget);
+    }
+
+    #[test]
+    fn counts_join_the_three_runs_per_op() {
+        let (none, b, u) = (run_of(&[("a", 10.0), ("b", 4.0)]), run_of(&[("a", 8.0)]), run_of(&[("a", 5.0), ("b", 3.0)]));
+        let counts = tier_counts([none.as_slice(), b.as_slice(), u.as_slice()]);
+        assert_eq!(counts["a"], [10.0, 8.0, 5.0]);
+        assert_eq!(counts["b"][0], 4.0);
+        assert!(counts["b"][1].is_nan());
+        assert_eq!(counts["b"][2], 3.0);
+    }
+
+    #[test]
+    fn an_empty_list_is_seeded_on_a_write_run_only() {
+        let faults = set(&["a b-jit"]);
+        let seeded = judge_debt(&BTreeSet::new(), &faults, &set(&["a"]), "list", true);
+        assert_eq!(seeded, Debt { failures: Vec::new(), kept: faults.clone() });
+        let plain = judge_debt(&BTreeSet::new(), &faults, &set(&["a"]), "list", false);
+        assert_eq!(plain.failures, vec!["a b-jit: not listed in list"]);
+        assert!(plain.kept.is_empty());
+    }
+
+    #[test]
+    fn a_write_run_never_adds_to_a_list_with_entries() {
+        let listed = set(&["a b-jit"]);
+        let debt = judge_debt(&listed, &set(&["a b-jit", "b u-jit"]), &set(&["a", "b"]), "list", true);
+        assert_eq!(debt.failures, vec!["b u-jit: not listed in list"]);
+        assert_eq!(debt.kept, listed);
+    }
+
+    #[test]
+    fn a_write_run_removes_an_entry_that_no_longer_faults() {
+        let debt = judge_debt(&set(&["a b-jit", "c u-jit"]), &set(&["c u-jit"]), &set(&["a", "c"]), "list", true);
+        assert!(debt.failures.is_empty());
+        assert_eq!(debt.kept, set(&["c u-jit"]));
+    }
+
+    #[test]
+    fn a_plain_run_fails_on_a_stale_entry_and_keeps_it() {
+        let listed = set(&["a b-jit"]);
+        let debt = judge_debt(&listed, &BTreeSet::new(), &set(&["a"]), "list", false);
+        assert_eq!(debt.failures, vec!["a b-jit: no longer faults; remove it from list"]);
+        assert_eq!(debt.kept, listed);
+    }
+
+    #[test]
+    fn an_entry_for_an_unmeasured_op_is_not_judged() {
+        let listed = set(&["z u-jit"]);
+        let plain = judge_debt(&listed, &BTreeSet::new(), &set(&["a"]), "list", false);
+        assert!(plain.failures.is_empty());
+        let write = judge_debt(&listed, &BTreeSet::new(), &set(&["a"]), "list", true);
+        assert_eq!(write.kept, listed);
+    }
 }
