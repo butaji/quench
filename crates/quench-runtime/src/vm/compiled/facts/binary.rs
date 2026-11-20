@@ -2,7 +2,7 @@
 //! definition, any other proves its operands Numbers or leaves.
 
 use super::{ranges, Flow, boolean_binary, constant_number, operand_type, prove_number, set};
-use crate::bytecode::{Constant, Register, WideInstruction};
+use crate::bytecode::{Constant, WideInstruction};
 use crate::typed_ir::Type;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
@@ -46,7 +46,7 @@ pub(in crate::vm) fn heap_operator(instruction: WideInstruction) -> bool {
 
 /// `transfer` of a numeric binary operator.
 pub(super) fn numeric_binary(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Flow {
+    written: &dyn Fn(WideInstruction) -> super::Writes) -> Flow {
     let operand = |operand| operand_type(constants, operand, |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
     let heap = heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c()))
         .filter(|_| heap_operator(instruction) && !instruction.returns_from_frame());
@@ -59,7 +59,7 @@ pub(super) fn numeric_binary(types: &mut [Type], instruction: WideInstruction, c
 /// The result type of a numeric operator on Numbers, whose operands it proves Numbers
 /// (`prove_number`) where the operator leaves for any other.
 fn number_result(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Option<Type> {
+    written: &dyn Fn(WideInstruction) -> super::Writes) -> Option<Type> {
     let (op, operator) = (instruction.op(), instruction.binary_operator());
     let operands = [instruction.operand_b(), instruction.operand_c()];
     if let Some(bitwise) = NumberBitwise::from_js_instruction(op, operator) {

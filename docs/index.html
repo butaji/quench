@@ -6,7 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust</title>
     <link rel="alternate" type="application/atom+xml" title="Quench engineering blog" href="/blog/feed.xml">
-    <meta name="description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+    <meta name="description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
     <meta name="keywords" content="TypeScript runtime, JavaScript runtime, WebAssembly runtime, AOT compiler, ahead-of-time compilation, compile TypeScript to native binary, Node.js alternative, Bun alternative, Rust JavaScript engine, JIT, Cranelift, copy-and-patch, low memory" />
     <meta name="author" content="Quench" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
@@ -17,21 +18,18 @@
     <meta property="og:site_name" content="Quench" />
     <meta property="og:url" content="https://quench.run/" />
     <meta property="og:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
-    <meta property="og:description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <meta property="og:description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
     <meta property="og:image" content="https://quench.run/og.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="Quench: TypeScript, JavaScript and WebAssembly runtime with AOT, written in Rust" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
-    <meta name="twitter:description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <meta name="twitter:description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
     <meta name="twitter:image" content="https://quench.run/og.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap"
-        rel="stylesheet" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
     <style>
+        @font-face{font-family:'Inter';font-style:normal;font-display:swap;font-weight:100 900;src:url(/assets/fonts/inter.woff2) format('woff2')}@font-face{font-family:'JetBrains Mono';font-style:normal;font-display:swap;font-weight:100 800;src:url(/assets/fonts/jetbrains-mono.woff2) format('woff2')}
         * {
             margin: 0;
             padding: 0;
@@ -256,8 +254,10 @@
             cursor: pointer;
             background: none;
             border: 0;
-            padding: 6px 10px;
-            margin: -6px -10px;
+            padding: 16px 14px;
+            margin: -16px -14px;
+            position: relative;
+            z-index: 1;
             border-radius: 8px;
             font-family: 'Inter', sans-serif;
             font-weight: 400;
@@ -297,7 +297,7 @@
             font-family: 'Inter', sans-serif;
             font-weight: 400;
             font-size: 1rem;
-            color: #A9A9A9;
+            color: #5F6368;
             line-height: 1.5;
             margin-top: 1rem;
             max-width: 260px;
@@ -307,7 +307,7 @@
             font-family: 'Inter', sans-serif;
             font-weight: 400;
             font-size: 0.875rem;
-            color: #6B7280;
+            color: #555B66;
             line-height: 1.5;
             margin-top: 0.75rem;
             max-width: 100%;
@@ -334,7 +334,7 @@
             font-family: 'Inter', sans-serif;
             font-weight: 400;
             font-size: 1rem;
-            color: #A9A9A9;
+            color: #5F6368;
             line-height: 1.5;
             margin-top: 0;
             max-width: 260px;
@@ -385,11 +385,11 @@
         }
 
         .code-block .string {
-            color: #6B7280;
+            color: #555B66;
         }
 
         .code-block .num {
-            color: #6B7280;
+            color: #555B66;
         }
 
         @media (max-width: 560px) {
@@ -461,11 +461,11 @@
 
         /* ─── Assembly Loading Animation ─── */
         .card {
-            opacity: 0;
+            opacity: 0.01;
             transform: scale(0.92) translateY(30px);
-            animation: assembleCard 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards,
-                       cardSolid 0.5s ease forwards;
-            animation-delay: 0.1s, 1.3s;
+            animation: assembleCard 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+                       cardSolid 0.25s ease forwards;
+            animation-delay: 0.05s, 0.65s;
         }
 
         @keyframes assembleCard {
@@ -476,75 +476,75 @@
         }
 
         .brand-panel {
-            opacity: 0;
+            opacity: 0.01;
             transform: translateX(-60px);
-            animation: slideInRight 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.35s;
+            animation: slideInRight 0.30s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.17s;
         }
 
         .metal-panel {
-            opacity: 0;
+            opacity: 0.01;
             transform: translateX(60px);
-            animation: slideInLeft 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.45s;
+            animation: slideInLeft 0.30s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.23s;
         }
 
         .divider {
             transform: scaleX(0);
-            animation: expandX 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards,
-                       fadeIn 0.3s ease forwards;
-            animation-delay: 0.55s, 1.2s;
+            animation: expandX 0.20s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+                       fadeIn 0.15s ease forwards;
+            animation-delay: 0.28s, 0.60s;
         }
 
         .orange-panel {
-            opacity: 0;
+            opacity: 0.01;
             transform: translateY(50px);
-            animation: slideInUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.65s;
+            animation: slideInUp 0.30s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.33s;
         }
 
         .content-panel {
-            opacity: 0;
+            opacity: 0.01;
             transform: translateX(60px);
-            animation: slideInLeft 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.75s;
+            animation: slideInLeft 0.30s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.38s;
         }
 
         .github-link {
-            opacity: 0;
+            opacity: 0.01;
             transform: translateY(-20px);
-            animation: slideInDown 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 1.0s;
+            animation: slideInDown 0.25s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.50s;
         }
 
         .nav-row,
         .code-block {
-            opacity: 0;
-            animation: fadeIn 0.5s ease forwards;
+            opacity: 0.01;
+            animation: fadeIn 0.25s ease forwards;
         }
 
-        .nav-row   { animation-delay: 0.9s; }
-        .code-block { animation-delay: 1.05s; }
+        .nav-row   { animation-delay: 0.45s; }
+        .code-block { animation-delay: 0.53s; }
 
         .brand-text,
         .brand-dot {
-            opacity: 0;
-            animation: fadeIn 0.4s ease forwards;
-            animation-delay: 0.55s;
+            opacity: 0.01;
+            animation: fadeIn 0.20s ease forwards;
+            animation-delay: 0.28s;
         }
 
         .stripes {
-            opacity: 0;
+            opacity: 0.01;
             transform: scaleY(0);
             transform-origin: top;
-            animation: expandY 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.85s;
+            animation: expandY 0.20s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.42s;
         }
 
         .metric-area {
-            opacity: 0;
-            animation: fadeIn 0.4s ease forwards;
-            animation-delay: 1.0s;
+            opacity: 0.01;
+            animation: fadeIn 0.20s ease forwards;
+            animation-delay: 0.50s;
         }
 
         @keyframes slideInRight {
@@ -582,6 +582,14 @@
             to { opacity: 1; }
         }
     
+        @media (prefers-reduced-motion: reduce) {
+            .card, .brand-panel, .metal-panel, .divider, .orange-panel, .content-panel, .github-link,
+            .nav-row, .code-block, .brand-text, .brand-dot, .stripes, .metric-area, .dots, .scroll-hint {
+                animation: none !important; opacity: 1 !important; transform: none !important;
+            }
+            .card { background: #111716; border-color: #111716; }
+        }
+
         /* ─── Carousel UX ─── */
         .nav-arrow:focus-visible,
         .github-link:focus-visible,
@@ -609,23 +617,28 @@
             display: flex;
             gap: 6px;
             margin-top: 1rem;
-            opacity: 0;
+            opacity: 0.01;
             animation: fadeIn 0.5s ease forwards;
-            animation-delay: 1.05s;
+            animation-delay: 0.53s;
         }
 
         .dot {
             flex: 1;
             height: 4px;
             border: 0;
-            padding: 0;
+            padding: 18px 0;
+            margin: -18px 0;
+            position: relative;
+            z-index: 1;
+            background-clip: content-box;
+            box-sizing: content-box;
             border-radius: 2px;
             background: #D4D4D4;
             cursor: pointer;
             transition: background 0.2s;
         }
 
-        .dot:hover { background: #A9A9A9; }
+        .dot:hover { background: #5F6368; }
         .dot[aria-current="true"] { background: #EF5102; }
 
         .tui-header { overflow-wrap: anywhere; }
@@ -637,14 +650,14 @@
             translate: -50% 0;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.75rem;
-            color: #6B7280;
+            color: #555B66;
             text-decoration: none;
             padding: 6px 12px;
             border-radius: 8px;
             z-index: 10;
-            opacity: 0;
+            opacity: 0.01;
             animation: fadeIn 0.5s ease forwards;
-            animation-delay: 1.4s;
+            animation-delay: 0.70s;
         }
 
         .scroll-hint:hover { color: #EF5102; }
@@ -740,7 +753,7 @@
             overflow-wrap: anywhere;
         }
 
-        .tile pre .c { color: #6B7280; }
+        .tile pre .c { color: #555B66; }
         .tile pre .p { color: #EF5102; }
 
         .stat-num {
@@ -764,7 +777,7 @@
             margin: 0.75rem 0 0.25rem;
         }
 
-        .tile .stat-note { font-size: 0.875rem; line-height: 1.45; color: #6B7280; }
+        .tile .stat-note { font-size: 0.875rem; line-height: 1.45; color: #555B66; }
         .tile.orange .stat-note { color: #1C1C1E; }
         .tlink { color: #1C1C1E; font-weight: 600; text-decoration: underline; text-decoration-color: #EF5102; text-underline-offset: 3px; }
         .tlink:hover { color: #EF5102; }
@@ -772,7 +785,7 @@
         .tile.orange .tlink:hover { color: #F0F0F0; }
         .tile.orange p { color: #1C1C1E; }
         #start, #contribute { scroll-margin-top: 1rem; }
-        .tile .fine { font-size: 0.8125rem; color: #6B7280; }
+        .tile .fine { font-size: 0.8125rem; color: #555B66; }
 
         .faq details { border-top: 1px solid #DCDCDC; }
         .faq details:first-of-type { border-top: 0; }
@@ -826,7 +839,7 @@
             text-align: center;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.75rem;
-            color: #6B7280;
+            color: #555B66;
         }
 
         .foot a { color: #3C3C3C; }
@@ -887,7 +900,7 @@
                     <div class="dots" id="dots"></div>
                     <div class="card-body swap" id="card-body" aria-live="polite">
                         <p class="feature-description" id="feature-description">One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.</p>
-                        <p class="tui-header"><span class="tui-prompt">$</span> <span id="feature-cmd">quench-node app.ts</span></p>
+                        <p class="tui-header"><span class="tui-prompt">$</span> <span id="feature-cmd">quench app.ts</span></p>
                         <p class="feature-detail" id="feature-detail">Types are kept, and they make it fast.</p>
                     </div>
                 </div>
@@ -919,24 +932,51 @@
             </div>
         </section>
 
+        <section class="frame cols-2" id="agents" aria-labelledby="agents-title">
+            <div class="tile wide orange">
+                <h2 id="agents-title">Built for agent Code Mode</h2>
+                <p>Agents increasingly write code and run it inside the harness instead of chaining tool calls one by one, often hundreds of agents to a machine, each running code nobody reviewed. That needs a JavaScript engine that lives in the harness, stays small, runs without a JIT and runs whatever the model wrote. Quench is built for that slot.</p>
+            </div>
+            <div class="tile">
+                <h2>The QuickJS slot, faster</h2>
+                <p>Today it is QuickJS for small scripts or V8 for heavy ones. Quench aims at QuickJS's place (small, embedded, interpreter only) with an interpreter well ahead of V8's and JavaScriptCore's: with the JIT off it scores 1.49x to 2.57x the best of Node and Bun on V8-v7, and five of eight benchmarks peak at 6.4 to 8.2 MB against 43 to 50 MB for Node and 16 to 26 MB for Bun.</p>
+                <p class="fine">Not yet measured against QuickJS. That comparison is next, published either way.</p>
+            </div>
+            <div class="tile">
+                <h2>Embeddable, Rust-native</h2>
+                <p><code>quench-runtime</code> is a Rust library. The harness creates a <code>Runtime</code> with its own <code>Host</code>, exposes its tools as host functions, and can stop runaway code from another thread with an execution interrupt. Generated code runs in the harness's process: no subprocess, no IPC.</p>
+                <p class="fine">Not on crates.io yet, and the API will still change.</p>
+            </div>
+            <div class="tile">
+                <h2>No JIT required</h2>
+                <p><code>--no-jit</code>, also the library's default, runs the interpreter only, WebAssembly included. No machine code is generated while untrusted code runs, so JIT compiler bugs are off the attack surface and an attacker has far less control over the code that executes, which Spectre-style attacks rely on. The numbers above are with the JIT off.</p>
+                <p class="fine">Not a sandbox on its own: isolation and limits come from your host.</p>
+            </div>
+            <div class="tile">
+                <h2>Full JavaScript and TypeScript</h2>
+                <p>Test262: 53,353 passing, 0 failing. TypeScript runs directly with no build step, and <code>node:</code> APIs are there too. Code a model writes just runs, with no "Lua needs a C extension for that" step, and models write JavaScript and TypeScript far better than Lua.</p>
+                <p><a class="tlink" href="/javascript-engine-for-ai-agents/">Quench for AI agents →</a></p>
+            </div>
+        </section>
+
         <section class="frame cols-2" id="start" aria-label="Usage">
             <div class="tile">
                 <h2>Run</h2>
                 <pre><span class="c"># TypeScript, JavaScript, WebAssembly</span>
-<span class="p">$</span> quench-node app.ts
-<span class="p">$</span> quench-node server.mjs</pre>
+<span class="p">$</span> quench app.ts
+<span class="p">$</span> quench server.mjs</pre>
             </div>
             <div class="tile">
                 <h2>Compile ahead of time</h2>
                 <pre><span class="c"># one native executable</span>
-<span class="p">$</span> quench-node --build-aot app.ts -o app
+<span class="p">$</span> quench --build-aot app.ts -o app
 <span class="p">$</span> ./app</pre>
             </div>
             <div class="tile wide">
                 <h2>Build from source</h2>
                 <pre><span class="p">$</span> git clone https://github.com/butaji/quench
 <span class="p">$</span> cd quench
-<span class="p">$</span> cargo build --release -p quench-node <span class="c"># add --features aot for the AOT compiler</span></pre>
+<span class="p">$</span> cargo build --release -p quench <span class="c"># add --features aot for the AOT compiler</span></pre>
                 <p class="fine" style="margin-top:0.75rem">Quench is early and has no packaged releases yet.</p>
             </div>
         </section>
@@ -1001,7 +1041,7 @@
                 <h2>Work on the engine</h2>
                 <ul>
                     <li><b>quench-runtime.</b> Interpreter, object model, GC and the tiers.</li>
-                    <li><b>quench-node.</b> Node-compatible APIs in Rust, checked against Node.</li>
+                    <li><b>quench.</b> Node-compatible APIs in Rust, checked against Node.</li>
                     <li><b>quench-wasm, quench-regexp, quench-intl.</b> Self-contained and easy to start in.</li>
                     <li><b>AGENTS.md.</b> The rules every change follows, and the gates it must pass.</li>
                 </ul>
@@ -1012,6 +1052,7 @@
                     <li><a class="tlink" href="/blog/where-quench-stands/">Where Quench stands: JetStream 3 with the JIT off</a></li>
                     <li><a class="tlink" href="/blog/an-instruction-budget-for-every-operation/">3 × C + 6: an instruction budget for every operation</a></li>
                     <li><a class="tlink" href="/blog/one-interpreter-four-outputs/">One interpreter, four outputs</a></li>
+                    <li><a class="tlink" href="/benchmarks/">All benchmarks, dated, with weak spots</a></li>
                     <li><a class="tlink" href="/blog/">All 17 posts</a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
                 </ul>
             </div>
@@ -1041,6 +1082,14 @@
                         <p>With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. The JIT tiers are still being brought up to their goal.</p>
                     </details>
                     <details>
+                        <summary>Is Quench Test262 compliant?</summary>
+                        <p>Yes. Quench passes 53,353 Test262 tests with 0 failing, with the JIT off and on. 53 cases are waived because they fail exactly the way Node fails them, and they stay counted as failures in every report. The WebAssembly spec suite passes 67,124 of 67,124. <a href="/test262-compliant-javascript-engine/">Details</a>.</p>
+                    </details>
+                    <details>
+                        <summary>Can Quench run code written by AI agents?</summary>
+                        <p>That is a use Quench is built for. It embeds in a Rust harness as a library, runs interpreter only with no JIT, and runs full JavaScript and TypeScript (Test262: 53,353 passing, 0 failing). With the JIT off it scores 1.49x to 2.57x the best of Node and Bun on V8-v7, peaking at 6.4 to 8.2 MB on five of eight benchmarks. <a href="/javascript-engine-for-ai-agents/">Details</a>.</p>
+                    </details>
+                    <details>
                         <summary>Is Quench compatible with Node.js?</summary>
                         <p>Quench implements Node-compatible APIs in a separate host crate and checks changed behavior against Node itself: values, errors, ordering and exit status. Compatibility is being built out, so expect gaps.</p>
                     </details>
@@ -1062,7 +1111,7 @@
             </div>
         </section>
 
-        <p class="foot">Quench · MIT licensed · <a href="/blog/">blog</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></p>
+        <p class="foot">Quench · MIT licensed · <a href="/benchmarks/">benchmarks</a> · <a href="/blog/">blog</a> · <a href="/fastest-javascript-runtime-in-rust/">Rust JS runtime</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node alternative</a> · <a href="/compile-javascript-to-native-executable/">JS to native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262</a> · <a href="/javascript-engine-for-ai-agents/">JS for AI agents</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></p>
     </main>
 
     <script type="application/ld+json">
@@ -1075,7 +1124,7 @@
       "Quench runtime",
       "Quench JavaScript engine"
     ],
-    "url": "https://quench.run",
+    "url": "https://quench.run/",
     "applicationCategory": "DeveloperApplication",
     "applicationSubCategory": "JavaScript, TypeScript and WebAssembly runtime",
     "operatingSystem": "Linux",
@@ -1088,8 +1137,9 @@
     "programmingLanguage": [
       "Rust"
     ],
-    "description": "Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary.",
+    "description": "JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables.",
     "featureList": [
+      "Test262: 53,353 passing, 0 failing",
       "Runs TypeScript, JavaScript and WebAssembly",
       "Ahead-of-time (AOT) compilation to a native executable",
       "Register-bytecode interpreter",
@@ -1097,11 +1147,17 @@
       "u-jit: optimizing JIT on Cranelift",
       "Node-compatible APIs",
       "Low memory use",
+      "Embeddable in Rust for running AI agent code without a JIT",
       "MIT licensed"
     ],
     "codeRepository": "https://github.com/butaji/quench",
     "isAccessibleForFree": true,
-    "inLanguage": "en"
+    "inLanguage": "en",
+    "softwareHelp": {
+      "@type": "CreativeWork",
+      "url": "https://github.com/butaji/quench#quick-start"
+    },
+    "dateModified": "2026-11-20"
   },
   {
     "@context": "https://schema.org",
@@ -1147,10 +1203,26 @@
       },
       {
         "@type": "Question",
+        "name": "Can Quench run code written by AI agents?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "That is a use Quench is built for. It embeds in a Rust harness as a library, runs interpreter only with no JIT, and runs full JavaScript and TypeScript (Test262: 53,353 passing, 0 failing). With the JIT off it scores 1.49x to 2.57x the best of Node and Bun on V8-v7, peaking at 6.4 to 8.2 MB on five of eight benchmarks."
+        }
+      },
+      {
+        "@type": "Question",
         "name": "How does Quench compare to Node.js and Bun?",
         "acceptedAnswer": {
           "@type": "Answer",
           "text": "With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. The JIT tiers are still being brought up to their goal."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Quench Test262 compliant?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Quench passes 53,353 Test262 tests with 0 failing, with the JIT off and on. 53 cases are waived because they fail exactly the way Node fails them, and they stay counted as failures in every report. The WebAssembly spec suite passes 67,124 of 67,124."
         }
       },
       {
@@ -1190,8 +1262,17 @@
                         "vertical1": "TS / JS / WASM",
                         "vertical2": "RUNTIME IN RUST",
                         "description": "One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.",
-                        "cmd": "quench-node app.ts",
+                        "cmd": "quench app.ts",
                         "detail": "Types are kept, and they make it fast."
+            },
+            {
+                        "name": "Agent Code",
+                        "label": "use case: ",
+                        "vertical1": "AGENT CODE MODE",
+                        "vertical2": "NO JIT NEEDED",
+                        "description": "Run model-written JavaScript and TypeScript inside your Rust harness: embedded, interpreter only, a few MB per run.",
+                        "cmd": "quench --no-jit agent-task.ts",
+                        "detail": "The QuickJS slot, with more speed."
             },
             {
                         "name": "AOT Compile",
@@ -1199,7 +1280,7 @@
                         "vertical1": "AHEAD OF TIME",
                         "vertical2": "NATIVE BINARY",
                         "description": "Compile an entry file and everything it imports into one native executable. Same semantics as the interpreter, decided ahead of time.",
-                        "cmd": "quench-node --build-aot app.ts -o app",
+                        "cmd": "quench --build-aot app.ts -o app",
                         "detail": "One file in. One binary out."
             },
             {
@@ -1208,7 +1289,7 @@
                         "vertical1": "NO-JIT  B-JIT",
                         "vertical2": "U-JIT  AOT",
                         "description": "A register-bytecode interpreter, b-jit copy-and-patch stencils and u-jit on Cranelift. Native code exits to the exact bytecode.",
-                        "cmd": "quench-node --no-jit | --b-jit | --u-jit",
+                        "cmd": "quench --no-jit | --b-jit | --u-jit",
                         "detail": "Pick a tier, or let the counters decide."
             },
             {
@@ -1217,7 +1298,7 @@
                         "vertical1": "34.3 SCORE",
                         "vertical2": "JIT TURNED OFF",
                         "description": "With JIT off, Quench scores 34.3 against Node --jitless at 39.7 and Bun at 32.2, on the 56 tests all three finish.",
-                        "cmd": "quench-node --no-jit jetstream",
+                        "cmd": "quench --no-jit jetstream",
                         "detail": "Goal: 1.5x the best of them."
             },
             {
@@ -1226,7 +1307,7 @@
                         "vertical1": "28.5 MB PEAK",
                         "vertical2": "GEOMEAN RSS",
                         "description": "Peak memory of 28.5 MB on the same tests. That is about a quarter of Node and 60% of Bun.",
-                        "cmd": "quench-node --no-jit jetstream",
+                        "cmd": "quench --no-jit jetstream",
                         "detail": "Goal: half of the best."
             },
             {
@@ -1253,7 +1334,7 @@
                         "vertical1": "MIT LICENSE",
                         "vertical2": "BUILD FROM SOURCE",
                         "description": "Rust from parser to codegen, MIT licensed. Early and moving fast: build it from source and read how it works.",
-                        "cmd": "cargo build --release -p quench-node",
+                        "cmd": "cargo build --release -p quench",
                         "detail": "Fork it. Measure it. Break it."
             }
 ];

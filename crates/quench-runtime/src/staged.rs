@@ -69,6 +69,7 @@ mod admission;
 mod delete;
 mod operation;
 pub(crate) use operation::Operation;
+pub(crate) use operation::kind as op_kind;
 mod binary_class;
 pub(crate) use binary_class::BinaryClass;
 mod edge;
@@ -97,6 +98,7 @@ pub(crate) mod double_view;
 pub(crate) mod element_rows;
 pub(crate) mod typed_elements;
 pub(crate) mod typed_view;
+pub(crate) mod data_view;
 mod element_frame;
 pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
@@ -105,13 +107,29 @@ pub(crate) mod ic;
 pub(crate) mod ic_flat;
 pub(crate) mod ic_read;
 pub(crate) mod object;
-mod narrow;
+pub(crate) mod narrow;
 pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
 pub(crate) mod string_length;
 pub(crate) mod code_units;
 pub(crate) mod parse_int;
+/// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
+pub(crate) mod string_text;
+/// String search builtins (indexOf, lastIndexOf, includes, startsWith, endsWith) and cuts (slice, substring, substr).
+pub(crate) mod string_search;
+/// String.prototype.split with a string separator: the cut offsets, once.
+pub(crate) mod string_split;
+/// String.prototype.replace/replaceAll with a string pattern: the plan and the write, once.
+pub(crate) mod string_replace;
+/// Map/Set/WeakMap/WeakSet hash and probe: one lookup body.
+pub(crate) mod collections;
+/// Array indexOf/includes/lastIndexOf over dense elements: one search body.
+pub(crate) mod array_search;
+/// BigInt small-magnitude arithmetic and comparison: one body.
+pub(crate) mod bigint_small;
+/// The calendar fields of a Date's time value, derived once for the getters, setters and `toISOString` (`vm::date`).
+pub(crate) mod date_fields;
 pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod array_iteration;
@@ -155,7 +173,7 @@ mod guard;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+pub(crate) use steps::{step, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub(crate) mod region;
@@ -202,7 +220,7 @@ mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
 /// capture access whose scopes the frame does not hold, the walk over the scopes from the
@@ -912,6 +930,11 @@ pub(crate) const fn row_writes_result(op: Op) -> bool {
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
         return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
     }
+    // An opcode whose A field is no result register defines none, so there is nothing for the lane
+    // to write: its row's value (a cleanup pop's 0, a store's source) must not land in register A.
+    if !matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) {
+        return true;
+    }
     // A keyed read's answer is written by the lane (its record's result register, as every
     // producer writes it beside the carried value).
     !matches!(op, Op::GetEnumerated | Op::GetIndex | Op::StoreName | Op::StoreLocal | Op::InitializeTdz | Op::DefineArrayElement
@@ -1189,6 +1212,8 @@ mod property_tests;
 mod coverage_tests;
 #[cfg(test)]
 mod stage_coverage_tests;
+#[cfg(test)]
+mod semantics_duplication_tests;
 #[cfg(test)]
 mod capture_return_tests;
 #[cfg(test)]

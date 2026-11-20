@@ -121,6 +121,7 @@ impl ShapeTransitionIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vm::push_child;
     use crate::vm::{DictionaryTrigger, DEFAULT_SHAPE_ATTRIBUTES, property_key::PropertyKey};
 
     #[test]
@@ -130,11 +131,13 @@ mod tests {
         let key = PropertyKey::string(0);
         let attributes = DEFAULT_SHAPE_ATTRIBUTES.data().unwrap();
         let added = shapes.len() as u32;
-        shapes.push(Shape::child(Some(parent), ShapeTransition::Add { key, slot: 0, attributes },
-            1, None, shapes[parent as usize].facts));
+        let facts = shapes[parent as usize].facts;
+        push_child(&mut shapes, Shape::child(Some(parent), ShapeTransition::Add { key, slot: 0, attributes },
+            1, None, facts));
         let dictionary = shapes.len() as u32;
-        shapes.push(Shape::child(Some(added), ShapeTransition::Dictionary { trigger: DictionaryTrigger::PropertyCount },
-            1, Some(DictionaryTrigger::PropertyCount), shapes[added as usize].facts));
+        let facts = shapes[added as usize].facts;
+        push_child(&mut shapes, Shape::child(Some(added), ShapeTransition::Dictionary { trigger: DictionaryTrigger::PropertyCount },
+            1, Some(DictionaryTrigger::PropertyCount), facts));
         for child in [added, dictionary] {
             let mut index = ShapeTransitionIndex::default();
             assert!(!index.try_insert_child(&shapes, u32::MAX));

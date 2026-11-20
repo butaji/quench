@@ -67,11 +67,6 @@ impl SimdKernel {
         self.result
     }
 
-    /// The type of the result of the operator `selector` names.
-    pub(crate) fn result_of(selector: u32) -> WasmType {
-        SimdOperator::KERNELS[(selector >> SELECTOR_LANE_BITS) as usize].result
-    }
-
     /// The operator applied to operands given as bits, its result as bits: a vector whole, a
     /// scalar in the low bits (`ScalarBits`), as compiled code holds them.
     #[inline(always)]

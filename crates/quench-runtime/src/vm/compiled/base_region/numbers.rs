@@ -55,40 +55,139 @@ fn entry_state(span: &Span, homes: &Homes, webs: &Webs, reads: &EntryReads, row:
 /// stub enters at (none for a body, which only its entry enters).
 pub(super) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
     reads: &EntryReads, kinds: &[Option<OperandKinds>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
-    let count = decoded.len();
-    let mut entry_rows = vec![span.header as usize];
-    if ending == Ending::Region {
-        entry_rows.extend(entries.iter().map(|(_, row)| *row as usize));
-    }
-    entry_rows.sort_unstable();
-    entry_rows.dedup();
-    let mut state: Vec<Option<Held>> = vec![None; count];
-    let mut pending = Vec::new();
-    for row in entry_rows.into_iter().filter(|row| *row < count) {
-        state[row] = Some(entry_state(span, homes, webs, reads, row));
-        pending.push(row);
-    }
-    while let Some(k) = pending.pop() {
-        let Some(held) = state[k].clone() else { continue };
-        let out = transfer(homes, &decoded[k], kinds.get(k).and_then(Option::as_ref), &held);
-        for next in decoded[k].successors(k, count, span) {
-            let Next::Row(n) = next else { continue };
-            let changed = match &mut state[n] {
-                None => {
-                    state[n] = Some(out.clone());
-                    true
-                }
-                Some(known) => meet(known, &out),
-            };
-            if changed {
-                pending.push(n);
-            }
-        }
-    }
+    let state = solve(span, decoded, ending, entries, |row| entry_state(span, homes, webs, reads, row),
+        |k, held| transfer(homes, &decoded[k], kinds.get(k).and_then(Option::as_ref), held));
     decoded.iter().enumerate().map(|(k, row)| {
         let (true, Some(Source::Register(web))) = (reached.contains(k) && row.checked, row.a) else { return false };
         state[k].as_ref().is_some_and(|held| held.contains(usize::from(homes.orig[usize::from(web)])))
     }).collect()
+}
+
+/// Per row, whether each operand (`a`, `b`) is an int32 on every path into it: the int32 counterpart of
+/// `proven_operands`, over the same rows and entries.
+///
+/// Soundness: the frame slots change only through the registers a row writes (`dst`, `also`), the premise
+/// `proven_operands` relies on. A slot holds an int32 only where its entry seed says so (a MemInt or int32 pinned
+/// web, which the entry holds as an int32 word), or where the last write to it stored an int32 word: a copy or
+/// constant of an int32, or a row whose result is always an int32 and which continues in its stencil
+/// (`yields_int32`). Every other write kills the fact, and a meet keeps only the slots all paths hold.
+pub(super) fn proven_int_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
+    ending: Ending, entries: &[(u32, u32)]) -> Vec<(bool, bool)> {
+    let state = solve(span, decoded, ending, entries, |row| int_entry_state(span, homes, webs, row),
+        |k, held| int_transfer(homes, &decoded[k], held));
+    let is_int = |k: usize, source: Option<Source>| match source {
+        Some(Source::Register(web)) => reached.contains(k) && state[k].as_ref().is_some_and(|held| held.contains(usize::from(homes.orig[usize::from(web)]))),
+        _ => false,
+    };
+    decoded.iter().enumerate().map(|(k, row)| (is_int(k, row.a), is_int(k, row.b))).collect()
+}
+
+/// The entry rows of a region: its header, and under `Ending::Region` the rows its resume stubs enter at.
+fn entry_rows(span: &Span, count: usize, ending: Ending, entries: &[(u32, u32)]) -> Vec<usize> {
+    let mut rows = vec![span.header as usize];
+    if ending == Ending::Region {
+        rows.extend(entries.iter().map(|(_, row)| *row as usize));
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    rows.retain(|row| *row < count);
+    rows
+}
+
+/// A forward problem over the rows of a region, for `dataflow::solve`: each row is a block, its edges are the rows
+/// it reaches (a `Leave` is no edge), and its seed is the state an entry row starts with.
+struct RowFlow<F> {
+    edges: Vec<Vec<usize>>,
+    seeds: Vec<Option<Held>>,
+    step: F,
+}
+
+impl<F: Fn(usize, &Held) -> Held> crate::dataflow::Dataflow for RowFlow<F> {
+    type State = Held;
+
+    fn blocks(&self) -> usize {
+        self.edges.len()
+    }
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.edges[block]
+    }
+
+    fn entry_state(&self, block: usize) -> Option<Held> {
+        self.seeds[block].clone()
+    }
+
+    fn join(&self, into: &mut Held, incoming: &Held) -> bool {
+        meet(into, incoming)
+    }
+
+    fn transfer(&mut self, block: usize, state: &Held) -> Held {
+        (self.step)(block, state)
+    }
+}
+
+/// The state on entry to each row of a forward analysis over the rows: `seed` gives an entry row's state and `step`
+/// the state after a row from the state before it. Where paths meet, `meet` keeps the slots all of them hold. `None`
+/// marks a row control does not reach.
+fn solve(span: &Span, decoded: &[Decoded], ending: Ending, entries: &[(u32, u32)], seed: impl Fn(usize) -> Held,
+    step: impl Fn(usize, &Held) -> Held) -> Vec<Option<Held>> {
+    let count = decoded.len();
+    let mut seeds: Vec<Option<Held>> = vec![None; count];
+    for row in entry_rows(span, count, ending, entries) {
+        seeds[row] = Some(seed(row));
+    }
+    let edges: Vec<Vec<usize>> = decoded.iter().enumerate().map(|(k, row)| {
+        row.successors(k, count, span).filter_map(|next| match next {
+            Next::Row(n) => Some(n),
+            Next::Leave(_) => None,
+        }).collect()
+    }).collect();
+    crate::dataflow::solve(&mut RowFlow { edges, seeds, step })
+}
+
+/// The int32 state an entry at `row` holds: the slots of its live webs whose home is an int32 (a MemInt slot or an
+/// int32 pin), which the entry holds as an int32 word.
+fn int_entry_state(span: &Span, homes: &Homes, webs: &Webs, row: usize) -> Held {
+    let mut held = Held::with_capacity(homes.orig.len().max(1));
+    for web in webs.live_at(span, row as u32) {
+        if matches!(homes.place(web as Register), Place::MemInt | Place::Pin(_)) {
+            held.insert(usize::from(homes.orig[web]));
+        }
+    }
+    held
+}
+
+/// Whether a numeric kind's result is an int32 on every operand the row continues on: the bitwise, shift and
+/// `Math.imul`/`Math.clz32` kinds, whose results are ToInt32 values. Unsigned shift, addition, subtraction and the
+/// no-overflow kinds may yield a number no int32 holds.
+fn yields_int32(kind: Kind) -> bool {
+    matches!(kind, Kind::And | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr | Kind::Imul | Kind::Clz32)
+}
+
+/// The int32 state after `row` from `held`. A copy or constant keeps its source's int32-ness; a row `yields_int32`
+/// writes an int32; anything else writes an unknown value.
+fn int_transfer(homes: &Homes, row: &Decoded, held: &Held) -> Held {
+    let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);
+    let source = |source: Option<Source>| match source {
+        Some(Source::Register(web)) => held.contains(slot(web)),
+        Some(Source::Constant(word) | Source::Value(word)) => Value::from_bits(word).as_int().is_some(),
+        None => false,
+    };
+    let value = if row.heap.is_some() || row.step.is_some() {
+        false
+    } else if matches!(row.kind, Kind::Move | Kind::Const) {
+        source(row.a)
+    } else {
+        yields_int32(row.kind)
+    };
+    let mut out = held.clone();
+    for written in [row.dst, row.also].into_iter().flatten() {
+        out.remove(slot(written));
+    }
+    if let (true, Some(dst)) = (value, row.dst) {
+        out.insert(slot(dst));
+    }
+    out
 }
 
 /// The state after `row` from `held`. A copy keeps its source's Number-ness; a numeric row's result is a

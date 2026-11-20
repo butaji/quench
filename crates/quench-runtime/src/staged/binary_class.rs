@@ -23,7 +23,7 @@ impl BinaryClass {
     pub(crate) fn of_operator(operator: u32) -> Self {
         if let Some(operation) = NumberArithmetic::from_operator(operator) {
             Self::Arithmetic(operation)
-        } else if operator == oxc_ast::ast::BinaryOperator::Remainder as u32 {
+        } else if operator == crate::vm::operations::binary_operator::Remainder {
             Self::Remainder
         } else if let Some(operation) = NumberBitwise::from_operator(operator) {
             Self::Bitwise(operation)

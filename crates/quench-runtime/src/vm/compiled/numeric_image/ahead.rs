@@ -41,7 +41,7 @@ fn run_pick(linked: &[u8], registers: usize) {
             crate::vm::dispatch_fast::set_frame_word(window, crate::staged::frame::CONTEXT_BODY, 0);
         }
         words[crate::vm::register_file::FRAME_CONTEXT] = Value::number(input);
-        let super::super::BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
+        let super::super::BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, Value::UNDEFINED.to_bits(), 0, window.cast()) };
         assert_eq!(status, super::super::LANE_BODY_RETURNED, "{input}");
         assert_eq!(Value::from_bits(word), Value::number(expected), "{input}");
     }

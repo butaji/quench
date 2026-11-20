@@ -20,10 +20,11 @@ use crate::wasm::integer::I64BinaryOperator as Binary;
 use quench_bjit::wasm::{self as codes, WasmCode};
 use quench_bjit::{HOLES, Row, Stencil, padded_holes};
 use super::CONTEXT_MEMORY_LENGTH;
+use crate::staged::frame::WASM_HEADER_WORDS;
 
 /// The frame word a register is, past the header words.
 const fn slot(register: u16) -> u64 {
-    8 * (quench_bjit::FRAME_HEADER_WORDS + register as u64)
+    quench_bjit::call_record::REGISTER_BYTES as u64 * (WASM_HEADER_WORDS as u64 + register as u64)
 }
 
 /// The word an integer constant is at `width`: an i32 zero-extended.
@@ -236,85 +237,133 @@ fn plan(
     world: &World<'_>,
 ) -> Option<Vec<Planned>> {
     let instruction = instructions[pc];
-    let (constant, memory_slot) = (world.constant, world.memory_slot);
-    let (a, b) = (instruction.a(), instruction.b());
     let Some(step) = Step::of(instruction.op(), instruction.imm()) else {
         return wasm_stitch_simd_more::simd_more(pc, instruction, world);
     };
-    match step {
-        Step::Numeric(operation) => numeric(instruction, operation),
-        Step::Instance(step) => {
-            if let Some(rows) = wasm_stitch_simd::instance(pc, instruction, step, world) {
-                return Some(rows);
-            }
-            if let Some(registers) = step.constant_registers(instruction) {
-                let value = constant(instruction.constant_index())?;
-                return Some(
-                    registers
-                        .map(|register| row((codes::CONSTANT, 0, codes::W64, codes::IMMEDIATE), [slot(register), 0, value], None))
-                        .collect(),
-                );
-            }
-            match step {
-                Instance::Move => Some(vec![row((codes::MOVE, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), 0], None)]),
-                Instance::Binding if memory_slot == Some(instruction.imm()) => Some(vec![]),
-                // Any other binding register is read only by global and table rows (the u-jit's
-                // plan admits no other reader of a binding), which read the context; it places nothing.
-                Instance::Binding => Some(vec![]),
-                Instance::GlobalGet | Instance::GlobalSet => wasm_stitch_global::global(pc, instruction, step, world),
-                _ => None,
-            }
+    crate::staged::wasm_step::dispatch(&mut Rows { instructions, returns, world }, pc, instruction, step)
+}
+
+/// The b-jit as a Wasm tier (`staged::wasm_step::WasmTier`): each family plans its stencil
+/// rows over frame slots, `None` where it has none yet (the function stays interpreted).
+struct Rows<'r, 'w> {
+    instructions: &'r [WideInstruction],
+    returns: bool,
+    world: &'r World<'w>,
+}
+
+impl crate::staged::wasm_step::WasmTier for Rows<'_, '_> {
+    type Out = Option<Vec<Planned>>;
+
+    fn numeric(&mut self, _pc: usize, instruction: WideInstruction, operation: crate::staged::wasm_operation::WasmOperation) -> Self::Out {
+        numeric(instruction, operation)
+    }
+
+    fn instance(&mut self, pc: usize, instruction: WideInstruction, step: Instance) -> Self::Out {
+        let world = self.world;
+        let (a, b) = (instruction.a(), instruction.b());
+        if let Some(rows) = wasm_stitch_simd::instance(pc, instruction, step, world) {
+            return Some(rows);
         }
-        Step::Memory(step) => memory(instruction, step)
+        if let Some(registers) = step.constant_registers(instruction) {
+            let value = (world.constant)(instruction.constant_index())?;
+            return Some(
+                registers
+                    .map(|register| row((codes::CONSTANT, 0, codes::W64, codes::IMMEDIATE), [slot(register), 0, value], None))
+                    .collect(),
+            );
+        }
+        match step {
+            Instance::Move => Some(vec![row((codes::MOVE, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), 0], None)]),
+            Instance::Binding if world.memory_slot == Some(instruction.imm()) => Some(vec![]),
+            // Any other binding register is read only by global and table rows (the u-jit's
+            // plan admits no other reader of a binding), which read the context; it places nothing.
+            Instance::Binding => Some(vec![]),
+            Instance::GlobalGet | Instance::GlobalSet => wasm_stitch_global::global(pc, instruction, step, world),
+            _ => None,
+        }
+    }
+
+    fn memory(&mut self, pc: usize, instruction: WideInstruction, step: crate::staged::wasm_memory::Memory) -> Self::Out {
+        memory(instruction, step)
             .or_else(|| bulk(instruction, step))
-            .or_else(|| instance_op(pc, instruction, step, world)),
-        Step::Flow(Flow::Jump) => Some(vec![row((codes::GOTO, 0, codes::W64, codes::REGISTER), [0; 3], Some(instruction.jump_target() as usize))]),
-        Step::Flow(Flow::Select) => {
-            let (condition, _) = instruction.register_pair();
-            let mut select = row((codes::SELECT, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), slot(instruction.c())], None);
-            select.holes[3] = slot(condition);
-            Some(vec![select])
-        }
-        Step::Flow(Flow::Unreachable) => Some(vec![row((codes::TRAP, 0, codes::W64, codes::REGISTER), [0; 3], None)]),
-        Step::Flow(Flow::Table) => {
-            let entries = crate::bytecode::branch_table_entries(pc, instruction);
-            let targets: Vec<usize> = entries.map(|entry| instructions.get(entry).map(|jump| jump.jump_target() as usize)).collect::<Option<_>>()?;
-            let (default, cases) = targets.split_last()?;
-            Some(table(a, cases, *default))
-        }
-        Step::Call(crate::staged::wasm_call::Call::Known) => {
-            // A tail call (its destination flagged) calls, then leaves, as the u-jit's does.
-            if a & crate::bytecode::RETURN_REGISTER != 0 {
-                return wasm_stitch_tail::tail(pc, instruction, returns, world);
+            .or_else(|| instance_op(pc, instruction, step, self.world))
+    }
+
+    fn flow(&mut self, pc: usize, instruction: WideInstruction, flow: Flow) -> Self::Out {
+        let (a, b) = (instruction.a(), instruction.b());
+        match flow {
+            Flow::Jump => Some(vec![row((codes::GOTO, 0, codes::W64, codes::REGISTER), [0; 3], Some(instruction.jump_target() as usize))]),
+            Flow::Select => {
+                let (condition, _) = instruction.register_pair();
+                let mut select = row((codes::SELECT, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), slot(instruction.c())], None);
+                select.holes[3] = slot(condition);
+                Some(vec![select])
             }
-            let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-            Some(vec![known_call(a, window, usize::from(instruction.known_function_index()), world)?])
-        }
-        Step::Call(crate::staged::wasm_call::Call::IndirectTarget) => indirect::target(pc, instructions),
-        Step::Call(crate::staged::wasm_call::Call::Reference) => {
-            if !world.memory_stable {
-                return None;
+            Flow::Unreachable => Some(vec![row((codes::TRAP, 0, codes::W64, codes::REGISTER), [0; 3], None)]),
+            Flow::Table => {
+                let entries = crate::bytecode::branch_table_entries(pc, instruction);
+                let targets: Vec<usize> = entries.map(|entry| self.instructions.get(entry).map(|jump| jump.jump_target() as usize)).collect::<Option<_>>()?;
+                let (default, cases) = targets.split_last()?;
+                Some(table(a, cases, *default))
             }
-            let mut rows = indirect::reference(pc, instructions, world)?;
-            // A flagged call returns its result: nothing follows it on this path.
-            if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
-                rows.push(wasm_stitch_tail::leave(instruction, returns));
-            }
-            Some(rows)
+            Flow::Return => Some(vec![if self.returns {
+                Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(a)]), taken: None }
+            } else {
+                Planned { stencil: "leave_wasm_void", holes: padded_holes([]), taken: None }
+            }]),
+            #[allow(unreachable_patterns)]
+            _ => None,
         }
-        Step::Simd(simd) => wasm_stitch_simd::simd(instruction, simd, world).or_else(|| wasm_stitch_simd_more::simd_more(pc, instruction, world)),
-        Step::Table(op) => wasm_stitch_table::table(pc, instruction, op, world),
-        Step::Gc(op) => wasm_stitch_gc::gc(pc, instruction, op, world),
-        // The b-jit has no rows for exception operations yet: such a function stays interpreted.
-        Step::Exception(_) => None,
-        // The b-jit has no rows for atomic operations: such a function stays interpreted.
-        Step::Atomic(_) => None,
-        Step::Flow(Flow::Return) => Some(vec![if returns {
-            Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(a)]), taken: None }
-        } else {
-            Planned { stencil: "leave_wasm_void", holes: padded_holes([]), taken: None }
-        }]),
-        _ => None,
+    }
+
+    fn call(&mut self, pc: usize, instruction: WideInstruction, call: crate::staged::wasm_call::Call) -> Self::Out {
+        let (world, a) = (self.world, instruction.a());
+        match call {
+            crate::staged::wasm_call::Call::Known => {
+                // A tail call (its destination flagged) calls, then leaves, as the u-jit's does.
+                if a & crate::bytecode::RETURN_REGISTER != 0 {
+                    return wasm_stitch_tail::tail(pc, instruction, self.returns, world);
+                }
+                let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
+                Some(vec![known_call(a, window, usize::from(instruction.known_function_index()), world)?])
+            }
+            crate::staged::wasm_call::Call::IndirectTarget => indirect::target(pc, self.instructions),
+            crate::staged::wasm_call::Call::Reference => {
+                if !world.memory_stable {
+                    return None;
+                }
+                let mut rows = indirect::reference(pc, self.instructions, world)?;
+                // A flagged call returns its result: nothing follows it on this path.
+                if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+                    rows.push(wasm_stitch_tail::leave(instruction, self.returns));
+                }
+                Some(rows)
+            }
+            #[allow(unreachable_patterns)]
+            _ => None,
+        }
+    }
+
+    fn table(&mut self, pc: usize, instruction: WideInstruction, op: crate::staged::wasm_table_ops::TableOp) -> Self::Out {
+        wasm_stitch_table::table(pc, instruction, op, self.world)
+    }
+
+    fn simd(&mut self, pc: usize, instruction: WideInstruction, step: crate::staged::wasm_simd::Simd) -> Self::Out {
+        wasm_stitch_simd::simd(instruction, step, self.world).or_else(|| wasm_stitch_simd_more::simd_more(pc, instruction, self.world))
+    }
+
+    fn gc(&mut self, pc: usize, instruction: WideInstruction, op: crate::staged::wasm_gc::GcOp) -> Self::Out {
+        wasm_stitch_gc::gc(pc, instruction, op, self.world)
+    }
+
+    /// The b-jit has no rows for exception operations yet: such a function stays interpreted.
+    fn exception(&mut self, _pc: usize, _instruction: WideInstruction, _op: crate::staged::wasm_exception::Exception) -> Self::Out {
+        None
+    }
+
+    /// The b-jit has no rows for atomic operations: such a function stays interpreted.
+    fn atomic(&mut self, _pc: usize, _instruction: WideInstruction, _op: crate::staged::wasm_atomic::Atomic) -> Self::Out {
+        None
     }
 }
 
@@ -461,18 +510,10 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
         return None;
     }
     let stencils: Vec<Stencil> = flat.iter().map(|planned| stencil(planned.stencil)).collect::<Option<_>>()?;
-    let holes: Vec<Box<dyn Fn(u32) -> u64>> = flat
-        .iter()
-        .map(|planned| {
-            let holes = planned.holes;
-            Box::new(move |index: u32| holes[index as usize]) as Box<dyn Fn(u32) -> u64>
-        })
-        .collect();
     let placed: Vec<Row> = flat
         .iter()
         .zip(&stencils)
-        .zip(&holes)
-        .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
+        .map(|(planned, stencil)| Row { stencil, hole: &planned.holes, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
         .collect();
 
     let trap = stencil("leave_wasm_trap")?;

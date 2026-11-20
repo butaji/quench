@@ -42,6 +42,13 @@ pub(in crate::vm) struct DirectCallee {
 }
 
 impl DirectCallee {
+    /// The type summary of the callee's published body (`lane_region::TypeSummary`): its entry
+    /// parameter types, which the call's arguments must hold for its proven entry, and its result,
+    /// which types the call's result. `None` where the callee has no published body or its body has none.
+    pub(in crate::vm) fn summary(&self) -> Option<lane_region::TypeSummary> {
+        self.method.as_ref()?.lease()?.summary().cloned()
+    }
+
     /// The callee's dense capture slots, in the one word a body's entry takes them in.
     pub(in crate::vm) fn capture_word(&self) -> u64 {
         super::entry_cell::capture_word(self.capture_values, self.capture_len, self.capture_stores)
@@ -63,6 +70,12 @@ pub(in crate::vm) fn names_dead_callee(inlined: &[InlinedCall], direct: &[Direct
 /// leave inside one reads (`Vm::scratch_in_lane`), and the room the frames past the caller's registers
 /// need.
 pub(in crate::vm) fn window_width(inlined: &[InlinedCall], caller_registers: u16) -> usize {
-    inlined.iter().map(|frame| usize::from(frame.base - caller_registers) + usize::from(frame.registers)).max().unwrap_or(0)
+    frames_window(inlined.iter().map(|frame| (frame.base, frame.registers)), caller_registers)
+}
+
+/// `window_width` of frames given by their first register and their count, for a region whose
+/// frames are not `InlinedCall`s (`Inlining::window`).
+pub(in crate::vm) fn frames_window(frames: impl Iterator<Item = (crate::bytecode::Register, u16)>, caller_registers: u16) -> usize {
+    frames.map(|(base, registers)| usize::from(base - caller_registers) + usize::from(registers)).max().unwrap_or(0)
 }
 

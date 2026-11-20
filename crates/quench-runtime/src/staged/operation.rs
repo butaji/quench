@@ -2,6 +2,7 @@
 //! decoder for the opcode (`Op::staged`), and its queries over instructions. `staged.rs` re-exports it.
 
 use super::*;
+#[cfg(not(stencil_build))]
 use super::wasm_jump::WasmJump;
 
 /// An instruction `step` runs, with the operands a tier decoded.
@@ -63,6 +64,37 @@ pub(crate) enum Operation<W, P> {
     TypeofString { destination: Register, source: Register },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
+    /// A property add of `value` to the object at the record table `records`, through a site's
+    /// transition `edge` (and the prototype `link` a chained site must hold), storing it in `form`
+    /// (`add::site_add`). The tier names the object word and the site's words: a register's or the
+    /// activation's receiver, so one variant serves the register and `this` add rows. No opcode
+    /// decodes to it; a stencil row builds it. Leaves at the miss edge where the add declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    AddSite { records: W, object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
+    /// A function's inferred name `name` written to the function word `function`'s empty name slot
+    /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
+    /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
+    /// `value instanceof constructor` into `destination`, decided by the frame's words of the value
+    /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
+    /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    InstanceOf { destination: Register, value: Register, constructor: Register },
+    /// Continue where register `source` holds a direct array (the array identity test, `Frame::direct_array`);
+    /// any other value leaves at the miss edge.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    DirectArray { source: Register },
+    /// Define `destination` with the `length` of the direct array in register `source` (`Frame::array_length`).
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    ArrayLength { destination: Register, source: Register },
+    /// Define `destination` with the `length` of the typed array in register `source` (`Frame::typed_length`).
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    TypedLength { destination: Register, source: Register },
+    /// Append the value in register `value` to the array in register `array`, where its backing has
+    /// room and is writable (`Frame::array_append`); a value the frame does not append leaves at the miss edge.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    ArrayAppend { array: Register, value: Register },
     /// The empty object, object or array literal, constant array, regexp literal, closure,
     /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
     /// at the frame's miss edge (`Frame::allocate_value`).
@@ -182,6 +214,7 @@ pub(crate) enum Operation<W, P> {
     /// Suspend the activation (`Suspension`: `await`, `yield`, `yield*`) with the value of `value`,
     /// resuming with what it receives next in `destination` (`suspend::suspend`, which asks the
     /// frame: `Frame::suspend_await`, `suspend_yield`, `suspend_yield_star`).
+    #[cfg(not(stencil_build))]
     Suspend { kind: super::Suspension, destination: Register, value: Register },
     /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
     Nop,
@@ -247,8 +280,10 @@ pub(crate) enum Operation<W, P> {
     #[cfg(not(stencil_build))]
     WasmInt(wasm_int::WasmIntOperation),
     /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
+    #[cfg(not(stencil_build))]
     WasmJump(WasmJump),
     /// A Wasm branch table: control goes to the entry its index picks (`Edge::Entry`, `wasm_jump`).
+    #[cfg(not(stencil_build))]
     BranchTable(BranchTable),
     /// A Wasm global's load or store, or a register window's fill (`wasm_state`).
     #[cfg(not(stencil_build))]
@@ -266,37 +301,125 @@ pub(crate) enum Operation<W, P> {
     /// The prologue of a specialized body of `function` (`BodyEntry`, a lane's synthetic record): the body
     /// runs on the activation's registers, binding `this` where `binds_this` (`prologue::PrologueFrame::body_entry`).
     BodyEntry { function: u32, binds_this: bool },
-    /// A property add of `value` to the object at the record table `records`, through a site's
-    /// transition `edge` (and the prototype `link` a chained site must hold), storing it in `form`
-    /// (`add::site_add`). The tier names the object word and the site's words: a register's or the
-    /// activation's receiver, so one variant serves the register and `this` add rows. No opcode
-    /// decodes to it; a stencil row builds it. Leaves at the miss edge where the add declines.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    AddSite { records: W, object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
-    /// A function's inferred name `name` written to the function word `function`'s empty name slot
-    /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
-    /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
-    /// `value instanceof constructor` into `destination`, decided by the frame's words of the value
-    /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
-    /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    InstanceOf { destination: Register, value: Register, constructor: Register },
-    /// Continue where register `source` holds a direct array (the array identity test, `Frame::direct_array`);
-    /// any other value leaves at the miss edge.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    DirectArray { source: Register },
-    /// Define `destination` with the `length` of the direct array in register `source` (`Frame::array_length`).
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    ArrayLength { destination: Register, source: Register },
-    /// Define `destination` with the `length` of the typed array in register `source` (`Frame::typed_length`).
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    TypedLength { destination: Register, source: Register },
-    /// Append the value in register `value` to the array in register `array`, where its backing has
-    /// room and is writable (`Frame::array_append`); a value the frame does not append leaves at the miss edge.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    ArrayAppend { array: Register, value: Register },
+}
+
+/// Each `Operation` variant as a number, for the dispatchers' compile-time choice of arm (`step_of` and the other
+/// `*_of` steps): a caller that knows its variant passes it, and every other arm is dropped before code generation
+/// (an `if const` test); `ANY` runs every arm, as the interpreter does.
+pub(crate) mod kind {
+    pub(crate) const ANY: u16 = 0;
+    pub(crate) const MOVE: u16 = 1;
+    pub(crate) const LOAD_CONST: u16 = 2;
+    pub(crate) const LOAD_LOCAL_PLAIN: u16 = 3;
+    pub(crate) const STORE_LOCAL_PLAIN: u16 = 4;
+    pub(crate) const LOAD_LOCAL_CHECKED: u16 = 5;
+    pub(crate) const STORE_LOCAL_CHECKED: u16 = 6;
+    pub(crate) const INITIALIZE_LOCAL: u16 = 7;
+    pub(crate) const JUMP: u16 = 8;
+    pub(crate) const JUMP_IF: u16 = 9;
+    pub(crate) const LOAD_THIS: u16 = 10;
+    pub(crate) const LOAD_CALLEE: u16 = 11;
+    pub(crate) const NUMBER: u16 = 12;
+    pub(crate) const REQUIRE_OBJECT_COERCIBLE: u16 = 13;
+    pub(crate) const REQUIRE_ITERATOR_RESULT: u16 = 14;
+    pub(crate) const LOGICAL_NOT: u16 = 15;
+    pub(crate) const TYPEOF_INDEX: u16 = 16;
+    pub(crate) const TYPEOF_TEST: u16 = 17;
+    pub(crate) const TYPEOF_STRING: u16 = 18;
+    pub(crate) const INDEX_WRITE: u16 = 19;
+    pub(crate) const ADD_SITE: u16 = 20;
+    pub(crate) const NAMING_SITE: u16 = 21;
+    pub(crate) const INSTANCE_OF: u16 = 22;
+    pub(crate) const DIRECT_ARRAY: u16 = 23;
+    pub(crate) const ARRAY_LENGTH: u16 = 24;
+    pub(crate) const TYPED_LENGTH: u16 = 25;
+    pub(crate) const ARRAY_APPEND: u16 = 26;
+    pub(crate) const ALLOCATE: u16 = 27;
+    pub(crate) const SUPER_CONST_ARRAY_OBJECT2: u16 = 28;
+    pub(crate) const DEFINE_ELEMENT: u16 = 29;
+    pub(crate) const SAFEPOINT: u16 = 30;
+    pub(crate) const GUARD_IDENTITY: u16 = 31;
+    pub(crate) const GUARD_LIVE: u16 = 32;
+    pub(crate) const GUARD_REALM: u16 = 33;
+    pub(crate) const GUARD_DECLARED: u16 = 34;
+    pub(crate) const GUARD_PROTOTYPE: u16 = 35;
+    pub(crate) const GUARD_SHAPE: u16 = 36;
+    pub(crate) const GUARD_STORES: u16 = 37;
+    pub(crate) const BACK_EDGE: u16 = 38;
+    pub(crate) const INDEX_SET_HELPER: u16 = 39;
+    pub(crate) const LOAD_NAME: u16 = 40;
+    pub(crate) const VOID: u16 = 41;
+    pub(crate) const UNARY: u16 = 42;
+    pub(crate) const PROPERTY_KEY: u16 = 43;
+    pub(crate) const EQUALITY: u16 = 44;
+    pub(crate) const BINARY: u16 = 45;
+    pub(crate) const LOAD_ENV_LOCAL: u16 = 46;
+    pub(crate) const STORE_ENV_LOCAL: u16 = 47;
+    pub(crate) const ARGUMENTS_LENGTH: u16 = 48;
+    pub(crate) const ARGUMENT_GET: u16 = 49;
+    pub(crate) const CLONE_ENV: u16 = 50;
+    pub(crate) const GLOBAL_TYPEOF: u16 = 51;
+    pub(crate) const SET_FUNCTION_NAME: u16 = 52;
+    pub(crate) const GLOBAL_WRITE: u16 = 53;
+    pub(crate) const GLOBAL_LEXICAL_LOAD: u16 = 54;
+    pub(crate) const GLOBAL_LEXICAL_STORE: u16 = 55;
+    pub(crate) const PROTOCOL: u16 = 56;
+    pub(crate) const FOR_IN_NEXT: u16 = 57;
+    pub(crate) const ENUMERATED_GET: u16 = 58;
+    pub(crate) const FIELD_STORE_MISS: u16 = 59;
+    pub(crate) const ITERATOR_CLEANUP_PUSH: u16 = 60;
+    pub(crate) const ITERATOR_CLEANUP_POP: u16 = 61;
+    pub(crate) const STRING_CASE_INDEX: u16 = 62;
+    pub(crate) const SUSPEND: u16 = 63;
+    pub(crate) const NOP: u16 = 64;
+    pub(crate) const GET_FIELD: u16 = 65;
+    pub(crate) const SET_FIELD: u16 = 66;
+    pub(crate) const STORE_FIELD: u16 = 67;
+    pub(crate) const FIELD_GET_HOST: u16 = 68;
+    pub(crate) const FIELD_ADD: u16 = 69;
+    pub(crate) const DELETE: u16 = 70;
+    pub(crate) const INDEX_GET_HOST: u16 = 71;
+    pub(crate) const CALL: u16 = 72;
+    pub(crate) const SPREAD_CALL: u16 = 73;
+    pub(crate) const SUPER_CALL: u16 = 74;
+    pub(crate) const RETURN: u16 = 75;
+    pub(crate) const THROW: u16 = 76;
+    pub(crate) const ELEMENT_READ: u16 = 77;
+    pub(crate) const ELEMENT_READ_OPERAND: u16 = 78;
+    pub(crate) const INC_DEC_LOCAL: u16 = 79;
+    pub(crate) const ELEMENT_WRITE: u16 = 80;
+    pub(crate) const LOAD_CAPTURE: u16 = 81;
+    pub(crate) const STORE_CAPTURE: u16 = 82;
+    pub(crate) const COMPARE_JUMP: u16 = 83;
+    pub(crate) const WASM_FLOAT: u16 = 84;
+    pub(crate) const WASM_INT: u16 = 85;
+    pub(crate) const WASM_JUMP: u16 = 86;
+    pub(crate) const BRANCH_TABLE: u16 = 87;
+    pub(crate) const WASM_STATE: u16 = 88;
+    pub(crate) const WASM_ACCESS: u16 = 89;
+    pub(crate) const WASM_VECTOR: u16 = 90;
+    pub(crate) const PROLOGUE: u16 = 91;
+    pub(crate) const BODY_ENTRY: u16 = 92;
+
+    /// Whether a dispatcher instantiated for `kind` runs an arm of `variants`.
+    pub(crate) const fn admits(kind: u16, variants: &[u16]) -> bool {
+        if kind == ANY {
+            return true;
+        }
+        let mut at = 0;
+        while at < variants.len() {
+            if variants[at] == kind {
+                return true;
+            }
+            at += 1;
+        }
+        false
+    }
+
+    /// Whether a dispatcher instantiated for `kind` runs a catch-all arm after arms for `variants`.
+    pub(crate) const fn outside(kind: u16, variants: &[u16]) -> bool {
+        kind == ANY || !admits(kind, variants)
+    }
 }
 /// Decoding reads instructions and the opcode catalog, which the stencil build (`quench-bjit`) does
 /// not have: a stencil row builds its operation from its holes instead.
@@ -375,7 +498,7 @@ impl<W, P> Operation<W, P> {
 
     /// The record `instruction` is without its completion flags, and those flags: a return, or a `this` write.
     #[inline(always)]
-    fn completion_split(instruction: WideInstruction) -> Option<(WideInstruction, crate::bytecode::Register)> {
+    pub(crate) fn completion_split(instruction: WideInstruction) -> Option<(WideInstruction, crate::bytecode::Register)> {
         use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
         // The returned flags are the completions only: a return, or a `this` write. A numeric local target
         // is where the result goes, not how it completes, so it is left to the record (`writes_numeric_local`);
@@ -532,21 +655,21 @@ impl<W, P> Operation<W, P> {
         }
         match operator {
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
+            _ if operator == crate::vm::operations::unary_operator::LogicalNot => Self::LogicalNot { destination, source },
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 => Self::TypeofString { destination, source },
+            _ if operator == crate::vm::operations::unary_operator::Typeof => Self::TypeofString { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::BitwiseNot =>
                 Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::UnaryNegation as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::UnaryNegation =>
                 Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Negate),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::UnaryPlus as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::UnaryPlus =>
                 Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Plus),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 => Self::Void { destination },
+            _ if operator == crate::vm::operations::unary_operator::Void => Self::Void { destination },
             _ => Self::Unary { destination, source, operator },
         }
     }
@@ -596,6 +719,7 @@ impl<W, P> Operation<W, P> {
     }
 }
 
+// The instruction queries the tiers ask: runtime only, as the stencils decode no instruction.
 #[cfg(not(stencil_build))]
 impl Operation<u64, ()> {
     /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
@@ -688,7 +812,6 @@ impl Operation<u64, ()> {
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`), as the
     /// program's field sites name them: a named read's lookup (its site, or the sites of a
     /// nested lookup), and a field store's cache site.
-    #[cfg(not(stencil_build))]
     pub(crate) fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
         if Self::is_field_read(instruction) {
             return match instruction.field_lookup() {

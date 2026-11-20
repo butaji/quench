@@ -4,7 +4,8 @@
 //! invocations of it: they differ in the `Division` they fold and in where the residual
 //! code is published, never in what a specializer is. Implementations live beside the
 //! lowering they drive (`CallThreaded` in `vm::specialize`, `RegionSpecializer` in
-//! `vm::compiled::lane_region`).
+//! `vm::compiled::lane_region`), and `WasmSpecializer` in `vm::compiled::wasm_specializer`
+//! (the u-jit's Cranelift body and entry, and the b-jit's stitched rows).
 
 use crate::bytecode::ResidualProgram;
 

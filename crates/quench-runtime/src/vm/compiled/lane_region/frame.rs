@@ -5,7 +5,7 @@ use crate::vm::compiled::regions;
 #[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
-pub(in crate::vm) use operands::{held_long, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
+pub(in crate::vm) use operands::{held_long, known_number, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The lane's register file.
@@ -73,6 +73,9 @@ pub(super) struct EmitFrame<'a> {
     pub(super) arrays_fixed: bool,
     /// The call or return a step of the call family runs for (`call_frames`).
     pub(super) site: Option<super::call_frames::Site<'a>>,
+    /// Whether the call `call_entry` last planned passes arguments proved to have its callee's proven entry's
+    /// parameter types (`call_frames::EmitFrame::arguments_proven`), which `call_enter` reads.
+    pub(super) proven_arguments: std::cell::Cell<bool>,
     /// What a capture access reaches, where the lowering made it (`captures`).
     pub(super) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).

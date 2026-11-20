@@ -75,6 +75,10 @@ impl NumericStage for super::super::Concrete {
         value ^ mask
     }
     #[inline(always)]
+    fn float_eq(&mut self, left: u64, right: u64) -> bool {
+        f64::from_bits(left) == f64::from_bits(right)
+    }
+    #[inline(always)]
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: u64, right: u64) -> (u64, bool) {
         let (left, right) = (int32(left), int32(right));
@@ -108,6 +112,10 @@ impl NumericStage for super::super::Concrete {
         super::super::math::float_unary(operation, f64::from_bits(value)).to_bits()
     }
     #[inline(always)]
+    fn float_primitive(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
+        super::super::math::float_primitive(operation, f64::from_bits(value)).to_bits()
+    }
+    #[inline(always)]
     fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {
         super::super::math::float_extreme(maximum, f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
@@ -121,10 +129,15 @@ impl NumericStage for super::super::Concrete {
     }
     #[inline(always)]
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
-    /// Opaque to the stencil build, so a row moves the bits as an immediate instead of loading a
-    /// constant pool entry (a relocation that is not a hole); the bits themselves in the runtime.
+    /// The stencil build materializes the constant in an integer register (`words::register_bits`): a double
+    /// LLVM folds into an instruction's memory operand would come from a constant pool, which a stencil may not use.
     #[inline(always)]
-    fn f64_constant(&mut self, value: f64) -> u64 { crate::staged::wasm_float::opaque(value.to_bits()) }
+    fn f64_constant(&mut self, value: f64) -> u64 {
+        #[cfg(stencil_build)]
+        { crate::words::register_bits(value.to_bits()) }
+        #[cfg(not(stencil_build))]
+        { value.to_bits() }
+    }
     #[inline(always)]
     fn f64_from_bits(&mut self, bits: u64) -> u64 { bits }
     #[inline(always)]

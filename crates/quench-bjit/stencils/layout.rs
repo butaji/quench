@@ -38,8 +38,12 @@ pub(crate) mod string_form;
 #[path = "../../quench-runtime/src/staged/field_cache_layout.rs"]
 pub(crate) mod field_cache_layout;
 
-/// The typed-array kinds, the runtime's own enum (`TypedArrayKind`, mounted by `codes.rs`).
+/// The typed-array kinds, the runtime's own enum (`TypedArrayKind`): mounted by `codes.rs` in the stencil
+/// crate, and the runtime's `staged::typed_array_catalog` where the runtime's layout test mounts this file.
+#[cfg(stencil_build)]
 pub(crate) use crate::codes::typed_array_catalog;
+#[cfg(not(stencil_build))]
+pub(crate) use crate::staged::typed_array_catalog;
 
 #[path = "../../quench-runtime/src/staged/layout_offsets.rs"]
 mod offsets;

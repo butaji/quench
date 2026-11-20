@@ -26,7 +26,7 @@ rustflags = ["-D", "warnings", "-Z", "merge-functions=disabled"]
 # run uses this binary (`quench-bench` defaults to it); `release` stays for the qualification
 # screens of a settled tree.
 [alias]
-quench = "build --profile experiment -p quench-node --bin quench-node"
+quench = "build --profile experiment -p quench --bin quench"
 
 [env]
 # quench-runtime's lane handlers use the `rust-preserve-none` calling convention

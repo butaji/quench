@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Quench benchmarks: V8-v7 and JetStream 3 vs Node.js and Bun (November 2026)</title>
+<meta name="description" content="Measured Quench benchmark results with the JIT off: V8-v7 (14 Nov 2026) and JetStream 3 (17 Nov 2026) against Node --jitless and Bun, with peak memory, weak spots and method." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/benchmarks/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/benchmarks/" />
+<meta property="og:title" content="Quench benchmarks: V8-v7 and JetStream 3 vs Node.js and Bun (November 2026)" />
+<meta property="og:description" content="Measured Quench benchmark results with the JIT off: V8-v7 (14 Nov 2026) and JetStream 3 (17 Nov 2026) against Node --jitless and Bun, with peak memory, weak spots and method." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:modified_time" content="2026-11-17" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Quench benchmarks: V8-v7 and JetStream 3 vs Node.js and Bun (November 2026)" />
+<meta name="twitter:description" content="Measured Quench benchmark results with the JIT off: V8-v7 (14 Nov 2026) and JetStream 3 (17 Nov 2026) against Node --jitless and Bun, with peak memory, weak spots and method." />
+<meta name="twitter:image" content="https://quench.run/og.png" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<style>.prose .answer{background:#FFF3EC;border-left:4px solid #EF5102;border-radius:8px;padding:1rem 1.25rem;margin-top:1.25rem;font-size:1.1rem;color:#1C1C1E}.prose .small{font-size:.9rem;color:#555B66}</style>
+<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/", "applicationCategory": "DeveloperApplication", "applicationSubCategory": "JavaScript, TypeScript and WebAssembly runtime", "operatingSystem": "Linux", "programmingLanguage": "Rust", "license": "https://opensource.org/licenses/MIT", "codeRepository": "https://github.com/butaji/quench", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "isAccessibleForFree": true, "description": "JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables."}, {"@context": "https://schema.org", "@type": "TechArticle", "headline": "Quench benchmarks", "description": "Measured Quench benchmark results with the JIT off: V8-v7 (14 Nov 2026) and JetStream 3 (17 Nov 2026) against Node --jitless and Bun, with peak memory, weak spots and method.", "url": "https://quench.run/benchmarks/", "dateModified": "2026-11-17", "datePublished": "2026-11-17", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run/"}, "about": {"@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/"}}, {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Quench", "item": "https://quench.run/"}, {"@type": "ListItem", "position": 2, "name": "Quench benchmarks", "item": "https://quench.run/benchmarks/"}]}]</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/benchmarks/">Benchmarks</a>
+<a class="badge" href="/blog/">Blog</a>
+<a class="badge" href="https://github.com/butaji/quench">GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>BENCHMARKS</span><span>NOVEMBER 2026</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/">quench.run</a> / updated <time datetime="2026-11-17">17 November 2026</time></p>
+<h1>Quench benchmarks</h1>
+<p class="lead">Every number Quench publishes, with its date, configuration and the tests where Quench loses.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p class="answer">With the JIT off in every engine, Quench scores 1.49x to 2.57x the faster of Node <code>--jitless</code> and Bun on all 8 V8-v7 benchmarks, at 0.28x to 0.55x their peak memory on 7 of 8. On the broader JetStream 3 suite it scores 34.3 against Node 39.7 and Bun 32.2, at 28.5 MB peak memory against 110.1 MB and 47.7 MB. The JIT tiers and AOT have no published speed numbers yet.</p>
+<h2 id="v8-v7">V8-v7, JIT off (14 November 2026)</h2>
+<p>Interpreter only in every engine: <code>quench --no-jit</code>, <code>node --jitless</code>, and Bun with <code>BUN_JSC_useJIT=0</code>. Score is the suite's own score (higher is better). Memory is peak RSS (lower is better). "vs best" divides by the better of Node and Bun on that row.</p>
+<div class="table-scroll"><table><thead><tr><th>Benchmark</th><th>Quench</th><th>Node --jitless</th><th>Bun JIT off</th><th>Score vs best</th><th>Quench RSS</th><th>Node RSS</th><th>Bun RSS</th><th>RSS vs best</th></tr></thead><tbody><tr><td>richards</td><td class="n">2,759</td><td class="n">1,220</td><td class="n">1,529</td><td class="n">1.80x</td><td class="n">6.4 MB</td><td class="n">43.5 MB</td><td class="n">15.9 MB</td><td class="n">0.40x</td></tr><tr><td>deltablue</td><td class="n">2,237</td><td class="n">1,488</td><td class="n">1,200</td><td class="n">1.50x</td><td class="n">6.9 MB</td><td class="n">45.4 MB</td><td class="n">24.5 MB</td><td class="n">0.28x</td></tr><tr><td>crypto</td><td class="n">3,520</td><td class="n">1,232</td><td class="n">1,706</td><td class="n">2.06x</td><td class="n">8.2 MB</td><td class="n">43.6 MB</td><td class="n">25.4 MB</td><td class="n">0.32x</td></tr><tr><td>raytrace</td><td class="n">8,084</td><td class="n">3,780</td><td class="n">2,711</td><td class="n">2.14x</td><td class="n">7.1 MB</td><td class="n">50.1 MB</td><td class="n">25.8 MB</td><td class="n">0.28x</td></tr><tr><td>earley-boyer</td><td class="n">8,365</td><td class="n">5,600</td><td class="n">4,686</td><td class="n">1.49x</td><td class="n">15.8 MB</td><td class="n">74.2 MB</td><td class="n">28.7 MB</td><td class="n">0.55x</td></tr><tr><td>regexp</td><td class="n">5,179</td><td class="n">3,049</td><td class="n">709</td><td class="n">1.70x</td><td class="n">16.2 MB</td><td class="n">64.5 MB</td><td class="n">32.6 MB</td><td class="n">0.50x</td></tr><tr><td>splay</td><td class="n">6,940</td><td class="n">3,722</td><td class="n">2,995</td><td class="n">1.86x</td><td class="n">58.7 MB</td><td class="n">326.0 MB</td><td class="n">54.9 MB</td><td class="n">1.07x</td></tr><tr><td>navier-stokes</td><td class="n">7,166</td><td class="n">1,723</td><td class="n">2,788</td><td class="n">2.57x</td><td class="n">7.6 MB</td><td class="n">49.9 MB</td><td class="n">20.2 MB</td><td class="n">0.38x</td></tr></tbody></table></div>
+<p>Geometric means over the 8 rows: Quench 4,980 at 11.4 MB, Node 2,349 at 65.4 MB, Bun 1,979 at 26.8 MB. The geometric mean of Quench's per-row ratio to the better engine is 1.86x.</p>
+<p><b>Weak spots:</b> splay peaks at 58.7 MB, slightly above Bun's 54.9 MB (1.07x). earley-boyer is 1.49x, just under the project's 1.5x goal, and deltablue is exactly 1.50x.</p>
+<h2 id="jetstream-3">JetStream 3, JIT off (17 November 2026)</h2>
+<p>JetStream 3 has 75 tests in our harness. All three engines finish 56 of them, and only those 56 are compared, because a geometric mean over different test sets is not a comparison.</p>
+<div class="table-scroll"><table><thead><tr><th></th><th>Quench</th><th>Node --jitless</th><th>Bun JIT off</th></tr></thead><tbody><tr><td>Score, geomean (higher is better)</td><td class="n">34.3</td><td class="n">39.7</td><td class="n">32.2</td></tr><tr><td>Peak RSS, geomean (lower is better)</td><td class="n">28.5 MB</td><td class="n">110.1 MB</td><td class="n">47.7 MB</td></tr></tbody></table></div>
+<p>On speed Quench is 0.86 times Node and 1.07 times Bun. On memory it uses 26% of Node's peak and 60% of Bun's, and has the lowest peak memory of the three on 51 of the 56 tests. Single-test noise is about 20%, so only the geometric means are meaningful.</p>
+<h3>Best and worst rows (score vs the better of Node and Bun)</h3>
+<div class="table-scroll"><table><thead><tr><th>Best</th><th>Ratio</th><th>Worst</th><th>Ratio</th></tr></thead><tbody><tr><td>gaussian-blur</td><td class="n">3.53x</td><td>babylonjs-scene</td><td class="n">0.44x</td></tr><tr><td>navier-stokes</td><td class="n">2.13x</td><td>babel-wtb</td><td class="n">0.39x</td></tr><tr><td>mandreel</td><td class="n">2.07x</td><td>chai-wtb</td><td class="n">0.39x</td></tr><tr><td>crypto</td><td class="n">1.89x</td><td>WSL</td><td class="n">0.38x</td></tr><tr><td>gbemu</td><td class="n">1.63x</td><td>async-fs</td><td class="n">0.36x</td></tr><tr><td>splay</td><td class="n">1.6x</td><td>validatorjs</td><td class="n">0.35x</td></tr><tr><td>earley-boyer</td><td class="n">1.6x</td><td>proxy-mobx</td><td class="n">0.25x</td></tr><tr><td></td><td class="n"></td><td>octane-code-load</td><td class="n">0.23x</td></tr></tbody></table></div>
+<p>Quench wins on long-running hot loops: numeric kernels, emulators and the classic object-oriented benchmarks. It loses on tests dominated by loading and compiling code, by promises and async functions, and by proxies.</p>
+<h3>Memory outliers outside the compared set</h3>
+<div class="table-scroll"><table><thead><tr><th>Test</th><th>Quench</th><th>Bun</th><th>Note</th></tr></thead><tbody><tr><td>jsdom-d3-startup</td><td class="n">602 MB</td><td class="n">776 MB</td><td>Node did not finish it with the JIT off</td></tr><tr><td>babylonjs-startup-es6</td><td class="n">562 MB</td><td class="n">339 MB</td><td>Node did not finish it with the JIT off</td></tr><tr><td>Kotlin-compose-wasm</td><td class="n">450 MB</td><td class="n">did not finish</td><td>only Quench finished</td></tr><tr><td>babylonjs-scene-es6</td><td class="n">226 MB</td><td class="n">189 MB</td><td>Node 210 MB</td></tr></tbody></table></div>
+<p>Details: <a href="/blog/where-quench-stands/">Where Quench stands: JetStream 3 with the JIT off</a>.</p>
+<h2 id="conformance">Conformance</h2>
+<div class="table-scroll"><table><thead><tr><th>Suite</th><th>Result</th></tr></thead><tbody><tr><td>Test262 (ECMAScript)</td><td>53,353 passing, 0 failing, 53 waived; JIT off and on</td></tr><tr><td>WebAssembly spec suite</td><td>67,124 of 67,124</td></tr></tbody></table></div>
+<p>The 53 waived Test262 cases fail exactly the way Node fails them; each is listed with a reason in <a href="https://github.com/butaji/quench/blob/v2-merged/crates/quench-test262/node-waivers.json">node-waivers.json</a> and stays counted as a failure in every report.</p>
+<h2 id="not-measured">What is not measured yet</h2>
+<ul><li><b>Deno.</b> Not in our harness yet, so no Deno numbers are published.</li>
+<li><b>JIT tiers.</b> b-jit and u-jit are not yet competitive with V8 or JavaScriptCore with their JITs on; no comparison is published.</li>
+<li><b>AOT executables.</b> No speed numbers are published for AOT-compiled programs. The goal is within 5x of equivalent C.</li></ul>
+<h2 id="method">Method</h2>
+<p>One 4-core Linux machine, each test pinned to a core. Peak memory is the maximum resident set size of the process. The harness and raw results are in the repository; every number on this page can be rerun from it.</p>
+<h2 id="about">About Quench</h2>
+<p>Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: <a href="https://github.com/butaji/quench">github.com/butaji/quench</a>. Machine-readable summary: <a href="/llms.txt">llms.txt</a>.</p>
+<p class="small">Related: <a href="/benchmarks/">benchmarks</a> · <a href="/fastest-javascript-runtime-in-rust/">JavaScript runtime in Rust</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node.js alternative</a> · <a href="/compile-javascript-to-native-executable/">compile JavaScript to a native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262 conformance</a> · <a href="/javascript-engine-for-ai-agents/">JavaScript for AI agents</a></p>
+</div></div>
+</article>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/benchmarks/">benchmarks</a> · <a href="/blog/">blog</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

@@ -1,11 +1,7 @@
 #![deny(warnings)]
-// DEBT (arm64 AOT port, TOD-1202): the merged v2-aot tip leaves the b-jit call-record and lane
-// surface of the compiled tiers unreachable on aarch64 -- `staged/call.rs`'s record words, the
-// staged row dispatch (`dispatch_fast/lane_frame/staged_ops.rs`) and `staged/meaning_*` are
-// entered only from the x86-64 paths today. Until those paths are ported this crate builds with
-// the dead-code lint off; every other lint stays an error, and this line goes away as the port
-// lands. Nothing here changes what a program computes: unreachable code, not unchecked code.
-#![allow(dead_code)]
+// The v2-merged sync left items both sides added in different places, one copy unused, and AOT items
+// named in wider interfaces than their types: allowed until the merge's dead copies are removed.
+#![allow(dead_code, private_interfaces)]
 #![feature(rust_preserve_none_cc)]
 // Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
 // whatever the handler body keeps on its stack (`vm::dispatch_fast`).
@@ -156,17 +152,15 @@ pub mod shared_backing;
 
 #[cfg(feature = "native-execution")]
 pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_LANE_HELPERS_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS_OPERATION_PREFIX, NativeProgramNamespace};
-pub use vm::compiled::{NATIVE_JS_LANE_HELPER_COUNT, native_js_lane_helper_table};
-pub use bytecode::NATIVE_JS_LANE_HELPER_TABLE_SYMBOL;
 #[cfg(feature = "native-execution")]
 pub use vm::{
-    NativeJsOperands, NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
-    native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
+    NativeJsOperands, NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
+    native_program::{NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
 };
 pub use vm::{
     IsaBaseline, NativeTarget,
     native_object::{
-        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeFunction, NativeFunctionAddress,
+        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeDataAddress, NativeFunction, NativeFunctionAddress,
         NativeJsModule, NativeReloc, emit_native_module, emit_native_module_for, emit_native_object, lower_native_js_module,
         lower_native_js_module_for,
     },

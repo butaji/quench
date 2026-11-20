@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::{WasmHostValue, WasmSignature, WasmValue};
+use crate::wasm::WasmHostSignature;
+use super::wasm_js::WASM_INLINE_ARGUMENTS;
 
 #[derive(Clone, Copy)]
 enum WasmHostInvocation {
@@ -102,7 +104,8 @@ impl<H: Host> Vm<H> {
         if args.len() != signature.params.len() {
             return Err(JsError::validation("Wasm argument count mismatch".into()));
         }
-        let mut arguments = Vec::with_capacity(args.len());
+        let mut arguments: smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]> =
+            smallvec::SmallVec::with_capacity(args.len());
         for (&value, &ty) in args.iter().zip(&signature.params) {
             if !value.fits_type(ty) {
                 return Err(JsError::validation("Wasm argument type mismatch".into()));
@@ -117,6 +120,36 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
         let result = self.call_value(&program, function, Value::UNDEFINED, &arguments)?;
         self.decode_wasm_result_types(&signature.results, result, signature.declarations())
+            .map(super::wasm::WasmResults::into_vec)
+    }
+
+    /// The JavaScript callee of the host import `function`, its memcpy capture where it has one,
+    /// and its host signature, shared with the cell rather than copied. `None` for a function
+    /// that is no host function, or a host-backed import.
+    pub(super) fn host_import_js_target(
+        &self,
+        function: Value,
+    ) -> Option<(Value, Option<(Value, usize)>, Rc<WasmHostSignature>)> {
+        let Some(FunctionRecord {
+            kind: FunctionKind::Native(Native::WasmHost),
+            env,
+            ..
+        }) = self.heap.function(function)
+        else {
+            return None;
+        };
+        match self.heap.get(*env) {
+            Some(Cell::WasmHostFunction { target, signature }) => match target {
+                crate::heap::WasmHostTarget::Js(target) => Some((*target, None, signature.clone())),
+                crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => Some((
+                    target.function,
+                    Some((target.view_environment, target.view_slot)),
+                    signature.clone(),
+                )),
+                crate::heap::WasmHostTarget::Host(_) => None,
+            },
+            _ => None,
+        }
     }
 
     pub(super) fn wasm_callable_signature(&self, function: Value) -> Option<&WasmSignature> {
@@ -345,16 +378,8 @@ impl<H: Host> Vm<H> {
         };
         let previous_program = self.replace_active_program(program);
         let previous_global = self.switch_realm_global(realm);
-        let native_depth = self.realm.promise.active_native.len();
-        self.realm
-            .promise
-            .active_native
-            .push(super::activation::NativeActivation {
-                callable: wrapper,
-                receiver: Value::UNDEFINED,
-                frame_depth: self.frames.len(),
-                boundary: super::activation::NativeCallBoundary::Opaque,
-            });
+        let native_depth = self.host_frame_count();
+        self.push_host_frame(wrapper, Value::UNDEFINED, self.frames.len(), super::activation::NativeCallBoundary::Opaque);
 
         // The compiled-callout boundary catches Rust panics. Catch here long
         // enough to restore the state this shortcut installs before resuming
@@ -375,7 +400,7 @@ impl<H: Host> Vm<H> {
             })
         }));
 
-        self.realm.promise.active_native.truncate(native_depth);
+        self.truncate_host_frames(native_depth);
         self.switch_realm_global(previous_global);
         self.set_active_program(previous_program);
         self.active_call_roots.truncate(call_roots);
@@ -728,7 +753,7 @@ mod tests {
             (7..20).collect::<Vec<_>>(),
             "the with object shadows the outer lexical HEAPU8"
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
     }
 
@@ -940,7 +965,7 @@ mod tests {
             hits + 1,
             "a replaced method must be re-read and use the JS fallback"
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert!(vm.frames.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
@@ -963,7 +988,7 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.is_execution_terminated());
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert!(vm.frames.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
@@ -1180,7 +1205,7 @@ mod tests {
                         .is_err()
                 );
                 assert_eq!(vm.heap.root_count_for_test(), count);
-                assert!(vm.realm.promise.active_native.is_empty());
+                assert!(vm.host_frame_count() == 0);
                 assert!(vm.active_call_roots.is_empty());
                 assert_eq!(vm.active_program, ProgramId::MAIN);
             }
@@ -1269,7 +1294,7 @@ mod tests {
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(WasmValue::I32(71_113))
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
     }
@@ -1310,7 +1335,7 @@ mod tests {
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(WasmValue::I32(1))
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
     }
@@ -1351,7 +1376,7 @@ mod tests {
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(WasmValue::I32(1))
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
     }
@@ -1400,11 +1425,33 @@ mod tests {
 
         assert_eq!(error.thrown_value(), Some(marker));
         assert_eq!(vm.heap.root_count_for_test(), roots_before);
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
         assert_eq!(vm.realm.globals, realm_before);
         assert!(vm.heap.is_live(target));
         assert!(vm.heap.is_live(marker));
+    }
+
+    /// The memory-copy helper is recognized by its shape, not its spelling: any names for the
+    /// parameters and the captured view, the same `view.copyWithin(a, b, b + n)` body. A body of
+    /// another shape is not.
+    #[test]
+    fn memory_copy_helper_is_recognized_by_shape_not_spelling() {
+        let mut vm = Vm::new(crate::SystemHost);
+        let owner = Engine::specialize("void 0", "memory-copy-shape-owner.js").unwrap();
+        vm.execute(&owner).unwrap();
+        let signature = WasmSignature { params: vec![WasmType::I32, WasmType::I32, WasmType::I32], results: vec![] };
+        let mut helper = |source: &str| {
+            let script = vm.compile_embedding_host_script(source, "memory-copy-shape.js", (0, 0)).unwrap();
+            let helper = vm.evaluate_embedding_compiled_script(&script).unwrap();
+            vm.emscripten_memcpy_view_capture(helper, &signature).is_some()
+        };
+        assert!(helper("(() => { let HEAPU8 = new Uint8Array(64); return (dest, src, num) => HEAPU8.copyWithin(dest, src, src + num); })()"));
+        assert!(helper("(() => { let bytes = new Uint8Array(64); return (to, from, count) => bytes.copyWithin(to, from, from + count); })()"));
+        assert!(helper("(() => { let bytes = new Uint8Array(64); return function (a, b, n) { return bytes.copyWithin(a, b, b + n); }; })()"));
+        assert!(!helper("(() => { let bytes = new Uint8Array(64); return (a, b, n) => bytes.copyWithin(a, b, n); })()"));
+        assert!(!helper("(() => { let bytes = new Uint8Array(64); return (a, b, n) => bytes.copyWithin(b, a, a + n); })()"));
+        assert!(!helper("(() => { let bytes = new Uint8Array(64); return (a, b, n) => bytes.fill(a, b, b + n); })()"));
     }
 }

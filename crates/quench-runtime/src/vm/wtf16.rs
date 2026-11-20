@@ -13,7 +13,7 @@ mod parts;
 mod payload;
 pub(crate) use parts::{Part, Parts, MAX_PARTS, MIN_PARTS};
 mod search;
-pub(crate) use search::find_ascii;
+pub(crate) use search::scans;
 pub(super) use concat_all::JsStringBuilder;
 pub(crate) mod split;
 mod text_hash;
@@ -1682,14 +1682,6 @@ impl JsString {
     }
 }
 
-/// Writes the non-empty ASCII `bytes` repeated through `out`, whose length is a multiple of
-/// `bytes.len()`: the one byte writer of a repeat over flat ASCII units.
-pub(crate) fn repeat_ascii_into(out: &mut [u8], bytes: &[u8]) {
-    for chunk in out.chunks_exact_mut(bytes.len()) {
-        chunk.copy_from_slice(bytes);
-    }
-}
-
 impl PartialEq for JsString {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
@@ -1831,7 +1823,7 @@ mod tests {
             Some(1)
         );
         let mut parts = Vec::new();
-        value.split_runs(super::Units::Wide(&[b'|' as u16]), usize::MAX, |run| parts.push(JsString::from_unit_run(run)));
+        crate::staged::string_split::runs(value.units(), super::Units::Wide(&[b'|' as u16]), usize::MAX, |run| parts.push(JsString::from_unit_run(run)));
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].units(), &[0xD800]);
         assert_eq!(parts[1].units(), &[0xDC00]);

@@ -118,10 +118,8 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
         let same = stage.eq_imm(exact, shape);
         stage.guard(same, miss)?;
     }
-    if gated {
-        let open = stage.store_gate(StagedRecordSpace::Object, id, value);
-        stage.guard(open, miss)?;
-    }
+    let open = if gated { stage.store_gate(StagedRecordSpace::Object, id, value) } else { stage.immediate_store_open() };
+    stage.guard(open, miss)?;
     let slot = entry_slot(stage, entry);
     plain_store(stage, record, slot, value, miss)
 }
@@ -150,7 +148,7 @@ fn holder_value<S: Stage>(stage: &mut S, holder: S::Word, slot: S::Word, miss: S
     let flat = stage.not(inline);
     let fits = stage.any(flat, below);
     stage.guard(fits, miss)?;
-    let run = stage.choose(inline, |stage| stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64), |stage| {
+    let run = stage.choose(inline, #[inline(always)] |stage| stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64), #[inline(always)] |stage| {
         let start = stage.load_u32(Region::Payload.mutable(), pointer, OBJECT.extras_arena_start_offset as i32);
         arena_run(stage, start)
     });

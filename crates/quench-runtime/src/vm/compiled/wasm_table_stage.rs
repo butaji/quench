@@ -114,7 +114,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let index = self.read(instruction.c(), Kind::I32);
         let index = self.convert(Conversion::ExtendI32Unsigned, index);
         self.checked_row = None;
-        let row = infallible(indirect_target(self, index, expected));
+        let (_, row) = infallible(indirect_target(self, index, expected));
         self.checked_row = self.checked_row.map(|checked| CheckedRow { block: self.body.core.builder.current_block(), ..checked });
         self.indirect = None;
         self.write(instruction.a(), Kind::I64, row);
@@ -138,6 +138,13 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
 
     /// The reference of an element, for the call that follows, is its row: the table keeps it.
     fn table_element(&mut self, index: ir::Value) -> ir::Value {
+        index
+    }
+
+    type Row = ir::Value;
+
+    /// The row word is the index, which the call that follows resolves through the table.
+    fn element_row(&mut self, index: ir::Value) -> ir::Value {
         index
     }
 

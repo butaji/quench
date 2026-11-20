@@ -46,7 +46,28 @@ impl<H: Host> Vm<H> {
         for set in &mut self.megamorphic_methods {
             set.len = retain_other_atom(&mut set.entries, usize::from(set.len), atom) as u8;
         }
-        self.megamorphic_methods.retain(|set| set.len != 0);
+        self.retain_megamorphic_sets();
+    }
+
+    /// Drops the megamorphic sets that are empty or that no site reaches, and renumbers the kept
+    /// ones: a set is reached through its site's index (`MethodCacheTable::megamorphic_index`),
+    /// so the index of every kept set is rewritten here, since a drop shifts the sets after it.
+    /// Sound because each site has at most one set and each set has one index, so the rewrite
+    /// never moves another site's set.
+    fn retain_megamorphic_sets(&mut self) {
+        let sets = std::mem::take(&mut self.megamorphic_methods);
+        for (index, set) in sets.into_iter().enumerate() {
+            if self.method_caches.megamorphic_index(set.site) != Some(index) {
+                continue;
+            }
+            if set.len == 0 {
+                self.method_caches.set_megamorphic_index(set.site, None);
+                continue;
+            }
+            self.method_caches
+                .set_megamorphic_index(set.site, Some(self.megamorphic_methods.len()));
+            self.megamorphic_methods.push(set);
+        }
     }
 
     pub(super) fn invalidate_method_caches_for_prototype_add(&mut self, object: Value, atom: Atom) {
@@ -66,7 +87,7 @@ impl<H: Host> Vm<H> {
                 atom,
             ) as u8;
         }
-        self.megamorphic_methods.retain(|set| set.len != 0);
+        self.retain_megamorphic_sets();
     }
 
     pub(super) fn is_function(&self, value: Value) -> bool {
@@ -175,7 +196,7 @@ impl<H: Host> Vm<H> {
         for set in &mut self.megamorphic_methods {
             set.len = retain_entries(heap, &mut set.entries, usize::from(set.len)) as u8;
         }
-        self.megamorphic_methods.retain(|set| set.len != 0);
+        self.retain_megamorphic_sets();
         #[cfg(feature = "profile-aggregate")]
         {
             let after = self.method_cache_entry_count();
@@ -210,11 +231,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
         self.method_cache_atoms.name(cache.atom);
-        if let Some(set) = self
-            .megamorphic_methods
-            .iter_mut()
-            .find(|set| set.site == site)
-        {
+        if let Some(index) = self.method_caches.megamorphic_index(site) {
+            let set = &mut self.megamorphic_methods[index];
             if let Some(entry) = set.entries[..usize::from(set.len)]
                 .iter_mut()
                 .find(|entry| entry.records_same(&cache))
@@ -243,31 +261,31 @@ impl<H: Host> Vm<H> {
         };
         set.entries[..METHOD_CACHE_WAYS].copy_from_slice(entries);
         set.entries[METHOD_CACHE_WAYS] = cache;
+        self.method_caches
+            .set_megamorphic_index(site, Some(self.megamorphic_methods.len()));
         self.megamorphic_methods.push(set);
     }
 }
 
 impl<H: Host> Vm<H> {
-    fn method_cache_owner(&self, object: Value, atom: Atom, guard: MethodGuard) -> Option<Value> {
-        let mut owner = object;
-        for depth in 0..=guard.depth {
-            let current = self.shape_property_lookup(owner, atom)?;
-            if depth == guard.depth {
-                return (owner == guard.owner && current.shape() == guard.owner_shape)
-                    .then_some(owner);
-            }
-            if self
-                .shape_slot(current.shape(), atom)
-                .is_some_and(|slot| self.heap.property_get(current, slot).is_some())
-            {
-                return None;
-            }
-            owner = current.proto();
-            if owner.is_null() {
-                return None;
-            }
+    /// The holder a method guard recorded, for a lookup of `atom` on `receiver` whose entry
+    /// already matched the receiver's shape and prototype. The receiver's own kind is tested
+    /// by its shape (`shape_property_lookup`), a depth-0 guard names the receiver itself, and
+    /// the holder is the recorded object, which still answers `atom` only while its shape is
+    /// the recorded `owner_shape`. The intermediate prototypes are not walked: each one's
+    /// shape and prototype are kept by invalidation, not by a compare on every hit. A property
+    /// added to an intermediate prototype drops the entry (`invalidate_method_caches_for_prototype_add`),
+    /// a removal drops it through its key (`invalidate_method_caches_for_key`), and a change of
+    /// an intermediate's prototype flushes every cache (`set_prototype_of`). The holder's own
+    /// layout is still compared here, so a changed holder misses as the walk did.
+    #[inline(always)]
+    fn method_cache_holder(&self, receiver: Value, atom: Atom, guard: MethodGuard) -> Option<&Object> {
+        self.shape_property_lookup(receiver, atom)?;
+        if guard.depth == 0 && receiver != guard.owner {
+            return None;
         }
-        None
+        let holder = self.object_data(guard.owner)?;
+        (holder.shape() == guard.owner_shape).then_some(holder)
     }
 
     fn method_cache_guard(&self, receiver: Value, atom: Atom) -> Option<MethodGuard> {
@@ -425,7 +443,9 @@ impl<H: Host> Vm<H> {
             );
         }
 
-        let guard = self.method_cache_guard(this, metadata.atom);
+        // The guard only feeds a specialized refill, so an unspecialized site walks the chain once,
+        // for the callee alone. It is taken before the callee, which may run a getter that changes it.
+        let guard = if specialized { self.method_cache_guard(this, metadata.atom) } else { None };
         let callee = self.get_field_cached(p, this, metadata.atom, metadata.cache)?;
         if specialized
             && let Some(guard) = guard
@@ -470,17 +490,15 @@ impl<H: Host> Vm<H> {
         let serves = |entry: &MethodCache| entry.serves(shape, atom, proto, this);
         let inline = self.method_caches[cache_site].iter().enumerate()
             .find(|(_, entry)| serves(entry)).map(|(tier, entry)| (*entry, tier));
-        // The megamorphic set is the tier after the inline ways.
-        let megamorphic = || self.megamorphic_methods.iter().find(|set| set.site == cache_site)
+        // The megamorphic set is the tier after the inline ways, read at the index its site
+        // recorded when the set was made, so no scan over the sets.
+        let megamorphic = || self.method_caches.megamorphic_index(cache_site)
+            .and_then(|index| self.megamorphic_methods.get(index))
             .and_then(|set| set.entries[..usize::from(set.len)].iter().find(|entry| serves(entry)).copied())
             .map(|entry| (entry, METHOD_CACHE_WAYS));
         let (entry, tier) = inline.or_else(megamorphic)?;
-        let owner = self.method_cache_owner(this, atom, entry.guard)?;
-        let owner_data = self.object_data(owner)?;
-        if owner_data.shape() != entry.guard.owner_shape {
-            return None;
-        }
-        let callee = self.heap.property_get(owner_data, entry.guard.slot as usize)?;
+        let holder = self.method_cache_holder(this, atom, entry.guard)?;
+        let callee = self.heap.property_get(holder, entry.guard.slot as usize)?;
         (entry.callee == callee).then_some(())?;
         Some((callee, entry.target?, tier))
     }

@@ -23,9 +23,31 @@ impl LoopRegion {
         live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
         header: u32,
     ) -> Option<Self> {
+        if instructions.len() > MAX_REGION_INSTRUCTIONS { return None; }
+        Self::unbounded_span(instructions, constants, live, header)
+    }
+
+    /// The span of a whole function for an ahead image's base body (`base_body::image_body`): as
+    /// `of_function`, with no instruction budget. The budget bounds the JIT's compile time and code
+    /// size where it runs; an ahead compile pays neither at run time, and every function needs its
+    /// base body, which polls termination at backward jumps as any body does.
+    pub(in crate::vm) fn of_whole_function(
+        instructions: Vec<WideInstruction>,
+        constants: &[Value],
+        live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    ) -> Option<Self> {
+        Self::unbounded_span(instructions, constants, live, 0)
+    }
+
+    fn unbounded_span(
+        instructions: Vec<WideInstruction>,
+        constants: &[Value],
+        live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+        header: u32,
+    ) -> Option<Self> {
         let backedge = header.checked_add(u32::try_from(instructions.len().checked_sub(1)?).ok()?)?;
         let live = live?.clone();
-        (instructions.len() <= MAX_REGION_INSTRUCTIONS).then(|| Self {
+        Some(Self {
             header,
             backedge,
             numbers: Vec::<Register>::new(),

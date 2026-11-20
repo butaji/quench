@@ -1,9 +1,8 @@
 //! `MatchStage` on the emitter: the matcher's operations of `quench_regexp::backtrack::matcher`
 //! as Cranelift IR over an ASCII subject. A position or unit is an `i64` value, a flag an `i8`
 //! one, and a guarded operation a pair of blocks that join on the flag.
-use super::Emit;
-use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
-use cranelift_codegen::ir::{self, condcodes::CondCode, InstBuilder, MemFlagsData};
+use super::{Emit, RegexpMachine};
+use crate::staged::machine::{Binary, Extend, Lane, Relation};
 use quench_regexp::backtrack::matcher::MatchStage;
 use quench_regexp::backtrack::native::{NativeTest, NATIVE_ASCII_UNITS};
 
@@ -13,9 +12,9 @@ const WORD_SHIFT_MASK: i64 = WORD_BITS - 1;
 /// The words of a mask of the ASCII units.
 const MASK_WORDS: usize = (NATIVE_ASCII_UNITS as i64 / WORD_BITS) as usize;
 
-impl Emit<'_, '_> {
+impl<M: RegexpMachine> Emit<'_, M> {
     /// Bit `byte` of the 128-bit `mask`.
-    fn in_mask(&mut self, mask: [u64; MASK_WORDS], byte: ir::Value) -> ir::Value {
+    fn in_mask(&mut self, mask: [u64; MASK_WORDS], byte: M::Word) -> M::Word {
         let low = self.constant(mask[0] as i64);
         let high = self.constant(mask[1] as i64);
         let below = self.compare_constant(Relation::UnsignedLess, byte, WORD_BITS);
@@ -26,17 +25,8 @@ impl Emit<'_, '_> {
         self.compare_constant(Relation::NotEqual, bit, 0)
     }
 
-    /// The opposite comparison where `flag` is a comparison.
-    fn complement(&mut self, flag: ir::Value) -> Option<ir::Value> {
-        let ir::ValueDef::Result(inst, _) = self.b.func.dfg.value_def(flag) else { return None };
-        match self.b.func.dfg.insts[inst] {
-            ir::InstructionData::IntCompare { cond, args: [left, right], .. } => Some(self.b.ins().icmp(cond.complement(), left, right)),
-            _ => None,
-        }
-    }
-
     /// Whether `byte` lies in `first..=last`.
-    fn in_range(&mut self, byte: ir::Value, (first, last): (u32, u32)) -> ir::Value {
+    fn in_range(&mut self, byte: M::Word, (first, last): (u32, u32)) -> M::Word {
         if first == last {
             return self.compare_constant(Relation::Equal, byte, i64::from(first));
         }
@@ -45,38 +35,38 @@ impl Emit<'_, '_> {
     }
 }
 
-impl MatchStage for Emit<'_, '_> {
-    type Pos = ir::Value;
-    type Unit = ir::Value;
-    type Flag = ir::Value;
+impl<M: RegexpMachine> MatchStage for Emit<'_, M> {
+    type Pos = M::Word;
+    type Unit = M::Word;
+    type Flag = M::Word;
     type Test = NativeTest;
 
-    fn length(&mut self) -> ir::Value {
+    fn length(&mut self) -> M::Word {
         self.length
     }
 
-    fn at_start(&mut self, position: ir::Value) -> ir::Value {
+    fn at_start(&mut self, position: M::Word) -> M::Word {
         self.compare_constant(Relation::Equal, position, 0)
     }
 
-    fn equal(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+    fn equal(&mut self, left: M::Word, right: M::Word) -> M::Word {
         self.compare(Relation::Equal, left, right)
     }
 
-    fn before(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+    fn before(&mut self, left: M::Word, right: M::Word) -> M::Word {
         self.compare(Relation::UnsignedLess, left, right)
     }
 
-    fn offset(&mut self, position: ir::Value, delta: isize) -> ir::Value {
+    fn offset(&mut self, position: M::Word, delta: isize) -> M::Word {
         self.b.raw_binary_imm(Binary::Add, position, delta as i64)
     }
 
-    fn unit_at(&mut self, index: ir::Value) -> ir::Value {
+    fn unit_at(&mut self, index: M::Word) -> M::Word {
         let address = self.b.raw_binary(Binary::Add, self.bytes, index);
-        self.b.raw_load_extended(Lane::I8, Extend::Zero, Lane::I64, MemFlagsData::trusted(), address, 0)
+        self.b.raw_load_extended(Lane::I8, Extend::Zero, Lane::I64, self.flags, address, 0)
     }
 
-    fn passes(&mut self, unit: ir::Value, test: NativeTest) -> ir::Value {
+    fn passes(&mut self, unit: M::Word, test: NativeTest) -> M::Word {
         match test {
             NativeTest::Never => self.b.raw_const(Lane::I8, 0),
             NativeTest::Exact(expected) => self.compare_constant(Relation::Equal, unit, i64::from(expected)),
@@ -85,7 +75,7 @@ impl MatchStage for Emit<'_, '_> {
     }
 
     /// The ranges' ASCII part: an ASCII subject holds no other unit.
-    fn in_ranges(&mut self, unit: ir::Value, ranges: &[(u32, u32)]) -> ir::Value {
+    fn in_ranges(&mut self, unit: M::Word, ranges: &[(u32, u32)]) -> M::Word {
         // Two or more ranges (`\w`, which `\b` reads twice) are one test of their mask.
         if ranges.len() > 1 {
             let mut mask = [0u64; MASK_WORDS];
@@ -105,15 +95,15 @@ impl MatchStage for Emit<'_, '_> {
     }
 
     /// The complement of a comparison is the opposite comparison, which a branch fuses with.
-    fn not(&mut self, flag: ir::Value) -> ir::Value {
-        self.complement(flag).unwrap_or_else(|| self.b.raw_binary_imm(Binary::Xor, flag, 1))
+    fn not(&mut self, flag: M::Word) -> M::Word {
+        self.b.compare_complement(flag).unwrap_or_else(|| self.b.raw_binary_imm(Binary::Xor, flag, 1))
     }
 
-    fn differ(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+    fn differ(&mut self, left: M::Word, right: M::Word) -> M::Word {
         self.compare(Relation::NotEqual, left, right)
     }
 
-    fn guarded(&mut self, condition: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+    fn guarded(&mut self, condition: M::Word, then: impl FnOnce(&mut Self) -> M::Word) -> M::Word {
         let (run, done) = (self.b.new_block(), self.b.new_block());
         let outcome = self.b.block_parameter(done, Lane::I8);
         let none = self.b.raw_const(Lane::I8, 0);
@@ -125,7 +115,7 @@ impl MatchStage for Emit<'_, '_> {
         outcome
     }
 
-    fn or_else(&mut self, first: ir::Value, otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+    fn or_else(&mut self, first: M::Word, otherwise: impl FnOnce(&mut Self) -> M::Word) -> M::Word {
         let (probe, done) = (self.b.new_block(), self.b.new_block());
         let outcome = self.b.block_parameter(done, Lane::I8);
         self.b.branch_if(first, (done, &[first]), (probe, &[]));

@@ -101,13 +101,13 @@ mod tests {
 
     #[test]
     fn attribution_counts_aliases_once_and_does_not_cross_section_gaps() {
-        let names = "00000067 T quench_node::first\n000000c8 t quench_runtime::second\n\
-            000000d2 T quench_node::alias\n000000d2 W other::alias\n\
-            000000d2 T quench_node::alias_again\n0000012c D data::value\n U imported";
+        let names = "00000067 T quench::first\n000000c8 t quench_runtime::second\n\
+            000000d2 T quench::alias\n000000d2 W other::alias\n\
+            000000d2 T quench::alias_again\n0000012c D data::value\n U imported";
         let report = spans(&[(100, 10), (200, 20)], &symbols(names)).unwrap();
         assert_eq!(report.code_bytes, 30);
         assert_eq!(report.code_spans_by_symbol_root, BTreeMap::from([
-            ("unattributed".into(), 3), ("symbol_root:quench_node".into(), 7),
+            ("unattributed".into(), 3), ("symbol_root:quench".into(), 7),
             ("symbol_root:quench_runtime".into(), 10), ("shared_symbol_address".into(), 10),
         ]));
         assert_eq!(report.code_spans_by_symbol_root.values().sum::<u64>(), report.code_bytes);
@@ -115,8 +115,8 @@ mod tests {
 
     #[test]
     fn generic_type_arguments_do_not_reassign_the_outer_symbol_root() {
-        assert!(owner("<quench_runtime::vm::Vm<quench_node::NodeHost>>::call") == Owner::SymbolRoot("quench_runtime"));
-        assert!(owner("core::ptr::drop_in_place<quench_node::Host>") == Owner::SymbolRoot("core"));
+        assert!(owner("<quench_runtime::vm::Vm<quench::NodeHost>>::call") == Owner::SymbolRoot("quench_runtime"));
+        assert!(owner("core::ptr::drop_in_place<quench::Host>") == Owner::SymbolRoot("core"));
         assert!(owner("_quench_js_op_Call") == Owner::SemanticAbi);
         assert!(owner("_main") == Owner::NativeOrUnclassified);
         let empty = spans(&[(10, 5)], &[]).unwrap();

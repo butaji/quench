@@ -1,7 +1,7 @@
 use super::*;
 use quench_bjit::call_record as protocol;
 
-const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, method: None };
+const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, method: None, op: crate::bytecode::Op::Call };
 
 fn facts(registers: u16, params: u16) -> DirectFacts {
     let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
@@ -102,8 +102,10 @@ fn a_sloppy_callee_takes_the_sloppy_row_with_its_global() {
     let sloppy = DirectFacts { global_this: Some(0xabc), ..facts(4, 2) };
     let chain = plan_call(&plan(Some(&sloppy), &[], &[])).expect("a plan");
     assert_eq!(chain.records.into_iter().next().expect("a record").global_this, 0xabc);
-    let name = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }.name().expect("a row");
-    assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }).expect(&name)));
+    let row = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true, pinned: false };
+    let name = row.name().expect("a row");
+    assert_eq!(name, "call_direct_a2_sloppy_window", "every argument is in the window");
+    assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(row).expect(&name)));
 }
 
 /// A pinned argument dead after the call is read from its pin by the direct row (its place in the record), and its
@@ -128,10 +130,6 @@ fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_on_refusal_only() {
 fn call_protocol_matches_the_runtime() {
     use super::super::super as compiled;
     use compiled::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED};
-    #[allow(dead_code)]
-    mod stencil_layout {
-        include!("../../../../../../quench-bjit/stencils/layout.rs");
-    }
     use stencil_layout as mirror;
     assert_eq!(
         [compiled::LANE_CALL_COMPLETED, compiled::LANE_CALL_MISSED, compiled::LANE_CALL_LEFT, compiled::LANE_CALL_TERMINATED, compiled::LANE_CALL_BRANCHED, compiled::LaneExit::Callee.word()],
@@ -178,3 +176,8 @@ fn a_method_site_reads_its_callee_before_the_direct_row() {
     assert_eq!(chain.parts[2].taken, Some(4), "the direct row completes past the helper row");
     assert_eq!(chain.records.first().map(|record| record.callee_register), Some(7), "the direct row checks the scratch register");
 }
+
+/// The stencils' layout numbers, mounted as the stencil crate mounts them (`call_protocol_matches_the_runtime`).
+#[allow(dead_code)]
+#[path = "../../../../../../quench-bjit/stencils/layout.rs"]
+mod stencil_layout;

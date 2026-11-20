@@ -5,9 +5,9 @@
 //! allocates in place, a specializer calls out to an allocator that leaves for a due
 //! collection first.
 
-use crate::bytecode::{Register, RegisterList, RegisterWindow};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::{Register, RegisterList, RegisterWindow};
 
 /// What an allocation row makes. Every operand is static: the registers it reads are named by
 /// a window, never passed as words, so each tier reads them from its own register homes.

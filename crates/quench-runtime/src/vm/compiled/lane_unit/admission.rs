@@ -3,11 +3,32 @@
 use super::*;
 use crate::bytecode::Traits;
 
-/// Whether the lane-body lowering runs `instruction` of an inlined callee: a capture of its
-/// own environment only, no fusion but a returning one, which splits into the
-/// computation and the return (`osr_loop::inlined_returning`). A call is the plan's to admit:
-/// only one it inlines in turn.
-pub(super) fn inlinable(instruction: WideInstruction) -> bool {
+/// The tier that asks whether an inlined callee's instruction may be inlined. The two answer
+/// differently, by design: a loop region takes an instruction by its opcode's `INLINABLE` trait
+/// alone (its own admission checks the operands), while the lane body also reads the instruction's
+/// result flags and the decoded row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::vm::compiled) enum InlineScope {
+    /// An OSR loop region's inlined callee (`osr_loop::inlining`).
+    Loop,
+    /// A lane body's inlined callee (`lane_unit::Planner::inline_body`).
+    Lane,
+}
+
+/// Whether `instruction` of an inlined callee may be inlined by `scope`. A loop region takes the
+/// opcode's `INLINABLE` trait; the lane runs `instruction` where it is a capture of its own
+/// environment only, no fusion but a returning one, which splits into the computation and the
+/// return (`osr_loop::inlined_returning`). A lane call is the plan's to admit: only one it inlines
+/// in turn.
+pub(in crate::vm::compiled) fn inlinable(instruction: WideInstruction, scope: InlineScope) -> bool {
+    match scope {
+        InlineScope::Loop => instruction.op().traits().has(Traits::INLINABLE),
+        InlineScope::Lane => lane_inlinable(instruction),
+    }
+}
+
+/// Whether the lane body runs `instruction` of an inlined callee (`inlinable`, `InlineScope::Lane`).
+fn lane_inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0 || super::super::osr_loop::inlined_returning(instruction);
     inlinable_pure(instruction, plain).unwrap_or_else(|| match () {
         // Operations native code leaves at, exactly, through the inlined frame's recovery: a
@@ -46,7 +67,7 @@ fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
 /// The shared lowering performs only guarded, non-guest operations for an inlinable pure
 /// leaf. A miss may restart that call without replaying effects.
 pub(super) fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
-    if super::super::lane_region::restartable_numeric_function(program, function, code) { return true; }
+    if super::super::lane_region::restartable_numeric_function(program, function, code.iter().copied()) { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match () {
         _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => false,
         _ if super::super::meaning_compiled::is_call(*instruction) => false,

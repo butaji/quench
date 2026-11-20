@@ -69,7 +69,7 @@ pub(crate) unsafe fn call_indirect(mut s: S) -> Out {
         let words = *array.add(table);
         let mut stage = TableStage { base: (*words).base, length: (*words).length };
         let row = match indirect_target_word(&mut stage, index, expected, u64::from(NULL_SIGNATURE)) {
-            Ok(row) => row as usize,
+            Ok((_, row)) => row as usize,
             Err(Leave::Trap(error)) => return trap(s, error),
             // A related or uninitialized element, or a target the rule defers: the VM's callout.
             Err(_) => return slow(s, (table, index), (high(h2), low(h3)), (window, destination)),

@@ -8839,7 +8839,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                         .map(|value| vm.heap.weak_handle(value).unwrap());
                     let roots = vm.heap.root_count_for_test();
                     let calls = vm.active_call_roots.len();
-                    let active_native = vm.realm.promise.active_native.len();
+                    let active_native = vm.host_frame_count();
                     let realm = vm.realm.globals;
                     let revoke_root = vm.heap.root(revoke);
                     let owner_root = match owner {
@@ -8877,7 +8877,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                         };
                         assert_eq!(result.unwrap(), Value::UNDEFINED);
                         assert_eq!(vm.active_call_roots.len(), calls);
-                        assert_eq!(vm.realm.promise.active_native.len(), active_native);
+                        assert_eq!(vm.host_frame_count(), active_native);
                         assert_eq!(vm.realm.globals, realm);
                     }
                     assert_eq!(vm.is_function(proxy), callable, "{kind} {owner} {entry}");
@@ -11542,7 +11542,7 @@ fn native_dispatch_roots_raw_inputs_through_receiver_normalization_and_calls() {
                             .collect::<Vec<_>>();
                         let roots = vm.heap.root_count_for_test();
                         let calls = vm.active_call_roots.len();
-                        let active_native = vm.realm.promise.active_native.len();
+                        let active_native = vm.host_frame_count();
                         let callee = (entry == "guarded").then(|| {
                             let function = vm.native_with_env(native, Value::UNDEFINED);
                             (function, vm.heap.weak_handle(function).unwrap())
@@ -11557,7 +11557,7 @@ fn native_dispatch_roots_raw_inputs_through_receiver_normalization_and_calls() {
                             ),
                             None => vm.call_native(&program, native, values[0], &values[1..]),
                         };
-                        assert_eq!(vm.realm.promise.active_native.len(), active_native);
+                        assert_eq!(vm.host_frame_count(), active_native);
                         if let Some((function, handle)) = callee {
                             assert_eq!(vm.heap.weak_value(handle), Some(function));
                         }

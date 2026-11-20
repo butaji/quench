@@ -23,7 +23,7 @@ impl Activation {
     }
 }
 
-impl Frame {
+impl ActivationView {
     /// The dynamic bindings its record holds (implicit ones, a direct eval's), which the
     /// environment its window makes for its first closure takes over, as a frame's promotion
     /// takes its own (`Vm::promote_frame_environment`); none once taken, or for an activation
@@ -488,7 +488,7 @@ pub(super) fn suspend_generator_in_lane<H: Host>(
 /// step's final result.
 pub(super) fn generator_returned_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
-    frame: &Frame,
+    frame: &ActivationView,
     memory: MemoryView,
     value: Value,
 ) -> Resumed {
@@ -503,7 +503,7 @@ pub(super) fn generator_returned_in_lane<H: Host>(
 /// on past them (`Completion::StepReads`), as `iterator_step_reads_miss` makes an array's step;
 /// any other caller takes the step's result object after its call, in the call's register, or,
 /// for a delegate's step, at the `yield*` itself in its state register.
-fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, frame: &Frame, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {
+fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, frame: &ActivationView, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {
     let completion = frame.completion();
     let (call, caller) = (frame.call(), frame.caller_registers());
     if let (Some(Completion::StepReads(form)), None) = (completion, passed_on) {

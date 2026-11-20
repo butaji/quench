@@ -14,6 +14,8 @@ pub(in crate::vm) type MethodWays = [MethodCache; METHOD_CACHE_WAYS];
 const EMPTY_WAYS: MethodWays = [EMPTY_METHOD_CACHE; METHOD_CACHE_WAYS];
 /// A site that recorded nothing.
 const NO_SLOT: u32 = u32::MAX;
+/// A slot whose site has no megamorphic set.
+const NO_SET: u32 = u32::MAX;
 
 #[derive(Default)]
 pub(in crate::vm) struct MethodCacheTable {
@@ -21,6 +23,9 @@ pub(in crate::vm) struct MethodCacheTable {
     entries: Vec<MethodWays>,
     /// The site of each entry of `entries`; `NO_SLOT` for one in `free`.
     entry_sites: Vec<u32>,
+    /// The index of the megamorphic set that took over each entry's site (`NO_SET` while the
+    /// site is inline), so a call finds its set without scanning the sets of every site.
+    entry_sets: Vec<u32>,
     /// Indices into `entries` a reclaimed program's sites left, empty, for the next record.
     free: Vec<u32>,
 }
@@ -59,6 +64,7 @@ impl MethodCacheTable {
                 None => {
                     self.entries.push(EMPTY_WAYS);
                     self.entry_sites.push(NO_SLOT);
+                    self.entry_sets.push(NO_SET);
                     (self.entries.len() - 1) as u32
                 }
             };
@@ -66,6 +72,30 @@ impl MethodCacheTable {
             self.entry_sites[slot as usize] = site as u32;
         }
         &mut self.entries[slot as usize]
+    }
+
+    /// The index of the megamorphic set that took over `site`, when one did.
+    ///
+    /// Sound because a site's slot holds at most one set index, and the index is written only
+    /// by `set_megamorphic_index`, which the VM keeps in step with its set list, so a reader
+    /// sees the index of the set made for this site, or none.
+    #[inline(always)]
+    pub(in crate::vm) fn megamorphic_index(&self, site: usize) -> Option<usize> {
+        let slot = if site < self.len() { self.slots.get(site) } else { NO_SLOT };
+        (slot != NO_SLOT)
+            .then(|| self.entry_sets[slot as usize])
+            .filter(|index| *index != NO_SET)
+            .map(|index| index as usize)
+    }
+
+    /// Records (or, with `None`, forgets) the megamorphic set of `site`, which must have
+    /// recorded a cache. Sound as `megamorphic_index`: the VM calls this whenever it creates a
+    /// set or renumbers the kept sets, so the index always names the set at that position.
+    pub(in crate::vm) fn set_megamorphic_index(&mut self, site: usize, index: Option<usize>) {
+        let slot = self.slots.get(site);
+        if slot != NO_SLOT {
+            self.entry_sets[slot as usize] = index.map_or(NO_SET, |index| index as u32);
+        }
     }
 
     /// The ways of `site`, when it recorded a cache, mutably.
@@ -106,6 +136,7 @@ impl MethodCacheTable {
         self.slots.reset();
         self.entries.clear();
         self.entry_sites.clear();
+        self.entry_sets.clear();
         self.free.clear();
     }
 
@@ -118,6 +149,7 @@ impl MethodCacheTable {
             if slot != NO_SLOT {
                 self.entries[slot as usize] = EMPTY_WAYS;
                 self.entry_sites[slot as usize] = NO_SLOT;
+                self.entry_sets[slot as usize] = NO_SET;
                 self.free.push(slot);
             }
         }
@@ -129,6 +161,7 @@ impl MethodCacheTable {
         self.slots.clear();
         self.entries.clear();
         self.entry_sites.clear();
+        self.entry_sets.clear();
         self.free.clear();
     }
 
@@ -136,7 +169,8 @@ impl MethodCacheTable {
     pub(in crate::vm) fn capacity_bytes(&self) -> usize {
         self.slots.capacity_bytes()
             + self.entries.capacity() * size_of::<MethodWays>()
-            + (self.free.capacity() + self.entry_sites.capacity()) * size_of::<u32>()
+            + (self.free.capacity() + self.entry_sites.capacity() + self.entry_sets.capacity())
+                * size_of::<u32>()
     }
 
     /// Appends one site holding `ways`.

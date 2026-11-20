@@ -697,10 +697,9 @@ impl<H: Host> Vm<H> {
         freeze: bool,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if matches!(
-            self.heap.get(source),
-            Some(Cell::Proxy { .. } | Cell::TypedArray { .. } | Cell::WasmGc { .. })
-        ) || self
+        if matches!(self.heap.get(source), Some(Cell::Proxy { .. } | Cell::TypedArray { .. }))
+            || self.heap.wasm_gc(source).is_some()
+            || self
             .object_data(source)
             .is_some_and(Object::is_module_namespace)
             || self.has_lazy_data_properties(source)

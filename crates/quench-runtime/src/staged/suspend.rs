@@ -145,5 +145,5 @@ fn yield_value<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, (destina
 #[inline(always)]
 pub(crate) fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awaited: S::Word) -> Option<S::Word> {
     let object = frame.object_test(stage, awaited)?;
-    stage.choose_leaving(object, |stage| frame.promise_resolve(stage, awaited), |_| Some(awaited))
+    stage.choose_leaving(object, #[inline(always)] |stage| frame.promise_resolve(stage, awaited), |_| Some(awaited))
 }

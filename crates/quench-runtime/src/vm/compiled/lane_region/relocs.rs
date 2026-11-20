@@ -27,9 +27,6 @@ pub(in crate::vm) enum RelocKind {
     HeapValue,
     /// The shape numbered `key` of the image's recipes, interned in the VM that loads the code.
     Shape,
-    /// The process's one table of helper addresses (`native_js_lane_helpers`): an image reads a
-    /// helper's address from it, so the executable exports one symbol however many helpers exist.
-    HelperTable,
 }
 
 /// The address in this process of the symbol `(namespace, key)` a numeric image names, which is
@@ -52,12 +49,6 @@ pub(in crate::vm::compiled) fn atom_key(namespace: u32, key: u32) -> Option<u32>
 /// The symbol of the atom numbered `atom`, which an ahead image's loader resolves to that atom in its VM.
 pub(in crate::vm::compiled) fn atom_symbol(builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
     crate::vm::jit_backend::symbol_address(builder, RelocKind::Atom as u32, atom)
-}
-
-/// The helper table's symbol: an ahead image loads each helper's address from it, so the linked
-/// executable defines one symbol (`NATIVE_JS_LANE_HELPERS_SYMBOL`) rather than one per helper.
-pub(in crate::vm::compiled) fn helper_table_symbol(builder: &mut FunctionBuilder<'_>) -> ir::Value {
-    crate::vm::jit_backend::symbol_address(builder, RelocKind::HelperTable as u32, 0)
 }
 
 /// The address of `helper` as the symbol a frameless Number region's loader resolves.

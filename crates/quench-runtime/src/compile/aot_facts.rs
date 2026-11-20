@@ -38,6 +38,8 @@ use scope::Scope;
 pub(crate) struct AotFacts {
     /// `(function, pc)` of a plain call → the function it always calls.
     pub(crate) call_targets: BTreeMap<(u32, u32), u32>,
+    /// `(function, pc)` of a construction (`new`) → the function it always constructs.
+    pub(crate) construct_targets: BTreeMap<(u32, u32), u32>,
     /// Function id of a constructor → the fields its `new` stores on the object, in order (atom numbers).
     pub(crate) constructor_shapes: BTreeMap<u32, Box<[u32]>>,
     /// Function id → register → the Number representation it always holds.
@@ -46,7 +48,7 @@ pub(crate) struct AotFacts {
 
 impl AotFacts {
     pub(crate) fn is_empty(&self) -> bool {
-        self.call_targets.is_empty() && self.constructor_shapes.is_empty() && self.numbers.is_empty()
+        self.call_targets.is_empty() && self.construct_targets.is_empty() && self.constructor_shapes.is_empty() && self.numbers.is_empty()
     }
 
     /// The facts of function `function`, for its lowering.
@@ -61,19 +63,24 @@ pub(crate) struct FunctionFacts<'a> {
     function: u32,
 }
 
-impl FunctionFacts<'_> {
+impl<'a> FunctionFacts<'a> {
     /// The function the plain call at `pc` always calls.
     pub(crate) fn call_target(&self, pc: u32) -> Option<u32> {
         self.facts.call_targets.get(&(self.function, pc)).copied()
     }
 
+    /// The function the construction (`new`) at `pc` always constructs.
+    pub(crate) fn construct_target(&self, pc: u32) -> Option<u32> {
+        self.facts.construct_targets.get(&(self.function, pc)).copied()
+    }
+
     /// Per register, the Number representation it always holds.
-    pub(crate) fn numbers(&self) -> Option<&[Option<Representation>]> {
+    pub(crate) fn numbers(&self) -> Option<&'a [Option<Representation>]> {
         self.facts.numbers.get(&self.function).map(|numbers| &**numbers)
     }
 
     /// The fields a `new` of this function stores on its object, in order (atom numbers).
-    pub(crate) fn constructor_shape(&self) -> Option<&[u32]> {
+    pub(crate) fn constructor_shape(&self) -> Option<&'a [u32]> {
         self.facts.constructor_shapes.get(&self.function).map(|fields| &**fields)
     }
 }
@@ -96,6 +103,7 @@ pub(crate) fn analyze(program: &ResidualProgram) -> AotFacts {
             let Some(target) = census.target(call.callee) else { continue };
             if call.construct {
                 constructed.insert(target);
+                facts.construct_targets.insert((id, call.pc), target);
             } else {
                 facts.call_targets.insert((id, call.pc), target);
             }

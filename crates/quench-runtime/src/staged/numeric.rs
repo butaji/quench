@@ -3,7 +3,7 @@
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
 #[cfg(not(stencil_build))]
-use oxc_ast::ast::BinaryOperator;
+use crate::vm::operations::binary_operator;
 use crate::vm::operations::{
     int32_bitwise_bits, CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberBitwise, NumberF64Stage,
     NumberRelation, NumberUnary, PartialOrderStage,
@@ -170,7 +170,7 @@ pub(crate) enum NumberOperation {
     /// `Math.max` (`maximum`) or `Math.min` of two Numbers, a double: `staged::math::float_extreme`.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Extreme { destination: Register, left: Operand, right: Operand, maximum: bool },
-    /// `Math.imul` of two int32s: `staged::math::int_multiply`. Any other value leaves.
+    /// `Math.imul` of two int32s: `staged::math::multiply`, the wrapping product. Any other value leaves.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Imul { destination: Register, left: Operand, right: Operand },
     /// The case slot of a `switch` over the dense int labels `minimum..=maximum` (`count` slots, the
@@ -205,32 +205,64 @@ fn constant_int32(_number: f64) -> i32 { 0 }
 #[inline(always)]
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: NumberOperation) -> Step<S::Word, F::Control> {
+    step_of::<{ kind::ANY }, S, F>(stage, frame, operation)
+}
+
+/// The `NumberOperation` variants as numbers, for `step_of`'s compile-time choice of arm: `ANY` runs every arm.
+pub(crate) mod kind {
+    pub(crate) const ANY: u8 = 0;
+    pub(crate) const ARITHMETIC: u8 = 1;
+    pub(crate) const RELATION: u8 = 2;
+    pub(crate) const RELATION_VALUE: u8 = 3;
+    pub(crate) const BITWISE: u8 = 4;
+    pub(crate) const REMAINDER: u8 = 5;
+    pub(crate) const INC_DEC: u8 = 6;
+    pub(crate) const BITWISE_NOT: u8 = 7;
+    pub(crate) const TO_NUMERIC: u8 = 8;
+    pub(crate) const UNARY: u8 = 9;
+    pub(crate) const MATH: u8 = 10;
+    pub(crate) const EXTREME: u8 = 11;
+    pub(crate) const IMUL: u8 = 12;
+    pub(crate) const INT_CASE: u8 = 13;
+}
+
+/// `step` where the caller knows the operation's variant `KIND` (`kind`) at compile time: every other arm is
+/// unresolved in a `const` test, which rustc drops before code generation, so a stencil row instantiates only its
+/// own arm. `kind::ANY` is `step`.
+#[inline(always)]
+pub(crate) fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: NumberOperation) -> Step<S::Word, F::Control> {
     #[cfg(not(stencil_build))]
     let general = if frame.general_operators() { general_binary(&operation) } else { None };
     #[cfg(stencil_build)]
     let general: Option<(super::CallOut, Option<Register>)> = None;
     let step = match operation {
         NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero } =>
-            arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)),
+            if const { KIND == kind::ANY || KIND == kind::ARITHMETIC } { arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)) } else { Step::Unresolved },
         NumberOperation::Relation { left, right, relation, domain } =>
-            self::relation(stage, frame, left, right, relation, domain),
+            if const { KIND == kind::ANY || KIND == kind::RELATION } { self::relation(stage, frame, left, right, relation, domain) } else { Step::Unresolved },
         NumberOperation::RelationValue { destination, left, right, relation, domain } =>
-            relation_value(stage, frame, destination, left, right, relation, domain),
+            if const { KIND == kind::ANY || KIND == kind::RELATION_VALUE } { relation_value(stage, frame, destination, left, right, relation, domain) } else { Step::Unresolved },
         NumberOperation::Bitwise { destination, left, right, operation } =>
-            bitwise_value(stage, frame, destination, left, right, operation),
+            if const { KIND == kind::ANY || KIND == kind::BITWISE } { bitwise_value(stage, frame, destination, left, right, operation) } else { Step::Unresolved },
         NumberOperation::Remainder { destination, left, right, domain, zero, divisor_nonzero } =>
-            remainder(stage, frame, destination, left, right, domain, (zero, divisor_nonzero)),
+            if const { KIND == kind::ANY || KIND == kind::REMAINDER } { remainder(stage, frame, destination, left, right, domain, (zero, divisor_nonzero)) } else { Step::Unresolved },
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
-            increment(stage, frame, destination, source, decrement, overflow),
-        NumberOperation::BitwiseNot { destination, source } => bitwise_not(stage, frame, destination, source),
-        NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
+            if const { KIND == kind::ANY || KIND == kind::INC_DEC } { increment(stage, frame, destination, source, decrement, overflow) } else { Step::Unresolved },
+        NumberOperation::BitwiseNot { destination, source } =>
+            if const { KIND == kind::ANY || KIND == kind::BITWISE_NOT } { bitwise_not(stage, frame, destination, source) } else { Step::Unresolved },
+        NumberOperation::ToNumeric { destination, source } =>
+            if const { KIND == kind::ANY || KIND == kind::TO_NUMERIC } { to_numeric(stage, frame, destination, source) } else { Step::Unresolved },
         NumberOperation::Unary { destination, source, operation, domain } =>
-            unary(stage, frame, destination, source, operation, domain),
-        NumberOperation::Math { destination, source, operation } => math(stage, frame, destination, source, operation),
-        NumberOperation::Extreme { destination, left, right, maximum } => extreme(stage, frame, destination, (left, right), maximum),
-        NumberOperation::Imul { destination, left, right } => imul(stage, frame, destination, left, right),
+            if const { KIND == kind::ANY || KIND == kind::UNARY } { unary(stage, frame, destination, source, operation, domain) } else { Step::Unresolved },
+        NumberOperation::Math { destination, source, operation } =>
+            if const { KIND == kind::ANY || KIND == kind::MATH } { math(stage, frame, destination, source, operation) } else { Step::Unresolved },
+        NumberOperation::Extreme { destination, left, right, maximum } =>
+            if const { KIND == kind::ANY || KIND == kind::EXTREME } { extreme(stage, frame, destination, (left, right), maximum) } else { Step::Unresolved },
+        NumberOperation::Imul { destination, left, right } =>
+            if const { KIND == kind::ANY || KIND == kind::IMUL } { imul(stage, frame, destination, left, right) } else { Step::Unresolved },
         NumberOperation::IntCase { destination, source, minimum, maximum, count } =>
-            int_case(stage, frame, destination, source, (minimum, maximum), count),
+            if const { KIND == kind::ANY || KIND == kind::INT_CASE } { int_case(stage, frame, destination, source, (minimum, maximum), count) } else { Step::Unresolved },
     };
     match (general, step) {
         (Some((call, destination)), Step::Unresolved) => super::callout::calling(stage, frame, call, destination),
@@ -246,7 +278,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 fn general_binary(operation: &NumberOperation) -> Option<(super::CallOut, Option<Register>)> {
     let (destination, left, right, operator) = match *operation {
         NumberOperation::Arithmetic { destination, left, right, operation, .. } => (destination, left, right, operation.binary_operator()),
-        NumberOperation::Remainder { destination, left, right, .. } => (destination, left, right, BinaryOperator::Remainder as u32),
+        NumberOperation::Remainder { destination, left, right, .. } => (destination, left, right, binary_operator::Remainder),
         NumberOperation::Bitwise { destination, left, right, operation } => (destination, left, right, operation.binary_operator()),
         NumberOperation::RelationValue { destination, left, right, relation, .. }
             if !matches!(relation, NumberRelation::Equal | NumberRelation::NotEqual) =>
@@ -316,18 +348,21 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     let (offset, _) = stage.int_arithmetic(NumberArithmetic::Subtract, value, low);
     let fallback = stage.i32_constant(i32::from(count));
     let slot = stage.select(inside, offset, fallback);
+    // The int's word as the frame holds an int (`int_result`: the interpreter's tagged int), as `typeof_index` defines its.
+    let slot = frame.int_result(stage, slot);
     let fact = frame.int_fact();
     frame.write(stage, destination, slot, fact);
     Step::Value(slot)
 }
 
-/// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
+/// `Math.imul` of two int32s: their wrapping product, `math::multiply`; any other operand leaves.
 #[inline(always)]
 fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
 ) -> Step<S::Word, F::Control> {
     let Some((left, right)) = operands(stage, frame, left, right, Domain::Int32) else { return Step::Unresolved };
     let result = super::math::multiply(stage, left, right);
+    let result = frame.int_result(stage, result);
     let fact = frame.int_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)
@@ -383,8 +418,8 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 #[cfg(not(stencil_build))]
 fn unary_operator(operation: NumberUnary) -> u32 {
     match operation {
-        NumberUnary::Plus => oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
-        NumberUnary::Negate => oxc_ast::ast::UnaryOperator::UnaryNegation as u32,
+        NumberUnary::Plus => crate::vm::operations::unary_operator::UnaryPlus,
+        NumberUnary::Negate => crate::vm::operations::unary_operator::UnaryNegation,
     }
 }
 
@@ -395,11 +430,6 @@ fn unary_operator(_operation: NumberUnary) -> u32 {
     u32::MAX
 }
 
-/// The oxc `~` operator, which the VM's `unary` takes (`CallOut::Unary`); as `unary_operator` in the stencil build.
-#[cfg(not(stencil_build))]
-const BITWISE_NOT_OPERATOR: u32 = oxc_ast::ast::UnaryOperator::BitwiseNot as u32;
-#[cfg(stencil_build)]
-const BITWISE_NOT_OPERATOR: u32 = u32::MAX;
 
 /// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
 /// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
@@ -419,7 +449,7 @@ fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
     destination: Register, source: Operand) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let Some(value) = frame.int_operand(stage, source, miss) else {
-        return general_unary(stage, frame, BITWISE_NOT_OPERATOR, (destination, source));
+        return general_unary(stage, frame, crate::vm::operations::unary_operator::BitwiseNot, (destination, source));
     };
     let all_ones = stage.i32_constant(-1);
     int_arithmetic_result(stage, frame, destination, all_ones, value,
@@ -529,7 +559,7 @@ pub(crate) fn binary_operation(operator: u32, destination: Register, left: Opera
         return Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Float64,
             overflow: Overflow::Widen, zero: NegativeZero::Ignore });
     }
-    if operator == BinaryOperator::Remainder as u32 {
+    if operator == binary_operator::Remainder {
         return Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Float64,
             zero: NegativeZero::Exit, divisor_nonzero: false });
     }
@@ -550,7 +580,7 @@ pub(crate) fn int32_binary_operation(operator: u32, destination: Register, left:
         Some(NumberArithmetic::Divide) => None,
         Some(operation) => Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Int32,
             overflow: Overflow::Exit, zero: NegativeZero::Exit }),
-        None if operator == BinaryOperator::Remainder as u32 =>
+        None if operator == binary_operator::Remainder =>
             Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Int32,
                 zero: NegativeZero::Exit, divisor_nonzero: false }),
         None => None,
@@ -585,10 +615,10 @@ fn relation_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     let Some(tests) = both_tests(stage, [left_test, right_test]) else {
         return Some(stage.relation(relation, Domain::Int32, left_int, right_int));
     };
-    let word = stage.choose_leaving(tests, |stage| {
+    let word = stage.choose_leaving(tests, #[inline(always)] |stage| {
         let holds = stage.relation(relation, Domain::Int32, left_int, right_int);
         Some(stage.cond_word(holds))
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let holds = relation_float(stage, frame, (left, right), relation)?;
         Some(stage.cond_word(holds))
     })?;
@@ -647,13 +677,13 @@ fn number_arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
     };
     let packed = match both_tests(stage, [left_test, right_test]) {
         Some(tests) => stage.choose(tests,
-            |stage| int_fast_result(stage, operation, left_int, right_int),
-            |stage| stage.constant(NOT_INT32)),
+            #[inline(always)] |stage| int_fast_result(stage, operation, left_int, right_int),
+            #[inline(always)] |stage| stage.constant(NOT_INT32)),
         None => int_fast_result(stage, operation, left_int, right_int),
     };
     let taken = stage.ne_imm(packed, NOT_INT32);
     let boxed_int = frame.int_result(stage, packed);
-    let boxed = stage.choose_leaving(taken, |_| Some(boxed_int), |stage| {
+    let boxed = stage.choose_leaving(taken, |_| Some(boxed_int), #[inline(always)] |stage| {
         let number = float_operation(stage, frame, (left, right), operation)?;
         Some(stage.box_number(number))
     })?;
@@ -755,10 +785,10 @@ fn remainder_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
     for test in [left_test, right_test].into_iter().flatten() {
         fast = stage.both(fast, test);
     }
-    stage.choose_leaving(fast, |stage| {
+    stage.choose_leaving(fast, #[inline(always)] |stage| {
         let remainder = stage.int_remainder(left_int, right_int);
         Some(stage.i32_to_f64(remainder))
-    }, |stage| remainder_float(stage, frame, left, right))
+    }, #[inline(always)] |stage| remainder_float(stage, frame, left, right))
 }
 
 /// `left % right` of two binary64 operands (`float_word`), the general remainder.
@@ -878,11 +908,11 @@ fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
             }
             None => {}
         }
-        let number = stage.choose(widen, |stage| {
+        let number = stage.choose(widen, #[inline(always)] |stage| {
             let left = stage.i32_to_f64(left_value);
             let right = stage.i32_to_f64(right_value);
             stage.float_arithmetic(operation, left, right)
-        }, |stage| stage.i32_to_f64(result));
+        }, #[inline(always)] |stage| stage.i32_to_f64(result));
         let fact = frame.number_fact();
         frame.write(stage, destination, number, fact);
         return Step::Value(number);

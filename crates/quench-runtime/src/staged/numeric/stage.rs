@@ -12,6 +12,8 @@ pub(crate) trait NumericStage: Stage {
         left: Self::Word, right: Self::Word) -> Self::Word;
     /// The binary64 negation of `value`: `-0` stays negative and NaN stays NaN.
     fn float_negate(&mut self, value: Self::Word) -> Self::Word;
+    /// IEEE equality of two binary64 words: `-0` equals `+0`, and NaN equals nothing.
+    fn float_eq(&mut self, left: Self::Word, right: Self::Word) -> Self::Cond;
     /// `operation` of two int32 words: the wrapped result and whether it overflowed.
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: Self::Word, right: Self::Word) -> (Self::Word, Self::Cond);
@@ -26,6 +28,13 @@ pub(crate) trait NumericStage: Stage {
     fn int_remainder(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
     /// `operation` of a binary64 word (`staged::math::float_unary`).
     fn float_unary(&mut self, operation: super::super::math::FloatUnary, value: Self::Word) -> Self::Word;
+    /// `float_unary` of a machine primitive (`Floor`, `Ceil`, `Trunc`, `Abs`, `Sqrt`, `Fround`): what the
+    /// composite bodies (`math::round`, `math::sign`) build on, so the interpreter's instantiation of
+    /// them calls no composite again and inlines whole (a stencil holds no call).
+    #[inline(always)]
+    fn float_primitive(&mut self, operation: super::super::math::FloatUnary, value: Self::Word) -> Self::Word {
+        self.float_unary(operation, value)
+    }
     /// `Math.max` (`maximum`) or `Math.min` of two binary64 words (`staged::math::float_extreme`).
     fn float_extreme(&mut self, maximum: bool, left: Self::Word, right: Self::Word) -> Self::Word;
     /// The wrapping product of two int32 words (`Math.imul`; `staged::math::int_multiply`).

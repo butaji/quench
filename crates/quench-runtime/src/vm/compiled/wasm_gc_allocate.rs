@@ -23,7 +23,7 @@ use crate::staged::wasm_gc::{ArrayConstruction, GcStep};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::gc::ArraySegmentInput;
 use cranelift_codegen::ir::{self, MemFlagsData};
-use quench_bjit::wasm::FRAME_HEADER_WORDS;
+use crate::staged::frame::WASM_HEADER_WORDS;
 
 /// The bytes of one word of an operand block or a result.
 const WORD: usize = size_of::<u64>();
@@ -105,11 +105,11 @@ unsafe extern "C" fn gc_allocate<H: Host>(
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let (program, env) = unsafe { ((*context).program, (*context).env) };
+    let (program, env) = unsafe { ((*context).head.program, (*context).head.env) };
     let instruction = unpack(packed, imm);
     let count = count as usize;
     // SAFETY: the emitted code spilled `count` registers, kinds and words, then `out`.
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
     let values: Vec<(u16, Value)> = (0..count)
         .map(|index| unsafe {
             let (register, kind, bits) = (*operands.add(index), *operands.add(count + index), *operands.add(2 * count + index));
@@ -151,7 +151,7 @@ pub(super) fn allocating_bits<H: Host>(
 /// `gc_allocate`): the operands are the frame's words, not spilled ones. `descriptor` names each
 /// operand as a word of `register | kind << 16` (the kinds are `Kind as u64`), `count` of them, and
 /// `meta` holds the immediate in its low 32 bits. The frame's registers are at the frame header's
-/// offset (`FRAME_HEADER_WORDS`), as the stitcher places them.
+/// offset (`WASM_HEADER_WORDS`), as the stitcher places them.
 ///
 /// # Safety
 /// `context` is the live context of the row's call, `frame` the stitched frame whose registers
@@ -165,16 +165,16 @@ pub(super) unsafe extern "C" fn allocate_frame<H: Host>(
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let (program, env) = unsafe { ((*context).program, (*context).env) };
+    let (program, env) = unsafe { ((*context).head.program, (*context).head.env) };
     let instruction = unpack(packed, meta & u64::from(u32::MAX));
     let count = ((meta >> 32) & 0xff) as usize;
     // SAFETY: as above; the VM outlives the call.
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
     let operands: Vec<(u16, Value)> = (0..count)
         .map(|index| unsafe {
             let entry = *descriptor.add(index);
             let register = entry as u16;
-            let bits = *frame.add(FRAME_HEADER_WORDS as usize + usize::from(register));
+            let bits = *frame.add(WASM_HEADER_WORDS + usize::from(register));
             (register, operand_value(vm, entry >> 16, bits))
         })
         .collect();

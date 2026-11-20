@@ -37,19 +37,18 @@ pub const T_I32: u8 = AccessType::I32 as u8;
 pub const T_I64: u8 = AccessType::I64 as u8;
 pub const T_F32: u8 = AccessType::F32 as u8;
 
-/// The frame's header words, before the registers. `wasm_entry.rs` writes them and the rows read
-/// the memory base and length from them. `FRAME_HEADER_WORDS` is one past the last header word.
-#[derive(Clone, Copy)]
-#[repr(usize)]
-pub(crate) enum FrameWord {
-    Result,
-    Base,
-    Length,
-}
+/// The Wasm frame's header words are defined once, in `quench-runtime/src/staged/frame.rs` (the one
+/// frame model), mounted here so the stencil crate and the lib share it. The names below stay for
+/// the rows that use them. `FRAME_HEADER_WORDS` is one past the last header word.
+// Only the Wasm header words are read here; the rest of the frame model is the JS rows' and the runtime's.
+#[allow(dead_code)]
+#[path = "../../quench-runtime/src/staged/frame.rs"]
+mod frame;
+pub(crate) use frame::{WASM_BASE_WORD, WASM_HEADER_WORDS, WASM_LENGTH_WORD, WASM_RESULT_WORD};
 
-pub const FRAME_BASE_WORD: usize = FrameWord::Base as usize;
-pub const FRAME_LENGTH_WORD: usize = FrameWord::Length as usize;
-pub const FRAME_HEADER_WORDS: u64 = (FrameWord::Length as usize + 1) as u64;
+pub const FRAME_BASE_WORD: usize = WASM_BASE_WORD;
+pub const FRAME_LENGTH_WORD: usize = WASM_LENGTH_WORD;
+pub const FRAME_HEADER_WORDS: u64 = WASM_HEADER_WORDS as u64;
 
 /// `CallContext`'s byte offsets the `call_indirect` row reads (`wasm_rows_indirect.rs`). The
 /// runtime's `offset_of!` values are asserted equal to these in `wasm_codes_check.rs`.

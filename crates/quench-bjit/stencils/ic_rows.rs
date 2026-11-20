@@ -37,6 +37,7 @@ use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOW
 use crate::heap_rows::{payload, word_at};
 use crate::layout::JS_STEP_OBJECT_RECORD_BASE;
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
+use crate::places::deliver_number;
 use crate::places::{Places, finish_chained, site_object};
 use crate::places_property::{Callout, planned_frame, receiver_read, receiver_set};
 use crate::stage::StencilStage;
@@ -46,7 +47,7 @@ use crate::staged::object::{Form, direct_object_record, object_record_at};
 use crate::staged::slot_store::{own_flat_known, proved_flat_store, store_admitted};
 use crate::staged::value::direct_object_id;
 use crate::typed_ir::Representation;
-use crate::staged::{Step, Stage, step_property};
+use crate::staged::{Stage, Step, op_kind, step_property_of};
 use crate::words::{hole, hole64};
 
 /// The hole the receiver's frame offset is in: for a get, the upper half of hole 0, whose lower half
@@ -79,10 +80,10 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
     let mut places = Places::<D, MEM, MEM>::new(s);
     let step = if HOLDER {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
-        step_property(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
+        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
     } else {
         let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: Representation::Tagged }];
-        step_property(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
+        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
     };
     finish_chained::<CHAINED>(places.s, step, |s, word| deliver::<D>(s, word))
 }
@@ -94,7 +95,7 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
 fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     let mut places = Places::<MEM, A, MEM>::new(s);
-    let step = step_property(&mut stage, &mut planned_frame(&mut places, [], Callout::FlatStore { int: INT }), receiver_set());
+    let step = step_property_of::<{ op_kind::SET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::FlatStore { int: INT }), receiver_set());
     finish_chained::<CHAINED>(places.s, step, |s, _| Out::Next(s))
 }
 
@@ -119,7 +120,7 @@ fn known_get<const D: u8, const NUMBER: bool>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
     let word = ic::own_field(&mut stage, record, 0, 0, ());
-    finish_chained::<true>(s, word.map_or(Step::Unresolved, Step::Value), |s, word| deliver::<D>(s, word))
+    finish_chained::<true>(s, word.map_or(Step::Unresolved, Step::Value), |s, word| if NUMBER { deliver_number::<D>(s, word) } else { deliver::<D>(s, word) })
 }
 
 /// The own slot of the receiver known to be a direct object of the exact shape in flat form (`SHAPE_FLAT_ROW`,
@@ -153,6 +154,9 @@ fn known_store<const INT: bool, const A: u8, const ADMITTED: bool, const FLAT: b
         let specialized = stage.stores_specialized(payload as u64);
         store_admitted(&mut stage, specialized, ())?;
     }
+    // A Number names no heap record, so it skips the store gate, unless old records keep counts.
+    let open = stage.immediate_store_open();
+    stage.guard(open, ())?;
     let record = known_record::<SET_RECEIVER>(s, &mut stage, payload);
     if !FLAT {
         own_flat_known(&mut stage, record, 0, ())?;

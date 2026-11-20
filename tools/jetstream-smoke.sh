@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Crash check of a quench-node build on a few JetStream tests, run cold and once each through
+# Crash check of a quench build on a few JetStream tests, run cold and once each through
 # JetStream's own driver (`quench-bench/src/bin/jetstream-smoke.rs`). Exits non-zero when any
 # test crashes, hangs or prints no score. It measures nothing.
 #

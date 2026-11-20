@@ -12,8 +12,11 @@ use crate::heap::{WasmHostTarget, WasmObjectSlot};
 use crate::{WasmType, WasmValue};
 use wasmparser::ExternalKind;
 
+#[path = "wasm_js/copy_shape.rs"]
+mod copy_shape;
+
 /// Arguments of a Wasm call that a JavaScript caller passes without a heap allocation.
-const WASM_INLINE_ARGUMENTS: usize = 8;
+pub(super) const WASM_INLINE_ARGUMENTS: usize = 8;
 
 /// Whether a value of `ty` may encode into a fresh heap cell (`Vm::encode_wasm_value`): 64-bit
 /// payloads outside the in-place range (`Vm::encode_bits64`) and vectors. 32-bit values encode
@@ -920,123 +923,6 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    /// Recognizes only the canonical Emscripten helper body and its real mutable
-    /// lexical `HEAPU8` binding. The capture location is retained; the view itself
-    /// is deliberately re-read on every call because Emscripten replaces it after
-    /// `WebAssembly.Memory.grow()`.
-    pub(super) fn emscripten_memcpy_view_capture(
-        &self,
-        function: Value,
-        signature: &crate::WasmSignature,
-    ) -> Option<(Value, usize)> {
-        use crate::WasmType::I32;
-
-        if signature.params.as_slice() != [I32, I32, I32] {
-            return None;
-        }
-        let FunctionRecord {
-            kind: FunctionKind::User(program_id, function_id),
-            env,
-            ..
-        } = self.heap.function(function)?
-        else {
-            return None;
-        };
-        let program = self.programs.get(*program_id)?;
-        let metadata = program.function_get(*function_id as usize)?;
-        if metadata.params != 3
-            || metadata.inherited_with_scope
-            || !metadata.binding_sites.is_empty()
-            || metadata
-                .parameter_atoms
-                .iter()
-                .map(|atom| &program.atoms[*atom as usize])
-                .ne(["dest", "src", "num"].iter().copied())
-        {
-            return None;
-        }
-        let span = metadata.source_span?;
-        let source = program
-            .source
-            .as_ref()?
-            .text
-            .get(span.start as usize..span.end as usize)?;
-        if source != "(dest, src, num) => HEAPU8.copyWithin(dest, src, src + num)" {
-            return None;
-        }
-        // Free-name atoms need not appear in `environment_atoms` (which describes
-        // bindings owned by this function); the complete program atom table includes
-        // both local and captured names.
-        let view_atom = program
-            .atoms
-            .iter()
-            .position(|atom| atom == "HEAPU8")?
-            .try_into()
-            .ok()?;
-        // The exact source reads one captured name, HEAPU8, so its one capture load names the
-        // binding's depth and slot; name bindings are kept only for functions that resolve
-        // names dynamically.
-        let mut captures = metadata
-            .instructions()
-            .filter(|instruction| {
-                matches!(
-                    crate::vm::compiled::decoded_completed(instruction),
-                    Some(crate::staged::Operation::LoadCapture { .. })
-                )
-            });
-        let load = captures.next()?;
-        if captures.next().is_some() {
-            return None;
-        }
-        let (depth, slot) = (load.capture_depth(), load.capture_slot());
-        let owner_environment = self.environment_capture_env(*env, false, depth)?;
-
-        // Verify that the statically resolved binding still names this slot in a
-        // plain lexical environment. Captured with/eval scopes can shadow a static
-        // outer declaration even though their parent chain also contains that slot.
-        let mut environment = *env;
-        loop {
-            let crate::heap::EnvironmentRecord {
-                parent,
-                function: owner_function,
-                slots,
-                scope,
-            } = self.heap.environment(environment)?;
-            if scope.root_eval_scope()
-                || scope.binding_site_pc().is_some()
-                || !scope.with_objects().is_empty()
-                || self
-                    .heap
-                    .environment_bindings(environment)?
-                    .iter()
-                    .any(|(atom, _)| *atom == view_atom)
-            {
-                return None;
-            }
-            if environment == owner_environment {
-                let owner_program_id = super::program_store::ProgramId::from_raw(scope.program()?);
-                let owner_program = self.programs.get(owner_program_id)?;
-                let owner_metadata = owner_program.function_get(*owner_function as usize)?;
-                let owns_atom = if *owner_function == super::ROOT_FUNCTION_ID {
-                    owner_metadata.declares_global_lexical(view_atom)
-                        || (owner_program.root_variables_are_local()
-                            && owner_metadata.global_var_atoms().contains(&view_atom))
-                } else {
-                    owner_metadata.declares_environment_atom(view_atom)
-                };
-                if !owns_atom
-                    || self.local_binding_slot(&owner_program, *owner_function, view_atom)?
-                        != usize::from(slot)
-                    || usize::from(slot) >= slots.len()
-                {
-                    return None;
-                }
-                return Some((environment, usize::from(slot)));
-            }
-            environment = *parent;
-        }
-    }
-
     fn wasm_import_global(
         &mut self,
         p: &ResidualProgram,
@@ -1339,7 +1225,7 @@ impl<H: Host> Vm<H> {
             }
             types => {
                 let results = self.decode_wasm_result_types(types, result, declarations)?;
-                self.wasm_results_to_js(p, results, types)
+                self.wasm_results_to_js(p, &results, types)
             }
         }
     }
@@ -1368,22 +1254,29 @@ impl<H: Host> Vm<H> {
         function: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let signature = self
-            .wasm_callable_signature(function)
-            .cloned()
-            .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
-        let mut values = Vec::with_capacity(signature.params.len());
-        for (position, &ty) in signature.params.iter().enumerate() {
+        // The types are copied out, so the signature's borrow ends before the conversions run JavaScript.
+        let (params, types) = {
+            let signature = self
+                .wasm_callable_signature(function)
+                .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
+            (
+                signature.params.iter().copied().collect::<smallvec::SmallVec<[WasmType; WASM_INLINE_ARGUMENTS]>>(),
+                signature.results.iter().copied().collect::<smallvec::SmallVec<[WasmType; crate::wasm::SCALAR_RETURN_ARITY]>>(),
+            )
+        };
+        let mut values: smallvec::SmallVec<[WasmValue; WASM_INLINE_ARGUMENTS]> =
+            smallvec::SmallVec::with_capacity(params.len());
+        for (position, &ty) in params.iter().enumerate() {
             let value = args.get(position).copied().unwrap_or(Value::UNDEFINED);
             values.push(self.js_to_wasm_value(p, value, ty, None)?);
         }
-        let encoded = values
+        let encoded: smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]> = values
             .into_iter()
             .map(|value| self.encode_wasm_value(value))
-            .collect::<Vec<_>>();
+            .collect();
         let result = self.call_value(p, function, Value::UNDEFINED, &encoded)?;
-        let results = self.decode_wasm_result_types(&signature.results, result, None)?;
-        self.wasm_results_to_js(p, results, &signature.results)
+        let results = self.decode_wasm_result_types(&types, result, None)?;
+        self.wasm_results_to_js(p, &results, &types)
     }
 
     /// A Wasm call's results, of types `types`, as JavaScript: undefined, the single value,
@@ -1391,15 +1284,15 @@ impl<H: Host> Vm<H> {
     fn wasm_results_to_js(
         &mut self,
         p: &ResidualProgram,
-        results: Vec<WasmValue>,
+        results: &[WasmValue],
         types: &[WasmType],
     ) -> Result<Value, JsError> {
-        match (results.as_slice(), types) {
+        match (results, types) {
             ([], _) => Ok(Value::UNDEFINED),
             ([value], [ty]) => self.wasm_value_to_js(p, *value, *ty),
             _ => {
                 let mut values = Vec::with_capacity(results.len());
-                for (value, &ty) in results.into_iter().zip(types) {
+                for (&value, &ty) in results.iter().zip(types) {
                     values.push(self.wasm_value_to_js(p, value, ty)?);
                 }
                 Ok(self.new_array(values))
@@ -1665,7 +1558,7 @@ impl<H: Host> Vm<H> {
     /// Whether `value` is a Wasm GC object (a struct or array reference) in JavaScript: an
     /// exotic object with a null prototype and no properties, which every mutation refuses.
     pub(super) fn is_wasm_gc_object(&self, value: Value) -> bool {
-        matches!(self.heap.get(value), Some(Cell::WasmGc { .. }))
+        self.heap.wasm_gc(value).is_some()
     }
 
     /// The TypeError of a mutation of a Wasm GC object (V8: "WebAssembly objects are opaque").
@@ -1988,6 +1881,7 @@ impl<H: Host> Vm<H> {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

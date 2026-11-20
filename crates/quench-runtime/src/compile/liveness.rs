@@ -62,9 +62,9 @@ impl MethodArguments for crate::bytecode::ResidualProgram {
     }
 }
 
-/// Records which functions liveness covers and each covered one's entry bound; the collector
-/// derives a covered function's per-pc root masks when it first finds one on the stack
-/// (`ResidualProgram::register_root_mask`).
+/// Records which functions liveness covers and each covered one's entry bound, each solved once
+/// from its own code (a test helper: a lowered function records its roots where it is lowered).
+#[cfg(test)]
 pub(crate) fn mark_register_roots<'a>(
     functions: impl IntoIterator<Item = &'a mut Function>,
     methods: &(impl MethodArguments + ?Sized),
@@ -72,35 +72,41 @@ pub(crate) fn mark_register_roots<'a>(
     superinstructions: &[Superinstruction],
 ) {
     for function in functions {
-        function.register_roots = register_roots(function, methods, fields, superinstructions);
+        let solved = analyze(function, methods, fields, superinstructions);
+        function.register_roots = register_roots_from(function, methods, fields, superinstructions, solved);
     }
 }
 
-/// `function`'s liveness coverage and entry bound, derived now from the tables it is given. Used
-/// where those tables are local and final (Wasm functions, which have no field or method sites).
-pub(crate) fn register_roots(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> crate::bytecode::RegisterRoots {
-    crate::bytecode::RegisterRoots::with_entry_live(true, derive_entry_live(function, methods, fields, superinstructions))
-}
-
-/// `function`'s entry bound, derived from its masks as a collection derives them;
-/// `ALL_LIVE_AT_ENTRY` where they bound no register.
-pub(crate) fn derive_entry_live(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> u16 {
-    RegisterMasks::of(function, methods, fields, superinstructions)
-        .map_or(crate::bytecode::RegisterRoots::ALL_LIVE_AT_ENTRY, |live| entry_live(function, &live))
-}
-
 /// `function`'s register roots, given the live sets `solved` that the lowering solved for `function`
-/// as it stands (`analyze`, `None` where it was not solved). The entry bound is taken from `solved`
-/// where it is at hand. Otherwise the bound and the masks are derived on first ask from the
-/// program's tables (`ResidualProgram::entry_fill`, `ResidualProgram::shared_register_root_masks`),
-/// so a function nothing activates or collects is never analysed.
+/// as it stands (`analyze`, `None` where it was not solved). The entry bound and the masks are both
+/// built from `solved`, so the function is solved once; the masks are kept for the first mask ask
+/// where a collection would keep them (`RegisterRoots::keep_solved`). Otherwise the bound and the
+/// masks are derived on first ask from the program's tables (`ResidualProgram::entry_fill`,
+/// `ResidualProgram::shared_register_root_masks`), so a function nothing activates or collects is
+/// never analysed.
 pub(crate) fn register_roots_from(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction], solved: Option<Vec<RegisterSet>>) -> crate::bytecode::RegisterRoots {
     // `RegisterMasks::of` declines over the budget and solves windows past the root map's width.
     let Some(live) = solved.filter(|_| budget::admits(function) && function.registers <= ROOT_MAP_REGISTERS) else {
         return crate::bytecode::RegisterRoots::new(true);
     };
     debug_assert!(analyze(function, methods, fields, superinstructions).as_ref() == Some(&live), "the solved live sets match the code");
-    crate::bytecode::RegisterRoots::with_entry_live(true, entry_live(function, &RegisterMasks::new(live)))
+    let masks = RegisterMasks::new(live);
+    let entry = entry_live(function, &masks);
+    crate::bytecode::RegisterRoots::with_solved(entry, (!RegisterMasks::too_large_to_keep(function)).then_some(masks))
+}
+
+/// The entry bound of a function whose bound is derived on its first activation: the masks it
+/// solves are kept for the first mask ask where a collection would keep them, so that ask does
+/// not solve the function again.
+pub(crate) fn derive_entry_live_keeping(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> u16 {
+    let Some(masks) = RegisterMasks::of(function, methods, fields, superinstructions) else {
+        return crate::bytecode::RegisterRoots::ALL_LIVE_AT_ENTRY;
+    };
+    let entry = entry_live(function, &masks);
+    if !RegisterMasks::too_large_to_keep(function) {
+        function.register_roots.keep_solved(masks);
+    }
+    entry
 }
 
 /// `function`'s live registers before each instruction, solved at the width `M`, which holds

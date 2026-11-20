@@ -24,12 +24,10 @@ impl super::LoopSite {
     /// Weighs a native run that took `backedges` backward jumps against the entry it paid.
     pub(super) fn note_run(&self, backedges: u64) {
         self.declines_in_row.set(0);
-        {
-            let mut tier = self.tier.borrow_mut();
-            tier.weigh_run(backedges);
-            tier.promote(self.tiers, self.span());
-        }
-        self.settle();
+        let mut tier = self.tier.borrow_mut();
+        tier.weigh_run(backedges);
+        tier.promote(self.tiers);
+        self.settle(&mut tier);
     }
 
     /// Weighs an entry the guards declined: an entry paid for no iteration. The `k`th decline in
@@ -42,8 +40,9 @@ impl super::LoopSite {
         let declines = before.saturating_add(1);
         self.declines_in_row.set(declines);
         self.skipped_entries.set(backoff(declines));
-        self.tier.borrow_mut().weigh_declines(1 + backoff(before));
-        self.settle();
+        let mut tier = self.tier.borrow_mut();
+        tier.weigh_declines(1 + backoff(before));
+        self.settle(&mut tier);
     }
 
     /// Whether this entry passes to the interpreter untried, counting it off the backoff.
@@ -56,10 +55,15 @@ impl super::LoopSite {
     }
 
     /// Stops entering native code once the entries cost more than the iterations they ran save.
-    fn settle(&self) {
-        let tier = self.tier.borrow();
-        if !loop_model::repays(self.tiers, self.span(), tier.entries(), tier.iterations()) {
-            self.entering.set(false);
+    /// The check is due only once the entries pass `settle_at`, the count the last check found the
+    /// spare covers: iterations only add, so until then every entry is repaid, and a run or decline
+    /// that cannot change the decision costs one compare.
+    fn settle(&self, tier: &mut super::loop_tier::LoopTier) {
+        let entries = tier.entries();
+        if entries <= tier.settle_at { return; }
+        match loop_model::repaid_entries(self.tiers, self.span(), entries, tier.iterations()) {
+            Some(spare) => tier.settle_at = entries.saturating_add(spare),
+            None => self.entering.set(false),
         }
     }
 

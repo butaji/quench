@@ -21,12 +21,12 @@
 use super::plan::{CallEntry, CalleeKind, DirectPlan, Identity, NativeId, WordList};
 use super::region::Region;
 use super::property::get_field;
-use super::protocol::{bind_this, complete_call, fill_call, guard_callee, guard_received};
+use super::protocol::{bind_this_with, complete_call, fill_call, guard_callee, guard_callee_word, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
-use crate::bytecode::{FieldBase, FieldLookup};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup};
 use crate::Value;
 
 /// The general forms of the call-family records a frame may run where its staged row declines
@@ -53,6 +53,7 @@ pub(crate) enum CallForm {
     FirstChunk,
 }
 
+#[cfg(not(stencil_build))]
 /// The general form of the call-family opcode `op`, else `None`: the records the call runner answers
 /// (`vm::dispatch`'s `Runner::Call`).
 #[cfg(not(stencil_build))]
@@ -125,6 +126,20 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// The identity the call's callee is checked against, where the frame reads it as a word (an image's
+    /// call record, which the loader binds); `None` where the plan's identity is the constant itself.
+    #[inline(always)]
+    fn call_identity(&mut self, _stage: &mut S) -> Option<S::Word> {
+        None
+    }
+
+    /// The global object a sloppy callee binds, where the frame reads it as a word (an image's call
+    /// record); `None` where the plan's global is the constant itself.
+    #[inline(always)]
+    fn call_global(&mut self, _stage: &mut S) -> Option<S::Word> {
+        None
+    }
+
     /// The receiver `constructor`'s plan allocates; the deleted marker where it declines.
     #[inline(always)]
     fn call_receiver(&mut self, _stage: &mut S, _constructor: S::Word) -> Option<S::Word> {
@@ -165,6 +180,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    #[cfg(not(stencil_build))]
     /// Suspend the activation as `suspending` names (`suspend`): the control the step ends in;
     /// `None` where the frame cannot, leaving the suspension to the interpreter. The interpreter's
     /// frame suspends by the step result (`Vm::staged_suspend`), the lane's in place
@@ -194,6 +210,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    #[cfg(not(stencil_build))]
     /// The word a step of `yield*`'s delegation defines (`delegation`), with the fact the frame
     /// keeps of it; `None` where the frame cannot make it, or it raised.
     #[inline(always)]
@@ -201,6 +218,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    #[cfg(not(stencil_build))]
     /// The `next` step of a sync `yield*`'s delegate (`DelegationStep::Next`) made by the frame in
     /// place: the control that runs it, whose result arrives in `state` with this instruction run
     /// again (`delegation`). `None`, before any effect, where the frame calls `next` instead.
@@ -241,6 +259,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         direct
     }
 
+    #[cfg(not(stencil_build))]
     /// The general form `form` of the call-family record `instruction` at resume PC `pc`, which the
     /// call row runner asks where the row declined (the record's operands are read from it, since an
     /// `Invocation` does not name every form). `None` where the frame runs no general calls.
@@ -295,9 +314,12 @@ fn callee_word<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fram
     let held = match (site.callee, plan.identity) {
         (Callee::Register(register), Identity::Guarded(_)) => stage.load_u64(Region::Frame.mutable(), file, word_offset(register)),
         (Callee::Method { atom, site: index }, Identity::Guarded(_)) => frame.call_method(stage, receiver?, atom, index, miss)?,
-        (_, identity) => return Some(stage.constant(identity.word())),
+        (_, identity) => return Some(frame.call_identity(stage).unwrap_or_else(|| stage.constant(identity.word()))),
     };
-    guard_callee(stage, held, plan.identity.word(), miss)?;
+    match frame.call_identity(stage) {
+        Some(expected) => guard_callee_word(stage, held, expected, miss)?,
+        None => guard_callee(stage, held, plan.identity.word(), miss)?,
+    }
     Some(held)
 }
 
@@ -315,7 +337,8 @@ pub(super) fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &
     let receiver = receiver_word(stage, frame, file, miss, site.receiver)?;
     callee_word(stage, frame, file, miss, (site, plan, Some(receiver)))?;
     let this = plan.bound.map_or(receiver, |bound| stage.constant(bound.this));
-    bind_this(stage, this, plan.sloppy, miss)
+    let global = plan.sloppy.map(|global| move |stage: &mut S| frame.call_global(stage).unwrap_or_else(|| stage.constant(global)));
+    bind_this_with(stage, this, global, miss)
 }
 
 /// The callee's window at `top` of `registers` words, filled from the bound function's arguments

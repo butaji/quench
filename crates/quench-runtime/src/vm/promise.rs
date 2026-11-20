@@ -615,15 +615,7 @@ impl<H: Host> Vm<H> {
             Native::Eval if self.direct_eval => super::activation::NativeCallBoundary::Forward,
             _ => super::activation::NativeCallBoundary::Opaque,
         };
-        self.realm
-            .promise
-            .active_native
-            .push(super::activation::NativeActivation {
-                callable: callee,
-                receiver: Value::UNDEFINED,
-                frame_depth: self.frames.len(),
-                boundary,
-            });
+        self.push_host_frame(callee, Value::UNDEFINED, self.frames.len(), boundary);
         let result = (|| {
             // Within the lane's bounds the call needs no guard of its own; outside them (or
             // with no bounds read yet, `StackLimit::CLOSED`) the guard decides, raising its
@@ -634,7 +626,7 @@ impl<H: Host> Vm<H> {
             };
             body(self)
         })();
-        self.realm.promise.active_native.pop();
+        self.pop_host_frame();
         self.switch_realm_global(previous_global);
         result
     }
@@ -670,15 +662,7 @@ impl<H: Host> Vm<H> {
             _ => return self.call_value(p, method, receiver, args),
         };
         self.profile.call_target(0, args.len());
-        self.realm
-            .promise
-            .active_native
-            .push(super::activation::NativeActivation {
-                callable: method,
-                receiver: Value::UNDEFINED,
-                frame_depth: self.frames.len(),
-                boundary: super::activation::NativeCallBoundary::Opaque,
-            });
+        self.push_host_frame(method, Value::UNDEFINED, self.frames.len(), super::activation::NativeCallBoundary::Opaque);
         let result = (|| {
             let _stack = self.enter_stack()?;
             self.check_execution_interrupt()?;
@@ -689,7 +673,7 @@ impl<H: Host> Vm<H> {
                 _ => vm.regexp_symbol_split(p, receiver, args),
             })
         })();
-        self.realm.promise.active_native.pop();
+        self.pop_host_frame();
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();
         result
@@ -3006,7 +2990,7 @@ impl<H: Host> Vm<H> {
         let program = self.realm.promise.modules.get(&module_cache_key(name, "javascript"))
             .and_then(|record| record.program)
             .and_then(|id| self.programs.get(id))
-            .filter(|program| program.source_text() == Some(source));
+            .filter(|program| program.source_text().is_some_and(|text| crate::Engine::compiled_module_text_is(text, source)));
         let host = &mut self.host;
         crate::Engine::static_module_analysis_with(source, name, module.typescript, |analyze| {
             // Derive the loader's memoized view from its admitted compiler result.
@@ -3101,31 +3085,44 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| self.type_error(p, "module program store is full".into()))?,
             None => {
                 self.require_source_compilation(p)?;
-                if let Some(message) = self.static_module_early_error(module) {
-                    return self
-                        .syntax_error_result(p, &message)
-                        .map(|_| ());
+                // A typed module is analyzed first: its analysis checks the tree before admission,
+                // which the compilation's checks do not (`Engine::admit_typescript`).
+                if module.typescript
+                    && let Some(message) = self.static_module_early_error(module)
+                {
+                    return self.syntax_error_result(p, &message).map(|_| ());
                 }
-                let residual = crate::Engine::specialize_module_with_atom_prefix(
+                // Compiled first otherwise: a module that compiles has no early error, as its
+                // compilation checks every body alone. Only one that does not is analyzed
+                // (`static_module_early_error`), which reports its early error as a load always has,
+                // and else its compilation failure.
+                let residual = match crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
                     module.typescript,
                     &*self,
                     self.released_records(true),
-                )
-                .map_err(|diagnostics| {
-                    if diagnostics
-                        .iter()
-                        .any(crate::compile::Diagnostic::is_stack_exhausted)
-                    {
-                        self.stack_exhaustion_error()
-                    } else {
-                        self.type_error(
-                            p,
-                            format!("dynamic module compilation failed: {diagnostics:?}"),
-                        )
+                ) {
+                    Ok(residual) => residual,
+                    Err(diagnostics) => {
+                        if let Some(message) = self.static_module_early_error(module) {
+                            return self
+                                .syntax_error_result(p, &message)
+                                .map(|_| ());
+                        }
+                        return Err(if diagnostics
+                            .iter()
+                            .any(crate::compile::Diagnostic::is_stack_exhausted)
+                        {
+                            self.stack_exhaustion_error()
+                        } else {
+                            self.type_error(
+                                p,
+                                format!("dynamic module compilation failed: {diagnostics:?}"),
+                            )
+                        });
                     }
-                })?;
+                };
                 // Encoded with this VM's atoms, which storing it then finds interned.
                 let residual = self.intern_program_atoms(residual);
                 self.keep_static_module_program(module, &residual);
@@ -4807,14 +4804,6 @@ impl<H: Host> Vm<H> {
             Constant::Null => Value::NULL,
             Constant::Undefined => Value::UNDEFINED,
         }
-    }
-
-    pub(super) fn active_native_callable(&self) -> Option<Value> {
-        self.realm
-            .promise
-            .active_native
-            .last()
-            .map(|activation| activation.callable)
     }
 
     pub(super) fn active_native_env(&self) -> Option<Value> {

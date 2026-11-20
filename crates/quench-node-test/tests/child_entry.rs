@@ -8,7 +8,7 @@ fn embedding_children_execute_node_arguments_instead_of_the_suite() {
     ] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
         command
-            .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
+            .env(quench::shared_run::CHILD_RUNNER_ENV, "1")
             .args(["-e", source]);
         let observation =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
@@ -36,7 +36,7 @@ fn node_cli_separates_runtime_options_from_guest_arguments() {
             let mut command = Command::new(executable);
             command.current_dir(directory.path()).args(&arguments);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
                 .unwrap()
@@ -74,7 +74,7 @@ fn package_scope_applies_inside_nested_checkouts() {
             .current_dir(directory.path())
             .arg("tests/node/entry.js");
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let observation =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
@@ -134,7 +134,7 @@ fn builtin_esm_exports_keep_node_snapshots_of_lazy_members() {
         for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
             let mut command = Command::new(executable);
             command.arg(&entry);
-            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            if executable != "node" { command.env(quench::shared_run::CHILD_RUNNER_ENV, "1"); }
             let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
             assert_eq!(result.exit_code, Some(0), "{name} {executable}: {}", String::from_utf8_lossy(&result.stderr));
             assert_eq!(String::from_utf8_lossy(&result.stdout), expected, "{name} {executable}");
@@ -179,7 +179,7 @@ fn package_scope_reads_nearest_type_and_stops_at_node_modules() {
             let mut command = Command::new(executable);
             command.arg(&entry);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             let result =
                 quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
@@ -235,7 +235,7 @@ fn util_type_predicates_match_node_internal_brands() {
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -310,7 +310,7 @@ fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -367,7 +367,7 @@ fn util_text_operations_match_node_without_utf16_loss() {
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -427,7 +427,7 @@ fn callbackify_matches_node_descriptors_receivers_and_tick_order() {
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -511,7 +511,7 @@ fn error_constructors_capture_stack_at_the_node_observable_phase() {
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -566,7 +566,7 @@ console.log(descriptor.get.name,descriptor.enumerable,descriptor.configurable,de
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -622,7 +622,7 @@ cp.exec('sleep 1',{timeout:20},(e,o,s)=>record('timeout',e,o,s));
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -675,7 +675,7 @@ record('failure',exec('printf failure >&2; exit 3'));
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -714,7 +714,7 @@ controller.abort('cause');
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(2)).unwrap()
     });
@@ -752,7 +752,7 @@ const child=cp.exec(command,{maxBuffer:0,killSignal:'SIGKILL'},(error,out,err)=>
         let mut command = Command::new(executable);
         command.args(["--expose-internals", "-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -791,7 +791,7 @@ for(const maxBuffer of [-1,NaN,'2',null])try{spawnSync(process.execPath,[],{maxB
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -836,7 +836,7 @@ check(a,e);console.log(JSON.stringify(events));
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -880,7 +880,7 @@ console.log(typeof process.stdout.on,process.stdout instanceof require('events')
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -917,7 +917,7 @@ console.log(fs.readFileSync('small','utf8'));
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -958,7 +958,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -997,7 +997,7 @@ fn shell_argument_deprecation_is_shared_and_emitted_once() {
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -1033,7 +1033,7 @@ fn handled_exceptions_do_not_read_stack_or_coerce_thrown_values() {
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -1063,7 +1063,7 @@ fn fatal_source_excerpts_use_compiler_snapshots_and_commonjs_origins() {
         let mut command = Command::new(executable);
         command.arg(&path);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -1117,7 +1117,7 @@ process.on('exit',()=>console.log(JSON.stringify(result.map(value=>JSON.stringif
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -1151,7 +1151,7 @@ setTimeout(()=>{gc();console.log('timer',first.deref()===undefined);
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -1222,7 +1222,7 @@ process.on('exit',()=>console.log(JSON.stringify(result.map(value=>JSON.stringif
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -1254,7 +1254,7 @@ const server=net.createServer(socket=>socket.destroy()).listen(0,()=>{
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -1295,7 +1295,7 @@ process._kill=original;console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -1331,7 +1331,7 @@ setImmediate(()=>{result.push(['immediate']);console.log(JSON.stringify(result))
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -1360,7 +1360,7 @@ setTimeout(()=>process.exit(0),0);setTimeout(()=>console.log('unexpected timer')
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -1383,7 +1383,7 @@ stream.on('end',()=>console.log('input',buffers,Buffer.concat(pieces).toString('
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
         std::io::Write::write_all(&mut writer, "hello 😀\nworld".as_bytes()).unwrap();
@@ -1412,7 +1412,7 @@ fn cli_stdin_preserves_source_arguments_and_commonjs_origin() {
             let mut command = Command::new(executable);
             command.args(&arguments);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
             std::io::Write::write_all(&mut writer, source.as_bytes()).unwrap();
@@ -1446,7 +1446,7 @@ console.log(JSON.stringify([process.openStdin.call(null)===second,process.openSt
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -1473,7 +1473,7 @@ child.on('error',error=>{throw error});child.on('close',(code,signal)=>{record.p
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
         std::io::Write::write_all(&mut writer, b"inherited").unwrap();
@@ -1562,7 +1562,7 @@ fn compare_node_source_with_args(
         let mut command = Command::new(executable);
         command.args(flags).args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -1740,7 +1740,7 @@ console.log('internal-url');
         let mut command = Command::new(executable);
         command.args(["--expose-internals", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -1990,7 +1990,7 @@ fn extensionless_entries_use_the_package_module_scope() {
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let result =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
@@ -2031,7 +2031,7 @@ console.log(JSON.stringify([caught(),viaParameter(bad),nested(),finalized(events
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let result =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
@@ -2149,7 +2149,7 @@ fn cyclic_esm_instantiates_live_bindings_before_running_dependencies() {
             let mut command = Command::new(executable);
             command.arg(&entry);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             let result =
                 quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
@@ -2208,7 +2208,7 @@ console.log('stack-source-identities');
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let result =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
@@ -2244,7 +2244,7 @@ console.log(null,undefined);
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let result =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
@@ -2422,7 +2422,7 @@ fn really_exit_coerces_int32_and_skips_guest_exit_handlers() {
             let mut command = Command::new(executable);
             command.args(["-e", &source]);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
                 .unwrap()
@@ -2455,7 +2455,7 @@ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-iterator-')),fil
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -2494,7 +2494,7 @@ watcher.once('stop',()=>{global.gc();fs.rmSync(dir,{recursive:true,force:true});
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -2635,7 +2635,7 @@ let output='';child.stdout.on('data',chunk=>output+=chunk);child.on('error',erro
         let mut command = Command::new(executable);
         command.args(["-e", source, node.trim()]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -2678,7 +2678,7 @@ process.nextTick(()=>events.push(['tick']));"#;
         let mut command = Command::new(executable);
         command.args(["-e", source, child.to_str().unwrap()]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -2714,7 +2714,7 @@ let output='';child.stdout.on('data',chunk=>output+=chunk);child.on('error',erro
         let mut command = Command::new(executable);
         command.args(["-e", source, path.to_str().unwrap()]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -2755,7 +2755,7 @@ fn node_entry_resolution_matches_extensionless_files_and_package_directories() {
             let mut command = Command::new(executable);
             command.current_dir(directory.path()).arg(entry);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
                 .unwrap()
@@ -2792,7 +2792,7 @@ console.log(JSON.stringify(events));}));"#;
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -2826,7 +2826,7 @@ child.on('close',(code)=>{assert.strictEqual(code,0);assert.strictEqual(callback
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let observation =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
@@ -2878,7 +2878,7 @@ source.stdin.write('first\n');
             let mut command = Command::new(executable);
             command.args(["-e", source]);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             let observation =
                 quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
@@ -2930,7 +2930,7 @@ console.log(JSON.stringify(observations));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -2979,7 +2979,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3024,7 +3024,7 @@ child.on('close',code=>{result.push(code,output.trim(),trace.slice());console.lo
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3071,7 +3071,7 @@ function next(){if(!hosts.length){console.log(JSON.stringify(result));return}
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3105,7 +3105,7 @@ child.on('error',error=>{throw error});child.on('close',(code,signal)=>{assert.s
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3152,7 +3152,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3208,7 +3208,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3248,7 +3248,7 @@ setImmediate(()=>{result.push(warnings);console.log(JSON.stringify(result))});
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3291,7 +3291,7 @@ setImmediate(()=>{result.push(warnings);console.log(JSON.stringify(result))});
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3335,7 +3335,7 @@ setImmediate(()=>{console.log(JSON.stringify(result))});
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3414,7 +3414,7 @@ socket.on('close',hadError=>{{result.push(['close',hadError]);console.log(JSON.s
         let mut command = Command::new(executable);
         command.args(["-e", &source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         observations.push(
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
@@ -3467,7 +3467,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3507,7 +3507,7 @@ setImmediate(()=>console.log(JSON.stringify(result)));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3543,7 +3543,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3586,7 +3586,7 @@ console.log(JSON.stringify({result,calls}));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3619,7 +3619,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3660,7 +3660,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3696,7 +3696,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3733,7 +3733,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3768,7 +3768,7 @@ console.log(JSON.stringify({result,calls}));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3804,7 +3804,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3839,7 +3839,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3885,7 +3885,7 @@ console.log(JSON.stringify(result));
             .current_dir(directory.path())
             .args(["--expose-gc", "--no-warnings", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3919,7 +3919,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -3951,7 +3951,7 @@ fn tracing_writes_console_events_to_expanded_file_pattern() {
             SOURCE,
         ]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let observation =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
@@ -3998,7 +3998,7 @@ const result=[];let visits=0;process.on('beforeExit',code=>{result.push(['before
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4033,7 +4033,7 @@ let pending=3;for(const [tag,options] of [['async-default',{}],['async-relative'
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -4074,7 +4074,7 @@ console.log(original({result,calls}));
             SOURCE,
         ]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let observation =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
@@ -4123,7 +4123,7 @@ console.log(JSON.stringify(result));
             SOURCE,
         ]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4152,7 +4152,7 @@ fn environment_tracing_records_real_spans_and_matching_lifetime_ids() {
             SOURCE,
         ]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let observation =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
@@ -4212,7 +4212,7 @@ process.on('exit',()=>console.log(JSON.stringify(result)));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4239,7 +4239,7 @@ fn fatal_before_exit_errors_retain_diagnostics_and_final_exit_status() {
             let mut command = Command::new(executable);
             command.args(["-e", &source]);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             let observation =
                 quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
@@ -4282,7 +4282,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4320,7 +4320,7 @@ console.log(JSON.stringify([getEventListeners.name,getEventListeners.length,call
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4366,7 +4366,7 @@ queueMicrotask(()=>{globalThis.Event=EventConstructor;assert.strictEqual(deliver
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4407,7 +4407,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4443,7 +4443,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4493,7 +4493,7 @@ asyncChild.on('error',error=>{throw error});asyncChild.on('exit',(status,signal)
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let observation =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
@@ -4531,7 +4531,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4567,7 +4567,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4604,7 +4604,7 @@ setImmediate(()=>{result.push('immediate');hook.disable();console.log(JSON.strin
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4638,7 +4638,7 @@ console.log(JSON.stringify([result,reads,copied]));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4676,7 +4676,7 @@ setImmediate(()=>{hook.disable();console.log(JSON.stringify(result))});
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4716,7 +4716,7 @@ const child=cp.spawn(process.execPath,['-e','0'],{cwd:url.pathToFileURL(process.
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4804,7 +4804,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", &source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4842,7 +4842,7 @@ result.push(trace);assert.strictEqual(cp.execFileSync(process.execPath,['-e','pr
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -4873,7 +4873,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -4911,7 +4911,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -4947,7 +4947,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -4978,7 +4978,7 @@ assert.strictEqual(child.error.code,'ETIMEDOUT');assert.strictEqual(child.status
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5015,7 +5015,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5053,7 +5053,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5084,7 +5084,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -5117,7 +5117,7 @@ const child=cp.spawn('sleep',['5']);child.on('exit',(code,signal)=>{assert.stric
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5158,7 +5158,7 @@ child.on('exit',()=>{assert.strictEqual(child._handle,null);assert.strictEqual(h
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5192,7 +5192,7 @@ server.listen(path,()=>{
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5222,7 +5222,7 @@ const missing=net.connect(path);missing.on('error',error=>{assert.strictEqual(er
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5254,7 +5254,7 @@ const first=net.createServer();first.listen(path,()=>{
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5282,7 +5282,7 @@ const server=net.createServer(socket=>socket.end('abstract'));server.listen(path
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5315,7 +5315,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5355,7 +5355,7 @@ server.listen(0,()=>{const handle=server._handle;assert.strictEqual(handle.hasRe
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -5397,7 +5397,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -5438,7 +5438,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -5496,7 +5496,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
     });
@@ -5532,7 +5532,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5574,7 +5574,7 @@ socket.on('error',error=>{
             let mut command = Command::new(executable);
             command.args(["-e", SOURCE, &port, host]);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
                 .unwrap()
@@ -5627,7 +5627,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -5661,7 +5661,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -5712,7 +5712,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5744,7 +5744,7 @@ fn net_family_attempt_timeout_cli_preserves_value_and_last_override() {
             let mut command = Command::new(executable);
             command.args(&flags).args(["-e", SOURCE]);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
                 .unwrap()
@@ -5797,7 +5797,7 @@ console.log(JSON.stringify([result,arrayCalls,typedCalls,constructorCalls]));
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5842,7 +5842,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5875,7 +5875,7 @@ fn fatal_promise_rejections_preserve_original_stack_and_intrinsic_wrapper() {
                     source,
                 ]);
                 if executable != "node" {
-                    command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                    command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
                 }
                 let observation = quench_node_test::case_process::observe_command(
                     command,
@@ -5925,7 +5925,7 @@ Promise.reject('primitive-rejection-marker');
             SOURCE,
         ]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5962,7 +5962,7 @@ console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -5999,7 +5999,7 @@ setTimeout(()=>{assert.strictEqual(closed,2);},100);
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -6034,7 +6034,7 @@ fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -6073,7 +6073,7 @@ for(const name of ['ignored.log','ignored.tmp','.hidden','keep.txt'])fs.writeFil
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -6107,7 +6107,7 @@ fs.rmSync(dir,{recursive:true,force:true});process.nextTick(()=>console.log(JSON
         let mut command = Command::new(executable);
         command.args(["-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -6146,7 +6146,7 @@ globalThis.gc();fs.writeFileSync(file,'after');
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -6180,7 +6180,7 @@ process.on('exit',()=>{assert.strictEqual(plain.context.getMinProto(),plainMinim
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -6282,7 +6282,7 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -6320,7 +6320,7 @@ for(const flags of [0,1,2,3,4,8,16,17,31]){const trace=[];const p=new Proxy({a:1
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
     });
@@ -6507,7 +6507,7 @@ socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.
                 .args(["-e", &source])
                 .env("QUENCH_TLS_PEER_ROOT", &fixtures);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
                 .unwrap()
@@ -6577,7 +6577,7 @@ server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
     ] {
         let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",server_source]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        if executable!="node"{command.env(quench::shared_run::CHILD_RUNNER_ENV,"1");}
         let mut peer=Peer(command.spawn().unwrap());let (mut stdout,line)=tls_peer_first_line(&mut peer.0);
         let port:u16=line.trim().parse().expect("TLS server did not start");
         let send=if half_close {"end"} else {"write"};
@@ -7052,7 +7052,7 @@ console.log(JSON.stringify([typeof globalThis.crypto,descriptor.enumerable,descr
             let mut command = Command::new(executable);
             command.current_dir(directory.path()).args(&arguments);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
                 .unwrap()
@@ -7174,7 +7174,7 @@ fn cli_print_evaluates_script_statements_and_language_completion_like_node() {
         let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
             let mut command=Command::new(executable);
             command.args(["-pe",source]);
-            if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            if executable!="node" { command.env(quench::shared_run::CHILD_RUNNER_ENV,"1"); }
             quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
         });
         for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr)); assert!(observation.stderr.is_empty()); }
@@ -7266,7 +7266,7 @@ setTimeout(()=>{hook.disable();out.push(phases);console.log(JSON.stringify(out))
         let mut command = Command::new(executable);
         command.args(["--expose-internals", "--no-warnings", "-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -7295,7 +7295,7 @@ fn native_internal_timer_require_and_resolution_obey_exposure_flag() {
             }
             command.args(["-e", source]);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
                 .unwrap()
@@ -7322,7 +7322,7 @@ process.uptime=()=>99999999;const begin=binding.getLibuvNow();while(binding.getL
         let mut command = Command::new(executable);
         command.args(["--expose-internals", "--no-warnings", "-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
@@ -7897,7 +7897,7 @@ fn node_modules_bounds_package_scope_without_hiding_local_package_types() {
                 .current_dir(directory.path())
                 .arg("node_modules/fixture/entry.js");
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             let result =
                 quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
@@ -7933,7 +7933,7 @@ server.listen(0,'127.0.0.1',()=>http.get({host:'127.0.0.1',port:server.address()
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let result =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
@@ -7976,7 +7976,7 @@ console.log(JSON.stringify(rows));
         let mut command = Command::new(executable);
         command.args(["-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let result =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
@@ -8205,7 +8205,7 @@ fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
             let mut command = Command::new(executable);
             command.current_dir(directory.path()).args(&args);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
                 .unwrap()
@@ -9045,7 +9045,7 @@ fn process_memory_constraints_respect_inherited_data_limits() {
         let mut command = Command::new(executable);
         command.args(["-e", PROCESS_MEMORY_SOURCE]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         // The lower soft limit applies only to this test child, leaving the runner unchanged.
         unsafe {
@@ -9218,7 +9218,7 @@ fn os_priority_changes_are_visible_to_the_kernel_on_the_child_process_pid() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("ready.json");
     let child = Command::new(env!("CARGO_BIN_EXE_run-parallel"))
-        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
+        .env(quench::shared_run::CHILD_RUNNER_ENV, "1")
         .args(["-e", "const os=require('node:os');const priority=Math.min(19,os.getPriority()+1);os.setPriority(priority);require('node:fs').writeFileSync(process.argv[1],JSON.stringify(priority));setInterval(()=>{},1000)"])
         .arg(&marker)
         .stdout(std::process::Stdio::null())
@@ -9482,7 +9482,7 @@ console.log(JSON.stringify({{out,firstId:first.id,firstLive:first.live}}));
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
     });
@@ -9572,7 +9572,7 @@ console.log(JSON.stringify({complete:true,out}));
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
     });
@@ -9639,7 +9639,7 @@ console.log(JSON.stringify({complete:true,out}));
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
     });
@@ -9737,7 +9737,7 @@ console.log(JSON.stringify({complete:true,out}));
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
     });
@@ -9903,7 +9903,7 @@ fn native_collection_previews_keep_iterator_positions_live_slots_and_return_conv
 fn cli_signal_defaults_reset_inherited_ignores_before_vm_workers_start() {
     use std::os::unix::process::CommandExt;
     let runner = std::path::PathBuf::from(env!("CARGO_BIN_EXE_run-parallel"));
-    let cli = runner.with_file_name("quench-node");
+    let cli = runner.with_file_name("quench");
     for (name, signal) in [
         ("SIGINT", libc::SIGINT),
         ("SIGQUIT", libc::SIGQUIT),
@@ -9921,7 +9921,7 @@ fn cli_signal_defaults_reset_inherited_ignores_before_vm_workers_start() {
                 name,
             ]);
             if executable != std::path::Path::new("node") {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             unsafe {
                 command.pre_exec(move || {
@@ -10566,7 +10566,7 @@ fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_li
             let mut command = Command::new(executable);
             command.arg(&path);
             if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
                 .unwrap()
@@ -11079,7 +11079,7 @@ fn compare_node_file_source_with_args(source: &str, flags: &[&str]) {
         let mut command = Command::new(executable);
         command.args(flags).arg(&fixture);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
@@ -11333,7 +11333,7 @@ fn native_exit_listener_throw_still_abandons_owned_work_without_callbacks() {
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "-e", source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         let observation =
             quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
@@ -11356,7 +11356,7 @@ fn native_commonjs_realm_reuses_canonical_private_util_binding() {
         "-e",
         include_str!("../node-tests/test-native-realm-private-binding.js"),
     ]);
-    command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+    command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
     let observation =
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
     assert!(!observation.timed_out);
@@ -11610,7 +11610,7 @@ fn buffer_parity_directory() -> tempfile::TempDir {
 
 fn run_quench(entry: &std::path::Path, args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
-    command.arg(entry).args(args).env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+    command.arg(entry).args(args).env(quench::shared_run::CHILD_RUNNER_ENV, "1");
     let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap();
     assert_eq!(result.exit_code, Some(0), "{args:?}: {}", String::from_utf8_lossy(&result.stderr));
     String::from_utf8_lossy(&result.stdout).into_owned()
@@ -11707,7 +11707,7 @@ fn wasm_files_are_es_modules_as_in_node() {
         for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
             let mut command = Command::new(executable);
             command.arg(directory.path().join(entry));
-            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            if executable != "node" { command.env(quench::shared_run::CHILD_RUNNER_ENV, "1"); }
             let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
             let stdout = String::from_utf8_lossy(&result.stdout);
             let stderr = String::from_utf8_lossy(&result.stderr);
@@ -11782,7 +11782,7 @@ setTimeout(() => console.log(JSON.stringify(seen)), 10);
             let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
                 let mut command = Command::new(executable);
                 command.args(flags).arg(directory.path().join(name));
-                if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+                if executable != "node" { command.env(quench::shared_run::CHILD_RUNNER_ENV, "1"); }
                 quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
             });
             assert_eq!(observations[0].exit_code, observations[1].exit_code, "{name} {flags:?}");

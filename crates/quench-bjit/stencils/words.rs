@@ -175,6 +175,16 @@ pub(crate) fn int_word(v: i32) -> u64 {
     u64::from(v as u32) | INT_TAG
 }
 
+/// `bits`, held in an integer register the optimizer cannot see through: a Number constant made from it reaches its
+/// use as a move from that register (`movabs` + `movq`, `mov` + `fmov`), never as a constant-pool load, which a
+/// stencil may not make (`Concrete::f64_constant`, so a staged Number rule's constants build into a row).
+#[inline(always)]
+pub(crate) fn register_bits(mut bits: u64) -> u64 {
+    // SAFETY: a template of only a comment naming the register, which keeps its value.
+    unsafe { core::arch::asm!("/* {0} */", inout(reg) bits, options(pure, nomem, nostack, preserves_flags)) };
+    bits
+}
+
 /// `cvttsd2si` to 32 bits: the truncated int32, or `i32::MIN` where `f` is out of range or NaN
 /// (Rust's saturating `as` would load its bounds from a constant pool, which a stencil may not use).
 #[cfg(target_arch = "x86_64")]
@@ -196,24 +206,6 @@ pub(crate) fn truncate32(f: f64) -> i32 {
     out
 }
 
-/// `cvttsd2si` to 64 bits: the truncated integer, or `i64::MIN` out of range or for NaN.
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-pub(crate) fn truncate64(f: f64) -> i64 {
-    // SAFETY: SSE2 is the x86-64 baseline.
-    unsafe { core::arch::x86_64::_mm_cvttsd_si64(core::arch::x86_64::_mm_set_sd(f)) }
-}
-
-/// `fcvtzs` to 64 bits, the 64-bit rows' conversion on AArch64 (`truncate32`'s contract).
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-pub(crate) fn truncate64(f: f64) -> i64 {
-    let out: i64;
-    // SAFETY: one scalar conversion, no memory or flags touched.
-    unsafe { core::arch::asm!("fcvtzs {out:x}, {input:d}", out = out(reg) out, input = in(vreg) f) };
-    out
-}
-
 /// `Value::number(f)`.
 #[inline(always)]
 pub(crate) fn canonical(f: f64) -> u64 {
@@ -229,10 +221,10 @@ pub(crate) fn canonical(f: f64) -> u64 {
 }
 
 
+/// ToInt32 of `f` when its truncation is exact (`value::exact_uint32`'s test), else `None`.
 #[inline(always)]
 pub(crate) fn f64_to_i32(f: f64) -> Option<i32> {
-    let wide = truncate64(f);
-    if wide != i64::MIN { Some(wide as i32) } else { None }
+    crate::value::exact_uint32(f).map(|uint32| uint32 as i32)
 }
 
 /// Whether both tagged words are int words (one test of their upper halves).

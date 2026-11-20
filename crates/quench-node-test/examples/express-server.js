@@ -1,5 +1,5 @@
 // Smallest possible Express-style app using only the Node API surface
-// that `quench-node` exposes. `node:http`'s createServer is real, so
+// that `quench` exposes. `node:http`'s createServer is real, so
 // the app builds a route table and serves actual requests over a
 // loopback socket: a `net` client issues one HTTP request and asserts
 // the response the route table produced.

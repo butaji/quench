@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::bytecode::ImmediateLayout;
+use crate::staged::array_search::{DenseNeedle, scan_dense};
 use crate::staged::region::Region;
 use crate::staged::{Domain, builtins, elements, strings};
 use crate::heap::Native;
@@ -27,6 +28,8 @@ pub(super) enum Builtin {
     Includes,
     /// `Array.prototype.indexOf` of one int32 over a dense array (`element_search`).
     IndexOf,
+    /// `Array.isArray` of one value (`plain_array_argument`).
+    IsArray,
 }
 
 impl Builtin {
@@ -40,13 +43,14 @@ impl Builtin {
             Native::NumberIsInteger => Self::IsInteger,
             Native::ArrayIncludes => Self::Includes,
             Native::ArrayIndexOf => Self::IndexOf,
+            Native::ArrayIsArray => Self::IsArray,
             _ => return None,
         })
     }
 
     /// The arguments the builtin reads; a call passing another count takes the native.
     pub(super) const fn arguments(self) -> u16 {
-        match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger | Self::Includes | Self::IndexOf => 1 }
+        match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger | Self::Includes | Self::IndexOf | Self::IsArray => 1 }
     }
 
     /// Whether the builtin changes an array's elements.
@@ -110,7 +114,34 @@ impl Lowering<'_, '_> {
                 let position = self.element_search(state, pc, receiver, argument, exit);
                 self.set_int(state, result, position);
             }
+            Builtin::IsArray => {
+                // An ordinary array answers true; any other value leaves before the call changes anything, and the
+                // call's own step answers it (`Vm::is_array`).
+                self.plain_array_argument(state, argument, exit);
+                let holds = self.raw_const(Lane::I8, 1);
+                let boolean = self.boolean(holds);
+                self.set_boolean(state, result, boolean);
+            }
         }
+    }
+
+    /// Guards that the value in `register` is an ordinary array, one whose record holds no extras: a direct array
+    /// among the array records, with no extras in its payload word. An arguments object always holds extras (its
+    /// brand is one), so such a record is no arguments object and `Array.isArray` holds of it. Any other value leaves
+    /// at `exit`.
+    fn plain_array_argument(&mut self, state: &mut State, register: Register, exit: ir::Block) {
+        use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+        let base = self.tagged(state, register);
+        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
+        let mut stage = super::super::object_slots::emit(&mut self.builder);
+        let direct = crate::staged::value::is_direct_array(&mut stage, base);
+        continues(stage.guard(direct, exit));
+        let present = stage.ne_imm(records, 0u32);
+        continues(stage.guard(present, exit));
+        let record = elements::array_record(&mut stage, records, base);
+        let payload = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+        let plain = crate::staged::object::plain_payload(&mut stage, payload);
+        continues(stage.guard(plain, exit));
     }
 
     /// The word of the dispatch payload at `offset`.
@@ -223,9 +254,10 @@ impl Lowering<'_, '_> {
     /// any result is defined, for a receiver the view does not prove, a prototype holding an index
     /// (`LaneHelper::PrototypesHoldNoIndex`: a hole then reads undefined, which no int32 equals, so
     /// the scans need no hole test), and an empty view (an encoded backing reads as empty).
-    /// Pass 1 finds the first word equal to the int's tagged word. Pass 2 finds the first double
-    /// word of the same value, and runs only where the backing may hold one (its count of other
-    /// values is nonzero): over [0, k) where pass 1 hit at k, over the whole backing where it missed.
+    /// The scans are `staged::array_search::scan_dense` on this stage. Pass 1 finds the first word
+    /// equal to the int's tagged word. Pass 2 finds the first double float-equal to the int, and
+    /// runs only where the backing may hold one (its count of other values is nonzero): over
+    /// [0, k) where pass 1 hit at k, over the whole backing where it missed.
     fn element_search(&mut self, state: &mut State, pc: usize, receiver: Register, argument: Register, exit: ir::Block) -> ir::Value {
         let base = self.tagged(state, receiver);
         let hoisted = self.loop_array(pc, Some(receiver)).filter(|hoisted| hoisted.views == ElementViews::Dense);
@@ -250,106 +282,26 @@ impl Lowering<'_, '_> {
         let int = self.int(state, argument, exit);
         let key = self.tagged(state, argument);
         let search = self.raw_unary(Unary::FromSigned(Lane::F64), int);
-        let end = {
-            let length = self.raw_unary(Unary::ZeroExtend(Lane::I64), length);
-            let mut stage = super::super::object_slots::emit(&mut self.builder);
-            let bytes = stage.mul_imm(length, size_of::<crate::Value>() as u64);
-            stage.add(values, bytes)
-        };
-        let done = self.builder.create_block();
-        self.builder.append_block_param(done, ir::types::I32);
-        // Pass 1: the first word equal to the key.
-        let (word_found, word_missing) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.append_block_param(word_found, ir::types::I64);
-        self.scan_words(values, end, key, search, false, word_found, word_missing);
-        // A word hit at `at`: the first double-equal element before it wins, if the backing may hold one.
-        self.builder.switch_to_block(word_found);
-        self.builder.seal_block(word_found);
-        let at = self.builder.block_params(word_found)[0];
-        let at_position = self.element_position(values, at);
         let ints_only = self.holds_no_double(values);
-        let (doubles_before, doubles_before_found, doubles_before_missing) =
-            (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        self.builder.append_block_param(doubles_before_found, ir::types::I64);
-        self.branch_if(ints_only, (done, &[at_position]), (doubles_before, &[]));
-        self.builder.switch_to_block(doubles_before);
-        self.builder.seal_block(doubles_before);
-        self.scan_words(values, at, key, search, true, doubles_before_found, doubles_before_missing);
-        self.builder.switch_to_block(doubles_before_found);
-        self.builder.seal_block(doubles_before_found);
-        let double_at = self.builder.block_params(doubles_before_found)[0];
-        let double_position = self.element_position(values, double_at);
-        self.goto(done, &[double_position]);
-        self.builder.switch_to_block(doubles_before_missing);
-        self.builder.seal_block(doubles_before_missing);
-        self.goto(done, &[at_position]);
-        // No word hit: a double-equal element anywhere in the backing is the answer, else -1.
-        self.builder.switch_to_block(word_missing);
-        self.builder.seal_block(word_missing);
-        let none = self.raw_const(Lane::I32, -1);
-        let ints_only = self.holds_no_double(values);
-        let (doubles, doubles_found, doubles_missing) =
-            (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        self.builder.append_block_param(doubles_found, ir::types::I64);
-        self.branch_if(ints_only, (done, &[none]), (doubles, &[]));
-        self.builder.switch_to_block(doubles);
-        self.builder.seal_block(doubles);
-        self.scan_words(values, end, key, search, true, doubles_found, doubles_missing);
-        self.builder.switch_to_block(doubles_found);
-        self.builder.seal_block(doubles_found);
-        let double_at = self.builder.block_params(doubles_found)[0];
-        let double_position = self.element_position(values, double_at);
-        self.goto(done, &[double_position]);
-        self.builder.switch_to_block(doubles_missing);
-        self.builder.seal_block(doubles_missing);
-        self.goto(done, &[none]);
-        self.builder.switch_to_block(done);
-        self.builder.seal_block(done);
-        self.builder.block_params(done)[0]
-    }
-
-    /// The scan of the words from `start` up to `end` (both element addresses), in one loop:
-    /// `found` takes the address of the first word that is the int's tagged word `key`, or with
-    /// `by_double`, the first word that is a double of the int's value `search` (a NaN-space
-    /// word, a tag or a NaN, compares unequal to any Number). `missing` takes the range's end.
-    /// Continues from the current block, leaving the builder at no block.
-    fn scan_words(&mut self, start: ir::Value, end: ir::Value, key: ir::Value, search: ir::Value, by_double: bool,
-        found: ir::Block, missing: ir::Block) {
-        let (header, body, next) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        self.builder.append_block_param(header, ir::types::I64);
-        self.goto(header, &[start]);
-        self.builder.switch_to_block(header);
-        let cursor = self.builder.block_params(header)[0];
-        let at_end = self.raw_compare(Relation::Equal, cursor, end);
-        self.branch_if(at_end, (missing, &[]), (body, &[]));
-        self.builder.switch_to_block(body);
-        self.builder.seal_block(body);
-        let word = {
-            let mut stage = super::super::object_slots::emit(&mut self.builder);
-            stage.load_u64(Region::Elements.mutable(), cursor, 0)
-        };
-        let hit = if by_double {
-            let number = self.raw_unary(Unary::Bitcast(Lane::F64), word);
-            self.raw_compare(Relation::FloatEqual, number, search)
-        } else {
-            self.raw_compare(Relation::Equal, word, key)
-        };
-        self.branch_if(hit, (found, &[cursor]), (next, &[]));
-        self.builder.switch_to_block(next);
-        self.builder.seal_block(next);
-        let advanced = {
-            let mut stage = super::super::object_slots::emit(&mut self.builder);
-            stage.add_imm(cursor, size_of::<crate::Value>() as u64)
-        };
-        self.goto(header, &[advanced]);
-        self.builder.seal_block(header);
-    }
-
-    /// The int32 position of the element at address `at` of the backing at `values`.
-    fn element_position(&mut self, values: ir::Value, at: ir::Value) -> ir::Value {
-        let offset = self.raw_binary(Binary::Sub, at, values);
+        let length = self.raw_unary(Unary::ZeroExtend(Lane::I64), length);
         let mut stage = super::super::object_slots::emit(&mut self.builder);
-        let index = stage.shr_imm(offset, size_of::<crate::Value>().trailing_zeros());
+        let zero = stage.constant(0);
+        // Pass 1: the first word equal to the key, or `length`.
+        let words = [key];
+        let at = scan_dense(&mut stage, values, zero, length, DenseNeedle { words: &words, number: None, hole: None }, 8);
+        let hit = stage.ult(at, length);
+        // What the search answers when no double is equal: the word hit, else -1.
+        let fallback = {
+            let none = stage.constant(u64::MAX);
+            stage.select(hit, at, none)
+        };
+        // Pass 2, over [0, end): the first double equal to the int, else `fallback`.
+        let end = stage.select(hit, at, length);
+        let index = stage.choose(ints_only, |_| fallback, |stage| {
+            let double = scan_dense(stage, values, zero, end, DenseNeedle { words: &[], number: Some(search), hole: None }, 8);
+            let none = stage.eq(double, end);
+            stage.select(none, fallback, double)
+        });
         self.raw_unary(Unary::Narrow(Lane::I32), index)
     }
 

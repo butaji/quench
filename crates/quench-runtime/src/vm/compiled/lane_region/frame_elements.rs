@@ -12,9 +12,8 @@ use crate::staged::element_rows::ElementView;
 use crate::staged::elements::DenseView;
 use crate::staged::typed_elements::TypedView;
 use crate::staged::{ElementFrame, Region, Stage};
-use crate::staged::barrier::{unlogged_store, MarkList};
-use crate::vm::compiled::{emit_js_guard, regions};
-use cranelift_codegen::ir::MemFlagsData;
+use crate::staged::barrier::MarkList;
+use crate::vm::compiled::{emit_js_guard, emit_unlogged_property_store_guard};
 
 /// The view of a loop's hoisted array an element row reads and writes through, which the loop's
 /// entering edge proved once: a dense array's backing, or a typed array's elements.
@@ -27,11 +26,15 @@ pub(super) enum Held {
 
 /// The barrier gate of a store of the reference `value` into the direct array `base`, read from the
 /// dispatch `payload`: continues where the array's record mark bit is clear
-/// (`staged::barrier::unlogged_store` over the array records' mark list, the test `Heap::store_logs`
+/// (`emit_unlogged_property_store_guard` over the array records' mark list, the test `Heap::store_logs`
 /// makes), and leaves at `miss` for a base that is no direct array or a marked record. An immediate
-/// `value` passes the test inline, as `unlogged_store` decides it.
+/// `value` passes the test inline, as `emit_unlogged_property_store_guard` decides it, while old
+/// records keep no counts; under counts every store into a marked record logs, so the gate word's
+/// counts bit leaves at `miss` first.
 pub(super) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir::Value, value: ir::Value,
     miss: ir::Block) -> Option<()> {
+    let uncounted = stage.counts_clear(payload);
+    emit_js_guard(stage.builder, uncounted, miss);
     let direct = crate::staged::value::is_direct_array(stage, base);
     stage.guard(direct, miss)?;
     let record = stage.and_imm(base, u64::from(u32::MAX));
@@ -39,8 +42,7 @@ pub(super) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir:
         blocks: std::mem::offset_of!(JsStepDispatch, head.array_mark_blocks),
         count: std::mem::offset_of!(JsStepDispatch, head.array_mark_block_count),
     };
-    unlogged_store(stage, (regions::dispatch(), MemFlagsData::trusted()), payload, list, (record, value),
-        |stage, condition| emit_js_guard(stage.builder, condition, miss));
+    emit_unlogged_property_store_guard(stage, list, payload, record, value, miss);
     Some(())
 }
 
@@ -71,7 +73,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     /// Continues where a store of the reference `value` into the direct array `base` passes the write
-    /// barrier unlogged: the array's record mark bit is clear (`staged::barrier::unlogged_store` over
+    /// barrier unlogged: the array's record mark bit is clear (`emit_unlogged_property_store_guard` over
     /// the array records' mark list, the same test `Heap::store_logs` makes). A base that is no direct
     /// array, or a marked one, leaves at `miss`: the general store logs it, which clears the mark, so
     /// the next store of the loop passes here without a call.

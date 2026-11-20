@@ -1,7 +1,10 @@
 //! The object linker: an `AotImage` as a `NativeJsModule` for the system linker. Each function's
 //! entry is its lane body where it has one, else its base body; a lane's base PC leaves name the
 //! base body as a definition of its own. Helpers and semantic entries are imports the linker binds;
-//! a code relocation names its target by declaration index, with a PC leave's offset as addend.
+//! a code relocation names its target by declaration index, with a PC leave's offset as addend. The
+//! generic rows' operand records are one data record, named with the record's offset as addend, and
+//! the proven calls' records another, writable: each names no callee until the runtime binds it
+//! (`bound::BoundCalls::bind`), so its direct row takes the helper meanwhile.
 //! Symbols whose value is only known in a VM (atoms, shapes, heap values, cells) have no object
 //! form yet and are rejected here rather than linked to a wrong address.
 //!
@@ -11,18 +14,28 @@ use super::{AotFunction, AotImage, base::NO_ENTRY, file, symbols::{Symbol, Symbo
 use crate::bytecode::opcode_name;
 use crate::vm::compiled::native_js_operation_signature;
 use crate::vm::jit_backend::relocatable_code::RelocatableCode;
-use crate::vm::native_object::{NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeFunction, NativeFunctionAddress, NativeJsModule, NativeReloc};
+use crate::vm::native_object::{NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeFunction, NativeDataAddress, NativeFunctionAddress, NativeJsModule, NativeReloc};
 use cranelift_codegen::{ir, isa::{CallConv, TargetIsa}};
+use quench_bjit::call_record::CallRecord;
 use std::collections::BTreeMap;
 
 /// The system linker's name of lane helper number `helper`, which the runtime binds.
-const HELPER_SYMBOL_PREFIX: &str = "quench_lane_helper_";
 /// Every body starts at this alignment in the object.
 const CODE_ALIGNMENT: u64 = 16;
 /// The declaration index of the ABI header import, the object's first symbol.
 const ABI_DECLARATION: u32 = 0;
-/// The entry table's data record, after the recipe record.
+/// The image file's data record (`file::to_bytes`), which the executable reads its image from.
+const IMAGE_RECORD: u32 = 0;
+/// The entry table's data record, after the image record.
 const ENTRY_TABLE_RECORD: usize = 1;
+/// The operand records' data record, after the entry table.
+const OPERANDS_RECORD: u32 = 2;
+/// The proven calls' records, after the operand records.
+const CALL_RECORDS_RECORD: u32 = 3;
+/// The bytes of one call record (`CallRecord`).
+const CALL_RECORD_BYTES: i64 = std::mem::size_of::<CallRecord>() as i64;
+/// The bytes of one operand record (`NativeJsOperands`).
+const OPERAND_RECORD_BYTES: i64 = std::mem::size_of::<[u64; 2]>() as i64;
 
 /// The declarations an image's code names, and where its definitions are.
 struct Targets<'a> {
@@ -43,33 +56,17 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
         name: crate::NATIVE_JS_ABI_SYMBOL.into(),
         signature: ir::Signature::new(isa.default_call_conv()),
     }];
-    let (mut imports, helpers) = import_symbols(image, isa, &mut functions)?;
+    let imports = import_symbols(image, isa, &mut functions)?;
     let first = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
     let bases = base_declarations(image, first)?;
-    // The helper stubs follow every entry and base body, so the entry numbering `base_declarations`
-    // computes is unchanged.
-    let lanes = u32::try_from(image.functions.iter().filter(|function| function.lane.is_some()).count())
-        .map_err(|_| "native symbol count exceeds u32")?;
-    let helper_base = first.checked_add(u32::try_from(image.functions.len()).map_err(|_| "native symbol count exceeds u32")?)
-        .and_then(|after| after.checked_add(lanes)).ok_or("native symbol count overflow")?;
-    for (at, helper) in helpers.iter().enumerate() {
-        imports.insert((crate::vm::compiled::lane_helper_key(*helper).0, crate::vm::compiled::lane_helper_key(*helper).1), helper_base + at as u32);
-    }
     let targets = Targets { image, imports: &imports, bases: &bases, conv: isa.default_call_conv() };
     let mut definitions = image.functions.iter().map(|function| entry_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?;
     definitions.extend(image.functions.iter().filter(|function| function.lane.is_some())
         .map(|function| base_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?);
     functions.extend(definitions);
-    if !helpers.is_empty() {
-        let table = *imports.get(&(crate::vm::compiled::lane_helper_table_key().0, crate::vm::compiled::lane_helper_table_key().1))
-            .ok_or("an image names a helper but no helper table")?;
-        // Named per module: each object defines its own stub (nothing outside references it -- the
-        // code reaches it by declaration index), so two objects never collide on one name.
-        for helper in &helpers {
-            functions.push(helper_stub(format!("{namespace}_lane_helper_{helper}"), *helper, table, isa));
-        }
-    }
-    let data = vec![recipe_data(namespace, image), entry_table(isa, namespace, image.functions.len(), first)?];
+    let file = file::to_bytes(image);
+    let table = entry_table(isa, namespace, (&bases, first), file.len())?;
+    let data = vec![image_data(namespace, file), table, operand_data(namespace, image), call_data(namespace, image)];
     Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
 }
 
@@ -78,95 +75,33 @@ fn codes(function: &AotFunction) -> impl Iterator<Item = &RelocatableCode> {
     std::iter::once(&function.base.code).chain(function.lane.as_ref().map(|lane| &lane.code))
 }
 
-/// Declares the semantic-entry symbols the code names, after `functions`' existing declarations,
-/// and returns their declaration indices and the helpers the code names. A helper is not an
-/// import: the module defines one stub per helper over the exported table (`helper_stub`), because
-/// the executable cannot export a text symbol per helper of a build it does not know.
-fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<NativeFunction>)
-    -> Result<(BTreeMap<(u32, u32), u32>, Vec<u32>), String> {
+/// Declares the helper and semantic-entry symbols the code names, after `functions`' existing
+/// declarations, and returns their declaration indices.
+fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<NativeFunction>) -> Result<BTreeMap<(u32, u32), u32>, String> {
     let mut imports = BTreeMap::new();
-    let mut helpers: Vec<u32> = Vec::new();
     for reloc in image.functions.iter().flat_map(codes).flat_map(|code| code.relocations.iter()) {
         let key = (reloc.namespace, reloc.key);
-        match SymbolTable::decode(&image.labels, key.0, key.1) {
-            Some(Symbol::Helper(helper)) => {
-                if !helpers.contains(&helper) { helpers.push(helper); }
-                continue;
-            }
-            _ => {}
-        }
         if imports.contains_key(&key) {
             continue;
         }
-        let import = match SymbolTable::decode(&image.labels, key.0, key.1) {
-            Some(Symbol::HelperTable) => NativeFunction::Import {
-                name: crate::NATIVE_JS_LANE_HELPER_TABLE_SYMBOL.to_owned(),
-                signature: ir::Signature::new(isa.default_call_conv()),
-            },
+        let import = match SymbolTable::decode(image, key.0, key.1) {
+            Some(Symbol::Helper(helper)) => helper_import(isa, helper)?,
             Some(Symbol::SemanticEntry(op)) => operation_import(isa, op),
-            Some(Symbol::BasePc { .. }) => continue,
+            Some(Symbol::BasePc { .. } | Symbol::Operands { .. } | Symbol::CallRecord { .. }) => continue,
             Some(symbol) => return Err(format!("{symbol:?} has no object form yet")),
             None => return Err("an AOT image names an unknown symbol".into()),
         };
         imports.insert(key, u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?);
         functions.push(import);
     }
-    // A helper needs the table; an image that names helpers before the table does gets it here.
-    if !helpers.is_empty() && !imports.contains_key(&(crate::vm::compiled::lane_helper_table_key().0, crate::vm::compiled::lane_helper_table_key().1)) {
-        let key = (crate::vm::compiled::lane_helper_table_key().0, crate::vm::compiled::lane_helper_table_key().1);
-        imports.insert(key, u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?);
-        functions.push(NativeFunction::Import {
-            name: crate::NATIVE_JS_LANE_HELPER_TABLE_SYMBOL.to_owned(),
-            signature: ir::Signature::new(isa.default_call_conv()),
-        });
-    }
-    Ok((imports, helpers))
+    Ok(imports)
 }
 
-/// Helper `helper`'s stub: a branch to the table's entry, so a stitched row's call reaches the
-/// helper through one exported symbol. Built as Cranelift IR rather than bytes, so the target
-/// backend emits the reference to the table with the relocations Mach-O accepts from a text
-/// section (an absolute word there is illegal, and the table lives in data).
-///
-/// The stub forwards its own parameter registers unchanged, which is the row ABI a helper is
-/// entered with: it reads none of them, it only tails into the helper's entry.
-#[cfg(target_arch = "aarch64")]
-fn helper_stub(name: String, helper: u32, table: u32, isa: &dyn TargetIsa) -> NativeFunction {
-    use cranelift_codegen::ir::InstBuilder as _;
-    use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    for _ in 0..STUB_PARAMETERS { signature.params.push(ir::AbiParam::new(cranelift_codegen::ir::types::I64)); }
-    signature.returns.push(ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let mut function = ir::Function::with_name_signature(ir::UserFuncName::user(0, 0), signature.clone());
-    let mut context = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut function, &mut context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    builder.seal_block(entry);
-    let symbol = builder.func.declare_imported_user_function(ir::UserExternalName::new(NATIVE_FUNCTION_NAMESPACE, table));
-    let table_value = builder.func.create_global_value(ir::GlobalValueData::Symbol {
-        name: ir::ExternalName::user(symbol), offset: ir::immediates::Imm64::new(0), colocated: false, tls: false });
-    let base = builder.ins().symbol_value(cranelift_codegen::ir::types::I64, table_value);
-    let entry_address = builder.ins().load(cranelift_codegen::ir::types::I64, ir::MemFlagsData::trusted(), base, (helper * 8) as i32);
-    let call = builder.import_signature(signature);
-    let arguments: Vec<_> = builder.block_params(entry).to_vec();
-    // A call and return, not a sibling call: AArch64's register allocator cannot satisfy a tail
-    // call of this shape (`return_call_indirect` fails to allocate a minimal bundle).
-    let call = builder.ins().call_indirect(call, entry_address, &arguments);
-    let results: Vec<_> = builder.inst_results(call).to_vec();
-    builder.ins().return_(&results);
-    builder.finalize(isa.frontend_config());
-    NativeFunction::Definition { name, function }
-}
-
-/// The word registers a helper's entry may read: the row ABI's context, residual and operands.
-#[cfg(target_arch = "aarch64")]
-const STUB_PARAMETERS: usize = 5;
-
-#[cfg(not(target_arch = "aarch64"))]
-fn helper_stub(name: String, _helper: u32, _table: u32, isa: &dyn TargetIsa) -> NativeFunction {
-    NativeFunction::Import { name, signature: ir::Signature::new(isa.default_call_conv()) }
+/// The import of lane helper `helper`, by its name (`compiled::lane_helper_symbol`), which the
+/// executable defines (`define_lane_helper_symbols`).
+fn helper_import(isa: &dyn TargetIsa, helper: u32) -> Result<NativeFunction, String> {
+    let name = crate::vm::compiled::lane_helper_symbol(helper as usize).ok_or("an AOT image names an unknown lane helper")?;
+    Ok(NativeFunction::Import { name, signature: ir::Signature::new(isa.default_call_conv()) })
 }
 
 fn operation_import(isa: &dyn TargetIsa, op: u16) -> NativeFunction {
@@ -204,65 +139,123 @@ fn base_definition(namespace: &str, function: &AotFunction, targets: &Targets<'_
 
 fn definition(name: String, code: &RelocatableCode, targets: &Targets<'_>) -> Result<NativeFunction, String> {
     let relocations = code.relocations.iter().map(|reloc| {
-        let (index, addend) = targets.of(reloc.namespace, reloc.key, reloc.addend)?;
-        Ok(NativeReloc { offset: reloc.offset as u32, kind: reloc.kind, namespace: NATIVE_FUNCTION_NAMESPACE, index, addend })
+        let (namespace, index, addend) = targets.of(reloc.namespace, reloc.key, reloc.addend)?;
+        Ok(NativeReloc { offset: reloc.offset as u32, kind: reloc.kind, namespace, index, addend })
     }).collect::<Result<Vec<_>, String>>()?;
     Ok(NativeFunction::Code(NativeCode {
         name,
         signature: ir::Signature::new(targets.conv),
         code: code.code.to_vec(),
         alignment: CODE_ALIGNMENT,
-        local: false,
         relocations,
     }))
 }
 
 impl Targets<'_> {
-    /// The declaration and addend of symbol `(namespace, key)` under `addend`.
-    fn of(&self, namespace: u32, key: u32, addend: i64) -> Result<(u32, i64), String> {
-        match SymbolTable::decode(&self.image.labels, namespace, key) {
+    /// The native namespace, declaration and addend of symbol `(namespace, key)` under `addend`.
+    fn of(&self, namespace: u32, key: u32, addend: i64) -> Result<(u32, u32, i64), String> {
+        match SymbolTable::decode(self.image, namespace, key) {
             Some(Symbol::BasePc { function, pc }) => {
                 let offset = self.image.functions.get(function as usize)
                     .and_then(|body| body.base.pc_offsets.get(pc as usize).copied())
                     .filter(|offset| *offset != NO_ENTRY)
                     .ok_or("a lane leaves to a record no control enters")?;
                 let base = *self.bases.get(function as usize).ok_or("a lane leaves to an unknown function")?;
-                Ok((base, addend + i64::from(offset)))
+                Ok((NATIVE_FUNCTION_NAMESPACE, base, addend + i64::from(offset)))
             }
-            _ => self.imports.get(&(namespace, key)).map(|index| (*index, addend)).ok_or_else(|| "an AOT image symbol has no object form".into()),
+            Some(Symbol::Operands { .. }) => Ok((NATIVE_DATA_NAMESPACE, OPERANDS_RECORD, addend + i64::from(key) * OPERAND_RECORD_BYTES)),
+            Some(Symbol::CallRecord { .. }) => Ok((NATIVE_DATA_NAMESPACE, CALL_RECORDS_RECORD, addend + i64::from(key) * CALL_RECORD_BYTES)),
+            _ => self.imports.get(&(namespace, key)).map(|index| (NATIVE_FUNCTION_NAMESPACE, *index, addend)).ok_or_else(|| "an AOT image symbol has no object form".into()),
         }
     }
 }
 
-/// The recipe tables and atom texts, as the loader reads them.
-fn recipe_data(namespace: &str, image: &AotImage) -> NativeData {
+/// The image's file (`file::to_bytes`): the executable reads the image from it (`LinkedTable`), the
+/// code in it relinked only for the lane bodies a VM publishes.
+fn image_data(namespace: &str, file: Vec<u8>) -> NativeData {
     NativeData {
-        name: format!("{namespace}_recipes"),
-        bytes: file::recipe_bytes(image),
-        alignment: std::mem::align_of::<u32>() as u64,
+        name: format!("{namespace}_image"),
+        bytes: file,
+        alignment: std::mem::align_of::<u64>() as u64,
         writable: false,
         function_addresses: Vec::new(),
+        data_addresses: Vec::new(),
     }
 }
 
-/// The entry table: the ABI header word, then one entry per function, each the address of
-/// its entry definition (`first` plus the ID).
-fn entry_table(isa: &dyn TargetIsa, namespace: &str, count: usize, first: u32) -> Result<NativeData, String> {
+/// The operand records, each its words in host order (the object targets this host, as
+/// `NativeJsOperands::append_native_bytes` does).
+fn operand_data(namespace: &str, image: &AotImage) -> NativeData {
+    NativeData {
+        name: format!("{namespace}_operands"),
+        bytes: image.operands.iter().flat_map(|record| record.words).flat_map(u64::to_ne_bytes).collect(),
+        alignment: std::mem::align_of::<u64>() as u64,
+        writable: false,
+        function_addresses: Vec::new(),
+        data_addresses: Vec::new(),
+    }
+}
+
+/// The proven calls' records, each its image template in host order (`CallRecord` is `repr(C)`),
+/// writable for the runtime's binding.
+fn call_data(namespace: &str, image: &AotImage) -> NativeData {
+    NativeData {
+        name: format!("{namespace}_calls"),
+        bytes: image.calls.iter().flat_map(|call| record_bytes(&call.record)).collect(),
+        alignment: std::mem::align_of::<CallRecord>() as u64,
+        writable: true,
+        function_addresses: Vec::new(),
+        data_addresses: Vec::new(),
+    }
+}
+
+/// The bytes of `record` as the direct row reads them: each field at its offset, the padding zero.
+fn record_bytes(record: &CallRecord) -> Vec<u8> {
+    use std::mem::offset_of;
+    let mut bytes = vec![0; std::mem::size_of::<CallRecord>()];
+    let words = [(offset_of!(CallRecord, callee), record.callee), (offset_of!(CallRecord, cell), record.cell), (offset_of!(CallRecord, expected), record.expected),
+        (offset_of!(CallRecord, captures), record.captures), (offset_of!(CallRecord, global_this), record.global_this),
+        (offset_of!(CallRecord, call), record.call), (offset_of!(CallRecord, caller_base), record.caller_base), (offset_of!(CallRecord, packed), record.packed),
+        (offset_of!(CallRecord, proven_args), record.proven_args), (offset_of!(CallRecord, descriptor), record.descriptor)];
+    let registers = [(offset_of!(CallRecord, callee_register), record.callee_register), (offset_of!(CallRecord, this_register), record.this_register),
+        (offset_of!(CallRecord, args_register), record.args_register), (offset_of!(CallRecord, result_register), record.result_register)];
+    words.iter().for_each(|&(at, word)| bytes[at..at + std::mem::size_of::<u64>()].copy_from_slice(&word.to_ne_bytes()));
+    registers.iter().for_each(|&(at, register)| bytes[at..at + std::mem::size_of::<u16>()].copy_from_slice(&register.to_ne_bytes()));
+    let places = offset_of!(CallRecord, argument_places);
+    bytes[places..places + record.argument_places.len()].copy_from_slice(&record.argument_places);
+    bytes
+}
+
+/// The entry table (`crate::vm::native_program::LinkedTable` reads it): the ABI header word; one
+/// entry per function, each the address of its entry definition (`first` plus the ID); one base body
+/// address per function (`bases`, by declaration); then the image file's address and length, the
+/// operand records' address and the call records' address.
+fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u32), file_length: usize) -> Result<NativeData, String> {
     let pointer_bytes = usize::from(isa.pointer_bytes());
     if pointer_bytes != std::mem::size_of::<usize>() {
         return Err("native image pointer width differs from host".into());
     }
-    let header = crate::NATIVE_JS_IMAGE_HEADER_WORDS;
+    let (header, count) = (crate::NATIVE_JS_IMAGE_HEADER_WORDS, bases.len());
+    let offset = |word: usize| u32::try_from(word * pointer_bytes).map_err(|_| "native entry table exceeds relocation offsets");
     let mut addresses = vec![NativeFunctionAddress { offset: 0, function: ABI_DECLARATION }];
     for id in 0..count {
-        let offset = u32::try_from((id + header) * pointer_bytes).map_err(|_| "native entry table exceeds relocation offsets")?;
-        addresses.push(NativeFunctionAddress { offset, function: first + id as u32 });
+        addresses.push(NativeFunctionAddress { offset: offset(header + id)?, function: first + id as u32 });
+        addresses.push(NativeFunctionAddress { offset: offset(header + count + id)?, function: bases[id] });
     }
+    let tail = header + 2 * count;
+    let data_addresses = vec![
+        NativeDataAddress { offset: offset(tail)?, data: IMAGE_RECORD, addend: 0 },
+        NativeDataAddress { offset: offset(tail + 2)?, data: OPERANDS_RECORD, addend: 0 },
+        NativeDataAddress { offset: offset(tail + 3)?, data: CALL_RECORDS_RECORD, addend: 0 },
+    ];
+    let mut bytes = vec![0; (tail + 4) * pointer_bytes];
+    bytes[(tail + 1) * pointer_bytes..(tail + 2) * pointer_bytes].copy_from_slice(&file_length.to_ne_bytes());
     Ok(NativeData {
         name: format!("{namespace}_entries"),
-        bytes: vec![0; (count + header) * pointer_bytes],
+        bytes,
         alignment: pointer_bytes as u64,
         writable: false,
         function_addresses: addresses,
+        data_addresses,
     })
 }

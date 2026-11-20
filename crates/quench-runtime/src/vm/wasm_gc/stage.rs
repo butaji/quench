@@ -5,8 +5,8 @@
 use super::super::*;
 use crate::WasmTypes;
 use crate::staged::machine::{Machine, MachineStage};
-use crate::staged::wasm_gc::WasmGc;
-use crate::wasm::gc::{GcField, GcFieldValue};
+use crate::staged::wasm_gc::{WasmGc, reference_cast};
+use crate::wasm::gc::GcField;
 use crate::wasm::reference::{ReferenceTarget, TargetHeap};
 
 /// The VM's heap, as a stage the GC rules run on.
@@ -34,58 +34,59 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
     }
 
     fn is_object(&mut self, reference: u64) -> u64 {
-        u64::from(matches!(self.vm.heap.get(Value::from_bits(reference)), Some(Cell::WasmGc { .. })))
+        u64::from(self.vm.heap.wasm_gc(Value::from_bits(reference)).is_some())
     }
 
     /// One heap lookup: the address of the field's stored bytes in the object's payload, at the
-    /// offset its layout gives; 0 for a miss. The rules read or write it at once, before anything
-    /// allocates.
+    /// offset its layout gives; 0 for a miss. A read, from a shared borrow: no write barrier. The
+    /// rules read it at once, before anything allocates.
     fn field_slot(&mut self, reference: u64, index: u64) -> u64 {
         let index = usize::try_from(index).unwrap_or(usize::MAX);
-        match self.vm.heap.get_mut(Value::from_bits(reference)) {
-            Some(Cell::WasmGc { declarations, ty, fields }) => match declarations.layout(*ty) {
-                Some(layout) => fields.slot(layout, index).map_or(0, |slot| slot as usize as u64),
-                None => 0,
-            },
-            _ => 0,
+        let Some(record) = self.vm.heap.wasm_gc(Value::from_bits(reference)) else {
+            return 0;
+        };
+        match record.layout() {
+            Some(layout) => record.fields().address(layout, index).map_or(0, |slot| slot as usize as u64),
+            None => 0,
+        }
+    }
+
+    /// `field_slot` for a store into the field: the write barrier is passed before the address is
+    /// given, so the object is logged as the store into it requires.
+    fn field_slot_for_write(&mut self, reference: u64, index: u64) -> u64 {
+        let index = usize::try_from(index).unwrap_or(usize::MAX);
+        let Some(record) = self.vm.heap.wasm_gc_mut(Value::from_bits(reference)) else {
+            return 0;
+        };
+        match record.split_mut() {
+            Some((layout, fields)) => fields.slot(layout, index).map_or(0, |slot| slot as usize as u64),
+            None => 0,
         }
     }
 
     fn field_count(&mut self, reference: u64) -> u64 {
-        match self.vm.heap.get(Value::from_bits(reference)) {
-            Some(Cell::WasmGc { declarations, ty, fields }) => {
-                let layout = declarations.layout(*ty).expect("the rules count the fields of an object they checked");
-                fields.count(layout) as u64
+        match self.vm.heap.wasm_gc(Value::from_bits(reference)) {
+            Some(record) => {
+                let layout = record.layout().expect("the rules count the fields of an object they checked");
+                record.fields().count(layout) as u64
             }
             _ => unreachable!("the rules count the fields of an object they checked"),
         }
     }
 
-    /// The word a read of `field` gives: a packed field's integer; an `i32` or `f32` as a `Value`
-    /// integer; a 64-bit number as a `Value` (boxed where its bits are not in place); a reference's
-    /// `Value` bits.
+    /// The field's Wasm bits as its storage holds them: one load, no box and no tag.
     fn read_slot(&mut self, slot: u64, field: GcField) -> u64 {
         // SAFETY: `slot` is a nonzero `field_slot` answer, taken just before with nothing
         // allocated since, so it addresses the field's `size()` bytes of a live payload.
         let bytes = unsafe { std::slice::from_raw_parts(slot as usize as *const u8, field.size()) };
-        let stored = field.load(bytes);
-        if field.packed_bits().is_some() {
-            return stored;
-        }
-        match field.value() {
-            GcFieldValue::Narrow => Value::integer(stored as u32 as i32).to_bits(),
-            GcFieldValue::Wide => self.vm.encode_bits64(stored).to_bits(),
-            GcFieldValue::Reference | GcFieldValue::Vector => stored,
-        }
+        field.load(bytes)
     }
 
-    /// Stores the `Value` bits `value` in the field: its stored form, the raw bits a 64-bit number
-    /// keeps in place of its cell.
+    /// Stores the field's Wasm bits `value` in its storage: one store, no unboxing.
     fn write_slot(&mut self, slot: u64, field: GcField, value: u64) {
-        let bits = self.vm.wasm_stored_bits(field, Value::from_bits(value));
         // SAFETY: as `read_slot`: a fresh nonzero `field_slot` answer.
         let bytes = unsafe { std::slice::from_raw_parts_mut(slot as usize as *mut u8, field.size()) };
-        field.store(bytes, bits);
+        field.store(bytes, value);
     }
 
     fn array_mutable(&mut self, reference: u64) -> u64 {
@@ -115,33 +116,29 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
         let element = self.array_element(reference).expect("the rules fill an array they checked");
         let field = GcField::new(0, element).expect("index 0 fits");
         let bits = self.vm.wasm_stored_bits(field, Value::from_bits(value));
-        let Some(Cell::WasmGc { declarations, ty, fields }) = self.vm.heap.get_mut(Value::from_bits(reference)) else {
-            unreachable!("the rules fill an array they checked")
-        };
-        let layout = declarations.layout(*ty).expect("a validated array");
-        fields.fill(layout, field, index as usize, extent as usize, bits);
+        self.fill_field_bits(reference, index, extent, bits);
     }
 
     fn copy_fields(&mut self, destination: u64, output: u64, source: u64, input: u64, extent: u64) {
         let (output, input, extent) = (output as usize, input as usize, extent as usize);
-        let Some(Cell::WasmGc { declarations, ty, fields }) = self.vm.heap.get_mut(Value::from_bits(destination)) else {
+        let Some(record) = self.vm.heap.wasm_gc_mut(Value::from_bits(destination)) else {
             unreachable!("the rules copy into an array they checked")
         };
-        let layout = declarations.layout(*ty).expect("a validated array");
+        let layout = record.layout().expect("a validated array");
         let output = layout.element_range(output, extent).expect("a checked array range");
         let input = layout.element_range(input, extent).expect("a checked array range");
         if destination == source {
-            fields.copy_within(input, output.start);
+            record.fields_mut().copy_within(input, output.start);
             return;
         }
-        // Distinct arrays cannot alias: the destination's payload leaves its cell for one pass.
-        let mut to = std::mem::take(fields);
-        let Some(Cell::WasmGc { fields: from, .. }) = self.vm.heap.get(Value::from_bits(source)) else {
+        // Distinct arrays cannot alias: the destination's payload leaves its record for one pass.
+        let mut to = std::mem::take(record.fields_mut());
+        let Some(from) = self.vm.heap.wasm_gc(Value::from_bits(source)) else {
             unreachable!("the rules copy from an array they checked")
         };
-        to.copy_from(output, from, input);
-        if let Some(Cell::WasmGc { fields, .. }) = self.vm.heap.get_mut(Value::from_bits(destination)) {
-            *fields = to;
+        to.copy_from(output, from.fields(), input);
+        if let Some(record) = self.vm.heap.wasm_gc_mut(Value::from_bits(destination)) {
+            record.set_fields(to);
         }
     }
 
@@ -160,6 +157,20 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
 }
 
 impl<H: Host> HeapStage<'_, H> {
+    /// Stores the element's Wasm bits `bits` in `extent` elements of the array `reference` from
+    /// `index`: the fill a tier makes with a value it already holds as bits, no box between.
+    pub(in crate::vm) fn fill_field_bits(&mut self, reference: u64, index: u64, extent: u64, bits: u64) {
+        let element = self.array_element(reference).expect("the rules fill an array they checked");
+        let field = GcField::new(0, element).expect("index 0 fits");
+        let Some(record) = self.vm.heap.wasm_gc_mut(Value::from_bits(reference)) else {
+            unreachable!("the rules fill an array they checked")
+        };
+        let Some((layout, fields)) = record.split_mut() else {
+            unreachable!("a validated array")
+        };
+        fields.fill(layout, field, index as usize, extent as usize, bits);
+    }
+
     /// The element storage of the array `reference`, if it is an array.
     pub(in crate::vm) fn array_element(&self, reference: u64) -> Option<wasmparser::StorageType> {
         self.array_owner(reference).map(|(field, _)| field.element_type)
@@ -168,10 +179,8 @@ impl<H: Host> HeapStage<'_, H> {
     /// The element declaration of the array `reference`, with the declarations that own it, if it
     /// is an array.
     fn array_owner(&self, reference: u64) -> Option<(wasmparser::FieldType, &WasmTypes)> {
-        let Some(Cell::WasmGc { declarations, ty, .. }) = self.vm.heap.get(Value::from_bits(reference)) else {
-            return None;
-        };
-        Some((declarations.array_field(*ty)?, declarations))
+        let record = self.vm.heap.wasm_gc(Value::from_bits(reference))?;
+        Some((record.declarations().array_field(record.ty())?, record.declarations()))
     }
 
     /// Whether a cast to `target` admits `reference` when that is null, an i31 or a GC object,
@@ -181,8 +190,8 @@ impl<H: Host> HeapStage<'_, H> {
         if reference.is_null() {
             return Some(target.is_nullable());
         }
-        let object = match self.vm.heap.get(reference) {
-            Some(Cell::WasmGc { declarations: owner, ty, .. }) => Some((owner, *ty)),
+        let object = match self.vm.heap.wasm_gc(reference) {
+            Some(record) => Some((record.declarations(), record.ty())),
             _ if crate::wasm::i31::bits(reference).is_some() => None,
             _ => return None,
         };
@@ -204,6 +213,26 @@ impl<H: Host> HeapStage<'_, H> {
         declarations
             .callable_value_type(wasmparser::ValType::Ref(target))
             .is_some_and(|ty| self.vm.wasm_reference_valid_in(reference, ty, Some(declarations)))
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// `ref.test` (`cast` false) or `ref.cast` of `reference`, its Wasm bits, to `target`, under
+    /// `program`'s declarations: the admit flag, or the reference the cast leaves.
+    pub(in crate::vm) fn wasm_ref_test_or_cast(
+        &mut self,
+        program: ProgramId,
+        target: ReferenceTarget,
+        reference: u64,
+        cast: bool,
+    ) -> Result<u64, JsError> {
+        let declarations = self.wasm_module_declarations(program)?;
+        let stage = &mut HeapStage { vm: self };
+        if cast {
+            reference_cast(stage, reference, target, &declarations)
+        } else {
+            Ok(stage.admits(reference, target, &declarations))
+        }
     }
 }
 

@@ -42,7 +42,7 @@ pub(super) mod builtin;
 use builtin::BuiltinCall;
 pub(super) use chain::ChainRead;
 use chain::chained_reads;
-use super::{Exit, SLOT};
+use super::{Exit, NO_SYMBOLS, SLOT, Symbolic};
 use super::super::direct_callee::DirectCallee;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
@@ -137,12 +137,15 @@ pub(super) struct CallShape {
     pub(super) form: CallForm,
     /// The method site read a `Method` call makes before its direct row (`None` for the other forms).
     pub(super) method: Option<Method>,
+    /// The opcode of the call record, which keys the fast-row counter of a planned direct call (`note_fast`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) op: crate::bytecode::Op,
 }
 
 impl CallShape {
     pub(super) fn of(call_pc: u32, instruction: WideInstruction, form: CallForm) -> Self {
         let imm = instruction.imm();
-        let (result, returning) = (instruction.result_register(), instruction.returns_from_frame());
+        let (result, returning, op) = (instruction.result_register(), instruction.returns_from_frame(), instruction.op());
         match form {
             CallForm::Plain => Self {
                 call_pc,
@@ -154,8 +157,9 @@ impl CallShape {
                 returning,
                 form,
                 method: None,
+                op,
             },
-            CallForm::Construct | CallForm::Stepped | CallForm::Method => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, method: None },
+            CallForm::Construct | CallForm::Stepped | CallForm::Method => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, method: None, op },
         }
     }
 }
@@ -183,7 +187,7 @@ pub(super) fn method_shape(program: &crate::bytecode::ResidualProgram, instructi
     let cache = context.method_site(site as usize)?.cache;
     Some(CallShape {
         call_pc, callee: scratch, this: receiver, window, argc: list.count, result: instruction.result_register(), returning,
-        form: CallForm::Method, method: Some(Method { cache, scratch }),
+        form: CallForm::Method, method: Some(Method { cache, scratch }), op: instruction.op(),
     })
 }
 
@@ -298,8 +302,9 @@ pub(super) struct CallPart {
     pub(super) holes: [u64; HOLES],
     pub(super) taken: Option<usize>,
     pub(super) exits: Vec<Exit>,
-    /// The hole whose run-time address is a symbol the loader resolves, and the symbol (`HelperPlace::Symbol`).
-    pub(super) symbol: Option<(u8, Symbol)>,
+    /// The holes whose run-time addresses are symbols the loader resolves, each with its symbol
+    /// (`HelperHole::Symbol`, the generic row's entry and operand record).
+    pub(super) symbols: Symbolic,
 }
 
 /// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
@@ -356,7 +361,7 @@ fn slot(register: Register) -> u64 {
 }
 
 fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> CallPart {
-    CallPart { stencil, holes, taken: None, exits, symbol: None }
+    CallPart { stencil, holes, taken: None, exits, symbols: NO_SYMBOLS }
 }
 
 pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
@@ -369,10 +374,10 @@ pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, 
 }
 
 fn helper_part(call_pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>) -> Result<CallPart, String> {
-    let (address, symbol) = match helper {
+    let (address, symbols) = match helper {
         HelperPlace::Address(0) => return Err("call: no helper address".to_string()),
-        HelperPlace::Address(address) => (address as u64, None),
-        HelperPlace::Symbol(helper) => (0, Some((HelperHole::Helper as u8, Symbol::Helper(helper as u32)))),
+        HelperPlace::Address(address) => (address as u64, NO_SYMBOLS),
+        HelperPlace::Symbol(helper) => (0, [Some((HelperHole::Helper as u8, Symbol::Helper(helper as u32))), None]),
     };
     let exits = vec![Exit::At(call_pc), Exit::Status];
     let mut holes = [0; HOLES];
@@ -386,7 +391,7 @@ fn helper_part(call_pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>) -> R
             part(call::stencil(CallRow::HelperPacked)?, holes, exits)
         }
     };
-    Ok(CallPart { symbol, ..row })
+    Ok(CallPart { symbols, ..row })
 }
 
 /// The pinned register holding argument `k` of the call, where the call passes it by place (the leading
@@ -432,10 +437,12 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
         args_register: shape.window,
         result_register: shape.result,
         argument_places: arguments,
+        descriptor: 0,
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
-    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held })?;
+    let pinned = arguments.iter().any(|&place| place != Place::Mem.code());
+    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held, pinned })?;
     let mut holes = [0; HOLES];
     holes[DirectHole::Record as usize] = std::ptr::from_ref(&*record).addr() as u64;
     holes[DirectHole::CallPc as usize] = u64::from(shape.call_pc);
@@ -452,7 +459,7 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
     let record = Box::new(CallRecord {
         proven_args: 0, callee: identity, cell: 0, expected: 0, call: 0, caller_base: 0, packed: 0, captures: 0, global_this: 0,
         callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
-        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS],
+        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS], descriptor: 0,
     });
     let stencil = call::stencil(CallRow::Builtin(row))?;
     Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))
@@ -501,7 +508,7 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     if let Some((stencil, holes)) = read {
         // A miss takes the helper row behind the direct rows, as a refused direct call does: the spills ran, so the frame is canonical.
         let helper = 1 + directs.len() + refusal.len();
-        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)], symbol: None });
+        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)], symbols: NO_SYMBOLS });
     }
     // Past every direct row, the refusal spills and the helper row that follows them: the first reload, or the next instruction.
     let past = parts.len() + directs.len() + refusal.len() + 1;

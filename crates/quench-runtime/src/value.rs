@@ -107,6 +107,8 @@ pub(crate) enum HeapReference {
     SymbolRecord(u32),
     /// A Map or a Set (`Heap::alloc_map`, `Heap::alloc_set`).
     CollectionRecord(u32),
+    /// A Wasm GC struct or array (`Heap::alloc_wasm_gc`), whose head holds its payload.
+    WasmGcRecord(u32),
 }
 
 #[cfg(feature = "profile-aggregate")]
@@ -144,6 +146,22 @@ impl IntegerEncoding {
 
     #[inline(always)] pub(crate) fn encode(self, value: i32) -> Value {
         Value(self.0 | u64::from(value as u32))
+    }
+}
+
+/// Two operands classified by one pass over their tags: both int32, both Numbers (an int32 widened), or not both Numbers.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum NumericPair { Ints(i32, i32), Numbers(f64, f64), Other }
+
+impl NumericPair {
+    /// Both operands as doubles: an int32 widened (exact), a double as it is. `None` for
+    /// `Other`, whose operands are not both Numbers. Matches `number_pair` on the same operands.
+    #[inline(always)] pub(crate) fn as_doubles(self) -> Option<(f64, f64)> {
+        match self {
+            Self::Ints(left, right) => Some((f64::from(left), f64::from(right))),
+            Self::Numbers(left, right) => Some((left, right)),
+            Self::Other => None,
+        }
     }
 }
 
@@ -407,6 +425,10 @@ impl Value {
         Self(TAG_HEAP | DIRECT_V128_HANDLE_BIT | u64::from(index))
     }
 
+    #[inline(always)] pub(crate) fn direct_wasm_gc(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_WASM_GC_HANDLE_BITS | u64::from(index))
+    }
+
     #[inline(always)] pub(crate) fn direct_promise(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
     }
@@ -449,6 +471,26 @@ impl Value {
         Some((left.as_number()?, right.as_number()?))
     }
 
+    /// The operands' classification as `int_pair` and then `number_pair` would give it, with
+    /// one tag test per operand: the combined int32 test first (`int_pair`), and only when
+    /// it fails, each operand classified once by `number_parts`. An int32 operand's double
+    /// is its integer value, the same `as_number` makes of it, so `Numbers` carries the
+    /// bits `number_pair` returns.
+    #[inline(always)] pub(crate) fn numeric_pair(left: Self, right: Self) -> NumericPair {
+        if let Some((a, b)) = Self::int_pair(left, right) {
+            return NumericPair::Ints(a, b);
+        }
+        let (left_number, left_int, left_bits) = left.number_parts();
+        let (right_number, right_int, right_bits) = right.number_parts();
+        if !(left_number && right_number) {
+            return NumericPair::Other;
+        }
+        NumericPair::Numbers(
+            if left_int { f64::from(left.0 as u32 as i32) } else { left_bits },
+            if right_int { f64::from(right.0 as u32 as i32) } else { right_bits },
+        )
+    }
+
     #[inline] pub fn as_bool(self) -> Option<bool> {
         ((self.0 & TAG_MASK) == TAG_BOOL).then_some(self.0 & 1 != 0)
     }
@@ -476,6 +518,7 @@ impl Value {
                 DIRECT_ENVIRONMENT_HANDLE_BITS => HeapReference::EnvironmentRecord(index),
                 DIRECT_SYMBOL_HANDLE_BITS => HeapReference::SymbolRecord(index),
                 DIRECT_COLLECTION_HANDLE_BITS => HeapReference::CollectionRecord(index),
+                DIRECT_WASM_GC_HANDLE_BITS => HeapReference::WasmGcRecord(index),
                 _ => return None,
             },
         )
@@ -493,7 +536,8 @@ impl Value {
             | HeapReference::StringRecord(_)
             | HeapReference::V128Record(_)
             | HeapReference::EnvironmentRecord(_)
-            | HeapReference::SymbolRecord(_) => None,
+            | HeapReference::SymbolRecord(_)
+            | HeapReference::WasmGcRecord(_)
             | HeapReference::CollectionRecord(_) => None,
         }
     }
@@ -516,6 +560,10 @@ impl Value {
 
     #[inline(always)] pub(crate) fn direct_v128_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_V128_HANDLE_BIT).then_some(self.0 as u32)
+    }
+
+    #[inline(always)] pub(crate) fn direct_wasm_gc_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_WASM_GC_HANDLE_BITS).then_some(self.0 as u32)
     }
 
     #[inline(always)] pub(crate) fn direct_object_index(self) -> Option<u32> {

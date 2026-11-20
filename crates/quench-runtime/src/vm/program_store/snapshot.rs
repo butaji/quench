@@ -10,10 +10,6 @@ snapshot_enum!(program_scope: ProgramScope { Own, Global, GlobalVariables, Calle
 
 impl ProgramStore {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        #[cfg(feature = "native-execution")]
-        if self.programs.iter().flatten().any(|entry| entry.native_js.is_some()) {
-            return Err(SnapshotError::unsupported("linked native JavaScript entries"));
-        }
         let Self {
             programs,
             global_eval_programs,
@@ -80,8 +76,6 @@ impl ProgramEntry {
     fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         let Self {
             residual,
-            #[cfg(feature = "native-execution")]
-            native_js: _,
             wasm_signatures,
             constants,
             const_arrays,
@@ -234,8 +228,6 @@ impl ProgramEntry {
             regexp_literals: vec![None; regexp_literal_sites],
             regexp_receivers: FxHashMap::default(),
             regexp_arguments: FxHashMap::default(),
-            #[cfg(feature = "native-execution")]
-            native_js: None,
             views_in_lane: super::LaneViews::default(),
             raw_masks: Default::default(),
             js_entry_facts: super::JsEntryFactsTable::default(),

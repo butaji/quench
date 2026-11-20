@@ -5,8 +5,8 @@ use std::ops::Range;
 use std::path::Path;
 
 use wasmparser::{
-    BinaryReader, FunctionBody, KnownCustom, Operator, Parser, Payload, TypeRef, Validator,
-    WasmFeatures,
+    BinaryReader, FuncValidatorAllocations, FunctionBody, KnownCustom, Operator, Parser, Payload,
+    TypeRef, ValidPayload, Validator, WasmFeatures,
 };
 
 /// Outcome of inspecting a Wasm binary without executing it.
@@ -73,28 +73,49 @@ fn proposal_from_path(path: &str) -> Option<&str> {
     None
 }
 
-/// Decode `bytes` then validate with `features`.
+/// Decode `bytes` then validate with `features`. A module that does not parse is a `ParseError`;
+/// one that parses but fails validation is a `ValidateError`. The parse-only pass runs only where
+/// validation failed, to tell the two apart.
 pub fn inspect_binary_with(bytes: &[u8], features: WasmFeatures) -> ModuleStatus {
-    let mut parser = Parser::new(0);
-    parser.set_features(features);
-    for payload in parser.parse_all(bytes) {
-        if let Err(error) = payload {
-            return ModuleStatus::ParseError(error.to_string());
-        }
-    }
     match validate_with(bytes, features) {
         Ok(_) => ModuleStatus::Valid,
-        Err(error) => ModuleStatus::ValidateError(error),
+        Err(error) => match first_parse_error(bytes, features) {
+            Some(parse_error) => ModuleStatus::ParseError(parse_error),
+            None => ModuleStatus::ValidateError(error),
+        },
     }
 }
 
-/// The single validation: wasmparser's `Validator`, then the rules it leaves out.
+/// The first error of parsing `bytes` alone, if any.
+fn first_parse_error(bytes: &[u8], features: WasmFeatures) -> Option<String> {
+    let mut parser = Parser::new(0);
+    parser.set_features(features);
+    parser.parse_all(bytes).find_map(|payload| payload.err().map(|error| error.to_string()))
+}
+
+/// The single validation: one parse that feeds wasmparser's `Validator` and gathers the facts
+/// the rules it leaves out need, then those rules. Function bodies validate after the parse, as
+/// `Validator::validate_all` orders them, so a parse error wins over a body's error.
 fn validate_with(bytes: &[u8], features: WasmFeatures) -> Result<(), String> {
-    Validator::new_with_features(features)
-        .validate_all(bytes)
-        .map(drop)
-        .map_err(|error| error.to_string())?;
-    match extension_error(bytes, features) {
+    let mut parser = Parser::new(0);
+    parser.set_features(features);
+    let mut validator = Validator::new_with_features(features);
+    let mut facts = ExtensionFacts::default();
+    let mut functions = Vec::new();
+    for payload in parser.parse_all(bytes) {
+        let payload = payload.map_err(|error| error.to_string())?;
+        if let ValidPayload::Func(function, body) = validator.payload(&payload).map_err(|error| error.to_string())? {
+            functions.push((function, body));
+        }
+        facts.record(&payload);
+    }
+    let mut allocations = FuncValidatorAllocations::default();
+    for (function, body) in functions {
+        let mut body_validator = function.into_validator(allocations);
+        body_validator.validate(&body).map_err(|error| error.to_string())?;
+        allocations = body_validator.into_allocations();
+    }
+    match facts.error(bytes) {
         Some(message) => Err(message),
         None => Ok(()),
     }
@@ -103,84 +124,93 @@ fn validate_with(bytes: &[u8], features: WasmFeatures) -> Result<(), String> {
 const DESCRIPTOR_SUBTYPE: &str = "sub type with descriptor does not match super type without descriptor";
 const BRANCH_HINT_TARGET: &str = "@metadata.code.branch_hint annotation: invalid target";
 
-/// Two rules wasmparser 0.247 does not check, applied to the same bytes:
-/// a `sub` type with a descriptor needs a supertype with one (custom descriptors), and every
-/// branch hint names an `if` or `br_if` in a defined function. Both were checked only by the
-/// spec runner (quench-wasm-test); they now hold for every module this crate validates.
-fn extension_error(bytes: &[u8], features: WasmFeatures) -> Option<String> {
-    let mut parser = Parser::new(0);
-    parser.set_features(features);
-    // Per type: its declared supertype (module index) and whether it has a descriptor.
-    let mut types: Vec<(Option<u32>, bool)> = Vec::new();
-    let mut imported_functions = 0u32;
-    let mut bodies: Vec<Range<usize>> = Vec::new();
-    let mut hints: Vec<(u32, u32)> = Vec::new();
-    for payload in parser.parse_all(bytes) {
+/// What the rules wasmparser 0.247 does not check need from a module, gathered as its payloads
+/// are validated.
+#[derive(Default)]
+struct ExtensionFacts {
+    /// Per type: its declared supertype (module index) and whether it has a descriptor.
+    types: Vec<(Option<u32>, bool)>,
+    imported_functions: u32,
+    bodies: Vec<Range<usize>>,
+    hints: Vec<(u32, u32)>,
+    /// Set when a payload's contents do not read back: the rules then state no error.
+    unreadable: bool,
+}
+
+impl ExtensionFacts {
+    /// Records the facts of `payload`, which has validated.
+    fn record(&mut self, payload: &Payload<'_>) {
         match payload {
-            Ok(Payload::TypeSection(section)) => {
-                for rec in section {
-                    let Ok(rec) = rec else { return None };
+            Payload::TypeSection(section) => {
+                for rec in section.clone() {
+                    let Ok(rec) = rec else { self.unreadable = true; return };
                     for ty in rec.types() {
                         let has_descriptor = ty.composite_type.descriptor_idx.is_some();
                         let supertype = ty.supertype_idx.and_then(|index| index.as_module_index());
-                        types.push((supertype, has_descriptor));
+                        self.types.push((supertype, has_descriptor));
                     }
                 }
             }
-            Ok(Payload::ImportSection(section)) => {
-                for group in section {
-                    let Ok(group) = group else { return None };
+            Payload::ImportSection(section) => {
+                for group in section.clone() {
+                    let Ok(group) = group else { self.unreadable = true; return };
                     for item in group {
-                        let Ok((_, import)) = item else { return None };
+                        let Ok((_, import)) = item else { self.unreadable = true; return };
                         if matches!(import.ty, TypeRef::Func(_) | TypeRef::FuncExact(_)) {
-                            imported_functions += 1;
+                            self.imported_functions += 1;
                         }
                     }
                 }
             }
-            Ok(Payload::CodeSectionEntry(body)) => bodies.push(body.range()),
-            Ok(Payload::CustomSection(section)) => {
+            Payload::CodeSectionEntry(body) => self.bodies.push(body.range()),
+            Payload::CustomSection(section) => {
                 if let KnownCustom::BranchHints(functions) = section.as_known() {
                     for function in functions {
-                        let Ok(function) = function else { return None };
+                        let Ok(function) = function else { self.unreadable = true; return };
                         let func = function.func;
                         for hint in function.hints {
-                            let Ok(hint) = hint else { return None };
-                            hints.push((func, hint.func_offset));
+                            let Ok(hint) = hint else { self.unreadable = true; return };
+                            self.hints.push((func, hint.func_offset));
                         }
                     }
                 }
             }
-            Err(_) => return None,
-            Ok(_) => {}
+            _ => {}
         }
     }
 
-    for (supertype, has_descriptor) in &types {
-        if let (Some(parent), true) = (*supertype, *has_descriptor) {
-            if types.get(parent as usize).is_some_and(|(_, parent_has)| !parent_has) {
-                return Some(DESCRIPTOR_SUBTYPE.to_string());
+    /// The first rule the module breaks, if any.
+    fn error(self, bytes: &[u8]) -> Option<String> {
+        if self.unreadable {
+            return None;
+        }
+        let types = &self.types;
+        for (supertype, has_descriptor) in types {
+            if let (Some(parent), true) = (*supertype, *has_descriptor) {
+                if types.get(parent as usize).is_some_and(|(_, parent_has)| !parent_has) {
+                    return Some(DESCRIPTOR_SUBTYPE.to_string());
+                }
             }
         }
-    }
 
-    for (func, func_offset) in hints {
-        let body = func
-            .checked_sub(imported_functions)
-            .and_then(|defined| bodies.get(defined as usize))
-            .cloned();
-        let target = body
-            .as_ref()
-            .and_then(|body| body.start.checked_add(func_offset as usize));
-        let conditional = match (body, target) {
-            (Some(body), Some(target)) => conditional_at(bytes, body, target),
-            _ => false,
-        };
-        if !conditional {
-            return Some(BRANCH_HINT_TARGET.to_string());
+        for (func, func_offset) in self.hints {
+            let body = func
+                .checked_sub(self.imported_functions)
+                .and_then(|defined| self.bodies.get(defined as usize))
+                .cloned();
+            let target = body
+                .as_ref()
+                .and_then(|body| body.start.checked_add(func_offset as usize));
+            let conditional = match (body, target) {
+                (Some(body), Some(target)) => conditional_at(bytes, body, target),
+                _ => false,
+            };
+            if !conditional {
+                return Some(BRANCH_HINT_TARGET.to_string());
+            }
         }
+        None
     }
-    None
 }
 
 /// Whether the operator at absolute offset `target` in the body at `range` is `if` or `br_if`.

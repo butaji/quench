@@ -57,20 +57,11 @@ impl Value {
         }
     }
     /// The runtime's `Value::number`: an integral value within int32 (but not -0) as an
-    /// int32, NaN as the canonical NaN, any other double as its bits.
+    /// int32, NaN as the canonical NaN, any other double as its bits. The one copy is
+    /// `words::canonical`, which the stencil rows also call.
+    #[inline(always)]
     pub(crate) fn number(value: f64) -> Self {
-        let integer = value as i32;
-        let back = integer as f64;
-        if back < value || back > value {
-            return Self(value.to_bits());
-        }
-        if value != value {
-            return Self::NAN;
-        }
-        if integer != 0 || value.to_bits() == 0 {
-            return Self::integer(integer);
-        }
-        Self(value.to_bits())
+        Self(crate::words::canonical(value))
     }
 }
 
@@ -102,10 +93,7 @@ mod int_type;
 mod representation;
 #[path = "../../quench-runtime/src/typed_ir/binding.rs"]
 mod binding;
-// The runtime's Number-to-integer conversions (`value/number_conversion.rs`) and the binary64
-// fields they read (`float_layout.rs`), included unchanged.
-#[path = "../../quench-runtime/src/value/number_conversion.rs"]
-mod number_conversion;
+// The binary64 fields the runtime's Number conversions read (`float_layout.rs`), included unchanged.
 #[path = "../../quench-runtime/src/float_layout.rs"]
 pub(crate) mod float_layout;
 
@@ -113,14 +101,19 @@ pub(crate) mod float_layout;
 /// `Representation` the interpreter and the u-jit use, so a row folds the same facts.
 pub(crate) mod typed_ir {
     pub(crate) use super::int_range::IntRange;
-    pub(crate) use super::lattice::{Type, TypeKind};
+    pub(crate) use super::lattice::{Type, TypeKind, language_bit};
     pub(crate) use super::representation::Representation;
     pub(crate) use super::binding::{BindingTime, Division, Proof};
 }
 
+/// The runtime's Number conversions (ToInt32 and its kin), which a row folds into a constant operand.
+#[path = "../../quench-runtime/src/value/number_conversion.rs"]
+#[allow(dead_code)] // the rows take ToInt32 alone
+mod number_conversion;
+
 pub(crate) mod value {
     pub(crate) use super::operations::WORD32_SHIFT_MASK;
-    pub(crate) use super::number_conversion::{number_to_u32, EXACT_I64_TRUNCATION_LIMIT};
+    pub(crate) use super::number_conversion::{exact_uint32, number_to_u32, EXACT_I64_TRUNCATION_LIMIT};
     pub(crate) use crate::layout::value_encoding::{
         HEAP_FAMILY_BITS, HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_HEAP_FAMILIES, NarrowLayout, TAG_BOOL, TAG_DELETED, TAG_NULL,
         TAG_UNDEFINED, ValueLayout,
@@ -207,45 +200,21 @@ pub(crate) mod vm {
     }
 }
 
-/// The register and operand names the staged numeric rows take. Only a register operand exists
-/// here: a row names its places by register.
-/// The `typeof` names and their indices, the runtime's own file.
-#[path = "../../quench-runtime/src/bytecode/typeof_names.rs"]
-#[allow(dead_code)]
-mod typeof_names;
+/// The runtime's own operand encodings (`bytecode/operands.rs`), so a row decodes the same words the
+/// runtime writes; `bytecode` names them as the runtime's `crate::bytecode` does.
+#[path = "../../quench-runtime/src/bytecode/operands.rs"]
+#[allow(dead_code)] // the rows read part of the encodings
+mod operands;
 
-/// The registers a literal's elements were evaluated into, the runtime's own file.
+/// A literal's element registers (`bytecode/register_list.rs`), which an allocation row carries.
 #[path = "../../quench-runtime/src/bytecode/register_list.rs"]
+#[allow(dead_code)]
 mod register_list;
-/// The operand forms the staged rows carry (register windows, field bases and lookups), the runtime's own file.
-#[path = "../../quench-runtime/src/bytecode/operand_forms.rs"]
-mod operand_forms;
-/// The names those files take from their parent, the runtime's `bytecode`.
-use bytecode::{Atom, Register};
 
+/// The register, atom and operand names the staged rows take.
 pub(crate) mod bytecode {
     pub(crate) type Register = u16;
-    /// A program atom's index.
     pub(crate) type Atom = u32;
-
-    pub(crate) use super::register_list::RegisterList;
-    pub(crate) use super::typeof_names::typeof_name_index;
-
-    pub(crate) use super::operand_forms::*;
-
-    /// The modes of a property definition record, which no stencil row makes: uninhabited here.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(crate) enum PropertyDefinitionMode {}
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(crate) struct Operand(Register);
-
-    impl Operand {
-        pub(crate) fn register(value: Register) -> Self {
-            Self(value)
-        }
-        pub(crate) fn register_index(self) -> Option<Register> {
-            Some(self.0)
-        }
-    }
+    pub(crate) use super::operands::{ConstructArguments, FieldBase, FieldLookup, Operand, OperandKind, RegisterWindow, REGISTER_MASK, SET_THIS_REGISTER};
+    pub(crate) use super::register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
 }
