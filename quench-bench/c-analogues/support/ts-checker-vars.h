@@ -49,14 +49,7 @@ static void cCheckVariableLike(TsNode *node) {
   TsType *declType;
   if (!node->type) declType = cUnported("declaration without a type annotation");
   else declType = cTypeFromNode(node->type);
-  if (node->questionToken && declType != cErrorType) {
-    TsType *u = cNewType(TF_Union);
-    u->types = ts_arena_alloc(sizeof(TsType *) * 2);
-    u->types[0] = declType;
-    u->types[1] = cUndefinedType;
-    u->ntypes = 2;
-    declType = u;
-  }
+  if (node->questionToken) declType = cAddOptionality(declType);
   if (type != cErrorType && declType != cErrorType && !cIsTypeIdenticalTo(type, declType) && !(sym->flags & SF_Assignment_)) {
     int code = node->kind == TSK_VariableDeclaration ? 2403 : 2717;
     cDiagAdd(cSourceFileOf(node), cNodeStart(node->name), code, NULL);

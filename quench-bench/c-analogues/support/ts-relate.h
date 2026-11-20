@@ -67,7 +67,11 @@ static int cRelFind(CRelTab *tab, TsType *s, TsType *t, int st) {
   }
 }
 
+/* debug hook (typescript-lib --trace-iface): called for each new relation cache entry */
+static void (*cRelStoreHook)(int rel, TsType *s, TsType *t, bool ok);
+
 static void cRelStore(CRelTab *tab, TsType *s, TsType *t, int st, bool ok) {
+  if (cRelStoreHook) cRelStoreHook((int)(tab - cRelTab), s, t, ok);
   if (tab->n == tab->cap) {
     tab->cap = tab->cap ? tab->cap * 2 : 1024;
     tab->e = realloc(tab->e, sizeof(CRelEnt) * (size_t)tab->cap);
@@ -768,6 +772,8 @@ static int cIsRelatedTo(TsType *s, TsType *t, int st) {
   /* indexed access and index types: their relation rules (constraints of T[K], keyof) are not ported */
   if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); return RR_True; }
   if (cIsSimpleRelated(s, t, cCurRel)) return RR_True;
+  /* isRelatedTo (5.9.2): a type parameter is related to its own constraint without a cache entry */
+  if ((s->flags & TF_TypeParameter) && cConstraintOf(s) == t) return RR_True;
   if (!cIsStructured(s) && !cIsStructured(t)) return RR_False;
   /* isPerformingCommonPropertyChecks: a weak target needs a common property */
   if (cCurRel != REL_Identity && !(st & IS_Target) && (t->flags & TF_Object) && cIsWeakType(t)) {

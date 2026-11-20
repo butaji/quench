@@ -1833,15 +1833,8 @@ static TsType *cTypeOfSymbol(TsSymbol *sym) {
     else if ((d->kind != TSK_PropertySignature && d->kind != TSK_PropertyDeclaration) || !d->type) t = cUnported("property without annotation");
     else {
       t = cTypeFromNode(d->type);
-      if (d->questionToken && t != cErrorType) {
-        /* addOptionality: T | undefined under strictNullChecks */
-        TsType *u = cNewType(TF_Union);
-        u->types = ts_arena_alloc(sizeof(TsType *) * 2);
-        u->types[0] = t;
-        u->types[1] = cUndefinedType;
-        u->ntypes = 2;
-        t = u;
-      }
+      /* addOptionality: T | undefined under strictNullChecks */
+      if (d->questionToken) t = cAddOptionality(t);
     }
   } else if (sym->flags & SF_Accessor) {
     /* the type of an accessor: the return type of the getter, else the parameter type of the setter */
@@ -1974,14 +1967,7 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
     return cUnported("rest parameter element type");
   }
   TsType *t = cTypeFromNodeM(p->type, m);
-  if (p->questionToken && t != cErrorType) {
-    TsType *u = cNewType(TF_Union);
-    u->types = ts_arena_alloc(sizeof(TsType *) * 2);
-    u->types[0] = t;
-    u->types[1] = cUndefinedType;
-    u->ntypes = 2;
-    t = u;
-  }
+  if (p->questionToken) t = cAddOptionality(t);
   return t;
 }
 

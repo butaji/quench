@@ -346,6 +346,114 @@ static void cPrintMembersOf(TsNode *n) {
   printf("\n");
 }
 
+/* --iface-counts and --trace-iface NAME: the work of each checkInterfaceDeclaration call, as
+ * tools/typescript-lib-instr.cjs prints it for node (new assignable pairs, types and instantiations). The trace
+ * prints the new assignable pairs of the named interface, attributed to the innermost interface being checked. */
+typedef struct { char *key; long assign, types, inst; } IfaceCount;
+static IfaceCount *ifaceCounts;
+static int nIfaceCounts, capIfaceCounts;
+static const char *cTraceName;
+static const char *cCurIfaceName;      /* the innermost interface being checked (NULL outside) */
+static long cCurIfaceLen;
+
+static char *dPut(char *o, const char *end, const char *s, size_t n) {
+  size_t room = (size_t)(end - o);
+  if (n > room) n = room;
+  memcpy(o, s, n);
+  return o + n;
+}
+
+/* a short description of a type for the trace: names of symbols and references, unions, literals */
+static char *dType(char *o, char *end, TsType *t, int depth) {
+  if (!t) return dPut(o, end, "?", 1);
+  if (t == cErrorType) return dPut(o, end, "error", 5);
+  if (depth > 3) return dPut(o, end, "..", 2);
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    o = dPut(o, end, "(", 1);
+    for (int i = 0; i < t->ntypes; i++) {
+      if (i) o = dPut(o, end, (t->flags & TF_Union) ? " | " : " & ", 3);
+      o = dType(o, end, t->types[i], depth + 1);
+    }
+    return dPut(o, end, ")", 1);
+  }
+  if (t->text && (t->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral))) return dPut(o, end, t->text, (size_t)t->textLen);
+  if (t->symbol && t->symbol->name.n) {
+    o = dPut(o, end, t->symbol->name.s, (size_t)t->symbol->name.n);
+    if ((t->objectFlags & OF_Reference) && t->nargs) {
+      o = dPut(o, end, "<", 1);
+      for (int i = 0; i < t->nargs; i++) {
+        if (i) o = dPut(o, end, ", ", 2);
+        o = dType(o, end, t->args[i], depth + 1);
+      }
+      o = dPut(o, end, ">", 1);
+    }
+    return o;
+  }
+  char id[32];
+  int k = snprintf(id, sizeof id, "anon#%d", t->id);
+  return dPut(o, end, id, (size_t)k);
+}
+
+static void cTraceHook(int rel, TsType *s, TsType *t, bool ok) {
+  if (rel != REL_Assignable || !cTraceName || !cCurIfaceName) return;
+  if ((long)strlen(cTraceName) != cCurIfaceLen || strncmp(cTraceName, cCurIfaceName, (size_t)cCurIfaceLen) != 0) return;
+  char a[400], b[400];
+  char *ae = dType(a, a + sizeof a - 1, s, 0), *be = dType(b, b + sizeof b - 1, t, 0);
+  *ae = 0; *be = 0;
+  printf("%s  =>  %s%s\n", a, b, ok ? "" : "  [false]");
+}
+
+/* the interface stage with counts: the work of each call, keyed by interface name and file */
+static void cCountedInterfaceDecl(TsNode *n) {
+  if (n->kind != TSK_InterfaceDeclaration || !n->symbol || !n->name) { cCheckInterfaceDecl(n); return; }
+  int rel0 = cRelTab[REL_Assignable].n, t0 = cTypeCount, i0 = cInstTotal;
+  const char *outerName = cCurIfaceName;
+  long outerLen = cCurIfaceLen;
+  cCurIfaceName = n->name->text;
+  cCurIfaceLen = n->name->textLen;
+  cCheckInterfaceDecl(n);
+  cCurIfaceName = outerName;
+  cCurIfaceLen = outerLen;
+  if (!cTraceName) {
+    const char *file = cSourceFileOf(n)->fileName;
+    const char *base = strrchr(file, '/');
+    char key[512];
+    int k = snprintf(key, sizeof key, "%.*s (%s)", n->name->textLen, n->name->text, base ? base + 1 : file);
+    int idx = -1;
+    for (int i = 0; i < nIfaceCounts && idx < 0; i++)
+      if (strcmp(ifaceCounts[i].key, key) == 0) idx = i;
+    if (idx < 0) {
+      if (nIfaceCounts == capIfaceCounts) {
+        capIfaceCounts = capIfaceCounts ? capIfaceCounts * 2 : 256;
+        ifaceCounts = realloc(ifaceCounts, sizeof(IfaceCount) * (size_t)capIfaceCounts);
+        if (!ifaceCounts) abort();
+      }
+      idx = nIfaceCounts++;
+      ifaceCounts[idx].key = malloc((size_t)k + 1);
+      memcpy(ifaceCounts[idx].key, key, (size_t)k + 1);
+      ifaceCounts[idx].assign = ifaceCounts[idx].types = ifaceCounts[idx].inst = 0;
+    }
+    ifaceCounts[idx].assign += cRelTab[REL_Assignable].n - rel0;
+    ifaceCounts[idx].types += cTypeCount - t0;
+    ifaceCounts[idx].inst += cInstTotal - i0;
+  }
+}
+
+static int cIfaceCountCmp(const void *a, const void *b) {
+  const IfaceCount *x = a, *y = b;
+  if (x->assign != y->assign) return x->assign < y->assign ? 1 : -1;
+  return strcmp(x->key, y->key);
+}
+
+static void cPrintIfaceCounts(void) {
+  qsort(ifaceCounts, (size_t)nIfaceCounts, sizeof(IfaceCount), cIfaceCountCmp);
+  printf("interface\tassignable\ttypes\tinstantiations\n");
+  for (int i = 0; i < nIfaceCounts; i++)
+    printf("%s\t%ld\t%ld\t%ld\n", ifaceCounts[i].key, ifaceCounts[i].assign, ifaceCounts[i].types, ifaceCounts[i].inst);
+}
+
+static void (*cIfaceStage)(TsNode *) = cCheckInterfaceDecl;
+
 static void runChecker(void) {
   cResetTypeCaches();
   cResetTemplateTypes();
@@ -366,7 +474,7 @@ static void runChecker(void) {
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckVariableLike);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cResolveDeclaredMembersOf);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckClassBase);
-  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckInterfaceDecl);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cIfaceStage);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckHeritageArgs);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckTypeReferenceArgs);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckTypeParameterNode);
@@ -383,6 +491,21 @@ int main(int argc, char **argv) {
   snprintf(path, sizeof path, "%s/TypeScript/src/gen/immer-tiny/files.json", root);
   loadFilesJson(path);
   if (sourceCount != EXPECTED_FILE_COUNT) FAIL("expected %d files, found %d", EXPECTED_FILE_COUNT, sourceCount);
+  if (argc > 3 && (strcmp(argv[3], "--iface-counts") == 0 || strcmp(argv[3], "--trace-iface") == 0)) {
+    /* the interface counts (or the trace of one interface) only: no timing, no validation */
+    int trace = strcmp(argv[3], "--trace-iface") == 0;
+    if (trace) {
+      if (argc < 5) FAIL("usage: typescript-lib [iterations] [root] --trace-iface NAME");
+      cTraceName = argv[4];
+      cRelStoreHook = cTraceHook;
+    }
+    cIfaceStage = cCountedInterfaceDecl;
+    long a, b, c, d;
+    parseProgram(0, &a, &b, &c, &d);
+    runChecker();
+    if (!trace) cPrintIfaceCounts();
+    return 0;
+  }
   if (argc > 3 && strcmp(argv[3], "--members") == 0) {   /* the member dump only (no timing, no validation) */
     long a, b, c, d;
     parseProgram(0, &a, &b, &c, &d);

@@ -475,6 +475,13 @@ static TsType *cGetUnionType(TsType **in, int n) {
   return u;
 }
 
+/* addOptionality (getOptionalType): T | undefined through the union cache, so one member list gives one type */
+static TsType *cAddOptionality(TsType *t) {
+  if (t == cErrorType) return t;
+  TsType *pair[2] = { t, cUndefinedType };
+  return cGetUnionType(pair, 2);
+}
+
 /* getIntersectionType (66276): flattening, never, any, unknown and duplicates; the list keeps its order */
 static TsType *cGetIntersectionType(TsType **in, int n) {
   int cap = 1;

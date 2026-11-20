@@ -123,15 +123,7 @@ static TsType *cWidenLiteralType(TsType *t) {
 }
 
 /* addOptionality: T | undefined (under strictNullChecks), as the declared types of optional members are built */
-static TsType *cAddUndefined(TsType *t) {
-  if (t == cErrorType) return t;
-  TsType *u = cNewType(TF_Union);
-  u->types = ts_arena_alloc(sizeof(TsType *) * 2);
-  u->types[0] = t;
-  u->types[1] = cUndefinedType;
-  u->ntypes = 2;
-  return u;
-}
+static TsType *cAddUndefined(TsType *t) { return cAddOptionality(t); }
 
 /* ---- flow types of references (getFlowTypeOfReference, conservative) ----
  * The walk goes back from the reference's flow node. It succeeds (the declared type applies on every path) when no
