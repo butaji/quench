@@ -1396,6 +1396,10 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. }))) || matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::RequireObjectCoercible { .. })) => !instruction.returns_from_frame(),
         // A Number operator of a Number; any other operand leaves before any effect (`Lowering::unary`).
+        // A dense switch's case slot and its branch table read one frame register; an operand that
+        // is no int leaves before any effect (`Lowering::int_case_index`, `Lowering::branch_table`).
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IntCase { .. }))) => instruction.result_flags() == 0,
+        _ if instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::BranchTable => instruction.result_flags() == 0,
         _ if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::UnaryOperator
             && crate::vm::compiled::number_unary(instruction, instruction.unary_operator()).is_some() =>
             instruction.result_flags() == 0 && !instruction.writes_current_this(),
