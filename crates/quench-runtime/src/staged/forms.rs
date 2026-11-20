@@ -11,9 +11,9 @@
 
 #[cfg(not(stencil_build))]
 use super::DecodeContext;
-use crate::bytecode::Register;
 #[cfg(not(stencil_build))]
 use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, WideInstruction, RETURN_REGISTER};
+use crate::bytecode::Register;
 
 /// A function of the running program, by its index (`CallKnown`).
 pub(crate) type FunctionId = u16;

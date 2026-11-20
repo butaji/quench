@@ -16,13 +16,17 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::IncDecLocal { local, source, decrement } => inc_dec_local(stage, frame, local, source, decrement),
         Operation::Void { .. } | Operation::Unary { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. }
             | Operation::Binary { .. } | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
+        #[cfg(not(stencil_build))]
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
+        #[cfg(not(stencil_build))]
         Operation::BranchTable(table) => super::wasm_jump::branch_table(stage, frame, table),
-        call @ (Operation::Call(_) | Operation::Return { .. } | Operation::Suspend { .. }) => call_step(stage, frame, call),
+        call @ (Operation::Call(_) | Operation::Return { .. }) => call_step(stage, frame, call),
+        #[cfg(not(stencil_build))]
+        call @ Operation::Suspend { .. } => call_step(stage, frame, call),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } | Operation::Nop => register_step(stage, frame, operation),
-        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
+        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. } | Operation::ArgumentGet { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::GlobalLexicalLoad { .. }
             | Operation::GlobalLexicalStore { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
@@ -85,6 +89,7 @@ fn call_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, 
         Operation::Call(CallOperation::Site(site)) => super::invoke::invoke(stage, frame, frame.miss(), site),
         Operation::Return { source } => return_step(stage, frame, source),
         Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
+        #[cfg(not(stencil_build))]
         Operation::Suspend { kind, destination, value } => super::suspend::suspend(stage, frame, kind, destination, value),
         _ => unreachable!("`step` sends only calls, returns and suspensions"),
     }
@@ -109,9 +114,12 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination, frame.miss()),
         Operation::LoadCallee { destination } => load_callee(stage, frame, destination),
+        Operation::StringCaseIndex { destination, source, start, count } => string_case_index(stage, frame, destination, source, start, count),
         Operation::RequireIteratorResult { register } => super::iteration::require_iterator_result(stage, frame, register, frame.miss()),
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
-        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
+        Operation::StringCaseIndex { destination, source, start, count } =>
+            string_case_index(stage, frame, destination, source, start, count),
+        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. } | Operation::ArgumentGet { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::GlobalLexicalLoad { .. }
             | Operation::GlobalLexicalStore { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } => super::names::step(stage, frame, operation),
@@ -505,6 +513,7 @@ pub(crate) fn step_generic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
     super::generic::step(stage, frame, operation)
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a Wasm i32 jump row (`RowStep::WasmJump`).
 #[inline(always)]
 pub(crate) fn step_wasm_jump<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {

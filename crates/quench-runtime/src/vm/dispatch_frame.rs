@@ -1982,7 +1982,7 @@ impl<H: Host> Vm<H> {
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
                     if crate::staged::returns(instruction.op()) && pending_calls.is_empty() {
-                        let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
+                        let starter = self.active_native_callable();
                         let described = match starter.and_then(|callable| self.heap.function(callable)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
                                 let name = starter

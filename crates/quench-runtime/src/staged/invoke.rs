@@ -24,9 +24,9 @@ use super::property::get_field;
 use super::protocol::{bind_this, complete_call, fill_call, guard_callee, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
-use crate::bytecode::{FieldBase, FieldLookup};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup};
 use crate::Value;
 
 /// The general forms of the call-family records a frame may run where its staged row declines
@@ -53,6 +53,7 @@ pub(crate) enum CallForm {
     FirstChunk,
 }
 
+#[cfg(not(stencil_build))]
 /// The general form of the call-family opcode `op`, else `None`: the records the call runner answers
 /// (`vm::dispatch`'s `Runner::Call`).
 #[cfg(not(stencil_build))]
@@ -165,6 +166,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    #[cfg(not(stencil_build))]
     /// Suspend the activation as `suspending` names (`suspend`): the control the step ends in;
     /// `None` where the frame cannot, leaving the suspension to the interpreter. The interpreter's
     /// frame suspends by the step result (`Vm::staged_suspend`), the lane's in place
@@ -194,6 +196,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    #[cfg(not(stencil_build))]
     /// The word a step of `yield*`'s delegation defines (`delegation`), with the fact the frame
     /// keeps of it; `None` where the frame cannot make it, or it raised.
     #[inline(always)]
@@ -201,6 +204,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    #[cfg(not(stencil_build))]
     /// The `next` step of a sync `yield*`'s delegate (`DelegationStep::Next`) made by the frame in
     /// place: the control that runs it, whose result arrives in `state` with this instruction run
     /// again (`delegation`). `None`, before any effect, where the frame calls `next` instead.
@@ -241,6 +245,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         direct
     }
 
+    #[cfg(not(stencil_build))]
     /// The general form `form` of the call-family record `instruction` at resume PC `pc`, which the
     /// call row runner asks where the row declined (the record's operands are read from it, since an
     /// `Invocation` does not name every form). `None` where the frame runs no general calls.

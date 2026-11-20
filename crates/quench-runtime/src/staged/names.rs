@@ -39,20 +39,24 @@ pub(crate) enum Protocol {
     /// through cache site `site`, found already holding its name (`Vm::constant_fields_held`).
     /// It reads one cache entry and a shape, runs no guest code and raises nothing.
     ConstantFieldsHeld { site: u16 },
+    #[cfg(not(stencil_build))]
     /// A literal, template, closure or object-construction step (`protocol_literals`).
     Literal(super::protocol_literals::LiteralStep),
+    #[cfg(not(stencil_build))]
     /// A class, private-name or function-naming step (`protocol_classes`).
     Class(super::protocol_classes::ClassStep),
+    #[cfg(not(stencil_build))]
     /// A by-name, environment, string or iteration-cleanup step (`protocol_values`).
     Value(super::protocol_values::ValueStep),
+    #[cfg(not(stencil_build))]
     /// An activation-variable step: a local, a `var` binding, TDZ, an argument (`protocol_owned`).
     Owned(super::protocol_owned::OwnedVarStep),
-    /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`), which
-    /// names an opcode and so is the runtime's alone: no stencil row makes one.
     #[cfg(not(stencil_build))]
+    /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`).
     Wasm(super::protocol_wasm::WasmHostStep),
 }
 
+#[cfg(not(stencil_build))]
 /// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
 /// (`dispatch_fast::specialize_environment_window`) carries its register count above them.
 pub(crate) const ENVIRONMENT_CLONE_PLAN_MASK: u32 = u16::MAX as u32;
@@ -93,6 +97,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
 
 #[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
+    #[cfg(not(stencil_build))]
     /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
     /// tier's `proof` of the global it names; `None` for any other opcode.
     #[inline(always)]

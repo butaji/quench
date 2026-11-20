@@ -210,9 +210,9 @@ fn walk_from<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, target:
     let link = proto_link(stage, record);
     let gap = stage.sub(link, target);
     let reached = stage.eq_imm(gap, 0u64);
-    stage.choose(reached, |stage| stage.constant(WALK_HOLDS), |stage| {
+    stage.choose(reached, #[inline(always)] |stage| stage.constant(WALK_HOLDS), #[inline(always)] |stage| {
         let null = stage.eq_imm(link, u64::from(NULL_LINK));
-        stage.choose(null, |stage| stage.constant(WALK_FAILS), |stage| walk_on(stage, records, link, target, links))
+        stage.choose(null, #[inline(always)] |stage| stage.constant(WALK_FAILS), #[inline(always)] |stage| walk_on(stage, records, link, target, links))
     })
 }
 
@@ -221,11 +221,11 @@ fn walk_from<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, target:
 fn walk_on<S: Stage>(stage: &mut S, records: S::Word, link: S::Word, target: S::Word, links: u32) -> S::Word {
     let Some(rest) = links.checked_sub(1) else { return stage.constant(WALK_UNDECIDED) };
     let names = proto_names_record(stage, link);
-    stage.choose(names, |stage| {
+    stage.choose(names, #[inline(always)] |stage| {
         let id = proto_record_id(stage, link);
         let next = object_record_at(stage, records, id);
         walk_from(stage, records, next, target, rest)
-    }, |stage| stage.constant(WALK_UNDECIDED))
+    }, #[inline(always)] |stage| stage.constant(WALK_UNDECIDED))
 }
 
 /// `walk_prototypes` as a loop, for a stage whose words and conditions are the machine's own
@@ -271,14 +271,14 @@ pub(crate) fn instanceof_by_words<S: Stage>(stage: &mut S, records: S::Word, val
 #[inline(always)]
 fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word) -> S::Word {
     let direct = super::value::is_direct_object(stage, value);
-    stage.choose(direct, |stage| {
+    stage.choose(direct, #[inline(always)] |stage| {
         let id = super::value::direct_object_id(stage, value);
         let record = object_record_at(stage, records, id);
         let (decided, holds) = stage.walk_prototypes(records, record, target, INSTANCEOF_WALK_LINKS);
         let [fails, holding, undecided] = [WALK_FAILS, WALK_HOLDS, WALK_UNDECIDED].map(|answer| stage.constant(answer));
         let answer = stage.select(holds, holding, fails);
         stage.select(decided, answer, undecided)
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
         let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
         let immediate = stage.not(heap);
@@ -466,7 +466,7 @@ fn plain_slots<S: Stage>(stage: &mut S, payload: S::Word, packed: Packed<S::Word
                 let admitted = stage.any(inline, wide);
                 stage.guard(admitted, miss)?;
                 // The run is addressed on the flat side of the flag only.
-                let flat = stage.choose(inline, |stage| stage.constant(0), |stage| arena_run(stage, payload));
+                let flat = stage.choose(inline, #[inline(always)] |stage| stage.constant(0), #[inline(always)] |stage| arena_run(stage, payload));
                 return Some(Slots::Either { packed, inline, flat });
             }
         },
@@ -515,12 +515,12 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
         Slots::Either { packed: Packed::Record(record), inline, flat } => {
             // One operand for both forms (`site_offset`): a stencil numbers its holes as the row runs.
             let offset = site_offset(stage, slot);
-            stage.choose(inline, |stage| {
+            stage.choose(inline, #[inline(always)] |stage| {
                 let half = stage.shr_imm(offset, HALF_SHIFT);
                 let address = stage.add(record, half);
                 let narrow = stage.load_u32(Region::Payload.mutable(), address, OBJECT.payload_offset as i32);
                 decode_narrow(stage, narrow)
-            }, |stage| {
+            }, #[inline(always)] |stage| {
                 let address = stage.add(flat, offset);
                 match rep {
                     Representation::Float64 => stage.load_f64(Region::ObjectSlots.mutable(), address, 0),
@@ -554,7 +554,7 @@ pub(crate) fn read_slot_at<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::C
         Slots::Flat(base) => flat_read_at(stage, base, index, rep),
         Slots::Packed(packed) => packed_read_at(stage, packed, index, rep),
         Slots::Either { packed, inline, flat } => stage.choose(inline,
-            |stage| packed_read_at(stage, packed, index, rep), |stage| flat_read_at(stage, flat, index, rep)),
+            #[inline(always)] |stage| packed_read_at(stage, packed, index, rep), #[inline(always)] |stage| flat_read_at(stage, flat, index, rep)),
         Slots::Narrow(base) => {
             debug_assert!(rep != Representation::Float64, "a narrow run holds narrow values, never a raw double");
             let offset = stage.mul_imm(index, u64::from(u32::BITS / 8));
@@ -654,10 +654,10 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
 pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_words: S::Word) -> S::Word {
     let flag = stage.and_imm(narrow, u64::from(NarrowLayout::INTEGER_FLAG));
     let integer = stage.ne_imm(flag, 0u32);
-    stage.choose(integer, |stage| {
+    stage.choose(integer, #[inline(always)] |stage| {
         let shifted = stage.sar32_imm(narrow, NarrowLayout::CODE_SHIFT);
         stage.or_imm(shifted, ValueLayout::INT_TAG)
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let code = stage.shr_imm(narrow, NarrowLayout::CODE_SHIFT);
         let code = stage.and_imm(code, u64::from(NarrowLayout::CODE_MASK));
         let offset = stage.mul_imm(code, std::mem::size_of::<u64>() as u64);

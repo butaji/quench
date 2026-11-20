@@ -16,9 +16,9 @@ use super::elements::{prove_view, read_element, replace_present, DenseView};
 use super::property::Owner;
 use super::typed_elements::{typed_read, typed_write, TypedView};
 use super::{Concrete, ElementFrame, NumericFrame, NumericStage, Operation, Stage, Step};
-use crate::bytecode::{Operand, Register};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 
 /// An array's elements as an access reads them, once proved: a dense array's backing or a
@@ -31,6 +31,7 @@ pub(crate) enum ElementView<W> {
 
 #[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
+    #[cfg(not(stencil_build))]
     /// The element rows of `decode`: `GetIndex` of a register base and a register or immediate
     /// key (the tier defines the result register), and `SetIndex`; `None` where the instruction
     /// completes a frame or an operand names a local or a field.

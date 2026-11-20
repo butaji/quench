@@ -119,10 +119,15 @@ impl NumericStage for super::super::Concrete {
     }
     #[inline(always)]
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
-    /// Opaque to the stencil build, so a row moves the bits as an immediate instead of loading a
-    /// constant pool entry (a relocation that is not a hole); the bits themselves in the runtime.
+    /// The stencil build materializes the constant in an integer register (`words::register_bits`): a double
+    /// LLVM folds into an instruction's memory operand would come from a constant pool, which a stencil may not use.
     #[inline(always)]
-    fn f64_constant(&mut self, value: f64) -> u64 { crate::staged::wasm_float::opaque(value.to_bits()) }
+    fn f64_constant(&mut self, value: f64) -> u64 {
+        #[cfg(stencil_build)]
+        { crate::words::register_bits(value.to_bits()) }
+        #[cfg(not(stencil_build))]
+        { value.to_bits() }
+    }
     #[inline(always)]
     fn f64_from_bits(&mut self, bits: u64) -> u64 { bits }
     #[inline(always)]

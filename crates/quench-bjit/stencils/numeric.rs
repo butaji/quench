@@ -220,7 +220,7 @@ fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
 /// what makes the test redundant.
 #[inline(always)]
 fn unbox_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let word = read_place::<MEM, HOLE_A>(&frame.s);
+    let word = read_place::<MEM, { LEFT as u8 }>(&frame.s);
     let value = if is_int(word) { widen(word) } else { word };
     frame.write(&mut Concrete::from_hole(0), DEST, value, Representation::Float64);
     Out::Next(frame.s)
@@ -230,7 +230,7 @@ fn unbox_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
 /// caller's argument proof holds the slot an int32 (`CallRecord::proven_args`'s int32 bits).
 #[inline(always)]
 fn unbox_int_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let word = read_place::<MEM, HOLE_A>(&frame.s);
+    let word = read_place::<MEM, { LEFT as u8 }>(&frame.s);
     frame.write(&mut Concrete::from_hole(0), DEST, word as u32 as u64, Representation::Int32);
     Out::Next(frame.s)
 }
@@ -393,17 +393,14 @@ fn imul_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: 
 }
 
 /// `Math.clz32` of the first operand, an int32 (0..=32): `staged::math::leading_zeros` of its ToUint32. An int32 is its own bits;
-/// a Number whose truncation is exact (below 2^63 in magnitude, `value::number_to_u32`'s first step) takes the low 32 bits of
-/// it. Any other word leaves with nothing written, for the interpreter's own conversion.
+/// a Number whose ToUint32 is exact (`value::exact_uint32`, the one conversion the interpreter's `number_to_u32` also
+/// starts from) takes that. Any other word leaves with nothing written, for the interpreter's own conversion.
 #[inline(always)]
 fn clz32_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (mut stage, operand) = (Concrete::from_hole(0), Operand::register(LEFT));
     let uint32 = match frame.int_operand(&mut stage, operand, ()) {
         Some(word) => Some(word as u32),
-        None => frame.number_operand(&mut stage, operand, ()).and_then(|bits| {
-            let wide = truncate64(f64::from_bits(bits));
-            (wide != i64::MIN).then_some(wide as u32)
-        }),
+        None => frame.number_operand(&mut stage, operand, ()).and_then(|bits| crate::value::exact_uint32(f64::from_bits(bits))),
     };
     let Some(uint32) = uint32 else { return Out::Exit(frame.s) };
     frame.write(&mut stage, DEST, u64::from(crate::staged::math::leading_zeros(uint32)), Representation::Int32);

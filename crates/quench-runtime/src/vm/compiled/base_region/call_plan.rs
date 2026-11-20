@@ -137,6 +137,9 @@ pub(super) struct CallShape {
     pub(super) form: CallForm,
     /// The method site read a `Method` call makes before its direct row (`None` for the other forms).
     pub(super) method: Option<Method>,
+    /// The opcode of the call record, which keys the fast-row counter of a planned direct call (`note_fast`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) op: crate::bytecode::Op,
 }
 
 impl CallShape {
@@ -154,8 +157,9 @@ impl CallShape {
                 returning,
                 form,
                 method: None,
+                op,
             },
-            CallForm::Construct | CallForm::Stepped | CallForm::Method => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, method: None },
+            CallForm::Construct | CallForm::Stepped | CallForm::Method => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, method: None, op },
         }
     }
 }
@@ -183,7 +187,7 @@ pub(super) fn method_shape(program: &crate::bytecode::ResidualProgram, instructi
     let cache = context.method_site(site as usize)?.cache;
     Some(CallShape {
         call_pc, callee: scratch, this: receiver, window, argc: list.count, result: instruction.result_register(), returning,
-        form: CallForm::Method, method: Some(Method { cache, scratch }),
+        form: CallForm::Method, method: Some(Method { cache, scratch }), op: instruction.op(),
     })
 }
 

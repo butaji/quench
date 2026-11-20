@@ -78,7 +78,7 @@ pub(crate) use crate::layout::value_encoding;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/control.rs"] mod control;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/generic.rs"] mod generic;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/callout.rs"] mod callout;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use callout::CallOut;
+#[cfg(not(stencil_family = "wasm"))] pub(crate) use callout::{CallOut, OperandValues};
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/spread.rs"] mod spread;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use spread::Passing;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/compare.rs"] pub(crate) mod compare;
@@ -113,6 +113,8 @@ pub(crate) use crate::layout as layout_offsets;
 // families are the runtime's alone. The Wasm call rows' staged ABI, roots and instance words.
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/wasm_jump.rs"] pub(crate) mod wasm_jump;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use wasm_jump::{BranchTable, WasmJump};
+// The Wasm families `step` dispatches to (pure word arithmetic over the stage).
+#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/wasm_simd.rs"] mod wasm_simd;
 
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/edge.rs"] mod edge;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use edge::Edge;

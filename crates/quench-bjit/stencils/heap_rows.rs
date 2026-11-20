@@ -32,6 +32,8 @@
 //! instruction.
 
 use crate::bytecode::Operand;
+// A store's strictness decides only the VM's refused store, which a row leaves to at its miss: the
+// rows build their writes `strict: false`.
 use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;

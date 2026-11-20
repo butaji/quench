@@ -147,6 +147,22 @@ impl IntegerEncoding {
     }
 }
 
+/// Two operands classified by one pass over their tags: both int32, both Numbers (an int32 widened), or not both Numbers.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum NumericPair { Ints(i32, i32), Numbers(f64, f64), Other }
+
+impl NumericPair {
+    /// Both operands as doubles: an int32 widened (exact), a double as it is. `None` for
+    /// `Other`, whose operands are not both Numbers. Matches `number_pair` on the same operands.
+    #[inline(always)] pub(crate) fn as_doubles(self) -> Option<(f64, f64)> {
+        match self {
+            Self::Ints(left, right) => Some((f64::from(left), f64::from(right))),
+            Self::Numbers(left, right) => Some((left, right)),
+            Self::Other => None,
+        }
+    }
+}
+
 impl Value {
     pub const UNDEFINED: Self = Self(TAG_UNDEFINED);
     pub const NULL: Self = Self(TAG_NULL);
@@ -447,6 +463,26 @@ impl Value {
     /// Both operands as Numbers.
     #[inline(always)] pub(crate) fn number_pair(left: Self, right: Self) -> Option<(f64, f64)> {
         Some((left.as_number()?, right.as_number()?))
+    }
+
+    /// The operands' classification as `int_pair` and then `number_pair` would give it, with
+    /// one tag test per operand: the combined int32 test first (`int_pair`), and only when
+    /// it fails, each operand classified once by `number_parts`. An int32 operand's double
+    /// is its integer value, the same `as_number` makes of it, so `Numbers` carries the
+    /// bits `number_pair` returns.
+    #[inline(always)] pub(crate) fn numeric_pair(left: Self, right: Self) -> NumericPair {
+        if let Some((a, b)) = Self::int_pair(left, right) {
+            return NumericPair::Ints(a, b);
+        }
+        let (left_number, left_int, left_bits) = left.number_parts();
+        let (right_number, right_int, right_bits) = right.number_parts();
+        if !(left_number && right_number) {
+            return NumericPair::Other;
+        }
+        NumericPair::Numbers(
+            if left_int { f64::from(left.0 as u32 as i32) } else { left_bits },
+            if right_int { f64::from(right.0 as u32 as i32) } else { right_bits },
+        )
     }
 
     #[inline] pub fn as_bool(self) -> Option<bool> {

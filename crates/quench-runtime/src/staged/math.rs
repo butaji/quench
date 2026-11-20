@@ -194,22 +194,7 @@ pub(crate) fn int_abs(value: i32) -> Option<i32> {
 #[inline(always)]
 #[cfg(not(stencil_build))]
 pub(crate) fn clz32(value: f64) -> f64 {
-    f64::from(to_uint32(value).leading_zeros())
-}
-
-/// The modulus of ToUint32, 2^32.
-#[cfg(not(stencil_build))]
-const UINT32_MODULUS: f64 = 4_294_967_296.0;
-
-/// ToUint32 of `value`: its integer part modulo 2^32, zero for NaN and the infinities. Here
-/// rather than in `value`, since this module also builds into the baseline JIT's stencils.
-#[cfg(not(stencil_build))]
-#[inline(always)]
-fn to_uint32(value: f64) -> u32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    value.trunc().rem_euclid(UINT32_MODULUS) as u32
+    f64::from(leading_zeros(crate::value::number_to_u32(value)))
 }
 
 /// `Math.hypot` of Numbers: infinite if any is (even beside a NaN), NaN if any is, else the
@@ -230,8 +215,8 @@ pub(crate) fn hypot(values: &[f64]) -> f64 {
     largest * squares.sqrt()
 }
 
-/// `Math.clz32`: the leading zero bits of the ToUint32 of a Number, given as that ToUint32 (`value::number_to_u32`
-/// in the interpreter, the stencil's exact truncation in a row).
+/// `Math.clz32`: the leading zero bits of a ToUint32, given as that ToUint32. Every caller takes it from
+/// `value::number_to_u32` (or, in a stencil row, `value::exact_uint32`, which leaves the rest to it).
 #[inline(always)]
 pub(crate) fn leading_zeros(uint32: u32) -> u32 {
     uint32.leading_zeros()

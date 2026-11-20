@@ -243,8 +243,8 @@ fn arm_switch<S: Stage>(stage: &mut S, (at, object): (&Reached<S::Word, S::Cond>
         return arm_store(stage, (at.record, object), *arm, value, miss);
     }
     stage.choose_leaving(same,
-        |stage| arm_store(stage, (at.record, object), *arm, value, miss).map(|()| stage.constant(0)),
-        |stage| arm_switch(stage, (at, object), rest, value, miss).map(|()| stage.constant(0))).map(drop)
+        #[inline(always)] |stage| arm_store(stage, (at.record, object), *arm, value, miss).map(|()| stage.constant(0)),
+        #[inline(always)] |stage| arm_switch(stage, (at, object), rest, value, miss).map(|()| stage.constant(0))).map(drop)
 }
 
 /// The store through one arm into `record` (the record of `object`), whose shape the caller

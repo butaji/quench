@@ -22,6 +22,7 @@ pub(super) fn is_value_operand(operand: Operand) -> bool {
 
 #[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
+    #[cfg(not(stencil_build))]
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where a `Binary`
     /// carries a result flag (`decode_completed` strips it first).
     #[inline(always)]
@@ -38,6 +39,7 @@ impl<W, P> Operation<W, P> {
         })
     }
 
+    #[cfg(not(stencil_build))]
     /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`.
     fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
         let count = instruction.element_count();
@@ -68,6 +70,7 @@ impl<W, P> Operation<W, P> {
         Self::decode_binary(instruction)
     }
 
+    #[cfg(not(stencil_build))]
     /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
     /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
     /// Every operand kind decodes; whether a frame asks the VM for a record its words leave is
@@ -127,7 +130,7 @@ fn property_key<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut 
     let bits = frame.tagged(stage, source);
     let string = is_direct_string(stage, bits);
     let mut converted = None;
-    let key = stage.choose_leaving(string, |_| Some(bits), |stage| {
+    let key = stage.choose_leaving(string, |_| Some(bits), #[inline(always)] |stage| {
         let (key, fact) = frame.vm_step(stage, CallOut::PropertyKey { source }, Some(destination))?;
         converted = Some(fact);
         Some(key)
@@ -164,7 +167,7 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
         // by its tags only where it is not settled: the VM's `===` is false for two values that are
         // neither both Numbers nor both heap values, so the pair is apart unless it is one of those.
         let settled = stage.either(identical, ints);
-        let apart_word = stage.choose(settled, |stage| stage.constant(0), |stage| {
+        let apart_word = stage.choose(settled, #[inline(always)] |stage| stage.constant(0), #[inline(always)] |stage| {
             let (left_double, right_double) = (is_double(stage, left), is_double(stage, right));
             let (left_heap, right_heap) = (is_heap(stage, left), is_heap(stage, right));
             let heap_pair = stage.both(left_heap, right_heap);
@@ -201,8 +204,8 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     let result = if negated { stage.not(equal) } else { equal };
     let (decision, fact) = frame.boolean(stage, result);
     let call = CallOut::Equality { left, right, strict, negated };
-    let value = stage.choose_leaving(decided, #[inline(always)] |_| Some(decision),
-        #[inline(always)] |stage| frame.vm_step(stage, call, Some(destination)).map(#[inline(always)] |(word, _)| word));
+    let value = stage.choose_leaving(decided, |_| Some(decision),
+        #[inline(always)] |stage| frame.vm_step(stage, call, Some(destination)).map(|(word, _)| word));
     let Some(value) = value else { return Step::Unresolved };
     frame.write(stage, destination, value, fact);
     Step::Value(value)

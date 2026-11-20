@@ -1134,7 +1134,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u8(u8::from(function.is_generator));
         out.u8(u8::from(function.is_class_constructor));
         out.u8(u8::from(function.derived_constructor));
-        out.option_u32(function.instance_initializer);
+        out.option_u32(function.instance_initializer());
         write_constant_fields(out, &function.constant_fields);
         out.option_atom(function.super_home_atom);
         out.u8(u8::from(function.constructible));
@@ -1487,7 +1487,6 @@ fn read_function(input: &mut BinaryReader<'_>, header: Option<&super::FunctionHe
             is_generator,
             is_class_constructor,
             derived_constructor,
-            instance_initializer,
             constant_fields: constant_fields.into(),
             super_home_atom,
             constructible,

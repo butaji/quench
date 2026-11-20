@@ -209,13 +209,9 @@ fn is_parameter(function: &crate::bytecode::Function, register: Register) -> boo
 /// The language bits entry conformance checks exactly (`conform_language`): a Boolean,
 /// `undefined`, `null`, a direct object, a direct function, and a string (a direct string by its
 /// tag, any other string by the VM's `typeof`). A set with any other bit (Number, BigInt, Symbol)
-/// is not checkable here.
-const CHECKABLE: u16 = crate::typed_ir::language_bit(crate::ValueType::Boolean)
-    | crate::typed_ir::language_bit(crate::ValueType::Undefined)
-    | crate::typed_ir::language_bit(crate::ValueType::Null)
-    | crate::typed_ir::language_bit(crate::ValueType::Object)
-    | crate::typed_ir::language_bit(crate::ValueType::Function)
-    | crate::typed_ir::language_bit(crate::ValueType::String);
+/// is not checkable here. The members are `declared_checks::DECLARED_CHECKED` the u-jit's entry
+/// conformance tests (`declared_checks::LANE_TESTED`), so the b-jit reads the same set.
+const CHECKABLE: u16 = super::super::declared_checks::DECLARED_CHECKED & super::super::declared_checks::LANE_TESTED;
 
 /// Whether the non-empty language set `bits` is one entry conformance tests exactly.
 pub(super) fn checkable(bits: u16) -> bool {

@@ -143,6 +143,7 @@ pub(crate) struct Operands {
 /// The values of a `CallOut`'s operands, read by the tier from its own registers or constants.
 pub(crate) struct OperandValues<V> {
     pub(crate) fixed: [Option<V>; 2],
+    #[cfg(not(stencil_build))]
     pub(crate) list: Vec<V>,
 }
 
@@ -167,6 +168,7 @@ impl Operands {
     #[cfg(not(stencil_build))]
     /// The operands' values, each operand read by `read` in the order `registers` names them, the
     /// list's as registers.
+    #[cfg(not(stencil_build))]
     pub(crate) fn read<V>(self, records: &[Register], mut read: impl FnMut(Operand) -> V) -> OperandValues<V> {
         let fixed = self.fixed.map(|operand| operand.map(&mut read));
         let list = self.list.map_or_else(Vec::new, |list| list.registers(records).map(Operand::register).map(&mut read).collect());

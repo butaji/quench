@@ -439,6 +439,7 @@ mod tests {
     }
 }
 
+#[cfg(not(stencil_build))]
 /// Where a call site goes on a status its call helper returns (`LaneHelper::Call`,
 /// `LaneHelper::ConstructCall`): completed with its result written, missed before any effect,
 /// or raised with the exception stashed. Any other status leaves the region with it.

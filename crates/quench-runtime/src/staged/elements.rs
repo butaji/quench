@@ -3,6 +3,7 @@
 
 use super::{Concrete, Stage};
 use super::region::Region;
+#[cfg(not(stencil_build))]
 pub(crate) use super::double_view::{double_view, reloaded_double_view};
 
 /// Element `index` of the dense backing of `length` values at `values`, with its address:
@@ -36,6 +37,26 @@ pub(crate) fn present_element<S: Stage>(stage: &mut S, values: S::Word, index: S
     let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
     stage.guard(present, miss)?;
     Some((address, value))
+}
+
+/// Proves the dense backing at `values` counts no others (`OTHERS_FROM_VALUES` zero): every value
+/// below its length is an int32 and none is a hole, so each element's word is an int32's and needs
+/// no tag test (`int_element`). Leaves at `miss` otherwise, as a count of others does.
+#[inline(always)]
+pub(crate) fn int_only_backing<S: Stage>(stage: &mut S, values: S::Word, miss: S::Miss) -> Option<()> {
+    let others = stage.load_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES);
+    let none = stage.eq_imm(others, 0u32);
+    stage.guard(none, miss)
+}
+
+/// Element `index` of an int-only backing (`int_only_backing`) of `length` values at `values`, as
+/// its word: no hole test, since none is present. An `index` the caller did not prove below `length`
+/// (`within` false) leaves at `miss` past it.
+#[inline(always)]
+pub(crate) fn int_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
+    within: bool, miss: S::Miss) -> Option<S::Word> {
+    bounded(stage, within, length, index, miss)?;
+    Some(loaded_element(stage, values, index).1)
 }
 
 /// The address and bits of element `index` of the backing at `values`.
@@ -239,12 +260,12 @@ fn backing_element<S: Stage>(stage: &mut S, backing: Backing<S::Word>, index: S:
     stage.choose_leaving(double, #[inline(always)] |stage| double_element(stage, backing.values, index, miss), #[inline(always)] |stage| {
         let flag = stage.and_imm(backing.length, u64::from(NARROW_LEN));
         let narrow = stage.ne_imm(flag, 0u32);
-        let value = stage.choose(narrow, |stage| {
+        let value = stage.choose(narrow, #[inline(always)] |stage| {
             let offset = stage.mul_imm(index, std::mem::size_of::<u32>() as u64);
             let address = stage.add(backing.values, offset);
             let narrow = stage.load_u32(Region::Elements.mutable(), address, 0);
             super::object::decode_narrow_through(stage, narrow, upper_words)
-        }, |stage| loaded_element(stage, backing.values, index).1);
+        }, #[inline(always)] |stage| loaded_element(stage, backing.values, index).1);
         let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
         stage.guard(present, miss)?;
         Some(value)
@@ -292,7 +313,7 @@ pub(crate) fn array_header<S: Stage>(stage: &mut S, record: S::Word) -> S::Word 
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let word = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
     let extras = super::object::has_extras(stage, word);
-    stage.choose(extras, |stage| {
+    stage.choose(extras, #[inline(always)] |stage| {
         let extras = super::object::extras_pointer(stage, word);
         stage.load_u64(Region::Payload.mutable(), extras, (ARRAY.extras_elements_offset + ARRAY.elements_header_offset) as i32)
     }, |_| word)

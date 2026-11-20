@@ -13,7 +13,7 @@ use crate::bytecode::{FieldBase, FieldLookup, Operand, Register};
 use crate::codes::CHAIN_SECOND_AT;
 use crate::heap_rows::{context_word, payload, stage_site, word_at};
 use crate::layout::{CONTEXT_THIS, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE};
-use crate::typed_ir::{Representation, Type};
+use crate::typed_ir::Representation;
 use crate::places::{DEST, LEFT, Places};
 use crate::staged::ic::IcOp;
 use crate::staged::object::direct_object_record;
@@ -21,7 +21,7 @@ use crate::staged::property::{FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use crate::staged::region::Region;
 use crate::staged::slot_store::{own_flat_store, store_admitted};
 use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalBinding, GlobalFrame, NumericFrame, Operation, PropertyFrame, Stage, Step, entry, lexical_read, step_names, step_property};
-use crate::words::{HOLE_B, LAST_HOLE, S, hole, hole64, is_double, is_int};
+use crate::words::{HOLE_B, S, hole64, is_double, is_int};
 
 /// Bits in a method-cache bitset word, as a shift.
 
@@ -265,9 +265,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
             Callout::SiteStore { gated } => {
                 let tables = field_tables(&self.places.s);
                 let offset = stage_site(stage);
-                // An ungated row's proved shape is its last hole (`site_rows::site_store_row`).
-                let proven = if gated { None } else { Some(hole::<LAST_HOLE>() as u64) };
-                entry::site_store(stage, tables, object, offset, (value, gated, proven), miss)
+                entry::site_store(stage, tables, object, offset, (value, gated, None), miss)
             }
             Callout::FlatStore { int } => flat_store(stage, &self.places.s, object, value, int),
             Callout::Plan | Callout::LoopEntry | Callout::SiteRead { .. } => None,
@@ -325,6 +323,6 @@ fn flat_store(stage: &mut Concrete, s: &S, object: u64, value: u64, int: bool) -
     store_admitted(stage, specialized, ())?;
     let records = word_at(base, JS_STEP_OBJECT_RECORD_BASE);
     let (id, record) = direct_object_record(stage, object, records, ())?;
-    let (rep, fact) = if int { (Representation::Int32, Type::INT32) } else { (Representation::Tagged, Type::NUMBER) };
-    own_flat_store(stage, record, id, 0, 0, (value, rep, fact), ())
+    let rep = if int { Representation::Int32 } else { Representation::Tagged };
+    own_flat_store(stage, record, id, 0, 0, (value, rep, crate::typed_ir::Type::ANY), ())
 }

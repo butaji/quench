@@ -45,10 +45,12 @@ pub(crate) trait WasmGc: MachineStage {
     fn field_slot(&mut self, reference: Self::Word, index: Self::Word) -> Self::Word;
     /// The number of fields of the object `reference`.
     fn field_count(&mut self, reference: Self::Word) -> Self::Word;
-    /// The stored word at the field address `slot` (`field_slot`, checked nonzero): the integer of
-    /// a packed field, the value's bits otherwise.
+    /// The Wasm bits stored at the field address `slot` (`field_slot`, checked nonzero), typed by
+    /// the field's static storage: a packed or 32-bit field's bits zero-extended, a 64-bit
+    /// number's bits, a reference's bits. No box, no tag: the field's type says what they are.
     fn read_slot(&mut self, slot: Self::Word, field: GcField) -> Self::Word;
-    /// Stores the value bits `value` at the field address `slot`, in the field's storage.
+    /// Stores the Wasm bits `value` (as `read_slot` gives them) at the field address `slot`, in
+    /// the field's storage.
     fn write_slot(&mut self, slot: Self::Word, field: GcField, value: Self::Word);
     /// The flag that the array `reference` has mutable elements.
     fn array_mutable(&mut self, reference: Self::Word) -> Self::Word;

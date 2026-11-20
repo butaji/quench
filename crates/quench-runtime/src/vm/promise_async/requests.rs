@@ -59,7 +59,7 @@ impl<H: Host> Vm<H> {
     /// it receives next going to `destination`: at a `yield` of `value` when `yielded`, else at
     /// an `await` of it.
     pub(in crate::vm) fn suspend_request_window(&mut self, generator: Value, (pc, destination, depth): (usize, crate::bytecode::Register, usize), yielded: bool, value: Value) {
-        self.realm.promise.active_native.pop();
+        self.pop_host_frame();
         let job = JobRoot { object: generator, kind: SuspendKind::AsyncGenerator };
         if yielded {
             self.suspend_async_generator_yield(job, pc, destination, value, depth);
@@ -70,7 +70,7 @@ impl<H: Host> Vm<H> {
 
     /// Ends `generator`'s in-place activation at its return: its frame goes back to the pool.
     pub(in crate::vm) fn finish_request_window(&mut self, generator: Value) {
-        self.realm.promise.active_native.pop();
+        self.pop_host_frame();
         self.finish_job_window(JobRoot { object: generator, kind: SuspendKind::AsyncGenerator });
     }
 
@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         stop: Option<MaterializedStop>,
     ) -> Result<Value, JsError> {
-        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        let generator = self.pop_host_frame().expect("a resumed generator's activation");
         let promise = self.release_settled_call_root(root);
         let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncGeneratorAwait(generator), rejected: false };
         let outcome = match stop {
@@ -107,7 +107,7 @@ impl<H: Host> Vm<H> {
     /// The request rooted at `root`, whose in-place activation became a frame that threw `error`:
     /// the request fails, and the call yields its promise.
     pub(in crate::vm) fn fail_materialized_request(&mut self, p: &ResidualProgram, root: crate::heap::RootId, error: JsError) -> Result<Value, JsError> {
-        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        let generator = self.pop_host_frame().expect("a resumed generator's activation");
         let promise = self.release_settled_call_root(root);
         let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncGeneratorAwait(generator), rejected: false };
         self.fail_resumed(p, resume, error)?;

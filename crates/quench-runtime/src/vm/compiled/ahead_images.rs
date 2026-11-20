@@ -166,10 +166,10 @@ impl<H: Host> Vm<H> {
         let body = program.function_get(function as usize)?;
         let unit = lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))?;
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
-            fault_poll, hoists_arrays: false, stable: Default::default() };
-        let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None }, fields: Vec::new(),
+            fault_poll, hoists_arrays: false, stable: Default::default(), entry_types: Default::default(), summary: None };
+        let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: crate::code_dependencies::Invalidation::default(), budget: 0, tiers: self.programs.tiers() };
-        let method = plan.finish(&linked, None)?;
+        let method = plan.finish(&linked, None, None)?;
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())
     }
 

@@ -4617,14 +4617,14 @@ impl Heap {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
             let slot = properties.len(data.properties());
-            append_property(data, properties, slot, value, shape);
+            append_property(data, properties, slot, value, shape, 0);
             slot
         } else {
             let (data, properties) = self
                 .object_and_arena_mut(object)
                 .expect("property owner is an object");
             let slot = properties.len(data.properties());
-            append_property(data, properties, slot, value, shape);
+            append_property(data, properties, slot, value, shape, 0);
             slot
         };
         self.settle_widened();
@@ -4636,6 +4636,13 @@ impl Heap {
     /// storage length (a cached add's recorded slot), without deriving it again.
     #[inline(always)]
     pub(crate) fn record_property_add_at(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+        self.record_property_add_wanting(object, slot, value, shape, 0);
+    }
+
+    /// `record_property_add_at` whose move, if the add makes one, takes the run capacity `want`
+    /// (`ValueArena::grow`); zero takes the next class.
+    #[inline(always)]
+    fn record_property_add_wanting(&mut self, object: Value, slot: usize, value: Value, shape: u32, want: usize) {
         let Some(record_id) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
@@ -4643,17 +4650,20 @@ impl Heap {
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
         let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
         debug_assert_eq!(slot, properties.len(data.properties()));
-        append_property(data, properties, slot, value, shape);
+        append_property(data, properties, slot, value, shape, want);
         self.settle_widened();
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }
 
     /// `record_property_add_at` out of line, for an add whose storage moves or whose store
-    /// the write barrier logs, so a caller's plain appends keep their code call-free.
+    /// the write barrier logs, so a caller's plain appends keep their code call-free. `want` is
+    /// the arena capacity the moved run reserves (`Vm::predicted_run_capacity`): the run takes
+    /// the size the shape tree predicts for the object instead of only the next class, so an
+    /// object that grows by several properties moves once rather than at each class.
     #[inline(never)]
-    pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
-        self.record_property_add_at(object, slot, value, shape);
+    pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32, want: usize) {
+        self.record_property_add_wanting(object, slot, value, shape, want);
     }
 
     /// `record_property_add_at` of an add the record admits as a plain append
@@ -5324,9 +5334,10 @@ enum YoungOwner {
 
 
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
-/// storage length, and moves the owner to `shape`.
+/// storage length, and moves the owner to `shape`. `want` is the capacity a moved arena run
+/// takes (`ValueArena::push`), zero for the next class.
 #[inline(always)]
-fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32, want: usize) {
     properties.note_shape_value(shape, slot, value);
     let mut vector = data.properties();
     if vector.is_narrow() {
@@ -5336,7 +5347,7 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
     }
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();
-        properties.push(&mut vector, value, shape);
+        properties.push(&mut vector, value, shape, want);
         // An append within its range leaves the storage as it was; `set_shape` below
         // records the grown shape.
         if vector.into_parts() != before {

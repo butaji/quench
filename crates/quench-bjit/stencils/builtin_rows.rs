@@ -22,7 +22,8 @@ use crate::layout::{
     JS_STEP_ASCII_UNIT_STRINGS, JS_STEP_STRING_RECORD_BASE,
 };
 use crate::stage::StencilStage;
-use crate::staged::{builtins, elements, math, object, strings, Stage};
+use crate::staged::region::Region;
+use crate::staged::{Concrete, Domain, builtins, elements, math, object, strings};
 use crate::words::{S, hole64};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};
@@ -130,7 +131,9 @@ unsafe fn char_at(s: &S, record: usize) -> Option<u64> {
     }
 }
 
-/// `Number.isInteger` of a Number argument (`builtins::concrete_is_integral`); a non-Number misses.
+/// `Number.isInteger` of a Number argument: `builtins::is_integral` of its binary64 word on the
+/// concrete numeric stage, as the u-jit's `IsInteger` lowers it (an int32 is integral as its double
+/// is). A non-Number misses.
 #[inline(always)]
 unsafe fn is_integer(s: &S, record: usize) -> Option<u64> {
     // SAFETY: as `is_callee`.
@@ -138,13 +141,14 @@ unsafe fn is_integer(s: &S, record: usize) -> Option<u64> {
         if !is_callee(s, record) {
             return None;
         }
-        let value = Value::from_bits(argument(s, record, 0));
-        value.as_number()?;
-        Some(Value::boolean(builtins::concrete_is_integral(value)).to_bits())
+        let value = number(s, record, 0)?;
+        let integral = builtins::is_integral(&mut Concrete::from_hole(0), Domain::Float64, value.to_bits());
+        Some(Value::boolean(integral).to_bits())
     }
 }
 
-/// `Math.imul` of two int32 operands (`math::int_multiply`), its result an int32.
+/// `Math.imul` of two int32 operands (`math::multiply` on the concrete numeric stage, which takes
+/// the int32s' low words), its result an int32. Any other operand misses.
 #[inline(always)]
 unsafe fn imul(s: &S, record: usize) -> Option<u64> {
     // SAFETY: as `is_callee`.
@@ -154,7 +158,8 @@ unsafe fn imul(s: &S, record: usize) -> Option<u64> {
         }
         let left = Value::from_bits(argument(s, record, 0)).as_int()?;
         let right = Value::from_bits(argument(s, record, 1)).as_int()?;
-        Some(Value::integer(math::int_multiply(left, right)).to_bits())
+        let product = math::multiply(&mut Concrete::from_hole(0), u64::from(left as u32), u64::from(right as u32));
+        Some(Value::integer(product as u32 as i32).to_bits())
     }
 }
 
@@ -187,8 +192,9 @@ unsafe fn array_push(s: &S, record: usize) -> Option<u64> {
         if chain == 0 || object::proto_link(&mut stage, object) != chain {
             return None;
         }
-        let capacity = ((backing.header as usize + ARRAY.header_capacity_offset) as *const u32).read();
-        let room = u64::from(capacity) & u64::from(ARRAY.capacity_mask);
+        // The room is the capacity word under its mask, read as `elements::append_in_room` reads it.
+        let word = stage.load_u32(Region::Elements.mutable(), backing.header, ARRAY.header_capacity_offset as i32);
+        let room = stage.and_imm(word, u64::from(ARRAY.capacity_mask));
         let value = argument(s, record, 0);
         builtins::unreferenced(&mut stage, value, ())?;
         builtins::array_push_one(&mut stage, backing, room, value, ())

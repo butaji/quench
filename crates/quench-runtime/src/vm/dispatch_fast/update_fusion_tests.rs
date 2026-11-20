@@ -2,6 +2,7 @@
 //! it (`update_fusion`), so a declined loop runs as many dispatches as `--no-jit`'s.
 
 use super::*;
+use crate::bytecode::index as opc;
 use crate::test_host::TestHost;
 use crate::{Engine, ExecutionMode, JitMode};
 

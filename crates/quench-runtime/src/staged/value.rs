@@ -191,12 +191,14 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
         let integer_truthy = stage.ne_imm(payload, 0u32);
         let past = is_double(stage, bits);
         let tagged = stage.not(past);
-        // The four falsy immediates, folded by hand: an iterator fold is an out-of-line call (and a
-        // panic path) in a stencil, which may carry no relocation but its holes.
-        let [null, undefined, deleted, false_word] = [crate::Value::NULL, crate::Value::UNDEFINED, crate::Value::DELETED, crate::Value::FALSE]
-            .map(|value| stage.eq_imm(bits, value.to_bits()));
-        let (nullish, marked) = (stage.any(null, undefined), stage.any(deleted, false_word));
-        let falsy = stage.any(nullish, marked);
+        // Written out, not an iterator fold: a stencil inlines every step (no call to `reduce` or `expect`).
+        let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+        let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
+        let deleted = stage.eq_imm(bits, crate::Value::DELETED.to_bits());
+        let false_word = stage.eq_imm(bits, crate::Value::FALSE.to_bits());
+        let nullish = stage.any(null, undefined);
+        let absent = stage.any(deleted, false_word);
+        let falsy = stage.any(nullish, absent);
         let immediate_truthy = stage.not(falsy);
         let double_truthy = stage.number_truthy(bits);
         let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);
@@ -219,9 +221,18 @@ pub(crate) fn int_truthy<S: Stage>(stage: &mut S, word: S::Word) -> S::Cond {
     stage.ne_imm(word, 0u32)
 }
 
+#[cfg(not(stencil_build))]
+use crate::bytecode::typeof_name_index as name_index;
+// The stencil build mounts the same self-contained file as `crate::bytecode`'s `typeof_names`.
+#[cfg(stencil_build)]
+#[path = "../bytecode/typeof_names.rs"]
+mod typeof_names;
+#[cfg(stencil_build)]
+use typeof_names::typeof_name_index as name_index;
+
 /// The index in `bytecode::TYPEOF_NAMES` of a name some value's `typeof` is.
 const fn typeof_name_index(name: &str) -> u64 {
-    match crate::bytecode::typeof_name_index(name) {
+    match name_index(name) {
         Some(index) => index as u64,
         None => panic!("a typeof name"),
     }
@@ -380,6 +391,7 @@ pub(crate) fn number_bits_unless_whole<M: MachineScalar>(machine: &mut M, number
     (cold, bits)
 }
 
+#[cfg(not(stencil_build))]
 /// The ToInt32 candidate of the binary64 `number` by the exact I64 truncation: the low 32 bits of its
 /// saturating I64 truncation, and whether `number` lies inside the exact range
 /// (`EXACT_I64_TRUNCATION_LIMIT`); a caller leaves when the range does not hold. Returns `(int32, exact)`.
@@ -392,6 +404,7 @@ pub(crate) fn truncate_int32<M: MachineScalar>(machine: &mut M, number: M::Word)
     (machine.raw_unary(Unary::Narrow(Lane::I32), wide), exact)
 }
 
+#[cfg(not(stencil_build))]
 /// The interpreter's `immediate_typeof_index` of `value`.
 #[inline(always)]
 pub(crate) fn concrete_immediate_typeof_index(value: crate::Value) -> Option<usize> {
