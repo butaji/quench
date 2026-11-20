@@ -17,10 +17,12 @@ use crate::{Host, Value};
 use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
-/// The namespace of `Symbol::SemanticEntry`: the first number after the `RelocKind` ones.
-const SEMANTIC_ENTRY_NAMESPACE: u32 = RelocKind::Shape as u32 + 1;
+/// The namespaces of the symbols no `RelocKind` names, above every kind: image code's own
+/// relocations use the kinds' numbers, so these cannot be derived from the enum's last variant
+/// (adding one would silently take over the next symbol kind) and must be disjoint from it.
+const SEMANTIC_ENTRY_NAMESPACE: u32 = u32::MAX - 1;
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list.
-const BASE_PC_NAMESPACE: u32 = SEMANTIC_ENTRY_NAMESPACE + 1;
+const BASE_PC_NAMESPACE: u32 = u32::MAX;
 
 /// The attribute bits of a `ShapeRecipe` field, as `DataAttributes` reads them.
 pub(crate) const ATTRIBUTE_WRITABLE: u8 = 1 << 0;

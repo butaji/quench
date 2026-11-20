@@ -11,19 +11,41 @@ use quench_bjit::EXIT_STUB_LEN;
 pub(in crate::vm) struct SymbolSite {
     pub(in crate::vm) offset: usize,
     pub(in crate::vm) symbol: Symbol,
+    /// How the image writes the reference: an address word (`Abs8`), or a branch the image's
+    /// linker binds (`Arm64Call`, the Apple AArch64 helper site).
+    pub(in crate::vm) kind: cranelift_codegen::binemit::Reloc,
 }
 
 /// The symbolic fields of `rows` (`symbols` by row, the symbol of each row's named hole), at their code
-/// offsets from the code's start, `head` bytes past the entry thunk; a field must be an absolute word.
+/// offsets from the code's start, `head` bytes past the entry thunk. A field is an absolute word or a
+/// branch; an image's absolute words become page references when its bodies are lowered (`aot_image::page`).
 fn symbol_sites(rows: &[Placed], symbols: &[Option<(u8, Symbol)>], head: usize) -> Result<Vec<SymbolSite>, String> {
     let named = |row: usize, hole: u32| symbols.get(row).copied().flatten().is_some_and(|(index, _)| u32::from(index) == hole);
     quench_bjit::symbolic_fields(rows, named).into_iter().map(|field| -> Result<SymbolSite, String> {
-        if field.class != quench_bjit::ABS64 {
-            return Err("a symbolic hole is not an absolute word".to_string());
-        }
+        let kind = match field.class {
+            quench_bjit::ABS64 => cranelift_codegen::binemit::Reloc::Abs8,
+            quench_bjit::BRANCH26 => cranelift_codegen::binemit::Reloc::Arm64Call,
+            _ => return Err("a symbolic hole is neither an absolute word nor a branch".to_string()),
+        };
         let symbol = symbols[field.row].map(|(_, symbol)| symbol).ok_or("a symbolic field has no symbol")?;
-        Ok(SymbolSite { offset: head + field.offset, symbol })
+        Ok(SymbolSite { offset: head + field.offset, symbol, kind })
     }).collect()
+}
+
+/// `imm26` of an AArch64 branch: a 4-byte instruction whose low bits are the displacement.
+const A64_BRANCH_LEN: usize = 4;
+const A64_BRANCH_IMM26_MASK: u32 = (1 << 26) - 1;
+
+/// A branch field the loader links names its target by symbol, so it holds no displacement of
+/// its own. Placement patches it like any branch (to the next row), but ld64 reads a non-zero
+/// `imm26` as an addend and refuses the relocation (`ARM64_RELOC_ADDEND` should be used
+/// instead), so the field is cleared once the symbolic sites are known.
+fn clear_branch_displacements(code: &mut [u8], sites: &[SymbolSite]) {
+    for site in sites.iter().filter(|site| site.kind == cranelift_codegen::binemit::Reloc::Arm64Call) {
+        let field = &mut code[site.offset..site.offset + A64_BRANCH_LEN];
+        let word = u32::from_le_bytes(field.try_into().expect("a branch field is a word")) & !A64_BRANCH_IMM26_MASK;
+        field.copy_from_slice(&word.to_le_bytes());
+    }
 }
 
 /// Copies the rows behind the thunk, then the exit routines and each stub, and patches each
@@ -50,6 +72,7 @@ pub(in super::super) fn place_rows(ending: Ending, rows: &[Placed], (exits, rout
         patch_jump(&mut code, head + starts[jump.row], starts[jump.target] as i64 - starts[jump.row] as i64)?;
     }
     let sites = symbol_sites(rows, symbols, head)?;
+    clear_branch_displacements(&mut code, &sites);
     let proven_at = head + starts.get(proven_row).copied().unwrap_or(0);
     let thunk_bytes = thunk(ending, head, proven_at)?;
     code[..head].copy_from_slice(&thunk_bytes);

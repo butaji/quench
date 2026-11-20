@@ -68,18 +68,24 @@ pub fn check_transfer(arch: Arch, row: &str, code: &[u8], at: usize, class: u8) 
         Arch::Aarch64 => {
             let word = word_at(code, at);
             let matches_form = |(c, mask, pattern): (u8, u32, u32)| c == class && word & mask == pattern;
-            A64_TRANSFERS.into_iter().any(matches_form) || may_call(row) && matches_form(A64_CALL)
+            // An entry routine calls the first row; a call row branches to its helper's hole on
+            // Apple AArch64 (see `check_call`).
+            A64_TRANSFERS.into_iter().any(matches_form) || (may_call(row) || row.starts_with(CALL_ROW_PREFIX)) && matches_form(A64_CALL)
         }
     };
-    assert!(ok, "stencil {row}: relocation at {at} is not a jump or conditional branch (a call?): preceding bytes {:02x?}", &code[at.saturating_sub(3)..at]);
+    assert!(ok, "stencil {row}: relocation at {at} is not a jump or conditional branch (a call?): class {class} word {:08x} preceding bytes {:02x?}", word_at(code, at), &code[at.saturating_sub(3)..at]);
 }
 
-/// A `call_*` row calls indirectly (`call r64`, `call [r64]`, `blr`) and no other way; any other row
-/// has no call, which a relocation against a non-hole symbol would already have failed.
+/// A `call_*` row calls: indirectly (`call r64`, `call [r64]`, `blr`) everywhere but Apple AArch64,
+/// where Mach-O forbids an absolute word in text and the helper site is a direct branch to the
+/// hole's symbol (`bl`); any other row has no call.
 pub fn check_call(arch: Arch, row: &str, code: &[u8]) {
     let calls = match arch {
         Arch::X86_64 => x86_instructions(code).iter().any(|instr| instr.code() == Code::Call_rm64),
-        Arch::Aarch64 => code.chunks_exact(A64_WORD).any(|word| word_at(word, 0) & A64_CALL_REG.0 == A64_CALL_REG.1),
+        Arch::Aarch64 => code.chunks_exact(A64_WORD).any(|word| {
+            let word = word_at(word, 0);
+            word & A64_CALL_REG.0 == A64_CALL_REG.1 || word & A64_CALL.1 == A64_CALL.2
+        }),
     };
     assert!(calls || !row.starts_with(CALL_ROW_PREFIX), "stencil {row}: a call row with no indirect call");
 }

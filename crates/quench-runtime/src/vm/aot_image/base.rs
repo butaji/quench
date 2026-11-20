@@ -12,7 +12,6 @@ use super::{ImageTarget, symbols::SymbolTable};
 use crate::bytecode::ResidualProgram;
 use crate::compile::aot_facts::AotFacts;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
-use cranelift_codegen::binemit::Reloc;
 
 /// A base body: code, relocations, and where each record starts.
 pub(crate) struct BaseImage {
@@ -45,7 +44,7 @@ pub(crate) fn lower(
     let built = crate::vm::compiled::image_body(program, id)?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
-        Relocation { offset: site.offset, kind: Reloc::Abs8, namespace, key, addend: 0 }
+        Relocation { offset: site.offset, kind: site.kind, namespace, key, addend: 0 }
     }).collect();
     let mut pc_offsets = vec![NO_ENTRY; program.function(id as usize).instructions().count()];
     for &(pc, offset) in built.entries.iter() {

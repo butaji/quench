@@ -48,6 +48,12 @@ pub enum Reloc {
     /// value is sign-extended, multiplied by 4, and added to the PC of
     /// the call instruction to form the destination address.
     Arm64Call,
+    /// AArch64 `adrp`: the page of the target, relative to the page of the
+    /// instruction (Mach-O `ARM64_RELOC_PAGE21`, ELF `R_AARCH64_ADR_PREL_PG_HI21`).
+    Arm64Page21,
+    /// AArch64 `add`/`ldr`: the target's offset within its page (Mach-O
+    /// `ARM64_RELOC_PAGEOFF12`, ELF `R_AARCH64_ADD_ABS_LO12_NC`).
+    Arm64PageOff12,
     /// s390x PC-relative 4-byte offset
     S390xPCRel32Dbl,
     /// s390x PC-relative 4-byte offset to PLT
@@ -161,6 +167,8 @@ impl fmt::Display for Reloc {
             Self::X86GOTPCRel4 => write!(f, "GOTPCRel4"),
             Self::X86SecRel => write!(f, "SecRel"),
             Self::Arm32Call | Self::Arm64Call => write!(f, "Call"),
+            Self::Arm64Page21 => write!(f, "Page21"),
+            Self::Arm64PageOff12 => write!(f, "PageOff12"),
             Self::RiscvCallPlt => write!(f, "RiscvCallPlt"),
             Self::RiscvTlsGdHi20 => write!(f, "RiscvTlsGdHi20"),
             Self::RiscvGotHi20 => write!(f, "RiscvGotHi20"),

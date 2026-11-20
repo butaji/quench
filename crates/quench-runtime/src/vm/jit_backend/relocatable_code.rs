@@ -8,11 +8,33 @@ pub(in crate::vm) const ARM64_BRANCH_IMMEDIATE_BITS: u32 = 26;
 pub(in crate::vm) const ARM64_INSTRUCTION_BYTES: usize = 4;
 const ARM64_INSTRUCTION_ALIGNMENT_BITS: u32 = 2;
 
+/// AArch64 page size, and the immediate fields of `adrp` (a 21-bit signed page count
+/// split into `immlo`/`immhi`) and `add` (an unsigned 12-bit offset within the page).
+const ARM64_PAGE_BITS: u32 = 12;
+const ARM64_PAGE_MASK: u64 = (1 << ARM64_PAGE_BITS) - 1;
+const ARM64_ADRP_IMM_BITS: u32 = 21;
+const ARM64_ADRP_IMMLO_SHIFT: u32 = 29;
+const ARM64_ADRP_IMMHI_SHIFT: u32 = 5;
+const ARM64_ADRP_IMMHI_BITS: u32 = 19;
+/// The `adrp` bits that are not its immediate: the opcode and the destination register.
+const ARM64_ADRP_FIXED_MASK: u32 = 0x9F00_001F;
+const ARM64_ADD_IMM12_SHIFT: u32 = 10;
+const ARM64_ADD_IMM12_MASK: u32 = 0xFFF << ARM64_ADD_IMM12_SHIFT;
+/// `add xN, xN, #imm12` with no shift: the only form a page offset links into here.
+const ARM64_ADD_OPCODE_MASK: u32 = 0x7F00_0000;
+const ARM64_ADD_OPCODE: u32 = 0x1100_0000;
+
 /// Whether `apply_relocation` fills relocations of `kind`.
 pub(in crate::vm) fn patchable(kind: Reloc) -> bool {
     matches!(
         kind,
-        Reloc::Abs8 | Reloc::X86PCRel4 | Reloc::X86CallPCRel4 | Reloc::X86CallPLTRel4 | Reloc::Arm64Call
+        Reloc::Abs8
+            | Reloc::X86PCRel4
+            | Reloc::X86CallPCRel4
+            | Reloc::X86CallPLTRel4
+            | Reloc::Arm64Call
+            | Reloc::Arm64Page21
+            | Reloc::Arm64PageOff12
     )
 }
 
@@ -97,6 +119,30 @@ pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, ki
             let mask = (1_u32 << ARM64_BRANCH_IMMEDIATE_BITS) - 1;
             let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));
             field.copy_from_slice(&((word & !mask) | (words as u32 & mask)).to_le_bytes());
+        }
+        Reloc::Arm64Page21 => {
+            let target = value.wrapping_add(addend as u64);
+            let page = |address: u64| (address >> ARM64_PAGE_BITS) as i64;
+            let imm = page(target).wrapping_sub(page(site));
+            let limit = 1_i64 << (ARM64_ADRP_IMM_BITS - 1);
+            if !(-limit..limit).contains(&imm) {
+                return Err("relocation is out of page range".into());
+            }
+            let field = bytes.get_mut(..ARM64_INSTRUCTION_BYTES).ok_or("relocation is outside its code")?;
+            let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));
+            let immlo = (imm as u32 & 0x3) << ARM64_ADRP_IMMLO_SHIFT;
+            let immhi = ((imm as u32 >> 2) & ((1 << ARM64_ADRP_IMMHI_BITS) - 1)) << ARM64_ADRP_IMMHI_SHIFT;
+            field.copy_from_slice(&((word & ARM64_ADRP_FIXED_MASK) | immlo | immhi).to_le_bytes());
+        }
+        Reloc::Arm64PageOff12 => {
+            let target = value.wrapping_add(addend as u64);
+            let field = bytes.get_mut(..ARM64_INSTRUCTION_BYTES).ok_or("relocation is outside its code")?;
+            let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));
+            if word & ARM64_ADD_OPCODE_MASK != ARM64_ADD_OPCODE {
+                return Err("a page-offset relocation fills an add immediate".into());
+            }
+            let imm12 = (target & ARM64_PAGE_MASK) as u32;
+            field.copy_from_slice(&((word & !ARM64_ADD_IMM12_MASK) | (imm12 << ARM64_ADD_IMM12_SHIFT)).to_le_bytes());
         }
         _ => return Err("relocation kind is not patchable".into()),
     }

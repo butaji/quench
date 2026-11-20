@@ -417,6 +417,9 @@ fn check_movw_groups(row: &ObjectRow) {
     }
 }
 
+/// The suffix a hole's symbol carries where a branch names it (`stencils/call_rows.rs`).
+const HOLE_BRANCH_SUFFIX: &str = "_BRANCH";
+
 /// The hole index of a relocation. Value hole `HOLE_V<n>` is index n; `HOLE_NEXT` 0, `HOLE_TAKEN` 1,
 /// `HOLE_EXIT<k>` 2 + k (the successor indexes of `quench_bjit`).
 fn hole_index(row: &str, symbol: &str, class: u8) -> u32 {
@@ -426,6 +429,12 @@ fn hole_index(row: &str, symbol: &str, class: u8) -> u32 {
         (true, "NEXT") => NEXT,
         (true, "TAKEN") => TAKEN,
         (true, exit) if exit.starts_with("EXIT") => EXIT_BASE + number(&exit[EXIT_PREFIX..]),
+        // A value hole named by a branch: the Apple AArch64 helper site, which the image links to
+        // the helper (`Reloc::Arm64Call`) instead of writing an address word into text. Its symbol
+        // carries the suffix, so no definition of the hole's own name can leave an addend in the
+        // branch (ld64 refuses a B/BL with one).
+        (true, value) if value.starts_with('V') && value.ends_with(HOLE_BRANCH_SUFFIX) =>
+            number(&value[1..value.len() - HOLE_BRANCH_SUFFIX.len()]),
         (false, value) if value.starts_with('V') => number(&value[1..]),
         _ => panic!("stencil {row}: hole {symbol} used in the wrong way"),
     }

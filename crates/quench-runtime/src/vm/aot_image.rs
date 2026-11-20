@@ -29,6 +29,8 @@ pub(crate) mod object;
 pub(crate) mod live;
 #[path = "aot_image/file.rs"]
 pub(crate) mod file;
+#[path = "aot_image/page.rs"]
+mod page;
 
 use crate::bytecode::ResidualProgram;
 use crate::compile::aot_facts::AotFacts;
@@ -99,8 +101,12 @@ fn lower_function(
     id: u32,
     symbols: &mut symbols::SymbolTable,
 ) -> Result<AotFunction, String> {
-    let base = base::lower(program, facts, target, id, symbols)?;
-    let lane = join::lower_lane(program, facts, target, id, &base, symbols)?;
+    let mut base = base::lower(program, facts, target, id, symbols)?;
+    let mut lane = join::lower_lane(program, facts, target, id, &base, symbols)?;
+    crate::vm::aot_image::page::rewrite(&mut base.code)?;
+    if let Some(lane) = &mut lane {
+        crate::vm::aot_image::page::rewrite(&mut lane.code)?;
+    }
     Ok(AotFunction { id, base, lane })
 }
 

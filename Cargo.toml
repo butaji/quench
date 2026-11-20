@@ -135,3 +135,4 @@ iana-time-zone = { path = "vendor/iana-time-zone" }
 oxc_parser = { path = "vendor/oxc-parser" }
 oxc_regular_expression = { path = "vendor/oxc-regular-expression" }
 cranelift-codegen = { path = "vendor/cranelift-codegen" }
+cranelift-object = { path = "vendor/cranelift-object" }

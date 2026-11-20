@@ -21,6 +21,8 @@ const RELOC_X86_PC_REL4: u8 = 1;
 const RELOC_X86_CALL_PC_REL4: u8 = 2;
 const RELOC_X86_CALL_PLT_REL4: u8 = 3;
 const RELOC_ARM64_CALL: u8 = 4;
+const RELOC_ARM64_PAGE21: u8 = 5;
+const RELOC_ARM64_PAGEOFF12: u8 = 6;
 /// A relocation kind `RelocatableCode` never holds; the reader rejects it.
 const RELOC_UNPATCHABLE: u8 = u8::MAX;
 
@@ -161,6 +163,8 @@ fn reloc_tag(kind: Reloc) -> u8 {
         Reloc::X86CallPCRel4 => RELOC_X86_CALL_PC_REL4,
         Reloc::X86CallPLTRel4 => RELOC_X86_CALL_PLT_REL4,
         Reloc::Arm64Call => RELOC_ARM64_CALL,
+        Reloc::Arm64Page21 => RELOC_ARM64_PAGE21,
+        Reloc::Arm64PageOff12 => RELOC_ARM64_PAGEOFF12,
         _ => RELOC_UNPATCHABLE,
     }
 }
@@ -172,6 +176,8 @@ fn reloc_of(tag: u8) -> Result<Reloc, String> {
         RELOC_X86_CALL_PC_REL4 => Reloc::X86CallPCRel4,
         RELOC_X86_CALL_PLT_REL4 => Reloc::X86CallPLTRel4,
         RELOC_ARM64_CALL => Reloc::Arm64Call,
+        RELOC_ARM64_PAGE21 => Reloc::Arm64Page21,
+        RELOC_ARM64_PAGEOFF12 => Reloc::Arm64PageOff12,
         _ => return Err("an AOT image relocation has an unknown kind".into()),
     })
 }
