@@ -1,8 +1,8 @@
-// jetstream-row: mandreel
-// jetstream-files: Octane/mandreel.js
-// iterations: 80
-// jetstream-driver: deterministic=true
-// c-sources: ../c-analogues/support/mandreel-gen.c -lm
+/* The machine-translated reference for the mandreel row: the JS run as C (support/mandreel-gen.c), not
+ * a row analogue of its own. The row's analogue is ../mandreel-native.cc, which builds the same
+ * benchmark from Bullet's C++ source. This file has no `jetstream-row:` header, so the AOT gate does
+ * not measure it; it is kept as the bit-exact baseline the native analogue is compared against.
+ */
 /* C analogue of JetStream's Octane/mandreel.js: Mandreel's LLVM-to-JS translation of the Bullet
  * physics demo (BenchmarkDemo), run for 80 iterations.
  *
@@ -45,7 +45,7 @@
  * state callback), which the C writes as a non-zero marker where the JS tests them for truthiness.
  * The C computes the same hashes (after the timed part, so they are not timed) and compares them
  * with the constants below. Regenerate the constants with
- *   node tools/mandreel-validate.cjs --write-c mandreel.c
+ *   node tools/mandreel-validate.cjs --write-c support/mandreel-translated.c
  * The checksum that the JS checks each frame (Mandreel_checkState) runs inside the timed part too.
  */
 #include <stdint.h>
@@ -54,7 +54,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "support/mandreel-rt.h"
+#include "mandreel-rt.h"
 
 /* The JS globals used by the hand-written code (defined in support/mandreel-gen.c). */
 extern void *V_my_old_constructors;
