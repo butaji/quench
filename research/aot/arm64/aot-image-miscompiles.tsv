@@ -14,3 +14,9 @@ hash-map.js	--u-jit	JS error: switch(typeof key) fell to default for type=number
 # s=26684559 — every loop gains iterations, so a loop whose body calls a function that steps
 # out still mis-resumes under the function tier; the tier stays off (054f5ef0ea). With it off
 # all four reproducers are exact (ty2 n=20000, sw4/co s=199990000, +i sums 199990000).
+# Narrowed further: with the function tier on, r1.js (`t(i); n++`, callee does typeof) gives
+# n=20176 and r2.js (`s += t(i)`) s=121446 = 6*20241 — the extra count equals the loop index
+# where the callout left the lane, i.e. the resumed body restarts the induction at 0. The same
+# callee with more live caller values (miss2: r, shown, badr) is exact, so it depends on the
+# register allocation: a live pinned int is not restored across the callout leave/resume.
+# With the tier off all of these are exact (n=20000, s=120000).
