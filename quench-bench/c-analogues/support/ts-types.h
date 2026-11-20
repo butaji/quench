@@ -959,8 +959,9 @@ static TsType *cPropertyTypeForIndex(TsType *o, TsType *key) {
   return info ? info->type : NULL;
 }
 
-/* getIndexedAccessTypeOrUndefined (67063) for the resolved forms; a missing property is an error (not ported) */
-static TsType *cGetIndexedAccessType(TsType *o, TsType *ix) {
+/* getIndexedAccessType (67063) for the resolved forms. A missing property is an error at an access node (a type node:
+ * not ported) and unknownType without one (an instantiation of T[K], as TypeScript does for K = string). */
+static TsType *cGetIndexedAccessType(TsType *o, TsType *ix, bool accessNode) {
   if (o == cErrorType || ix == cErrorType) return cErrorType;
   if (cIsGenericIndex(ix) || cIsGenericObject(o)) {
     if (o->flags & (TF_Any | TF_Unknown)) return o;
@@ -979,12 +980,15 @@ static TsType *cGetIndexedAccessType(TsType *o, TsType *ix) {
     TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(ix->ntypes ? ix->ntypes : 1));
     for (int i = 0; i < ix->ntypes; i++) {
       parts[i] = cPropertyTypeForIndex(o, ix->types[i]);
-      if (!parts[i]) return cUnported("indexed access: missing property of a union key");
+      if (!parts[i]) return accessNode ? cUnported("indexed access: missing property of a union key") : cUnknownType;
     }
     return cGetUnionType(parts, ix->ntypes);
   }
   TsType *r = cPropertyTypeForIndex(o, ix);
-  return r ? r : cUnported("indexed access: no such property or index signature");
+  if (r) return r;
+  if (!accessNode && (o->flags & TF_Object) && (ix->flags & (TF_StringLiteral | TF_NumberLiteral | TF_String | TF_Number | TF_Any)))
+    return cUnknownType;   /* no property and no index signature: getIndexedAccessType without an access node */
+  return cUnported("indexed access: no such property or index signature");
 }
 
 /* getLiteralTypeFromProperties (for the object types of the port): the names of the public properties as
@@ -1050,7 +1054,7 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
       TsType *o = cTypeFromNode(n->objectType);
       TsType *ix = cTypeFromNode(n->indexType);
       if (o == cErrorType || ix == cErrorType) return cErrorType;
-      return cGetIndexedAccessType(o, ix);
+      return cGetIndexedAccessType(o, ix, true);
     }
     case TSK_AnyKeyword: return cAnyType;
     case TSK_UnknownKeyword: return cUnknownType;

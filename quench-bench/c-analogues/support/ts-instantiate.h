@@ -23,7 +23,7 @@ struct TsMapper { int kind; TsType **src, **tgt; int n; TsMapper *m1, *m2; };
 
 static bool cIsThisless(TsSymbol *s);
 static TsType *cDeclaredTypeOfClassOrInterface(TsSymbol *sym);
-static TsType *cGetIndexedAccessType(TsType *o, TsType *ix);
+static TsType *cGetIndexedAccessType(TsType *o, TsType *ix, bool accessNode);
 static TsType *cGetIndexType(TsType *t);
 static TsType *cGetUnionType(TsType **in, int n);
 static int cInstTotal;              /* totalInstantiationCount (getInstantiationCount) */
@@ -603,7 +603,7 @@ static TsType *cInstantiateWorker(TsType *t, TsMapper *m) {
   if (t->flags & TF_IndexedAccess) {
     /* instantiateTypeWorker: getIndexedAccessType of the instantiated object and index types */
     TsType *o = cInstantiate(t->iaObj, m), *ix = cInstantiate(t->iaIdx, m);
-    return cGetIndexedAccessType(o, ix);
+    return cGetIndexedAccessType(o, ix, false);
   }
   if (t->flags & TF_Index) return cGetIndexType(cInstantiate(t->ixOf, m));
   if (t->flags & TF_Conditional) return cGetConditionalTypeInstantiation(t, cCombineMappers(t->condMapper, m));
