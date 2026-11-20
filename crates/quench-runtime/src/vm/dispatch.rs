@@ -695,8 +695,11 @@ impl<H: Host> Vm<H> {
         if matches!(run, RowRun::Done(Edge::Target)) {
             *pc = i.jump_target() as usize;
             if matches!(operation, Operation::Jump) {
+                // The back edge's target is the next instruction, not a continuation after the one
+                // before it: the collection scans the registers live into the target, which a loop
+                // head's state (a for-in's) is, and the instruction before it may define.
                 self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
+                self.frames[f].pc_is_resume = false;
                 self.maybe_collect(p);
             }
         }
