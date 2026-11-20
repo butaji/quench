@@ -358,14 +358,16 @@ fn nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, te
 
 /// Whether a value of type `ty` is `expected` (loosely, either nullish value) by its type
 /// alone: the nullish types are, and objects, Numbers and Booleans are not.
+#[inline(always)]
 fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
-    let [null, undefined] = [ValueType::Null, ValueType::Undefined].map(Type::language);
-    if ty.is_subtype(null) {
-        Some(!strict || expected == ValueType::Null)
-    } else if ty.is_subtype(undefined) {
-        Some(!strict || expected == ValueType::Undefined)
+    // Language-set tests only (`within_languages`), so a stencil's constant type folds them.
+    if ty.within_languages(Type::language(ValueType::Null)) {
+        Some(!strict || matches!(expected, ValueType::Null))
+    } else if ty.within_languages(Type::language(ValueType::Undefined)) {
+        Some(!strict || matches!(expected, ValueType::Undefined))
     } else {
-        (ty.is_direct_object_family() || ty.is_subtype(Type::NUMBER.join(Type::language(ValueType::Boolean)))).then_some(false)
+        let number_or_boolean = Type::NUMBER.language_union(Type::language(ValueType::Boolean));
+        (ty.is_direct_object_family() || ty.within_languages(number_or_boolean)).then_some(false)
     }
 }
 

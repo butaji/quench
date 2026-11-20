@@ -192,8 +192,9 @@ type Rows = Vec<(String, String)>;
 /// object's rows, and merges them into the sorted library with its counts.
 fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
     // `QUENCH_STENCIL_WORKERS` caps the rustc processes on a box whose memory, not its cores, bounds them.
+    // Unset, one worker per core that the box's available memory holds a shard's rustc for (`SHARD_MEMORY`).
     let parallelism = env::var("QUENCH_STENCIL_WORKERS").ok().and_then(|jobs| jobs.parse().ok())
-        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get));
+        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get).min(memory_workers()));
     let next = AtomicUsize::new(0);
     let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
         let workers: Vec<_> = (0..shards::workers(count, parallelism))
@@ -205,13 +206,22 @@ fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Ve
                         if shard >= count {
                             return done;
                         }
-                        done.push(stencil_rows(arch, read(&fs::read(compile(out, shard, cpu)).unwrap())));
+                        // A shard of heap rows takes the most memory: one compiles at a time (`HEAVY_SHARD`).
+                        let heavy = fs::read_to_string(instance_file(out, shard)).is_ok_and(|rows| rows.contains("heap_row!"));
+                        let guard = heavy.then(|| HEAVY_SHARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+                        let object = compile(out, shard, cpu);
+                        drop(guard);
+                        done.push(stencil_rows(arch, read(&fs::read(object).unwrap())));
                     }
                 })
             })
             .collect();
         workers.into_iter().flat_map(|worker| worker.join().expect("a shard worker")).collect()
     });
+    // Every shard is checked before the build fails, so one run names every row that breaks a check.
+    let failed = FAILED_ROWS.lock().unwrap();
+    assert!(failed.is_empty(), "{} stencil rows fail their checks:\n{}", failed.len(), failed.join("\n"));
+    drop(failed);
     let counts = built.iter().fold(Counts::default(), |sum, (_, c)| Counts { framed: sum.framed + c.framed, unchained: sum.unchained + c.unchained });
     (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
 }
@@ -238,19 +248,47 @@ fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
     let mut counts = Counts::default();
     let rows = rows
         .iter()
-        .map(|row| {
-            check_no_return(arch, &row.name, &row.code);
-            check_call(arch, &row.name, &row.code);
-            let relocs = relocations(arch, row);
-            let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
-            let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
-            let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
-            counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
-            counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
-            (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
+        .filter_map(|row| {
+            // A row that fails a check is recorded (`FAILED_ROWS`) and the shard goes on with the next.
+            let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| checked_row(arch, row, &mut counts)));
+            checked.map_err(|failure| {
+                let message = failure.downcast_ref::<String>().cloned()
+                    .or_else(|| failure.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_else(|| format!("stencil {}: a check failed", row.name));
+                FAILED_ROWS.lock().unwrap().push(message);
+            }).ok()
         })
         .collect();
     (rows, counts)
+}
+
+/// Held while a shard of heap rows compiles, so two never run together (`compile_shards`).
+static HEAVY_SHARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The rows that failed a check, across every shard (`stencil_rows`).
+static FAILED_ROWS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// What one shard's rustc may reach, in bytes: the workers the box's memory holds (`memory_workers`).
+const SHARD_MEMORY: u64 = 5 << 30;
+
+/// How many shard rustc processes the box's available memory holds, at least one.
+fn memory_workers() -> usize {
+    let available = fs::read_to_string("/proc/meminfo").ok().and_then(|info| info.lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()));
+    available.map_or(usize::MAX, |kib| usize::try_from((kib << 10) / SHARD_MEMORY).unwrap_or(usize::MAX).max(1))
+}
+
+/// One row as (name, table entry), checked; adds to `counts` what `checks` counted.
+fn checked_row(arch: Arch, row: &ObjectRow, counts: &mut Counts) -> (String, String) {
+    check_no_return(arch, &row.name, &row.code);
+    check_call(arch, &row.name, &row.code);
+    let relocs = relocations(arch, row);
+    let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
+    let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
+    let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
+    counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
+    counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
+    (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
 }
 
 /// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.

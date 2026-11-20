@@ -32,7 +32,7 @@ pub fn split_weighted<T>(items: &[T], weight: impl Fn(&T) -> usize) -> Vec<&[T]>
 
 /// The weight of one heap row in `split_weighted`, in Number rows: a 1490-row shard of mostly heap rows reached 8.5 GB
 /// where a Number shard of the same length stays near 2 GB.
-pub const HEAP_ROW_WEIGHT: usize = 4;
+pub const HEAP_ROW_WEIGHT: usize = 8;
 
 /// Concurrent compilations for `shards` shards on a machine with `parallelism` threads.
 pub fn workers(shards: usize, parallelism: usize) -> usize {

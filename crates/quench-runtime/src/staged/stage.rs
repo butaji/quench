@@ -205,8 +205,8 @@ pub(crate) trait Stage {
     fn choose_leaving(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Option<Self::Word>,
         otherwise: impl FnOnce(&mut Self) -> Option<Self::Word>) -> Option<Self::Word> {
         let left = std::cell::Cell::new(false);
-        let word = self.choose(cond, #[inline(always)] |stage| then(stage).unwrap_or_else(|| { left.set(true); stage.constant(0) }),
-            #[inline(always)] |stage| otherwise(stage).unwrap_or_else(|| { left.set(true); stage.constant(0) }));
+        let word = self.choose(cond, #[inline(always)] |stage| then(stage).unwrap_or_else(#[inline(always)] || { left.set(true); stage.constant(0) }),
+            #[inline(always)] |stage| otherwise(stage).unwrap_or_else(#[inline(always)] || { left.set(true); stage.constant(0) }));
         (!left.get()).then_some(word)
     }
     /// Continues where `cond` holds; `None` where it does not, so nothing runs past it.
