@@ -60,6 +60,31 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether the dispatch loop may not push a call made by frame `f` as an activation of its
+    /// own: an eval is in progress, `p` is a Wasm program (its calls keep Wasm's own activation
+    /// and exhaustion accounting), `f` is not the top frame, `f` is the root activation, or the
+    /// call is a strict terminal one that the host makes a proper tail call (`call_forms`).
+    #[inline(always)]
+    fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction) -> bool {
+        self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+            || (self.host.proper_tail_calls()
+                && i.returns_from_frame()
+                && p.function(self.frames[f].function as usize).strict)
+    }
+
+    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the host
+    /// permits them, the call returns from its frame, and the call site permits it.
+    #[inline(always)]
+    pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
+        self.host.proper_tail_calls()
+            && i.returns_from_frame()
+            && p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32)
+    }
+
     /// Starts a plain or array-spread call of an eligible same-realm user function as an
     /// activation of the running dispatch loop, or returns `None` to leave it to `step`. Such a
     /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
@@ -74,20 +99,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Result<StepResult, JsError>> {
         // A sloppy call that falls into a return of its result is pushed like any other; its
         // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
-        // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
-        // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
-        // exhaustion accounting, so they are never inlined as user calls.
-        if !crate::staged::calls_ordinary(i.op())
-            || i.direct_eval()
-            || self.direct_eval
-            || self.parameter_eval
-            || p.kind == crate::bytecode::ProgramKind::Wasm
-            || f + 1 != self.frames.len()
-            || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (self.host.proper_tail_calls()
-                && i.returns_from_frame()
-                && p.function(self.frames[f].function as usize).strict)
-        {
+        if !crate::staged::calls_ordinary(i.op()) || i.direct_eval() || self.inline_call_blocked(p, f, i) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -445,16 +457,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if !crate::staged::calls_positional(i.op())
-            || self.direct_eval
-            || self.parameter_eval
-            || p.kind == crate::bytecode::ProgramKind::Wasm
-            || f + 1 != self.frames.len()
-            || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (self.host.proper_tail_calls()
-                && i.returns_from_frame()
-                && p.function(self.frames[f].function as usize).strict)
-        {
+        if !crate::staged::calls_positional(i.op()) || self.inline_call_blocked(p, f, i) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -489,7 +492,7 @@ impl<H: Host> Vm<H> {
                     }
                     let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
                     (target, this) = (bound_target, bound_this);
-                    bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
+                    bound_arguments = super::function::bound_then(&bound, window);
                     bound_arguments.as_slice()
                 }
                 // `Reflect.apply` takes its target and receiver as arguments and requires a list

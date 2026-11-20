@@ -2,94 +2,15 @@
 //! a value at a slot, whichever of the two plain storage forms it keeps its values in. The
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
-use super::narrow::{NOT_NARROW, UPPER_WORD};
+use super::narrow::{narrow_form, packed_form, storable_form, UPPER_WORD};
 use super::object::{inline_storage, HALF_BYTES};
 use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
 use super::Stage;
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::typed_ir::{Representation, Type};
-use crate::value::{NarrowLayout, ValueLayout, LOWER_WORD};
+use crate::value::ValueLayout;
 use crate::{Value, ValueType};
-
-/// The payload bits that code a narrow reference's family, and where they sit.
-const FAMILY_BITS: u64 = crate::value::HEAP_FAMILY_BITS;
-const FAMILY_SHIFT: u32 = crate::value::HEAP_FAMILY_SHIFT;
-/// The upper words of the narrow constants, their codes following the families' codes.
-const CONSTANT_UPPER_WORDS: [u64; 4] = [crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED];
-const FIRST_CONSTANT_CODE: u64 = crate::value::NARROW_HEAP_FAMILIES as u64;
-
-/// The narrow form of `value` (`Value::to_narrow`) where it has one: an integer in range, a
-/// reference whose index fits, or a constant; `NOT_NARROW` for any other value, which the
-/// store leaves to the general path. A `fact` that proves an int32 selects the integer arm
-/// alone: the tag test and the reference arm are not emitted. Each form computes only its own arm.
-#[inline(always)]
-pub(crate) fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -> S::Word {
-    if fact.is_subtype(Type::INT32) { return integer_form(stage, value); }
-    any_narrow_form(stage, value)
-}
-
-/// `narrow_form` of a value nothing is proved of: the integer or the reference arm, by its tag.
-#[inline(always)]
-fn any_narrow_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
-    let upper = stage.and_imm(value, UPPER_WORD);
-    let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);
-    stage.choose(is_int, #[inline(always)] |stage| integer_form(stage, value), #[inline(always)] |stage| reference_form(stage, value, upper))
-}
-
-/// Whether the int32 `value`'s biased low word is below the narrow integer span: it has a narrow form.
-#[inline(always)]
-pub(crate) fn integer_fits<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
-    let lower = stage.and_imm(value, LOWER_WORD);
-    let span = 1_u64 << NarrowLayout::INTEGER_BITS;
-    let biased = stage.add_imm(lower, span >> 1);
-    let biased = stage.and_imm(biased, LOWER_WORD);
-    let over = stage.ugt_imm(biased, span - 1);
-    stage.not(over)
-}
-
-/// The narrow word of the int32 `value` that `integer_fits` holds for: its code under the integer flag.
-#[inline(always)]
-pub(crate) fn integer_code<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
-    let lower = stage.and_imm(value, LOWER_WORD);
-    let shifted = stage.mul_imm(lower, 1_u64 << NarrowLayout::CODE_SHIFT);
-    let shifted = stage.and_imm(shifted, LOWER_WORD);
-    stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG))
-}
-
-/// `narrow_form` of an integer: its code where `integer_fits`.
-#[inline(always)]
-fn integer_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
-    let fits = integer_fits(stage, value);
-    let integer = integer_code(stage, value);
-    let refused = stage.constant(NOT_NARROW);
-    stage.select(fits, integer, refused)
-}
-
-/// `narrow_form` of a value that is no integer: its code is its family bits, a constant's
-/// follows them, and the lower word is the index.
-#[inline(always)]
-fn reference_form<S: Stage>(stage: &mut S, value: S::Word, upper: S::Word) -> S::Word {
-    let lower = stage.and_imm(value, LOWER_WORD);
-    let family = stage.and_imm(upper, FAMILY_BITS);
-    let base = stage.and_imm(upper, !FAMILY_BITS);
-    let mut named = stage.eq_imm(base, ValueLayout::HEAP_TAG);
-    let mut code = stage.shr_imm(family, FAMILY_SHIFT);
-    for (offset, word) in CONSTANT_UPPER_WORDS.into_iter().enumerate() {
-        let is_constant = stage.eq_imm(upper, word);
-        let constant_code = stage.constant(FIRST_CONSTANT_CODE + offset as u64);
-        code = stage.select(is_constant, constant_code, code);
-        named = stage.any(named, is_constant);
-    }
-    let index_high = stage.shr_imm(lower, NarrowLayout::INDEX_BITS);
-    let index_fits = stage.eq_imm(index_high, 0u32);
-    let fits = stage.pick(named, index_fits, named);
-    let index = stage.mul_imm(lower, 1_u64 << NarrowLayout::INDEX_SHIFT);
-    let coded = stage.mul_imm(code, 1_u64 << NarrowLayout::CODE_SHIFT);
-    let reference = stage.or(index, coded);
-    let refused = stage.constant(NOT_NARROW);
-    stage.select(fits, reference, refused)
-}
 
 /// Stores `value` at `slot` of the object record at `record` (id `record_id`) where its exact
 /// shape is `shape`, its values are plain (packed in its payload word or a run in the arena,
@@ -117,9 +38,8 @@ fn own_store_formed<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, 
         store_flat(stage, payload, slot, (value, Representation::Tagged));
         return Some(());
     }
-    let narrow = any_narrow_form(stage, value);
-    let storable = stage.ne_imm(narrow, NOT_NARROW);
-    stage.guard(storable, miss)?;
+    let narrow = narrow_form(stage, value, Type::ANY);
+    let narrow = storable_form(stage, narrow, miss)?;
     let half = stage.site(OBJECT.payload_offset as u64 + u64::from(slot) * HALF_BYTES);
     let address = stage.add_imm(record, half);
     stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
@@ -144,9 +64,7 @@ fn own_store_with<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S:
     (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     let inline = inline_storage(stage, record);
     // A packed slot needs the value's narrow form; a flat one takes any value.
-    let narrow = stage.choose(inline, #[inline(always)] |stage| narrow_form(stage, value, fact), #[inline(always)] |stage| stage.constant(0));
-    let storable = stage.ne_imm(narrow, NOT_NARROW);
-    stage.guard(storable, miss)?;
+    let narrow = packed_form(stage, inline, value, fact, miss)?;
     stage.choose(inline, #[inline(always)] |stage| {
         let half = stage.site(OBJECT.payload_offset as u64 + u64::from(slot) * HALF_BYTES);
         let address = stage.add_imm(record, half);
@@ -189,8 +107,7 @@ pub(crate) fn bound_full_store<S: Stage>(stage: &mut S, record_id: S::Word, addr
 pub(crate) fn bound_packed_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
     (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     let narrow = narrow_form(stage, value, fact);
-    let storable = stage.ne_imm(narrow, NOT_NARROW);
-    stage.guard(storable, miss)?;
+    let narrow = storable_form(stage, narrow, miss)?;
     gate_open(stage, record_id, (value, fact), miss)?;
     stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
     Some(())

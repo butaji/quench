@@ -208,6 +208,8 @@ impl<H: Host> Vm<H> {
         let image = images.get(function)?;
         let body = program.function_get(function as usize)?;
         let unit = lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))?;
+        // An image has no lowering to ask which registers a leave inside an inlined frame stores.
+        if !unit.frames.is_empty() { return None; }
         let table = LaneHelper::addresses::<H>();
         let atoms: Vec<(u32, u32)> = image.atoms.iter().map(|(atom, text)| (*atom, self.intern_atom(text))).collect();
         let linked = image.code.link(0, |namespace, key| match lane_region::relocs::atom_key(namespace, key) {
@@ -215,7 +217,8 @@ impl<H: Host> Vm<H> {
             None => table.get(lane_region::relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),
         }).ok()?;
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
-            fault_poll: image.fault_poll, hoists_arrays: false, stable: Default::default(), entry_types: Default::default(), summary: None };
+            fault_poll: image.fault_poll, hoists_arrays: false, stable: Default::default(), entry_types: Default::default(), summary: None,
+            exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: crate::code_dependencies::Invalidation::default(), budget: 0, tiers: self.programs.tiers() };
         let method = plan.finish(&linked, None, None)?;

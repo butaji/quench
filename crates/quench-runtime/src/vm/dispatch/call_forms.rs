@@ -49,7 +49,7 @@ impl<H: Host> Vm<H> {
         }
         let spread_arguments = if matches!(form, CallForm::Array | CallForm::Spread) {
             let array = self.read(f, window.base);
-            Some(CallArguments::from_values(self.array_values(array)?))
+            Some(CallArguments::from_values(self.array_value_list(array)?))
         } else {
             None
         };
@@ -83,7 +83,6 @@ impl<H: Host> Vm<H> {
             .then(|| std::mem::replace(&mut self.frames[f].this, this));
         // The dispatch loop offers every plain call to `try_inline_user_call` first.
         // Compilation flags every call that falls into a return of its result.
-        let terminal = i.returns_from_frame();
         self.direct_eval = direct_eval;
         self.parameter_eval = parameter_eval;
         let arguments = spread_arguments
@@ -123,11 +122,8 @@ impl<H: Host> Vm<H> {
             self.profile.terminal_call(TerminalCall::Function);
             return Ok(StepResult::TailCall);
         }
-        if terminal
-            && self.host.proper_tail_calls()
-            && p.kind != crate::bytecode::ProgramKind::Wasm
-            && p.function(self.frames[f].function as usize)
-                .permits_js_tail_call_at(pc.saturating_sub(1) as u32)
+        if p.kind != crate::bytecode::ProgramKind::Wasm
+            && self.js_tail_call_allowed(p, f, i, pc)
             && !matches!(self.heap.get(callee), Some(Cell::Proxy { .. }))
             && let Some(CallTarget::User(program_id, id, env)) =
                 self.call_target(callee).ok()
@@ -267,13 +263,12 @@ impl<H: Host> Vm<H> {
         self.profile.call_target(1, usize::from(window.count));
         self.frames[f].pc = pc;
         self.frames[f].pc_is_resume = true;
-        let terminal = i.returns_from_frame();
-        if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
-            || (p.kind != crate::bytecode::ProgramKind::Wasm
-                && self.host.proper_tail_calls()
-                && terminal
-                && p.function(self.frames[f].function as usize)
-                    .permits_js_tail_call_at(pc.saturating_sub(1) as u32)))
+        let tail_call = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            i.returns_from_frame()
+        } else {
+            self.js_tail_call_allowed(p, f, i, pc)
+        };
+        if tail_call
             && !p.function(function_index as usize).is_async
             && !p.function(function_index as usize).is_generator
         {
@@ -350,25 +345,29 @@ impl<H: Host> Vm<H> {
         if allow_inline_calls && let Some(step) = self.try_inline_construct(p, f, i, pc) {
             return step;
         }
-        let args = match i.construct_arguments() {
+        let array_arguments;
+        let window_arguments;
+        let args: &[Value] = match i.construct_arguments() {
             crate::bytecode::ConstructArguments::Array(register) => {
                 let array = self.read(f, register);
                 if !self.heap.array(array).is_some() {
                     return Err(JsError("constructor arguments are not an array".into()));
                 }
-                self.call_argument_list(p, array, false)?
+                array_arguments = self.call_argument_list(p, array, false)?;
+                array_arguments.as_slice()
             }
             crate::bytecode::ConstructArguments::Registers(window) => {
-                self.register_window(f, window).to_vec()
+                window_arguments = CallArguments::from_slice(self.register_window(f, window));
+                window_arguments.as_slice()
             }
         };
         self.frames[f].pc = pc;
         self.frames[f].pc_is_resume = true;
         let callee = self.read(f, i.register_b());
         let v = if i.is_super_construct() {
-            self.construct_super_value(p, callee, &args)?
+            self.construct_super_value(p, callee, args)?
         } else {
-            self.construct_value(p, callee, &args)?
+            self.construct_value(p, callee, args)?
         };
         if i.returns_from_frame() {
             return Ok(StepResult::Return(v));

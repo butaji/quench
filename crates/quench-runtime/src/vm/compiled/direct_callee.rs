@@ -70,6 +70,12 @@ pub(in crate::vm) fn names_dead_callee(inlined: &[InlinedCall], direct: &[Direct
 /// leave inside one reads (`Vm::scratch_in_lane`), and the room the frames past the caller's registers
 /// need.
 pub(in crate::vm) fn window_width(inlined: &[InlinedCall], caller_registers: u16) -> usize {
-    inlined.iter().map(|frame| usize::from(frame.base - caller_registers) + usize::from(frame.registers)).max().unwrap_or(0)
+    frames_window(inlined.iter().map(|frame| (frame.base, frame.registers)), caller_registers)
+}
+
+/// `window_width` of frames given by their first register and their count, for a region whose
+/// frames are not `InlinedCall`s (`Inlining::window`).
+pub(in crate::vm) fn frames_window(frames: impl Iterator<Item = (crate::bytecode::Register, u16)>, caller_registers: u16) -> usize {
+    frames.map(|(base, registers)| usize::from(base - caller_registers) + usize::from(registers)).max().unwrap_or(0)
 }
 

@@ -5,7 +5,7 @@
 use super::super::*;
 use crate::WasmTypes;
 use crate::staged::machine::{Machine, MachineStage};
-use crate::staged::wasm_gc::WasmGc;
+use crate::staged::wasm_gc::{WasmGc, reference_cast};
 use crate::wasm::gc::GcField;
 use crate::wasm::reference::{ReferenceTarget, TargetHeap};
 
@@ -200,6 +200,26 @@ impl<H: Host> HeapStage<'_, H> {
         declarations
             .callable_value_type(wasmparser::ValType::Ref(target))
             .is_some_and(|ty| self.vm.wasm_reference_valid_in(reference, ty, Some(declarations)))
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// `ref.test` (`cast` false) or `ref.cast` of `reference`, its Wasm bits, to `target`, under
+    /// `program`'s declarations: the admit flag, or the reference the cast leaves.
+    pub(in crate::vm) fn wasm_ref_test_or_cast(
+        &mut self,
+        program: ProgramId,
+        target: ReferenceTarget,
+        reference: u64,
+        cast: bool,
+    ) -> Result<u64, JsError> {
+        let declarations = self.wasm_module_declarations(program)?;
+        let stage = &mut HeapStage { vm: self };
+        if cast {
+            reference_cast(stage, reference, target, &declarations)
+        } else {
+            Ok(stage.admits(reference, target, &declarations))
+        }
     }
 }
 

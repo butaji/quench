@@ -91,8 +91,7 @@ struct Sites<'a> {
     /// The index of `function` in its program.
     id: u32,
     callees: &'a Callees,
-    facts: &'a [Option<DirectFacts>],
-    /// By PC, every callee the call site recorded (`Callees::targets`).
+    /// By PC, every callee the call site recorded, the first the one it may inline (`Callees::targets`).
     targets: &'a [Vec<DirectFacts>],
     context: Context,
     registers: u16,
@@ -157,7 +156,7 @@ pub(in crate::vm::compiled) struct ShapeProto {
 /// pure entry cost.
 ///
 /// # Safety
-/// Each of `callees` names its function's live entry cell (`Callees::facts`).
+/// Each of `callees` names its function's live entry cell (`Callees::targets`).
 pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, spec: &BodySpec, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     unsafe { build(region, spec, (Ending::Body, Views::Frame), callees, helpers) }
@@ -168,7 +167,7 @@ pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, spec: &Bod
 /// calls inlined or chained as a body's are, the rest of its rows its own.
 ///
 /// # Safety
-/// Each of `callees` names its function's live entry cell (`Callees::facts`).
+/// Each of `callees` names its function's live entry cell (`Callees::targets`).
 pub(in crate::vm::compiled) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: ElementViews, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     unsafe { build(region, spec, (Ending::Region, views.into()), callees, helpers) }
@@ -204,12 +203,12 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
-    let (facts, targets) = unsafe { (callees.facts(), callees.targets()) };
+    let targets = unsafe { callees.targets() };
     let function = spec.known.program.function(spec.function as usize);
     // The prototypes the entry may check and the rows may fold on: none where the function's rows reshape an object.
     let classes = super::declared::class_prototypes(function, spec.known.classes);
     let known = Known { classes: &classes, ..spec.known };
-    let sites = Sites { function, id: spec.function, callees, facts: &facts, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
+    let sites = Sites { function, id: spec.function, callees, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
     let built = assemble(region, spec, sites, helpers).map(|body| with_native_holders(body, callees));
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built

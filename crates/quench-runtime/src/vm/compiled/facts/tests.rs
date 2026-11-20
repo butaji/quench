@@ -12,7 +12,7 @@ fn native_call_retires_conditional_shapes_in_cfg_facts() {
     for ty in [Type::direct_object(7), Type::direct_object(7).join(null),
         Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
         let mut types = vec![ty; usize::from(function.registers)];
-        assert!(matches!(transfer(&mut types, call, &program.constants,
+        assert!(matches!(transfer(&mut types, call, Operation::<u64, ()>::of(call).as_ref(), &program.constants,
             &super::super::lane_region::writes, true), Flow::Next));
         for (register, actual) in types.into_iter().enumerate() {
             let expected = if register == usize::from(call.result_register()) { Type::ANY }
@@ -32,11 +32,11 @@ fn native_construction_continues_like_a_call() {
     let function = program.function(1);
     let construct = function.instructions().find(|instruction| instruction.op().is_construct()).unwrap();
     let mut types = vec![Type::direct_object(7); usize::from(function.registers)];
-    assert!(matches!(transfer(&mut types, construct, &program.constants,
+    assert!(matches!(transfer(&mut types, construct, Operation::<u64, ()>::of(construct).as_ref(), &program.constants,
         &super::super::lane_region::writes, true), Flow::Next));
     assert_eq!(types[usize::from(construct.result_register())], Type::ANY);
     assert!(types.iter().all(|ty| *ty == Type::ANY || *ty == Type::direct_object(7).without_object_shape()));
-    assert!(matches!(transfer(&mut types, construct, &program.constants,
+    assert!(matches!(transfer(&mut types, construct, Operation::<u64, ()>::of(construct).as_ref(), &program.constants,
         &super::super::lane_region::writes, false), Flow::Leaves));
 }
 

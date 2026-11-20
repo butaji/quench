@@ -800,6 +800,9 @@ pub(crate) struct ProgramStore {
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
+    /// The id of each program `insert_shared` holds, by its code's address: `find_shared` is one
+    /// probe, not a scan of every program (the Wasm boundary asks it per call).
+    shared_ids: FxHashMap<usize, ProgramId>,
     /// Advanced by every change to a program the store holds or to the set it holds, and by
     /// the VM's changes to cache layouts and tables (`bump_context_epoch`): a program context
     /// derived at another epoch is derived again (`Vm::program_context`).
@@ -857,6 +860,7 @@ impl Default for ProgramStore {
             lane_compiles: Default::default(),
             lane_plan_ir: Default::default(),
             programs: Vec::new(),
+            shared_ids: FxHashMap::default(),
             // Each store's epochs start apart from every other's, so a context derived from
             // a store a snapshot or reset replaced never matches its successor's.
             context_epoch: {
@@ -1049,6 +1053,12 @@ impl ProgramStore {
                 reclaimed_wasm_baselines.0 += 1;
                 reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
             }
+            if let Some(code) = entry.residual.if_decoded()
+                && let key = Rc::as_ptr(code) as usize
+                && self.shared_ids.get(&key).copied() == ProgramId::from_index(index)
+            {
+                self.shared_ids.remove(&key);
+            }
             *slot = None;
             self.context_epoch += 1;
             reclaimed.extend(ProgramId::from_index(index));
@@ -1088,6 +1098,7 @@ impl ProgramStore {
         self.strict_direct_eval_code.clear();
         self.owned_scripts.clear();
         self.programs.clear();
+        self.shared_ids.clear();
         self.context_epoch += 1;
         self.unchecked_reclaimable = 0;
         self.js_jit_tracked_functions = 0;
@@ -1270,12 +1281,16 @@ impl ProgramStore {
     }
 
     pub(crate) fn find_shared(&self, program: &Rc<ResidualProgram>) -> Option<ProgramId> {
+        if let Some(&id) = self.shared_ids.get(&(Rc::as_ptr(program) as usize)) {
+            return Some(id);
+        }
+        // A program a snapshot restored is not in the index. Only a decoded one can be the
+        // caller's code: the caller's `Rc` exists only once the residual is decoded, so the scan
+        // decodes nothing.
         self.programs
             .iter()
             .position(|entry| {
-                entry
-                    .as_ref()
-                    .is_some_and(|entry| Rc::ptr_eq(&entry.residual, program))
+                entry.as_ref().and_then(|entry| entry.residual.if_decoded()).is_some_and(|code| Rc::ptr_eq(code, program))
             })
             .and_then(ProgramId::from_index)
     }
@@ -1298,6 +1313,7 @@ impl ProgramStore {
         let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.context_epoch += 1;
+        self.shared_ids.entry(Rc::as_ptr(&program) as usize).or_insert(id);
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
             #[cfg(feature = "native-execution")]

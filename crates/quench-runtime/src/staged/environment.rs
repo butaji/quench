@@ -34,10 +34,16 @@ fn dense_slot<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16,
 #[inline(always)]
 pub(crate) fn capture_at<S: Stage>(stage: &mut S, address: S::Word, miss: S::Miss) -> Option<S::Word> {
     let value = stage.load_u64(Region::Cells.mutable(), address, 0);
-    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
-    let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
+    let ordinary = ordinary_slot(stage, value);
     stage.guard(ordinary, miss)?;
     Some(value)
+}
+
+/// Whether the environment slot word `value` is an ordinary value: not an internal marker.
+#[inline(always)]
+fn ordinary_slot<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    stage.ne_imm(tag, ValueLayout::INTERNAL_TAG)
 }
 
 /// Value `slot` of the dense run of `len` environment values at `values`: its ordinary
@@ -151,8 +157,7 @@ pub(crate) fn environment_slot_define<S: Stage>(stage: &mut S, storage: S::Word,
     let (values, len) = storage_run(stage, storage, miss)?;
     let address = slot_address(stage, values, len, slot, miss)?;
     let current = stage.load_u64(Region::Cells.mutable(), address, 0);
-    let tag = stage.and_imm(current, ValueLayout::TAG_MASK);
-    let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
+    let ordinary = ordinary_slot(stage, current);
     let hole = stage.eq_imm(current, crate::Value::DELETED.to_bits());
     let definable = stage.any(ordinary, hole);
     stage.guard(definable, miss)?;
