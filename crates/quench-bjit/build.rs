@@ -80,9 +80,44 @@ const INSTANCES_VAR: &str = "QUENCH_STENCIL_INSTANCES";
 /// Environment variable of each rustc process naming the file of `call_rows`' invocations (`build/call_rows.rs`),
 /// which `stencils/call_rows.rs` includes; only the fixed-rows shard compiles that module.
 const CALL_ROWS_VAR: &str = "QUENCH_STENCIL_CALL_ROWS";
-/// The shard that also defines the fixed rows of the target's `stencils/entry*.rs` (cfg
-/// `fixed_rows`), so no name is defined twice.
+/// The shard that defines the fixed rows of the target's `stencils/entry*.rs` (cfg `fixed_rows`) and no generated
+/// row, so no name is defined twice.
 const FIXED_ROWS_SHARD: usize = 0;
+
+/// The row families a shard compiles one of (`--cfg stencil_family`), so a shard's key holds only the sources its
+/// family's rows read: the Wasm rows need the staged Wasm rules and the machine layer but none of the JS staged
+/// dispatch, so an edit to a JS staged file leaves the Wasm shards cached and one to a Wasm rule the JS shards.
+/// The number, heap and supernode rows stay one family: every one of them runs the staged `step` over the whole
+/// `Operation`, whose variants name every JS staged module, so their source sets are the same.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Family {
+    /// The fixed rows (`FIXED_ROWS_SHARD`): every module, no family cfg.
+    Fixed,
+    Js,
+    Wasm,
+}
+
+impl Family {
+    const ALL: [Family; 3] = [Family::Fixed, Family::Js, Family::Wasm];
+
+    /// The cfgs that select the family's modules in `rows.rs` and `stencils/staged.rs`.
+    fn args(self) -> Vec<String> {
+        let cfg = match self {
+            Family::Fixed => "fixed_rows",
+            Family::Js => "stencil_family=\"js\"",
+            Family::Wasm => "stencil_family=\"wasm\"",
+        };
+        vec!["--cfg".to_string(), cfg.to_string()]
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Family::Fixed => "fixed",
+            Family::Js => "js",
+            Family::Wasm => "wasm",
+        }
+    }
+}
 /// Environment variable of the library (`stencils/supernodes.rs`) naming the generated list: `build/supernodes.rs`
 /// writes `FAMILIES` and `SUPERNODES` from `supernodes.txt` to `OUT_DIR/supernodes.rs`.
 const SUPERNODES_VAR: &str = "QUENCH_SUPERNODES";
@@ -118,6 +153,7 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
 fn main() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
+    println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\"))");
     for extra in EXTRA_WATCHED {
         println!("cargo::rerun-if-changed={extra}");
     }
@@ -133,20 +169,39 @@ fn main() {
         return;
     };
     let instances = instances(&listed, arch);
-    let parts = shards::split(&instances, |(_, weight)| *weight);
-    for (shard, part) in parts.iter().enumerate() {
-        fs::write(instance_file(&out, shard), part.iter().map(|(row, _)| row.as_str()).collect::<String>()).unwrap();
+    // The fixed rows' shard first, then each family's rows split on their own, so no shard mixes two families.
+    let mut parts: Vec<(Family, &[(String, usize, Family)])> = vec![(Family::Fixed, &[][..])];
+    for family in [Family::Js, Family::Wasm] {
+        let start = instances.iter().position(|row| row.2 == family);
+        let Some(start) = start else { continue };
+        let end = instances.iter().rposition(|row| row.2 == family).unwrap() + 1;
+        assert!(instances[start..end].iter().all(|row| row.2 == family), "the {family:?} rows are contiguous");
+        parts.extend(shards::split(&instances[start..end], |(_, weight, _)| *weight).into_iter().map(|part| (family, part)));
+    }
+    for (shard, (_, part)) in parts.iter().enumerate() {
+        fs::write(instance_file(&out, shard), part.iter().map(|(row, _, _)| row.as_str()).collect::<String>()).unwrap();
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 && builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] };
-    let watched = stencil_sources(&out).unwrap_or_else(|| sources::watched(manifest));
-    watch(&watched);
-    // `EXTRA_WATCHED` reruns the script but is not in the key: the supernode list and the opcode table reach a shard
-    // only through its instance file, and the flags file through its arguments, which the key holds.
-    let sources = cache::sources_key(&rustc(), manifest, &watched, &[]);
-    let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| (0..parts.len()).map(|shard| shard_job(&out, shard, *cpu, sources))).collect();
-    if jobs.iter().any(|job| !job.cached()) {
-        type_check(&out);
+    // Each family's sources as rustc reads them, from the first instance file of the family; the fixed shard's (every
+    // module) are the rerun triggers. `EXTRA_WATCHED` reruns the script but is not in a key: the supernode list and
+    // the opcode table reach a shard only through its instance file, and the flags file through its arguments.
+    let first = |family: Family| parts.iter().position(|(of, _)| *of == family);
+    let mut keys = Vec::new();
+    for family in Family::ALL {
+        let Some(shard) = first(family) else { continue };
+        let watched = stencil_sources(&out, family, shard).unwrap_or_else(|| sources::watched(manifest));
+        if family == Family::Fixed {
+            watch(&watched);
+        }
+        keys.push((family, cache::sources_key(&rustc(), manifest, &watched, &[])));
+    }
+    let key_of = |family: Family| keys.iter().find(|(of, _)| *of == family).map(|(_, key)| *key).expect("a family key");
+    let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| parts.iter().enumerate().map(|(shard, (family, _))| shard_job(&out, shard, *family, *cpu, key_of(*family))).collect::<Vec<_>>()).collect();
+    for family in Family::ALL {
+        if jobs.iter().any(|job| job.family == family && !job.cached()) {
+            type_check(&out, family, first(family).expect("a shard of the family"));
+        }
     }
     let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&jobs, (arch, read), *cpu))).collect();
     // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
@@ -169,7 +224,7 @@ fn main() {
 /// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
 /// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
 /// and its base tier falls back as a `--b-jit` without one does.
-fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize)> {
+fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize, Family)> {
     let base: Vec<(String, usize)> = if arch == Arch::X86_64 {
         let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
         let heap_weight = |kind: u8| match kind {
@@ -188,8 +243,8 @@ fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize)> {
     } else {
         Vec::new()
     };
-    let wasm = wasm_library::wasm_library().into_iter().map(|c| (format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3), shards::NUMBER_WEIGHT));
-    base.into_iter().chain(wasm).collect()
+    let wasm = wasm_library::wasm_library().into_iter().map(|c| (format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3), shards::NUMBER_WEIGHT, Family::Wasm));
+    base.into_iter().map(|(row, weight)| (row, weight, Family::Js)).chain(wasm).collect()
 }
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {
@@ -219,6 +274,7 @@ fn rustc() -> PathBuf {
 /// (`cache`), kept beside the object so a rerun whose inputs are unchanged skips rustc.
 struct Shard {
     cpu: Option<&'static str>,
+    family: Family,
     args: Vec<std::ffi::OsString>,
     envs: [(&'static str, PathBuf); 2],
     object: PathBuf,
@@ -238,20 +294,19 @@ impl Shard {
 fn base_args() -> Vec<String> {
     let mut args = vec!["--target".to_string(), env::var("TARGET").expect("cargo sets TARGET")];
     args.extend(rustc_flags());
-    args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--cfg", "stencil_build"].map(String::from));
+    args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--check-cfg", "cfg(stencil_family, values(\"js\", \"wasm\"))", "--cfg", "stencil_build"].map(String::from));
     args
 }
 
-fn shard_job(out: &Path, shard: usize, cpu: Option<&'static str>, sources: u128) -> Shard {
+fn shard_job(out: &Path, shard: usize, family: Family, cpu: Option<&'static str>, sources: u128) -> Shard {
     let name = cpu.unwrap_or("native");
     let object = out.join(format!("rows_{name}_{shard}.o"));
     let mut args = base_args();
     if let Some(cpu) = cpu {
         args.extend(["-C".to_string(), format!("target-cpu={cpu}")]);
     }
-    if shard == FIXED_ROWS_SHARD {
-        args.extend(["--cfg", "fixed_rows"].map(String::from));
-    }
+    debug_assert_eq!(shard == FIXED_ROWS_SHARD, family == Family::Fixed);
+    args.extend(family.args());
     let instances = instance_file(out, shard);
     let key = cache::shard_key(sources, &args, &[&instances, &call_rows_file(out)]);
     // Not `-C incremental`: rustc's incremental mode partitions and inlines differently (with one codegen unit
@@ -260,7 +315,7 @@ fn shard_job(out: &Path, shard: usize, cpu: Option<&'static str>, sources: u128)
     let mut args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
     args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
     let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
-    Shard { cpu, args, envs, key_file: object.with_extension("key"), object, key }
+    Shard { cpu, family, args, envs, key_file: object.with_extension("key"), object, key }
 }
 
 /// Environment variable that builds the V3 library in a profile other than `release` (any non-empty value).
@@ -284,16 +339,17 @@ fn watch(watched: &std::collections::BTreeSet<PathBuf>) {
     }
 }
 
-/// The source files the stencil crate is made of, as rustc reads them (`--emit=dep-info`, about a second: parse
-/// and expansion only), less the generated files under `out` (in each shard's key by content): the files whose
-/// change reruns the build script and whose contents are in every shard's key. The fixed-rows shard's cfgs, the
-/// widest set. `None` where rustc cannot read the source, which falls back to the `#[path]` graph.
-fn stencil_sources(out: &Path) -> Option<std::collections::BTreeSet<PathBuf>> {
-    let deps = out.join("rows.d");
+/// The source files `family`'s shards are made of, as rustc reads them (`--emit=dep-info` under the family's cfgs
+/// and the instances of its shard `shard`, about a second: parse and expansion only), less the generated files under
+/// `out` (in each shard's key by content): the files whose contents are in the family's keys. The fixed family's
+/// set (every module) is the build script's rerun triggers. `None` where rustc cannot read the source, which falls
+/// back to the `#[path]` graph.
+fn stencil_sources(out: &Path, family: Family, shard: usize) -> Option<std::collections::BTreeSet<PathBuf>> {
+    let deps = out.join(format!("rows_{}.d", family.name()));
     let mut command = Command::new(rustc());
-    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit")));
-    command.args(["--cfg", "fixed_rows", "--emit=dep-info", "-o"]).arg(&deps).arg(SOURCE);
-    let status = command.env(INSTANCES_VAR, instance_file(out, FIXED_ROWS_SHARD)).env(CALL_ROWS_VAR, call_rows_file(out)).status().ok()?;
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
+    command.args(["--emit=dep-info", "-o"]).arg(&deps).arg(SOURCE);
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).status().ok()?;
     if !status.success() {
         return None;
     }
@@ -305,14 +361,15 @@ fn stencil_sources(out: &Path) -> Option<std::collections::BTreeSet<PathBuf>> {
     Some(files)
 }
 
-/// Type-checks the stencil source once (`--emit=metadata`, the fixed-rows shard's instances) before any shard's
-/// codegen, so a source error fails the build in about a minute rather than after the first shard objects.
-fn type_check(out: &Path) {
+/// Type-checks the stencil source under `family`'s cfgs once (`--emit=metadata`, the instances of its shard
+/// `shard`) before any shard's codegen, so a source error, or a module a family leaves out that its rows need,
+/// fails the build in about a minute rather than after the first shard objects.
+fn type_check(out: &Path, family: Family, shard: usize) {
     let mut command = Command::new(rustc());
-    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit")));
-    command.args(["--cfg", "fixed_rows", "--emit=metadata", "-o"]).arg(out.join("rows_check.rmeta"));
-    let status = command.env(INSTANCES_VAR, instance_file(out, FIXED_ROWS_SHARD)).env(CALL_ROWS_VAR, call_rows_file(out)).arg(SOURCE).status().expect("run rustc");
-    assert!(status.success(), "rustc failed to type-check {SOURCE}");
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
+    command.args(["--emit=metadata", "-o"]).arg(out.join(format!("rows_check_{}.rmeta", family.name())));
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).arg(SOURCE).status().expect("run rustc");
+    assert!(status.success(), "rustc failed to type-check {SOURCE} for the {family:?} rows");
 }
 
 /// Compiles every shard of `jobs` for `cpu` whose object is not cached (at most `shards::workers` rustc processes at
