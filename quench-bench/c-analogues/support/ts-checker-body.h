@@ -2201,9 +2201,12 @@ static TsType *cContextualType(TsNode *e) {
       TsSymbol *ps = cPropertyOf(oc, bnEscapeText(c->name->text, c->name->textLen));
       return ps ? cTypeOfSymbol(ps) : NULL;
     }
-    case TSK_PropertyAssignment: {
-      /* the property of the contextual type of the object literal */
-      if (p->initializer != c || !p->name || p->name->kind != TSK_Identifier || !p->parent || p->parent->kind != TSK_ObjectLiteralExpression)
+    case TSK_PropertyAccessExpression: case TSK_ElementAccessExpression:
+      return NULL;   /* getContextualType2 has no case for an access: its object and its argument have none */
+    case TSK_ShorthandPropertyAssignment: case TSK_PropertyAssignment: {
+      /* the property of the contextual type of the object literal (getContextualTypeForObjectLiteralElement) */
+      TsNode *value = p->kind == TSK_ShorthandPropertyAssignment ? p->name : p->initializer;
+      if (value != c || !p->name || p->name->kind != TSK_Identifier || !p->parent || p->parent->kind != TSK_ObjectLiteralExpression)
         return cUnported("contextual type of a property name");
       TsType *oc = cContextualType(p->parent);
       if (oc == NULL || oc == cErrorType) return oc;
