@@ -617,6 +617,43 @@ static TsType *cNarrowByEqualityValue(TsType *t, TsType *value, bool doubleEq, b
   return res;
 }
 
+/* narrowTypeByInstanceof (75714) for a reference of type any: the instance type of the constructor when the test holds, the
+ * reference type otherwise. The right side must be an object derived from Object and Function (not an empty anonymous
+ * type); a hasInstance member, or a constructor without a prototype property, is not ported. */
+static TsType *cNarrowByInstanceof(TsNode *c, bool truthy, TsType *t) {
+  TsType *rt = cExprType(c->right);
+  if (rt == cErrorType) return cUnported("instanceof of an unported constructor");
+  if (rt->flags & TF_Any) return t;
+  if (!(rt->flags & TF_Object)) return cUnported("instanceof of a type that is not an object");
+  if (cIsEmptyAnonymousObject(rt)) return t;
+  TsSymbol **props;
+  int np = cPropertiesOf(rt, &props);
+  for (int p = 0; p < np; p++) {
+    BName nm = props[p]->name;
+    if (nm.n > 15 && memcmp(nm.s, "__@hasInstance@", 15) == 0) return cUnported("instanceof with a hasInstance member");
+  }
+  cResolveSignatures(rt);
+  if (!rt->ncall && !rt->nconstruct) {
+    if (cPropertyOf(rt, bnC("bind"))) return cUnported("instanceof of an object with a bind member");
+    return t;   /* isFunctionObjectType is false */
+  }
+  TsSymbol *pr = cPropertyOf(rt, bnC("prototype"));
+  if (!pr) return cUnported("instance type of a constructor without a prototype property");
+  TsType *inst = cTypeOfSymbol(pr);
+  if (inst == cErrorType) return inst;
+  if (inst->flags & TF_Any) return cUnported("instance type of a constructor with an any prototype");
+  bool instIsObject = (inst->flags & TF_Object) && !cIsEmptyAnonymousObject(inst);
+  if (!truthy && !instIsObject) return t;
+  /* narrowTypeByInstanceof keeps an any reference for the global Object and Function types */
+  if (inst->flags & TF_Object && inst->symbol) {
+    TsSymbol *sym = inst->symbol;
+    if ((sym->name.n == 6 && memcmp(sym->name.s, "Object", 6) == 0) || (sym->name.n == 8 && memcmp(sym->name.s, "Function", 8) == 0))
+      return cUnported("instanceof of the global Object or Function type");
+  }
+  /* getNarrowedType of an any reference: the candidate when true; the reference when false (filtering keeps any) */
+  return truthy ? inst : t;
+}
+
 /* the flow type of a reference narrowed by a condition (narrowType): the reference is matched directly, through `!`,
  * by equality with undefined or null, by a typeof comparison, and by calls whose arguments include it (without a type
  * predicate). Discriminants, instanceof, in, literal equality and type predicates are not ported. A condition that does
@@ -634,6 +671,17 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
     /* narrowTypeByBinaryExpression: the operators other than the equalities, instanceof and in do not narrow */
     if (!isEq && !isNe && op != TSK_InstanceOfKeyword && op != TSK_InKeyword) {
       if (op == TSK_EqualsToken) return cUnported("assignment condition");
+      return t;
+    }
+    /* instanceof narrows its left reference; in narrows its right reference (narrowTypeByInKeyword keeps any) */
+    if (op == TSK_InstanceOfKeyword) {
+      if (!cMatchesRefTree(cSkipParens(c->left), r)) return t;
+      if (!(t->flags & TF_Any)) return cUnported("instanceof narrowing of a reference that is not any");
+      return cNarrowByInstanceof(c, truthy, t);
+    }
+    if (op == TSK_InKeyword) {
+      if (!cMatchesRefTree(cSkipParens(c->right), r)) return t;
+      if (!(t->flags & TF_Any)) return cUnported("in narrowing of a reference that is not any");
       return t;
     }
     if (isEq || isNe) {
