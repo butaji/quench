@@ -854,8 +854,7 @@ impl<H: Host> Vm<H> {
         // binding never changes once initialized (`Vm::lexical_this`).
         frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
-        frame.bind_register_parameters(function, args);
-        frame.initialize_promoted_registers(function, args);
+        frame.place_parameters(function, args);
     }
 
     /// Replace the active frame for a terminal user call.  This is the
@@ -904,7 +903,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<(), JsError> {
         let fixed = usize::from(function.params) - usize::from(function.rest);
-        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
+        // Promoted parameters live in registers; `place_parameters` clears their
         // local slots once the frame is set up, so every fixed parameter is copied here. Every
         // other local starts undefined.
         let passed = fixed.min(args.len());

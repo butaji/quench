@@ -466,19 +466,6 @@ impl Frame {
         }
     }
 
-    /// Arguments for a body that keeps its parameters in registers.
-    #[inline(always)]
-    fn bind_register_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
-        if let Some(base) = function.parameter_registers {
-            for offset in 0..function.params {
-                self.registers[usize::from(base + offset)] = args
-                    .get(usize::from(offset))
-                    .copied()
-                    .unwrap_or(Value::UNDEFINED);
-            }
-        }
-    }
-
     /// A Wasm activation's registers: the parameters where the function
     /// keeps them, every other register its default, each written once.
     #[inline(always)]
@@ -592,9 +579,12 @@ impl Frame {
         self.locals.resize(count, Value::UNDEFINED);
     }
 
-    /// `initialize_promoted_registers` for a plain activation, whose locals already start
-    /// undefined: its promoted entries, ordered by local, begin with every parameter, and
-    /// validation places promoted entry `i` in register `i`.
+    /// `place_parameters` for a plain activation, the in-place case of it: its locals already
+    /// start undefined, so none is cleared, and its promoted entries, ordered by local, begin
+    /// with every parameter, so validation places promoted entry `i` in register `i` and
+    /// parameter `k` (for `k` below the promoted count) is written once to register `k`.
+    /// Plain functions take no rest parameter and keep no parameter registers, so the general
+    /// rules reduce to this copy.
     #[inline(always)]
     fn place_plain_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
@@ -620,13 +610,28 @@ impl Frame {
         }
     }
 
-    fn initialize_promoted_registers(
-        &mut self,
-        function: &crate::bytecode::Function,
-        args: &[Value],
-    ) {
+    /// Places a general activation's parameters and promoted locals, each register written once.
+    /// Parameter `k` lives in its promoted register when it has one, else in register
+    /// `parameter_registers + k` when the body keeps its parameters in registers, else in its
+    /// local, which `bind_activation_arguments` filled. Its value is `args[k]`, or `undefined`
+    /// past the arguments; a promoted rest parameter takes the array its local holds instead. A
+    /// promoted parameter's local is cleared, and every other promoted local starts `undefined`.
+    /// A body has either `parameter_registers` or `local_registers`, never both: a wasm body
+    /// keeps its parameters in registers and promotes nothing, and a compiled body has no
+    /// parameter registers.
+    fn place_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
         debug_assert_eq!(self.locals.len(), usize::from(function.locals));
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        if let Some(base) = function.parameter_registers {
+            for offset in 0..function.params {
+                if function.promoted_register(offset).is_none() {
+                    self.registers[usize::from(base + offset)] = args
+                        .get(usize::from(offset))
+                        .copied()
+                        .unwrap_or(Value::UNDEFINED);
+                }
+            }
+        }
         let rest = function.rest.then(|| function.params - 1);
         for entry in &function.local_registers {
             // A promoted parameter starts as its argument, a promoted rest parameter as the
