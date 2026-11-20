@@ -1078,6 +1078,52 @@ static void cInferObjectsBody(CInfer *c, TsType *source, TsType *target) {
   }
 }
 
+/* getTrueTypeFromConditionalType and getFalseTypeFromConditionalType: the branch of the root's node under the type's mapper */
+static TsType *cCondBranch(TsType *t, bool isTrue) {
+  TsNode *cn = t->root->node;
+  return cInstantiate(cTypeFromNode(isTrue ? cn->trueType : cn->falseType), t->condMapper);
+}
+
+/* inferToConditionalType (invokeOnce): a conditional source infers its check, extends and branch types; another source infers
+ * into both branches with the ContravariantConditional priority under a contravariant inference. A branch that is a type
+ * parameter of the inference takes the source as a naked type variable candidate */
+static void cInferToConditional(CInfer *c, TsType *source, TsType *target) {
+  for (int i = 0; i < c->nvis; i++) if (c->visS[i] == source && c->visT[i] == target) return;
+  if (c->nvis >= 100) { cUnported("inference of nested conditional types"); return; }
+  if (c->nvis == c->capvis) {
+    int cap = c->capvis ? 2 * c->capvis : 8;
+    TsType **ns = ts_arena_alloc(sizeof(TsType *) * (size_t)cap), **nt = ts_arena_alloc(sizeof(TsType *) * (size_t)cap);
+    for (int i = 0; i < c->nvis; i++) { ns[i] = c->visS[i]; nt[i] = c->visT[i]; }
+    c->visS = ns; c->visT = nt; c->capvis = cap;
+  }
+  c->visS[c->nvis] = source; c->visT[c->nvis] = target; c->nvis++;
+  TsType *tt = cCondBranch(target, true), *tf = cCondBranch(target, false);
+  if (tt == cErrorType || tf == cErrorType) { cUnported("conditional type branch of an unported shape"); }
+  else if (source->flags & TF_Conditional) {
+    TsType *st = cCondBranch(source, true), *sf = cCondBranch(source, false);
+    if (st == cErrorType || sf == cErrorType) cUnported("conditional type branch of an unported shape");
+    else {
+      cInferFrom(c, source->condCheck, target->condCheck);
+      cInferFrom(c, source->condExtends, target->condExtends);
+      cInferFrom(c, st, tt);
+      cInferFrom(c, sf, tf);
+    }
+  } else {
+    TsType *targets[2] = { tt, tf };
+    int save = c->priority;
+    c->priority |= c->contravariant ? 64 : 0;   /* ContravariantConditional */
+    int typeVars = 0;
+    for (int i = 0; i < 2; i++) {
+      if (cInferIndexOf(c, targets[i]) >= 0) typeVars++;
+      else cInferFrom(c, source, targets[i]);
+    }
+    if (typeVars > 0)
+      for (int i = 0; i < 2; i++) if (cInferIndexOf(c, targets[i]) >= 0) cInferWithPriority(c, source, targets[i], 1);
+    c->priority = save;
+  }
+  c->nvis--;
+}
+
 static void cInferFrom(CInfer *c, TsType *source, TsType *target) {
   if (!cCouldContain(target)) return;
   if (source == target && (source->flags & (TF_Union | TF_Intersection))) {
@@ -1144,8 +1190,9 @@ static void cInferFrom(CInfer *c, TsType *source, TsType *target) {
     return;
   }
   if (target->flags & TF_IndexedAccess) return;   /* the simplified forms of T[K] are not ported; nothing to infer */
-  if (target->flags & (TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) {
-    cUnported("inference into an index, conditional, template literal or string mapping type");
+  if (target->flags & TF_Conditional) { cInferToConditional(c, source, target); return; }
+  if (target->flags & (TF_Index | TF_TemplateLiteral | TF_StringMapping)) {
+    cUnported("inference into an index, template literal or string mapping type");
     return;
   }
   if (target->flags & TF_Object) {
