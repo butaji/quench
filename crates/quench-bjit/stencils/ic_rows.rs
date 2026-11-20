@@ -77,7 +77,7 @@ fn receiver<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Opt
 #[inline(always)]
 fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
-    let mut places = Places::<D, MEM, MEM>::new(s);
+    let mut places = Places::new::<D, MEM, MEM>(s);
     let step = if HOLDER {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
         step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
@@ -94,7 +94,7 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
 #[inline(always)]
 fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
-    let mut places = Places::<MEM, A, MEM>::new(s);
+    let mut places = Places::new::<MEM, A, MEM>(s);
     let step = step_property_of::<{ op_kind::SET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::FlatStore { int: INT }), receiver_set());
     finish_chained::<CHAINED>(places.s, step, |s, _| Out::Next(s))
 }

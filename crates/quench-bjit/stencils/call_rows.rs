@@ -433,7 +433,7 @@ unsafe fn enter<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PL
         let window = register_index(record, offset_of!(CallRecord, args_register));
         let mut stage = StencilStage::from_hole(0);
         // The caller's register file: the call protocol's frame hook (`Places::call_registers`).
-        let mut frame = Places::<0, 0, 0>::new(S { frame: s.frame, ctx: s.ctx, p: s.p, f: s.f });
+        let mut frame = Places::new::<0, 0, 0>(S { frame: s.frame, ctx: s.ctx, p: s.p, f: s.f });
         let Some(file) = CallFrame::call_registers(&mut frame, &mut stage) else { return Entered::Refused };
         // Identity (checked rows only), then the receiver the callee binds (strict as it is, sloppy by `protocol::bind_this`).
         if CHECKED {
