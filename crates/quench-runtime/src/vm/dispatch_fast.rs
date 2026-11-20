@@ -10635,9 +10635,15 @@ use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_lea
 pub(in crate::vm) fn settle_leaf_before_direct_calls<H: Host>(lane_context: *mut (), registers: *mut Value) {
     let cx = lane_context.cast::<LaneContext<H>>();
     // SAFETY: a lane body's context is the running lane's, which nothing else accesses.
-    if !cx.is_null() && unsafe { (*cx).registers.0 } == registers {
-        materialize_running_leaf_in_lane(cx);
+    if cx.is_null() || unsafe { (*cx).leaf.call }.is_null() || unsafe { (*cx).registers.0 } != registers {
+        return;
     }
+    // The body runs in the leaf only where no activation owns `registers` yet: a body's call made from inside the
+    // leaf pushed the callee's activation on its own window, which the context names while the leaf stays set.
+    if unsafe { vm(cx) }.lane_stack.top_frame().is_some_and(|frame| frame.window == registers.addr()) {
+        return;
+    }
+    materialize_running_leaf_in_lane(cx);
 }
 
 /// Make the running leaf (`LaneContext::leaf`) the activation its call would have pushed
