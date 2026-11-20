@@ -1848,6 +1848,12 @@ static void bBind(TsNode *node) {
   if (bCurFlow && (node->kind == TSK_Identifier || node->kind == TSK_ThisKeyword || node->kind == TSK_SuperKeyword)) node->flowNode = bCurFlow;
   else if (bCurFlow && (node->kind == TSK_PropertyAccessExpression || node->kind == TSK_ElementAccessExpression) && bIsNarrowableReference(node))
     node->flowNode = bCurFlow;
+  /* bindFunctionExpression and bindPropertyOrMethodOrAccessor: the flow at which a function value is created */
+  if (bCurFlow && node->kind > TSK_LastToken &&
+      (node->kind == TSK_FunctionExpression || node->kind == TSK_ArrowFunction ||
+       ((node->kind == TSK_MethodDeclaration || node->kind == TSK_GetAccessor || node->kind == TSK_SetAccessor) &&
+        (bContainerFlags(node) & CF_IsObjectLiteralOrClassExpressionMethodOrAccessor))))
+    node->flowNode = bCurFlow;
   bool saveStrict = bInStrictMode;
   bBindWorker(node);
   TsNode *saveParent = bParent;

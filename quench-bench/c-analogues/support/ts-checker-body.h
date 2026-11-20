@@ -146,6 +146,8 @@ typedef struct {
   bool nonUnion;         /* the declared type is not a union: an assignment resets to it */
   bool outer;            /* the declaration is in an enclosing function (its narrowing is not walked) */
   bool startInit;        /* the reference is initialized at the start of its container (parameter, assigned, ...) */
+  bool jump;             /* a const reference continues at the creation flow of each function value between it and its declaration */
+  TsNode *flowContainer; /* the container the walk ends at (checkIdentifier's flowContainer) */
 } CFlowRef;
 
 static uint32_t cFlowStamp;
@@ -188,6 +190,7 @@ static bool cOuterNarrowingSafe(TsType *d) {
 
 /* the type of a reference at the start of its container (getTypeAtFlowNode, FlowStart) */
 static TsType *cFlowStartType(CFlowRef *r) {
+  if (r->jump) return r->startInit ? r->declared : cUnported("reference used before its assignment");
   if (r->outer) return cOuterNarrowingSafe(r->declared) ? r->declared : cUnported("narrowing of an outer reference");
   return r->startInit ? r->declared : cUnported("reference used before its assignment");
 }
@@ -508,7 +511,15 @@ static TsType *cFlowWalkNode(TsFlow *f, CFlowRef *r) {
   uint32_t fl = f->flags;
   TsType *declared = r->declared;
   if (fl & FF_Unreachable) return cNeverType;
-  if (fl & FF_Start) return cFlowStartType(r);
+  if (fl & FF_Start) {
+    /* FlowStart: a function value created in another container continues at its creation flow */
+    TsNode *c = f->node;
+    if (r->jump && c && c != r->flowContainer) {
+      if (!c->flowNode) return cUnported("function value without a flow node");
+      return cFlowWalkType(c->flowNode, r);
+    }
+    return cFlowStartType(r);
+  }
   if (fl & FF_ReduceLabel) {
     if (cRedOverrideN == 32) return cUnported("reduce label depth");
     cRedOverrides[cRedOverrideN].target = f->target;
@@ -661,7 +672,23 @@ static TsType *cIdentifierType(TsNode *e) {
     TsType *c = cConstraintOf(d);
     if (c && (c->flags & TF_Union)) return cUnported("reference of a type parameter with a union constraint");
   }
-  CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit };
+  /* checkIdentifier: a const variable of an enclosing container is narrowed through the function values that
+   * create the reference (the flow container moves up past function expressions, arrows and object-literal methods) */
+  bool jump = false;
+  TsNode *flowC = NULL;
+  TsNode *decl = cFirstDeclOf(s);
+  if (outer && decl && decl->kind == TSK_VariableDeclaration && decl->parent && decl->parent->kind == TSK_VariableDeclarationList &&
+      (decl->parent->flags & 7u) == TNF_Const) {
+    TsNode *declC = cFlowContainerOf(decl);
+    flowC = cFlowContainerOf(e);
+    while (flowC && flowC != declC &&
+           (flowC->kind == TSK_FunctionExpression || flowC->kind == TSK_ArrowFunction ||
+            ((flowC->kind == TSK_MethodDeclaration || flowC->kind == TSK_GetAccessor || flowC->kind == TSK_SetAccessor) &&
+             (bContainerFlags(flowC) & CF_IsObjectLiteralOrClassExpressionMethodOrAccessor))))
+      flowC = cFlowContainerOf(flowC);
+    jump = flowC != NULL;
+  }
+  CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit, jump, flowC };
   return cFlowTypeOfReference(e, &r);
 }
 
@@ -677,7 +704,7 @@ static TsType *cAccessReferenceFlow(TsNode *e, TsType *declared, bool startInit)
     text = k->text;
     len = k->textLen;
   }
-  CFlowRef r = { e, text, len, declared, false, false, startInit };
+  CFlowRef r = { e, text, len, declared, false, false, startInit, false, NULL };
   return cFlowTypeOfReference(e, &r);
 }
 
