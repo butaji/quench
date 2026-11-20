@@ -224,6 +224,7 @@ static TsType *cUnported(const char *what) {
 static TsType *cTypeFromNode(TsNode *node);
 static TsType *cTypeOfSymbol(TsSymbol *sym);
 static TsType *cExprType(TsNode *e);                       /* ts-checker-body.h */
+static TsType *cApparentOf(TsType *o);                    /* ts-checker-body.h */
 static TsType *cWidenLiteralType(TsType *t);               /* ts-checker-body.h */
 static TsType *cAddUndefined(TsType *t);                  /* ts-checker-body.h */
 static TsType *cMutableLocationType(TsNode *e, TsType *t); /* ts-checker-body.h */
@@ -1304,6 +1305,16 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
         TsSymbol *s = cResolveValueName(n, bnEscapeText(e->text, e->textLen));
         if (s && s == cGlobalThisSymbol) return cGlobalThisType;
         if (s && !(s->flags & SF_Alias)) return cTypeOfSymbol(s);
+      }
+      /* checkQualifiedName of a value on the left (checkPropertyAccessExpressionOrQualifiedName): the property's type, regular */
+      if (e && e->kind == TSK_QualifiedName && e->left && e->left->kind == TSK_Identifier && e->right && e->right->kind == TSK_Identifier) {
+        TsType *lt = cExprType(e->left);
+        if (lt == cErrorType) return lt;
+        TsType *o = cApparentOf(lt);
+        if (o == cErrorType || !(o->flags & TF_Object)) return cUnported("type query");
+        TsSymbol *ps = cPropertyOf(o, bnEscapeText(e->right->text, e->right->textLen));
+        if (!ps) return cUnported("type query");
+        return cRegularType(cTypeOfSymbol(ps));
       }
       return cUnported("type query");
     }
