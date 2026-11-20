@@ -1529,8 +1529,10 @@ pub struct Function {
     pub(crate) dispatch: DispatchClass,
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
-    /// Lazily derived `plain_local_slots`; never serialized. Read on every interpreter local operand,
-    /// so it stays inline rather than behind `caches`.
+    /// The `plain_local_slots` words of the final code: stored by `compile::lower_settled` from its
+    /// proof, else derived on the first read (`plain_local`). The binary codec writes them for a
+    /// lowered record. Read on every interpreter local operand, so it stays inline rather than
+    /// behind `caches`.
     pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
     /// The lazily derived booleans (`LazyFlag`), each a known bit and a value bit; never serialized.
     pub(crate) lazy_flags: std::cell::Cell<u16>,

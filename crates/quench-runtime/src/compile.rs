@@ -2318,7 +2318,7 @@ pub(crate) fn lower_settled<'a>(
     // passes read one set of blocks.
     let flow = crate::bytecode::initialization::FlowCell::new();
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow, scratch);
+    frame_registers::promote(function, plain_slots.clone(), superinstructions, undefined_constant, &atom_name, &flow, scratch);
     if specialized {
         if coalescing_repays(function) {
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions, scratch);
@@ -2345,6 +2345,12 @@ pub(crate) fn lower_settled<'a>(
     // The one compaction of the lowering: the passes above leave the `Nop`s their in-place
     // rewrites made, and the live sets this returns are compacted with the same map.
     rewrite::remove_nops(function, &mut solved, scratch);
+    // The proof above is the final code's `plain_local_slots`: the passes after `promote` move no
+    // slot, and `numeric::apply_plain_local_stores` fuses a plain store into its producer, which
+    // the dataflow reads as the same initializing write (`initialization::accesses`). So the
+    // runtime's first read need not derive the set again (`Function::plain_locals`).
+    let words: crate::heap::ThinBoxSlice<u64> = plain_slots.words().to_vec().into();
+    function.plain_locals = std::cell::OnceCell::from(words);
     solved
 }
 
