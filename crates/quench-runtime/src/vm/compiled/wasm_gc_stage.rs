@@ -12,7 +12,10 @@ use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, Slot, Value, Vm, finish_callout};
 use crate::bytecode::{Function, Op, WideInstruction};
-use crate::staged::machine::{Extend, Lane, MachineAccess, MachineFlow, MachineStage};
+use crate::heap::WasmGcRecord;
+use crate::staged::layout_offsets::NATIVE_WASM_GC_LAYOUT;
+use crate::staged::machine::{Extend, Lane, MachineAccess, MachineFlow, MachineScalar, MachineStage, Relation};
+use crate::staged::value_encoding::{DIRECT_WASM_GC_HANDLE_BITS, HEAP_FAMILY_MASK, TAG_HEAP};
 use cranelift_codegen::ir::MemFlagsData;
 use crate::staged::wasm::Width;
 use crate::staged::wasm_gc::{Aggregate, GcOp, GcStep, WasmGc, array_length, field_read, field_write, non_null, reference_cast};
@@ -24,6 +27,13 @@ use crate::wasm::reference::{NonNullCheck, ReferenceTarget};
 use crate::WasmTypes;
 use cranelift_codegen::ir;
 use std::convert::Infallible;
+
+/// The context word that holds the Wasm GC record range's base (`CallContext::wasm_gc_records`).
+const CONTEXT_WASM_GC_RECORDS: i32 = std::mem::offset_of!(CallContext, wasm_gc_records) as i32;
+/// The low bits of a Wasm GC reference that name its record: the record's ID in the record space.
+const RECORD_ID_MASK: u64 = u32::MAX as u64;
+/// The bytes of an array's length word, which its elements follow.
+const ARRAY_LENGTH_BYTES: usize = std::mem::size_of::<u64>();
 
 /// The VM of a callout's context. The compiled code that calls the callout suspends its VM in it.
 ///
@@ -132,6 +142,29 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
         self.call_leaf(gc_field_slot::<H> as *const () as usize, &[context, reference, index])
     }
 
+    /// An array element's read address, inline (`array_element_address`), where the reference is a
+    /// Wasm GC record and the record range is made; otherwise the `field_slot` callout answers it.
+    fn element_slot(&mut self, reference: ir::Value, index: ir::Value, field: GcField) -> ir::Value {
+        let context = self.body.core.context;
+        let base = self.raw_load(Lane::I64, MemFlagsData::trusted(), context, CONTEXT_WASM_GC_RECORDS);
+        let (checked, inline, callout, join) = (self.new_block(), self.new_block(), self.new_block(), self.new_block());
+        let slot = self.block_parameter(join, Lane::I64);
+        let is_record = self.is_wasm_gc_record(reference);
+        self.body.core.builder.set_cold_block(callout);
+        self.branch_if(is_record, (checked, &[]), (callout, &[]));
+        self.enter(checked);
+        let made = self.raw_compare_imm(Relation::NotEqual, base, 0);
+        self.branch_if(made, (inline, &[]), (callout, &[]));
+        self.enter(inline);
+        let address = self.array_element_address(base, reference, index, field);
+        self.goto(join, &[address]);
+        self.enter(callout);
+        let address = self.call_leaf(gc_field_slot::<H> as *const () as usize, &[context, reference, index]);
+        self.goto(join, &[address]);
+        self.enter(join);
+        slot
+    }
+
     fn field_slot_for_write(&mut self, reference: ir::Value, index: ir::Value) -> ir::Value {
         let context = self.body.core.context;
         self.call_leaf(gc_field_slot_for_write::<H> as *const () as usize, &[context, reference, index])
@@ -212,6 +245,40 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
         self.goto(next, &[]);
         self.enter(next);
         Ok(())
+    }
+}
+
+impl<H: Host> Emitter<'_, '_, H> {
+    /// The flag that `reference` names a Wasm GC record: its handle family's bits are the record
+    /// family's (`DIRECT_WASM_GC_HANDLE_BITS`), as `Value::direct_wasm_gc_index` tests them.
+    fn is_wasm_gc_record(&mut self, reference: ir::Value) -> ir::Value {
+        let mask = self.constant(Width::I64, HEAP_FAMILY_MASK as i64);
+        let family = self.operate(Binary::And, Width::I64, reference, mask);
+        let tag = self.constant(Width::I64, (TAG_HEAP | DIRECT_WASM_GC_HANDLE_BITS) as i64);
+        self.operate(Binary::Equal, Width::I64, family, tag)
+    }
+
+    /// The address of element `index` of the array `reference`, whose record is at `base` plus its ID
+    /// times the record's size: the payload's address is the record's head, the length word leads the
+    /// payload, and the element sits at its storage's size past it. Past the length the address is 0,
+    /// as `WasmGcFields::address` answers. The element's storage size is the field's (`GcField::size`).
+    fn array_element_address(&mut self, base: ir::Value, reference: ir::Value, index: ir::Value, field: GcField) -> ir::Value {
+        let id_mask = self.constant(Width::I64, RECORD_ID_MASK as i64);
+        let id = self.operate(Binary::And, Width::I64, reference, id_mask);
+        let record_size = self.constant(Width::I64, std::mem::size_of::<WasmGcRecord>() as i64);
+        let offset = self.operate(Binary::Multiply, Width::I64, id, record_size);
+        let record = self.operate(Binary::Add, Width::I64, base, offset);
+        let payload_offset = NATIVE_WASM_GC_LAYOUT.payload_offset as i32;
+        let payload = self.raw_load(Lane::I64, MemFlagsData::trusted(), record, payload_offset);
+        let length = self.raw_load(Lane::I64, MemFlagsData::trusted(), payload, 0);
+        let within = self.raw_compare(Relation::UnsignedLess, index, length);
+        let element_size = self.constant(Width::I64, field.size() as i64);
+        let scaled = self.operate(Binary::Multiply, Width::I64, index, element_size);
+        let first = self.constant(Width::I64, ARRAY_LENGTH_BYTES as i64);
+        let elements = self.operate(Binary::Add, Width::I64, payload, first);
+        let element = self.operate(Binary::Add, Width::I64, elements, scaled);
+        let absent = self.constant(Width::I64, 0);
+        self.raw_select(within, element, absent)
     }
 }
 

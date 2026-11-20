@@ -1963,7 +1963,8 @@ const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 pub(super) struct CallContext {
     /// Every field compiled code loads, at its `CallContextHead` offset (`CALL_CONTEXT_ADAPTER_PAYLOAD`).
     head: CallContextFields,
-    // Fields below are the VM's, never read by compiled code.
+    // Fields below are the VM's, never read by the stencils; the last one, `wasm_gc_records`, is read by the
+    // u-jit's emitted code at its `offset_of!`, and is last so the offsets above stay where the stencils hold them.
     /// Borrowed only during a running entry; a non-reentrant region may prove unique ownership.
     interrupt_owner: *const crate::ExecutionInterrupt,
     /// The record of the instance this context is in (`InstanceContext`), whose words the fields
@@ -1974,6 +1975,10 @@ pub(super) struct CallContext {
     /// The VM's `memory_grow_callout::<H>`: (context, pages) -> the size before in pages, or -1.
     /// A stitched `memory.grow` row calls it (`CONTEXT_MEMORY_GROW`).
     memory_grow: usize,
+    /// The base of the Wasm GC record range (`Heap::wasm_gc_record_base`), zero until it is reserved. The
+    /// u-jit's array reads take an element's slot from the record at `base + id * record size`, and call
+    /// the `field_slot` callout where it is zero. Read by the u-jit's emitted code, not the stencils.
+    wasm_gc_records: usize,
 }
 
 /// The ABI prefix of a call context, with the runtime's own field types (`staged::record_heads`).
@@ -2034,6 +2039,7 @@ impl CallContext {
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
             memory_grow: 0,
+            wasm_gc_records: 0,
         };
         context.bind_native_adapter(adapter_payload, interrupt, poll_page);
         context
@@ -2096,6 +2102,7 @@ impl CallContext {
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
             memory_grow: 0,
+            wasm_gc_records: 0,
         }
     }
 
@@ -2146,6 +2153,7 @@ impl CallContext {
             instance: self.instance,
             native_roots: self.native_roots,
             memory_grow: self.memory_grow,
+            wasm_gc_records: self.wasm_gc_records,
         }
     }
 }
@@ -2389,6 +2397,12 @@ fn refresh_memory_length<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
     {
         context.memory_length = length as u64;
     }
+}
+
+/// Publishes the Wasm GC record range's base (`CallContext::wasm_gc_records`) after a callout that may
+/// have reserved it: the base is fixed once reserved, so zero means the range is not yet made.
+pub(super) fn refresh_wasm_gc_records<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
+    context.wasm_gc_records = vm.heap.wasm_gc_record_base().map_or(0, |base| base as usize);
 }
 
 fn finish_callout(
@@ -2681,6 +2695,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
         );
     }
     refresh_memory_length(context, vm);
+    refresh_wasm_gc_records(context, vm);
     direct_status.map_or_else(|| finish_callout(context, called), i64::from)
 }
 
@@ -2740,6 +2755,7 @@ unsafe extern "C" fn import_callout<H: Host>(
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
     refresh_memory_length(context, vm);
+    refresh_wasm_gc_records(context, vm);
     finish_callout(context, called)
 }
 
@@ -9513,6 +9529,7 @@ impl<H: Host> Vm<H> {
                 instance: std::ptr::null(),
                 native_roots: &mut *self.native_roots,
                 memory_grow: wasm_memory_stage::memory_grow_callout::<H> as *const () as usize,
+                wasm_gc_records: self.heap.wasm_gc_record_base().map_or(0, |base| base as usize),
             };
             // SAFETY: the record belongs to the environment the call runs in.
             context.enter(unsafe { &*record });
