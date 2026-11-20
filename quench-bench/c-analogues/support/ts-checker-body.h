@@ -2501,6 +2501,35 @@ static TsType *cMemberType(TsType *o, TsSymbol *p, TsNode *e) {
   return cTypeOfSymbol(p);
 }
 
+/* the symbols of the global interfaces that give the members of every object: Object, CallableFunction (an object with call
+ * signatures, strictBindCallApply) and NewableFunction (one with construct signatures). Their own declared members are read
+ * from the binder table (none of these interfaces has a base to inherit from). */
+static TsSymbol *cGlobalMemberIface(int idx) {
+  static const char *const names[3] = { "Object", "CallableFunction", "NewableFunction" };
+  return bTableGet(cGlobals, bnC(names[idx]));   /* not cached: the globals are rebuilt by every checker run */
+}
+
+/* getPropertyOfType of an object type (the non-union case): its member, else the member of CallableFunction or
+ * NewableFunction when it has call or construct signatures, else the member of Object. *ok is false when the global
+ * interface is not in the program. */
+static TsSymbol *cPropertyOfObjectOrGlobal(TsType *o, BName name, bool *ok) {
+  *ok = true;
+  TsSymbol *p = cPropertyOf(o, name);
+  if (p) return p;
+  cResolveSignatures(o);
+  int fi = o->ncall ? 1 : (o->nconstruct ? 2 : 0);
+  if (fi) {
+    TsSymbol *g = cGlobalMemberIface(fi);
+    if (!g) { *ok = false; return NULL; }
+    TsSymbol *m = g->members ? bTableGet(g->members, name) : NULL;
+    if (m && (m->flags & SF_Value) && !(m->flags & SF_Signature)) return m;
+  }
+  TsSymbol *ob = cGlobalMemberIface(0);
+  if (!ob) { *ok = false; return NULL; }
+  TsSymbol *m = ob->members ? bTableGet(ob->members, name) : NULL;
+  return (m && (m->flags & SF_Value) && !(m->flags & SF_Signature)) ? m : NULL;
+}
+
 /* the type of a member access e.expression.name (checkPropertyAccessExpression) */
 static TsType *cPropertyAccessType(TsNode *e) {
   if (e->questionDotToken) return cUnported("optional chain");
@@ -2517,7 +2546,9 @@ static TsType *cPropertyAccessType(TsNode *e) {
     if (!p) return cUnported("property of a union");
   } else {
     if (!(o->flags & TF_Object)) return cUnported("property access on a non-object");
-    p = cPropertyOf(o, pname);
+    bool gok;
+    p = cPropertyOfObjectOrGlobal(o, pname, &gok);
+    if (!gok) return cUnported("property access: no global object member");
     if (!p) return cUnported("property access: no property");
   }
   TsType *declared = cMemberType(o, p, e);
