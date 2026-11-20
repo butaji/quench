@@ -428,6 +428,101 @@ static TsType *cNarrowByPredicate(TsNode *c, bool truthy, TsType *t, CFlowRef *r
   return truthy ? cand : t;
 }
 
+/* isCoercibleUnderDoubleEquals (5.9.2, 72371) */
+static bool cCoercibleUnderDoubleEquals(TsType *s, TsType *t) {
+  return (s->flags & (TF_Number | TF_String | TF_BooleanLiteral)) != 0 && (t->flags & (TF_Number | TF_String | TF_Boolean)) != 0;
+}
+
+/* isUnitLikeType: a unit type, or an intersection with one; the instantiable members are not ported */
+static bool cIsUnitLikeMember(TsType *m, bool *ok) {
+  if (m->flags & TF_Intersection) {
+    for (int i = 0; i < m->ntypes; i++) if (cIsUnitType(m->types[i])) return true;
+    return false;
+  }
+  if (m->flags & (TF_TypeParameter | TF_Index | TF_IndexedAccess | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) *ok = false;
+  return cIsUnitType(m);
+}
+
+/* filterType with the comparability test of a value: the members for which keep holds (the type itself when none is
+ * removed, never when none is kept). unit: the test is isUnitLikeType(member) && comparable, negated. */
+static TsType *cFilterByValue(TsType *t, TsType *value, bool doubleEq, bool unitRemoval, bool *ok) {
+  if (t->flags & TF_Never) return t;
+  int n = cMemberCount(t);
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  for (int i = 0; i < n; i++) {
+    TsType *m = cMemberAt(t, i);
+    bool keep;
+    if (unitRemoval) keep = !(cIsUnitLikeMember(m, ok) && cAreTypesComparable(m, value));
+    else keep = cAreTypesComparable(m, value) || (doubleEq && cCoercibleUnderDoubleEquals(m, value));
+    if (keep) kept[k++] = m;
+  }
+  if (!(t->flags & TF_Union)) return k ? t : cNeverType;
+  if (k == n) return t;
+  if (k == 0) return cNeverType;
+  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+}
+
+/* replacePrimitivesWithLiterals: a string, number or bigint member of the filtered type becomes the literals of the
+ * value's type of the same kind (the template and string mapping forms are not ported) */
+static TsType *cReplacePrimitivesWithLiterals(TsType *withPrim, TsType *withLit) {
+  int np = cMemberCount(withPrim), nl = cMemberCount(withLit);
+  bool primMaybe = false, litMaybe = false;
+  for (int i = 0; i < np; i++) {
+    TsType *m = cMemberAt(withPrim, i);
+    if (m->flags & (TF_TemplateLiteral | TF_StringMapping)) return cUnported("template literal in an equality narrowing");
+    if (m->flags & (TF_String | TF_Number | TF_BigInt)) primMaybe = true;
+  }
+  for (int i = 0; i < nl; i++) {
+    TsType *m = cMemberAt(withLit, i);
+    if (m->flags & (TF_TemplateLiteral | TF_StringMapping)) return cUnported("template literal in an equality narrowing");
+    if (m->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral)) litMaybe = true;
+  }
+  if (!(primMaybe && litMaybe)) return withPrim;
+  TsType **res = ts_arena_alloc(sizeof(TsType *) * (size_t)(np ? np : 1));
+  int k = 0;
+  bool changed = false;
+  for (int i = 0; i < np; i++) {
+    TsType *m = cMemberAt(withPrim, i);
+    uint32_t want = (m->flags & TF_String) ? (TF_String | TF_StringLiteral) : (m->flags & TF_Number) ? (TF_Number | TF_NumberLiteral)
+                  : (m->flags & TF_BigInt) ? (TF_BigInt | TF_BigIntLiteral) : 0;
+    if (!want) { res[k++] = m; continue; }
+    changed = true;
+    for (int j = 0; j < nl; j++) {
+      TsType *x = cMemberAt(withLit, j);
+      if (x->flags & want) res[k++] = x;   /* extractTypesOfKind: the members of the value's type of that kind */
+    }
+  }
+  if (!changed) return withPrim;
+  if (k == 0) return cNeverType;
+  return k == 1 ? res[0] : cGetUnionType(res, k);
+}
+
+/* narrowTypeByEquality (5.9.2, 75503) against a value that is neither undefined nor null: the true branch keeps the
+ * members comparable with the value (or coercible under ==) and replaces primitives with the value's literals; the
+ * false branch removes the members that are the unit value, when the value is a unit type. */
+static TsType *cNarrowByEqualityValue(TsType *t, TsType *value, bool doubleEq, bool assumeTrue) {
+  if (value == cErrorType) return cUnported("equality with an unported value");
+  if (assumeTrue) {
+    if (!doubleEq) {
+      bool unknownOrEmpty = (t->flags & TF_Unknown) != 0;
+      for (int i = 0; i < cMemberCount(t) && !unknownOrEmpty; i++) unknownOrEmpty = cIsEmptyAnonymousObject(cMemberAt(t, i));
+      if (unknownOrEmpty) return cUnported("equality narrowing of unknown or an empty object type");
+    }
+    int before = cUnportedCount;
+    bool ok = true;
+    TsType *filtered = cFilterByValue(t, value, doubleEq, false, &ok);
+    if (!ok || cUnportedCount != before) return cUnported("comparability in an equality narrowing");
+    return cReplacePrimitivesWithLiterals(filtered, value);
+  }
+  if (!cIsUnitType(value)) return t;
+  int before = cUnportedCount;
+  bool ok = true;
+  TsType *res = cFilterByValue(t, value, false, true, &ok);
+  if (!ok || cUnportedCount != before) return cUnported("comparability in an equality narrowing");
+  return res;
+}
+
 /* the flow type of a reference narrowed by a condition (narrowType): the reference is matched directly, through `!`,
  * by equality with undefined or null, by a typeof comparison, and by calls whose arguments include it (without a type
  * predicate). Discriminants, instanceof, in, literal equality and type predicates are not ported. A condition that does
@@ -472,12 +567,9 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
           bool holds = isEq == truthy;   /* the comparison holds on this branch */
           return cNullishEquality(t, ov, doubleEq, holds);
         }
-        /* narrowTypeByEquality: the true branch filters by comparability (not ported); the false branch of a unit value
-         * filters by comparability too, and any other value leaves the type as it is */
-        if (isEq == truthy) return cUnported("equality narrowing with a value");
-        if (ov->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral | TF_BooleanLiteral | TF_UniqueESSymbol | TF_EnumLiteral))
-          return cUnported("equality narrowing with a unit value");
-        return t;
+        /* narrowTypeByEquality: the true branch keeps the members comparable with the value; the false branch of a unit
+         * value removes the unit members; any other value leaves the type as it is */
+        return cNarrowByEqualityValue(t, ov, doubleEq, isEq == truthy);
       }
       /* a discriminant: a property of the reference compared (narrowTypeByDiscriminant for a union) */
       if (cIsMemberOfRef(l, r) || cIsMemberOfRef(rt, r)) return (t->flags & TF_Union) ? cUnported("discriminant narrowing") : t;

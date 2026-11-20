@@ -15,7 +15,7 @@
  *
  * NOT PORTED (a relation that meets one sets cUnportedHit and is answered as related, so the caller
  * cannot report a false error): intersections as sources with structural comparison of their combined
- * members, comparable relation, enum types, template literals, mapped, conditional, indexed access and
+ * members, enum types, template literals, mapped, conditional, indexed access and
  * keyof types, generic signatures (a comparison with type parameters), rest parameters at a position
  * that is not the last one, callback parameters (single call signature parameters are compared plainly),
  * the optional-property-in-class-member error (2327), private and protected members, abstract
@@ -157,13 +157,39 @@ static bool cSameLiteralValue(TsType *s, TsType *t) {
   return s->textLen == t->textLen && memcmp(s->text, t->text, (size_t)s->textLen) == 0;
 }
 
+/* isUnitType (Unit = Enum | Literal | UniqueESSymbol | Nullable) */
+static bool cIsUnitType(TsType *t) {
+  return (t->flags & (TF_Enum | TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral | TF_BooleanLiteral | TF_UniqueESSymbol |
+                      TF_Undefined | TF_Null)) != 0;
+}
+
+/* isEmptyAnonymousObjectType: an anonymous object type with no properties, signatures or index infos */
+static bool cIsEmptyAnonymousObject(TsType *t) {
+  if (!(t->flags & TF_Object) || !(t->objectFlags & OF_Anonymous)) return false;
+  TsSymbol **props;
+  if (cPropertiesOf(t, &props) != 0) return false;
+  cResolveSignatures(t);
+  cResolveIndexInfos(t);
+  return t->ncall == 0 && t->nconstruct == 0 && t->nindex == 0;
+}
+
+/* isUnknownLikeUnionType (strictNullChecks): undefined | null | {} and more members, with the empty object type */
+static bool cIsUnknownLikeUnion(TsType *t) {
+  if (!(t->flags & TF_Union) || t->ntypes < 3) return false;
+  if (!(t->types[0]->flags & TF_Undefined) || !(t->types[1]->flags & TF_Null)) return false;
+  for (int i = 0; i < t->ntypes; i++) if (cIsEmptyAnonymousObject(t->types[i])) return true;
+  return false;
+}
+
 static bool cIsSimpleRelated(TsType *s, TsType *t, int rel) {
   uint32_t sf = s->flags, tf = t->flags;
   if ((tf & (TF_Any | TF_Unknown)) || (sf & TF_Never)) return true;
   if ((sf & TF_Undefined) && (tf & (TF_Undefined | TF_Void))) return true;   /* strictNullChecks */
   if ((sf & TF_Null) && (tf & TF_Null)) return true;
   if ((sf & TF_Object) && (tf & TF_NonPrimitive) && !(rel == REL_StrictSubtype && (s->objectFlags & OF_Anonymous) && !s->symbol)) return true;
-  if (rel == REL_Assignable && (sf & TF_Any)) return true;
+  /* isSimpleTypeRelatedTo (assignable or comparable): any, the number and enum rules, unknown-like unions */
+  bool assignOrComparable = rel == REL_Assignable || rel == REL_Comparable;
+  if (assignOrComparable && (sf & TF_Any)) return true;
   if ((sf & (TF_String | TF_StringLiteral)) && (tf & TF_String)) return true;
   /* enum literals (isSimpleTypeRelatedTo, 5.9.2): a literal of an enum relates to the plain literal of its value */
   if ((sf & TF_StringLiteral) && (sf & TF_EnumLiteral) && (tf & TF_StringLiteral) && !(tf & TF_EnumLiteral) && cSameLiteralValue(s, t)) return true;
@@ -186,10 +212,11 @@ static bool cIsSimpleRelated(TsType *s, TsType *t, int rel) {
       return true;
     }
   }
-  if (rel == REL_Assignable) {
+  if (assignOrComparable) {
     if ((sf & TF_Number) && ((tf & TF_Enum) || ((tf & TF_NumberLiteral) && (tf & TF_EnumLiteral)))) return true;
     if ((sf & TF_NumberLiteral) && !(sf & TF_EnumLiteral) &&
         ((tf & TF_Enum) || ((tf & TF_NumberLiteral) && (tf & TF_EnumLiteral) && s->litNum == t->litNum))) return true;
+    if (cIsUnknownLikeUnion(t)) return true;
   }
   if ((sf & TF_BigInt) && (tf & TF_BigInt)) return true;
   if ((sf & (TF_Boolean | TF_BooleanLiteral)) && (tf & TF_Boolean)) return true;
@@ -416,7 +443,8 @@ static int cPropertiesRelated(TsType *s, TsType *t, int st) {
     if (!sp) continue;   /* an optional target property the source lacks */
     if (sp == tp[i]) continue;
     /* propertyRelatedTo: an optional source property is not assignable to a required target one */
-    if ((sp->flags & SF_Optional) && !(tp[i]->flags & SF_Optional) && cCurRel != REL_Identity) return RR_False;
+    /* (propertyRelatedTo: skipOptional is set for the comparable relation) */
+    if ((sp->flags & SF_Optional) && !(tp[i]->flags & SF_Optional) && cCurRel != REL_Identity && cCurRel != REL_Comparable) return RR_False;
     TsType *a = cTypeOfSymbol(sp), *b = cTypeOfSymbol(tp[i]);
     int r = cIsRelatedTo(a, b, IS_None);
     if (r == RR_False) return RR_False;
@@ -876,7 +904,8 @@ static int cSignaturesRelated(TsType *s, TsType *t, bool isConstruct) {
   int ns = isConstruct ? s->nconstruct : s->ncall, nt = isConstruct ? t->nconstruct : t->ncall;
   CSig *ss = isConstruct ? s->construct : s->call, *ts = isConstruct ? t->construct : t->call;
   if (nt == 0) return RR_True;
-  bool erase = !(ns == 1 && nt == 1);
+  /* signaturesRelatedTo: several signatures are erased; the comparable relation erases a single pair too (71469) */
+  bool erase = !(ns == 1 && nt == 1) || cCurRel == REL_Comparable;
   for (int j = 0; j < nt; j++) {
     bool hit = false;
     for (int i = 0; i < ns && !hit; i++) {
@@ -948,7 +977,7 @@ static int cTypeRelatedToSome(TsType *s, TsType *t, int st) {
   for (int i = 0; i < t->ntypes; i++) if (t->types[i] == s) return RR_True;   /* containsType */
   /* typeRelatedToSomeType: a string, boolean or bigint literal (and a number literal for the subtype relations)
    * is looked up in a primitive union instead of comparing each member */
-  if ((t->objectFlags & OF_PrimitiveUnion) && !(s->flags & TF_EnumLiteral) &&
+  if ((t->objectFlags & OF_PrimitiveUnion) && cCurRel != REL_Comparable && !(s->flags & TF_EnumLiteral) &&
       ((s->flags & (TF_StringLiteral | TF_BooleanLiteral | TF_BigIntLiteral)) ||
        ((cCurRel == REL_Subtype || cCurRel == REL_StrictSubtype) && (s->flags & TF_NumberLiteral)))) {
     TsType *prim = (s->flags & TF_StringLiteral) ? cStringType : (s->flags & TF_NumberLiteral) ? cNumberType
@@ -1105,7 +1134,7 @@ static int cIndexTargetRelated(TsType *s, TsType *t, int st) {
       if (ri != RR_False) return (ro == RR_True && ri == RR_True) ? RR_True : RR_Maybe;
     }
   }
-  if (cCurRel == REL_Assignable) {
+  if (cCurRel == REL_Assignable || cCurRel == REL_Comparable) {
     /* a target T[K] with a non-generic base is related through the access of its base constraints, written */
     TsType *bo = cBaseConstraintOf(t->iaObj), *bi = cBaseConstraintOf(t->iaIdx);
     if (bo == cErrorType || bi == cErrorType) return RR_True;
@@ -1139,8 +1168,15 @@ static int cIndexSourceRelated(TsType *s, TsType *t, int st) {
   return RR_False;
 }
 
+/* someType(t, flags & TypeParameter) */
+static bool cHasTypeParamMember(TsType *t) {
+  if (t->flags & TF_TypeParameter) return true;
+  if (t->flags & TF_Union) for (int i = 0; i < t->ntypes; i++) if (t->types[i]->flags & TF_TypeParameter) return true;
+  return false;
+}
+
 static int cStructuredRelated(TsType *s, TsType *t, int st) {
-  if (s->flags & TF_Union) return cEachTypeRelatedToType(s, t, st);
+  if (s->flags & TF_Union) return cCurRel == REL_Comparable ? cSomeTypeRelatedToType(s, t, st) : cEachTypeRelatedToType(s, t, st);
   if (t->flags & TF_Union) {
     /* a type parameter source that is related to no member of the target union is related through its constraint
      * (structuredTypeRelatedToWorker falls through to the constraint of an instantiable source) */
@@ -1163,6 +1199,17 @@ static int cStructuredRelated(TsType *s, TsType *t, int st) {
     if (r != RR_False) return r;
   }
   if (s->flags & (TF_IndexedAccess | TF_Index)) return cIndexSourceRelated(s, t, st);
+  /* comparable (structuredTypeRelatedToWorker, 70587): a type parameter source is related to a type parameter target
+   * through the constraints of the source, each one a type parameter while it has one */
+  if (cCurRel == REL_Comparable && (s->flags & TF_TypeParameter) && (t->flags & TF_TypeParameter)) {
+    TsType *c = cConstraintOf(s);
+    while (c && cHasTypeParamMember(c)) {
+      int r = cIsRelatedTo(c, t, IS_Source);
+      if (r != RR_False) return r;
+      c = (c->flags & TF_TypeParameter) ? cConstraintOf(c) : NULL;   /* getConstraintOfTypeParameter */
+    }
+    return RR_False;
+  }
   if (s->flags & TF_TypeParameter) {
     TsType *c = cConstraintOf(s);
     if (!c) return RR_False;
@@ -1226,12 +1273,14 @@ static int cIsRelatedTo(TsType *s, TsType *t, int st) {
   if (s == t) return RR_True;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return RR_True; }
   if ((s->flags | t->flags) & (TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); return RR_True; }
-  if (cIsSimpleRelated(s, t, cCurRel)) return RR_True;
+  /* the comparable relation also tries the simple rules with the target as the source (isRelatedTo, 69257) */
+  if ((cCurRel == REL_Comparable && !(t->flags & TF_Never) && cIsSimpleRelated(t, s, cCurRel)) || cIsSimpleRelated(s, t, cCurRel))
+    return RR_True;
   /* isRelatedTo (5.9.2): a type parameter is related to its own constraint without a cache entry */
   if ((s->flags & TF_TypeParameter) && cConstraintOf(s) == t) return RR_True;
   if (!cIsStructured(s) && !cIsStructured(t)) return RR_False;
-  /* isPerformingCommonPropertyChecks: a weak target needs a common property */
-  if (cCurRel != REL_Identity && !(st & IS_Target) && (t->flags & TF_Object) && cIsWeakType(t)) {
+  /* isPerformingCommonPropertyChecks: a weak target needs a common property (comparable: only from a unit source) */
+  if (cCurRel != REL_Identity && (cCurRel != REL_Comparable || cIsUnitType(s)) && !(st & IS_Target) && (t->flags & TF_Object) && cIsWeakType(t)) {
     /* getPropertiesOfType of a primitive source is that of its apparent type */
     TsType *sa = (s->flags & TF_Object) ? s : cApparentType(s);
     if (sa) {
@@ -1261,7 +1310,7 @@ static bool cIsRelatedWith(TsType *s, TsType *t, int rel) {
   bool r;
   if (rel == REL_Identity) r = cIdentical(s, t);
   else if (s == t) r = true;
-  else if (cIsSimpleRelated(s, t, rel)) r = true;
+  else if ((rel == REL_Comparable && !(t->flags & TF_Never) && cIsSimpleRelated(t, s, rel)) || cIsSimpleRelated(s, t, rel)) r = true;
   else if ((s->flags | t->flags) & (TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); r = true; }
   else if (!cIsStructured(s) && !cIsStructured(t)) r = false;
   else {
@@ -1271,6 +1320,11 @@ static bool cIsRelatedWith(TsType *s, TsType *t, int rel) {
   }
   cCurRel = saved;
   return r;
+}
+
+/* isTypeComparableTo and areTypesComparable (68409): the comparable relation in either direction */
+static bool cAreTypesComparable(TsType *a, TsType *b) {
+  return cIsRelatedWith(a, b, REL_Comparable) || cIsRelatedWith(b, a, REL_Comparable);
 }
 
 /* checkTypeRelatedTo: the relation, and a diagnostic with the code at the node when it fails */

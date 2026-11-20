@@ -181,7 +181,7 @@ static void cCreateIntrinsicTypes(void) {
   cIntrinsicMarkerType = cIntrinsic(TF_Any);
 }
 
-enum { REL_Identity = 0, REL_Subtype, REL_StrictSubtype, REL_Assignable, REL_Count };
+enum { REL_Identity = 0, REL_Subtype, REL_StrictSubtype, REL_Assignable, REL_Comparable, REL_Count };
 /* Ternary (False < Maybe < True, so And is min and Or is max) */
 enum { RR_False = 0, RR_Maybe = 1, RR_True = 2 };
 /* IntersectionState */
