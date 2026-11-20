@@ -179,7 +179,7 @@ static bool cAssignContains(TsNode *target, CFlowRef *r) {
  * assumed initialized, so its initial type is its declared type; a variable of the container needs startInit. */
 static TsType *cFlowStartType(CFlowRef *r) {
   if (r->outer) return r->declared;
-  return r->startInit ? r->declared : cUnported("reference used before its assignment");
+  return r->startInit ? r->declared : r->initial;   /* an uninitialized reference starts at its optional type (getOptionalType) */
 }
 
 static bool cMatchesRefTree(TsNode *n, CFlowRef *r) { return cSameChain(n, r->node); }
@@ -1733,6 +1733,13 @@ static TsType *cReferenceDeclaredType(TsNode *ref, TsSymbol *s, bool *outer, boo
   return d;
 }
 
+/* containsUndefinedType */
+static bool cContainsUndefinedType(TsType *t) {
+  if (t->flags & TF_Undefined) return true;
+  if (t->flags & TF_Union) for (int i = 0; i < t->ntypes; i++) if (t->types[i]->flags & TF_Undefined) return true;
+  return false;
+}
+
 /* the type of an identifier reference (checkIdentifier): the flow type of a variable, else the type of the symbol */
 static TsType *cIdentifierType(TsNode *e) {
   BName nm = bnEscapeText(e->text, e->textLen);
@@ -1769,7 +1776,14 @@ static TsType *cIdentifierType(TsNode *e) {
   }
   bool jump = flowC != ownC;
   CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit, jump, flowC };
-  return cFlowTypeOfReference(e, &r);
+  TsType *ft = cFlowTypeOfReference(e, &r);
+  /* checkIdentifier: a reference that is not assumed initialized and whose flow type has undefined that its declared type
+   * has not is an error (2454), and it has its declared type */
+  if (!startInit && ft != cErrorType && cContainsUndefinedType(ft) && !cContainsUndefinedType(d)) {
+    cDiagAdd(cSourceFileOf(e), cNodeStart(e), 2454, NULL);
+    return d;
+  }
+  return ft;
 }
 
 /* the type of a property access or element access reference, narrowed by the flow (the declared type of the member) */
