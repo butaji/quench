@@ -4979,9 +4979,10 @@ impl<H: Host> Vm<H> {
             && let Ok(slot) = u16::try_from(slot)
         {
             // Once per transition: the add that creates `target_shape` seeds its slot from the
-            // class's declared type; later adds of the shape reuse this entry and its seed.
+            // class's declared type, once the added `value` satisfies it; later adds of the shape
+            // reuse this entry and its seed.
             if let Some(ty) = declared_field_type(p, function, atom) {
-                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty);
+                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty, value);
             }
             self.record_field_add_cache(
                 site,
