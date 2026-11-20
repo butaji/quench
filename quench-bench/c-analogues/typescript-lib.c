@@ -23,9 +23,10 @@
  *     bases included), the identity relation, and the assignable and subtype relations (maybe stack,
  *     depth limits, variances by marker types, signatures, index signatures, weak types), the base type
  *     check of classes with issueMemberSpecificError (2416 at member names, 2415).
- *   53 of the 54 node diagnostics match. The one that does not is mapset.ts 185:5 (2322), an assignment
- *   in a constructor whose target is an indexed access of a mapped type: expression checking is not ported.
- *   NOT PORTED: expression and statement checking (checkSourceFile bodies, checkExpression, assignments),
+ *   Expression checks of assignments (support/ts-checker-expr.h): `this[K] = { ... }` in a constructor is
+ *   checked by elaborating the object literal per property, which gives the last diagnostic (mapset.ts
+ *   185:5, 2322, at the property name). All 54 node diagnostics match.
+ *   NOT PORTED: statement and expression checking in general (checkSourceFile bodies, checkExpression,
  *   this types, indexed access and conditional types in general, template and string mapping types,
  *   intersection structure in relations, emit. The counts of types, instantiations and relation cache
  *   entries therefore stay far below node's; the run prints them next to node's numbers and fails validation.
@@ -55,6 +56,7 @@
 #include "support/ts-checker-vars.h"
 #include "support/ts-relate.h"
 #include "support/ts-checker-class.h"
+#include "support/ts-checker-expr.h"
 #include "support/ts-checker-expected.h"
 
 #define FAIL(...)                  \
@@ -353,6 +355,7 @@ static void runChecker(void) {
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckVariableLike);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cResolveDeclaredMembersOf);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckClassBase);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckExpressionNode);
 }
 
 int main(int argc, char **argv) {

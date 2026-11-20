@@ -992,6 +992,7 @@ static void cResolveIndexInfos(TsType *t) {
 
 /* ---- types of symbols (getTypeOfSymbol) ---- */
 static TsType *cTypeOfSymbol(TsSymbol *sym) {
+  if (sym == cUndefinedSymbol) return cUndefinedType; /* undefinedSymbol: undefinedWideningType */
   if (sym->instTarget) {   /* getTypeOfInstantiatedSymbol (61381) */
     if (!sym->type) sym->type = cInstantiate(cTypeOfSymbol(sym->instTarget), sym->instMapper);
     return sym->type;
