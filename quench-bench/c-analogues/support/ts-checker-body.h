@@ -2251,40 +2251,138 @@ static TsType *cContextualType(TsNode *e) {
   return cUnported("contextual type");
 }
 
-/* getContextualSignature of a function expression or arrow: the one call signature of its contextual type that is not too
- * small for it (getContextualCallSignature with isAritySmaller). A union, an intersection or a context without signatures,
- * several signatures, a this parameter, a generic signature and every context not ported set *err (NULL with *err set),
- * and a NULL result without *err means there is no contextual type at all. */
 /* getContextualCallSignature of an object type: the one call signature that is not too small for the function (isAritySmaller);
- * none (NULL without *err) when no call signature is applicable, several or a generic or this one are not ported */
-static CSig *cContextualCallSignatureOf(TsNode *fn, TsType *ctx, bool *err) {
+ * none (NULL without *err) when no call signature is applicable. A single signature result is a leaf; several are combined
+ * (getIntersectedSignatures, reduceLeft of combineSignaturesOfIntersectionMembers, which the strict options of the benchmark
+ * programs enable: noImplicitAny). A generic, a this parameter, a rest or an initialized parameter in a combination, and every
+ * other context not ported set *err. */
+/* A contextual signature: a leaf is one signature of the contextual type; a combined node is the synthetic signature of
+ * combineSignaturesOfIntersectionMembers (its parameter types are the union of the members' at each position, its return type
+ * the intersection of theirs). Combined signatures only exist for the contextual parameter types and the contextual return
+ * type (cContextualSigNode): any other use of one is not ported. */
+struct CCombinedSig { CSig *leaf; struct CCombinedSig *left, *right; int count, min; };
+typedef struct CCombinedSig CCombinedSig;
+
+static CCombinedSig *cLeafSigNode(CSig *s, bool *err) {
+  CParams cp;
+  if (!cSplitParams(s->decl, &cp)) { *err = true; return NULL; }
+  CCombinedSig *c = ts_arena_alloc(sizeof(CCombinedSig));
+  c->leaf = s;
+  c->left = c->right = NULL;
+  c->count = cp.n;
+  c->min = cp.min;
+  return c;
+}
+
+/* a signature a combination is made of: no this parameter, rest parameter, type parameter or initializer */
+static bool cCombinableSig(CSig *s) {
+  CParams cp;
+  if (!cSplitParams(s->decl, &cp) || cp.thisParam || cp.rest) return false;
+  if (s->decl->typeParameters && s->decl->typeParameters->n) return false;
+  for (int i = 0; i < cp.n; i++) if (cp.params[i]->initializer) return false;
+  return true;
+}
+
+/* combineIntersectionParameters and the counts of combineSignaturesOfIntersectionMembers: the longer count and the larger
+ * minimum (getMinArgumentCount of the combination is the maximum of the two) */
+static CCombinedSig *cCombineSigNodes(CCombinedSig *l, CCombinedSig *r) {
+  CCombinedSig *c = ts_arena_alloc(sizeof(CCombinedSig));
+  c->leaf = NULL;
+  c->left = l;
+  c->right = r;
+  c->count = l->count > r->count ? l->count : r->count;
+  c->min = l->min > r->min ? l->min : r->min;
+  return c;
+}
+
+/* getTypeAtPosition of a contextual signature, with the ok flag of tryGetTypeAtPosition (no parameter at the position).
+ * A combined position is the union of the members' types there (getUnionType of the longest member's type and the
+ * shorter member's, unknown past the end of the shorter one), longest first, as combineIntersectionParameters builds it. */
+static TsType *cCombinedParamType(CCombinedSig *c, int pos, bool *ok) {
+  *ok = pos >= 0 && pos < c->count;
+  if (!*ok) return NULL;
+  if (c->leaf) {
+    CParams cp;
+    if (!cSplitParams(c->leaf->decl, &cp)) { *ok = false; return cErrorType; }
+    return cSigParamType(c->leaf, &cp, pos, ok);
+  }
+  CCombinedSig *longest = c->left->count >= c->right->count ? c->left : c->right;
+  CCombinedSig *shorter = longest == c->left ? c->right : c->left;
+  bool okL = false, okS = false;
+  TsType *lt = cCombinedParamType(longest, pos, &okL);
+  TsType *st = cCombinedParamType(shorter, pos, &okS);
+  if (!okS) st = cUnknownType;
+  if (!okL) { *ok = false; return NULL; }
+  TsType *pair[2] = { lt, st };
+  return cGetUnionType(pair, 2);
+}
+
+/* the return type of a contextual signature: a leaf's, or the intersection of the combined leaves' in their order
+ * (getUnionOrIntersectionType of the composite signatures with the intersection kind) */
+static int cCountLeafSigs(CCombinedSig *c) {
+  return c->leaf ? 1 : cCountLeafSigs(c->left) + cCountLeafSigs(c->right);
+}
+static void cCollectLeafSigs(CCombinedSig *c, CSig **out, int *n) {
+  if (c->leaf) { out[(*n)++] = c->leaf; return; }
+  cCollectLeafSigs(c->left, out, n);
+  cCollectLeafSigs(c->right, out, n);
+}
+static TsType *cCombinedReturn(CCombinedSig *c) {
+  if (c->leaf) return cReturnTypeOf(c->leaf);
+  int nleaf = 0;
+  CSig **leaves = ts_arena_alloc(sizeof(CSig *) * (size_t)cCountLeafSigs(c));
+  cCollectLeafSigs(c, leaves, &nleaf);
+  TsType **rs = ts_arena_alloc(sizeof(TsType *) * (size_t)nleaf);
+  for (int i = 0; i < nleaf; i++) rs[i] = cReturnTypeOf(leaves[i]);
+  return cGetIntersectionType(rs, nleaf);
+}
+
+static CCombinedSig *cContextualCallNode(TsNode *fn, TsType *ctx, bool *err) {
   /* isAritySmaller: the target parameters before the first optional, initialized or rest one (a this parameter is not counted) */
   TsList *pl = fn->parameters;
   int target = 0;
   while (pl && target < pl->n && !pl->v[target]->initializer && !pl->v[target]->questionToken && !pl->v[target]->dotDotDotToken) target++;
   if (pl && pl->n && cIsThisParam(pl->v[0])) target--;
+  CSig **app = ts_arena_alloc(sizeof(CSig *) * (size_t)(ctx->ncall ? ctx->ncall : 1));
   int applicable = 0;
-  CSig *pick = NULL;
   for (int c = 0; c < ctx->ncall; c++) {
     CSig *s = &ctx->call[c];
     CParams sp;
     if (!cSplitParams(s->decl, &sp) || sp.thisParam) { *err = true; return NULL; }
     if (!sp.rest && sp.n < target) continue;
-    applicable++;
-    pick = s;
+    app[applicable++] = s;
   }
   if (applicable == 0) return NULL;
-  if (applicable != 1) { *err = true; return NULL; }
-  if (pick->decl->typeParameters && pick->decl->typeParameters->n) { *err = true; return NULL; }
-  return pick;
+  if (applicable == 1) {
+    if (app[0]->decl->typeParameters && app[0]->decl->typeParameters->n) { *err = true; return NULL; }
+    return cLeafSigNode(app[0], err);
+  }
+  /* getIntersectedSignatures: reduceLeft over the applicable signatures, each combined with the next one */
+  CCombinedSig *acc = NULL;
+  for (int k = 0; k < applicable; k++) {
+    if (!cCombinableSig(app[k])) { *err = true; return NULL; }
+    CCombinedSig *leaf = cLeafSigNode(app[k], err);
+    if (*err) return NULL;
+    acc = acc ? cCombineSigNodes(acc, leaf) : leaf;
+  }
+  return acc;
 }
 
-/* getContextualSignature of a function expression or arrow: the one call signature of its contextual type that is not too
- * small for it. An object type with call signatures gives its own (getContextualCallSignature); a union gives the one
- * signature of its members that have call signatures (members without any, and undefined, null and the primitives, have
- * none). Several signatures (getIntersectedSignatures and createUnionSignature), a generic, a this parameter and every
- * context not ported set *err (NULL with *err); a NULL result without *err means there is no contextual signature. */
-static CSig *cContextualSignature(TsNode *fn, bool *err) {
+/* the one call signature of an object context as a single signature (a union member): a combination is not ported there
+ * (createUnionSignature and compareSignaturesIdentical) */
+static CSig *cContextualCallSignatureOf(TsNode *fn, TsType *ctx, bool *err) {
+  CCombinedSig *n = cContextualCallNode(fn, ctx, err);
+  if (!n) return NULL;
+  if (!n->leaf) { *err = true; return NULL; }
+  return n->leaf;
+}
+
+/* getContextualSignature of a function expression or arrow: the contextual signature (a leaf or a combined node). An object
+ * type with call signatures gives its own (getContextualCallSignature); a union gives the one signature of its members that
+ * have call signatures (members without any, and undefined, null and the primitives, have none). Several signatures of a
+ * union (createUnionSignature), a generic, a this parameter and every context not ported set *err (NULL with *err); a NULL
+ * result without *err means there is no contextual signature. */
+static CCombinedSig *cContextualSigNode(TsNode *fn, bool *err) {
   *err = false;
   TsType *ctx = cContextualType(fn);
   if (ctx == NULL) return NULL;
@@ -2309,12 +2407,13 @@ static CSig *cContextualSignature(TsNode *fn, bool *err) {
       if (s) { found = s; nfound++; }
     }
     if (nfound > 1) { *err = true; return NULL; }   /* createUnionSignature (or no signature when the members differ) */
-    return found;
+    if (!found) return NULL;
+    return cLeafSigNode(found, err);
   }
   if (!(ctx->flags & TF_Object)) { *err = true; return NULL; }
   cResolveSignatures(ctx);
   if (ctx->ncall == 0) { *err = true; return NULL; }
-  return cContextualCallSignatureOf(fn, ctx, err);
+  return cContextualCallNode(fn, ctx, err);
 }
 
 /* getContextualReturnType: the return annotation, else the return type of the contextual signature (function expressions and
@@ -2328,9 +2427,9 @@ static TsType *cContextualReturnOf(TsNode *fn) {
   if (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction) return cUnported("contextual return type of a method");
   if (fn->asteriskToken || (bModifierFlags(fn) & TMF_Async)) return cUnported("contextual return of a generator or async function");
   bool err = false;
-  CSig *cs = cContextualSignature(fn, &err);
+  CCombinedSig *cn = cContextualSigNode(fn, &err);
   if (err) return cErrorType;
-  return cs ? cReturnTypeOf(cs) : NULL;
+  return cn ? cCombinedReturn(cn) : NULL;
 }
 
 /* a type with a literal or type variable member: a contextual type that keeps a literal return (isLiteralOfContextualType) */
@@ -2389,15 +2488,14 @@ static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
   /* the refusal is counted only when no type is found: a counted placeholder would end the inference or narrowing around it */
   TsType *t = NULL;
   bool err = false;
-  CSig *cs = cContextualSignature(fn, &err);
-  if (!err && cs) {
+  CCombinedSig *cn = cContextualSigNode(fn, &err);
+  if (!err && cn) {
     int idx = 0;
     while (idx < fn->parameters->n && fn->parameters->v[idx] != d) idx++;
     if (fn->parameters->n && cIsThisParam(fn->parameters->v[0])) idx--;
-    CParams cp;
-    if (idx >= 0 && cSplitParams(cs->decl, &cp)) {
+    if (idx >= 0) {
       bool ok;
-      TsType *pt = cSigParamType(cs, &cp, idx, &ok);
+      TsType *pt = cCombinedParamType(cn, idx, &ok);
       /* a position beyond the contextual parameters has no type (tryGetTypeAtPosition): implicit any */
       if (ok) t = pt;
     }
@@ -3827,9 +3925,9 @@ static TsType *cExprWorker(TsNode *e) {
         /* checkFunctionExpressionOrObjectLiteralMethod: the parameters take the contextual signature (cUnannotatedParamType);
          * a literal return of the body is kept when the contextual return type has a literal or type variable */
         bool err = false;
-        CSig *cs = cContextualSignature(e, &err);
+        CCombinedSig *cn = cContextualSigNode(e, &err);
         if (err) return cUnported("function expression with a contextual type");
-        if (!cs) {
+        if (!cn) {
           /* no contextual signature (an any context, or none applicable): the parameters take no contextual type, so they
            * must be annotated (an unannotated one would be implicitly any) */
           if (e->parameters) for (int i = 0; i < e->parameters->n; i++)
@@ -3840,7 +3938,7 @@ static TsType *cExprWorker(TsNode *e) {
           if (e->parameters) for (int i = 0; i < e->parameters->n; i++)
             if (!e->parameters->v[i]->type && e->parameters->v[i]->symbol) (void)cTypeOfSymbol(e->parameters->v[i]->symbol);
           if (!e->type) {
-            TsType *cr = cReturnTypeOf(cs);
+            TsType *cr = cCombinedReturn(cn);
             if (cr == cErrorType) return cr;
             if (cHasLiteralOrVariable(cr)) {
               TsType *rt = cInferReturnType(e);
