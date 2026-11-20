@@ -108,18 +108,19 @@ fn a_sloppy_callee_takes_the_sloppy_row_with_its_global() {
     assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(row).expect(&name)));
 }
 
-/// A pinned argument dead after the call is read from its pin by the direct row (its place in the record), and its
-/// spill moves behind the direct rows, to the refusal path; a live one keeps its spill before the call.
+/// A pinned argument dead after the call is read from its pin by the direct row (its place in the record), and is
+/// still spilled before the call: the direct row's refusal passes every pinned register dead, so a spill behind it
+/// would hand the helper junk.
 #[cfg(target_arch = "x86_64")]
 #[test]
-fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_on_refusal_only() {
+fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_before_the_call() {
     let spills = [(Place::Pin(1), SHAPE.window), (Place::PinF(0), 9)];
     let reloads: [(Place, Register); 0] = [];
     let direct = facts(4, 2);
     let chain = plan_call(&plan(Some(&direct), &spills, &reloads)).expect("a plan");
-    assert_eq!(chain.parts.len(), 4, "the kept spill, the direct row, the refusal spill, the helper row");
-    assert_eq!(chain.parts[1].taken, Some(4), "completion skips the refusal spill and the helper row");
-    assert_eq!(chain.parts[2].holes[0], slot(SHAPE.window), "the refusal spill is the window argument's");
+    assert_eq!(chain.parts.len(), 4, "both spills, the direct row, the helper row");
+    assert_eq!(chain.parts[0].holes[0], slot(SHAPE.window), "the argument's spill runs before the direct row");
+    assert_eq!(chain.parts[2].taken, Some(4), "completion skips the helper row");
     let record = chain.records.into_iter().next().expect("the direct row's record");
     assert_eq!(record.argument_places, [Place::Pin(1).code(), Place::Mem.code()]);
 }

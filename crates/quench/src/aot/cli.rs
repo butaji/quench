@@ -280,20 +280,15 @@ fn compile(options: Options) -> Result<(), String> {
         None => {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().map_err(|error| format!("automatic support build requires the compiler checkout: {error}; use --sdk-report with existing support artifacts"))?;
             // The `experiment` profile takes nightly flags, as the standard build does (`RUSTC_BOOTSTRAP`).
+            // A dynamic-source image links the standard build's library (`cargo build -p quench`, default
+            // features), which that build left fresh: this cargo run only reports it. A static image's
+            // support leaves out the JIT and the bundled sources, a build of its own.
             let mut cargo = Command::new("cargo");
-            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args([
-                "build",
-                "--locked",
-                "--profile",
-                &options.profile,
-                "-p",
-                "quench",
-                "--no-default-features",
-                "--features",
-                if support.allows_dynamic_source() { "native-execution,jit" } else { "native-execution" },
-                "--lib",
-                "--message-format=json",
-            ]);
+            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args(["build", "--locked", "--profile", &options.profile, "-p", "quench"]);
+            if !support.allows_dynamic_source() {
+                cargo.args(["--no-default-features", "--features", "native-execution"]);
+            }
+            cargo.args(["--lib", "--message-format=json"]);
             String::from_utf8(quench_runtime::native_link::checked_output(
                 &mut cargo,
                 "native execution support build",

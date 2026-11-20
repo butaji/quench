@@ -202,7 +202,7 @@ pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl 
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
     materialize_running_leaf_in_lane(cx);
-    let Some(frame) = vm.lane_stack.top_native() else { return helper() };
+    let Some(frame) = vm.lane_stack.top_native() else { return in_innermost_body(cx, helper) };
     let owner = CallerState::of_context(cx);
     // Native frames are records on top of the records: a record index.
     let depth = vm.lane_stack.record_count();
@@ -213,6 +213,35 @@ pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl 
         retire_header_bodies(cx);
         vm.lane_stack.records_mut().retire_bodies(depth);
     } else if status != LANE_CALL_TERMINATED {
+        owner.install(cx);
+    }
+    status
+}
+
+/// `helper` with the context of the b-jit body a direct call row entered, where the innermost activation is its
+/// plain header (`BODY_FLAG`, `protocol::push_body_header`): the row pushes the window and header but leaves the
+/// context the caller's, so a step the body's helper makes would read and write the caller's registers at the
+/// caller's records (a callee's `return p === 0` wrote the caller's loop counter). The callee runs in its caller's
+/// program, whose lane view of its function gives its records. Elsewhere `helper` as it is.
+#[inline(always)]
+fn in_innermost_body<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
+    let vm = unsafe { vm(cx) };
+    let stack = &vm.lane_stack;
+    if stack.plain.depth.get() == 0 { return helper(); }
+    let window = Registers(stack.plain.registers.get());
+    let packed = header_packed(window);
+    if packed & crate::staged::frame::BODY_FLAG == 0 || packed & crate::staged::frame::NATIVE_FLAG != 0 { return helper(); }
+    // SAFETY: the running lane's context, which nothing else accesses.
+    let (registers, program) = unsafe { ((*cx).registers, (*cx).program) };
+    if registers.0 == window.0 { return helper(); }
+    let function = packed as u32 as usize;
+    let Some(view) = vm.programs.made_lane_views(program).and_then(|views| views.get(function)).and_then(super::super::program_store::derived_lane_view) else {
+        return helper();
+    };
+    let owner = CallerState::of_context(cx);
+    CallerState { registers: window, base: view.records(), program }.install(cx);
+    let status = helper();
+    if status != LANE_CALL_LEFT && status != LANE_CALL_TERMINATED {
         owner.install(cx);
     }
     status

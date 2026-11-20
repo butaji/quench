@@ -65,8 +65,9 @@ pub(crate) enum HeapValueRecipe {
     Intrinsic(u32),
     /// The value of the global binding named by image atom `atom` once the realm is initialized.
     Global(u32),
-    /// The program constant in pool slot `slot` (`FrozenAssumptions::constants`).
-    Constant(u32),
+    /// A string whose text is image atom `atom`: a string constant a lane body loads, allocated
+    /// once by the loader (its code roots it), as a frozen image materializes its constant block.
+    String(u32),
     /// The `prototype` object of function `function`'s closure in the root activation.
     PrototypeOf(u32),
     /// Function `function`'s closure, where the running program made exactly one: the callee a
@@ -146,6 +147,15 @@ impl SymbolTable {
             Symbol::CallRecord { function, pc } => (CALL_RECORD_NAMESPACE, self.calls.key((function, pc))),
             other => (other.namespace(), other.key()),
         }
+    }
+
+    /// The image atom of `text`: a program atom with that text, or a text added past them.
+    pub(crate) fn text_atom(&mut self, text: &str) -> u32 {
+        let at = self.atoms.iter().position(|atom| &**atom == text).unwrap_or_else(|| {
+            self.atoms.push(text.into());
+            self.atoms.len() - 1
+        });
+        at as u32
     }
 
     pub(crate) fn heap_value(&mut self, recipe: HeapValueRecipe) -> Symbol {
@@ -248,7 +258,10 @@ fn heap_value<H: Host>(image: &AotImage, vm: &mut Vm<H>, key: u32) -> Option<Val
         }
         HeapValueRecipe::PrototypeOf(function) => prototype_of(vm, function),
         HeapValueRecipe::ClosureOf(function) => closure_of(vm, function),
-        HeapValueRecipe::Constant(_) => None,
+        HeapValueRecipe::String(atom) => {
+            let text = image.atoms.get(atom as usize)?;
+            Some(vm.heap.alloc_string(crate::vm::wtf16::JsString::from_str(text)))
+        }
     }
 }
 

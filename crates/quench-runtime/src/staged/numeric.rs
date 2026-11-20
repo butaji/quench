@@ -327,7 +327,8 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     let int_tag = super::value::is_int(stage, tagged);
     let double_tag = super::value::is_double(stage, tagged);
     let number_tag = stage.either(int_tag, double_tag);
-    let number = stage.select(int_tag, from_int, tagged);
+    let double = stage.f64_from_bits(tagged);
+    let number = stage.select(int_tag, from_int, double);
     let truncated = stage.float_unary(super::math::FloatUnary::Trunc, number);
     let exact = stage.relation(NumberRelation::Equal, Domain::Float64, truncated, number);
     let lowest = stage.f64_constant(f64::from(i32::MIN));
