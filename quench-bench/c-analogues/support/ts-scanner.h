@@ -83,7 +83,7 @@ typedef struct { const char *name; int kind; } TsKeywordEntry;
 static const TsKeywordEntry ts_keywords[] = {
   {"abstract",128},{"accessor",129},{"any",133},{"as",130},{"asserts",131},{"assert",132},{"bigint",163},
   {"boolean",136},{"break",83},{"case",84},{"catch",85},{"class",86},{"continue",88},{"const",87},
-  {"debugger",89},{"declare",138},{"default",90},{"defer",166},{"delete",91},{"do",92},{"else",93},
+  {"constructor",137},{"debugger",89},{"declare",138},{"default",90},{"defer",166},{"delete",91},{"do",92},{"else",93},
   {"enum",94},{"export",95},{"extends",96},{"false",97},{"finally",98},{"for",99},{"from",161},
   {"function",100},{"get",139},{"if",101},{"implements",119},{"import",102},{"in",103},{"infer",140},
   {"instanceof",104},{"interface",120},{"intrinsic",141},{"is",142},{"keyof",143},{"let",121},

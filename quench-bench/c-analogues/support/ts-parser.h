@@ -3160,8 +3160,7 @@ static TsNode *parseTypeAliasDeclaration(int pos, bool hasJSDoc, TsList *modifie
   TsNode *name = parseIdentifier();
   TsList *typeParameters = parseTypeParameters();
   parseExpected(TSK_EqualsToken);
-  TsNode *type = NULL;
-  if (token() == TSK_UnknownKeyword) type = (TsNode *)tryParse(cb_parseKeywordAndNoDot);
+  TsNode *type = token() == TSK_IntrinsicKeyword ? (TsNode *)tryParse(cb_parseKeywordAndNoDot) : NULL;
   if (!type) type = parseType();
   parseSemicolon();
   TsNode *node = newNode(TSK_TypeAliasDeclaration);
