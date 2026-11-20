@@ -3293,6 +3293,37 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
+    /// value) whose accumulator field is `ACC`: `generated_row`'s row with the operator a parameter of the
+    /// instantiation rather than a field the row decodes and dispatches on. Where `INT32` (an operand is an
+    /// int32 constant) the operation is `numeric::int32_binary_operation`'s, else `numeric::binary_operation`'s,
+    /// over the record's own operands. Any step but a value hands the record to its generated row for good
+    /// (`requicken`), which decides every operand pair.
+    pub(super) fn operator_row<OP: u16, ACC: u8, OPERATOR: u8, INT32: bool>(cx, r, ip, i, view) {
+        let generic: Handler = generated_row!(H, OP, ACC, FLAG_UNREAD);
+        let (left, right) = (Operand(i.b), Operand(i.c));
+        let number = if INT32 {
+            crate::staged::numeric::int32_binary_operation(OPERATOR as u32, i.a, left, right)
+        } else {
+            crate::staged::numeric::binary_operation(OPERATOR as u32, i.a, left, right)
+        };
+        let Some(number) = number else {
+            requicken::<H>(ip, generic);
+            sibling!(generic, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<H, OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
+        match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
+            Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
+            Step::Control(_) | Step::Unresolved => {
+                requicken::<H>(ip, generic);
+                sibling!(generic, r, ip, view)
+            }
+        }
+    }
+}
+
 /// Whether `handler` is opcode `OP`'s plain row in any direction: its value row with no
 /// accumulator field, or its jump row.
 pub(in crate::vm::dispatch_fast) fn plain_row<H: Host, const OP: u16>(handler: *const ()) -> bool {

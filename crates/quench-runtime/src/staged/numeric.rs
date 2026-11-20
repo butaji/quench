@@ -578,6 +578,7 @@ pub(crate) fn binary_operation(operator: u32, destination: Register, left: Opera
 /// zero divisor and a negative zero. A division has no int32 result, and the other operators are
 /// `binary_operation`'s own.
 #[cfg(not(stencil_build))]
+#[inline(always)]
 pub(crate) fn int32_binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
     let int32 = match NumberArithmetic::from_operator(operator) {
         Some(NumberArithmetic::Divide) => None,
