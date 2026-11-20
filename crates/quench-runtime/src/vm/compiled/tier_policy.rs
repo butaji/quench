@@ -448,7 +448,10 @@ pub(in crate::vm) struct PolicyTiers {
 
 /// One row per memory policy, in `MemoryPolicy` order.
 const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
-    PolicyTiers { loop_tier: true, js_function_tiers: true },
+    // AArch64's function tier miscompiles a loop whose body calls a function that steps out
+    // (`typeof` in a callee adds iterations in the default mode; `--u-jit`, `--no-jit` and
+    // memory-first are exact). Loop regions still run; the tier returns when that is fixed.
+    PolicyTiers { loop_tier: true, js_function_tiers: cfg!(not(target_arch = "aarch64")) },
     PolicyTiers { loop_tier: false, js_function_tiers: false },
 ];
 
