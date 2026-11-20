@@ -599,9 +599,28 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     pub(super) fn property_attributes(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
-        if let Some(data) = self.object_data(object)
-            && let Some(slot) = self.property_shape_slot(data.shape(), key)
-            && let Some(attributes) = self.slot_attributes(data, slot)
+        let slot = self.object_data(object).and_then(|data| self.property_shape_slot(data.shape(), key));
+        self.property_attributes_at(object, key, slot)
+    }
+
+    /// `object`'s own shape slot for `atom`: the slot `property_attributes` and `own_property`
+    /// both resolve from its shape. A caller that reads both resolves it once and passes it to
+    /// `property_attributes_at` and `own_property_at`.
+    #[inline(always)]
+    pub(super) fn own_shape_slot(&self, object: Value, atom: Atom) -> Option<usize> {
+        self.object_data(object).and_then(|data| self.shape_slot(data.shape(), atom))
+    }
+
+    /// `property_attributes` of `key` on `object` given its shape `slot` (`own_shape_slot`).
+    #[inline(always)]
+    pub(super) fn property_attributes_at(
+        &self,
+        object: Value,
+        key: PropertyKey,
+        slot: Option<usize>,
+    ) -> Option<PropertyAttributes> {
+        if let Some(slot) = slot
+            && let Some(attributes) = self.object_data(object).and_then(|data| self.slot_attributes(data, slot))
         {
             return Some(attributes);
         }
@@ -1409,6 +1428,19 @@ impl<H: Host> Vm<H> {
         let object = self.object_data(object)?;
         let slot = self.shape_slot(object.shape(), atom)?;
         self.slot_data_value(object, slot)
+    }
+
+    /// `own_property` of `atom` on `object` given its shape `slot` (`own_shape_slot`), so a walk
+    /// that already resolved the slot does not resolve it again. An array's length is answered
+    /// before the shape, as in `own_property`.
+    pub(super) fn own_property_at(&self, object: Value, atom: Atom, slot: Option<usize>) -> Option<Value> {
+        if atom == self.length_atom
+            && let Some(length) = self.own_array_length(object)
+        {
+            return Some(Value::length(length));
+        }
+        let object = self.object_data(object)?;
+        self.slot_data_value(object, slot?)
     }
     /// The target and handler of a Proxy, copied out so callers need not clone its cell.
     pub(super) fn proxy_parts(&self, value: Value) -> Option<(Value, Value)> {
@@ -2880,8 +2912,9 @@ impl<H: Host> Vm<H> {
         set.get(receiver, NO_FIELD_HOLDER).map(|entry| entry.slot)
     }
 
-    /// `get_field_cached` past the inline own-data hits: hashed megamorphic and
-    /// prototype-holder hits, then the uncached path. The receiver is an ordinary object.
+    /// `get_field_cached`'s miss path past `cached_field_hit`, which already probed the
+    /// receiver's own entries and its ordinary holder entry: only the megamorphic
+    /// prototype-holder probe remains, then the uncached path. The receiver is an ordinary object.
     #[inline(never)]
     fn get_field_polymorphic(
         &mut self,
@@ -2895,10 +2928,7 @@ impl<H: Host> Vm<H> {
         if let Some(receiver) =
             heap_reference.and_then(|reference| self.heap.record_object(reference))
         {
-            if let Some(hit) = self
-                .cached_field_value(index, receiver)
-                .or_else(|| self.cached_holder_field_value(index, receiver, atom))
-            {
+            if let Some(hit) = self.cached_holder_field_value(index, receiver, atom) {
                 self.profile
                     .field_cache_hit(usize::from(hit.tier), hit.depth);
                 return Ok(hit.value);
@@ -4096,9 +4126,10 @@ impl<H: Host> Vm<H> {
             {
                 self.own_index_attributes(current, index as usize, Some(atom))
             } else {
-                self.property_attributes(current, PropertyKey::string(atom))
+                let own_slot = self.own_shape_slot(current, atom);
+                self.property_attributes_at(current, PropertyKey::string(atom), own_slot)
                     .filter(|attributes| {
-                        self.own_property(current, atom).is_some() || attributes.accessor
+                        attributes.accessor || self.own_property_at(current, atom, own_slot).is_some()
                     })
             };
             if let Some(attributes) = held {
@@ -4405,10 +4436,13 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
-        if self.cached_field_store_hit(p, object, atom, value, site) {
+        // A method cache naming `atom` declines the own-store probes before running them, so
+        // only then is the store half still owed to the polymorphic path.
+        let store_owed = self.method_caches_may_name(atom);
+        if !store_owed && self.cached_own_store_hit(p, object, value, site) {
             return Ok(());
         }
-        self.set_field_polymorphic(p, object, atom, value, site, strict)
+        self.set_field_polymorphic(p, object, atom, value, site, strict, store_owed)
     }
 
     /// Stores `value` when it is an own-data store hit that no method cache can observe,
@@ -4423,7 +4457,14 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> bool {
-        if !(self.specialized && p.specialized) || self.method_caches_may_name(atom) {
+        !self.method_caches_may_name(atom) && self.cached_own_store_hit(p, object, value, site)
+    }
+
+    /// The own-store probes of `cached_field_store_hit` past its method-cache guard: the
+    /// site's primary entry, then its megamorphic own slot, inline or hashed.
+    #[inline(always)]
+    fn cached_own_store_hit(&mut self, p: &ResidualProgram, object: Value, value: Value, site: u16) -> bool {
+        if !(self.specialized && p.specialized) {
             return false;
         }
         let Some(data) = self.heap.object(object) else {
@@ -4578,7 +4619,8 @@ impl<H: Host> Vm<H> {
         self.try_cached_field_add(object, atom, shape, link, value, site)
     }
 
-    /// `set_field_cached` past the inline own-data store hits.
+    /// `set_field_cached` past the inline own-data store hits. `store_owed` is false when those
+    /// own-store probes already missed, so only the add half of the cache can still hit.
     #[inline(never)]
     fn set_field_polymorphic(
         &mut self,
@@ -4588,9 +4630,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
         strict: bool,
+        store_owed: bool,
     ) -> Result<(), JsError> {
         // Only an ordinary object reaches the shape cache: a nullish base falls through to the uncached path's TypeError.
-        if self.set_field_cache_hit(p, object, atom, value, site) {
+        if self.set_field_cache_hit(p, object, atom, value, site, store_owed) {
             return Ok(());
         }
         if self.is_typed_array_element(object, atom) { return self.set_property_with_program_mode(p, object, atom, value, strict); }
@@ -5124,7 +5167,8 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     /// Store through the field cache when it covers the write: a plain data
     /// object whose shape hits the site. Strictness only shapes failures, so
-    /// a hit is the same store either way; a miss changes nothing.
+    /// a hit is the same store either way; a miss changes nothing. `store_owed` is false when
+    /// `cached_own_store_hit` already probed the store half and missed, leaving the add half.
     pub(super) fn set_field_cache_hit(
         &mut self,
         p: &ResidualProgram,
@@ -5132,6 +5176,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        store_owed: bool,
     ) -> bool {
         if !(self.specialized && p.specialized) || self.is_private_name(atom) {
             return false;
@@ -5144,7 +5189,7 @@ impl<H: Host> Vm<H> {
         }
         let site = self.field_cache_index(site);
         let (shape, link, extensible) = (data.shape(), data.proto_link(), data.is_extensible());
-        self.try_cached_field_store(object, atom, shape, value, site)
+        (store_owed && self.try_cached_field_store(object, atom, shape, value, site))
             || (extensible
                 && self.field_cache_atom_eligible(atom)
                 && self.try_cached_field_add(object, atom, shape, link, value, site))
