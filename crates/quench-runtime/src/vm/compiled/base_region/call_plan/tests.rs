@@ -102,8 +102,10 @@ fn a_sloppy_callee_takes_the_sloppy_row_with_its_global() {
     let sloppy = DirectFacts { global_this: Some(0xabc), ..facts(4, 2) };
     let chain = plan_call(&plan(Some(&sloppy), &[], &[])).expect("a plan");
     assert_eq!(chain.records.into_iter().next().expect("a record").global_this, 0xabc);
-    let name = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }.name().expect("a row");
-    assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }).expect(&name)));
+    let row = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true, pinned: false };
+    let name = row.name().expect("a row");
+    assert_eq!(name, "call_direct_a2_sloppy_window", "every argument is in the window");
+    assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(row).expect(&name)));
 }
 
 /// A pinned argument dead after the call is read from its pin by the direct row (its place in the record), and its
