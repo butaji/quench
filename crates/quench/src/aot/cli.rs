@@ -297,6 +297,7 @@ fn compile(options: Options) -> Result<(), String> {
         }
     };
     let support = NativeSupport::from_cargo_report_with_support(&support_report, support)?;
+    support.check_build()?;
     report["support_artifacts"] = support.report();
     let driver = work.0.join("driver.rs");
     fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;

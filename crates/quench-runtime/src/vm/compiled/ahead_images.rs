@@ -14,6 +14,26 @@ use crate::vm::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self
 /// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
 pub(crate) const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
 
+/// The text that names the build in a library's bytes, followed by `QUENCH_BUILD_ID` in 16 hex
+/// digits (`AHEAD_BUILD_ID_MARK`).
+pub(crate) const AHEAD_BUILD_ID_PREFIX: &[u8; 16] = b"QUENCH_BUILD_ID=";
+
+/// `AHEAD_BUILD_ID_PREFIX` and the build ID, kept in every object of this crate's library so
+/// `quench compile` can read which build a runtime library is before it links an image against
+/// it (`native_link::NativeSupport::check_build`): an image only runs on its own build.
+#[used]
+pub(crate) static AHEAD_BUILD_ID_MARK: [u8; 32] = {
+    let id = env!("QUENCH_BUILD_ID").as_bytes();
+    let mut mark = [0u8; 32];
+    let mut at = 0;
+    while at < 16 {
+        mark[at] = AHEAD_BUILD_ID_PREFIX[at];
+        mark[16 + at] = id[at];
+        at += 1;
+    }
+    mark
+};
+
 /// What names a program: a hash of its source text and every function's registers and opcodes
 /// (atom numbers are per VM, so no operand), which an image is valid for and no other (plus the helper count the code was linked against; it is a validity key, never a reason to treat a program specially).
 pub(crate) fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {

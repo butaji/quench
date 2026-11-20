@@ -17,6 +17,8 @@ impl NativeSupport {
         native_link::NativeSupport::from_cargo_report(report, "quench", support)
             .map(|support| Self(support.with_executable_link_args(EXECUTABLE_LINK_ARGS)))
     }
+    /// Fails unless the support's runtime library is this compiler's own build (`native_link::NativeSupport::check_build`).
+    pub fn check_build(&self) -> Result<(), String> { self.0.check_build() }
     pub fn report(&self) -> serde_json::Value {
         let mut report = self.0.report();
         let host = report.as_object_mut().unwrap().remove("host_library").unwrap();
