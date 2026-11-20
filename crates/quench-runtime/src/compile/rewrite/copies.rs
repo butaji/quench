@@ -45,8 +45,10 @@ pub(super) fn forward_move_sources(
         if rewritten_readers.contains(pc) {
             continue;
         }
-        let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
-        let definitions = |instruction: Instr| liveness::definitions(instruction.as_wide(), superinstructions);
+        // A wide record's fields are its wide entry's: its packed word is only the index.
+        let widened = |instruction: Instr| if instruction.is_wide() { function.wide[instruction.wide_index()] } else { instruction.as_wide() };
+        let uses = |instruction: Instr| liveness::uses(widened(instruction), methods, field_sites, superinstructions);
+        let definitions = |instruction: Instr| liveness::definitions(widened(instruction), superinstructions);
         let Some(forwarding) = scan_move(function, &analysis, &scope, pc, (&uses, &definitions), &mut readers) else {
             continue;
         };
