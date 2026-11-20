@@ -10322,7 +10322,12 @@ impl<H: Host> Vm<H> {
         // Once native headers are enabled, emitted pushes keep body_top equal to the total count between bindings.
         debug_assert!(!native_frames_enabled() || stack.body_top.get() == stack.activation_count(), "body_top names the total frame count at binding");
         stack.body_top.set(stack.activation_count());
-        stack.plain_depth_limit.set(if native_frames_enabled() { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
+        // A binding that admits no direct-call frames admits no native headers either: a run with a
+        // pending activation (a cell body entered as the context's leaf, `enter_cell_body_in_lane`)
+        // has its caller still unmaterialized, and a header pushed over it would end above the
+        // activation the leaf becomes, with a stale caller (earley-boyer under --u-jit). Its calls
+        // take the helper row, which materializes the leaf first (`native_frames::in_innermost_frame`).
+        stack.plain_depth_limit.set(if native_frames_enabled() && frames != 0 { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
         words
     }
 
