@@ -31,11 +31,11 @@ pub(crate) const FUNCTION: u16 = language_bit(ValueType::Function);
 /// family test decides it. The u-jit also takes any other string by the VM's `typeof` on a slow path,
 /// which no string needs today.
 pub(crate) const STRING: u16 = language_bit(ValueType::String);
-/// A direct array word (`DIRECT_ARRAY_TAG`): one tag test in the b-jit. The u-jit has no `Type` for
-/// an array, so an array set gets no u-jit entry check.
+/// A direct array word (`DIRECT_ARRAY_TAG`): one tag test in both tiers. The u-jit names it as the
+/// language bit `Type::languages(ARRAY)`, which no `ValueType` names (the bit sits past them).
 pub(crate) const ARRAY: u16 = crate::staged::value::language::ARRAY;
-/// A plain direct object word (`DIRECT_OBJECT_TAG`): one tag test in the b-jit. The u-jit has no
-/// `Type` for a plain object, so a plain-object set gets no u-jit entry check.
+/// A plain direct object word (`DIRECT_OBJECT_TAG`): one tag test in both tiers. The u-jit names it as
+/// `Type::languages(OBJECT_PLAIN)`, past `ValueType`'s bits like `ARRAY`.
 pub(crate) const OBJECT_PLAIN: u16 = crate::staged::value::language::OBJECT_PLAIN;
 
 /// The one set of declared language types a tier checks at entry: the union of every member some
@@ -43,9 +43,9 @@ pub(crate) const OBJECT_PLAIN: u16 = crate::staged::value::language::OBJECT_PLAI
 pub(crate) const DECLARED_CHECKED: u16 = NUMBER | BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING | ARRAY | OBJECT_PLAIN;
 
 /// The members of `DECLARED_CHECKED` the u-jit's entry conformance (`lane_region.rs`, `conform_language`)
-/// tests exactly: the immediates, the direct object and function families, and a string. A Number is
-/// not in it: the u-jit proves a Number set through its own exact Number path, not a tag test.
-pub(crate) const LANE_TESTED: u16 = BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING;
+/// tests exactly: the immediates, the direct object, array, plain and function families, and a string. A
+/// Number is not in it: the u-jit proves a Number set through its own exact Number path, not a tag test.
+pub(crate) const LANE_TESTED: u16 = BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING | ARRAY | OBJECT_PLAIN;
 
 /// The members of `DECLARED_CHECKED` the b-jit's entry test decides with a tag (`Heap::Declared`,
 /// `staged::value::tag_languages`): a Number, the immediates, the direct object, array, plain, function
@@ -63,9 +63,9 @@ pub(crate) enum EntryCheck {
     Number,
     /// A string: a direct string by its tag (both tiers); the u-jit takes any other by the VM's `typeof`.
     String,
-    /// A direct array word (the b-jit only).
+    /// A direct array word.
     Array,
-    /// A plain direct object word (the b-jit only).
+    /// A plain direct object word.
     PlainObject,
     /// Any other set of `DECLARED_CHECKED` members: one test of the set, which each tier admits by its mask.
     Languages(u16),

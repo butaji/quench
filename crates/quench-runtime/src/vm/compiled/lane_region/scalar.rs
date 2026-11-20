@@ -22,7 +22,7 @@ use crate::staged::{Access, GlobalBinding, Operation, Region, Stage};
 use crate::staged::machine::{Lane, MachineAccess, MachineScalar, Relation, Unary};
 use crate::vm::global_facts::GlobalRead;
 use super::super::object_slots::emit;
-use super::super::declared_checks::{self, EntryCheck, LANE_TESTED, STRING};
+use super::super::declared_checks::{self, ARRAY, EntryCheck, LANE_TESTED, OBJECT_PLAIN, STRING};
 
 /// The alias region of the function's entry cell, which a scalar call reads its entry from.
 const CELL: Access = Region::EntryCell.mutable();
@@ -208,22 +208,22 @@ fn is_parameter(function: &crate::bytecode::Function, register: Register) -> boo
 }
 
 /// Whether the non-empty language set `bits` is one entry conformance tests exactly (`conform_language`):
-/// the members of `LANE_TESTED`, a Boolean, `undefined`, `null`, a direct object or function, and a string.
-/// A set with a Number, BigInt, Symbol, array or plain object is not checkable here.
+/// the members of `LANE_TESTED`: a Boolean, `undefined`, `null`, a direct object, array, plain object or
+/// function, and a string. A set with a Number, BigInt or Symbol is not checkable here.
 pub(super) fn checkable(bits: u16) -> bool {
     bits != 0 && bits & !LANE_TESTED == 0
 }
 
 /// The u-jit's entry test of a declared parameter's check, as the language fact it proves
-/// (`conform_language`); None where this tier emits no test yet.
+/// (`conform_language`); None where this tier emits no test for it.
 fn lane_check(check: EntryCheck) -> Option<Type> {
     match check {
         EntryCheck::Number => Some(Type::NUMBER),
         EntryCheck::String => Some(Type::languages(STRING)),
+        EntryCheck::Array => Some(Type::languages(ARRAY)),
+        EntryCheck::PlainObject => Some(Type::languages(OBJECT_PLAIN)),
         EntryCheck::Languages(bits) if checkable(bits) => Some(Type::languages(bits)),
         EntryCheck::Languages(_) => None,
-        // not emitted by this tier yet: the u-jit has no `Type` for an array or a plain object
-        EntryCheck::Array | EntryCheck::PlainObject => None,
     }
 }
 

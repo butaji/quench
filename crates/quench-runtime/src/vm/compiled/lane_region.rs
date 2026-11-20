@@ -1157,16 +1157,20 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// A language fact of the target the edge has not proved, when `ty` is exactly a set
     /// `scalar::checkable` names: one guard that the register holds a member, then the set as its
     /// fact. A String member is proved by its direct tag, and any other string by the VM's `typeof`
-    /// helper on a slow path only. A Number, BigInt or Symbol set is not tested here and leaves to `proves`.
+    /// helper on a slow path only. An array or plain object member (`ARRAY`, `OBJECT_PLAIN`, bits no
+    /// `ValueType` names) is proved by its family tag alone. A Number, BigInt or Symbol set is not tested here and leaves to `proves`.
     fn conform_language(&mut self, state: &mut State, target: usize, register: Register, ty: Type) {
         use crate::ValueType::{Boolean, Function, Null, Object, String as Text, Undefined};
         use crate::staged::Stage;
         use crate::typed_ir::Languages;
-        use crate::staged::value::{is_boolean, is_direct_function, is_direct_object, is_direct_string, is_null, is_undefined};
+        use crate::staged::value::{is_boolean, is_direct_array, is_direct_function, is_direct_object, is_direct_string, is_null, is_undefined};
+        use super::declared_checks::{ARRAY, OBJECT_PLAIN};
         let index = usize::from(register);
         let kinds = [Boolean, Undefined, Null, Object, Function, Text];
+        let families = [ARRAY, OBJECT_PLAIN];
         let bits = kinds.into_iter().filter(|kind| Type::language(*kind).is_subtype(ty))
-            .fold(Languages::EMPTY, |set, kind| set | Languages::of(kind)).bits();
+            .fold(Languages::EMPTY, |set, kind| set | Languages::of(kind)).bits()
+            | families.into_iter().filter(|family| Type::languages(*family).is_subtype(ty)).fold(0u16, |set, family| set | family);
         if !scalar::checkable(bits) || Type::languages(bits) != ty || state.values[index].value.ty.is_subtype(ty) { return; }
         let value = self.tagged(state, register);
         let exit = self.guard_exit(state, target as u32);
@@ -1184,6 +1188,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
                     // Not in `kinds`: no exact one-word test.
                     _ => continue,
                 };
+                member = Some(match member { Some(any) => stage.any(any, test), None => test });
+            }
+            // A plain object is the plain family's tag, as `Object` is above; an array is the array tag.
+            for family in families.into_iter().filter(|family| bits & *family != 0) {
+                let test = if family == ARRAY { is_direct_array(stage, value) } else { is_direct_object(stage, value) };
                 member = Some(match member { Some(any) => stage.any(any, test), None => test });
             }
             member
