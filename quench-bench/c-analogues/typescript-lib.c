@@ -32,6 +32,7 @@
 #include "support/ts-binder.h"
 #include "support/ts-binder-expected.h"
 #include "support/ts-checker.h"
+#include "support/ts-checker-names.h"
 #include "support/ts-checker-expected.h"
 
 #define FAIL(...)                  \
@@ -233,45 +234,48 @@ static int parseProgram(int verify, long *sumNodes, long *sumIdents, long *sumSy
 /* ---- checker run: initializeTypeChecker, then the diagnostics of getPreEmitDiagnostics ---- */
 static long checkerSymbolCount;
 
-static int cmpDiagOrder(const void *pa, const void *pb) {
-  const CDiag *a = pa, *b = pb;
-  if (a->file != b->file) {
-    if (!a->file) return -1;
-    if (!b->file) return 1;
-    int c = strcmp(a->file->fileName, b->file->fileName);
-    if (c) return c;
-  }
-  if (a->start != b->start) return a->start < b->start ? -1 : 1;
-  return a->code < b->code ? -1 : a->code > b->code;
-}
-
-/* Compares the diagnostics with node's list (sorted as getPreEmitDiagnostics sorts them). */
+/* Matches the produced diagnostics with node's list by file, line, column and code. */
 static int compareDiagnostics(int verbose) {
-  qsort(cDiags, (size_t)cDiagCount, sizeof(CDiag), cmpDiagOrder);
-  int mismatch = 0, matched = 0;
-  for (int i = 0; i < EXPECTED_DIAG_COUNT || i < cDiagCount; i++) {
-    const ExpectedDiag *e = i < EXPECTED_DIAG_COUNT ? &expectedDiags[i] : NULL;
-    const CDiag *d = i < cDiagCount ? &cDiags[i] : NULL;
-    int line = 0, col = 0;
-    if (d && d->file) cLineCol(d->file, d->start, &line, &col);
-    bool same = e && d && d->code == e->code && line == e->line && col == e->column &&
-                ((e->file == NULL && d->file == NULL) || (e->file && d->file && strcmp(e->file, d->file->fileName) == 0));
-    if (same) { matched++; continue; }
-    mismatch++;
-    if (verbose)
-      printf("DIAG MISMATCH #%d expected %s %d:%d %d, got %s %d:%d %d\n", i,
-             e ? (e->file ? e->file : "-") : "(none)", e ? e->line : 0, e ? e->column : 0, e ? e->code : 0,
-             d ? (d->file ? d->file->fileName : "-") : "(none)", line, col, d ? d->code : 0);
+  int n = cDiagCount;
+  bool *used = calloc((size_t)(n ? n : 1), sizeof(bool));
+  int *line = malloc(sizeof(int) * (size_t)(n ? n : 1)), *col = malloc(sizeof(int) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) {
+    line[i] = col[i] = 0;
+    if (cDiags[i].file) cLineCol(cDiags[i].file, cDiags[i].start, &line[i], &col[i]);
   }
-  if (verbose) printf("diagnostics matched %d of %d (produced %d)\n", matched, EXPECTED_DIAG_COUNT, cDiagCount);
-  return mismatch;
+  int matched = 0, missing = 0, extra = 0;
+  for (int e = 0; e < EXPECTED_DIAG_COUNT; e++) {
+    const ExpectedDiag *x = &expectedDiags[e];
+    int hit = -1;
+    for (int i = 0; i < n && hit < 0; i++) {
+      if (used[i] || cDiags[i].code != x->code || line[i] != x->line || col[i] != x->column) continue;
+      bool sameFile = (!x->file && !cDiags[i].file) || (x->file && cDiags[i].file && strcmp(x->file, cDiags[i].file->fileName) == 0);
+      if (sameFile) hit = i;
+    }
+    if (hit >= 0) { used[hit] = true; matched++; }
+    else {
+      missing++;
+      if (verbose) printf("MISSING %s %d:%d %d\n", x->file ? x->file : "-", x->line, x->column, x->code);
+    }
+  }
+  for (int i = 0; i < n; i++) {
+    if (used[i]) continue;
+    extra++;
+    if (verbose) printf("EXTRA %s %d:%d %d\n", cDiags[i].file ? cDiags[i].file->fileName : "-", line[i], col[i], cDiags[i].code);
+  }
+  if (verbose) printf("diagnostics matched %d of %d (produced %d, extra %d)\n", matched, EXPECTED_DIAG_COUNT, n, extra);
+  free(used); free(line); free(col);
+  return missing + extra;
 }
 
 static void runChecker(void) {
   cDiagCount = 0;
   cNDupPairs = 0;
+  cFiles = programFiles;
+  cFileCount = EXPECTED_PROGRAM_FILES;
   cInitializeGlobals(programFiles, EXPECTED_PROGRAM_FILES);
   cReportAmalgamatedDuplicates();
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkNames(programFiles[i]);
 }
 
 int main(int argc, char **argv) {

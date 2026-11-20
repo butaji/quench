@@ -109,6 +109,7 @@ static int cSymbolCount;            /* checker symbolCount: every createSymbol c
 static TsSymTable *cGlobals;        /* globals */
 static TsSymbol *cGlobalThisSymbol; /* globalThisSymbol */
 static TsSymbol *cUndefinedSymbol;  /* undefinedSymbol */
+static TsSymbol *cArgumentsSymbol;  /* argumentsSymbol */
 
 /* createSymbol (52194): a checker symbol is transient */
 static TsSymbol *cCreateSymbol(uint32_t flags, BName name) {
@@ -343,7 +344,7 @@ static void cCreateIntrinsicSymbols(void) {
   cGlobalThisSymbol->exports = cGlobals;
   cGlobalThisSymbol->ndecls = 0;
   bTableSet(cGlobals, cGlobalThisSymbol->name, cGlobalThisSymbol);
-  cCreateSymbol(SF_Property, bnC("arguments"));
+  cArgumentsSymbol = cCreateSymbol(SF_Property, bnC("arguments"));
   cCreateSymbol(SF_Property, bnC("require"));
   cCreateSymbol(SF_Property, bnC("unknown"));
   cCreateSymbol(0, bnC("__resolving__"));
