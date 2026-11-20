@@ -581,7 +581,7 @@ impl Heap {
             HeapReference::CollectionRecord(record_id) => {
                 &mut unsafe { collection_records.get_live_mut(record_id, properties) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) => {
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) | HeapReference::WasmGcRecord(_) => {
                 return None;
             }
             HeapReference::LegacySlot(index) => {
@@ -861,6 +861,7 @@ impl Heap {
             | HeapReference::V128Record(_)
             | HeapReference::EnvironmentRecord(_)
             | HeapReference::SymbolRecord(_)
+            | HeapReference::WasmGcRecord(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }

@@ -1665,7 +1665,7 @@ impl<H: Host> Vm<H> {
     /// Whether `value` is a Wasm GC object (a struct or array reference) in JavaScript: an
     /// exotic object with a null prototype and no properties, which every mutation refuses.
     pub(super) fn is_wasm_gc_object(&self, value: Value) -> bool {
-        matches!(self.heap.get(value), Some(Cell::WasmGc { .. }))
+        self.heap.wasm_gc(value).is_some()
     }
 
     /// The TypeError of a mutation of a Wasm GC object (V8: "WebAssembly objects are opaque").

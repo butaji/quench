@@ -417,6 +417,19 @@ impl<'heap> ParallelMarkView<'heap> {
                 self.note_marked_key(value, batch);
                 CellKind::Symbol
             }
+            // A Wasm GC object's payload holds the references it keeps: marking it pushes them.
+            HeapReference::WasmGcRecord(id) => {
+                if !self.wasm_gcs.occupied(id) {
+                    return;
+                }
+                // SAFETY: occupied, and no record is written or freed while the view lives.
+                let record = unsafe { self.wasm_gcs.get(id) };
+                if !self.wasm_gcs.mark_if_new(id) {
+                    return;
+                }
+                record.trace_children(work);
+                CellKind::WasmGc
+            }
             HeapReference::LegacySlot(index) => {
                 let index = index as usize;
                 let Some(cell) = self.cell(index) else {

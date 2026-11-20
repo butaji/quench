@@ -73,7 +73,7 @@ impl<H: Host> Vm<H> {
             let bits = self.wasm_stored_bits(field, value);
             stored.put(layout, position, field, bits);
         }
-        Ok(self.heap.alloc(Cell::WasmGc { declarations: declarations.clone(), ty: index, fields: stored }))
+        Ok(self.heap.alloc_wasm_gc(crate::heap::WasmGcRecord::new(declarations.clone(), index, stored)))
     }
 
     fn check_wasm_struct_descriptor(
@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
             return Ok(target.reference_type().unwrap().is_nullable());
         }
         Ok(
-            matches!(self.heap.get(reference), Some(Cell::WasmGc { fields, .. }) if fields.descriptor() == Some(descriptor)),
+            matches!(self.heap.wasm_gc(reference), Some(record) if record.fields().descriptor() == Some(descriptor)),
         )
     }
 
@@ -142,8 +142,8 @@ impl<H: Host> Vm<H> {
                 "invalid Wasm described struct reference".into(),
             ));
         }
-        match self.heap.get(reference) {
-            Some(Cell::WasmGc { fields, .. }) if let Some(descriptor) = fields.descriptor() => {
+        match self.heap.wasm_gc(reference) {
+            Some(record) if let Some(descriptor) = record.fields().descriptor() => {
                 Ok(descriptor)
             }
             _ => Err(JsError::validation("Wasm struct has no descriptor".into())),
@@ -213,7 +213,7 @@ impl<H: Host> Vm<H> {
         let layout = declarations.layout(index).ok_or_else(|| JsError::validation("invalid Wasm array declaration".into()))?;
         let mut stored = crate::heap::WasmGcFields::new(layout, count, None).ok_or_else(wasm_array_too_large)?;
         self.wasm_array_elements(declarations, layout, field.element_type, initialization, &mut stored)?;
-        Ok(self.heap.alloc(Cell::WasmGc { declarations: declarations.clone(), ty: index, fields: stored }))
+        Ok(self.heap.alloc_wasm_gc(crate::heap::WasmGcRecord::new(declarations.clone(), index, stored)))
     }
 
     /// Stores the elements `initialization` gives in the new array `stored` of `layout`, whose
@@ -382,10 +382,12 @@ impl<H: Host> Vm<H> {
         for (index, destination) in output.enumerate() {
             let value = self.wasm_array_segment_value(&source, index);
             let bits = self.wasm_stored_bits(element, value);
-            let Some(Cell::WasmGc { declarations, ty, fields }) = self.heap.get_mut(reference) else {
+            let Some(record) = self.heap.wasm_gc_mut(reference) else {
                 unreachable!("validated live array")
             };
-            let layout = declarations.layout(*ty).expect("a validated array");
+            let Some((layout, fields)) = record.split_mut() else {
+                unreachable!("a validated array")
+            };
             fields.put(layout, destination, element, bits);
         }
         Ok(())
@@ -398,18 +400,12 @@ impl<H: Host> Vm<H> {
                 crate::WasmTrap::NullArrayReference,
             ));
         }
-        let Some(Cell::WasmGc {
-            declarations,
-            ty,
-            fields,
-            ..
-        }) = self.heap.get(reference)
-        else {
+        let Some(record) = self.heap.wasm_gc(reference) else {
             return Err(JsError::validation("invalid Wasm array reference".into()));
         };
         let invalid = || JsError::validation("invalid Wasm array reference".into());
-        let field = declarations.array_field(*ty).ok_or_else(invalid)?;
-        let layout = declarations.layout(*ty).ok_or_else(invalid)?;
-        Ok((field, fields.count(layout)))
+        let field = record.declarations().array_field(record.ty()).ok_or_else(invalid)?;
+        let layout = record.layout().ok_or_else(invalid)?;
+        Ok((field, record.fields().count(layout)))
     }
 }

@@ -456,7 +456,7 @@ impl<H: Host> Vm<H> {
         }
         match conversion {
             ExternalConversion::Internalize => {
-                if matches!(self.heap.get(value), Some(Cell::WasmGc { .. })) {
+                if self.heap.wasm_gc(value).is_some() {
                     return value;
                 }
                 // JS host numbers in the signed i31 range have the canonical immediate representation.
@@ -1323,18 +1323,13 @@ impl<H: Host> Vm<H> {
                 if value.is_null() {
                     return nullable;
                 }
-                let Some(Cell::WasmGc {
-                    declarations: owner,
-                    ty: index,
-                    ..
-                }) = self.heap.get(value)
-                else {
+                let Some(record) = self.heap.wasm_gc(value) else {
                     return false;
                 };
-                owner.reference_subtype(
+                record.declarations().reference_subtype(
                     wasmparser::RefType::new(
                         false,
-                        wasmparser::HeapType::Exact(wasmparser::UnpackedIndex::Module(*index)),
+                        wasmparser::HeapType::Exact(wasmparser::UnpackedIndex::Module(record.ty())),
                     )
                     .unwrap(),
                     target_owner,

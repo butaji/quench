@@ -3019,7 +3019,8 @@ impl<H: Host> Vm<H> {
                 | HeapReference::AwaitRecord(_)
                 | HeapReference::V128Record(_)
                 | HeapReference::EnvironmentRecord(_)
-                | HeapReference::SymbolRecord(_),
+                | HeapReference::SymbolRecord(_)
+                | HeapReference::WasmGcRecord(_),
             )
             | None => None,
         };

@@ -35,6 +35,9 @@ impl Heap {
         if self.v128_records.live_count() != 0 {
             return Err(SnapshotError::unsupported("a Wasm vector"));
         }
+        if self.wasm_gc_records.live_count() != 0 {
+            return Err(SnapshotError::unsupported("WebAssembly"));
+        }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.collection_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.environment_records, |writer, record| record.write_snapshot(writer))?;
@@ -178,6 +181,7 @@ impl Heap {
             + self.promise_records.live_count()
             + self.iterator_records.live_count()
             + self.symbol_records.live_count()
+            + self.wasm_gc_records.live_count()
             + self.collection_records.live_count()
             + self.string_records.live_count()
             + self.small_strings.live_count();
