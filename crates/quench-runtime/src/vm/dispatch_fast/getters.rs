@@ -26,7 +26,7 @@ pub(super) unsafe fn lane_getter_read<H: Host>(
     let getter = match vm.getter_entry_read(object, index) {
         GetterEntryRead::Answer(value, _) => return Some(Some(value)),
         GetterEntryRead::Call(getter) => getter,
-        GetterEntryRead::Miss => vm.cached_field_getter(object, atom, index)?,
+        GetterEntryRead::Miss => vm.cached_getter_after_miss(object, atom, index)?,
     };
     let Some(value) = (unsafe { lane_getter_answer(cx, getter, object) }) else {
         return Some(None);

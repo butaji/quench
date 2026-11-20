@@ -258,7 +258,7 @@ impl Lowered {
             return Self::Oversized;
         }
         let started = std::time::Instant::now();
-        let code = image::compile(native, lowered.scalar.take(), level);
+        let code = image::compile(native, lowered.scalar.take(), lowered.proven.take(), level);
         if let Some(census) = census {
             eprintln!("{}", Census { ir, ..census }.report(started.elapsed(), code.as_ref().map_or(0, |image| image.code.len())));
         }
@@ -287,6 +287,8 @@ struct TakenFacts {
     global_reads: crate::vm::global_facts::GlobalReads,
     frame_captures: Vec<(usize, usize)>,
     left_at: Vec<usize>,
+    /// Which direct callees had a summary to type their calls' results by (`DirectCallee::summary`), in `LanePlan::direct`'s order.
+    callee_summaries: Vec<bool>,
 }
 
 /// What a pending body's compile came to.
@@ -353,7 +355,7 @@ pub(in crate::vm) enum LaneBodyOutcome {
 
 use crate::vm::compiled::tier_policy::{REPLAN_BUDGET_DIVISOR, LANE_BACKTRACKING_MAX_INSTS};
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] mod ahead;
-use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
+use super::admission::{refuse, record, Refusal};
 use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
 /// The unit PCs a previous body left at, and whether it left at its entry. A leave at the first
@@ -392,17 +394,17 @@ impl<H: Host> Vm<H> {
     /// it inlines is admitted.
     fn plan_unit_in_lane(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
-        let body = program.function_get(function as usize)?;
+        let Some(body) = program.function_get(function as usize) else { refuse(self, Refusal::NoUnit); return None; };
         let valid = std::cell::Cell::new(true);
         let unit = lane_unit::with_trips(program, function, body, (budget, self.programs.tiers().lane_body.max_inlined_instructions),
             &|caller, pc| self.bindings_in_lane(program, function, generic, targets, &valid, caller, pc), trips,
-            &|callee| program.function_get(callee as usize)).or_else(|| { plan_miss(self, Miss::PlanNoUnit); None })?;
-        if !valid.get() { plan_miss(self, Miss::PlanInvalidBindings); return None; }
+            &|callee| program.function_get(callee as usize)).or_else(|| { refuse(self, Refusal::NoUnit); None })?;
+        if !valid.get() { refuse(self, Refusal::InvalidBindings); return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
             CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.inlined_target_admitted_in_lane(program, callee, frame.target.function),
             CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
                 && numeric_restartable(program, frame.target.function),
-        }).then_some(unit).or_else(|| { plan_miss(self, Miss::PlanFrameNotAdmitted); None })
+        }).then_some(unit).or_else(|| { refuse(self, Refusal::FrameNotAdmitted); None })
     }
 
     /// Plans `function`'s lane body at `budget`: its unit, proofs and lowering, and the
@@ -422,8 +424,8 @@ impl<H: Host> Vm<H> {
         let construct = |function: u32, pc: u32| self.construct_plan_of(targets, function, pc);
         let job = self.lowering_job(LoweringProgram::Running(program), function, &unit, &fields, global_reads, direct_sites,
             captures, invalidation.address(), (entry, entry_left, &left_at), arrays, &construct);
-        let mut lowered = job.run().or_else(|| { plan_miss(self, Miss::PlanNothingNative); None })?;
-        if lowered.region.native == 0 { plan_miss(self, Miss::PlanNothingNative); return None; }
+        let mut lowered = job.run().or_else(|| { refuse(self, Refusal::NothingNative); None })?;
+        if lowered.region.native == 0 { refuse(self, Refusal::NothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget, tiers: self.programs.tiers() }, native))
     }
@@ -436,7 +438,7 @@ impl<H: Host> Vm<H> {
         trips: &dyn Fn(u32, u32) -> Option<u64>, direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>,
         view: Option<&super::super::dispatch_fast::LaneView>, gate: &PlanGate<'_, H>) -> Option<LanePrepared> {
         let unit = self.plan_unit_in_lane(program, function, targets, trips, generic, budget)?;
-        let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(self, Miss::PlanNoEntry); None })?;
+        let entry = entry_pc(&unit, entry).or_else(|| { refuse(self, Refusal::NoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
         let mut fields = self.unit_fields_in_lane(program, &unit, &left_at, view);
         // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
@@ -465,7 +467,10 @@ impl<H: Host> Vm<H> {
             .map_or(Vec::new(), |_| self.programs.constants(active).to_vec());
         let tables = FactTables::of(self, function, unit, fields, &global_reads, construct);
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(unit))).chain(self.adding_stores(unit)).collect();
-        let number_reads = super::osr_compile::observed_reads(&program, unit, arrays, &[], left_at);
+        // The element reads observed, and the direct calls whose results their callees' summaries type.
+        let mut number_reads = super::osr_compile::observed_reads(&program, unit, arrays, &[], left_at);
+        number_reads.extend(lane_region::call_results(&direct_sites, &unit.instructions));
+        number_reads.sort_by_key(|read| read.pc);
         LoweringJob { function, unit: unit.clone(), fields: fields.to_vec(), global_reads, direct_sites, frame_captures,
             helpers: Self::process_helpers(), facts: self.vm_facts(), method_cache_atoms: self.method_cache_atoms.bits().clone(),
             invalidation, constants, tables, leaves, number_reads, entry, program }
@@ -491,8 +496,8 @@ impl<H: Host> Vm<H> {
         let method = loop {
             let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[], &|_, _, _, _| true)
             else { break None };
-            match image::compile(native, plan.lowered.scalar.take(), super::jit_backend::CompileLevel::run_default()) {
-                Ok(code) => break plan.finish(&code.code, code.scalar),
+            match image::compile(native, plan.lowered.scalar.take(), plan.lowered.proven.take(), super::jit_backend::CompileLevel::run_default()) {
+                Ok(code) => break plan.finish(&code.code, code.scalar, code.proven),
                 Err(reason) if plan.replans(reason) => budget /= 2,
                 Err(_) => break None,
             }
@@ -514,7 +519,7 @@ impl<H: Host> Vm<H> {
         // from it did not pay at its size is not planned again until its entries would pay for that size.
         let site = (self.active_program.raw(), function, entry);
         let tiers = self.programs.tiers();
-        if !self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if !self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some())) { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
         // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
         // each, the loop region's measure): inlining only adds to it.
         let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
@@ -527,13 +532,13 @@ impl<H: Host> Vm<H> {
             let ir = estimated;
             match pays_compile(tiers, program, function, entries, ir, caller, true, false) {
                 super::tier_model::Pick::Ultra => {}
-                super::tier_model::Pick::Interpreter => return Err(Unstarted::Unpaid),
+                super::tier_model::Pick::Interpreter => { record(Refusal::NotAmortized); return Err(Unstarted::Unpaid); }
                 // A function whose u-jit body would never get ahead of a b-jit body's takes the b-jit body (`LaneBodyOutcome::Base`).
                 super::tier_model::Pick::Base => return Err(Unstarted::Base),
             }
             // Few entries to come take the quick compile, which an optimizing one follows once they repay it.
-            if level == super::jit_backend::CompileLevel::Optimized && super::lane_facts::compiles_quick(tiers, program, function, entries, ir, caller) {
-                level = super::jit_backend::CompileLevel::Quick;
+            if level == super::jit_backend::CompileLevel::Optimized {
+                level = super::admission::compile_level(tiers, program, function, entries, ir, caller);
             }
         }
         if entry.is_none() { caller.note_compile_level(level == super::jit_backend::CompileLevel::Quick, estimated); }
@@ -570,7 +575,7 @@ impl<H: Host> Vm<H> {
         let prepared = self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, Some(caller), &gate);
         self.host.after_native_compilation();
         match stopped.into_inner() {
-            Some(Unstarted::Short) => { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+            Some(Unstarted::Short) => { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
             Some(stop) => return Err(stop),
             None => {}
         }
@@ -579,14 +584,13 @@ impl<H: Host> Vm<H> {
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if entry.is_none() && !called && !recursive && !amortizes_entry(tiers, &unit, function, &direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         // A recurrent compile (no observed entries to price) still repays only where one entry of
-        // its unit, inlined callees included, saves more than the entry costs.
-        if entry.is_none() && observed.is_none() && looped.is_none() && !recursive && !super::lane_facts::entry_repays(tiers, &unit, function, &direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+        // its unit amortizes it (`amortizes_entry`, the same test as above, inlined callees included).
+        if entry.is_none() && observed.is_none() && looped.is_none() && !recursive && !amortizes_entry(tiers, &unit, function, &direct) { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
         bind_callees(&direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&unit, &fields, direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if !self.programs.admit_lane_compile(&key, tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if !self.programs.admit_lane_compile(&key, tiers.lane_body.compile_bound(entry.is_some())) { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
         let invalidation = crate::code_dependencies::Invalidation::default();
         // The functions the lowering reads: its own, its inlined callees' and its direct callees'.
         let functions: Vec<u32> = std::iter::once(function).chain(unit.frames.iter().map(|frame| frame.target.function))
@@ -594,7 +598,8 @@ impl<H: Host> Vm<H> {
         let construct = |function: u32, pc: u32| self.construct_plan_of(targets, function, pc);
         let job = self.lowering_job(LoweringProgram::Detached(program.detached(&functions)), function, &unit, &fields,
             global_reads.clone(), direct_sites, captures, invalidation.address(), (entry_at, entry_left, &left_at), arrays, &construct);
-        let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at };
+        let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
+        let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at, callee_summaries };
         let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
@@ -677,11 +682,11 @@ impl<H: Host> Vm<H> {
                 watch.hold_roots(pending.plan.lowered.region.stable.roots.clone(), &mut self.heap);
                 let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
                 if !pending.plan.dependencies().subscribe(&pending.plan.lowered.region.stable, &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
-                    plan_miss(self, Miss::PlanDependencies);
+                    refuse(self, Refusal::Dependencies);
                     return Ok(LaneBodyOutcome::Declined);
                 }
                 let PendingLaneMethod { plan, .. } = *pending;
-                plan.finish(&code.code, code.scalar)
+                plan.finish(&code.code, code.scalar, code.proven)
                     .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
                     .inspect(|published| self.programs.note_installed_lane(key, published))
                     .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
@@ -701,12 +706,14 @@ impl<H: Host> Vm<H> {
         // A construction's plan is asked of the callee it was planned for: its code tests the
         // callee, so another callee at the site only leaves.
         let construct = |function: u32, pc: u32| taken.tables.construct_plans.get(&(function, pc))
-            .and_then(|plan| super::super::dispatch_fast::scalar_construct_plan(self, plan.callee));
+            .and_then(|plan| super::super::dispatch_fast::scalar_construct_plan(self, plan.callee.live()?));
         // A field's formed layout id (the view's own-field hint) is guarded where the code reads
         // it, so a hint that moved since only leaves: the fields compare without it.
         let unformed = |fields: &[Option<Vec<NativeFieldLoad>>]| fields.iter()
             .map(|loads| loads.as_ref().map(|loads| loads.iter().map(|load| NativeFieldLoad { formed: None, ..*load }).collect::<Vec<_>>())).collect::<Vec<_>>();
-        FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads, &construct) == taken.tables
+        // A callee whose summary a withdrawal ended since the plan took it types a result the code no longer may.
+        plan.direct.iter().map(|callee| callee.summary().is_some()).eq(taken.callee_summaries.iter().copied())
+            && FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads, &construct) == taken.tables
             && self.global_reads_in_lane(program, plan.function, &plan.unit) == taken.global_reads
             && unformed(&self.unit_fields_in_lane(program, &plan.unit, &taken.left_at, None)) == unformed(&plan.fields)
             && plan.unit.frames.iter().map(|frame| frame.target.identity().map_or((0, 0), |callee| self.callee_capture_slots(callee)))
@@ -780,7 +787,7 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    pub(super) fn finish(mut self, code: &[u8], scalar: Option<usize>) -> Option<LaneMethod> {
+    pub(super) fn finish(mut self, code: &[u8], scalar: Option<usize>, proven: Option<(usize, Box<[crate::typed_ir::Type]>)>) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
@@ -794,14 +801,16 @@ impl LanePlan {
         // SAFETY: the lane region lowers a body with the lane body ABI (`body_signature_in_lane`).
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         let scalar = scalar.map(|at| memory.pointer().addr() + at);
+        let proven = proven.map(|(at, params)| (memory.pointer().addr() + at, params));
         Some(LaneMethod {
-            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, rows: None, recovery_space,
+            dependencies, stable, invalidation: self.invalidation, _code: Some(memory), entry, scalar, proven, rows: None, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
-            names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,
+            names_shapes, exits: std::mem::take(&mut self.lowered.region.exits), inlined: self.unit.frames,
             scratch_width, caller_registers, frame_reach: 0,
             amortizes, direct: self.direct, closed: self.closed,
             framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
+            summary: self.lowered.region.summary.take(), withdrawn: Default::default(),
         })
     }
 }

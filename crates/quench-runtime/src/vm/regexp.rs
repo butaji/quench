@@ -1,5 +1,6 @@
 use super::wtf16::FlatUnits;
 use super::*;
+use crate::staged::string_replace::{self, Piece};
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -10,6 +11,8 @@ mod ascii;
 mod subject_cache; pub(super) use subject_cache::SubjectCache;
 mod literal_matches;
 mod literal;
+mod replacement;
+use replacement::{ReplaceResult, has_substitution, result_length};
 mod legacy;
 pub(super) use legacy::LegacyRegExpSnapshot;
 use legacy::{LegacyRegExpMatch, LegacyStatics};
@@ -460,7 +463,7 @@ impl<H: Host> Vm<H> {
                             replacement,
                             &matcher,
                             flags,
-                            true,
+                            ReplaceResult::Value,
                         );
                     }
                     let flags = vm.regexp_flags_text(p, receiver)?;
@@ -1005,7 +1008,7 @@ impl<H: Host> Vm<H> {
         replacement: FastReplacement<'_>,
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
-        result_used: bool,
+        build: ReplaceResult,
     ) -> Result<Value, JsError> {
         // Matching, slicing and substitution all read the input; a rope the program keeps
         // (V8-v7 RegExp's input variants) would otherwise keep a flat copy of its text for its
@@ -1013,9 +1016,9 @@ impl<H: Host> Vm<H> {
         let input = &input.unkept_flat();
         let subject = self.regexp_subject(input, matcher);
         if let FastReplacement::Template(template) = replacement
-            && !template.units().iter().any(|unit| unit == u16::from(b'$')) {
+            && !has_substitution(template) {
                 return self.regexp_replace_with_literal(
-                    p, receiver, input, input_value, &subject, template, matcher, flags, result_used,
+                    p, receiver, input, input_value, &subject, template, matcher, flags, build,
                 );
             }
         let matches = if flags.contains(RegExpFlags::GLOBAL) {
@@ -1045,8 +1048,14 @@ impl<H: Host> Vm<H> {
             FastReplacement::Function(function) => function,
         };
         self.with_prepared_callback(callee, Value::UNDEFINED, |vm, prepared| -> Result<(), JsError> {
-            let mut next_source = 0;
-            for found in &matches {
+            string_replace::walk_matches(input.units().len(), matches, |found| found.range.clone(), |piece| -> Result<(), JsError> {
+                let found = match piece {
+                    Piece::Gap(gap) => {
+                        output.append_slice(input, gap);
+                        return Ok(());
+                    }
+                    Piece::Match(found) => found,
+                };
                 let position = found.range.start;
                 let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
                 let captures = found
@@ -1060,7 +1069,7 @@ impl<H: Host> Vm<H> {
                         })
                     })
                     .collect::<Vec<_>>();
-                let named = regexp_named_capture_ranges(found);
+                let named = regexp_named_capture_ranges(&found);
                 let groups = vm.regexp_groups_object(&named, input.units())?;
                 let text = vm.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
                     match replacement {
@@ -1082,12 +1091,9 @@ impl<H: Host> Vm<H> {
                         }
                     }
                 })?;
-                output.append_slice(input, next_source..position);
                 output.append(&text);
-                next_source = found.range.end;
-            }
-            output.append_slice(input, next_source..input.units().len());
-            Ok(())
+                Ok(())
+            })
         })?;
         let output = self.string_build_result(p, output.finish())?;
         Ok(self.heap.alloc_string(output))
@@ -1142,7 +1148,7 @@ impl<H: Host> Vm<H> {
         template: &JsString,
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
-        result_used: bool,
+        build: ReplaceResult,
     ) -> Result<Value, JsError> {
         let (ranges, last) = if flags.contains(RegExpFlags::GLOBAL) {
             let searcher = matcher.range_searcher(subject);
@@ -1164,36 +1170,31 @@ impl<H: Host> Vm<H> {
             let found = matcher.range_searcher(subject).find(0);
             (found.iter().cloned().collect(), found.map(|found| Err(found.start)))
         };
+        // No match leaves the subject as it is: the same string value answers.
         let Some(last) = last else {
-            if !result_used {
-                return Ok(Value::UNDEFINED);
-            }
-            // No match leaves the subject as it is: the same string value answers.
-            return Ok(input_value);
+            return Ok(build.unchanged(input_value, input.units().len()));
         };
         let owner = self.regexp_legacy_owner(receiver)?;
         match last {
             Ok(found) => self.record_regexp_legacy_match(owner, input.clone(), found),
             Err(start) => self.record_regexp_legacy_pending(owner, input.clone(), Rc::clone(matcher), start),
         }
-        // Nothing reads the result: building it runs no guest code, so only its one
-        // observable outcome, a length past the limit raising, needs the length.
-        if !result_used {
-            let kept = ranges.iter().try_fold(input.units().len(), |length, range| {
-                (length - range.len()).checked_add(template.units().len())
-            });
-            if kept.is_some_and(|length| length <= super::wtf16::MAX_STRING_UNITS) {
-                return Ok(Value::UNDEFINED);
-            }
+        // Only a length is observable when nothing reads the string, or only its `.length`
+        // does: building it runs no guest code, so its length past the limit raising is the
+        // one outcome left to decide.
+        if build != ReplaceResult::Value
+            && let Some(length) = result_length(input.units().len(), &ranges, template.units().len())
+        {
+            return Ok(build.value(length));
         }
         let mut output = super::wtf16::JsStringBuilder::default();
-        let mut next_source = 0;
-        for range in ranges {
-            output.append_slice(input, next_source..range.start);
-            output.append(template);
-            next_source = range.end;
-        }
-        output.append_slice(input, next_source..input.units().len());
+        string_replace::walk_matches(input.units().len(), ranges, Range::clone, |piece| -> Result<(), JsError> {
+            match piece {
+                Piece::Gap(gap) => output.append_slice(input, gap),
+                Piece::Match(_) => output.append(template),
+            }
+            Ok(())
+        })?;
         let output = self.string_build_result(p, output.finish())?;
         Ok(self.heap.alloc_string(output))
     }
@@ -1724,13 +1725,23 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<usize, JsError> {
+        Ok(crate::units::to_length(self.regexp_to_number_value(p, value)?))
+    }
+
+    /// `ToNumber(ToPrimitive(value))` of a RegExp's `lastIndex`, the Number that `exec_start`
+    /// (RegExpBuiltinExec's `ToLength`) and `regexp_to_length_value` read.
+    pub(super) fn regexp_to_number_value(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<f64, JsError> {
         // A number is its own primitive and number, so its conversion runs no guest code.
         if let Some(number) = value.as_number() {
-            return Ok(crate::units::to_length(number));
+            return Ok(number);
         }
         self.with_call_roots([value], |vm| {
             let value = vm.to_primitive(p, value, "number")?;
-            Ok(crate::units::to_length(vm.to_number(p, value)?))
+            vm.to_number(p, value)
         })
     }
 
@@ -2332,24 +2343,18 @@ impl<H: Host> Vm<H> {
     /// a static is read (`record_regexp_legacy_pending`), as the steady path leaves them.
     fn regexp_builtin_test(&mut self, p: &ResidualProgram, this: Value, input: JsString) -> Result<bool, JsError> {
         let last_index = self.regexp_last_index(p, this)?;
-        let last_index = self.regexp_to_length_value(p, last_index)?;
-        let (regex, owner, stateful, sticky) = match self.heap.get(this) {
-            Some(Cell::RegExp { meta, .. }) => (
-                Self::regexp_matcher(meta)?,
-                meta.legacy_constructor,
-                meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
-                meta.flags.contains(RegExpFlags::STICKY),
-            ),
+        let last_index = self.regexp_to_number_value(p, last_index)?;
+        let (regex, owner, flags) = match self.heap.get(this) {
+            Some(Cell::RegExp { meta, .. }) => (Self::regexp_matcher(meta)?, meta.legacy_constructor, meta.flags),
             _ => return Err(self.type_error(p, "RegExp method called on incompatible receiver".into())),
         };
-        let start = if stateful { last_index } else { 0 };
+        let exec = steady::exec_start(flags, last_index);
         let steady = self
             .regexp_last_index_slot(this)
             .map(|slot| steady::SteadyMatch { slot, prefiltered: false, captures: false });
-        let matched = self.regexp_search(&regex, &input, start, (stateful, sticky), steady);
-        if stateful {
-            let last_index = Value::number(matched.as_ref().map_or(0, |matched| matched.range.end) as f64);
-            self.store_regexp_last_index(p, this, last_index)?;
+        let matched = self.regexp_search(&regex, &input, exec, steady);
+        if let Some(stored) = steady::exec_finish(exec.stateful, matched.as_ref().map(|matched| matched.range.end)) {
+            self.store_regexp_last_index(p, this, Value::number(stored as f64))?;
         }
         let Some(matched) = matched else {
             return Ok(false);
@@ -2367,50 +2372,47 @@ impl<H: Host> Vm<H> {
         input: &JsString,
     ) -> Result<Option<quench_regexp::Match>, JsError> {
         let last_index = self.regexp_last_index(p, this)?;
-        let last_index = self.regexp_to_length_value(p, last_index)?;
+        let last_index = self.regexp_to_number_value(p, last_index)?;
         self.regexp_match_from(p, this, input, last_index, None)
     }
 
-    /// `regexp_builtin_match` past its `lastIndex` read: the match from `last_index` where
-    /// the flags make it stateful, storing the new `lastIndex` as `store_regexp_last_index`
-    /// does, or as a steady call's facts allow (`SteadyMatch`).
+    /// `regexp_builtin_match` past its `lastIndex` read: the match from the `lastIndex` Number
+    /// `last_index` where the flags make it stateful, storing the new `lastIndex` as
+    /// `store_regexp_last_index` does, or as a steady call's facts allow (`SteadyMatch`).
     fn regexp_match_from(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         input: &JsString,
-        last_index: usize,
+        last_index: f64,
         steady: Option<steady::SteadyMatch>,
     ) -> Result<Option<quench_regexp::Match>, JsError> {
-        let (regex, stateful, sticky) = match self.heap.get(this) {
-            Some(Cell::RegExp { meta, .. }) => (
-                Self::regexp_matcher(meta)?,
-                meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
-                meta.flags.contains(RegExpFlags::STICKY),
-            ),
+        let (regex, flags) = match self.heap.get(this) {
+            Some(Cell::RegExp { meta, .. }) => (Self::regexp_matcher(meta)?, meta.flags),
             _ => return Err(self.type_error(p, "RegExp method called on incompatible receiver".into())),
         };
-        let start = if stateful { last_index } else { 0 };
-        let matched = self.regexp_search(&regex, input, start, (stateful, sticky), steady);
+        let exec = steady::exec_start(flags, last_index);
+        let matched = self.regexp_search(&regex, input, exec, steady);
         // No match, excluded or failed, resets `lastIndex`.
-        if stateful {
-            let last_index = Value::number(matched.as_ref().map_or(0, |matched| matched.range.end) as f64);
+        if let Some(stored) = steady::exec_finish(exec.stateful, matched.as_ref().map(|matched| matched.range.end)) {
+            let stored = Value::number(stored as f64);
             match steady {
-                Some(steady) => self.heap.primitive_cell_property_set(this, steady.slot, last_index),
-                None => self.store_regexp_last_index(p, this, last_index)?,
+                Some(steady) => self.heap.primitive_cell_property_set(this, steady.slot, stored),
+                None => self.store_regexp_last_index(p, this, stored)?,
             }
         }
         Ok(matched)
     }
 
-    /// `regexp_match_from`'s search from `start` of a regexp whose flags are `(stateful,
-    /// sticky)`: `None` where the prefilter excludes it (`Regex::excludes_search`), unless a
-    /// steady call's already admitted it, else the matcher's match, without its captures
-    /// where nothing reads them. A Unicode-mode start inside a surrogate pair is the pair's
-    /// lead (RegExpBuiltinExec's inputIndex), where a sticky match may start and a search starts.
+    /// `regexp_match_from`'s search from `exec`'s start of a regexp whose flags are `exec`'s:
+    /// `None` where the prefilter excludes it (`Regex::excludes_search`), unless a steady
+    /// call's already admitted it, else the matcher's match, without its captures where nothing
+    /// reads them. A Unicode-mode start inside a surrogate pair is the pair's lead
+    /// (RegExpBuiltinExec's inputIndex), where a sticky match may start and a search starts.
     #[inline(always)]
-    fn regexp_search(&mut self, regex: &quench_regexp::Regex, input: &JsString, start: usize, (stateful, sticky): (bool, bool),
+    fn regexp_search(&mut self, regex: &quench_regexp::Regex, input: &JsString, exec: steady::ExecStart,
         steady: Option<steady::SteadyMatch>) -> Option<quench_regexp::Match> {
+        let steady::ExecStart { stateful, sticky, start } = exec;
         let prefiltered = steady.is_some_and(|steady| steady.prefiltered);
         // An ASCII rope not yet flat is searched through a reused buffer and stays a rope:
         // the match is ranges, which the caller reads out by the same units.
@@ -2422,10 +2424,7 @@ impl<H: Host> Vm<H> {
             {
                 return Some(None);
             }
-            if steady.is_some_and(|steady| !steady.captures) {
-                return regex.find_range_ascii(bytes, start, sticky).map(|found| found.map(quench_regexp::Match::native));
-            }
-            regex.find_ascii(bytes, start, sticky, true)
+            ascii::ascii_search(regex, bytes, start, sticky, steady::captures_read(steady))
         }) {
             return found;
         }

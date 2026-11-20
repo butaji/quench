@@ -44,7 +44,7 @@ impl<H: Host> Vm<H> {
         }
         let view = self.plain_typed_view(receiver)?;
         let index = args.first()?.as_int()?;
-        match resolve_at_index(index, view.length) {
+        match crate::staged::typed_elements::element_at(f64::from(index), view.length) {
             Some(position) => self.typed_array_number_element(receiver, position),
             None => Some(Value::UNDEFINED),
         }
@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let elements = bytes.owned()?.get(view.span())?;
-        let found = find_element(elements, view.kind, from, search, mode == Search::Includes);
+        let found = crate::staged::typed_elements::find_number_element(elements, view.kind, from, search, mode == Search::Includes);
         Some(match mode {
             Search::IndexOf => Value::number(found.map_or(NOT_FOUND, |index| index as f64)),
             Search::Includes => Value::boolean(found.is_some()),
@@ -133,17 +133,6 @@ fn is_searchable(kind: TypedArrayKind) -> bool {
     matches!(kind, TypedArrayKind::Uint8 | TypedArrayKind::Int32 | TypedArrayKind::Float64)
 }
 
-/// The element index `at(index)` reads from a view of `length` elements: a negative index counts
-/// from the end. `None` when it lies outside the view.
-fn resolve_at_index(index: i32, length: usize) -> Option<usize> {
-    let position = if index < 0 {
-        i64::try_from(length).ok()? + i64::from(index)
-    } else {
-        i64::from(index)
-    };
-    usize::try_from(position).ok().filter(|position| *position < length)
-}
-
 /// A bound of `fill` or of a search, resolved against `length`: `default` when absent or
 /// undefined, else the int32 relative index (`crate::units::relative_index`). `None` for any
 /// other value, whose ToIntegerOrInfinity may run guest code.
@@ -160,30 +149,4 @@ fn fill_range(start: Option<&Value>, end: Option<&Value>, length: usize) -> Opti
     let start = relative_bound(start, 0, length)?;
     let end = relative_bound(end, length, length)?.max(start);
     Some((start, end))
-}
-
-/// Whether an element's Number equals `search`: strict equality, or under `nan_matches`
-/// (SameValueZero) a NaN equal to a NaN. Zeros of either sign are equal.
-fn search_matches(element: f64, search: f64, nan_matches: bool) -> bool {
-    element == search || (nan_matches && element.is_nan() && search.is_nan())
-}
-
-/// The Number of the element of `kind` whose bytes are `bytes`, exactly one element wide.
-fn element_number(kind: TypedArrayKind, bytes: &[u8]) -> f64 {
-    match kind {
-        TypedArrayKind::Int32 => f64::from(i32::from_ne_bytes(bytes.try_into().expect("an Int32 element is four bytes"))),
-        TypedArrayKind::Float64 => f64::from_ne_bytes(bytes.try_into().expect("a Float64 element is eight bytes")),
-        _ => f64::from(bytes[0]),
-    }
-}
-
-/// The index of the first element of `elements` (the bytes of a view of `kind`) at or after
-/// `from` whose Number matches `search`.
-fn find_element(elements: &[u8], kind: TypedArrayKind, from: usize, search: f64, nan_matches: bool) -> Option<usize> {
-    elements
-        .chunks_exact(kind.width())
-        .enumerate()
-        .skip(from)
-        .find(|(_, bytes)| search_matches(element_number(kind, bytes), search, nan_matches))
-        .map(|(index, _)| index)
 }

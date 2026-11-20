@@ -14,17 +14,20 @@ impl<H: Host> Vm<H> {
         // a name the unit stores read its slot (`stored`), typed by the slot's dependency, not folded
         // as a fact the store would retire each time.
         let slots = self.global_slots_in_lane(program, function, unit);
-        let stored: Vec<(crate::bytecode::Atom, GlobalRead)> = slots.iter().filter(|(_, store, _)| *store)
-            .map(|(pc, _, slot)| (unit.instructions[*pc].atom_index(), *slot)).collect();
+        // The first store of each name holds its slot.
+        let mut stored: std::collections::HashMap<crate::bytecode::Atom, GlobalRead> = std::collections::HashMap::new();
+        for (pc, _, slot) in slots.iter().filter(|(_, store, _)| *store) {
+            stored.entry(unit.instructions[*pc].atom_index()).or_insert(*slot);
+        }
+        let immutable = super::super::builtins::immutable_globals();
         let reads: Vec<(usize, GlobalRead)> = self.global_name_loads(program, function, unit)
             .into_iter()
             .map(|(pc, atom, site)| {
                 let name = self.atom_name(atom);
-                let immutable = super::super::builtins::immutable_globals().into_iter().find(|(global, _)| *global == name);
-                let read = match immutable {
-                    Some((_, value)) => GlobalRead::Constant(value),
-                    None => match stored.iter().find(|(stored, _)| *stored == atom) {
-                        Some((_, slot)) => *slot,
+                let read = match immutable.iter().find(|(global, _)| *global == name) {
+                    Some((_, value)) => GlobalRead::Constant(*value),
+                    None => match stored.get(&atom) {
+                        Some(slot) => *slot,
                         None => self.stable_global_read(program, atom, site),
                     },
                 };
@@ -205,7 +208,7 @@ impl<H: Host> Vm<H> {
         Some((value, native, self.native_holder(object)?))
     }
 
-    /// The field read `instruction` of a method of strings or arrays that a call runs inline
+    /// The field read `instruction` of a method of strings, arrays or DataViews that a call runs inline
     /// (`lane_region::native_calls`), where the realm's prototype holds that native as an own
     /// data property now. The receiver is not known: the call guards the callee it reads.
     pub(in crate::vm) fn method_native(&mut self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
@@ -216,6 +219,7 @@ impl<H: Host> Vm<H> {
         let native = row.native;
         let holder = match row.holder {
             crate::vm::native_rows::Holder::ArrayPrototype => self.array_proto,
+            crate::vm::native_rows::Holder::DataViewPrototype => self.data_view_proto,
             _ => self.string_proto,
         };
         let value = self.own_plain_data(holder, atom)??;

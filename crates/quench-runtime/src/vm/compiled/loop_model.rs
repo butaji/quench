@@ -8,12 +8,12 @@
 //! nanoseconds per IR instruction (`tier_model`) over the `ir_per_bytecode` of the span, at the
 //! wall share of its time. The iterations to come are `taken / remaining_divisor` (Lindy).
 
-use super::tier_model::compile_wall_permille;
+use super::tier_model::{compile_wall_permille, future_count, interpreted_ns, net_gain_ns};
 use super::tier_policy::{Loops, Priors, Tiers, PER_MILLE};
 
 /// What one iteration of a loop `span` bytecodes long saves, in ns, over the interpreter.
 fn saved_per_iteration(priors: &Priors, span: u64) -> u64 {
-    span * priors.interpreter_ns * (PER_MILLE - priors.body_share) / PER_MILLE
+    interpreted_ns(priors.interpreter_ns, span, priors.body_share)
 }
 
 /// What the compile of a loop `span` bytecodes long costs the running program, plus the one
@@ -25,8 +25,8 @@ fn outlay_ns(priors: &Priors, loops: &Loops, span: u64, compile_ns_per_ir: u64, 
 /// The net gain in ns of compiling the loop after `taken` backward jumps.
 #[cfg(test)]
 fn net_ns(priors: &Priors, loops: &Loops, span: u64, taken: u64, compile_ns_per_ir: u64, wall_permille: u64) -> i64 {
-    let future = (taken / priors.remaining_divisor) as i64;
-    future * saved_per_iteration(priors, span) as i64 - outlay_ns(priors, loops, span, compile_ns_per_ir, wall_permille) as i64
+    let future = future_count(priors, taken);
+    net_gain_ns(future, saved_per_iteration(priors, span), outlay_ns(priors, loops, span, compile_ns_per_ir, wall_permille)) as i64
 }
 
 /// The fewest backward jumps after which `net_ns` is positive, and never fewer than the
@@ -45,13 +45,21 @@ pub(in crate::vm) fn admission_taken(tiers: &Tiers, span: u64) -> u32 {
     required_taken(&tiers.priors, &tiers.loops, span, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors))
 }
 
-/// Whether `iterations`, over `entries` of the loop's native code (runs and declined entries),
-/// repay the entries: the prior credits `prior_runs` entries that repaid themselves, and the
-/// measurements outweigh it as the entries mount.
-fn repays_entries(priors: &Priors, loops: &Loops, span: u64, entries: u64, iterations: u64) -> bool {
-    let credit = loops.prior_runs * priors.region_entry_ns;
-    let saved = iterations.saturating_mul(saved_per_iteration(priors, span)).saturating_add(credit);
-    saved >= entries.saturating_mul(priors.region_entry_ns)
+/// What `iterations` over `entries` of the loop's native code (runs and declined entries) save
+/// beyond the entries' region entries, in ns, the prior's `prior_runs` entries credited as having
+/// repaid themselves. Negative where the entries cost more than the iterations save.
+fn spare_ns(priors: &Priors, loops: &Loops, span: u64, entries: u64, iterations: u64) -> i128 {
+    let entry_ns = i128::from(priors.region_entry_ns);
+    let credit = i128::from(loops.prior_runs) * entry_ns;
+    i128::from(iterations) * i128::from(saved_per_iteration(priors, span)) + credit - i128::from(entries) * entry_ns
+}
+
+/// The further entries the loop's native code repays after `entries` and `iterations`, each
+/// costing one region entry from the spare (`spare_ns`), or `None` where the entries already cost
+/// more. Iterations only add, so until the entries pass this count the site keeps entering.
+pub(in crate::vm) fn repaid_entries(tiers: &Tiers, span: u64, entries: u64, iterations: u64) -> Option<u64> {
+    let spare = u64::try_from(spare_ns(&tiers.priors, &tiers.loops, span, entries, iterations)).ok()?;
+    Some(spare.checked_div(tiers.priors.region_entry_ns).unwrap_or(u64::MAX))
 }
 
 /// The iterations after which a loop body whose iterations work through `work` bytecodes pays
@@ -77,14 +85,9 @@ pub(in crate::vm) fn body_taken(tiers: &Tiers, span: u64, ir: usize, unplanned: 
     body_required_taken(priors, body_work(&tiers.loops, span, ir), outlay)
 }
 
-/// `repays_entries` under the process's priors.
-pub(in crate::vm) fn repays(tiers: &Tiers, span: u64, entries: u64, iterations: u64) -> bool {
-    repays_entries(&tiers.priors, &tiers.loops, span, entries, iterations)
-}
-
 /// What one iteration of a loop `span` bytecodes long saves, in ns, in stencil code (b-jit).
 fn base_saved_per_iteration(priors: &Priors, span: u64) -> u64 {
-    span * priors.interpreter_ns * (PER_MILLE - priors.base_body_share) / PER_MILLE
+    interpreted_ns(priors.interpreter_ns, span, priors.base_body_share)
 }
 
 /// Whether a u-jit region of a loop `span` bytecodes long is ahead of a b-jit region after
@@ -92,9 +95,9 @@ fn base_saved_per_iteration(priors: &Priors, span: u64) -> u64 {
 /// saving, the u-jit region's less its compile and entry (`outlay_ns`), the b-jit region's less
 /// its entry alone, as its stencils stitch in microseconds.
 pub(super) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, taken: u64, compile_ns_per_ir: u64, wall_permille: u64) -> bool {
-    let future = taken / priors.remaining_divisor;
-    let ultra = future.saturating_mul(saved_per_iteration(priors, span)) as i128 - outlay_ns(priors, loops, span, compile_ns_per_ir, wall_permille) as i128;
-    let base = future.saturating_mul(base_saved_per_iteration(priors, span)) as i128 - priors.region_entry_ns as i128;
+    let future = future_count(priors, taken);
+    let ultra = net_gain_ns(future, saved_per_iteration(priors, span), outlay_ns(priors, loops, span, compile_ns_per_ir, wall_permille));
+    let base = net_gain_ns(future, base_saved_per_iteration(priors, span), priors.region_entry_ns);
     ultra > base
 }
 
@@ -134,6 +137,20 @@ mod tests {
     const COST: u64 = PRIORS.compile_ns_per_ir;
 
     fn required(span: u64, wall: u64) -> u32 { required_taken(&PRIORS, &LOOPS, span, COST, wall) }
+
+    fn repays_entries(priors: &Priors, loops: &Loops, span: u64, entries: u64, iterations: u64) -> bool {
+        spare_ns(priors, loops, span, entries, iterations) >= 0
+    }
+
+    #[test]
+    fn the_repaid_entries_are_exactly_the_entries_the_spare_covers() {
+        let tiers = super::super::tier_policy::STATIC_ROWS;
+        let (entries, iterations) = (1_000, 1_000_000);
+        let spare = repaid_entries(tiers, 10, entries, iterations).expect("the iterations repay the entries");
+        assert!(repays_entries(&tiers.priors, &tiers.loops, 10, entries + spare, iterations));
+        assert!(!repays_entries(&tiers.priors, &tiers.loops, 10, entries + spare + 1, iterations));
+        assert_eq!(repaid_entries(tiers, 10, 1_000_000_000, 0), None);
+    }
 
     #[test]
     fn promotion_is_where_u_jit_gets_ahead() {

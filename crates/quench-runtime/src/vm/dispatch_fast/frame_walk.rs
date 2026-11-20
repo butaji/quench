@@ -4,7 +4,7 @@
 //! into records, and its pop unseals them; every reader pairs the frames with the side records
 //! innermost first, so no reader and no writer but emitted code's entry spills.
 use super::*;
-use super::lane_frames::{header_sided, Frame, Side};
+use super::lane_frames::{header_sided, ActivationView, Side};
 
 /// The plain headers a record was pushed over (`LaneStack::seal_plain`): the `PlainFrames` words
 /// as they stood, which come back when the records count `records` again (`unseal_plain`).
@@ -31,7 +31,7 @@ pub(super) enum Walked {
 
 /// The frames innermost first (`LaneStack::walk_innermost`): the innermost plain headers, then
 /// each record followed by the headers it sealed, taking one side record per sided frame. Each
-/// frame is read once, where it is (`plain_frame`, `Frame::of_record`): a header's frame names
+/// frame is read once, where it is (`plain_frame`, `ActivationView::of_record`): a header's frame names
 /// the next header down, so the walk advances by the frame it yields.
 pub(super) struct Walk<'a> {
     stack: &'a LaneStack,
@@ -59,9 +59,9 @@ impl Walk<'_> {
 }
 
 impl Iterator for Walk<'_> {
-    type Item = (Frame, Walked);
+    type Item = (ActivationView, Walked);
 
-    fn next(&mut self) -> Option<(Frame, Walked)> {
+    fn next(&mut self) -> Option<(ActivationView, Walked)> {
         loop {
             if self.headers != 0 {
                 self.headers -= 1;
@@ -83,7 +83,7 @@ impl Iterator for Walk<'_> {
             let records = self.records;
             let record = &records[self.next_record];
             let payload = if LaneStack::record_sided(record) { self.take_side().payload } else { SidePayload::None };
-            return Some((Frame::of_record(record, payload), Walked::Record { index: self.next_record }));
+            return Some((ActivationView::of_record(record, payload), Walked::Record { index: self.next_record }));
         }
     }
 }
@@ -255,7 +255,7 @@ impl LaneStack {
     }
 
     /// Take every frame off the stack, outermost first, each as the record it becomes
-    /// (`Frame::record`) with what its side record carries: the materialization's frames,
+    /// (`ActivationView::record`) with what its side record carries: the materialization's frames,
     /// without a spill. The windows stay in the values for the frames to take.
     pub(super) fn take_frames(&mut self) -> Vec<(Activation, SidePayload)> {
         let mut frames: Vec<(Activation, SidePayload)> = self.frames_innermost().map(|frame| (frame.record(), frame.payload())).collect();

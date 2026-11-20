@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         stop: MaterializedStop,
     ) -> Value {
-        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        let generator = self.pop_host_frame().expect("a resumed generator's activation");
         let done = match stop {
             MaterializedStop::Yielded { destination, delegated_result } => {
                 frame.with_objects = self.with_stack.split_off(frame.with_base);
@@ -110,7 +110,7 @@ impl<H: Host> Vm<H> {
     /// `resume_generator_step` finishes it, and the native activation ends; the caller's
     /// unwind goes on with the error.
     pub(super) fn abandon_materialized_generator_step(&mut self, _resume: GeneratorResume) {
-        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        let generator = self.pop_host_frame().expect("a resumed generator's activation");
         if let Some(record) = self.generator_record_mut(generator) {
             record.complete();
         }
@@ -207,8 +207,11 @@ impl<H: Host> Vm<H> {
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         frame.reserve_suspension_window(function);
+        // A generator's register file is filled whole, since its suspended registers are
+        // scanned whole (`prepare_registers_for`), so a promoted parameter's register is
+        // written by this fill and then by `place_parameters`, the one parameter pass here.
         frame.prepare_registers(function.registers, function.initial_register);
-        frame.initialize_promoted_registers(function, args);
+        frame.place_parameters(function, args);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
             let result = self.run_frame_general_until::<true>(

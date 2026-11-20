@@ -269,7 +269,7 @@ macro_rules! catalog {
     /// is the declared set. A hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
     DECLARED_ROW: uses(Unread, Unread, Unread, Never) = Heap::Declared,
     /// A captured declaration's entry test (`base_region::link::entry_rows`): the depth-0 capture at the slot of hole 0
-    /// holds exactly the word of hole 1 (the callee the body calls by identity). A hit continues at NEXT; a miss leaves
+    /// (byte offset in hole 1) holds exactly the word of hole 2 (the callee the body calls by identity). A hit continues at NEXT; a miss leaves
     /// through EXIT0 with nothing written.
     CAPTURE_IDENTITY_ROW: uses(Unread, Unread, Unread, Never) = Heap::CaptureIdentity,
     /// A class-typed parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct
@@ -315,6 +315,11 @@ macro_rules! catalog {
     STAGED_LOOSE_NE: uses(Unread, Src, Src, Never),
     STAGED_STRICT_EQ: uses(Unread, Src, Src, Never),
     STAGED_STRICT_NE: uses(Unread, Src, Src, Never),
+    /// An empty object (`EMPTY_OBJECT_ROW`) or zero-length array (`EMPTY_ARRAY_ROW`) bumped from its kind's record cursor
+    /// and template (`heap_rows::empty_row`): the destination (hole 0) takes the new reference. A spent run, a missing
+    /// template or a destination that cannot hold a reference leaves through EXIT0 with nothing written.
+    EMPTY_OBJECT_ROW: uses(Dst, Unread, Unread, Never),
+    EMPTY_ARRAY_ROW: uses(Dst, Unread, Unread, Never),
     ]
     }
     number {

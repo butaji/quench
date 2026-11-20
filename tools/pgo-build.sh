@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Profile-guided release build of quench-node.
+# Profile-guided release build of quench.
 #
 # usage: tools/pgo-build.sh [--static] [PROFILE]   (default: release)
 #
 # --static builds the static x86_64 Linux binary (C runtime linked in, static relocation
 # model), the input of the BOLT layout step in the Linear command reference: both the instrumented and the
 # profile-guided build add `-Ctarget-feature=+crt-static -Crelocation-model=static` and build
-# for the host triple, so the binary lands at target/<host>/PROFILE/quench-node. Every build
+# for the host triple, so the binary lands at target/<host>/PROFILE/quench. Every build
 # passes its flags in `RUSTFLAGS`, which replaces the repository's rustflags
 # (.cargo/config.toml) rather than appending to them, so the script repeats that baseline in
 # `repo_rustflags` and refuses an inherited `RUSTFLAGS`.
 #
-# 1. Builds an instrumented quench-node into target/pgo-instrumented.
+# 1. Builds an instrumented quench into target/pgo-instrumented.
 # 2. Runs the training corpus: the interpreter curriculum micro programs, the numbered
 #    diagnostic micros and the Node compatibility fixtures. The scored engine suites under
 #    quench-bench/js-engine-benchmark are never run, so the profile describes general
 #    workloads, not benchmark identity.
-# 3. Builds PROFILE with the merged profile; the binary lands at target/PROFILE/quench-node,
+# 3. Builds PROFILE with the merged profile; the binary lands at target/PROFILE/quench,
 #    where the benchmark tooling reads it.
 #
 # Requires llvm-profdata from the toolchain's llvm-tools component
@@ -33,7 +33,7 @@ profile="${1:-release}"
 target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
 instrumented_dir="$target_dir/pgo-instrumented"
 data_dir="$target_dir/pgo-data"
-profdata="$target_dir/pgo-quench-node.profdata"
+profdata="$target_dir/pgo-quench.profdata"
 # Seconds each corpus program may run; fixtures that wait on the network or a child process
 # only add their startup path.
 per_program_timeout=10
@@ -130,8 +130,8 @@ mkdir -p "$data_dir"
 # `RUSTFLAGS` replaces the repository's target-specific rustflags instead of appending to
 # them; see `repo_rustflags` above.
 RUSTFLAGS="$repo_rustflags -Cprofile-generate=$data_dir" \
-    CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}"
-instrumented="$instrumented_dir/$binary_subdir/quench-node"
+    CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench "${target_args[@]}"
+instrumented="$instrumented_dir/$binary_subdir/quench"
 
 # One raw profile per process: Darwin's runtime does not reliably merge concurrent
 # writers into a shared pool file here (llvm-profdata then reports "too much profile data").
@@ -190,8 +190,8 @@ rm -rf "$data_dir"
 # move), whose every dispatch then pays the large one's prologue: Crypto and NavierStokes
 # ran 38% more instructions once training made a call the move's most frequent successor.
 RUSTFLAGS="$repo_rustflags -Cprofile-use=$profdata -Cllvm-args=-disable-icp" \
-    CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}"
-binary="$target_dir/$binary_subdir/quench-node"
+    CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench "${target_args[@]}"
+binary="$target_dir/$binary_subdir/quench"
 printf 'PGO build: %s\n' "$binary"
 # Profile-guided inlining decides which lane handlers form their dispatch as a sibling jump
 # (`tools/check-lane-tail-calls.sh`); a profile that keeps symbols reports the ones that do not.

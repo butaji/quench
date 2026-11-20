@@ -11,9 +11,10 @@
 //! function never writes, which hold the fact at every row.
 
 use super::*;
-use super::super::declared_checks::{ARRAY, OBJECT_PLAIN};
+use super::super::declared_checks::{entry_checks, ARRAY, BASE_TESTED, EntryCheck, OBJECT_PLAIN, STRING};
 use super::super::lane_region::scalar::parameter_register;
 use crate::bytecode::{Function, Operand};
+use crate::staged::value::language_typeof_index;
 use crate::staged::{DecodeContext, Operation};
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -29,24 +30,18 @@ const _: () = {
     assert!(language(ValueType::Undefined) == bits::UNDEFINED && language(ValueType::Null) == bits::NULL);
     assert!(language(ValueType::Boolean) == bits::BOOLEAN && language(ValueType::Number) == bits::NUMBER);
     assert!(language(ValueType::Object) == bits::OBJECT && language(ValueType::Function) == bits::FUNCTION);
+    assert!(language(ValueType::String) == bits::STRING);
     assert!(bits::ARRAY & bits::OBJECT_PLAIN == 0 && bits::ARRAY & (bits::OBJECT | bits::FUNCTION) == 0);
     assert!(bits::OBJECT_PLAIN & (bits::OBJECT | bits::FUNCTION) == 0);
     use crate::staged::value::language as tier;
     assert!(tier::UNDEFINED == bits::UNDEFINED && tier::NULL == bits::NULL && tier::BOOLEAN == bits::BOOLEAN);
     assert!(tier::NUMBER == bits::NUMBER && tier::OBJECT == bits::OBJECT && tier::FUNCTION == bits::FUNCTION);
-    assert!(language(ValueType::String) == bits::STRING && tier::STRING == bits::STRING);
+    assert!(tier::STRING == bits::STRING);
     assert!(tier::ARRAY == bits::ARRAY && tier::OBJECT_PLAIN == bits::OBJECT_PLAIN);
 };
 
-/// The language types a value's tag word alone decides, with no heap read: the members of the
-/// shared declared set (`declared_checks::DECLARED_CHECKED`) the b-jit's tag test decides
-/// (`declared_checks::BASE_TESTED`). A Symbol or a BigInt needs a heap read or a family test this
-/// tier has no row for, so a set naming one gets no entry check. A String is decided only for a
-/// direct string; a rope or heap string leaves the entry at run time.
-const TAG_DECIDED: u16 = super::super::declared_checks::DECLARED_CHECKED & super::super::declared_checks::BASE_TESTED;
-
-/// What a declared parameter type gives the b-jit's entry: exactly a Number, proved through the
-/// register's representation, or a set of tag-decided language types (`language` bits), tested at once.
+/// What a declared parameter's entry check gives the b-jit's entry: exactly a Number, proved through the
+/// register's representation, or a set of language types (`language` bits), tested by tag at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::vm::compiled) enum DeclaredFact {
     Number,
@@ -54,20 +49,23 @@ pub(in crate::vm::compiled) enum DeclaredFact {
 }
 
 impl DeclaredFact {
-    /// The fact the declared set `declared` gives where an entry can check it; none for no fact
-    /// (`DECLARED_ANY`) or a set naming a type a tag does not decide.
-    pub(in crate::vm::compiled) fn of(declared: u16) -> Option<Self> {
-        if Type::languages(declared) == Type::NUMBER {
-            return Some(Self::Number);
+    /// The fact `check` gives where this tier's entry test decides it; None for a check this tier does not
+    /// decide by a tag. A string is the direct string family word, one tag test (`tag_languages`).
+    pub(in crate::vm::compiled) fn of(check: EntryCheck) -> Option<Self> {
+        match check {
+            EntryCheck::Number => Some(Self::Number),
+            EntryCheck::String => Some(Self::Languages(STRING)),
+            EntryCheck::Array => Some(Self::Languages(ARRAY)),
+            EntryCheck::PlainObject => Some(Self::Languages(OBJECT_PLAIN)),
+            EntryCheck::Languages(languages) => (languages & !BASE_TESTED == 0).then_some(Self::Languages(languages)),
         }
-        (declared != 0 && declared & !TAG_DECIDED == 0).then_some(Self::Languages(declared))
     }
 }
 
 /// Each parameter of `function` with a checkable declared fact, by the register it enters in.
 fn declared(function: &Function) -> impl Iterator<Item = (Register, DeclaredFact)> + '_ {
-    function.declared_parameters().iter().enumerate()
-        .filter_map(|(index, declared)| Some((parameter_register(function, index)?, DeclaredFact::of(*declared)?)))
+    entry_checks(function)
+        .filter_map(|(index, check)| Some((parameter_register(function, index)?, DeclaredFact::of(check)?)))
 }
 
 /// The registers some instruction of `function` writes.
@@ -105,9 +103,10 @@ pub(super) fn seen(function: &Function, ending: Ending, seen: &[Type]) -> Vec<Ty
 /// register's frame slot word and continues only where its language type is one of `languages`
 /// as its tag alone decides it: a Number (int32 or double word), `true`/`false`, `null`,
 /// `undefined` (the hole is no `undefined`), a direct object family word
-/// (`Value::is_direct_object_family`) or a direct function word (`Value::direct_function_index`).
-/// Any other word, a heap-decided object or function included, fails the entry with
-/// `LaneExit::Entry` before any row runs, as a Number guard's failure does (`Leaves::open`).
+/// (`Value::is_direct_object_family`), a direct function word (`Value::direct_function_index`) or a
+/// direct string word (`Value::direct_string_index`). Any other word, a heap-decided object or function
+/// included, fails the entry with `LaneExit::Entry` before any row runs, as a Number guard's failure does
+/// (`Leaves::open`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct EntryGuard {
     pub(super) register: Register,
@@ -177,12 +176,8 @@ pub(super) fn typeof_fold(function: &Function, instruction: WideInstruction) -> 
         return None;
     }
     let (index, negated) = crate::bytecode::typeof_test(instruction.unary_operator())?;
-    let name = match guard_languages(function, instruction.register_b())? {
-        languages if languages == language(ValueType::Function) => "function",
-        languages if languages & !(OBJECT_PLAIN | ARRAY) == 0 => "object",
-        _ => return None,
-    };
-    let holds = (index == crate::bytecode::typeof_name_index(name)?) != negated;
+    let name = language_typeof_index(guard_languages(function, instruction.register_b())?)?;
+    let holds = (index as u64 == name) != negated;
     Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(Value::boolean(holds).to_bits())), None, None))
 }
 
@@ -194,7 +189,7 @@ fn guard_languages(function: &Function, register: Register) -> Option<u16> {
 
 /// The truth every value of a language set `languages` has, where the set decides it: `null` and
 /// `undefined` are falsy, a direct object or function is truthy (`Languages` admits no other word). A
-/// set holding a Number or a Boolean may be either, so it has no constant truth.
+/// set holding a Number, a Boolean or a string may be either, so it has no constant truth.
 fn constant_truth(languages: u16) -> Option<bool> {
     const FALSY: u16 = language(ValueType::Null) | language(ValueType::Undefined);
     const TRUTHY: u16 = language(ValueType::Object) | language(ValueType::Function) | ARRAY | OBJECT_PLAIN;
@@ -262,26 +257,32 @@ pub(super) fn branch_fold(function: &Function, constants: &[Value], pc: u32, ins
 mod tests {
     use super::*;
 
+    /// The fact a declared set gives the b-jit's entry, through the shared entry check.
+    fn fact(declared: u16) -> Option<DeclaredFact> {
+        EntryCheck::of(declared).and_then(DeclaredFact::of)
+    }
+
     #[test]
     fn a_declared_number_is_proved_through_its_representation() {
-        assert_eq!(DeclaredFact::of(language(ValueType::Number)), Some(DeclaredFact::Number));
+        assert_eq!(fact(language(ValueType::Number)), Some(DeclaredFact::Number));
     }
 
     #[test]
     fn tag_decided_sets_are_tested_at_entry() {
         for set in [language(ValueType::Boolean), language(ValueType::Null) | language(ValueType::Undefined),
             language(ValueType::Object), language(ValueType::Function), language(ValueType::Number) | language(ValueType::Undefined),
-            ARRAY, OBJECT_PLAIN, ARRAY | OBJECT_PLAIN | language(ValueType::Undefined), language(ValueType::String),
-            language(ValueType::String) | language(ValueType::Number)] {
-            assert_eq!(DeclaredFact::of(set), Some(DeclaredFact::Languages(set)));
+            ARRAY, OBJECT_PLAIN, ARRAY | OBJECT_PLAIN | language(ValueType::Undefined),
+            language(ValueType::String), language(ValueType::String) | language(ValueType::Undefined)] {
+            assert_eq!(fact(set), Some(DeclaredFact::Languages(set)));
         }
     }
 
     #[test]
     fn sets_a_tag_does_not_decide_get_no_check() {
-        assert_eq!(DeclaredFact::of(u16::MAX), None);
-        assert_eq!(DeclaredFact::of(language(ValueType::Number) | language(ValueType::BigInt)), None);
-        assert_eq!(DeclaredFact::of(0), None);
+        assert_eq!(fact(u16::MAX), None);
+        assert_eq!(fact(language(ValueType::Number) | language(ValueType::BigInt)), None);
+        assert_eq!(fact(language(ValueType::Symbol)), None);
+        assert_eq!(fact(0), None);
     }
 
     #[test]

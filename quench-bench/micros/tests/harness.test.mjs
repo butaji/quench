@@ -139,7 +139,7 @@ test("async work must complete before measurement result", async () => {
 
 test("plain payload contains no engine-specific branching", () => {
   const source = payloadSource(catalog.cases[0], scenario, options);
-  assert.doesNotMatch(source, /Bun|QUENCH_EXEC_TRACE|quench-node/);
+  assert.doesNotMatch(source, /Bun|QUENCH_EXEC_TRACE|["'`]quench["'`]/);
 });
 
 test("lifecycle calibration is bounded and fixed before epochs", () => {

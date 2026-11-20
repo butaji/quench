@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Class;
 
 #[test]
 fn unavailable_fault_page_declines_before_changing_canonical_registers() {
@@ -24,7 +25,7 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
     let mut registers = before.clone();
     // No resumable page is lent, so this entry must leave before touching a
     // poll or executing any guest operation. The canonical inputs stay exact.
-    let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
+    let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, Value::UNDEFINED.to_bits(), 0, registers.as_mut_ptr().cast()) };
     assert_eq!(status, NATIVE_JS_STOPPED);
     assert_eq!(word, 0);
     assert_eq!(registers, before);

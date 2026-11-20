@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn manifest_validation_rejects_duplicates_unsafe_paths_and_unknown_extensions() {
         let root =
-            std::env::temp_dir().join(format!("quench-node-manifest-{}", std::process::id()));
+            std::env::temp_dir().join(format!("quench-manifest-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("test-a.js"), "").unwrap();
         fs::write(root.join("test-b.txt"), "").unwrap();
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn manifest_validation_accepts_all_fixture_extensions() {
         let root =
-            std::env::temp_dir().join(format!("quench-node-manifest-valid-{}", std::process::id()));
+            std::env::temp_dir().join(format!("quench-manifest-valid-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         for name in ["test-a.js", "test-b.mjs", "test-c.cjs"] {
             fs::write(root.join(name), "").unwrap();

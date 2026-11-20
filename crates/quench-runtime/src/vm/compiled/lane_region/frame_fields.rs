@@ -262,9 +262,12 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             None => { stage.jump(general, &[]); }
         }
         stage.builder.switch_to_block(general);
+        // The slow path is the fast one's sibling: what the fast path derived is not in its blocks.
+        self.state.drop_path_views(&before);
         slow(stage, self, miss)?;
         stage.jump(done, &[]);
         stage.builder.switch_to_block(done);
+        self.state.drop_path_views(&before);
         self.retire_fast_proofs(owner, &before);
         Some(())
     }
@@ -291,7 +294,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         builder.switch_to_block(packed);
         let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);
         let table = match self.helpers {
-            #[cfg(feature = "aot")]
             LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),
             _ => NarrowTable::Process,
         };
@@ -327,6 +329,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         std::mem::swap(&mut *self.state, &mut dominating);
         stage.jump(join, &[probed?]);
         stage.builder.switch_to_block(join);
+        self.state.drop_path_views(&before);
         self.retire_fast_proofs(owner, &before);
         Some(value)
     }

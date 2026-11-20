@@ -228,17 +228,34 @@ impl Type {
     #[inline(always)]
     pub(crate) const fn is_any(self) -> bool { matches!(self.0, TypeKind::Language(u16::MAX)) }
 
+    /// `self == other`, written out by variant and inlined: a stencil row's constant facts fold through
+    /// `is_subtype` here, where the derived `eq` stays an out-of-line call (a relocation no hole names).
+    #[inline(always)]
+    fn same(self, other: Self) -> bool {
+        match (self.0, other.0) {
+            (TypeKind::Language(left), TypeKind::Language(right)) => left == right,
+            (TypeKind::Int(left), TypeKind::Int(right)) => left == right,
+            (TypeKind::DirectObjectFamily, TypeKind::DirectObjectFamily) => true,
+            (TypeKind::NullableDirectObjectFamily(left), TypeKind::NullableDirectObjectFamily(right)) => left == right,
+            (TypeKind::DirectObjectShape { shape, nullish }, TypeKind::DirectObjectShape { shape: other_shape, nullish: other_nullish }) =>
+                shape == other_shape && nullish == other_nullish,
+            (TypeKind::FunctionIdentity(left), TypeKind::FunctionIdentity(right)) => left == right,
+            (TypeKind::FunctionBody(left), TypeKind::FunctionBody(right)) => left == right,
+            _ => false,
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
         // Nothing but `ANY` holds every value: the common unproved fact answers with no compare.
         if self.is_any() { return expected.is_any(); }
-        self == Self::NEVER || self == expected
+        self.same(Self::NEVER) || self.same(expected)
             || matches!((self.0, expected.0), (TypeKind::Int(known), TypeKind::Int(allowed)) if allowed.contains(known))
             || matches!(expected.0, TypeKind::DirectObjectShape { shape, nullish }
                 if matches!(self.0, TypeKind::DirectObjectShape { shape: actual, nullish: alternatives }
                     if actual == shape && alternatives & !nullish == 0)
                     || matches!(self.0, TypeKind::Language(kinds) if kinds & !nullish == 0))
-            || (expected == Self::DIRECT_OBJECT_FAMILY && self.is_direct_object_family())
+            || (expected.same(Self::DIRECT_OBJECT_FAMILY) && self.is_direct_object_family())
             || matches!(expected.0, TypeKind::NullableDirectObjectFamily(nullish)
                 if self.direct_family_nullish().is_some_and(|actual| actual & !nullish == 0)
                     || matches!(self.0, TypeKind::Language(kinds) if kinds & !nullish == 0))

@@ -14,7 +14,7 @@ use crate::bytecode::Operand;
 use crate::places::{DEST, LEFT, Places, RIGHT, finish};
 use crate::typed_ir::Representation;
 use crate::staged::math::FloatUnary;
-use crate::staged::{Comparison, Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Operation, Overflow, Step, numeric, step, step_arith, step_flow, step_generic};
+use crate::staged::{Comparison, Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Operation, Overflow, Step, numeric, op_kind, step_arith_of, step_flow_of, step_generic_of, step_of};
 use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
 pub(crate) use crate::words::*;
 
@@ -73,10 +73,13 @@ fn branched<const D: u8, const A: u8, const B: u8>(decided: Step<u64, ()>, frame
     }
 }
 
+/// The variant `K` of the `NumberOperation` a row runs (`numeric::kind`), so `staged` instantiates only its arm.
+pub(crate) struct Kind<const K: u8>;
+
 /// The staged Number operation over the row's places: its word, `None` where it left.
 #[inline(always)]
-fn staged<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, operation: NumberOperation) -> Option<u64> {
-    match numeric::step(&mut Concrete::from_hole(0), frame, operation) {
+fn staged<const KIND: u8, const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, operation: NumberOperation, _: Kind<KIND>) -> Option<u64> {
+    match numeric::step_of::<KIND, _, _>(&mut Concrete::from_hole(0), frame, operation) {
         Step::Value(word) => Some(word),
         _ => None,
     }
@@ -87,7 +90,7 @@ fn staged<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, op
 fn arithmetic<const K: u8, const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, domain: Domain) -> bool {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
     let operation = NumberOperation::Arithmetic { destination: DEST, left, right, operation: arithmetic_of(K), domain, overflow: Overflow::Exit, zero: NegativeZero::Exit };
-    staged(frame, operation).is_some()
+    staged(frame, operation, Kind::<{ numeric::kind::ARITHMETIC }>).is_some()
 }
 
 /// An arithmetic row: doubles where a place holds one (and for a division), int32s where the
@@ -95,7 +98,7 @@ fn arithmetic<const K: u8, const D: u8, const A: u8, const B: u8>(frame: &mut Pl
 /// any other Number through doubles.
 #[inline(always)]
 fn arith_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
-    let done = if K == DIV || is_double_row::<K, D, A, B>() {
+    let done = if const { K == DIV || is_double_row::<K, D, A, B>() } {
         arithmetic::<K, D, A, B>(&mut frame, Domain::Float64)
     } else if SPEC {
         arithmetic::<K, D, A, B>(&mut frame, Domain::Int32)
@@ -113,7 +116,7 @@ fn arith_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: boo
 fn exact_arith_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
     let operation = NumberOperation::Arithmetic { destination: DEST, left, right, operation: arithmetic_of(K), domain: Domain::Int32, overflow: Overflow::Impossible, zero: NegativeZero::Exit };
-    let done = staged(&mut frame, operation).is_some();
+    let done = staged(&mut frame, operation, Kind::<{ numeric::kind::ARITHMETIC }>).is_some();
     finish(frame, done)
 }
 
@@ -121,7 +124,7 @@ fn exact_arith_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame
 /// interpreter's `CompareJump` of a Number relation, over the domain the row's places prove.
 #[inline(always)]
 fn compare_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
-    let domain = if is_double_row::<K, D, A, B>() {
+    let domain = if const { is_double_row::<K, D, A, B>() } {
         Domain::Float64
     } else if SPEC {
         Domain::Int32
@@ -139,7 +142,7 @@ fn compare_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: b
 #[inline(always)]
 fn compare_jump<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>, comparison: Comparison) -> Out {
     let operation = Operation::CompareJump { comparison, left: Operand::register(LEFT), right: Operand::register(RIGHT), negate: true };
-    branched(step_generic(&mut Concrete::from_hole(0), &mut frame, operation), frame)
+    branched(step_generic_of::<{ op_kind::COMPARE_JUMP }, _, _>(&mut Concrete::from_hole(0), &mut frame, operation), frame)
 }
 
 /// `if (a & b)`: the staged bitwise test of the two operands' ToInt32 (`Comparison::Bitwise`).
@@ -168,7 +171,7 @@ fn boolean_row<const EXPECTED: bool, const D: u8, const A: u8, const B: u8>(fram
 #[inline(always)]
 fn bitwise_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (left, right, operation) = (Operand::register(LEFT), Operand::register(RIGHT), bitwise_of(K));
-    let done = staged(&mut frame, NumberOperation::Bitwise { destination: DEST, left, right, operation }).is_some();
+    let done = staged(&mut frame, NumberOperation::Bitwise { destination: DEST, left, right, operation }, Kind::<{ numeric::kind::BITWISE }>).is_some();
     if done || holds_int(D) || operation != NumberBitwise::ShiftRightUnsigned {
         return finish(frame, done);
     }
@@ -192,7 +195,7 @@ fn bitwise_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Pl
 /// (`Operation::Move`).
 #[inline(always)]
 fn copy_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let copied = step_flow(&mut Concrete::from_hole(0), &mut frame, Operation::Move { destination: DEST, source: LEFT });
+    let copied = step_flow_of::<{ op_kind::MOVE }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::Move { destination: DEST, source: LEFT });
     finish(frame, matches!(copied, Step::Value(_)))
 }
 
@@ -251,13 +254,13 @@ pub(crate) fn interrupted(s: &S) -> bool {
 /// The staged `Operation::Safepoint` over the row's places: whether the row may continue.
 #[inline(always)]
 fn poll_step<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>) -> bool {
-    matches!(step(&mut Concrete::from_hole(0), frame, Operation::Safepoint { proof: () }), Step::Value(_))
+    matches!(step_of::<{ op_kind::SAFEPOINT }, _, _>(&mut Concrete::from_hole(0), frame, Operation::Safepoint { proof: () }), Step::Value(_))
 }
 
 /// The staged `Operation::BackEdge` over the row's places: polls the interrupt flag, then counts the taken edge.
 #[inline(always)]
 fn back_edge_step<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>) -> bool {
-    matches!(step(&mut Concrete::from_hole(0), frame, Operation::BackEdge { proof: () }), Step::Value(_))
+    matches!(step_of::<{ op_kind::BACK_EDGE }, _, _>(&mut Concrete::from_hole(0), frame, Operation::BackEdge { proof: () }), Step::Value(_))
 }
 
 /// A jump (`Operation::Jump`) that polls the interrupt flag first where `WATCHED`, and counts a
@@ -272,7 +275,7 @@ fn jump_row<const WATCHED: bool, const COUNT: bool, const D: u8, const A: u8, co
     if !proceed {
         return Out::Exit(frame.s);
     }
-    match step_flow(&mut Concrete::from_hole(0), &mut frame, Operation::Jump) {
+    match step_flow_of::<{ op_kind::JUMP }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::Jump) {
         Step::Control(()) => Out::Taken(frame.s),
         _ => Out::Exit(frame.s),
     }
@@ -300,7 +303,7 @@ fn control_row<const K: u8, const D: u8, const A: u8, const B: u8>(frame: Places
 /// successor where it is `WHEN`; a value whose heap cell decides it leaves.
 #[inline(always)]
 fn truth_row<const WHEN: bool, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let jumped = step_flow(&mut Concrete::from_hole(0), &mut frame, Operation::JumpIf { register: LEFT, taken: WHEN });
+    let jumped = step_flow_of::<{ op_kind::JUMP_IF }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::JumpIf { register: LEFT, taken: WHEN });
     branched(jumped, frame)
 }
 
@@ -308,7 +311,7 @@ fn truth_row<const WHEN: bool, const D: u8, const A: u8, const B: u8>(mut frame:
 /// (`Operation::LogicalNot`).
 #[inline(always)]
 fn not_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let negated = step_arith(&mut Concrete::from_hole(0), &mut frame, Operation::LogicalNot { destination: DEST, source: LEFT });
+    let negated = step_arith_of::<{ op_kind::LOGICAL_NOT }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::LogicalNot { destination: DEST, source: LEFT });
     finish(frame, matches!(negated, Step::Value(_)))
 }
 
@@ -317,7 +320,7 @@ fn not_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) ->
 #[inline(always)]
 fn neg_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let operation = NumberOperation::Unary { destination: DEST, source: Operand::register(LEFT), operation: NumberUnary::Negate, domain: Domain::Float64 };
-    let done = staged(&mut frame, operation).is_some();
+    let done = staged(&mut frame, operation, Kind::<{ numeric::kind::UNARY }>).is_some();
     finish(frame, done)
 }
 
@@ -334,7 +337,7 @@ fn math_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Place
         SIGN => FloatUnary::Sign,
         _ => FloatUnary::Sqrt,
     };
-    let done = staged(&mut frame, NumberOperation::Math { destination: DEST, source: Operand::register(LEFT), operation }).is_some();
+    let done = staged(&mut frame, NumberOperation::Math { destination: DEST, source: Operand::register(LEFT), operation }, Kind::<{ numeric::kind::MATH }>).is_some();
     finish(frame, done)
 }
 
@@ -352,7 +355,7 @@ fn tag_init(s: S) -> Out {
 fn remainder<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, domain: Domain) -> bool {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
     staged(frame, NumberOperation::Remainder { destination: DEST, left, right, domain, zero: NegativeZero::Exit,
-        divisor_nonzero: false }).is_some()
+        divisor_nonzero: false }, Kind::<{ numeric::kind::REMAINDER }>).is_some()
 }
 
 /// A remainder row: the int32 remainder where the row speculates int32s or both operands are ints, else the staged
@@ -374,14 +377,14 @@ fn remainder_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut fr
 #[inline(always)]
 fn extreme_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let operation = NumberOperation::Extreme { destination: DEST, left: Operand::register(LEFT), right: Operand::register(RIGHT), maximum: K == MAX };
-    let done = staged(&mut frame, operation).is_some();
+    let done = staged(&mut frame, operation, Kind::<{ numeric::kind::EXTREME }>).is_some();
     finish(frame, done)
 }
 
 /// `Math.imul` of the two operands, int32s; a general row proves them first, as the remainder does.
 #[inline(always)]
 fn imul_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
-    let product = |frame: &mut Places<D, A, B>| staged(frame, NumberOperation::Imul { destination: DEST, left: Operand::register(LEFT), right: Operand::register(RIGHT) }).is_some();
+    let product = |frame: &mut Places<D, A, B>| staged(frame, NumberOperation::Imul { destination: DEST, left: Operand::register(LEFT), right: Operand::register(RIGHT) }, Kind::<{ numeric::kind::IMUL }>).is_some();
     let done = if SPEC {
         product(&mut frame)
     } else {
@@ -415,7 +418,7 @@ fn int_case_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B
     let maximum = hole64::<HOLE_FOURTH>() as u32 as i32;
     let count = (i64::from(maximum) - i64::from(minimum) + 1) as u16;
     let operation = NumberOperation::IntCase { destination: DEST, source: Operand::register(LEFT), minimum, maximum, count };
-    let done = staged(&mut frame, operation).is_some();
+    let done = staged(&mut frame, operation, Kind::<{ numeric::kind::INT_CASE }>).is_some();
     finish(frame, done)
 }
 
@@ -432,30 +435,54 @@ fn unary_row<const K: u8, const D: u8, const A: u8, const B: u8>(frame: Places<D
 #[inline(always)]
 pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(s: S) -> Out {
     let frame = Places::<D, A, B>::new(s);
-    match K {
-        MOVE | COPY | SPILL => copy_row(frame),
-        ADD..=DIV => arith_row::<K, D, A, B, SPEC>(frame),
-        ADD_NO_OVERFLOW | SUB_NO_OVERFLOW => exact_arith_row::<K, D, A, B>(frame),
-        AND..=USHR => bitwise_row::<K, D, A, B>(frame),
-        LT..=NE => compare_row::<K, D, A, B, SPEC>(frame),
-        JUMP | JUMP_POLL | JUMP_WATCH | POLL => control_row::<K, D, A, B>(frame),
-        GUARD => guard_row(frame),
-        UNBOX => unbox_row(frame),
-        UNBOX_INT => unbox_int_row(frame),
-        JUMP_TRUE => truth_row::<true, D, A, B>(frame),
-        JUMP_FALSE => truth_row::<false, D, A, B>(frame),
-        NOT | NEG => unary_row::<K, D, A, B>(frame),
-        REM => remainder_row::<D, A, B, SPEC>(frame),
-        MATH_FIRST..=MATH_LAST => math_row::<K, D, A, B>(frame),
-        MIN | MAX => extreme_row::<K, D, A, B>(frame),
-        IMUL => imul_row::<D, A, B, SPEC>(frame),
-        CLZ32 => clz32_row::<D, A, B>(frame),
-        INT_CASE => int_case_row::<D, A, B>(frame),
-        BIT_TEST => bit_test_row::<D, A, B>(frame),
-        NULLISH_EQ => nullish_row::<false, D, A, B>(frame),
-        NULLISH_NE => nullish_row::<true, D, A, B>(frame),
-        BOOL_TRUE => boolean_row::<true, D, A, B>(frame),
-        BOOL_FALSE => boolean_row::<false, D, A, B>(frame),
-        _ => tag_init(frame.s),
+    // `if const`: rustc drops every other arm before code generation, so the row instantiates its own arm only.
+    if const { K == MOVE || K == COPY || K == SPILL } {
+        copy_row(frame)
+    } else if const { (ADD <= K && K <= DIV) } {
+        arith_row::<K, D, A, B, SPEC>(frame)
+    } else if const { K == ADD_NO_OVERFLOW || K == SUB_NO_OVERFLOW } {
+        exact_arith_row::<K, D, A, B>(frame)
+    } else if const { (AND <= K && K <= USHR) } {
+        bitwise_row::<K, D, A, B>(frame)
+    } else if const { (LT <= K && K <= NE) } {
+        compare_row::<K, D, A, B, SPEC>(frame)
+    } else if const { K == JUMP || K == JUMP_POLL || K == JUMP_WATCH || K == POLL } {
+        control_row::<K, D, A, B>(frame)
+    } else if const { K == GUARD } {
+        guard_row(frame)
+    } else if const { K == UNBOX } {
+        unbox_row(frame)
+    } else if const { K == UNBOX_INT } {
+        unbox_int_row(frame)
+    } else if const { K == JUMP_TRUE } {
+        truth_row::<true, D, A, B>(frame)
+    } else if const { K == JUMP_FALSE } {
+        truth_row::<false, D, A, B>(frame)
+    } else if const { K == NOT || K == NEG } {
+        unary_row::<K, D, A, B>(frame)
+    } else if const { K == REM } {
+        remainder_row::<D, A, B, SPEC>(frame)
+    } else if const { (MATH_FIRST <= K && K <= MATH_LAST) } {
+        math_row::<K, D, A, B>(frame)
+    } else if const { K == MIN || K == MAX } {
+        extreme_row::<K, D, A, B>(frame)
+    } else if const { K == IMUL } {
+        imul_row::<D, A, B, SPEC>(frame)
+    } else if const { K == CLZ32 } {
+        clz32_row::<D, A, B>(frame)
+    } else if const { K == INT_CASE } {
+        int_case_row::<D, A, B>(frame)
+    } else if const { K == BIT_TEST } {
+        bit_test_row::<D, A, B>(frame)
+    } else if const { K == NULLISH_EQ } {
+        nullish_row::<false, D, A, B>(frame)
+    } else if const { K == NULLISH_NE } {
+        nullish_row::<true, D, A, B>(frame)
+    } else if const { K == BOOL_TRUE } {
+        boolean_row::<true, D, A, B>(frame)
+    } else if const { K == BOOL_FALSE } {
+        boolean_row::<false, D, A, B>(frame)
+    } else {
+        tag_init(frame.s)
     }
 }

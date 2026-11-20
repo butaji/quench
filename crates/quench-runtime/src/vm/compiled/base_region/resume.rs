@@ -102,16 +102,16 @@ pub(super) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts)
 /// Appends the rows of `stubs` to `rows`, each failed guard taking row `failed` (the failed
 /// entry's leave) and each stub ending in `jump`; the rows' holes are `holes` from the first
 /// row appended.
-pub(super) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jump: &'a Stencil, holes: &'a [Box<dyn Fn(u32) -> u64 + 'a>], failed: usize) -> Vec<Jump> {
+pub(super) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jump: &'a Stencil, holes: &'a [[u64; HOLES]], failed: usize) -> Vec<Jump> {
     let mut hole = rows.len();
     let mut jumps = Vec::with_capacity(stubs.len());
     for stub in stubs {
         let first = rows.len();
         for row in &stub.rows {
-            rows.push(Placed { stencil: row.stencil, hole: &*holes[hole], taken: row.taken(failed), cold: false });
+            rows.push(Placed { stencil: row.stencil, hole: &holes[hole], taken: row.taken(failed), cold: false });
             hole += 1;
         }
-        rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None, cold: false });
+        rows.push(Placed { stencil: jump, hole: &holes[hole], taken: None, cold: false });
         hole += 1;
         jumps.push(Jump { first, row: rows.len() - 1, target: stub.target });
     }
@@ -152,7 +152,7 @@ mod tests {
     fn a_built_region_has_a_stub_at_each_pc() {
         let (program, id, region) = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
         let known = Known { program: &program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[] };
-        let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: RealmProof::default(), widened: &[], seen: &[], kinds: &[] };
+        let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: Some(RealmProof::default()), widened: &[], seen: &[], kinds: &[] };
         let helpers = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
         // SAFETY: the region has no callees, so no entry cell is read.
         let built = unsafe { function::build_region(&region, &spec, ElementViews::Dense, &callees::Callees::default(), helpers) }.expect("the loop has a row for each instruction");
@@ -161,7 +161,7 @@ mod tests {
         assert!(table.pcs().iter().all(|pc| (region.header..=region.backedge).contains(pc)));
         let offsets: Vec<usize> = table.pcs().iter().map(|pc| table.stub(*pc).unwrap()).collect();
         assert!(offsets.windows(2).all(|pair| pair[0] < pair[1]), "stubs are laid out in PC order");
-        let thunk = routine("entry_resume").unwrap().code;
+        let thunk = &routine("entry_resume").unwrap().code;
         assert_eq!(&code[table.thunk()..], thunk.as_slice(), "the resume thunk ends the code");
         assert!(offsets.iter().all(|offset| *offset > thunk_len() && *offset < table.thunk()));
         assert_eq!(table.stub(region.backedge + 1), None);

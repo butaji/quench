@@ -39,7 +39,7 @@ fn native_addon_contract_matches_node() {
         let mut command = Command::new(executable);
         command.arg(CONTRACT_DRIVER).arg(&addon);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, CONTRACT_TIMEOUT).unwrap()
     });
@@ -89,7 +89,7 @@ fn missing_and_unregistered_addons_fail_like_node() {
         let mut command = Command::new(executable);
         command.args(["-e", &source]);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, CONTRACT_TIMEOUT).unwrap()
     });

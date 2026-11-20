@@ -4,7 +4,7 @@ use super::*;
 use crate::staged::region::Mutability;
 use crate::staged::{Access, Domain, NumericStage, Stage, Table};
 use crate::staged::flow::FlowStage;
-use crate::staged::math::{FloatUnary, ROUND_HALF};
+use crate::staged::math::FloatUnary;
 use crate::staged::number_machine as numbers;
 use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use crate::vm::compiled::regions;
@@ -33,33 +33,12 @@ impl From<u64> for EmitImm { fn from(bits: u64) -> Self { Self::Const(bits) } }
 impl From<u32> for EmitImm { fn from(bits: u32) -> Self { Self::Const(u64::from(bits)) } }
 
 impl Emit<'_, '_> {
-    /// `Math.round` of the binary64 `value`: the floor, one more where the excess reaches a half;
-    /// a negative that rounds to zero is `-0`.
-    /// `Math.sign` (`staged::math::float_unary`): `-1` or `1` by the sign bit; NaN and both zeros are the operand.
-    fn sign(&mut self, value: ir::Value) -> ir::Value {
-        let zero = self.f64_constant(0.0);
-        let (one, minus_one) = (self.f64_constant(1.0), self.f64_constant(-1.0));
-        let negative = self.raw_compare(Relation::FloatLess, value, zero);
-        let signed = self.raw_select(negative, minus_one, one);
-        let is_zero = self.raw_compare(Relation::FloatEqual, value, zero);
-        let unordered = self.raw_compare(Relation::FloatUnordered, value, value);
-        let keep = self.raw_binary(Binary::Or, is_zero, unordered);
-        self.raw_select(keep, value, signed)
-    }
-
-    fn round_half_up(&mut self, value: ir::Value) -> ir::Value {
-        let floor = self.raw_unary(Unary::Floor, value);
-        let excess = self.raw_binary(Binary::FloatSub, value, floor);
-        let half = self.f64_constant(ROUND_HALF);
-        let up = self.raw_compare(Relation::FloatGreaterEqual, excess, half);
-        let (one, zero) = (self.f64_constant(1.0), self.f64_constant(0.0));
-        let step = self.raw_select(up, one, zero);
-        let rounded = self.raw_binary(Binary::FloatAdd, floor, step);
-        let is_zero = self.raw_compare(Relation::FloatEqual, rounded, zero);
-        let negative = self.raw_compare(Relation::FloatLess, value, zero);
-        let negative_zero = self.raw_binary(Binary::And, is_zero, negative);
-        let minus_zero = self.f64_constant(-0.0);
-        self.raw_select(negative_zero, minus_zero, rounded)
+    /// Whether the dispatch `payload`'s gate word has its counts bit clear (`STORE_WATCH_COUNTS`):
+    /// old records keep no reference counts, so an immediate store needs no barrier log.
+    pub(in crate::vm::compiled) fn counts_clear(&mut self, payload: ir::Value) -> ir::Value {
+        let watch = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.store_watch));
+        let counts = self.and_imm(watch, crate::staged::layout_offsets::STORE_WATCH_COUNTS);
+        self.raw_compare_imm(Relation::Equal, counts, 0)
     }
 
     /// `imm` as an operand: Cranelift folds a constant operand back into the instruction's immediate.
@@ -118,6 +97,7 @@ impl Stage for Emit<'_, '_> {
     fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Add, a, b) }
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Or, a, b) }
     fn and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
+    fn shr(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::ShiftRightUnsigned, a, b) }
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
         self.add(a, v)
@@ -175,10 +155,10 @@ impl Stage for Emit<'_, '_> {
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(logged);
         let open = self.builder.append_block_param(join, types::I8);
-        let tracked = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.slots_tracked));
+        let tracked = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.store_watch));
         let untracked = self.raw_compare_imm(Relation::Equal, tracked, 0);
         super::super::emit_js_guard(self.builder, untracked, logged);
-        super::super::emit_unlogged_property_store_guard(self.builder, space, payload, record_id, value, logged);
+        super::super::emit_unlogged_property_store_guard(self, super::super::store_mark_list(space), payload, record_id, value, logged);
         let yes = self.raw_const(Lane::I8, 1);
         self.goto(join, &[yes]);
         self.builder.switch_to_block(logged);
@@ -186,6 +166,17 @@ impl Stage for Emit<'_, '_> {
         self.goto(join, &[no]);
         self.builder.switch_to_block(join);
         open
+    }
+    /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
+    /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
+    /// without counts, else closed, and the store leaves at its miss.
+    fn immediate_store_open(&mut self) -> ir::Value {
+        let Some(payload) = self.gate else {
+            let seen = crate::heap::rc::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
+            let counted = self.raw_const(Lane::I8, i64::from(seen));
+            return self.raw_compare_imm(Relation::Equal, counted, 0);
+        };
+        self.counts_clear(payload)
     }
     fn number_operator(&mut self, _operator: EmitImm, _passed: ir::Value, _constant: ir::Value) -> (ir::Value, ir::Value) {
         // Native arithmetic for computed initializer fields is the construct lowering's (thread 13): until it lands the field leaves.
@@ -200,6 +191,27 @@ impl Stage for Emit<'_, '_> {
     }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
         self.compare(Relation::UnsignedLess, a, b)
+    }
+    fn eq(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
+        self.compare(Relation::Equal, a, b)
+    }
+    /// A do-while in a header block whose parameters are the carried words. The body is emitted into the
+    /// header: its `go_on` branches back to the header with the next words, or on to the exit block, whose
+    /// parameters are the final words. The header is sealed after the back edge.
+    fn loop_words<const N: usize>(&mut self, init: [ir::Value; N],
+        mut body: impl FnMut(&mut Self, [ir::Value; N]) -> (ir::Value, [ir::Value; N])) -> [ir::Value; N] {
+        let kinds = init.map(|word| self.builder.func.dfg.value_type(word));
+        let (header, exit) = (self.builder.create_block(), self.builder.create_block());
+        let carried: [ir::Value; N] = std::array::from_fn(|index| self.builder.append_block_param(header, kinds[index]));
+        let finals: [ir::Value; N] = std::array::from_fn(|index| self.builder.append_block_param(exit, kinds[index]));
+        self.goto(header, &init[..]);
+        self.builder.switch_to_block(header);
+        let (go_on, next) = body(self, carried);
+        self.branch_if(go_on, (header, &next[..]), (exit, &next[..]));
+        self.builder.seal_block(header);
+        self.builder.switch_to_block(exit);
+        self.builder.seal_block(exit);
+        finals
     }
     fn uextend32(&mut self, a: ir::Value) -> ir::Value {
         if self.raw_lane(a) == Lane::I32 { self.widen(a) } else { a }
@@ -306,7 +318,6 @@ impl FlowStage for Emit<'_, '_> {
         let results = self.call_signature(signature, entry, args);
         (results[0], results[1])
     }
-    #[cfg(feature = "aot")]
     fn ret(&mut self, values: &[ir::Value]) { self.leave(values); }
 }
 
@@ -366,6 +377,12 @@ impl NumericStage for Emit<'_, '_> {
     fn float_negate(&mut self, value: ir::Value) -> ir::Value {
         self.raw_unary(Unary::FloatNegate, value)
     }
+    /// IEEE equality of two binary64 words: a word of an integer lane is read as its bits.
+    fn float_eq(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+        let left = if self.raw_lane(left) == Lane::F64 { left } else { self.f64_from_bits(left) };
+        let right = if self.raw_lane(right) == Lane::F64 { right } else { self.f64_from_bits(right) };
+        self.raw_compare(Relation::FloatEqual, left, right)
+    }
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         numbers::checked_int32_arithmetic(self, operation, left, right)
@@ -404,8 +421,8 @@ impl NumericStage for Emit<'_, '_> {
                 let single = self.raw_unary(Unary::Demote, value);
                 self.raw_unary(Unary::Promote, single)
             }
-            FloatUnary::Round => self.round_half_up(value),
-            FloatUnary::Sign => self.sign(value),
+            FloatUnary::Round => crate::staged::math::round(self, value),
+            FloatUnary::Sign => crate::staged::math::sign(self, value),
         }
     }
     fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {

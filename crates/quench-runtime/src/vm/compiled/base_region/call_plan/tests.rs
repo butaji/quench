@@ -54,7 +54,7 @@ fn every_other_call_takes_the_helper_with_its_reason() {
 
 fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
     let direct = direct.map_or(&[][..], std::slice::from_ref);
-    CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, proven_args: 0, read: None, chain: Vec::new(), builtin: None }
+    CallPlan { shape: SHAPE, direct, helper: HelperPlace::Address(0x4000), spills, reloads, proven_args: 0, read: None, chain: Vec::new(), builtin: None }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -82,7 +82,7 @@ fn a_helper_chain_has_no_record_and_its_helper_row_is_last_before_the_reloads() 
     let chain = plan_call(&plan(None, &[], &[(Place::PinF(0), 3)])).expect("a plan");
     assert_eq!((chain.choice, chain.records.is_empty(), chain.parts.len()), (Choice::Helper(Declined::NoTarget), true, 2));
     assert!(chain.parts.iter().all(|part| part.taken.is_none()));
-    let nowhere = CallPlan { helper: 0, ..plan(None, &[], &[]) };
+    let nowhere = CallPlan { helper: HelperPlace::Address(0), ..plan(None, &[], &[]) };
     assert!(plan_call(&nowhere).is_err(), "a helper row needs its address");
 }
 
@@ -90,11 +90,11 @@ fn a_helper_chain_has_no_record_and_its_helper_row_is_last_before_the_reloads() 
 #[test]
 fn a_step_chain_is_spills_helper_reloads() {
     let (spills, reloads) = ([(Place::Pin(0), 1)], [(Place::PinF(1), 5), (Place::Pin(0), 1)]);
-    let parts = plan_step(9, 0x4000, None, &spills, &reloads).expect("a chain");
+    let parts = plan_step(9, HelperPlace::Address(0x4000), None, &spills, &reloads).expect("a chain");
     assert_eq!(parts.len(), spills.len() + 1 + reloads.len());
     assert_eq!(parts[spills.len()].holes[..2], [9, 0x4000]);
     assert_eq!(parts[spills.len()].exits, [Exit::At(9), Exit::Status]);
-    assert!(plan_step(9, 0, None, &[], &[]).is_err(), "a helper row needs its address");
+    assert!(plan_step(9, HelperPlace::Address(0), None, &[], &[]).is_err(), "a helper row needs its address");
 }
 
 #[test]
@@ -102,22 +102,25 @@ fn a_sloppy_callee_takes_the_sloppy_row_with_its_global() {
     let sloppy = DirectFacts { global_this: Some(0xabc), ..facts(4, 2) };
     let chain = plan_call(&plan(Some(&sloppy), &[], &[])).expect("a plan");
     assert_eq!(chain.records.into_iter().next().expect("a record").global_this, 0xabc);
-    let name = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }.name().expect("a row");
-    assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }).expect(&name)));
+    let row = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true, pinned: false };
+    let name = row.name().expect("a row");
+    assert_eq!(name, "call_direct_a2_sloppy_window", "every argument is in the window");
+    assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(row).expect(&name)));
 }
 
-/// A pinned argument dead after the call is read from its pin by the direct row (its place in the record), and its
-/// spill moves behind the direct rows, to the refusal path; a live one keeps its spill before the call.
+/// A pinned argument dead after the call is read from its pin by the direct row (its place in the record), and is
+/// still spilled before the call: the direct row's refusal passes every pinned register dead, so a spill behind it
+/// would hand the helper junk.
 #[cfg(target_arch = "x86_64")]
 #[test]
-fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_on_refusal_only() {
+fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_before_the_call() {
     let spills = [(Place::Pin(1), SHAPE.window), (Place::PinF(0), 9)];
     let reloads: [(Place, Register); 0] = [];
     let direct = facts(4, 2);
     let chain = plan_call(&plan(Some(&direct), &spills, &reloads)).expect("a plan");
-    assert_eq!(chain.parts.len(), 4, "the kept spill, the direct row, the refusal spill, the helper row");
-    assert_eq!(chain.parts[1].taken, Some(4), "completion skips the refusal spill and the helper row");
-    assert_eq!(chain.parts[2].holes[0], slot(SHAPE.window), "the refusal spill is the window argument's");
+    assert_eq!(chain.parts.len(), 4, "both spills, the direct row, the helper row");
+    assert_eq!(chain.parts[0].holes[0], slot(SHAPE.window), "the argument's spill runs before the direct row");
+    assert_eq!(chain.parts[2].taken, Some(4), "completion skips the helper row");
     let record = chain.records.into_iter().next().expect("the direct row's record");
     assert_eq!(record.argument_places, [Place::Pin(1).code(), Place::Mem.code()]);
 }

@@ -4,21 +4,17 @@
 //! target ISA from this cache and publish code through the same W^X memory
 //! implementation in `compiled.rs`.
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 use cranelift_codegen::settings::{self, Configurable};
-#[cfg(any(feature = "jit", feature = "aot"))]
 use std::collections::HashMap;
 use std::sync::Arc;
-#[cfg(any(feature = "jit", feature = "aot"))]
 use std::sync::{Mutex, OnceLock};
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 mod select;
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) mod relocatable_code;
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) mod symbol_words;
 mod worker;
+mod isa;
+pub use isa::{IsaBaseline, NativeTarget};
 pub(super) mod builder;
 pub(super) use worker::{OffThread, run_in_background};
 
@@ -30,34 +26,29 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 /// it makes: in debug builds, where tests check each lowering, and in the tier-stress build,
 /// which compiles everything it can (the ISA is shared by every VM of the process); not in release, where the verifier cost about a quarter
 /// of every JIT compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn verify_ir() -> bool { cfg!(debug_assertions) || cfg!(feature = "tier-stress") }
 
 /// Publication determines relocation policy and code-generation effort, not language
 /// semantics or lowering.
-#[cfg(any(feature = "jit", feature = "aot"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum CodePublication {
     #[cfg(feature = "jit")]
     ExecutableMemory,
-    #[cfg(feature = "aot")]
     RelocatableObject,
     /// Copy-and-patch stencils: executable memory whose continuations are
     /// tail calls, which Cranelift emits only with frame pointers.
-    #[cfg(all(feature = "aot", feature = "jit"))]
+    #[cfg(feature = "jit")]
     Stencil,
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 impl CodePublication {
     /// The Cranelift settings a publication fixes.
     fn settings(self) -> &'static [(&'static str, &'static str)] {
         match self {
             #[cfg(feature = "jit")]
             Self::ExecutableMemory => &[("is_pic", "false")],
-            #[cfg(feature = "aot")]
             Self::RelocatableObject => &[("is_pic", "true")],
-            #[cfg(all(feature = "aot", feature = "jit"))]
+            #[cfg(feature = "jit")]
             Self::Stencil => &[("is_pic", "false"), ("preserve_frame_pointers", "true")],
         }
     }
@@ -67,7 +58,6 @@ impl CodePublication {
 /// compiles a body at a fraction of the cost (no mid-end optimization, one-pass register
 /// allocation) for code that has not proven itself hot. A caller chooses per compile; every
 /// compile uses `Optimized` until a tier policy asks otherwise.
-#[cfg(any(feature = "jit", feature = "aot"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(super) enum CompileLevel {
     Quick,
@@ -78,7 +68,6 @@ pub(super) enum CompileLevel {
     Optimized,
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 impl CompileLevel {
     /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
     /// `quick-compile` experiment measures that level.
@@ -109,7 +98,6 @@ const JS_JIT_OPT_LEVEL: &str = "speed";
 
 /// Declares the symbol `(namespace, key)` in `function`, a relocation the loader patches: the
 /// one form every position-independent constant takes (stencil holes, `lane_region::relocs`).
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
     use cranelift_codegen::ir;
     let name = function.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
@@ -124,7 +112,6 @@ pub(super) fn declare_symbol(function: &mut cranelift_codegen::ir::Function, nam
 /// The function's reference to `signature`: the one it imported already, or a new import.
 /// Cranelift keeps one `SigRef` per imported signature and lowers each one's ABI, so the call
 /// sites of one shape share a reference instead of importing the signature again each.
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn signature_ref(function: &mut cranelift_codegen::ir::Function, signature: cranelift_codegen::ir::Signature) -> cranelift_codegen::ir::SigRef {
     match function.dfg.signatures.iter().find(|(_, imported)| **imported == signature) {
         Some((reference, _)) => reference,
@@ -133,7 +120,6 @@ pub(super) fn signature_ref(function: &mut cranelift_codegen::ir::Function, sign
 }
 
 /// The address of symbol `(namespace, key)`, as a 64-bit value built at `builder`.
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
     use crate::staged::machine::MachineAccess;
     let symbol = declare_symbol(builder.func, namespace, key);
@@ -141,7 +127,6 @@ pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'
 }
 
 /// The address of symbol `(namespace, key)` as a 64-bit value built at `cursor`.
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn symbol_in(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
     use cranelift_codegen::ir::{InstBuilder, types};
     let symbol = declare_symbol(cursor.func, namespace, key);
@@ -156,6 +141,20 @@ pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
     { None }
 }
 
+/// The ISA of an AOT lane body: the JIT's, with the frame pointers its leaves' tail calls to
+/// the base body's entries need, as the stencils that base body is built from have, and the IR
+/// verifier on: a lane body is an extra tier, so a body whose IR is invalid is dropped (the
+/// compile's error) rather than aborting the ahead compile, which can afford the check.
+pub(super) fn ahead_lane_isa() -> Option<Arc<TargetIsa>> {
+    #[cfg(feature = "jit")]
+    {
+        static ISA: OnceLock<Option<Arc<TargetIsa>>> = OnceLock::new();
+        ISA.get_or_init(|| build_isa_verified(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::run_default(), &NativeTarget::host(), true).ok()).clone()
+    }
+    #[cfg(not(feature = "jit"))]
+    { None }
+}
+
 /// The executable-memory ISA at `opt_level`: the Wasm tier's, which picks its own level.
 pub(super) fn target_isa_at(_opt_level: &'static str) -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
@@ -164,7 +163,6 @@ pub(super) fn target_isa_at(_opt_level: &'static str) -> Option<Arc<TargetIsa>> 
     { None }
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn target_isa_for(
     opt_level: &'static str,
     publication: CodePublication,
@@ -178,7 +176,6 @@ pub(super) fn target_isa_level(level: CompileLevel) -> Option<Arc<TargetIsa>> {
     target_isa_with(JS_JIT_OPT_LEVEL, CodePublication::ExecutableMemory, level)
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn target_isa_with(
     opt_level: &'static str,
     publication: CodePublication,
@@ -194,34 +191,58 @@ fn target_isa_with(
         return Some(Arc::clone(isa));
     }
 
-    let mut flags = settings::builder();
-    flags.set("opt_level", opt_level).ok()?;
-    for (name, value) in publication.settings().iter().chain(level.settings()) {
-        flags.set(name, value).ok()?;
-    }
-    for check in ["enable_verifier", "regalloc_checker"] {
-        flags.set(check, if verify_ir() { "true" } else { "false" }).ok()?;
-    }
-    let isa = cranelift_native::builder()
-        .ok()?
-        .finish(settings::Flags::new(flags))
-        .ok()?;
+    let target = match publication {
+        CodePublication::RelocatableObject => NativeTarget::default(),
+        _ => NativeTarget::host(),
+    };
+    let isa = build_isa(opt_level, publication, level, &target).ok()?;
     entries.insert(key, Arc::clone(&isa));
     Some(isa)
+}
+
+/// The relocatable ISA of AOT code on `target`: its CPU baseline and triple, never the host's CPU.
+pub(super) fn relocatable_isa(target: &NativeTarget) -> Result<Arc<TargetIsa>, String> {
+    build_isa("speed", CodePublication::RelocatableObject, CompileLevel::Optimized, target)
+}
+
+/// The ISA of `publication` at `opt_level` and `level` on `target`, with the flags every
+/// publication and level fixes.
+fn build_isa(
+    opt_level: &str,
+    publication: CodePublication,
+    level: CompileLevel,
+    target: &NativeTarget,
+) -> Result<Arc<TargetIsa>, String> {
+    build_isa_verified(opt_level, publication, level, target, verify_ir())
+}
+
+/// `build_isa`, with the IR verifier and register-allocation checker on where `verify` says.
+fn build_isa_verified(
+    opt_level: &str,
+    publication: CodePublication,
+    level: CompileLevel,
+    target: &NativeTarget,
+    verify: bool,
+) -> Result<Arc<TargetIsa>, String> {
+    let mut flags = settings::builder();
+    flags.set("opt_level", opt_level).map_err(|error| error.to_string())?;
+    for (name, value) in publication.settings().iter().chain(level.settings()) {
+        flags.set(name, value).map_err(|error| error.to_string())?;
+    }
+    for check in ["enable_verifier", "regalloc_checker"] {
+        let value = if verify { "true" } else { "false" };
+        flags.set(check, value).map_err(|error| error.to_string())?;
+    }
+    target.isa(settings::Flags::new(flags))
 }
 
 /// Compilation failures shared by the native publishers. Relocation admission
 /// and publication failures belong to the consumer, not Cranelift lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NativeCompileRejection {
-    #[cfg(any(feature = "jit", feature = "aot"))]
     Cranelift,
-    #[cfg(not(any(feature = "jit", feature = "aot")))]
-    BackendUnavailable,
     Relocations,
-    #[cfg(any(feature = "jit", feature = "aot"))]
     EmptyCode,
-    #[cfg(any(feature = "jit", feature = "aot"))]
     CodeSizeBudget,
     Publish,
 }
@@ -230,13 +251,11 @@ impl NativeCompileRejection {
     /// Whether replanning with less inlined code can address this rejection.
     pub(super) const fn exceeds_code_budget(self) -> bool {
         match self {
-            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::CodeSizeBudget => true,
             _ => false,
         }
     }
 
-    #[cfg(feature = "aot")]
     pub(super) const fn reason(self) -> &'static str {
         match self {
             Self::Cranelift => "cranelift-compile-error",
@@ -251,7 +270,6 @@ impl NativeCompileRejection {
 /// Lower once, retaining relocations and their symbolic name table until the
 /// consumer has linked or published the artifact. This avoids an extra code copy.
 /// A missing size limit preserves the Wasm compiler's existing admission policy.
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn compile_function<T>(
     mut function: cranelift_codegen::ir::Function,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
@@ -286,21 +304,10 @@ pub(super) fn compile_function<T>(
     outcome
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 thread_local! {
     static COMPILE_CONTEXT: std::cell::Cell<Option<cranelift_codegen::Context>> = const { std::cell::Cell::new(None) };
 }
 
-#[cfg(not(any(feature = "jit", feature = "aot")))]
-pub(super) fn compile_function<T>(
-    _function: cranelift_codegen::ir::Function,
-    _isa: &dyn cranelift_codegen::isa::TargetIsa,
-    _max_code_bytes: Option<usize>,
-    _consume: impl FnOnce(&cranelift_codegen::CompiledCode, &cranelift_codegen::ir::Function)
-        -> Result<T, NativeCompileRejection>,
-) -> Result<T, NativeCompileRejection> {
-    Err(NativeCompileRejection::BackendUnavailable)
-}
 
 #[cfg(all(test, feature = "jit", target_arch = "x86_64"))]
 mod vendor_patch_tests;

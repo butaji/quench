@@ -3,11 +3,12 @@
 //! guards the frames end with.
 
 use super::{
-    admitted_store, CalleeSource, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, is_move_row, object_reads, renamed,
+    admitted_store, CalleeSource, field_base, inlined_returning, inlined_set_this, intern_field, is_move_row, object_reads, renamed,
     FieldBase, FieldLookup, FieldPath, FieldReceiver, FieldSite, FieldUse, ImmediateLayout, ImmediateRole, InlineCallee,
     InlineFrame, InlineGuard, LoopRegion, Origin, Register, RegisterSet, WideInstruction, CALLEE_CAPTURE,
     MAX_INLINE_PARAMS, MAX_REGION_FIELDS,
 };
+use super::super::lane_unit::{inlinable, InlineScope};
 mod pc_map;
 pub(super) use pc_map::PcMap;
 use crate::bitset::BitSet;
@@ -71,7 +72,9 @@ pub(super) fn admitted_callee<'a>(
     let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
     body(&callee, &reached)
         .all(|instruction| {
-            inlinable(instruction.op())
+            // The ops an inlined callee's instructions may be: those the loop admits, its `Return`,
+            // and none that names its function's own state (captures, frame, calls).
+            inlinable(instruction, InlineScope::Loop)
                 && (instruction.result_flags() == 0 || inlined_returning(instruction) || inlined_set_this(instruction, sites).is_some())
         })
         .then_some(())?;

@@ -166,7 +166,7 @@ pub(crate) fn step<F: Frame<Concrete>>(
                     None => return Step::Unresolved,
                 },
             };
-            match execute(selector, left, right) {
+            match execute(kernel, selector, left, right) {
                 WasmValue::V128(bits) => store_vector(stage, frame, destination, bits),
                 _ => Step::Unresolved,
             }

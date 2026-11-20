@@ -1553,10 +1553,10 @@ mod tests {
             &off_environment,
             "process launched with the default JIT and explicit A/B switch",
         );
-        direct_off.executable = "/quench-node".into();
+        direct_off.executable = "/quench".into();
         direct_off.executable_sha256 = "d".repeat(64);
         direct_off.version = "Quench JIT test".into();
-        direct_off.jit_proof_command = vec!["/quench-node".into()];
+        direct_off.jit_proof_command = vec!["/quench".into()];
         let mut direct_on = direct_off.clone();
         direct_on.name = config.on_engine.into();
         direct_on.environment = on_environment

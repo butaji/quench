@@ -6,20 +6,33 @@
 
 use crate::layout::{
     words::{HEAP_TAG, TAG_MASK},
-    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_SLOTS_TRACKED,
+    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_STORE_WATCH,
     JS_STEP_STORES_SPECIALIZED,
-    LAYOUT_TABLE_BASE, NATIVE_OBJECT_LAYOUT as OBJECT, PROPERTY_BUFFER_BASE,
+    LAYOUT_TABLE_BASE, PROPERTY_BUFFER_BASE,
 };
+use crate::staged::barrier::{unmarked, MarkList};
 use crate::staged::{Passed, StagedRecordSpace, Stage, Table};
 use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
 use crate::staged::region::{Access, Region};
 
+// Statics, not functions: an operation with no stencil form reads one, so its relocation fails the
+// build as a call's would, but the path holds no call, which would keep LLVM from unrolling a loop
+// over static data (an IC's ops) whose unrolled form never reaches it.
 unsafe extern "C" {
-    fn UNSUPPORTED_assumption(a: u64) -> u64;
-    fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
-    fn UNSUPPORTED_shape_in(a: u64) -> u64;
-    fn UNSUPPORTED_site(a: u64) -> u64;
+    static UNSUPPORTED_assumption: u8;
+    static UNSUPPORTED_number_operator: u8;
+    static UNSUPPORTED_shape_in: u8;
+    static UNSUPPORTED_site: u8;
+}
+
+/// The word an unsupported operation answers: a volatile read of its `UNSUPPORTED_*` static, which
+/// no optimization folds away, so the relocation stays and fails the build.
+macro_rules! unsupported {
+    ($symbol:ident) => {
+        // SAFETY: never run; the relocation against the static fails the build.
+        u64::from(unsafe { core::ptr::read_volatile(&raw const $symbol) })
+    };
 }
 
 /// The stencil stage; `sites` is the number of the next value hole a `site` call names,
@@ -116,7 +129,7 @@ impl Stage for StencilStage {
                 HOLE_THIRD => hole::<HOLE_THIRD>() as u64,
                 HOLE_FOURTH => hole::<HOLE_FOURTH>() as u64,
                 LAST_HOLE => hole::<LAST_HOLE>() as u64,
-                _ => UNSUPPORTED_site(n as u64),
+                _ => unsupported!(UNSUPPORTED_site),
             }
         }
     }
@@ -127,8 +140,8 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn shape_in_site(&mut self, shape: u64, _shapes: &[u32]) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_shape_in(shape) != 0 }
+        let _ = shape;
+        unsupported!(UNSUPPORTED_shape_in) != 0
     }
     #[inline(always)]
     fn constant(&mut self, bits: u64) -> u64 { bits }
@@ -156,6 +169,8 @@ impl Stage for StencilStage {
     fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
     crate::staged::word_ops::word_stage_ops!();
     #[inline(always)]
+    fn shr(&mut self, a: u64, b: u64) -> u64 { a.wrapping_shr(b as u32) }
+    #[inline(always)]
     #[inline(always)]
     fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a.wrapping_add(imm.into()) }
     #[inline(always)]
@@ -171,6 +186,22 @@ impl Stage for StencilStage {
     fn ne_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a != imm.into() }
     #[inline(always)]
     fn ugt_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a > imm.into() }
+    #[inline(always)]
+    fn eq(&mut self, a: u64, b: u64) -> bool { a == b }
+    /// A plain Rust loop: a stencil holds no call, and the body runs on the state until it says the loop ends.
+    #[inline(always)]
+    fn loop_words<const N: usize>(&mut self, init: [u64; N], mut body: impl FnMut(&mut Self, [u64; N]) -> (bool, [u64; N]))
+        -> [u64; N] {
+        let mut state = init;
+        loop {
+            let (go_on, next) = body(self, state);
+            state = next;
+            if !go_on {
+                break;
+            }
+        }
+        state
+    }
     #[inline(always)]
     fn uextend32(&mut self, a: u64) -> u64 {
         // SAFETY: the operation's contract is a 32-bit word (a width-checked index or length), which
@@ -200,17 +231,9 @@ impl Stage for StencilStage {
     fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
     #[inline(always)]
     fn box_number(&mut self, number: u64) -> u64 {
-        // `Value::number`: an integral double in int32 range (not `-0`) is an int32, NaN the
-        // canonical NaN, any other double its own bits.
-        let double = f64::from_bits(number);
-        let integer = crate::words::truncate32(double);
-        if f64::from(integer) == double && (integer != 0 || number >> 63 == 0) {
-            crate::layout::words::INT_TAG | u64::from(integer as u32)
-        } else if double.is_nan() {
-            crate::layout::words::CANONICAL_NAN
-        } else {
-            number
-        }
+        // `Value::number` (`words::canonical`): its truncation is the target's own instruction, where
+        // a saturating `as` cast would load its bounds from a constant pool a stencil may not use.
+        crate::words::canonical(f64::from_bits(number))
     }
     #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
@@ -232,42 +255,45 @@ impl Stage for StencilStage {
             // SAFETY: a payload word at a layout offset; a row that stores was given the live payload.
             unsafe { ((self.payload as usize + offset) as *const u64).read() }
         };
-        if word(JS_STEP_SLOTS_TRACKED) != 0 {
+        if word(JS_STEP_STORE_WATCH) != 0 {
             return false;
         }
         // A value that names no heap record joins no barrier log (`StagedRecordSpace::store_logs`).
         if value & TAG_MASK != HEAP_TAG {
             return true;
         }
-        let (blocks_at, count_at) = match space {
-            StagedRecordSpace::Object => (JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT),
-            StagedRecordSpace::Function => (JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
+        let list = match space {
+            StagedRecordSpace::Object => MarkList { blocks: JS_STEP_OBJECT_MARK_BLOCKS, count: JS_STEP_OBJECT_MARK_BLOCK_COUNT },
+            StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
         };
-        let block = record_id >> OBJECT.mark_records_per_block.trailing_zeros();
-        if block >= word(count_at) {
-            return false;
+        let payload = self.payload;
+        unmarked(self, payload, list, record_id, ()).is_some()
+    }
+    #[inline(always)]
+    fn immediate_store_open(&mut self) -> bool {
+        // A row given no payload has no gate word to read; its immediate stores stay open, as they
+        // were before counts were read (each counted store row is given the payload).
+        if self.payload == 0 {
+            return true;
         }
-        let within = record_id & (OBJECT.mark_records_per_block as u64 - 1);
-        let words = within / OBJECT.mark_word_bits as u64 * core::mem::size_of::<u64>() as u64;
-        let marks = word(blocks_at) + block * OBJECT.mark_block_size as u64 + words + OBJECT.mark_offset as u64;
-        // SAFETY: the record's block lies below the block count, and its marks are a word of that block.
-        let marked = unsafe { (marks as *const u64).read() } >> (within % OBJECT.mark_word_bits as u64) & 1;
-        marked == 0
+        // SAFETY: a payload word at a layout offset; a row that stores was given the live payload.
+        let watch = unsafe { ((self.payload as usize + JS_STEP_STORE_WATCH) as *const u64).read() };
+        watch & crate::layout::STORE_WATCH_COUNTS == 0
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_assumption(watch) != 0 }
+        let _ = watch;
+        unsupported!(UNSUPPORTED_assumption) != 0
     }
     #[inline(always)]
     fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
-        // SAFETY: never run; the symbol fails the build.
-        (unsafe { UNSUPPORTED_number_operator(operator, passed, constant) }, false)
+        let _ = (operator, passed, constant);
+        (unsupported!(UNSUPPORTED_number_operator), false)
     }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, _shapes: &[u32]) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_shape_in(shape) != 0 }
+        let _ = shape;
+        unsupported!(UNSUPPORTED_shape_in) != 0
     }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {

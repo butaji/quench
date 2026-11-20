@@ -377,6 +377,27 @@ fn lane_bodies_read_their_arguments_binding() {
     assert_eq!(printed(materialized, "lane-arguments-object.js", crate::ExecutionMode::Compiled, true), interpreted);
 }
 
+/// `String.prototype.replace(...).length` whose string nothing else reads takes the replacement's
+/// length in the lane (`regexp_calls`): the interpreter's values over ASCII and non-ASCII
+/// subjects, a literal and a `$` template, a match and none.
+#[test]
+fn a_replace_read_only_for_its_length_matches_the_interpreter() {
+    let source = r#"
+      var inputs = ["abcabc", "xyz", "h\u00e9llo w\u00f6rld", "aaaa"];
+      var total = 0;
+      for (var i = 0; i < 3000; i++) {
+        var s = inputs[i & 3];
+        total = (total + s.replace(/a/g, "xy").length + s.replace(/zz/, "q").length
+          + s.replace(/b/, "$&$&").length + s.replace(/l/g, "\u00e9\u00e9").length) | 0;
+      }
+      print(total);
+    "#;
+    let interpreted = printed(source, "replace-length.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(printed(source, "replace-length.js", crate::ExecutionMode::Compiled, true), interpreted);
+    assert_eq!(printed(source, "replace-length.js", crate::ExecutionMode::Compiled, false), interpreted);
+}
+
 /// What `source`, wrapped in a function, prints when run in `mode`, with lane bodies where
 /// `lane_methods`.
 fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: bool) -> Vec<String> {

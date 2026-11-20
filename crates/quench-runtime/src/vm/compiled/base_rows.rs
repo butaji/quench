@@ -12,10 +12,7 @@
 use crate::staged::Form;
 use quench_bjit::numeric::{library, Place};
 use quench_bjit::Stencil;
-use std::collections::HashMap;
-use std::sync::Mutex;
 
-use quench_bjit::numeric::library::TYPED_KINDS;
 
 /// The heap catalog's macro (`quench-bjit/stencils/row_catalog.rs`, exported by the lib) and its heap row names
 /// (`row_names.rs`, the lib's copy); `heap_code_of!` reads each row's catalog line.
@@ -171,7 +168,8 @@ pub(super) enum Heap {
     /// tag-decided languages meet the declared mask at hole 1, else the entry leaves with nothing written.
     Declared,
     /// The entry test of a captured declaration a body calls by its identity (`base_region::link::entry_rows`): the
-    /// depth-0 capture at the slot of hole 0 holds the word of hole 1, else the entry leaves with nothing written.
+    /// depth-0 capture at the slot of hole 0 (its byte offset in hole 1) holds the word of hole 2, else the entry leaves
+    /// with nothing written.
     CaptureIdentity,
     /// The entry test of a class-typed parameter (`base_region::link::entry_rows`): the register at hole 0 holds a direct
     /// object whose exact shape and prototype link are the pair in hole 1 (`entry::shape_link_matches`), else the entry
@@ -329,17 +327,9 @@ impl HeapRow {
 
 /// The stencil of `row`, built at compile time by rustc; a row the library lacks declines the region.
 pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
-    static TABLE: Mutex<Option<HashMap<library::HeapCode, &'static Stencil>>> = Mutex::new(None);
+    static TABLE: quench_bjit::rustc::Memo<library::HeapCode> = std::sync::OnceLock::new();
     let code = row.code();
-    let mut table = TABLE.lock().map_err(|e| e.to_string())?;
-    let table = table.get_or_insert_with(HashMap::new);
-    if let Some(found) = table.get(&code) {
-        return Ok(found);
-    }
-    let found = quench_bjit::rustc::stencil(&library::heap_name(code)).ok_or_else(|| format!("no stencil row {row:?}"))?;
-    let stencil: &'static Stencil = Box::leak(Box::new(found));
-    table.insert(code, stencil);
-    Ok(stencil)
+    quench_bjit::rustc::memoized(&TABLE, code, || quench_bjit::rustc::stencil(&library::heap_name(code)).ok_or_else(|| format!("no stencil row {row:?}")))
 }
 
 /// The runtime's heap codes are the catalog's rows (`quench-bjit/stencils/row_catalog.rs`): a `Heap` variant

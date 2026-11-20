@@ -20,7 +20,7 @@ use crate::staged::object::direct_object_record;
 use crate::staged::property::{FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use crate::staged::region::Region;
 use crate::staged::slot_store::{own_flat_store, store_admitted};
-use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalBinding, GlobalFrame, NumericFrame, Operation, PropertyFrame, Stage, Step, entry, lexical_read, step_names, step_property};
+use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalBinding, GlobalFrame, NumericFrame, Operation, PropertyFrame, Stage, Step, entry, lexical_read, step_names_of};
 use crate::words::{HOLE_B, S, hole64, is_double, is_int};
 
 /// Bits in a method-cache bitset word, as a shift.
@@ -286,10 +286,10 @@ pub(crate) fn planned_frame<'a, const D: u8, const A: u8, const B: u8, const N: 
 /// The staged global-name operation `operation` (`LoadName` or `GlobalWrite`) run over `places` where
 /// the name is the global lexical binding at `address` (`GlobalBinding::Lexical`): the step it made.
 #[inline(always)]
-pub(crate) fn run_lexical<const D: u8, const A: u8, const B: u8>(stage: &mut Concrete,
+pub(crate) fn run_lexical<const KIND: u16, const D: u8, const A: u8, const B: u8>(stage: &mut Concrete,
     places: &mut Places<D, A, B>, address: u64, operation: Operation<u64, ()>) -> Step<u64, ()> {
     let mut frame = PlannedPlaces { places, ops: [], callout: Callout::Plan, lexical: Some(address), held: None };
-    step_names(stage, &mut frame, operation)
+    step_names_of::<KIND, _, _>(stage, &mut frame, operation)
 }
 
 /// `GetField` of the receiver in register `LEFT` (hole 1), the plan deciding how it reads.

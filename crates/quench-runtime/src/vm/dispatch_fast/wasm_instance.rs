@@ -4,10 +4,8 @@
 use super::*;
 use crate::staged::wasm_instance::{Storage, binding_get, global_get, global_set};
 use crate::staged::wasm_machine::ConcreteInstance;
-use crate::staged::wasm_memory::scalar_address;
 use crate::staged::wasm_memory_bytes::{read_memory, write_memory};
 use crate::staged::wasm_simd_rules::{shuffle_bits, simd_operand};
-use crate::staged::ConcreteWasm;
 use crate::vm::wasm_global::InstanceBindings;
 
 lane_handler! {

@@ -38,10 +38,6 @@ pub use class::{EXIT, LOCAL, NEXT, TAKEN, ABS64, BRANCH14, BRANCH19, BRANCH26, M
 pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};
 pub use stub::{EXIT_STUB_LEN, exit_stub};
 
-/// The frame's header words before the registers: the result pointer, the memory base and its
-/// length (the call row reloads the pins from them). The stitcher reads it; `build.rs` does not.
-pub const FRAME_HEADER_WORDS: u64 = 3;
-
 /// Pinned int registers a stencil takes, and the double registers (xmm0 to xmm7) after them.
 pub const PINNED: usize = 4;
 pub const PINNED_F: usize = 8;
@@ -93,7 +89,7 @@ pub struct Stencil {
 /// One row of a program: its stencil, hole values and branch target row.
 pub struct Row<'a> {
     pub stencil: &'a Stencil,
-    pub hole: &'a dyn Fn(u32) -> u64,
+    pub hole: &'a [u64; HOLES],
     pub taken: Option<usize>,
     /// A row only a miss reaches (an inline-cache row's fallback): placed after every other row's
     /// hot part, so the hot rows around it stay back to back.
@@ -235,14 +231,14 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
             let (code, base) = part_slice(field.offset as usize);
             let at = field.offset as usize - base;
             patch_ends_inside(at as u32, IMM32_WIDTH, code.len(), "an immediate");
-            code[at..at + IMM32_WIDTH].copy_from_slice(&field.value((row.hole)(field.index) as u32).to_le_bytes());
+            code[at..at + IMM32_WIDTH].copy_from_slice(&field.value(row.hole[field.index as usize] as u32).to_le_bytes());
         }
         for r in stencil.relocs.iter().filter(|r| layout.kept(rows, k, r.offset as usize)) {
             let (code, base) = part_slice(r.offset as usize);
             let at = r.offset as usize - base;
             patch_ends_inside(at as u32, reloc_width(r.class), code.len(), "a relocation");
             if !class::is_successor(r.class) {
-                patch_value(code, at, r.class, (row.hole)(r.index));
+                patch_value(code, at, r.class, row.hole[r.index as usize]);
                 continue;
             }
             let place = out as usize + layout.address(rows, k, r.offset as usize);
@@ -251,6 +247,30 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
         }
     }
     (layout.len, layout.hot)
+}
+
+/// A value field `symbolic_fields` names: the row and hole it takes, the offset of the field in the
+/// code `copy_patch` writes (from its `out`), and the relocation class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SymbolicField {
+    pub row: usize,
+    pub hole: u32,
+    pub offset: usize,
+    pub class: u8,
+}
+
+/// The value fields of `rows` whose hole `symbolic` names, at the offsets `copy_patch` places them: a
+/// relocatable image writes no value there and records the field for its loader instead.
+pub fn symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> Vec<SymbolicField> {
+    let layout = layout(rows);
+    let mut fields = Vec::new();
+    for (k, row) in rows.iter().enumerate() {
+        let relocs = row.stencil.relocs.iter();
+        for r in relocs.filter(|r| !class::is_successor(r.class) && layout.kept(rows, k, r.offset as usize) && symbolic(k, r.index)) {
+            fields.push(SymbolicField { row: k, hole: r.index, offset: layout.address(rows, k, r.offset as usize), class: r.class });
+        }
+    }
+    fields
 }
 
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
@@ -324,6 +344,21 @@ pub mod rustc {
             _ => (None, 0),
         };
         Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len, hot_len: raw.hot_len })
+    }
+
+    /// Stencils memoized by key (`memoized`): each is built once and leaked, so it lives for the life of the process.
+    pub type Memo<K> = std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<K, &'static Stencil>>>;
+
+    /// The stencil memoized under `key` in `memo`, built by `build` on the key's first use; a build that
+    /// fails is an error, and the next use builds again.
+    pub fn memoized<K: std::hash::Hash + Eq + Copy>(memo: &'static Memo<K>, key: K, build: impl FnOnce() -> Result<Stencil, String>) -> Result<&'static Stencil, String> {
+        let mut table = memo.get_or_init(Default::default).lock().map_err(|e| e.to_string())?;
+        if let Some(&found) = table.get(&key) {
+            return Ok(found);
+        }
+        let stencil: &'static Stencil = Box::leak(Box::new(build()?));
+        table.insert(key, stencil);
+        Ok(stencil)
     }
 }
 

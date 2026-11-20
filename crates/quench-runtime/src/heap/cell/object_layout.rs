@@ -104,6 +104,8 @@ impl Object {
             Some(HeapReference::CollectionRecord(id)) => {
                 windowed(proto, PROTO_COLLECTION_RECORD_BASE, COLLECTION_PROTO_WINDOW, id)
             }
+            // A Wasm GC object is a prototype past every window: its link is an overflow link.
+            Some(HeapReference::WasmGcRecord(_)) => overflow_link(proto),
             Some(HeapReference::SymbolRecord(_)) => unreachable!("a symbol is never a prototype"),
             Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
@@ -351,7 +353,7 @@ impl Object {
             return None;
         }
         // SAFETY: an extras pointer names the extras this object owns.
-        self.extras_pointer().map(|extras| unsafe { (*extras).arena_start } as usize)
+        self.extras_pointer().map(|extras| unsafe { (*extras).head.arena_start } as usize)
     }
 
     /// `plain_storage_start` of an object outside dictionary storage, whose start bits are

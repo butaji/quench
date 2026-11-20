@@ -4,9 +4,9 @@
 
 use super::super::*;
 use super::super::wasm_gc::{ArrayInitialization, GcFieldIndex};
-use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess};
+use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess, static_offset};
 use crate::wasm::reference::ReferenceTarget;
-use crate::staged::wasm_gc::{Aggregate, ArrayConstruction, GcStep, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null, reference_cast};
+use crate::staged::wasm_gc::{Aggregate, ArrayConstruction, GcStep, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null};
 use crate::staged::wasm_call::Call;
 use super::super::wasm_gc::stage::HeapStage;
 
@@ -39,6 +39,12 @@ pub(in crate::vm) struct FieldOperands {
     pub(in crate::vm) field: GcField,
     pub(in crate::vm) access: GcFieldAccess,
     pub(in crate::vm) value: Option<Value>,
+    /// A struct read's field's static payload offset (`static_offset` of the `c` operand), `None` for a
+    /// write, an array access, or an operand that does not carry it.
+    pub(in crate::vm) offset: Option<u32>,
+    /// Whether the access is a `*Raw` form: the data register holds the field's Wasm bits as a raw
+    /// word (`compile::liveness::raw_webs`), which moves to or from the storage untouched.
+    pub(in crate::vm) raw: bool,
 }
 
 /// The operands of a bulk array step (`array.fill`, `array.copy`), decoded from the registers: the
@@ -140,7 +146,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The declarations of `program`, a Wasm module's.
-    fn wasm_module_declarations(&self, program: ProgramId) -> Result<crate::WasmTypes, JsError> {
+    pub(in crate::vm) fn wasm_module_declarations(&self, program: ProgramId) -> Result<crate::WasmTypes, JsError> {
         self.programs.wasm_signatures(program)
             .map(|pool| pool.declarations.clone())
             .ok_or_else(|| JsError::validation("Wasm GC operation requires module declarations".into()))
@@ -158,29 +164,25 @@ impl<H: Host> Vm<H> {
         let (aggregate, access) = step.field().expect("field step");
         let write = access == GcFieldAccess::Write;
         let field = GcField::from_tag(i.imm()).expect("validated field operand");
+        let raw = i.op().traits().has(crate::bytecode::Traits::RAW_FORM);
+        let offset = if aggregate == Aggregate::Struct && !write { static_offset(i.c()) } else { None };
         if aggregate == Aggregate::Struct {
             let reference = read(self, if write { i.register_a() } else { i.register_b() });
             let value = write.then(|| read(self, i.register_b()));
-            return Ok(FieldOperands { reference, location: GcFieldIndex::Struct(field.index()), field, access, value });
+            return Ok(FieldOperands { reference, location: GcFieldIndex::Struct(field.index()), field, access, value, offset, raw });
         }
         let (reference, index) =
             if write { (i.register_a(), i.register_b()) } else { (i.register_b(), i.register_c()) };
         let location = GcFieldIndex::Array(Self::wasm_u32_operand(read(self, index))?);
         let value = write.then(|| read(self, i.register_c()));
-        Ok(FieldOperands { reference: read(self, reference), location, field, access, value })
+        Ok(FieldOperands { reference: read(self, reference), location, field, access, value, offset: None, raw })
     }
 
     /// The field access the GC rules make on the heap (`staged::wasm_gc`): the value it reads, or
     /// the trap or validation error a miss raises.
     #[inline(always)]
-    fn wasm_field_rule(
-        &mut self,
-        reference: Value,
-        location: GcFieldIndex,
-        field: GcField,
-        access: GcFieldAccess,
-        value: Option<Value>,
-    ) -> Result<Option<Value>, JsError> {
+    fn wasm_field_rule(&mut self, operands: FieldOperands) -> Result<Option<Value>, JsError> {
+        let FieldOperands { reference, location, field, access, value, offset, raw } = operands;
         let (aggregate, index) = match location {
             GcFieldIndex::Struct(index) => (Aggregate::Struct, index),
             GcFieldIndex::Array(index) => (Aggregate::Array, index),
@@ -189,12 +191,12 @@ impl<H: Host> Vm<H> {
         let mut stage = HeapStage { vm: self };
         match value {
             Some(value) => {
-                let bits = stage.vm.wasm_stored_bits(field, value);
-                field_write(&mut stage, aggregate, reference, index, field, bits).map(|()| None)
+                let bits = if raw { value.to_bits() } else { stage.vm.wasm_stored_bits(field, value) };
+                field_write(&mut stage, aggregate, reference, index, field, bits, offset).map(|()| None)
             }
             None => {
-                let word = field_read(&mut stage, aggregate, reference, index, field, access)?;
-                Ok(Some(stage.vm.wasm_field_value(field, access, word)))
+                let word = field_read(&mut stage, aggregate, reference, index, field, access, offset)?;
+                Ok(Some(if raw { Value::from_bits(word) } else { stage.vm.wasm_field_value(field, access, word) }))
             }
         }
     }
@@ -207,8 +209,8 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
-        let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(step, i, read)?;
-        self.wasm_field_rule(reference, location, field, access, value)
+        let operands = self.wasm_field_operands(step, i, read)?;
+        self.wasm_field_rule(operands)
     }
 
     /// The bulk operations of an array: `array.len`, `array.fill` and `array.copy`, whose operands
@@ -335,13 +337,8 @@ impl<H: Host> Vm<H> {
         if descriptor {
             return self.wasm_descriptor_cast_step(program, cast, i, target, reference, read);
         }
-        let declarations = self.wasm_module_declarations(program)?;
-        let reference = reference.to_bits();
-        let stage = &mut HeapStage { vm: self };
-        if !cast {
-            return Ok(Some(Value::integer(stage.admits(reference, target, &declarations) as i32)));
-        }
-        Ok(Some(Value::from_bits(reference_cast(stage, reference, target, &declarations)?)))
+        let bits = self.wasm_ref_test_or_cast(program, target, reference.to_bits(), cast)?;
+        Ok(Some(if cast { Value::from_bits(bits) } else { Value::integer(bits as i32) }))
     }
 
     /// A descriptor test or cast: the reference's descriptor is the operand's, which its

@@ -2,10 +2,10 @@
 //! semantics are `staged::wasm_simd_lanes` (shared with the b-jit rows); this module adds the
 //! `WasmValue` boundary, the kernel table the interpreter reads, and the interpreter's fast paths.
 
-use super::{V128_BYTES, WasmType, WasmValue};
+use super::{V128_BYTES, WasmValue};
 use crate::bytecode::Register;
 use crate::staged::wasm_emit;
-pub(crate) use crate::staged::wasm_simd_lanes::{SimdOperator, lane, lane_mask, replace};
+pub(crate) use crate::staged::wasm_simd_lanes::SimdOperator;
 pub(crate) use crate::staged::wasm_simd_rules::SimdKernel;
 
 pub(crate) use crate::staged::wasm_simd_rules::{bits_of, value_of};

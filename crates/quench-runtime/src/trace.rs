@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 /// The names a setting was given, as bits indexed by its enum, with their arguments.
 struct Named {
-    on: u32,
+    on: u64,
     values: Vec<Option<String>>,
 }
 
@@ -49,14 +49,14 @@ macro_rules! setting {
             const NAMES: &[&str] = &[$($name,)*];
 
             fn named() -> &'static Named {
-                const _: () = assert!($setting::NAMES.len() <= u32::BITS as usize);
+                const _: () = assert!($setting::NAMES.len() <= u64::BITS as usize);
                 static NAMED: OnceLock<Named> = OnceLock::new();
                 NAMED.get_or_init(|| parse($variable, Self::NAMES))
             }
 
             /// Whether the setting names this.
             pub fn on(self) -> bool {
-                Self::named().on & (1 << self as u32) != 0
+                Self::named().on & (1 << self as u64) != 0
             }
 
             /// The argument written after `=` for this name, if any.
@@ -113,6 +113,8 @@ setting! {
         LoopKernel = "loop-kernel",
         /// Every run of a lane body that ends anywhere but its completion: function and exit.
         BodyLeave = "body-leave",
+        /// Each AOT image compile: how many functions got a lane body, and why each other did not.
+        AotLanes = "aot-lanes",
     }
 }
 
@@ -175,8 +177,8 @@ setting! {
         /// counts (`--dump-before=quench_ir_mark`): the per-primitive instruction budget
         /// (`quench-gate`'s `ir-budget` step) measures each primitive between two marks.
         IrMark = "ir-mark",
-        /// Emitted direct calls push native headers (one-frame-one-call.md F5) instead of taking
-        /// the helper row, to verify the emitted push and its readers before it is the default.
-        NativeFrames = "native-frames",
+        /// Emitted direct calls take the helper row instead of pushing native headers
+        /// (one-frame-one-call.md F5), which is the default: to compare against the old path.
+        NoNativeFrames = "no-native-frames",
     }
 }

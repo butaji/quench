@@ -77,6 +77,13 @@ pub(in crate::vm::compiled) struct Body {
     /// Whether its inline-cache rows hold shape ids, which a shape compaction renumbers
     /// (`LaneMethod::names_shapes`).
     pub(in crate::vm::compiled) names_shapes: bool,
+    /// The run-time addresses the code names by symbol (`SymbolSite`), which a linked image's loader fills; none
+    /// for a body built for this process.
+    pub(in crate::vm::compiled) symbols: Box<[SymbolSite]>,
+    /// The code offset of each PC's first row, ascending by PC, for the PCs a control may enter (`link::Linked`).
+    pub(in crate::vm::compiled) entries: Box<[(u32, usize)]>,
+    /// The PCs with no stencil row of their own, which take the generic row (`steps::generic_row`), ascending.
+    pub(in crate::vm::compiled) generic: Box<[u32]>,
     /// The parameter registers whose Number guards its proven-arguments entry skips (`RowEntries::numbers`).
     pub(in crate::vm::compiled) number_guards: u64,
     /// Whether the activation reads its `this` (`RowEntries::uses_this`), so a direct call writes the receiver for it.
@@ -91,8 +98,7 @@ struct Sites<'a> {
     /// The index of `function` in its program.
     id: u32,
     callees: &'a Callees,
-    facts: &'a [Option<DirectFacts>],
-    /// By PC, every callee the call site recorded (`Callees::targets`).
+    /// By PC, every callee the call site recorded, the first the one it may inline (`Callees::targets`).
     targets: &'a [Vec<DirectFacts>],
     context: Context,
     registers: u16,
@@ -117,7 +123,8 @@ pub(in crate::vm::compiled) struct BodySpec<'a> {
     pub(in crate::vm::compiled) function: u32,
     pub(in crate::vm::compiled) registers: u16,
     pub(in crate::vm::compiled) known: Known<'a>,
-    pub(in crate::vm::compiled) realm: RealmProof,
+    /// The realm the body proves active at its entry; none where it folds nothing realm-bound (an image's body).
+    pub(in crate::vm::compiled) realm: Option<RealmProof>,
     pub(in crate::vm::compiled) widened: &'a [usize],
     /// The type each entry register held when the compile observed it, by register (a register past the slice
     /// is no observation: `Type::ANY`).
@@ -157,7 +164,7 @@ pub(in crate::vm::compiled) struct ShapeProto {
 /// pure entry cost.
 ///
 /// # Safety
-/// Each of `callees` names its function's live entry cell (`Callees::facts`).
+/// Each of `callees` names its function's live entry cell (`Callees::targets`).
 pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, spec: &BodySpec, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     unsafe { build(region, spec, (Ending::Body, Views::Frame), callees, helpers) }
@@ -168,7 +175,7 @@ pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, spec: &Bod
 /// calls inlined or chained as a body's are, the rest of its rows its own.
 ///
 /// # Safety
-/// Each of `callees` names its function's live entry cell (`Callees::facts`).
+/// Each of `callees` names its function's live entry cell (`Callees::targets`).
 pub(in crate::vm::compiled) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: ElementViews, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     unsafe { build(region, spec, (Ending::Region, views.into()), callees, helpers) }
@@ -204,12 +211,12 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
-    let (facts, targets) = unsafe { (callees.facts(), callees.targets()) };
+    let targets = unsafe { callees.targets() };
     let function = spec.known.program.function(spec.function as usize);
     // The prototypes the entry may check and the rows may fold on: none where the function's rows reshape an object.
     let classes = super::declared::class_prototypes(function, spec.known.classes);
     let known = Known { classes: &classes, ..spec.known };
-    let sites = Sites { function, id: spec.function, callees, facts: &facts, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
+    let sites = Sites { function, id: spec.function, callees, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
     let built = assemble(region, spec, sites, helpers).map(|body| with_native_holders(body, callees));
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
@@ -252,7 +259,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
-    if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
+    // An image body covers every function of its program: one whose first record leaves runs it in the lane's interpreter.
+    if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) && helpers != LaneHelpers::Ahead {
         return Err("first instruction leaves".to_string());
     }
     let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
@@ -281,7 +289,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
     // A body proves the realm it was compiled in at its entry, whatever it folds: a program shared by
     // realms enters it only in that one, so a realm switch need not retire it (`LaneMethod::realm_bound`).
-    let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
+    let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).flatten().or_else(|| held_realm(&decoded));
     let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
     let (guards, numbers) = (super::declared::entry_guards(function), super::declared::entry_numbers(function));
     // A declared Number's rows rely on its entry guard, and an inlined frame's copies run at a leave: those guards stay.
@@ -292,7 +300,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     for (row, (int_a, int_b)) in decoded.iter_mut().zip(ints) {
         (row.int_a, row.int_b) = (int_a, int_b);
     }
-    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
+    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities(region.header as usize..=region.backedge as usize).collect();
     identities.sort_unstable();
     identities.dedup();
     // The entry guards hold the pinned int32 and double webs live at the header (`entry_rows`, which every entry runs), so
@@ -302,25 +310,31 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &seeded, &pinned_ints).unwrap_or_default();
     let chain_holders = std::cell::RefCell::new(Vec::new());
     let builtins = sites.callees.builtins();
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
+    let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
-    let (code, resumes, number_guards) = link(&layout, &planned)?;
-    residuals::report_rows(&layout, region.header, &decoded, &planned, code.len());
+    let linked = link(&layout, &planned)?;
+    residuals::report_rows(&layout, region.header, &decoded, &planned, linked.code.len());
+    let generic = generic_records(&layout, &decoded, &reached, helpers);
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.count() - exits;
-    let bare = realm.is_none() && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
+    // A bare run binds no window header (`stencil_run::run_bare`), so a body that reads the captures word
+    // (`CONTEXT_BODY`: a capture read of any row, or an entry identity test of a captured callee) is no bare one.
+    let reads_captures = !layout.identities.is_empty() || !region.captures.is_empty() || !region.stored_captures.is_empty();
+    let bare = realm.is_none() && !reads_captures
+        && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
     let records = planned.iter_mut().flat_map(|row| std::mem::take(&mut row.owned)).collect();
     let atoms = held_atoms(&decoded);
     // A class-typed parameter's prototype shape joins the holders the body subscribes to, so a value change there retires it.
     let holders: Box<[u32]> = held_holders(&decoded).iter().copied().chain(layout.prototypes.iter().map(|proto| proto.holder)).chain(layout.holders.borrow().iter().copied())
         .collect::<std::collections::BTreeSet<u32>>().into_iter().collect();
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
-    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
+    Ok(Body { code: linked.code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
         chains: held_chains(&decoded), instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes, number_guards,
-        uses_this: crate::bytecode::activation_reads_this(spec.known.program, function) })
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes: linked.resumes, scratch, names_shapes, number_guards: linked.number_guards,
+        uses_this: crate::bytecode::activation_reads_this(spec.known.program, function),
+        symbols: linked.symbols.into(), entries: linked.entries.into(), generic })
 }
 
 /// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):

@@ -19,6 +19,20 @@ pub(crate) struct ObjectHead {
     pub(crate) layout: u32,
 }
 
+/// The head of a Wasm GC object's record: the address of its payload bytes (`heap::cell::WasmGcFields`),
+/// their length in bytes, and the type index the object was built from. Compiled code reads a field's
+/// slot as `payload + offset`, bounded by `length`, so a field access takes no callout, box or barrier.
+/// The record writes this head whenever it stores the payload; the payload stays owned by the record.
+#[repr(C)]
+pub(crate) struct WasmGcHead {
+    /// The first byte of the payload, or 0 where the payload is not allocated.
+    pub(crate) payload: u64,
+    /// The payload's length in bytes.
+    pub(crate) length: u64,
+    /// The index of the object's type in its module's types.
+    pub(crate) ty: u32,
+}
+
 /// A dense element backing's header (`heap::array_elements::Header`), the words before its values.
 #[repr(C)]
 pub(crate) struct ArrayHeaderHead {

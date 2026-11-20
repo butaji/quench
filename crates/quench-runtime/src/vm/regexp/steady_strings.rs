@@ -1,6 +1,7 @@
 //! String methods that call a RegExp's well-known symbol (`match`, `replace`) made in place,
 //! in the lane, when the symbol method, `exec`, the flags and `lastIndex` are the builtins'.
 use super::*;
+use super::replacement::{ReplaceResult, has_substitution};
 use super::ascii::AsciiReplace;
 
 impl<H: Host> Vm<H> {
@@ -142,12 +143,42 @@ impl<H: Host> Vm<H> {
         arguments: &[Value],
         result_used: bool,
     ) -> Option<Result<Value, JsError>> {
+        self.steady_string_replace_built(p, native, this, arguments, ReplaceResult::of(result_used))
+    }
+
+    /// `steady_string_replace` when the result is read only by its `.length`
+    /// (`String.prototype.replace(...).length`): the replacement's length, its string never
+    /// built. The same proofs and effects; a template with `$` substitutes, which takes the
+    /// string's build, so it is `None` as any other call the lane leaves to the native.
+    pub(in crate::vm) fn steady_string_replace_length(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        arguments: &[Value],
+    ) -> Option<Result<Value, JsError>> {
+        let [_, replacement] = *arguments.get(..2)?.as_array::<2>()?;
+        if has_substitution(self.heap.string(replacement)?) {
+            return None;
+        }
+        self.steady_string_replace_built(p, native, this, arguments, ReplaceResult::Length)
+    }
+
+    /// `steady_string_replace` building what `build` says its result is.
+    fn steady_string_replace_built(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        arguments: &[Value],
+        build: ReplaceResult,
+    ) -> Option<Result<Value, JsError>> {
         let [search, replacement] = *arguments.get(..2)?.as_array::<2>()?;
         if native != Native::StringReplace || !self.is_string(replacement) {
             return None;
         }
         let (matcher, flags) = self.steady_symbol_matcher(this, search, WellKnownSymbol::Replace, Native::RegExpSymbolReplace)?;
-        if let Some(replaced) = self.replace_ascii_input(p, search, this, replacement, &matcher, flags, result_used) {
+        if let Some(replaced) = self.replace_ascii_input(p, search, this, replacement, &matcher, flags, build) {
             return Some(replaced);
         }
         let input = self.heap.string(this)?.clone();
@@ -161,7 +192,7 @@ impl<H: Host> Vm<H> {
                 FastReplacement::Template(&template),
                 &matcher,
                 flags,
-                result_used,
+                build,
             )
         }))
     }
@@ -181,18 +212,18 @@ impl<H: Host> Vm<H> {
         replacement: Value,
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
-        result_used: bool,
+        build: ReplaceResult,
     ) -> Option<Result<Value, JsError>> {
         let global = flags.contains(RegExpFlags::GLOBAL);
         let mut ranges = smallvec::SmallVec::new();
-        let AsciiReplace { output, too_long } = AsciiReplace::plan(&self.heap, (this, replacement), matcher, flags, result_used, &mut ranges)?;
+        let AsciiReplace { output, length } = AsciiReplace::plan(&self.heap, (this, replacement), matcher, flags, build, &mut ranges)?;
         // The exec loop of a global replace starts from lastIndex 0 and leaves it 0.
         let holds_zero = |vm: &mut Self| vm.regexp_last_index_value(receiver).is_some_and(|(_, held)| held.as_number() == Some(0.0));
         if global && !holds_zero(self) && let Err(error) = self.store_regexp_last_index(p, receiver, Value::number(0.0)) {
             return Some(Err(error));
         }
         let Some(last) = ranges.last() else {
-            return Some(Ok(if result_used { this } else { Value::UNDEFINED }));
+            return Some(Ok(build.unchanged(this, self.heap.string(this)?.units().len())));
         };
         let input = self.heap.string(this)?.clone();
         let owner = match self.regexp_legacy_owner(receiver) {
@@ -200,10 +231,12 @@ impl<H: Host> Vm<H> {
             Err(error) => return Some(Err(error)),
         };
         self.record_regexp_legacy_pending(owner, input, Rc::clone(matcher), last.start);
-        Some(match output {
-            _ if too_long => Err(self.range_error(p, "Invalid string length".into())),
-            None => Ok(Value::UNDEFINED),
-            Some(replaced) => Ok(self.heap.alloc_string(replaced)),
+        Some(match length {
+            None => Err(self.range_error(p, "Invalid string length".into())),
+            Some(length) => Ok(match output {
+                Some(replaced) => self.heap.alloc_string(replaced),
+                None => build.value(length),
+            }),
         })
     }
 }

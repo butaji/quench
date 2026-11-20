@@ -344,10 +344,6 @@ impl<H: Host> Vm<H> {
             Protocol::Value(step) => self.value_step(p, site, step, array, operand),
             Protocol::Owned(step) => self.owned_var_step(p, site, step, array, operand),
             Protocol::Wasm(step) => self.wasm_host_step(p, site, step, array, operand),
-            Protocol::Literal(step) => self.literal_step(p, site, step, array, operand),
-            Protocol::Class(step) => self.class_step(p, site, step, array, operand),
-            Protocol::Value(step) => self.value_step(p, site, step, array, operand),
-            Protocol::Owned(step) => self.owned_var_step(p, site, step, array, operand),
             Protocol::AppendArray { length, spread } => {
                 let array = array.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, length)?;
@@ -375,21 +371,21 @@ impl<H: Host> Vm<H> {
     /// decide a string key, and the VM makes every other step.
     pub(super) fn staged_value_step(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
         let row = Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::of(p)).expect("a value step decodes");
-        self.staged_row(p, site, row)
+        self.staged_row(p, site, row, i.op())
     }
 
     /// The name read `i` (`LoadName`) at `site`, by its staged row on the interpreter's stage: the
     /// interpreter proves nothing of a global, so the VM's binding rules read it.
     pub(super) fn staged_load_name(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
         let row = Operation::<u64, ()>::decode_load_name(i, ()).expect("a name read decodes");
-        self.staged_row(p, site, row)
+        self.staged_row(p, site, row, i.op())
     }
 
     /// `row` on the interpreter's stage over the running frame: an error the VM raised is thrown.
-    fn staged_row(&mut self, p: &ResidualProgram, site: CallSite, row: Operation<u64, ()>) -> Result<(), JsError> {
+    fn staged_row(&mut self, p: &ResidualProgram, site: CallSite, row: Operation<u64, ()>, op: crate::bytecode::Op) -> Result<(), JsError> {
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
         match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
-            Step::Unresolved => Err(frame.raised.expect("a step left to the VM raised")),
+            Step::Unresolved => Err(frame.raised.unwrap_or_else(|| panic!("a step left to the VM raised: {op:?}"))),
             Step::Value(_) | Step::Control(_) => Ok(()),
         }
     }
@@ -529,7 +525,11 @@ impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
     }
 
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
+    /// The host's registers hold tagged words, so an int32 a row computes is written as its
+    /// tagged int (`IntCaseIndex`'s slot, which the branch table after it reads as an int).
+    fn int_result(&mut self, _stage: &mut Concrete, word: u64) -> u64 { Value::integer(word as u32 as i32).to_bits() }
     fn miss(&self) {}
     fn int_fact(&self) {}
     fn number_fact(&self) {}
+
 }

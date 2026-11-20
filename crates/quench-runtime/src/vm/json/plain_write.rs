@@ -59,23 +59,32 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// The epochs a plan is proved under (`JsonPlainCache`).
-    pub(super) fn json_epochs(&self) -> (u64, u64) {
-        (self.heap.collection_epoch(), crate::heap::prototype_layout_epoch())
+    /// The collection epoch a plan is proved under (`JsonPlainCache`): a collection may reuse a
+    /// freed record's id. A prototype's layout is not in it: each proof holds the chain cell of
+    /// the prototypes it read (`json_chain_cell`), which a layout change of any of them retires.
+    pub(super) fn json_epoch(&self) -> u64 {
+        self.heap.collection_epoch()
+    }
+
+    /// The validity cell of the prototype chain from `prototype` to its end, which a proof about
+    /// the prototypes `json_lacks_to_json` and the member plans read holds on (`ChainCell`).
+    /// `None` where the chain cannot be named: the proof is then not kept.
+    fn json_chain_cell(&mut self, prototype: Value) -> Option<crate::heap::ChainCell> {
+        self.chain_cell_to_end(prototype)
     }
 
     /// The kept writer (`JsonPlainCache`), or a new one, set up for a run under `options`.
     fn json_writer(&mut self, options: JsonOptions) -> Box<JsonWriter> {
-        let epochs = self.json_epochs();
+        let epoch = self.json_epoch();
         let mut writer = match self.json_plain.write.take() {
             Some(writer) => writer,
             None => {
                 let to_json = self.intern_atom("toJSON");
                 let empty = self.intern_atom("");
-                Box::new(JsonWriter::new(to_json, empty, epochs))
+                Box::new(JsonWriter::new(to_json, empty, epoch))
             }
         };
-        writer.prove(epochs);
+        writer.prove(epoch);
         writer.options = options;
         writer
     }
@@ -106,7 +115,7 @@ impl<H: Host> Vm<H> {
         self.with_call_roots([holder], |vm| {
             vm.set_property(holder, w.empty, value)?;
             // Making the wrapper may have collected.
-            w.after_guest_code(vm.json_epochs());
+            w.after_guest_code(vm.json_epoch());
             vm.json_write_member(p, holder, key, Some(value), w)
         })
     }
@@ -188,20 +197,21 @@ impl<H: Host> Vm<H> {
 
     /// Whether the array `value` is written as it is: its elements held densely
     /// (`array_search_elements`), no side-table descriptors, and no `toJSON` along its chain,
-    /// decided once per (shape, prototype) of a run's arrays. `None` for a value that is no
-    /// array.
-    fn json_plain_array(&self, value: Value, w: &mut JsonWriter) -> Option<bool> {
+    /// decided once per (shape, prototype) of a run's arrays and held while the chain cell of
+    /// the prototype holds. `None` for a value that is no array.
+    fn json_plain_array(&mut self, value: Value, w: &mut JsonWriter) -> Option<bool> {
         let array = self.heap.array(value)?;
         if array.has_side_descriptors() || self.array_search_elements(value).is_none() {
             return Some(false);
         }
         let key = (array.shape(), array.proto());
-        if w.array_lacks_to_json != Some(key) {
-            if !self.json_lacks_to_json(value, w.to_json) {
-                return Some(false);
-            }
-            w.array_lacks_to_json = Some(key);
+        if w.array_lacks_to_json.is_some_and(|(proved, cell)| proved == key && cell.holds()) {
+            return Some(true);
         }
+        if !self.json_lacks_to_json(value, w.to_json) {
+            return Some(false);
+        }
+        w.array_lacks_to_json = self.json_chain_cell(key.1).map(|cell| (key, cell));
         Some(true)
     }
 
@@ -237,7 +247,7 @@ impl<H: Host> Vm<H> {
     /// storage or indexed descriptors), which may run guest code.
     fn json_array_length(&mut self, p: &ResidualProgram, array: Value, w: &mut JsonWriter) -> Result<usize, JsonStop> {
         let length = self.array_like_length(p, array)?;
-        w.after_guest_code(self.json_epochs());
+        w.after_guest_code(self.json_epoch());
         Ok(length)
     }
 
@@ -382,7 +392,7 @@ impl<H: Host> Vm<H> {
     /// The member plan of `value`, an ordinary object of non-dictionary shape whose own
     /// record holds no side-table descriptors, raw JSON or boxed primitive, when no replacer
     /// property list names its keys (`json_plain_members`).
-    fn json_plain_plan(&self, value: Value, w: &mut JsonWriter) -> Option<std::rc::Rc<[JsonMember]>> {
+    fn json_plain_plan(&mut self, value: Value, w: &mut JsonWriter) -> Option<std::rc::Rc<[JsonMember]>> {
         if w.options.property_list.is_some() {
             return None;
         }
@@ -391,32 +401,30 @@ impl<H: Host> Vm<H> {
         if data.is_raw_json() || data.has_side_descriptors() || self.boxed_primitive_data(value).is_some() {
             return None;
         }
-        self.json_plain_members(value, data, w)
+        let key = (data.shape(), data.proto());
+        self.json_plain_members(value, key, w)
     }
 
     /// The members of `value`'s (shape, prototype), derived on the first object of it: its
     /// enumerable string-keyed data properties in order, when it lacks `toJSON` and no
-    /// property may be an accessor (whose kind a shape alone does not decide).
+    /// property may be an accessor (whose kind a shape alone does not decide). The plan, or its
+    /// refusal, is held while the chain cell of the prototype holds (`JsonPlanProof`); where
+    /// that cell cannot be made, it is not kept.
     fn json_plain_members(
-        &self,
+        &mut self,
         value: Value,
-        data: &crate::heap::Object,
+        key: (u32, Value),
         w: &mut JsonWriter,
     ) -> Option<std::rc::Rc<[JsonMember]>> {
-        let key = (data.shape(), data.proto());
-        let recent = key.0 as usize % JSON_RECENT_PLANS;
-        if let Some((last, plan)) = &w.recent_plans[recent]
-            && *last == key
+        let shape = key.0 as usize;
+        if let Some(Some((prototype, proof))) = w.plans.get(shape)
+            && *prototype == key.1
+            && proof.cell.holds()
         {
-            return Some(plan.clone());
+            return proof.plan.clone();
         }
-        if let Some(plan) = w.object_plans.get(&key) {
-            if let Some(plan) = plan {
-                w.recent_plans[recent] = Some((key, plan.clone()));
-            }
-            return plan.clone();
-        }
-        let plan = (!self.shape_may_have_accessors(data.shape()) && self.json_lacks_to_json(value, w.to_json))
+        // `json_plain_plan` decided that `value` is not a boxed primitive.
+        let plan = (!self.shape_may_have_accessors(key.0) && self.json_chain_lacks_to_json(value, w.to_json))
             .then(|| self.shape_enumerable_slots(value))
             .flatten()
             .and_then(|slots| {
@@ -433,7 +441,12 @@ impl<H: Host> Vm<H> {
                     })
                     .collect::<Option<std::rc::Rc<[JsonMember]>>>()
             });
-        w.object_plans.insert(key, plan.clone());
+        if let Some(cell) = self.json_chain_cell(key.1) {
+            if w.plans.len() <= shape {
+                w.plans.resize(shape + 1, None);
+            }
+            w.plans[shape] = Some((key.1, JsonPlanProof { cell, plan: plan.clone() }));
+        }
         plan
     }
 }

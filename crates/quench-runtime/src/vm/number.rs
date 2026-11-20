@@ -1,15 +1,15 @@
 use super::native_rows::Holder;
 use super::property_key::PropertyKey;
 use super::*;
-use crate::staged::math::FloatUnary;
-use crate::staged::call_native::MathCall;
+use crate::staged::math::{FloatUnary, float_extreme};
+use crate::staged::call_native::{MathCall, concrete_math_call};
 use num_bigint::{BigInt, Sign};
+use smallvec::SmallVec;
 
 const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
 const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PATTERN);
 const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
 use crate::float_layout::{BINARY64, power_of_two};
-pub(super) use crate::staged::math::{f64_to_half, half_to_f64};
 use crate::units::{BINARY_RADIX, HEXADECIMAL_RADIX, OCTAL_RADIX};
 use super::number_parse::{
     INFINITY_LITERAL, decimal_value, radix_digit_run, radix_digits_value, scan_decimal, split_sign, trim_ascii_space,
@@ -85,82 +85,87 @@ pub(super) fn parse_float_bytes(bytes: &[u8]) -> f64 {
     scan_decimal(text).map_or(f64::NAN, |decimal| decimal_value(&decimal))
 }
 
-/// `fixed_decimal` when the exact product significand * 10^digits, and its shift by the
-/// binary exponent, fit 128 bits (every finite |x| < 1e21 with a few digits and a binary
-/// exponent above -128): the nearest integer, a tie taking the larger, by integer arithmetic,
-/// written on the stack. `None` leaves any other value to the exact big-integer path.
-fn fixed_decimal_short(number: f64, digits: usize) -> Option<super::wtf16::JsString> {
-    const POWERS: [u128; 21] = {
-        let mut powers = [1u128; 21];
-        let mut index = 1;
-        while index < 21 {
-            powers[index] = powers[index - 1] * 10;
-            index += 1;
+/// The magnitude from which `Number.prototype.toFixed` writes exponential form (`number_to_decimal`).
+pub(super) const FIXED_EXPONENTIAL_FROM: f64 = 1e21;
+/// Inline capacity of a `toFixed` text: a sign, 21 integer digits, a point and 20 digits.
+const FIXED_INLINE_LEN: usize = 64;
+/// 10^0 through 10^20, each exact in a u128: the scales `fixed_rounded` multiplies by.
+const POWERS_OF_TEN: [u128; 21] = {
+    let mut powers = [1u128; 21];
+    let mut index = 1;
+    while index < powers.len() {
+        powers[index] = powers[index - 1] * 10;
+        index += 1;
+    }
+    powers
+};
+
+/// The `toFixed(digits)` text of a finite `number` below 1e21, with `digits` at most 100: a sign
+/// for a negative number (a negative that rounds to zero keeps it, as the spec's step 6 gives it),
+/// the magnitude rounded half up at `digits` places (`fixed_rounded`, or the exact integer path
+/// where that does not fit 128 bits), and its point. A zero is written unsigned.
+pub(super) fn fixed_text(number: f64, digits: usize) -> SmallVec<[u8; FIXED_INLINE_LEN]> {
+    let mut buffer = itoa::Buffer::new();
+    let exact;
+    let integer: &[u8] = match fixed_rounded(number, digits) {
+        Some(rounded) => buffer.format(rounded).as_bytes(),
+        None => {
+            exact = fixed_rounded_exact(number, digits).to_string();
+            exact.as_bytes()
         }
-        powers
     };
-    let (significand, exponent) = crate::float_layout::binary64_parts(number);
-    let scaled = u128::from(significand).checked_mul(*POWERS.get(digits)?)?;
-    let rounded = if exponent >= 0 {
-        let shift = exponent as u32;
-        (shift < scaled.leading_zeros()).then(|| scaled << shift)?
-    } else {
-        let shift = (-exponent) as u32;
-        if shift >= 127 {
-            return None;
-        }
-        (scaled + (1u128 << (shift - 1))) >> shift
-    };
-    // 39 integer digits at most, a point, `digits` zeros of padding and a sign.
-    let mut buffer = [b'0'; 64];
-    let mut integer = itoa::Buffer::new();
-    let text = integer.format(rounded).as_bytes();
-    let mut at = 1;
-    if number.is_sign_negative() && number != 0.0 {
-        buffer[0] = b'-';
-    } else {
-        at = 0;
+    let mut text: SmallVec<[u8; FIXED_INLINE_LEN]> = SmallVec::new();
+    if number < 0.0 {
+        text.push(b'-');
     }
     if digits == 0 {
-        buffer[at..at + text.len()].copy_from_slice(text);
-        return Some(super::wtf16::JsString::from_ascii_bytes(&buffer[..at + text.len()]));
+        text.extend_from_slice(integer);
+        return text;
     }
-    // At least one integer digit: leading zeros pad a short text.
-    let width = text.len().max(digits + 1);
-    let start = at + width - text.len();
-    buffer[start..start + text.len()].copy_from_slice(text);
-    let point = at + width - digits;
-    buffer.copy_within(point..at + width, point + 1);
-    buffer[point] = b'.';
-    Some(super::wtf16::JsString::from_ascii_bytes(&buffer[..at + width + 1]))
+    // At least one integer digit: leading zeros pad a short text before the point.
+    let start = text.len();
+    let width = integer.len().max(digits + 1);
+    text.resize(start + width - integer.len(), b'0');
+    text.extend_from_slice(integer);
+    text.insert(start + width - digits, b'.');
+    text
 }
 
-fn fixed_decimal(number: f64, digits: usize) -> String {
+/// `round(|number| * 10^digits)` as an integer, a tie taking the larger, from the exact significand
+/// and binary exponent in 128 bits. `None` when the product or its shift does not fit, which
+/// `fixed_rounded_exact` then computes.
+fn fixed_rounded(number: f64, digits: usize) -> Option<u128> {
+    /// Right shifts at or past this bit count are left to the exact path.
+    const MAX_RIGHT_SHIFT: u32 = 127;
+    let (significand, exponent) = crate::float_layout::binary64_parts(number);
+    let scaled = u128::from(significand).checked_mul(*POWERS_OF_TEN.get(digits)?)?;
+    if exponent >= 0 {
+        let shift = exponent as u32;
+        return (shift < scaled.leading_zeros()).then(|| scaled << shift);
+    }
+    let shift = exponent.unsigned_abs();
+    if shift >= MAX_RIGHT_SHIFT {
+        return None;
+    }
+    Some((scaled + (1u128 << (shift - 1))) >> shift)
+}
+
+/// `round(|number| * 10^digits)` in exact big-integer arithmetic, for the values and digit counts
+/// `fixed_rounded` does not hold.
+fn fixed_rounded_exact(number: f64, digits: usize) -> BigInt {
     let (significand, exponent) = crate::float_layout::binary64_parts(number);
     let scaled = BigInt::from(significand) * BigInt::from(10_u8).pow(digits as u32);
-    let rounded = if exponent >= 0 {
-        scaled << exponent as usize
+    if exponent >= 0 {
+        return scaled << exponent as usize;
+    }
+    let shift = (-exponent) as usize;
+    let quotient = &scaled >> shift;
+    let remainder = &scaled - (&quotient << shift);
+    if (&remainder << 1_usize) >= (BigInt::from(1_u8) << shift) {
+        quotient + 1_u8
     } else {
-        let shift = (-exponent) as usize;
-        let quotient = &scaled >> shift;
-        let remainder = &scaled - (&quotient << shift);
-        if (&remainder << 1_usize) >= (BigInt::from(1_u8) << shift) {
-            quotient + 1_u8
-        } else {
-            quotient
-        }
-    };
-    let mut text = rounded.to_string();
-    if digits > 0 {
-        if text.len() <= digits {
-            text.insert_str(0, &"0".repeat(digits + 1 - text.len()));
-        }
-        text.insert(text.len() - digits, '.');
+        quotient
     }
-    if number.is_sign_negative() && number != 0.0 {
-        text.insert(0, '-');
-    }
-    text
 }
 
 impl<H: Host> Vm<H> {
@@ -285,7 +290,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let number = self.number_receiver_value(p, receiver)?;
         let number = if number == 0.0 { 0.0 } else { number };
-        let number = if number == 0.0 { 0.0 } else { number };
         let digits_value = args.first().copied().filter(|value| !value.is_undefined());
         if !number.is_finite() {
             if let Some(value) = digits_value {
@@ -303,15 +307,10 @@ impl<H: Host> Vm<H> {
             .map(|value| self.number_format_digits(p, value))
             .transpose()?;
         let text = match kind {
-            Native::NumberFixed => {
-                if number.abs() >= 1e21 {
-                    number_to_decimal(number)
-                } else if let Some(text) = fixed_decimal_short(number, digits.unwrap_or(0)) {
-                    return Ok(self.heap.alloc_string(text));
-                } else {
-                    fixed_decimal(number, digits.unwrap_or(0))
-                }
+            Native::NumberFixed if number.abs() < FIXED_EXPONENTIAL_FROM => {
+                return Ok(self.heap.alloc_ascii_run(&fixed_text(number, digits.unwrap_or(0))));
             }
+            Native::NumberFixed => number_to_decimal(number),
             Native::NumberPrecision => match digits {
                 None => number_to_decimal(number),
                 Some(0) => return Err(self.range_error(p, "Invalid precision".into())),
@@ -385,14 +384,9 @@ impl<H: Host> Vm<H> {
                 "Infinity".to_owned()
             }
         } else {
-            let scientific = match digits {
-                Some(digits) => format!("{number:.digits$e}"),
-                None => format!("{number:e}"),
-            };
-            if digits.is_some() {
-                format_scientific_exponential(number, digits.unwrap_or_default())
-            } else {
-                normalize_exponent_sign(&scientific)
+            match digits {
+                Some(digits) => format_scientific_exponential(number, digits),
+                None => normalize_exponent_sign(&format!("{number:e}")),
             }
         };
         Ok(self.heap.alloc_string(text.into()))
@@ -454,10 +448,15 @@ pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
     })
 }
 
+/// The coefficient text and exponent of a `{:e}` formatted number.
+fn scientific_parts(value: &str) -> (&str, i32) {
+    let (coefficient, exponent) = value.split_once('e').unwrap_or((value, "0"));
+    (coefficient, exponent.parse::<i32>().unwrap_or_default())
+}
+
 fn format_scientific(number: f64, digits: usize) -> String {
     let value = format!("{number:.digits$e}");
-    let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
-    let exponent = exponent.parse::<i32>().unwrap_or_default();
+    let (coefficient, exponent) = scientific_parts(&value);
     format!("{coefficient}e{exponent:+}")
 }
 
@@ -467,8 +466,7 @@ pub(super) fn number_to_decimal(number: f64) -> String {
 
 fn format_scientific_exponential(number: f64, digits: usize) -> String {
     let value = format!("{number:.digits$e}");
-    let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
-    let exponent = exponent.parse::<i32>().unwrap_or_default();
+    let (coefficient, exponent) = scientific_parts(&value);
     let scaled = number.abs() / 10_f64.powi(exponent - digits as i32);
     if scaled.fract() == 0.5 {
         let mut rounded = scaled.floor() + 1.0;
@@ -497,162 +495,81 @@ fn normalize_exponent_sign(text: &str) -> String {
 /// Arguments a Math call of Numbers keeps inline (`math_numbers`); longer calls allocate.
 pub(super) const MATH_INLINE_ARGUMENTS: usize = 4;
 
-/// How a Math function of Numbers computes its value: the one table every tier reads
-/// (`math_function`). Each body is written once, in `staged::math` or in the libm it names.
-#[derive(Clone, Copy)]
-pub(super) enum MathFunction {
-    /// A machine row (`staged::math::float_unary`), which native code lowers inline.
-    Row(FloatUnary),
-    /// Any other Math function of one Number.
-    Unary(fn(f64) -> f64),
-    /// `Math.max` (true) or `Math.min` of Numbers, of any count.
-    Extreme(bool),
-    /// `Math.imul`: the wrapping product of the two arguments' ToInt32.
-    Imul,
-    /// `Math.pow` or `Math.atan2`: a function of two Numbers.
-    Binary(fn(f64, f64) -> f64),
-}
-
-/// The Math function `native` computes on Numbers; `None` for any other native.
-pub(super) fn math_function(native: Native) -> Option<MathFunction> {
-    math_operator(native).or_else(|| math_unary_function(native))
-}
-
-/// The Math functions that are machine rows or take several Numbers.
-fn math_operator(native: Native) -> Option<MathFunction> {
-    use MathFunction::{Binary, Extreme, Imul, Row};
+/// The Math function `native` computes on Numbers, the one table every tier reads: each tier derives
+/// its dispatch from `MathCall`, and each body is written once, in `staged::math` or in the libm it
+/// names. `None` for any other native.
+pub(super) const fn math_call(native: Native) -> Option<MathCall> {
+    use crate::staged::math::{atan, atanh, cbrt, f16_round};
+    use MathCall::{Binary, Extreme, Imul, LeadingZeros, Libm, Unary};
     Some(match native {
-        Native::MathFloor => Row(FloatUnary::Floor),
-        Native::MathAbs => Row(FloatUnary::Abs),
-        Native::MathCeil => Row(FloatUnary::Ceil),
-        Native::MathRound => Row(FloatUnary::Round),
-        Native::MathTrunc => Row(FloatUnary::Trunc),
-        Native::MathSqrt => Row(FloatUnary::Sqrt),
-        Native::MathFround => Row(FloatUnary::Fround),
+        Native::MathFloor => Unary(FloatUnary::Floor),
+        Native::MathAbs => Unary(FloatUnary::Abs),
+        Native::MathCeil => Unary(FloatUnary::Ceil),
+        Native::MathRound => Unary(FloatUnary::Round),
+        Native::MathTrunc => Unary(FloatUnary::Trunc),
+        Native::MathSqrt => Unary(FloatUnary::Sqrt),
+        Native::MathFround => Unary(FloatUnary::Fround),
+        Native::MathSign => Unary(FloatUnary::Sign),
+        Native::MathClz32 => LeadingZeros,
         Native::MathMax => Extreme(true),
         Native::MathMin => Extreme(false),
         Native::MathImul => Imul,
         Native::MathPow => Binary(crate::staged::math::power),
         Native::MathAtan2 => Binary(crate::staged::math::atan2),
+        Native::MathF16Round => Libm(f16_round),
+        Native::MathAtanh => Libm(atanh),
+        Native::MathAtan => Libm(atan),
+        Native::MathCbrt => Libm(cbrt),
+        Native::MathAcos => Libm(f64::acos),
+        Native::MathAsin => Libm(f64::asin),
+        Native::MathCos => Libm(f64::cos),
+        Native::MathExp => Libm(f64::exp),
+        Native::MathSin => Libm(f64::sin),
+        Native::MathTan => Libm(f64::tan),
+        Native::MathAcosh => Libm(f64::acosh),
+        Native::MathAsinh => Libm(f64::asinh),
+        Native::MathCosh => Libm(f64::cosh),
+        Native::MathExpm1 => Libm(f64::exp_m1),
+        Native::MathLog10 => Libm(f64::log10),
+        Native::MathLog1p => Libm(f64::ln_1p),
+        Native::MathLog => Libm(f64::ln),
+        Native::MathLog2 => Libm(f64::log2),
+        Native::MathSinh => Libm(f64::sinh),
+        Native::MathTanh => Libm(f64::tanh),
         _ => return None,
     })
 }
 
-/// The Math functions of one Number that are not machine rows: staged bodies, or libm's.
-fn math_unary_function(native: Native) -> Option<MathFunction> {
-    use crate::staged::math::{atan, atanh, cbrt, clz32, f16_round, sign};
-    use MathFunction::Unary;
-    Some(match native {
-        Native::MathSign => Unary(sign),
-        Native::MathClz32 => Unary(clz32),
-        Native::MathF16Round => Unary(f16_round),
-        Native::MathAtanh => Unary(atanh),
-        Native::MathAtan => Unary(atan),
-        Native::MathCbrt => Unary(cbrt),
-        Native::MathAcos => Unary(f64::acos),
-        Native::MathAsin => Unary(f64::asin),
-        Native::MathCos => Unary(f64::cos),
-        Native::MathExp => Unary(f64::exp),
-        Native::MathSin => Unary(f64::sin),
-        Native::MathTan => Unary(f64::tan),
-        Native::MathAcosh => Unary(f64::acosh),
-        Native::MathAsinh => Unary(f64::asinh),
-        Native::MathCosh => Unary(f64::cosh),
-        Native::MathExpm1 => Unary(f64::exp_m1),
-        Native::MathLog10 => Unary(f64::log10),
-        Native::MathLog1p => Unary(f64::ln_1p),
-        Native::MathLog => Unary(f64::ln),
-        Native::MathLog2 => Unary(f64::log2),
-        Native::MathSinh => Unary(f64::sinh),
-        Native::MathTanh => Unary(f64::tanh),
-        _ => return None,
-    })
+/// The value of a call of the Math function `native` (`math_call`) with Number arguments, as
+/// `staged::call_native::math_call` computes it, int32 fast paths included. `None` where an argument
+/// is no Number (the native converts it, and may run guest code) or the count is one the function
+/// does not take.
+#[inline(always)]
+pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> {
+    concrete_math_call(math_call(native)?, args)
 }
 
-/// The staged row (`staged::call_native::math_call`) of the Math function `native`, whose
-/// call of Number arguments a site makes in place, int32 fast paths included; `None` for any
-/// other native.
-pub(super) const fn math_call(native: Native) -> Option<MathCall> {
-    Some(match native {
-        Native::MathSqrt => MathCall::Unary(FloatUnary::Sqrt),
-        Native::MathAbs => MathCall::Unary(FloatUnary::Abs),
-        Native::MathFloor => MathCall::Unary(FloatUnary::Floor),
-        Native::MathCeil => MathCall::Unary(FloatUnary::Ceil),
-        Native::MathRound => MathCall::Unary(FloatUnary::Round),
-        Native::MathTrunc => MathCall::Unary(FloatUnary::Trunc),
-        Native::MathFround => MathCall::Unary(FloatUnary::Fround),
-        Native::MathSign => MathCall::Sign,
-        Native::MathMax => MathCall::Extreme(true),
-        Native::MathMin => MathCall::Extreme(false),
-        Native::MathImul => MathCall::Imul,
-        _ => return None,
-    })
-}
-
-/// The value of a Math function of Number arguments that may read more than its first
-/// (`Math.max`, `Math.min`, `Math.pow`, `Math.atan2`, `Math.imul`), a missing argument being
-/// NaN as `undefined` converts; `None` for any other function. Each runs no guest code once its
-/// arguments are Numbers.
+/// The value of a Math function of Number values that reads two (`Math.pow`, `Math.atan2`,
+/// `Math.imul`, a missing one NaN or `undefined`, as its conversion makes it), or of any count
+/// for `Math.max` and `Math.min`; `None` for a function of one Number. Each runs no guest code.
 #[inline(always)]
 pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
-    let argument = |index: usize| values.get(index).copied().unwrap_or(f64::NAN);
-    Some(match math_function(native)? {
-        MathFunction::Extreme(maximum) => {
-            let start = if maximum { f64::NEG_INFINITY } else { f64::INFINITY };
-            values.iter().fold(start, |result, &number| crate::staged::math::float_extreme(maximum, result, number))
+    match math_call(native)? {
+        MathCall::Extreme(maximum) => Some(values.iter().fold(MathCall::extreme_start(maximum), |result, &number| {
+            float_extreme(maximum, result, number)
+        })),
+        call @ (MathCall::Binary(_) | MathCall::Imul) => {
+            let args: SmallVec<[Value; 2]> = values.iter().take(2).map(|&number| Value::number(number)).collect();
+            concrete_math_call(call, &args)?.as_number()
         }
-        MathFunction::Binary(operation) => operation(argument(0), argument(1)),
-        MathFunction::Imul => {
-            let [left, right] = [argument(0), argument(1)].map(|number| crate::value::number_to_i32(number));
-            f64::from(crate::staged::math::int_multiply(left, right))
-        }
-        MathFunction::Row(_) | MathFunction::Unary(_) => return None,
-    })
+        MathCall::Unary(_) | MathCall::LeadingZeros | MathCall::Libm(_) => None,
+    }
 }
 
 /// Whether a call of `native` with Number arguments is a Math function's value that
-/// `math_inline_call` computes (`math_function`).
+/// `math_inline_call` computes (`math_call`).
 pub(super) fn math_numbers_inline(native: Native) -> bool {
-    math_function(native).is_some()
-}
-
-/// The value of a call of the Math function `native` (`math_function`) with at most two Number
-/// arguments, none of whose conversions runs guest code: `Math.max` and `Math.min` of two
-/// int32s compare them, whose result is that int32 (an int32 is never -0); `Math.imul` of two
-/// int32s is their staged product; `Math.abs` of an int32 is an int32 but at -2^31. Any other
-/// call takes `math_unary` or `math_numbers`. `None` for another native, any other argument or
-/// more arguments, which the native's call converts.
-#[inline(always)]
-pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> {
-    let function = math_function(native)?;
-    match *args {
-        [first, second] => {
-            if let (Some(x), Some(y)) = (first.as_int(), second.as_int()) {
-                match function {
-                    MathFunction::Extreme(maximum) =>
-                        return Some(Value::integer(crate::staged::math::int_extreme(maximum, x, y))),
-                    // ToInt32 of an int32 is itself: the product's low 32 bits.
-                    MathFunction::Imul => return Some(Value::integer(crate::staged::math::int_multiply(x, y))),
-                    _ => {}
-                }
-            }
-            math_numbers(native, &[first.as_number()?, second.as_number()?]).map(Value::number)
-        }
-        [only] => {
-            // The integral functions keep their double path: their arguments are doubles far more
-            // often, and a test first costs those.
-            if matches!(function, MathFunction::Row(FloatUnary::Abs))
-                && let Some(x) = only.as_int()
-                && let Some(absolute) = crate::staged::math::int_abs(x)
-            {
-                return Some(Value::integer(absolute));
-            }
-            let number = only.as_number()?;
-            math_unary(native, number).or_else(|| math_numbers(native, &[number])).map(Value::number)
-        }
-        [] => math_numbers(native, &[]).map(Value::number),
-        _ => None,
-    }
+    math_call(native).is_some()
 }
 
 /// The value of a Math function of one Number argument (`Math.sqrt` and its kin); `None`
@@ -661,20 +578,17 @@ pub(super) fn math_unary_call(native: Native, args: &[Value]) -> Option<Value> {
     math_unary(native, args.first()?.as_number()?).map(Value::number)
 }
 
-/// The value of a Math function of one Number (`math_function`): a machine row's `float_unary`,
-/// or the one-Number body. `None` for any other function.
+/// The value of a Math function of one Number (`math_call`, `MathCall::reads_one_number`), as
+/// `staged::call_native::math_call` computes it. `None` for any other function.
 #[inline(always)]
 pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
-    match math_function(native)? {
-        MathFunction::Row(operation) => Some(crate::staged::math::float_unary(operation, value)),
-        MathFunction::Unary(operation) => Some(operation(value)),
-        MathFunction::Extreme(_) | MathFunction::Imul | MathFunction::Binary(_) => None,
-    }
+    let call = math_call(native).filter(|call| call.reads_one_number())?;
+    concrete_math_call(call, &[Value::number(value)])?.as_number()
 }
 
 /// Whether `native` is a Math function of one Number, which `math_unary` computes.
 pub(super) fn is_math_unary(native: Native) -> bool {
-    matches!(math_function(native), Some(MathFunction::Row(_) | MathFunction::Unary(_)))
+    math_call(native).is_some_and(MathCall::reads_one_number)
 }
 
 impl<H: Host> Vm<H> {

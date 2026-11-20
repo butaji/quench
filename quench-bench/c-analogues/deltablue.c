@@ -1,3 +1,7 @@
+// jetstream-row: delta-blue
+// jetstream-files: Octane/deltablue.js
+// iterations: 120
+// jetstream-driver: deterministic=true
 // C analogue of JetStream 3's deltablue.js (DeltaBlue incremental constraint solver): the
 // same object model, quirks included (BinaryConstraint.chooseMethod's non-exclusive ifs,
 // Strength.nextWeaker's mapping, removeFirst popping the last element), the same chain and

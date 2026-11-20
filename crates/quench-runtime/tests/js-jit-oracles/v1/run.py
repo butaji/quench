@@ -37,7 +37,7 @@ def run(command: list[str], *, env: dict[str, str], timeout: int) -> subprocess.
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--node", default="node", help="Node.js oracle executable")
-    parser.add_argument("--quench", help="Quench executable (defaults to target/iteration/quench-node)")
+    parser.add_argument("--quench", help="Quench executable (defaults to target/iteration/quench)")
     parser.add_argument("--skip-build", action="store_true", help="do not build a missing Quench executable")
     parser.add_argument(
         "--allow-node-version-mismatch",
@@ -71,7 +71,7 @@ def main() -> int:
         )
         return 2
 
-    quench = Path(args.quench).resolve() if args.quench else root / "target" / build_profile / "quench-node"
+    quench = Path(args.quench).resolve() if args.quench else root / "target" / build_profile / "quench"
     build_env = os.environ.copy()
     build_env.update(build_config["build_environment"])
     if args.skip_build:
@@ -80,7 +80,7 @@ def main() -> int:
             return 2
     else:
         build = run(
-            ["cargo", "build", "--locked", "--profile", build_profile, "-p", "quench-node", "--bin", "quench-node"],
+            ["cargo", "build", "--locked", "--profile", build_profile, "-p", "quench", "--bin", "quench"],
             env=build_env,
             timeout=args.build_timeout_secs,
         )

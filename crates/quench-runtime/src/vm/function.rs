@@ -15,6 +15,15 @@ fn bound_length(target_length: Value, bound_count: f64) -> f64 {
     }
 }
 
+/// A bound function's bound arguments, then the call's, filled once on the native stack: no
+/// heap allocation per call. The values are rooted as the callee's call roots them.
+pub(super) fn bound_then(bound: &[Value], args: &[Value]) -> smallvec::SmallVec<[Value; 8]> {
+    let mut combined = smallvec::SmallVec::<[Value; 8]>::with_capacity(bound.len() + args.len());
+    combined.extend_from_slice(bound);
+    combined.extend_from_slice(args);
+    combined
+}
+
 /// A bound function's own `length` and `name`: read-only, not enumerable, configurable.
 const BOUND_FUNCTION_NAMED_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     writable: false,
@@ -158,10 +167,7 @@ impl<H: Host> Vm<H> {
             return Value::NULL;
         };
         loop {
-            if self.realm.promise.active_native.iter().any(|activation| {
-                activation.frame_depth == index
-                    && activation.boundary == super::activation::NativeCallBoundary::Opaque
-            }) {
+            if self.host_frame_hides_caller(index) {
                 return Value::NULL;
             }
             let Some(parent) = index.checked_sub(1) else {
@@ -223,17 +229,15 @@ impl<H: Host> Vm<H> {
                 None => frame.locals[usize::from(parameter)],
             }
         });
-        let args = crate::heap::ArrayElements::from(
-            reflected
-                .chain(frame.original_arguments.iter().copied())
-                .collect::<Vec<_>>(),
-        );
+        let values = reflected
+            .chain(frame.original_arguments.iter().copied())
+            .collect::<Vec<_>>();
         let arguments = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.realm_object_prototype(self.realm.globals)),
-                args.clone(),
+                crate::heap::ArrayElements::from_slice(&values),
             ));
         self.with_call_roots([arguments], |vm| {
-            vm.initialize_arguments_object(arguments, Some(function), &args.values_cow(), expose_callee)?;
+            vm.initialize_arguments_object(arguments, Some(function), &values, expose_callee)?;
             Ok(arguments)
         })
     }
@@ -368,12 +372,7 @@ impl<H: Host> Vm<H> {
             }
             return self.call_value(p, target, receiver, args);
         }
-        // Filled once on the native stack, bound arguments then the call's: no heap
-        // allocation per call. The values are rooted as `call_value` roots its arguments.
-        let mut combined = smallvec::SmallVec::<[Value; 8]>::with_capacity(bound_args.len() + args.len());
-        combined.extend_from_slice(&bound_args);
-        combined.extend_from_slice(args);
-        self.call_value(p, target, receiver, &combined)
+        self.call_value(p, target, receiver, &bound_then(&bound_args, args))
     }
 
     /// The call a call of `callee` with `receiver` and `args` makes without an observable

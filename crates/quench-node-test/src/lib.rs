@@ -1,7 +1,7 @@
 //! `quench-node-test` owns the Node.js test runner: discovery,
 //! composition, execution, and completion classification.
 //!
-//! This crate depends on `quench-node` (the host). It is
+//! This crate depends on `quench` (the host). It is
 //! forbidden from modifying the upstream fixture tree, from
 //! rewriting Node harness behavior, and from designing the
 //! Node API surface. The host is forbidden from knowing about

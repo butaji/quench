@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Compile JavaScript and TypeScript to a native executable with Quench AOT</title>
+<meta name="description" content="Quench compiles a JavaScript or TypeScript program ahead of time into one native executable, using the same semantics as its interpreter. How it works, how it differs from Node SEA, bun --compile and deno compile, and its limits." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/compile-javascript-to-native-executable/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/compile-javascript-to-native-executable/" />
+<meta property="og:title" content="Compile JavaScript and TypeScript to a native executable with Quench AOT" />
+<meta property="og:description" content="Quench compiles a JavaScript or TypeScript program ahead of time into one native executable, using the same semantics as its interpreter. How it works, how it differs from Node SEA, bun --compile and deno compile, and its limits." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:modified_time" content="2026-11-20" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Compile JavaScript and TypeScript to a native executable with Quench AOT" />
+<meta name="twitter:description" content="Quench compiles a JavaScript or TypeScript program ahead of time into one native executable, using the same semantics as its interpreter. How it works, how it differs from Node SEA, bun --compile and deno compile, and its limits." />
+<meta name="twitter:image" content="https://quench.run/og.png" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<style>.prose .answer{background:#FFF3EC;border-left:4px solid #EF5102;border-radius:8px;padding:1rem 1.25rem;margin-top:1.25rem;font-size:1.1rem;color:#1C1C1E}.prose .small{font-size:.9rem;color:#555B66}</style>
+<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/", "applicationCategory": "DeveloperApplication", "applicationSubCategory": "JavaScript, TypeScript and WebAssembly runtime", "operatingSystem": "Linux", "programmingLanguage": "Rust", "license": "https://opensource.org/licenses/MIT", "codeRepository": "https://github.com/butaji/quench", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "isAccessibleForFree": true, "description": "JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables."}, {"@context": "https://schema.org", "@type": "TechArticle", "headline": "Compile JavaScript to a native executable", "description": "Quench compiles a JavaScript or TypeScript program ahead of time into one native executable, using the same semantics as its interpreter. How it works, how it differs from Node SEA, bun --compile and deno compile, and its limits.", "url": "https://quench.run/compile-javascript-to-native-executable/", "dateModified": "2026-11-20", "datePublished": "2026-11-20", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run/"}, "about": {"@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/"}}, {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Quench", "item": "https://quench.run/"}, {"@type": "ListItem", "position": 2, "name": "Compile JavaScript to a native executable", "item": "https://quench.run/compile-javascript-to-native-executable/"}]}, {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How do I compile JavaScript or TypeScript to a native executable?", "acceptedAnswer": {"@type": "Answer", "text": "With Quench built with the aot feature, run quench --build-aot app.ts -o app, then ./app. The entry file and the modules it imports are compiled ahead of time into one native executable."}}, {"@type": "Question", "name": "Is the Quench AOT compiler faster than Node?", "acceptedAnswer": {"@type": "Answer", "text": "No AOT speed numbers are published yet. The goal is AOT code within 5x of the equivalent C program, and it is not yet met on every benchmark."}}, {"@type": "Question", "name": "Does an AOT-compiled Quench program include an interpreter?", "acceptedAnswer": {"@type": "Answer", "text": "The full interpreter and the JIT tiers are left out of the executable unless the program uses eval or new Function, which need to compile code at run time."}}]}]</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/benchmarks/">Benchmarks</a>
+<a class="badge" href="/blog/">Blog</a>
+<a class="badge" href="https://github.com/butaji/quench">GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>AOT</span><span>NOVEMBER 2026</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/">quench.run</a> / updated <time datetime="2026-11-20">20 November 2026</time></p>
+<h1>Compile JavaScript to a native executable</h1>
+<p class="lead">Quench's AOT compiler turns a JavaScript or TypeScript program into machine code, not a bundled script.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p class="answer"><b>Quench</b> compiles a JavaScript or TypeScript entry file and its imports ahead of time into <b>one native executable</b>: <code>quench --build-aot app.ts -o app</code>. The program is lowered to machine code with the same meaning as Quench's interpreter; the full interpreter and JITs are left out unless the program uses <code>eval</code> or <code>new Function</code>. AOT is experimental and no AOT speed numbers are published yet.</p>
+<h2 id="usage">Usage</h2>
+<pre><code>cargo build --release -p quench --features aot
+./target/release/quench --build-aot app.ts -o app
+./app</code></pre>
+<h2 id="comparison">How it compares</h2>
+<div class="table-scroll"><table><thead><tr><th></th><th>Quench AOT</th><th>Node.js SEA</th><th>bun build --compile</th><th>deno compile</th></tr></thead><tbody><tr><td>What goes into the binary</td><td>program compiled to machine code, plus runtime</td><td>script embedded in the node binary</td><td>bundle embedded in the Bun binary</td><td>program embedded in the Deno binary</td></tr><tr><td>Code runs as</td><td>precompiled native code</td><td>V8 interpreter and JIT at run time</td><td>JavaScriptCore at run time</td><td>V8 at run time</td></tr><tr><td>Full interpreter in the binary</td><td>only if eval or new Function is used</td><td>always</td><td>always</td><td>always</td></tr><tr><td>Published speed numbers</td><td>not measured</td><td>not measured</td><td>not measured</td><td>not measured</td></tr><tr><td>Maturity</td><td>experimental, build from source</td><td>stable</td><td>stable</td><td>stable</td></tr></tbody></table></div>
+<p class="small">Quench has not benchmarked its AOT output against these tools, so this table describes mechanism only.</p>
+<h2 id="one-semantics">One semantics</h2>
+<p>Each opcode's meaning is written once. The interpreter runs it directly, the JITs and the AOT compiler emit it as machine code. That is the interpreter specialized to what is known about the program (a Futamura projection), so an AOT-compiled program and an interpreted one agree. Background: <a href="/blog/aot-without-a-second-compiler/">AOT without a second compiler</a>.</p>
+<h2 id="limits">Limits today</h2>
+<ul><li>Built and tested on Linux, from a source build with <code>--features aot</code>.</li>
+<li>No published speed numbers; the target is within 5x of equivalent C on every JetStream benchmark.</li>
+<li>Node API compatibility is still being built out.</li></ul>
+<h2 id="runtime">The runtime around it</h2>
+<div class="table-scroll"><table><thead><tr><th></th><th>Quench</th><th>Node.js</th><th>Bun</th><th>Deno</th></tr></thead><tbody><tr><td>Written in</td><td>Rust (engine and runtime)</td><td>C++ (V8) and JavaScript</td><td>Zig, C++ (JavaScriptCore)</td><td>Rust runtime, C++ engine (V8)</td></tr><tr><td>V8-v7 score, JIT off, geomean of 8</td><td><b>4,980</b></td><td>2,349</td><td>1,979</td><td>not measured</td></tr><tr><td>V8-v7 peak memory, JIT off, geomean</td><td><b>11.4 MB</b></td><td>65.4 MB</td><td>26.8 MB</td><td>not measured</td></tr><tr><td>JetStream 3 score, JIT off, 56 tests</td><td>34.3</td><td><b>39.7</b></td><td>32.2</td><td>not measured</td></tr><tr><td>JetStream 3 peak memory, JIT off</td><td><b>28.5 MB</b></td><td>110.1 MB</td><td>47.7 MB</td><td>not measured</td></tr><tr><td>Test262</td><td>53,353 passing, 0 failing, 53 waived</td><td>not measured</td><td>not measured</td><td>not measured</td></tr><tr><td>JIT performance</td><td>JIT tiers not yet competitive</td><td>mature JIT</td><td>mature JIT</td><td>mature JIT (V8)</td></tr><tr><td>Packaged releases</td><td>no, build from source</td><td>yes</td><td>yes</td><td>yes</td></tr></tbody></table></div><p class="small">Benchmark rows: interpreter only in every engine (<code>quench --no-jit</code>, <code>node --jitless</code>, Bun with <code>BUN_JSC_useJIT=0</code>), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. <a href="/benchmarks/">Full tables and method</a>.</p><h2 id="questions">Questions</h2><h3>How do I compile JavaScript or TypeScript to a native executable?</h3><p>With Quench built with the aot feature, run quench --build-aot app.ts -o app, then ./app. The entry file and the modules it imports are compiled ahead of time into one native executable.</p><h3>Is the Quench AOT compiler faster than Node?</h3><p>No AOT speed numbers are published yet. The goal is AOT code within 5x of the equivalent C program, and it is not yet met on every benchmark.</p><h3>Does an AOT-compiled Quench program include an interpreter?</h3><p>The full interpreter and the JIT tiers are left out of the executable unless the program uses eval or new Function, which need to compile code at run time.</p>
+<h2 id="about">About Quench</h2>
+<p>Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: <a href="https://github.com/butaji/quench">github.com/butaji/quench</a>. Machine-readable summary: <a href="/llms.txt">llms.txt</a>.</p>
+<p class="small">Related: <a href="/benchmarks/">benchmarks</a> · <a href="/fastest-javascript-runtime-in-rust/">JavaScript runtime in Rust</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node.js alternative</a> · <a href="/compile-javascript-to-native-executable/">compile JavaScript to a native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262 conformance</a> · <a href="/javascript-engine-for-ai-agents/">JavaScript for AI agents</a></p>
+</div></div>
+</article>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/benchmarks/">benchmarks</a> · <a href="/blog/">blog</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

@@ -779,7 +779,7 @@ impl<H: Host> Vm<H> {
         global: Value,
     ) -> Result<(), JsError> {
         for row in super::native_rows::NATIVE_ROWS.iter().filter(|row| row.holder == holder) {
-            let function = self.native_with_realm(row.native, global, global);
+            let function = self.native_with_realm(row.native, Value::NULL, global);
             self.set_builtin_function_name(function, row.name)?;
             self.set_builtin_value_named(target, row.name, function)?;
         }

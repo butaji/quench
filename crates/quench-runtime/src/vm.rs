@@ -6,14 +6,10 @@ mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
-#[cfg(feature = "aot")]
+pub(crate) mod aot_image;
 pub(crate) mod native_object;
-#[cfg(feature = "aot")]
-pub(crate) mod native_graph;
-#[cfg(all(feature = "aot", feature = "jit"))]
-pub(crate) mod native_stencil;
+#[cfg(feature = "jit")]
 mod specializer;
-#[cfg(feature = "aot")]
 pub(crate) mod specialize;
 #[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
@@ -24,6 +20,7 @@ pub use compiled::NativeFaultHandler;
 mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
+pub use jit_backend::{IsaBaseline, NativeTarget};
 mod tier_machine; pub mod tier_events;
 mod shape_stability;
 pub(crate) mod switches;
@@ -96,6 +93,9 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// The ToPrimitive methods, read by every ToNumber and ToString of an object.
+    value_of: Atom,
+    to_string: Atom,
     /// The iterator protocol's step method.
     next: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
@@ -266,6 +266,7 @@ mod primitive_bench;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
+mod host_frames;
 mod promise_aggregate;
 mod promise_async;
 mod promise_jobs;
@@ -462,19 +463,6 @@ impl Frame {
         }
     }
 
-    /// Arguments for a body that keeps its parameters in registers.
-    #[inline(always)]
-    fn bind_register_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
-        if let Some(base) = function.parameter_registers {
-            for offset in 0..function.params {
-                self.registers[usize::from(base + offset)] = args
-                    .get(usize::from(offset))
-                    .copied()
-                    .unwrap_or(Value::UNDEFINED);
-            }
-        }
-    }
-
     /// A Wasm activation's registers: the parameters where the function
     /// keeps them, every other register its default, each written once.
     #[inline(always)]
@@ -500,15 +488,20 @@ impl Frame {
         self.registers.clear();
         self.registers.reserve(count);
         let registers = self.registers.as_mut_ptr();
+        let window_end = base + parameters.len();
         // SAFETY: capacity holds `count` values; every slot below `count` is
-        // written before the length covers it, parameters in their window.
+        // written before the length covers it. The fills cover only the slots
+        // outside the parameter window, which the copy below writes.
         unsafe {
-            for index in 0..count {
+            for index in 0..base {
                 registers.add(index).write(initial);
             }
             // A few values: an inline copy, not a library call.
             for (offset, value) in parameters.iter().enumerate() {
                 registers.add(base + offset).write(*value);
+            }
+            for index in window_end..count {
+                registers.add(index).write(initial);
             }
             self.registers.set_len(count);
         }
@@ -588,9 +581,12 @@ impl Frame {
         self.locals.resize(count, Value::UNDEFINED);
     }
 
-    /// `initialize_promoted_registers` for a plain activation, whose locals already start
-    /// undefined: its promoted entries, ordered by local, begin with every parameter, and
-    /// validation places promoted entry `i` in register `i`.
+    /// `place_parameters` for a plain activation, the in-place case of it: its locals already
+    /// start undefined, so none is cleared, and its promoted entries, ordered by local, begin
+    /// with every parameter, so validation places promoted entry `i` in register `i` and
+    /// parameter `k` (for `k` below the promoted count) is written once to register `k`.
+    /// Plain functions take no rest parameter and keep no parameter registers, so the general
+    /// rules reduce to this copy.
     #[inline(always)]
     fn place_plain_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
@@ -616,13 +612,28 @@ impl Frame {
         }
     }
 
-    fn initialize_promoted_registers(
-        &mut self,
-        function: &crate::bytecode::Function,
-        args: &[Value],
-    ) {
+    /// Places a general activation's parameters and promoted locals, each register written once.
+    /// Parameter `k` lives in its promoted register when it has one, else in register
+    /// `parameter_registers + k` when the body keeps its parameters in registers, else in its
+    /// local, which `bind_activation_arguments` filled. Its value is `args[k]`, or `undefined`
+    /// past the arguments; a promoted rest parameter takes the array its local holds instead. A
+    /// promoted parameter's local is cleared, and every other promoted local starts `undefined`.
+    /// A body has either `parameter_registers` or `local_registers`, never both: a wasm body
+    /// keeps its parameters in registers and promotes nothing, and a compiled body has no
+    /// parameter registers.
+    fn place_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
         debug_assert_eq!(self.locals.len(), usize::from(function.locals));
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        if let Some(base) = function.parameter_registers {
+            for offset in 0..function.params {
+                if function.promoted_register(offset).is_none() {
+                    self.registers[usize::from(base + offset)] = args
+                        .get(usize::from(offset))
+                        .copied()
+                        .unwrap_or(Value::UNDEFINED);
+                }
+            }
+        }
         let rest = function.rest.then(|| function.params - 1);
         for entry in &function.local_registers {
             // A promoted parameter starts as its argument, a promoted rest parameter as the
@@ -1184,9 +1195,10 @@ impl ProgramCacheLayout {
 /// Entries of the in-loop call target cache, indexed by the callee's heap index.
 const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
-/// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), valid
-/// for `callee` until collection, realm transition or heap reset clears the cache.
-/// Its function kind, environment and realm are immutable during that lifetime.
+/// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), or construct
+/// in place (`construct`), valid for `callee` until collection, realm transition or heap reset
+/// clears the cache. Its function kind, environment, realm and body are immutable during that
+/// lifetime, so its classifications are computed once, when the entry is filled.
 #[derive(Clone, Copy)]
 struct InLoopCallTarget {
     callee: Value,
@@ -1194,6 +1206,7 @@ struct InLoopCallTarget {
     function: u32,
     env: Value,
     push: InLoopPush,
+    construct: ConstructKind,
 }
 /// How the dispatch loop pushes an in-loop callee.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1204,6 +1217,18 @@ enum InLoopPush {
     /// settles the promise the call returns and whose first suspension returns that promise
     /// to the caller; only a plain call pushes it.
     Settles,
+    /// A callee the loop does not push as a call; its entry serves `new` (`ConstructKind`).
+    Unpushed,
+}
+/// How `new` may push a cached callee in place (`Vm::inline_construct_target`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConstructKind {
+    /// Not admitted to an in-loop construction: `new` keeps `construct_value`.
+    No,
+    /// A base constructor (`Vm::inline_constructible`).
+    Base,
+    /// A derived class constructor (`Vm::inline_derived_constructible`).
+    Derived,
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     callee: Value::UNDEFINED,
@@ -1211,7 +1236,25 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     function: 0,
     env: Value::UNDEFINED,
     push: InLoopPush::Body,
+    construct: ConstructKind::No,
 };
+/// A user function `new` may push in place, cached beside the call targets (`Vm::in_loop_constructor`),
+/// with the same lifetime: its program, function and environment, and which in-place [[Construct]]
+/// its body admits (`CONSTRUCT_BASE`, `CONSTRUCT_DERIVED`).
+#[derive(Clone, Copy)]
+struct ConstructTarget {
+    callee: Value,
+    program: ProgramId,
+    function: u32,
+    env: Value,
+    admits: u8,
+}
+/// A base constructor body (`Vm::inline_constructible`).
+const CONSTRUCT_BASE: u8 = 1;
+/// A derived constructor body (`Vm::inline_derived_constructible`).
+const CONSTRUCT_DERIVED: u8 = 2;
+const EMPTY_CONSTRUCT_TARGET: ConstructTarget =
+    ConstructTarget { callee: Value::UNDEFINED, program: ProgramId::MAIN, function: 0, env: Value::UNDEFINED, admits: 0 };
 /// A table of empty targets, which no binding matches: its function is the root, never a callee.
 static NO_CALL_TARGETS: [InLoopCallTarget; CALL_TARGET_CACHE_SIZE] = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
 /// The code units below which a unit is ASCII.
@@ -1578,8 +1621,9 @@ impl ShapeLookupIndex {
     }
 }
 /// Facts a shape inherits from its chain: once a transition introduces one, every descendant
-/// keeps it. Two bytes, so `Shape` keeps its size; the top three bits hold the shape's
-/// dictionary trigger (`DICTIONARY_MASK`).
+/// keeps it. Two bytes, so `Shape` keeps its size; bits 10 and 11 hold the shape's child count
+/// (`CHILDREN_MASK`, not inherited), and the top three bits its dictionary trigger
+/// (`DICTIONARY_MASK`).
 #[derive(Clone, Copy, Default)]
 struct ShapeFacts(u16);
 impl ShapeFacts {
@@ -1641,6 +1685,24 @@ impl ShapeFacts {
                 | introduced(matches!(transition, ShapeTransition::FunctionLengthReconfigured), Self::LENGTH_RECONFIGURED)
                 | introduced(matches!(transition, ShapeTransition::Add { key, .. } if !matches!(key, property_key::PropertyKey::String(_))), Self::HAS_SYMBOL_KEY),
         )
+    }
+
+    /// The child count, in bits 10 and 11: none, exactly one, or `CHILDREN_MANY` for two or more,
+    /// which saturates. Set per shape by `push_child` as its children are added, and never
+    /// inherited: `Shape::child` clears the bits `extended_by` copies from the parent.
+    const CHILDREN_SHIFT: u32 = 10;
+    const CHILDREN_MASK: u16 = 0b11 << Self::CHILDREN_SHIFT;
+    const CHILDREN_MANY: u16 = 2;
+
+    /// The child count: 0, 1, or `CHILDREN_MANY`.
+    #[inline(always)]
+    fn children(self) -> u16 {
+        (self.0 & Self::CHILDREN_MASK) >> Self::CHILDREN_SHIFT
+    }
+
+    /// These facts with `children` as the child count.
+    fn with_children(self, children: u16) -> Self {
+        Self((self.0 & !Self::CHILDREN_MASK) | (children << Self::CHILDREN_SHIFT))
     }
 
     /// The dictionary trigger, in the top three bits: zero for none, else the trigger's
@@ -1833,12 +1895,33 @@ impl Shape {
             parent: parent.unwrap_or(NO_PARENT_SHAPE),
             transition,
             storage_len: u32::try_from(storage_len).expect("object property index exceeds u32"),
-            facts: parent_facts.extended_by(transition).with_dictionary_trigger(dictionary_trigger),
+            facts: parent_facts
+                .extended_by(transition)
+                .with_children(0)
+                .with_dictionary_trigger(dictionary_trigger),
             memo: std::cell::Cell::new(ShapeMemo::INITIAL),
             lookup_index: OnceCell::new(),
             last_child: std::cell::Cell::new(NO_LAST_CHILD),
         }
     }
+}
+
+/// Appends `child` to the shape table, counting it among its parent's children
+/// (`ShapeFacts::children`). A parent's first child is also its `last_child`, so a walk down a
+/// chain of single children (`Vm::predicted_run_capacity`) finds the child without the
+/// transition index. Every shape made from a parent is appended here, so the counts are exact
+/// for the table as it stands.
+pub(crate) fn push_child(shapes: &mut Vec<Shape>, child: Shape) {
+    let id = u32::try_from(shapes.len()).expect("object shape table exhausted");
+    if let Some(parent) = child.parent() {
+        let entry = &mut shapes[parent as usize];
+        let children = entry.facts.children();
+        if children == 0 {
+            entry.last_child.set(id);
+        }
+        entry.facts = entry.facts.with_children((children + 1).min(ShapeFacts::CHILDREN_MANY));
+    }
+    shapes.push(child);
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
@@ -1975,6 +2058,10 @@ pub(crate) struct Vm<H> {
     /// about to reach its general native, so that native skips that body (the one-shot flag is
     /// taken at each such native's entry, and cleared at each dispatcher attempt).
     declined_fast: Option<Native>,
+    /// The index a declined `indexOf` or `includes` dense walk stopped at (`Err(Some(index))` of
+    /// `dense_search_resume`), recorded with `declined_fast` naming that native and taken with it
+    /// by the general native, which resumes its steps there instead of rescanning the prefix.
+    declined_resume: Option<usize>,
     /// The programs the running job queues return to, innermost last (`Vm::run_job_queue`):
     /// an await's job leaves its function's program active for the queue's next jobs, so a
     /// collection keeps each of these, which the queue makes active again when it ends.
@@ -2271,6 +2358,7 @@ pub(crate) struct Vm<H> {
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
+    construct_targets: Box<[ConstructTarget; CALL_TARGET_CACHE_SIZE]>,
     frameless: compiled::Frameless,
     field_caches: site_table::CacheSiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
@@ -2456,7 +2544,7 @@ struct IteratorRealmPrototypes {
 
 impl<H: Host> Vm<H> {
     /// Record a method-cache name, as a call site's first call does (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn name_method_atom(&mut self, atom: crate::bytecode::Atom) {
         self.method_cache_atoms.name(atom);
     }
@@ -2499,7 +2587,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// Retire weak callee bindings and frameless admissions at their lifetime-changing edge.
-    fn clear_call_targets(&mut self) { self.call_targets.fill(EMPTY_CALL_TARGET); self.frameless.clear(); }
+    fn clear_call_targets(&mut self) {
+        self.call_targets.fill(EMPTY_CALL_TARGET);
+        self.construct_targets.fill(EMPTY_CONSTRUCT_TARGET);
+        self.frameless.clear();
+    }
 
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
@@ -3293,6 +3385,7 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         // The kept root forgets its transitions along with the index.
         self.shapes[0].last_child.set(NO_LAST_CHILD);
+        self.shapes[0].facts = self.shapes[0].facts.with_children(0);
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.shape_attribute_memo.clear();
@@ -3445,6 +3538,8 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            value_of: self.intern_atom("valueOf"),
+            to_string: self.intern_atom("toString"),
             next: self.intern_atom("next"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),
@@ -4087,4 +4182,4 @@ enum StringConstantKey<'a> {
 }
 
 #[cfg(feature = "native-execution")]
-pub use compiled::{NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
+pub use compiled::{NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};

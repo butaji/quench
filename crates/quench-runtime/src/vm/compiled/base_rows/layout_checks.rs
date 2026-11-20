@@ -1,7 +1,7 @@
 //! The stencil layout numbers (`staged/layout_offsets.rs`, shared with the stencils by `#[path]`) checked against the
 //! runtime's own layouts: each is a `const` check against the runtime's `offset_of!`, `size_of` or layout const.
 
-use super::super::{CallContext, JsStepDispatch};
+use super::super::JsStepDispatch;
 use crate::staged::layout_offsets as L;
 use std::mem::offset_of;
 
@@ -18,6 +18,9 @@ const _: () = assert!(L::CAPTURE_ADDRESS_PAD == u64::BITS - quench_bjit::shared_
 const _: () = assert!(offset_of!(JsStepDispatch, head) == 0);
 
 // The layout structs: every field of each is the runtime's.
+// NATIVE_RECORD_CURSOR_LAYOUT
+const _: () = assert!(crate::heap::NATIVE_RECORD_CURSOR_LAYOUT.next_offset == L::NATIVE_RECORD_CURSOR_LAYOUT.next_offset);
+const _: () = assert!(crate::heap::NATIVE_RECORD_CURSOR_LAYOUT.limit_offset == L::NATIVE_RECORD_CURSOR_LAYOUT.limit_offset);
 // NATIVE_OBJECT_LAYOUT
 const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_capacity == L::NATIVE_OBJECT_LAYOUT.record_capacity);
 const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_size == L::NATIVE_OBJECT_LAYOUT.record_size);
@@ -93,3 +96,10 @@ const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement =
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_complement == L::NATIVE_FIELD_CACHE_LAYOUT.holder_complement);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_complement == L::NATIVE_FIELD_CACHE_LAYOUT.slot_complement);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.own_holder == L::NATIVE_FIELD_CACHE_LAYOUT.own_holder);
+
+// NATIVE_WASM_GC_LAYOUT: the record's head is its first field, so its words are the record's, and the
+// payload words are the head's (`WasmGcRecord` is `repr(C)` with the head first).
+const _: () = assert!(L::NATIVE_WASM_GC_LAYOUT.record_capacity == crate::staged::object_encoding::WASM_GC_RECORD_CAPACITY);
+const _: () = assert!(L::NATIVE_WASM_GC_LAYOUT.payload_offset == offset_of!(crate::staged::record_heads::WasmGcHead, payload));
+const _: () = assert!(L::NATIVE_WASM_GC_LAYOUT.length_offset == offset_of!(crate::staged::record_heads::WasmGcHead, length));
+const _: () = assert!(L::NATIVE_WASM_GC_LAYOUT.type_offset == offset_of!(crate::staged::record_heads::WasmGcHead, ty));

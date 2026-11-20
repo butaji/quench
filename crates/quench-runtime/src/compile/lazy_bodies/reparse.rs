@@ -10,6 +10,9 @@ use rustc_hash::FxHashSet;
 /// text.
 pub(in crate::compile) struct Reparsed<'a> {
     pub(in crate::compile) program: Program<'a>,
+    /// The declarations the body's admission found, at the program's positions, and the names they
+    /// resolve against (`DeclaredTypes::type_names`): the body's own, saved for the bodies in it.
+    pub(in crate::compile) declared: crate::bytecode::DeclaredTypes,
 }
 
 impl<'a> Reparsed<'a> {
@@ -86,12 +89,14 @@ pub(in crate::compile) fn parse_chunk<'a>(
     delta: u32,
     inherited_strict: bool,
     found: &mut FreeNames,
+    typescript: bool,
+    declared: &mut crate::bytecode::DeclaredTypes,
 ) -> oxc_parser::ParserReturn<'a> {
     let names = std::cell::RefCell::new(FreeNameCheck::new(found, delta, true));
     let mut skim = |body: oxc_parser::SkimmedBody<'_>| names.borrow_mut().skim(body, text);
     // SAFETY: `skim` lives through the parse, which alone calls it.
     let skim = unsafe { oxc_parser::LazyBodySkim::new(&mut skim) };
-    parse(allocator, text, SourceType::script(), Some(offset + 1), None, Some(skim), inherited_strict, false, crate::compile::annex_b_targets::Recognize::No, None, None)
+    parse(allocator, text, SourceType::script().with_typescript(typescript), Some(offset + 1), None, Some(skim), inherited_strict, false, crate::compile::annex_b_targets::Recognize::No, None, Some(declared))
 }
 
 /// The bodies of `program`, a function's text parsed again at `offset`, which the load released
@@ -115,6 +120,7 @@ pub(in crate::compile) fn reparse<'a>(
     delta: u32,
     source_type: SourceType,
     nesting: Nesting<'_>,
+    saved_names: Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>>,
 ) -> Result<Reparsed<'a>, ReparseFailure> {
     // The bodies inside whose free names and ends a parse before found are skipped unread: a
     // body nested deep is otherwise read again by each function around it that compiles.
@@ -148,7 +154,8 @@ pub(in crate::compile) fn reparse<'a>(
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.
     let check = lazy_from.filter(|_| checks).map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
     let skim = lazy_from.filter(|_| !checks).map(|_| unsafe { oxc_parser::LazyBodySkim::new(&mut skim) });
-    let mut parsed = parse(allocator, text, source_type, lazy_from, check, skim, false, false, crate::compile::annex_b_targets::Recognize::All, skips, None);
+    let mut declared = crate::bytecode::DeclaredTypes { type_names: saved_names, ..Default::default() };
+    let mut parsed = parse(allocator, text, source_type, lazy_from, check, skim, false, false, crate::compile::annex_b_targets::Recognize::All, skips, Some(&mut declared));
     if let Some(starts) = recorded {
         stand_in_recorded(allocator, &mut parsed.program, starts.iter().copied(), (offset, delta), text.len());
     }
@@ -162,7 +169,8 @@ pub(in crate::compile) fn reparse<'a>(
         return Err(ReparseFailure::Diagnostics);
     }
     oxc_ast_visit::VisitMut::visit_program(&mut crate::compile::replay::ShiftSpans(delta), &mut parsed.program);
-    Ok(Reparsed { program: parsed.program })
+    declared.shift(delta);
+    Ok(Reparsed { program: parsed.program, declared })
 }
 
 /// Why a function's text does not parse again alone (`reparse`).

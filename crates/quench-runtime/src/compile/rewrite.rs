@@ -1273,7 +1273,6 @@ mod tests {
                     runtime.set_execution_mode(mode);
                     runtime.execute(&program).unwrap();
                 }
-                #[cfg(feature = "aot")]
                 {
                     let native = crate::NativeJsProgram::compile_eager(program).unwrap();
                     let mut runtime = crate::Runtime::new(crate::SystemHost);

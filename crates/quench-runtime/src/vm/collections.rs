@@ -689,15 +689,26 @@ impl<H: Host> Vm<H> {
             Native::Iterator => {
                 Err(self.type_error(p, "Iterator constructor cannot be called".into()))
             }
-            Native::MapGet | Native::MapHas => {
+            Native::MapGet
+            | Native::MapHas
+            | Native::SetHas
+            | Native::WeakMapGet
+            | Native::WeakMapHas
+            | Native::WeakSetHas => {
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if self.declined_fast.take() != Some(native)
                     && let Some(found) = self.pure_collection_lookup(native, this, key)
                 {
                     return Ok(found);
                 }
-                self.require_brand(p, this, Brand::Map, "Map method")?;
-                unreachable!("a Map receiver answers its lookup")
+                let (brand, subject) = match native {
+                    Native::MapGet | Native::MapHas => (Brand::Map, "Map method"),
+                    Native::SetHas => (Brand::Set, "Set.prototype.has"),
+                    Native::WeakMapGet | Native::WeakMapHas => (Brand::WeakMap, "WeakMap method"),
+                    _ => (Brand::WeakSet, "WeakSet method"),
+                };
+                self.require_brand(p, this, brand, subject)?;
+                unreachable!("a receiver of the lookup's brand answers it")
             }
             Native::MapSet
             | Native::MapDelete
@@ -773,37 +784,36 @@ impl<H: Host> Vm<H> {
                 } else {
                     None
                 };
-                if let Some(index) = self.map_entry_index(this, key)
+                let key_hash = self.same_value_zero_hash(key);
+                if let Some(index) = self.map_entry_index_hashed(this, key, key_hash)
                     && let Some(entries) = self.heap.map_entries(this) {
                         return Ok(entries.value_at(index));
                     }
                 let value = match native {
+                    // Nothing ran since the miss above, so the key is still absent and the plain
+                    // arm inserts without probing again.
                     Native::MapGetOrInsert => args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     Native::MapGetOrInsertComputed => {
                         let callback = computed_callback.unwrap_or(Value::UNDEFINED);
                         let canonical_key = canonicalize_keyed_collection_key(key);
                         let computed =
                             self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
-                        if let Some(index) = self.map_entry_index(this, key)
-                            && let Some(entries) = self.heap.map_entries_mut(this) {
+                        // The callback may have inserted the key: only then is the miss stale.
+                        if let Some(index) = self.map_entry_index_hashed(this, key, key_hash) {
+                            if let Some(entries) = self.heap.map_entries_mut(this) {
                                 entries.set_value(index, computed);
                             }
+                            return Ok(computed);
+                        }
                         computed
                     }
                     _ => unreachable!("Map get-or-insert dispatch is exhaustive"),
                 };
-                let key_hash = self.same_value_zero_hash(key);
-                if let Some(index) = self.map_entry_index(this, key) {
-                    if let Some(entries) = self.heap.map_entries_mut(this) {
-                        entries.set_value(index, value);
+                self.heap.grow_collection_payload(this, |storage| {
+                    if let CollectionStorage::Map(entries) = storage {
+                        entries.push((key, value), key_hash);
                     }
-                } else {
-                    self.heap.grow_collection_payload(this, |storage| {
-                        if let CollectionStorage::Map(entries) = storage {
-                            entries.push((key, value), key_hash);
-                        }
-                    });
-                }
+                });
                 Ok(value)
             }
             Native::MapGroupBy => self.group_by(p, args, GroupByKind::Map),
@@ -815,19 +825,6 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 Ok(this)
-            }
-            Native::SetHas => {
-                self.require_brand(p, this, Brand::Set, "Set.prototype.has")?;
-                Ok(
-                    if self
-                        .set_entry_index(this, args.first().copied().unwrap_or(Value::UNDEFINED))
-                        .is_some()
-                    {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    },
-                )
             }
             Native::SetDelete => {
                 self.require_brand(p, this, Brand::Set, "Set.prototype.delete")?;
@@ -935,15 +932,6 @@ impl<H: Host> Vm<H> {
             Native::AsyncGeneratorNext
             | Native::AsyncGeneratorReturn
             | Native::AsyncGeneratorThrow => self.async_generator_method(p, native, this, args),
-            Native::WeakMapGet => {
-                self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
-                // A value that cannot be held weakly was never added: identity alone decides.
-                let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
-                    return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
-                };
-                Ok(entries.get(key).unwrap_or(Value::UNDEFINED))
-            }
             Native::WeakMapSet => {
                 self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
                 let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -953,15 +941,6 @@ impl<H: Host> Vm<H> {
                 };
                 entries.insert((key, value));
                 Ok(this)
-            }
-            Native::WeakMapHas => {
-                self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
-                // A value that cannot be held weakly was never added: identity alone decides.
-                let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
-                    return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
-                };
-                Ok(Value::boolean(entries.contains(key)))
             }
             Native::WeakMapDelete => {
                 self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
@@ -1019,11 +998,6 @@ impl<H: Host> Vm<H> {
                     entries.insert(value);
                 }
                 Ok(this)
-            }
-            Native::WeakSetHas => {
-                self.require_brand(p, this, Brand::WeakSet, "WeakSet method")?;
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::boolean(self.weak_set_has(this, value)))
             }
             Native::WeakSetDelete => {
                 self.require_brand(p, this, Brand::WeakSet, "WeakSet method")?;
@@ -1138,11 +1112,11 @@ impl<H: Host> Vm<H> {
             Native::SetHas => return Some(self.has_key(self.heap.set_entries(receiver)?, key)),
             _ => {}
         }
+        // A value that cannot be held weakly was never added: identity alone decides.
         match (native, self.heap.get(receiver)?) {
-            // A value that cannot be held weakly is never a key.
             (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
             (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(Value::boolean(entries.contains(key))),
-            (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(Value::boolean(self.weak_set_has(receiver, key))),
+            (Native::WeakSetHas, Cell::WeakSet { entries, .. }) => Some(Value::boolean(entries.contains(key))),
             _ => None,
         }
     }
@@ -1226,26 +1200,17 @@ impl<H: Host> Vm<H> {
         key: Value,
         key_hash: u64,
     ) -> Option<usize> {
-        entries.position(
-            key,
-            key_hash,
-            |candidate| self.same_value_zero(candidate, key),
-        )
+        crate::staged::collections::probe(entries, key, key_hash, |candidate| self.same_value_zero(candidate, key))
     }
     pub(super) fn same_value_zero(&self, left: Value, right: Value) -> bool {
         self.strict_equal(left, right)
             || (left.as_number().is_some_and(f64::is_nan)
                 && right.as_number().is_some_and(f64::is_nan))
     }
-    /// A hash under which SameValueZero-equal keys agree: numbers by value with both zeros
-    /// and every NaN as one, strings and BigInts by content, everything else by identity.
-    /// Numbers are hashed inline; the rest goes to the out-of-line `non_number_key_hash`.
+    /// The hash of `key` under which SameValueZero-equal keys agree (`staged::collections::key_hash`).
     #[inline(always)]
     pub(super) fn same_value_zero_hash(&self, key: Value) -> u64 {
-        match key.as_number() {
-            Some(number) => crate::heap::number_key_hash(number),
-            None => self.heap.non_number_key_hash(key),
-        }
+        crate::staged::collections::key_hash(&self.heap, key)
     }
     /// Fails with `TypeError: <subject> called on incompatible receiver` unless `receiver`
     /// holds the `brand` cell.
@@ -1288,11 +1253,6 @@ impl<H: Host> Vm<H> {
         } else {
             Err(self.type_error(p, "weak collection keys must be objects".into()))
         }
-    }
-    /// Whether the WeakSet `set` holds `value`. A value that cannot be held weakly was never
-    /// added, so identity alone decides.
-    fn weak_set_has(&self, set: Value, value: Value) -> bool {
-        matches!(self.heap.get(set), Some(Cell::WeakSet { entries, .. }) if entries.contains(value))
     }
 }
 

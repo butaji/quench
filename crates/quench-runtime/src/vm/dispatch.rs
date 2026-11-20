@@ -60,6 +60,31 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether the dispatch loop may not push a call made by frame `f` as an activation of its
+    /// own: an eval is in progress, `p` is a Wasm program (its calls keep Wasm's own activation
+    /// and exhaustion accounting), `f` is not the top frame, `f` is the root activation, or the
+    /// call is a strict terminal one that the host makes a proper tail call (`call_forms`).
+    #[inline(always)]
+    fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction) -> bool {
+        self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+            || (self.host.proper_tail_calls()
+                && i.returns_from_frame()
+                && p.function(self.frames[f].function as usize).strict)
+    }
+
+    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the host
+    /// permits them, the call returns from its frame, and the call site permits it.
+    #[inline(always)]
+    pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
+        self.host.proper_tail_calls()
+            && i.returns_from_frame()
+            && p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32)
+    }
+
     /// Starts a plain or array-spread call of an eligible same-realm user function as an
     /// activation of the running dispatch loop, or returns `None` to leave it to `step`. Such a
     /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
@@ -74,20 +99,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Result<StepResult, JsError>> {
         // A sloppy call that falls into a return of its result is pushed like any other; its
         // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
-        // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
-        // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
-        // exhaustion accounting, so they are never inlined as user calls.
-        if !crate::staged::calls_ordinary(i.op())
-            || i.direct_eval()
-            || self.direct_eval
-            || self.parameter_eval
-            || p.kind == crate::bytecode::ProgramKind::Wasm
-            || f + 1 != self.frames.len()
-            || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (self.host.proper_tail_calls()
-                && i.returns_from_frame()
-                && p.function(self.frames[f].function as usize).strict)
-        {
+        if !crate::staged::calls_ordinary(i.op()) || i.direct_eval() || self.inline_call_blocked(p, f, i) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -332,6 +344,20 @@ impl<H: Host> Vm<H> {
             .map(|target| (target.program, target.function, target.env))
     }
 
+    /// The cached target of `callee` for `new` as well as for a call (`InLoopCallTarget`): the
+    /// entry of `callee`'s slot, resolved and cached on a miss. Its `push` may be
+    /// `InLoopPush::Unpushed`, and its `construct` classifies a construction.
+    #[inline(always)]
+    pub(super) fn in_loop_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
+        let heap_index = callee.heap_index()?;
+        let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
+        let cached = self.call_targets[index];
+        if cached.callee == callee {
+            return Some(cached);
+        }
+        self.resolve_in_loop_call_target(p, callee, index)
+    }
+
     /// The cached in-loop push of `callee`, of either kind (`InLoopPush`).
     #[inline(always)]
     fn in_loop_call_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
@@ -342,12 +368,14 @@ impl<H: Host> Vm<H> {
         };
         let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
         let cached = self.call_targets[index];
-        if cached.callee == callee {
+        if cached.callee == callee && cached.push != super::InLoopPush::Unpushed {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::PositiveCacheHit);
             return Some(cached);
         }
-        let target = self.resolve_in_loop_call_target(p, callee, index);
+        let target = self
+            .resolve_in_loop_call_target(p, callee, index)
+            .filter(|target| target.push != super::InLoopPush::Unpushed);
         #[cfg(feature = "profile-lane-exits")]
         if target.is_some() {
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::PositiveResolution);
@@ -417,7 +445,13 @@ impl<H: Host> Vm<H> {
         } else if plan.settles_in_loop || suspends_in_loop(body) {
             super::InLoopPush::Settles
         } else {
-            return None;
+            super::InLoopPush::Unpushed
+        };
+        // A call-only closure (`Value::known_closure`) has no heap record and is never constructed.
+        let construct = if self.heap.function(callee).is_some() {
+            Self::construct_kind(body)
+        } else {
+            super::ConstructKind::No
         };
         let target = super::InLoopCallTarget {
             callee,
@@ -425,8 +459,13 @@ impl<H: Host> Vm<H> {
             function,
             env,
             push,
+            construct,
         };
-        self.call_targets[index] = target;
+        // A callee that neither a call nor a construction may push is not cached, so plain calls
+        // of it leave the slots they had.
+        if push != super::InLoopPush::Unpushed || construct != super::ConstructKind::No {
+            self.call_targets[index] = target;
+        }
         Some(target)
     }
 
@@ -445,16 +484,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if !crate::staged::calls_positional(i.op())
-            || self.direct_eval
-            || self.parameter_eval
-            || p.kind == crate::bytecode::ProgramKind::Wasm
-            || f + 1 != self.frames.len()
-            || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (self.host.proper_tail_calls()
-                && i.returns_from_frame()
-                && p.function(self.frames[f].function as usize).strict)
-        {
+        if !crate::staged::calls_positional(i.op()) || self.inline_call_blocked(p, f, i) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -489,7 +519,7 @@ impl<H: Host> Vm<H> {
                     }
                     let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
                     (target, this) = (bound_target, bound_this);
-                    bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
+                    bound_arguments = super::function::bound_then(&bound, window);
                     bound_arguments.as_slice()
                 }
                 // `Reflect.apply` takes its target and receiver as arguments and requires a list
@@ -665,8 +695,11 @@ impl<H: Host> Vm<H> {
         if matches!(run, RowRun::Done(Edge::Target)) {
             *pc = i.jump_target() as usize;
             if matches!(operation, Operation::Jump) {
+                // The target is the next instruction to run, so a collection scans the roots
+                // live before it: a resume PC would name the instruction before the target,
+                // an unrelated one whose liveness can drop registers the target reads.
                 self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
+                self.frames[f].pc_is_resume = false;
                 self.maybe_collect(p);
             }
         }
@@ -879,13 +912,19 @@ impl<H: Host> Vm<H> {
                 match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
                     RowRun::Done(_) => Ok(StepResult::Continue),
                     RowRun::Stop(stop) => stop,
-                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row"),
+                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row: {:?}", i.op()),
                 }
             }
-            // A call-out row the interpreter's stage answers in place (`staged_value_step`).
+            // A call-out row the interpreter's stage answers in place (`staged_value_step`). A record
+            // that returns its result (`CallRest` ending an arrow's expression body) completes the
+            // frame with it: the compiler emits no `Return` after it.
             Runner::Value => {
                 let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
-                self.staged_value_step(p, site, i)?;
+                let (plain, returning) = i.split_return();
+                self.staged_value_step(p, site, plain)?;
+                if returning {
+                    return Ok(StepResult::Return(self.read(f, plain.result_register())));
+                }
                 Ok(StepResult::Continue)
             }
             // A flow row that reads the program's constants (`LoadConst`) decodes over the active program's constants

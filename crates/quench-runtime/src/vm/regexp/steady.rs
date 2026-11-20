@@ -2,6 +2,7 @@
 use super::*;
 use crate::code_dependencies::IntactFuse;
 use super::steady_ascii::IndexStore;
+use super::ascii::ascii_search;
 
 impl<H: Host> Vm<H> {
     /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
@@ -79,10 +80,7 @@ impl<H: Host> Vm<H> {
         let Some(crate::vm::wtf16::Units::Ascii(bytes)) = input.existing_flat().map(|flat| flat.view()) else {
             return None;
         };
-        if steady.is_some_and(|steady| !steady.captures) {
-            return regex.find_range_ascii(bytes, start, sticky).map(|found| found.map(quench_regexp::Match::native));
-        }
-        regex.find_ascii(bytes, start, sticky, true)
+        ascii_search(regex, bytes, start, sticky, captures_read(steady))
     }
 
     /// The outcome of a flat ASCII subject's search made in place (`SteadyRead::Ascii`): a failed
@@ -117,7 +115,7 @@ impl<H: Host> Vm<H> {
         steady: SteadyMatch,
     ) -> Result<Value, JsError> {
         let input = self.coerce_js_string(p, subject)?;
-        let last_index = self.regexp_to_length_value(p, last_index)?;
+        let last_index = self.regexp_to_number_value(p, last_index)?;
         let Some(matched) = self.regexp_match_from(p, receiver, &input, last_index, Some(steady))? else {
             return Ok(Value::NULL);
         };
@@ -241,10 +239,8 @@ fn steady_rope_search(
     index: f64,
     captures: bool,
 ) -> SteadyRead {
-    let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-    let start = if stateful { crate::units::to_length(index) } else { 0 };
-    let sticky = meta.flags.contains(RegExpFlags::STICKY);
-    match input.with_ascii_rope_bytes(|bytes| regex.find_ascii(bytes, start, sticky, captures)) {
+    let ExecStart { stateful, sticky, start } = exec_start(meta.flags, index);
+    match input.with_ascii_rope_bytes(|bytes| ascii_search(regex, bytes, start, sticky, captures)) {
         Some(Some(found)) => SteadyRead::Ascii {
             slot,
             stateful,
@@ -263,9 +259,7 @@ fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, 
     let Some(units) = input.existing_flat() else {
         return steady_rope_search(meta, regex, input, slot, last_index, index, captures);
     };
-    let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-    let start = if stateful { crate::units::to_length(index) } else { 0 };
-    let sticky = meta.flags.contains(RegExpFlags::STICKY);
+    let ExecStart { stateful, sticky, start } = exec_start(meta.flags, index);
     if !stateful && !captures && regex.matches_at_every_start() {
         // Nothing reads the match but where it starts (test, or an exec whose result is
         // unused, and no lastIndex to store): a search from 0 matches at 0. The legacy
@@ -274,20 +268,58 @@ fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, 
     }
     if let crate::vm::wtf16::Units::Ascii(bytes) = units.view() {
         // A flat ASCII subject is searched in place, which makes the prefilter's tests
-        // itself (`Regex::find_ascii`): the match outlives the borrows of the regexp and the
+        // itself (`ascii_search`): the match outlives the borrows of the regexp and the
         // subject, which a result or the legacy statics keep, so only a match clones them.
-        if let Some(found) = regex.find_ascii(bytes, start, sticky, captures) {
-            let matched = match found {
-                Some(found) => Some((Rc::clone(regex), input.clone(), found)),
-                None => None,
-            };
-            return SteadyRead::Ascii { slot, stateful, matched };
-        }
-        return SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided);
+        let Some(found) = ascii_search(regex, bytes, start, sticky, captures) else {
+            return SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided);
+        };
+        let matched = found.map(|found| (Rc::clone(regex), input.clone(), found));
+        return SteadyRead::Ascii { slot, stateful, matched };
     }
     let length = input.len();
     let rejected = (stateful && start > length) || regex.excludes_search(length, start, sticky, || units.unit(start));
     SteadyRead::Prefiltered(slot, last_index, if rejected { Prefilter::Excludes { stateful } } else { Prefilter::Admits })
+}
+
+/// What RegExpBuiltinExec's steps 2-12 read of a RegExp's flags and `lastIndex` before it
+/// searches: whether the regexp is global or sticky (`stateful`, so its `lastIndex` is read
+/// and stored), whether it is sticky, and where the search starts.
+#[derive(Clone, Copy)]
+pub(super) struct ExecStart {
+    pub(super) stateful: bool,
+    pub(super) sticky: bool,
+    pub(super) start: usize,
+}
+
+/// `exec_start` of an integer `lastIndex`: the same meaning, with the conversion of an int32
+/// made as the Number's (`ToLength` of a negative is 0).
+#[inline(always)]
+pub(super) fn exec_start_int(flags: RegExpFlags, last_index: i32) -> ExecStart {
+    exec_start(flags, f64::from(last_index))
+}
+
+/// The search start of a RegExp of `flags` from its `lastIndex` Number `last_index`: `ToLength`
+/// of it where stateful, else 0 (steps 2-12 of RegExpBuiltinExec).
+#[inline(always)]
+pub(super) fn exec_start(flags: RegExpFlags, last_index: f64) -> ExecStart {
+    let stateful = flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
+    let start = if stateful { crate::units::to_length(last_index) } else { 0 };
+    ExecStart { stateful, sticky: flags.contains(RegExpFlags::STICKY), start }
+}
+
+/// The `lastIndex` RegExpBuiltinExec stores after a match ending at `matched_end`, or after a
+/// failure (`None`): a global or sticky regexp's new index, the end or 0; none otherwise. The
+/// caller stores it where its slot is known.
+#[inline(always)]
+pub(super) fn exec_finish(stateful: bool, matched_end: Option<usize>) -> Option<usize> {
+    stateful.then(|| matched_end.unwrap_or(0))
+}
+
+/// Whether a search reads the captures of its match: every search but a steady call that
+/// observes none (`SteadyMatch::captures`), and a search with no steady call.
+#[inline(always)]
+pub(super) fn captures_read(steady: Option<SteadyMatch>) -> bool {
+    steady.is_none_or(|steady| steady.captures)
 }
 
 /// What `regexp_steady_state` read of a steady call.

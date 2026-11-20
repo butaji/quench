@@ -1,4 +1,5 @@
 use super::property_key::PropertyKey;
+use super::dispatch_frame::this_is_fixed;
 use super::*;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub(super) use super::field_cache::FieldCacheProbe;
@@ -13,7 +14,7 @@ use mru_chain::record_mru_entry;
 pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
 pub(super) const FIELD_BYTE: u32 = 0xff;
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_host::TestHost;
@@ -512,11 +513,41 @@ impl<H: Host> Vm<H> {
         if let Some(index) = lookup_index {
             child.lookup_index = OnceCell::from(index);
         }
-        self.shapes.push(child);
+        push_child(&mut self.shapes, child);
         let parent_length = self.shapes[parent as usize].storage_len();
         self.heap.register_property_shape(next, storage_len, Some((parent, parent_length)));
         next
     }
+    /// The capacity an add that moves an object's arena run to `shape` reserves for a run of
+    /// `length` values (the new length): the size the shape tree predicts. It follows the only
+    /// child of each shape while that child is an `Add` of one more slot, and takes the length
+    /// the chain reaches, clamped to `length..=PREDICTED_RUN_CAP_FACTOR * length`, as a size
+    /// class. Walked only on a move, which already copies the run, never on an add that stays.
+    pub(super) fn predicted_run_capacity(&self, shape: u32, length: usize) -> usize {
+        let cap = length * crate::value_vec::PREDICTED_RUN_CAP_FACTOR;
+        let mut extent = length;
+        let mut cursor = shape;
+        while extent < cap {
+            let entry = &self.shapes[cursor as usize];
+            if entry.facts.children() != 1 || entry.is_dictionary() {
+                break;
+            }
+            let child_id = entry.last_child.get();
+            let Some(child) = self.shapes.get(child_id as usize) else {
+                break;
+            };
+            if child.parent() != Some(cursor)
+                || !matches!(child.transition, ShapeTransition::Add { .. })
+                || child.storage_len() != entry.storage_len() + 1
+            {
+                break;
+            }
+            extent = child.storage_len();
+            cursor = child_id;
+        }
+        crate::value_vec::capacity_class(extent.clamp(length, cap))
+    }
+
     /// Whether `to` is `from` extended by one appended property slot: the shape an add of
     /// one new data property makes, which `Heap::property_add` can apply directly.
     pub(super) fn shape_appends_one_slot(&self, from: u32, to: u32) -> bool {
@@ -569,9 +600,28 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     pub(super) fn property_attributes(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
-        if let Some(data) = self.object_data(object)
-            && let Some(slot) = self.property_shape_slot(data.shape(), key)
-            && let Some(attributes) = self.slot_attributes(data, slot)
+        let slot = self.object_data(object).and_then(|data| self.property_shape_slot(data.shape(), key));
+        self.property_attributes_at(object, key, slot)
+    }
+
+    /// `object`'s own shape slot for `atom`: the slot `property_attributes` and `own_property`
+    /// both resolve from its shape. A caller that reads both resolves it once and passes it to
+    /// `property_attributes_at` and `own_property_at`.
+    #[inline(always)]
+    pub(super) fn own_shape_slot(&self, object: Value, atom: Atom) -> Option<usize> {
+        self.object_data(object).and_then(|data| self.shape_slot(data.shape(), atom))
+    }
+
+    /// `property_attributes` of `key` on `object` given its shape `slot` (`own_shape_slot`).
+    #[inline(always)]
+    pub(super) fn property_attributes_at(
+        &self,
+        object: Value,
+        key: PropertyKey,
+        slot: Option<usize>,
+    ) -> Option<PropertyAttributes> {
+        if let Some(slot) = slot
+            && let Some(attributes) = self.object_data(object).and_then(|data| self.slot_attributes(data, slot))
         {
             return Some(attributes);
         }
@@ -1137,7 +1187,7 @@ impl<H: Host> Vm<H> {
         // An initialized `this` binding never changes (a second `super()` throws), so the
         // frame keeps it as its fixed receiver; only a derived constructor's binding before
         // `super()` stays to be resolved again.
-        let initialized = !value.is_deleted();
+        let initialized = this_is_fixed(false, value);
         let activation = &mut self.frames[frame];
         activation.this = value;
         activation.fixed_this = initialized;
@@ -1192,8 +1242,15 @@ impl FieldCacheSet {
         self.holds_own |= cache.holder == NO_FIELD_HOLDER;
         let key = field_cache_key(cache.receiver, cache.holder);
         if let Some(entries) = &mut self.overflow {
-            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&key) {
-                entries.insert(key, cache);
+            let room = entries.len() < FIELD_MEGAMORPHIC_LIMIT;
+            match entries.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    slot.insert(cache);
+                }
+                std::collections::hash_map::Entry::Vacant(slot) if room => {
+                    slot.insert(cache);
+                }
+                std::collections::hash_map::Entry::Vacant(_) => {}
             }
             return;
         }
@@ -1373,6 +1430,19 @@ impl<H: Host> Vm<H> {
         let slot = self.shape_slot(object.shape(), atom)?;
         self.slot_data_value(object, slot)
     }
+
+    /// `own_property` of `atom` on `object` given its shape `slot` (`own_shape_slot`), so a walk
+    /// that already resolved the slot does not resolve it again. An array's length is answered
+    /// before the shape, as in `own_property`.
+    pub(super) fn own_property_at(&self, object: Value, atom: Atom, slot: Option<usize>) -> Option<Value> {
+        if atom == self.length_atom
+            && let Some(length) = self.own_array_length(object)
+        {
+            return Some(Value::length(length));
+        }
+        let object = self.object_data(object)?;
+        self.slot_data_value(object, slot?)
+    }
     /// The target and handler of a Proxy, copied out so callers need not clone its cell.
     pub(super) fn proxy_parts(&self, value: Value) -> Option<(Value, Value)> {
         match self.heap.get(value)? {
@@ -1402,6 +1472,11 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Result<Value, JsError> {
         self.prepare_named_function_info_lookup(object, atom);
+        // An array's own `length` answers before the cache ladder: no shape or holder entry
+        // can shadow that data property, so the ladder would only find the same value.
+        if let Some(length) = self.array_length_field(object, atom) {
+            return Ok(length);
+        }
         let probe = self.cached_field_hit(p, object, site);
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(
@@ -1415,14 +1490,12 @@ impl<H: Host> Vm<H> {
         );
         match probe {
             FieldCacheProbe::Hit(value) => Ok(value),
-            FieldCacheProbe::OrdinaryMiss => match self.array_length_field(object, atom) {
-                Some(length) => Ok(length),
-                None => self.get_field_polymorphic(p, object, atom, site, object.heap_reference()),
-            },
-            FieldCacheProbe::Ineligible => match self.array_length_field(object, atom) {
-                Some(length) => Ok(length),
-                None => self.get_field_uncached(p, object, atom, site, object.heap_reference()),
-            },
+            FieldCacheProbe::OrdinaryMiss => {
+                self.get_field_polymorphic(p, object, atom, site, object.heap_reference())
+            }
+            FieldCacheProbe::Ineligible => {
+                self.get_field_uncached(p, object, atom, site, object.heap_reference())
+            }
         }
     }
 
@@ -1570,10 +1643,10 @@ impl<H: Host> Vm<H> {
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
         }
-        // The tiers the lane's own handlers read past these: a receiver a heap cell holds, and
-        // a field inherited from beyond the immediate prototype.
+        // The tiers the lane's own handlers read past these: a receiver a heap cell holds (whose
+        // ordinary holder entry `cached_ordinary_holder_field_value` has already probed), and a
+        // field inherited from beyond the immediate prototype.
         if let Some(value) = self.cell_own_field_hit(p, object, site)
-            .or_else(|| self.cell_holder_field_hit(p, object, site))
             .or_else(|| self.inherited_field_hit(p, object, site)) {
             return FieldCacheProbe::Hit(value);
         }
@@ -1967,11 +2040,21 @@ impl<H: Host> Vm<H> {
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
-        // A plain arena run whose slot already holds the value's class: no join, no settling.
-        if receiver.plain_arena_start().is_some()
-            // SAFETY: the exact shape holds the slot; the record's values are a plain arena run.
-            && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.slot, value) } {
-            return true;
+        // The barrier's one test for this store. Without `LOGS` a logged store is left to the
+        // caller; with it, a logged store takes the barriered store below.
+        let logged = self.heap.object_store_logs(record_id, value);
+        if logged && !LOGS {
+            return false;
+        }
+        if !logged {
+            // A plain arena run whose slot already holds the value's class: no join, no settling.
+            if receiver.plain_arena_start().is_some()
+                // SAFETY: the exact shape holds the slot; the record's values are a plain arena run; the barrier admitted the store.
+                && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.slot, value) } {
+                return true;
+            }
+            // SAFETY: this exact own-data shape proves the slot outside dictionary storage; the barrier admitted the store.
+            return unsafe { self.heap.record_property_set_unlogged(record_id, usize::from(cache.slot), value, layout) };
         }
         // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
         unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, usize::from(cache.slot), value, layout) }
@@ -2168,12 +2251,18 @@ impl<H: Host> Vm<H> {
             return;
         }
         let (slot, shape) = (usize::from(transition.slot), transition.after);
-        if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, shape))
-            && !self.heap.record_property_append_reserved(record_id, slot, value, shape)
+        if self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, shape)
         {
-            self.heap.record_property_add_moving(object, slot, value, shape);
+            return;
         }
+        if self.heap.record_property_append_reserved(record_id, slot, value, shape) {
+            return;
+        }
+        // The add moves the run: reserve the size the shape tree predicts for it, so the
+        // object's next adds append in place rather than move it again.
+        let want = self.predicted_run_capacity(shape, slot + 1);
+        self.heap.record_property_add_moving(object, slot, value, shape, want);
     }
 
     /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
@@ -2494,6 +2583,26 @@ impl<H: Host> Vm<H> {
     /// Whether the site has an inherited entry (`inherited_field_hit`).
     pub(super) fn field_site_inherited(&self, site: u16) -> bool {
         self.inherited_field_indices.get(self.field_cache_index(site)) != NO_INHERITED_FIELD
+    }
+
+    /// The entry tier of a single-read site, in the order the four `field_site_*` predicates
+    /// test it: an accessor, the megamorphic entries, a prototype holder, then an inherited
+    /// entry, else the primary own entry. The site's cache index is derived once, so each
+    /// table is read at the same index without re-deriving the active cache layout.
+    pub(super) fn field_site_tier(&self, site: u16) -> super::dispatch_fast::FieldSiteTier {
+        use super::dispatch_fast::FieldSiteTier;
+        let index = self.field_cache_index(site);
+        if self.accessor_field_indices.get(index) != NO_ACCESSOR_FIELD {
+            FieldSiteTier::Getter
+        } else if self.megamorphic_field_indices.get(index) != NO_MEGAMORPHIC_FIELD {
+            FieldSiteTier::Polymorphic
+        } else if self.field_caches.get(index).holder != NO_FIELD_HOLDER {
+            FieldSiteTier::Holder
+        } else if self.inherited_field_indices.get(index) != NO_INHERITED_FIELD {
+            FieldSiteTier::Inherited
+        } else {
+            FieldSiteTier::Own
+        }
     }
 
     /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
@@ -2817,8 +2926,9 @@ impl<H: Host> Vm<H> {
         set.get(receiver, NO_FIELD_HOLDER).map(|entry| entry.slot)
     }
 
-    /// `get_field_cached` past the inline own-data hits: hashed megamorphic and
-    /// prototype-holder hits, then the uncached path. The receiver is an ordinary object.
+    /// `get_field_cached`'s miss path past `cached_field_hit`, which already probed the
+    /// receiver's own entries and its ordinary holder entry: only the megamorphic
+    /// prototype-holder probe remains, then the uncached path. The receiver is an ordinary object.
     #[inline(never)]
     fn get_field_polymorphic(
         &mut self,
@@ -2832,10 +2942,7 @@ impl<H: Host> Vm<H> {
         if let Some(receiver) =
             heap_reference.and_then(|reference| self.heap.record_object(reference))
         {
-            if let Some(hit) = self
-                .cached_field_value(index, receiver)
-                .or_else(|| self.cached_holder_field_value(index, receiver, atom))
-            {
+            if let Some(hit) = self.cached_holder_field_value(index, receiver, atom) {
                 self.profile
                     .field_cache_hit(usize::from(hit.tier), hit.depth);
                 return Ok(hit.value);
@@ -2923,7 +3030,8 @@ impl<H: Host> Vm<H> {
                 | HeapReference::AwaitRecord(_)
                 | HeapReference::V128Record(_)
                 | HeapReference::EnvironmentRecord(_)
-                | HeapReference::SymbolRecord(_),
+                | HeapReference::SymbolRecord(_)
+                | HeapReference::WasmGcRecord(_),
             )
             | None => None,
         };
@@ -3086,7 +3194,7 @@ impl<H: Host> Vm<H> {
     /// proxy: a hit, a miss at the resolved site, or no cacheable receiver.
     #[inline(always)]
     fn object_field_cache_read(&self, cell: &Cell, atom: Atom, site: u16) -> FieldCacheRead {
-        self.receiver_field_cache_read(self.shape_property_lookup_cell(cell, atom), atom, site)
+        self.receiver_field_cache_read(self.shape_property_lookup_cell(cell, self.atom_class(atom)), atom, site)
     }
 
     /// The field cache's answer for a receiver whose shape answers the read (`None`: it
@@ -3295,7 +3403,7 @@ impl<H: Host> Vm<H> {
             super::accessor_cache::GetterEntryRead::Call(getter) => return self.call_value(p, getter, object, &[]),
             super::accessor_cache::GetterEntryRead::Miss => {}
         }
-        if let Some(getter) = self.cached_field_getter(object, atom, site) {
+        if let Some(getter) = self.cached_getter_after_miss(object, atom, site) {
             return self.call_value(p, getter, object, &[]);
         }
         if let Some(value) = self.field_miss_data_value(object, atom, site) {
@@ -3446,13 +3554,15 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The getter (`setter` false) or setter the fact table gives `atom` on the record
-    /// `receiver` (`record_accessor_fact`): `Some` with the part, or `Some(None)` for an
-    /// accessor without it, wherever the table holds an accessor answer; `None` otherwise.
+    /// The getter (`setter` false) or setter the fact table gives `key` on the record
+    /// `receiver` (`record_accessor_fact`, `record_accessor` of a symbol-keyed proof): `Some`
+    /// with the part, or `Some(None)` for an accessor without it, wherever the table holds an
+    /// accessor answer; `None` otherwise. The one decoder of an accessor fact, for both named
+    /// and symbol-keyed reads (`Vm::proved_getter`).
     #[inline(always)]
-    pub(super) fn fact_accessor(&self, receiver: &Object, atom: Atom, setter: bool) -> Option<Option<Value>> {
+    pub(super) fn fact_accessor(&self, receiver: &Object, key: PropertyKey, setter: bool) -> Option<Option<Value>> {
         use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
-        let key32 = PropertyKey::string(atom).key32()?;
+        let key32 = key.key32()?;
         let layout = receiver.layout_id();
         let word = self.symbol_load_proofs.word(layout, key32)?;
         let kind = word.kind();
@@ -4031,9 +4141,10 @@ impl<H: Host> Vm<H> {
             {
                 self.own_index_attributes(current, index as usize, Some(atom))
             } else {
-                self.property_attributes(current, PropertyKey::string(atom))
+                let own_slot = self.own_shape_slot(current, atom);
+                self.property_attributes_at(current, PropertyKey::string(atom), own_slot)
                     .filter(|attributes| {
-                        self.own_property(current, atom).is_some() || attributes.accessor
+                        attributes.accessor || self.own_property_at(current, atom, own_slot).is_some()
                     })
             };
             if let Some(attributes) = held {
@@ -4340,10 +4451,13 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
-        if self.cached_field_store_hit(p, object, atom, value, site) {
+        // A method cache naming `atom` declines the own-store probes before running them, so
+        // only then is the store half still owed to the polymorphic path.
+        let store_owed = self.method_caches_may_name(atom);
+        if !store_owed && self.cached_own_store_hit(p, object, value, site) {
             return Ok(());
         }
-        self.set_field_polymorphic(p, object, atom, value, site, strict)
+        self.set_field_polymorphic(p, object, atom, value, site, strict, store_owed)
     }
 
     /// Stores `value` when it is an own-data store hit that no method cache can observe,
@@ -4358,7 +4472,14 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> bool {
-        if !(self.specialized && p.specialized) || self.method_caches_may_name(atom) {
+        !self.method_caches_may_name(atom) && self.cached_own_store_hit(p, object, value, site)
+    }
+
+    /// The own-store probes of `cached_field_store_hit` past its method-cache guard: the
+    /// site's primary entry, then its megamorphic own slot, inline or hashed.
+    #[inline(always)]
+    fn cached_own_store_hit(&mut self, p: &ResidualProgram, object: Value, value: Value, site: u16) -> bool {
+        if !(self.specialized && p.specialized) {
             return false;
         }
         let Some(data) = self.heap.object(object) else {
@@ -4445,7 +4566,6 @@ impl<H: Host> Vm<H> {
     /// encoding is independent of the shape/descriptor permission to write it.
     fn cached_own_writable_slot(&self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<usize> {
         if !(self.specialized && p.specialized)
-            || self.is_private_name(atom)
             || !self.field_cache_atom_eligible(atom)
             || self.method_caches_may_name(atom)
         {
@@ -4514,7 +4634,8 @@ impl<H: Host> Vm<H> {
         self.try_cached_field_add(object, atom, shape, link, value, site)
     }
 
-    /// `set_field_cached` past the inline own-data store hits.
+    /// `set_field_cached` past the inline own-data store hits. `store_owed` is false when those
+    /// own-store probes already missed, so only the add half of the cache can still hit.
     #[inline(never)]
     fn set_field_polymorphic(
         &mut self,
@@ -4524,9 +4645,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
         strict: bool,
+        store_owed: bool,
     ) -> Result<(), JsError> {
         // Only an ordinary object reaches the shape cache: a nullish base falls through to the uncached path's TypeError.
-        if self.set_field_cache_hit(p, object, atom, value, site) {
+        if self.set_field_cache_hit(p, object, atom, value, site, store_owed) {
             return Ok(());
         }
         if self.is_typed_array_element(object, atom) { return self.set_property_with_program_mode(p, object, atom, value, strict); }
@@ -4872,9 +4994,10 @@ impl<H: Host> Vm<H> {
             && let Ok(slot) = u16::try_from(slot)
         {
             // Once per transition: the add that creates `target_shape` seeds its slot from the
-            // class's declared type; later adds of the shape reuse this entry and its seed.
+            // class's declared type, once the added `value` satisfies it; later adds of the shape
+            // reuse this entry and its seed.
             if let Some(ty) = declared_field_type(p, function, atom) {
-                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty);
+                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty, value);
             }
             self.record_field_add_cache(
                 site,
@@ -5060,7 +5183,8 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     /// Store through the field cache when it covers the write: a plain data
     /// object whose shape hits the site. Strictness only shapes failures, so
-    /// a hit is the same store either way; a miss changes nothing.
+    /// a hit is the same store either way; a miss changes nothing. `store_owed` is false when
+    /// `cached_own_store_hit` already probed the store half and missed, leaving the add half.
     pub(super) fn set_field_cache_hit(
         &mut self,
         p: &ResidualProgram,
@@ -5068,6 +5192,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        store_owed: bool,
     ) -> bool {
         if !(self.specialized && p.specialized) || self.is_private_name(atom) {
             return false;
@@ -5080,7 +5205,7 @@ impl<H: Host> Vm<H> {
         }
         let site = self.field_cache_index(site);
         let (shape, link, extensible) = (data.shape(), data.proto_link(), data.is_extensible());
-        self.try_cached_field_store(object, atom, shape, value, site)
+        (store_owed && self.try_cached_field_store(object, atom, shape, value, site))
             || (extensible
                 && self.field_cache_atom_eligible(atom)
                 && self.try_cached_field_add(object, atom, shape, link, value, site))

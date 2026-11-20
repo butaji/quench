@@ -1,25 +1,25 @@
 //! The one frame (`/mnt/project-files/calls-frames/one-frame-one-call.md`, steps F1 and F4,
 //! Ledger (3)): every reader of the lane's activations and every return, whether the activation
 //! is a record (`Activation`) or a plain activation's header in the value stack (call protocol
-//! v2 stage C), reads it as a `Frame`. No read through it spills the plain activations (`LaneStack::spill_plain`), and
+//! v2 stage C), reads it as an `ActivationView`. No read through it spills the plain activations (`LaneStack::spill_plain`), and
 //! the readers stop naming the record, so a later step can take the record away from the plain
 //! frames' readers without touching them again.
 //!
 //! Writers edit a frame where it is (one-frame-one-call.md F4 (3)): a header's side record
 //! (`LaneStack::recomplete_top`, `name_top_record`, `frame_walk`'s `recomplete_at` and
-//! `attach_payload`) or a record (`records_mut`). A `Frame` is a copy.
+//! `attach_payload`) or a record (`records_mut`). An `ActivationView` is a copy.
 use super::*;
 
 /// One frame, as every reader and every return reads it (one-frame-one-call.md F4 (3),
 /// Ledger (3)): the words every frame has (its native prefix, function, call record and caller
 /// state), what kind it is, and what its side record carries. A plain header's are read from
 /// its header words and side record (`LaneStack::plain_frame`), building no record; a record's
-/// are its own (`Frame::of_record`). The walk (`frame_walk`), the pop
+/// are its own (`ActivationView::of_record`). The walk (`frame_walk`), the pop
 /// (`LaneStack::pop_activation`) and the innermost's read (`LaneStack::top_frame`) produce it,
 /// and a frame that must become a record again (a spill, a materialization) is `record`. A
 /// frame is a copy: writers edit it where it is.
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct Frame {
+pub(in crate::vm) struct ActivationView {
     /// Its frame prefix: a record's own, a header's with no callee or body but its window.
     pub(super) callee: *const super::super::compiled::DirectCallee,
     pub(super) this: u64,
@@ -35,7 +35,7 @@ pub(in crate::vm) struct Frame {
     payload: SidePayload,
 }
 
-impl Frame {
+impl ActivationView {
     /// The frame a record holds, with what its side record carries.
     #[inline(always)]
     pub(super) fn of_record(record: &Activation, payload: SidePayload) -> Self {
@@ -252,7 +252,7 @@ impl Side {
             keeps,
             environment,
             completion.crosses(),
-            !matches!(completion, Completion::Plain | Completion::Cross),
+            completion.needs_completion_flag(),
             !record.is_null(),
         )
     }
@@ -265,7 +265,7 @@ pub(super) fn header_sided(window: Registers) -> bool {
 }
 
 impl LaneStack {
-    /// The frame of the plain activation whose window is `window` (`Frame`), read from its
+    /// The frame of the plain activation whose window is `window` (`ActivationView`), read from its
     /// header and `side`, its side record where its header carries one (`header_sided`), and
     /// `program`, the program its caller runs where it carries none: the innermost's is
     /// `PlainFrames::program`, each other's the caller program of the frame above it. No record
@@ -278,7 +278,7 @@ impl LaneStack {
     /// plain activation's window where one remains below. The one definition the walk, the
     /// innermost's read, the pop and the spill share.
     #[inline(always)]
-    pub(super) fn plain_frame(&self, window: Registers, side: Option<Side>, program: ProgramId) -> Frame {
+    pub(super) fn plain_frame(&self, window: Registers, side: Option<Side>, program: ProgramId) -> ActivationView {
         let (call, caller_registers, caller_base) = window.plain_caller();
         let (call, caller_registers, caller_base, completion) = if let Some(side) = side {
             (call, caller_registers, caller_base, side.completion)
@@ -299,7 +299,7 @@ impl LaneStack {
             Some(side) if side.native != NO_NATIVE => (self.native_table[side.native] as *const super::super::compiled::DirectCallee, self.body_table[side.native]),
             _ => (std::ptr::null(), 0),
         };
-        Frame {
+        ActivationView {
             callee: callee_at,
             this: 0,
             body,
@@ -324,19 +324,19 @@ impl LaneStack {
 
     /// Every frame, innermost first, where it is (`walk_innermost`). A reader calls no
     /// `activations` while it walks.
-    pub(super) fn frames_innermost(&self) -> impl Iterator<Item = Frame> + '_ {
+    pub(super) fn frames_innermost(&self) -> impl Iterator<Item = ActivationView> + '_ {
         self.walk_innermost().map(|(frame, _)| frame)
     }
 
     /// The innermost frame, read where it is: no spill and no record built for a plain one.
     #[inline(always)]
-    pub(in crate::vm) fn top_frame(&self) -> Option<Frame> {
+    pub(in crate::vm) fn top_frame(&self) -> Option<ActivationView> {
         if self.plain.depth.get() != 0 {
             return Some(self.plain_frame(Registers(self.plain.registers.get()), self.innermost_side(), self.plain.program.get()));
         }
         // SAFETY: the reference ends here.
         let record = unsafe { self.records_unspilled() }.last()?;
-        Some(Frame::of_record(record, self.innermost_record_payload(record)))
+        Some(ActivationView::of_record(record, self.innermost_record_payload(record)))
     }
 
     /// What the side record of `record`, the innermost record and frame, carries, where it has one.
@@ -367,7 +367,7 @@ impl LaneStack {
     }
 
     /// Pop the innermost plain activation, header and side record, yielding the words its return
-    /// reads (`Frame`, one-frame-one-call.md F4): the header's pop row
+    /// reads (`ActivationView`, one-frame-one-call.md F4): the header's pop row
     /// (`staged::protocol::pop_plain`), then the side record its flags select
     /// (`staged::call_complete::side_completion`). No record is built. The window stays for the
     /// caller to release (`lane_restore_caller`), as a popped record's does; the records and
@@ -375,7 +375,7 @@ impl LaneStack {
     ///
     /// # Safety
     /// A plain activation runs (`plain.depth > 0`).
-    pub(super) unsafe fn pop_plain_frame(&mut self) -> Frame {
+    pub(super) unsafe fn pop_plain_frame(&mut self) -> ActivationView {
         debug_assert!(self.plain.depth.get() != 0, "a plain activation runs");
         let window = Registers(self.plain.registers.get());
         let packed = crate::staged::call_complete::frame_packed(
@@ -508,7 +508,7 @@ impl LaneStack {
 
     /// The activation `depth` above the outermost, as `activations()[depth]` would read it once
     /// spilled; `None` past the innermost.
-    pub(in crate::vm) fn frame(&self, depth: usize) -> Option<Frame> {
+    pub(in crate::vm) fn frame(&self, depth: usize) -> Option<ActivationView> {
         let above = self.activation_count().checked_sub(depth + 1)?;
         self.frames_innermost().nth(above)
     }
@@ -516,8 +516,8 @@ impl LaneStack {
     /// Every activation, outermost first, as `activations().iter()` would yield them once
     /// spilled, without spilling: the walk's frames (`walk_innermost`), reversed. The walk reads
     /// no record a spill could write during it: a reader calls no `activations` while it walks.
-    pub(in crate::vm) fn frames(&self) -> impl Iterator<Item = Frame> + '_ {
-        let mut frames: Vec<Frame> = self.frames_innermost().collect();
+    pub(in crate::vm) fn frames(&self) -> impl Iterator<Item = ActivationView> + '_ {
+        let mut frames: Vec<ActivationView> = self.frames_innermost().collect();
         frames.reverse();
         frames.into_iter()
     }
@@ -552,7 +552,7 @@ impl LaneStack {
     /// The innermost frame while a native body runs in it (`top_native`): a linked native
     /// header or a record whose callee still runs its body; none for a plain header.
     #[inline(always)]
-    pub(in crate::vm) fn top_native(&self) -> Option<Frame> {
+    pub(in crate::vm) fn top_native(&self) -> Option<ActivationView> {
         self.top_frame().filter(|frame| !frame.callee.is_null() && frame.body != 0)
     }
 }

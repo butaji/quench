@@ -50,11 +50,22 @@ impl Compiler<'_> {
         // Bodies parse lazily past the method's own start, so its own parses whole again.
         let own = offset + (method.value.span.start - span.start);
         let mut allocator = self.lazy_arenas.pop().unwrap_or_else(|| super::arena(&text));
+        let saved_names = self.body_type_names();
         let nesting = if self.replay_target.is_some() { Nesting::Recorded(&self.lazy_bodies) } else { Nesting::Parse(&mut self.first_call.free_names, self.first_call.direct) };
-        let reparsed = reparse(&allocator, &text, own, span.start.wrapping_sub(offset), self.source_type, nesting);
+        let mut reparsed = reparse(&allocator, &text, own, span.start.wrapping_sub(offset), self.source_type, nesting, saved_names);
+        // The method's declarations join the program's, and it resolves its annotations against the names they were admitted with.
+        let names = match reparsed.as_mut() {
+            Ok(reparsed) => {
+                let declared = std::mem::take(&mut reparsed.declared);
+                let names = declared.type_names.clone();
+                self.declared_types.append(declared);
+                names
+            }
+            Err(_) => None,
+        };
         let again = reparsed.as_ref().ok().and_then(|reparsed| replay::wrapped_class_method(&reparsed.program)).filter(|again| again.value.span == method.value.span && !is_released_method(again));
         let id = match again {
-            Some(again) => self.compile_class_method(again, place.source_span, place.scopes, place.parent, None, None, false, place.home_atom, place.with_depth),
+            Some(again) => self.with_type_names(names, |this| this.compile_class_method(again, place.source_span, place.scopes, place.parent, None, None, false, place.home_atom, place.with_depth)),
             None => self.reject_released_method(method, place),
         };
         drop(reparsed);

@@ -723,7 +723,7 @@ fn wasm_gc_descriptor_is_the_last_traced_reference_word() {
     let mut stored = WasmGcFields::new(layout, 0, Some(descriptor)).unwrap();
     stored.put(layout, 1, crate::wasm::gc::GcField::new(1, anyref_storage()).unwrap(), external.to_bits());
     assert!(matches!(stored.descriptor(), Some(found) if found == descriptor));
-    let owner = heap.alloc(Cell::WasmGc { declarations, ty: 0, fields: stored });
+    let owner = heap.alloc_wasm_gc(WasmGcRecord::new(declarations, 0, stored));
     let root = heap.root(owner);
     heap.collect([]);
     assert!(heap.is_live(external));
@@ -748,7 +748,7 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let layout = declarations.layout(0).expect("a struct layout");
     let mut stored = WasmGcFields::new(layout, 0, None).unwrap();
     stored.put(layout, 1, crate::wasm::gc::GcField::new(1, anyref_storage()).unwrap(), external.to_bits());
-    let owner = heap.alloc(Cell::WasmGc { declarations, ty: 0, fields: stored });
+    let owner = heap.alloc_wasm_gc(WasmGcRecord::new(declarations, 0, stored));
     let tag = heap.alloc(Cell::WasmTag { object: Box::new(plain_object()), declarations: crate::WasmTypes::default(), ty: 0 });
     let exception = heap.alloc(Cell::WasmException {
         tag,

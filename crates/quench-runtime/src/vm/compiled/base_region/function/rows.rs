@@ -110,7 +110,9 @@ pub(super) fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: Wi
     let (plain, returning) = instruction.split_return();
     let row = lowered(region, pc, sites, (plain, returning), (facts, helpers));
     if returning && !completable(&row) {
-        return What::Row(Decoded::step(Step::Leave, None));
+        // Under `LaneHelpers::Ahead` the generic row runs it, flag and all, and completes the activation.
+        let step = unplaced(helpers);
+        return What::Row(Decoded { completes: step == Step::Generic, ..Decoded::step(step, None) });
     }
     #[cfg(test)]
     if is_fast(&row) {

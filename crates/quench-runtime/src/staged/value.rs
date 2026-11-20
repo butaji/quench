@@ -129,10 +129,6 @@ pub(crate) mod language {
     pub(crate) const OBJECT_PLAIN: u16 = 1 << 10;
 }
 
-const FIRST_TAG: u64 = ValueLayout::FIRST_TAG_FIELD << ValueLayout::TAG_SHIFT;
-/// The span of the double tags, from `FIRST_TAG` (a word in it is a double).
-const TAG_SPAN: u64 = (ValueLayout::TAG_FIELD_SPAN + 1) << ValueLayout::TAG_SHIFT;
-
 /// The language bits (`language`) a word's tag alone sets: a Number (an int32 or a double), a Boolean,
 /// `null`, `undefined`, a direct object family record (`OBJECT`, and `OBJECT_PLAIN` for a plain one), a
 /// direct array (`ARRAY`, with the `OBJECT` bit, as the family test the object family makes), a direct
@@ -140,14 +136,18 @@ const TAG_SPAN: u64 = (ValueLayout::TAG_FIELD_SPAN + 1) << ValueLayout::TAG_SHIF
 /// no tag decides (a rope or heap string, a symbol, a BigInt) sets none.
 #[inline(always)]
 pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
-    let mut object = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
-    for tag in [ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::DIRECT_PROMISE_TAG, ValueLayout::DIRECT_ITERATOR_TAG] {
+    let plain = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
+    let array = family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG);
+    let function = family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG);
+    let string = is_direct_string(stage, bits);
+    let mut object = stage.any(plain, array);
+    object = stage.any(object, function);
+    for tag in [ValueLayout::DIRECT_PROMISE_TAG, ValueLayout::DIRECT_ITERATOR_TAG] {
         let family = family_is(stage, bits, tag);
         object = stage.any(object, family);
     }
     let int = is_int(stage, bits);
-    let shifted = stage.add_imm(bits, FIRST_TAG.wrapping_neg());
-    let double = stage.ugt_imm(shifted, TAG_SPAN - 1);
+    let double = is_double(stage, bits);
     let number = stage.any(int, double);
     let unflagged = stage.and_imm(bits, !(crate::Value::TRUE.to_bits() ^ crate::Value::FALSE.to_bits()));
     let boolean = stage.eq_imm(unflagged, crate::Value::FALSE.to_bits());
@@ -240,6 +240,11 @@ pub(crate) fn is_double<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
     ops.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
 }
 
+/// The states `tagged_truthiness` sorts a word into: undecided by the word, falsy, or truthy.
+const UNDECIDED: u64 = 0;
+const FALSY: u64 = 1;
+const TRUTHY: u64 = 2;
+
 /// ToBoolean of `bits` as far as its own word decides it: `(undecided, truthy)`. A heap value
 /// other than an object or array record is undecided, its cell deciding (a string's length, a
 /// BigInt, the IsHTMLDDA object); `truthy` holds for any other truthy value: a record, a nonzero
@@ -249,17 +254,14 @@ pub(crate) fn is_double<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
 pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond) {
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
-    let (object, array) = (is_direct_object(stage, bits), is_direct_array(stage, bits));
-    let record = stage.any(object, array);
-    let unheaped = stage.not(heap);
-    let decided = stage.any(unheaped, record);
-    let undecided = stage.not(decided);
-    // A heap word's truth is its record's test alone, so the immediate and Number ladder below
-    // runs only where the word is not a heap value: an object's ToBoolean costs its tag and
-    // record tests, not every arm of the ladder. The arms compute the same truth as before.
-    let truthy = stage.choose(heap, #[inline(always)] |stage| {
-        let (yes, no) = (stage.constant(1), stage.constant(0));
-        stage.select(record, yes, no)
+    // The word's truth state: a heap word is decided by its record's test alone (its record is truthy,
+    // else undecided), so the record tests and the immediate and Number ladder below run only in their own
+    // arm. The arms compute the same truth as before.
+    let state = stage.choose(heap, #[inline(always)] |stage| {
+        let (object, array) = (is_direct_object(stage, bits), is_direct_array(stage, bits));
+        let record = stage.any(object, array);
+        let (truthy, undecided) = (stage.constant(TRUTHY), stage.constant(UNDECIDED));
+        stage.select(record, truthy, undecided)
     }, #[inline(always)] |stage| {
         let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
         let payload = stage.and_imm(bits, u64::from(u32::MAX));
@@ -278,10 +280,10 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
         let double_truthy = stage.number_truthy(bits);
         let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);
         let unheaped_truthy = stage.pick(tagged, tagged_truthy, double_truthy);
-        let (yes, no) = (stage.constant(1), stage.constant(0));
+        let (yes, no) = (stage.constant(TRUTHY), stage.constant(FALSY));
         stage.select(unheaped_truthy, yes, no)
     });
-    (undecided, stage.ne_imm(truthy, 0u32))
+    (stage.eq_imm(state, UNDECIDED), stage.eq_imm(state, TRUTHY))
 }
 
 /// ToBoolean of a Boolean's `bits`: `true` alone is truthy.
@@ -319,6 +321,22 @@ pub(crate) const TYPEOF_UNDEFINED: u64 = typeof_name_index("undefined");
 pub(crate) const TYPEOF_OBJECT: u64 = typeof_name_index("object");
 pub(crate) const TYPEOF_BOOLEAN: u64 = typeof_name_index("boolean");
 pub(crate) const TYPEOF_NUMBER: u64 = typeof_name_index("number");
+
+/// The index in `bytecode::TYPEOF_NAMES` of the one name `typeof` yields for every value of the language
+/// set `languages` (the `language` bits), where the set decides one: a set of functions is `function`, a
+/// set of Numbers is `number`, and a set of direct objects and arrays (or none) is `object`. A set that
+/// may name either (a generic object, or a mix of kinds) has none, so a fold built on it leaves at its test.
+pub(crate) const fn language_typeof_index(languages: u16) -> Option<u64> {
+    if languages == language::FUNCTION {
+        Some(typeof_name_index("function"))
+    } else if languages == language::NUMBER {
+        Some(TYPEOF_NUMBER)
+    } else if languages & !(language::OBJECT_PLAIN | language::ARRAY) == 0 {
+        Some(TYPEOF_OBJECT)
+    } else {
+        None
+    }
+}
 
 /// The tag classes `typeof` reads from a value's own word: a Number (int32 or double), a boolean,
 /// and `null`. Every `typeof` row selects its name from these.

@@ -11,6 +11,8 @@ impl Heap {
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             // An environment record passes the record barrier: unmarked and logged once.
             Some(HeapReference::EnvironmentRecord(record_id)) => self.environment_records.remember(record_id),
+            // A Wasm GC object's payload is written in place: its record passes the same barrier.
+            Some(HeapReference::WasmGcRecord(record_id)) => self.wasm_gc_records.remember(record_id),
             _ => {}
         }
     }

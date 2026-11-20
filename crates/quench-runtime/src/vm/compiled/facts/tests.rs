@@ -12,7 +12,7 @@ fn native_call_retires_conditional_shapes_in_cfg_facts() {
     for ty in [Type::direct_object(7), Type::direct_object(7).join(null),
         Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
         let mut types = vec![ty; usize::from(function.registers)];
-        assert!(matches!(transfer(&mut types, call, &program.constants,
+        assert!(matches!(transfer(&mut types, call, Operation::<u64, ()>::of(call).as_ref(), &program.constants,
             &super::super::lane_region::writes, true), Flow::Next));
         for (register, actual) in types.into_iter().enumerate() {
             let expected = if register == usize::from(call.result_register()) { Type::ANY }
@@ -32,11 +32,11 @@ fn native_construction_continues_like_a_call() {
     let function = program.function(1);
     let construct = function.instructions().find(|instruction| instruction.op().is_construct()).unwrap();
     let mut types = vec![Type::direct_object(7); usize::from(function.registers)];
-    assert!(matches!(transfer(&mut types, construct, &program.constants,
+    assert!(matches!(transfer(&mut types, construct, Operation::<u64, ()>::of(construct).as_ref(), &program.constants,
         &super::super::lane_region::writes, true), Flow::Next));
     assert_eq!(types[usize::from(construct.result_register())], Type::ANY);
     assert!(types.iter().all(|ty| *ty == Type::ANY || *ty == Type::direct_object(7).without_object_shape()));
-    assert!(matches!(transfer(&mut types, construct, &program.constants,
+    assert!(matches!(transfer(&mut types, construct, Operation::<u64, ()>::of(construct).as_ref(), &program.constants,
         &super::super::lane_region::writes, false), Flow::Leaves));
 }
 
@@ -248,4 +248,32 @@ fn a_register_below_another_is_a_relation_that_dies_with_either_write_and_surviv
     assert_eq!(relations.under[usize::from(index)], Some(bound), "`bound > index` bounds the same register");
     relations.kill(index);
     assert!(relations.under[usize::from(index)].is_none());
+}
+
+/// A direct call whose callee's summary types its result (`lane_region::call_results`) types the
+/// register the call defines after it, where the lowering checks the result at the completion. Without
+/// the observed read the result is `ANY`, as every call's result was before.
+#[test]
+fn a_direct_call_result_takes_the_type_its_callee_summary_observed() {
+    let program = crate::Engine::specialize(
+        "function caller(f, value) { let r = f(value); return r; }", "summary-call.js").unwrap();
+    let function = program.function(1);
+    let instructions: Vec<_> = function.instructions().collect();
+    let call_pc = instructions.iter().position(|instruction| instruction.op().is_call()).unwrap();
+    let result = instructions[call_pc].result_register();
+    let leaders = super::super::lane_region::leaders(&instructions);
+    let initial = vec![Type::ANY; usize::from(function.registers)];
+    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
+        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: true, raises: &[] };
+    let typed_after = |reads: &[ObservedRead]| {
+        let seeds = Seeds { observed: Observed(reads), ..Seeds::observing(Observed::NONE) };
+        let mut after = None;
+        analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
+            if pc == call_pc + 1 { after = Some(point.types[usize::from(result)]); }
+        });
+        after
+    };
+    assert_eq!(typed_after(&[]), Some(Type::ANY), "an untyped call's result is ANY");
+    let reads = [ObservedRead { pc: call_pc, ty: Type::NUMBER }];
+    assert_eq!(typed_after(&reads), Some(Type::NUMBER), "the summary's result types the call's result after it");
 }

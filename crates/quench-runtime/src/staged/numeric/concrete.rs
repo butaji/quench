@@ -75,6 +75,10 @@ impl NumericStage for super::super::Concrete {
         value ^ mask
     }
     #[inline(always)]
+    fn float_eq(&mut self, left: u64, right: u64) -> bool {
+        f64::from_bits(left) == f64::from_bits(right)
+    }
+    #[inline(always)]
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: u64, right: u64) -> (u64, bool) {
         let (left, right) = (int32(left), int32(right));
@@ -104,6 +108,10 @@ impl NumericStage for super::super::Concrete {
     #[inline(always)]
     fn float_unary(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
         super::super::math::float_unary(operation, f64::from_bits(value)).to_bits()
+    }
+    #[inline(always)]
+    fn float_primitive(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
+        super::super::math::float_primitive(operation, f64::from_bits(value)).to_bits()
     }
     #[inline(always)]
     fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {

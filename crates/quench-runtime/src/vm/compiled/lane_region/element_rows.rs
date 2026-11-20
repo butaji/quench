@@ -6,6 +6,7 @@
 use super::*;
 use crate::staged::typed_elements::{typed_read_integer, TypedView};
 use crate::staged::{Operation, Stage, Step};
+use crate::staged::NumericStage as _;
 
 impl Lowering<'_, '_> {
     /// The row of `instruction` where it is an element access whose operands this unit holds.
@@ -44,6 +45,12 @@ impl Lowering<'_, '_> {
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand)) -> bool {
         let exit = self.guard_exit(state, pc as u32);
         let array = self.loop_array(pc, Some(base));
+        if let Some(pending) = self.unit_compare(state, pc, (destination, base, key), exit) {
+            self.pending_unit = Some(pending);
+            return true;
+        }
+        if let Some(array) = array.filter(|array| self.int32_read(*array, pc))
+            && self.int32_element_read(state, (destination, key), array, exit) { return true; }
         if let Some(array) = array.filter(|array| self.reads_int32(*array))
             && self.integer_element_read(state, (destination, key), array, exit) { return true; }
         if let Some(array) = array.filter(|array| self.int_only.contains(&(array.header, array.source)))
@@ -82,6 +89,47 @@ impl Lowering<'_, '_> {
         true
     }
 
+    /// The unit compare of the string element read at `pc` into `destination` (`PendingUnit`): a read of
+    /// a string's unit whose next instruction is a strict `===` or `!==` of the read's register with a
+    /// one-unit string constant, and whose register no path reads after the comparison. The one-character
+    /// string such a read makes is then never made: the comparison decides on the unit
+    /// (`Lowering::unit_compare_jump`). The read leaves at `exit` for a base that is no string, and
+    /// for an index outside it, as the row does.
+    fn unit_compare(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand),
+        exit: ir::Block) -> Option<PendingUnit> {
+        let index = key.register_index()?;
+        let next = pc + 1;
+        let instruction = *self.unit.instructions.get(next)?;
+        let Some(crate::staged::Operation::CompareJump { comparison: crate::staged::Comparison::Equality { strict: true, negated }, left, right, .. })
+            = crate::vm::compiled::performed(instruction) else { return None };
+        let constant = match (left.register_index(), right.register_index()) {
+            (Some(register), None) if register == destination => self.one_unit_constant(right)?,
+            (None, Some(register)) if register == destination => self.one_unit_constant(left)?,
+            _ => return None,
+        };
+        let target = instruction.jump_target() as usize;
+        let string_base = self.loop_array(pc, Some(base)).is_none_or(|array| self.string_base(&array));
+        let unread = !self.is_live(pc + 2, destination) && !self.is_live(target, destination);
+        if !string_base || !unread || self.hoisted.contains_key(&next) || self.unit_leaders().contains(next) { return None; }
+        let within = self.ranges.string_in_bounds(pc);
+        let bits = self.tagged(state, base);
+        let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
+        emit_js_guard(&mut self.builder, is_string, exit);
+        let key_word = self.tagged(state, index);
+        let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
+        let unit = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");
+            let row = if within {
+                crate::staged::strings::string_unit_at_within(&mut stage, units, key_word, exit)
+            } else {
+                crate::staged::strings::string_unit_at(&mut stage, units, key_word, exit)
+            };
+            row.expect("the emit stage continues past its guards")
+        };
+        Some(PendingUnit { pc: next, register: destination, unit, constant, negated })
+    }
+
     /// `base[index]` where `base` holds a string: its one-unit string from the ASCII unit table
     /// (`strings::string_char_at`), joined with the element row otherwise. A string the row does
     /// not read (a rope, a wide unit, a unit with no string yet, an index outside the string)
@@ -95,7 +143,7 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(string);
         let key_word = self.tagged(state, index);
         let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
-        let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, ascii_unit_strings));
+        let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.ascii_unit_strings));
         let character = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");
@@ -119,6 +167,68 @@ impl Lowering<'_, '_> {
     /// Whether `array` is a hoisted typed array of a fixed kind whose elements are all int32s.
     fn reads_int32(&self, array: LoopArray) -> bool {
         array.views.observed_kind().and_then(NativeKind::new).is_some_and(NativeKind::is_int32)
+    }
+
+    /// Whether the hoisted dense `array` holds int32s throughout its loop (`int32_loop`) and the
+    /// read at `pc` is one the loop observed as an int32 (`int32_read_at`): such a read takes no tag test.
+    fn int32_read(&self, array: LoopArray, pc: usize) -> bool {
+        let ArraySource::Register(source) = array.source else { return false };
+        self.int32_loop(array) && self.int32_read_at(pc, source) && !self.generic.contains(&pc)
+    }
+
+    /// Whether the element read at `pc` reads register `source` as its base and was observed an int32.
+    fn int32_read_at(&self, pc: usize, source: Register) -> bool {
+        let instruction = self.unit.instructions[pc];
+        matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. }))
+            && instruction.operand_b().register_index() == Some(source)
+            && self.observed.at(pc).is_some_and(|ty| ty.is_int32())
+    }
+
+    /// Whether the hoisted dense `array` holds only int32s for its whole loop, so its element
+    /// reads need no tag test. The heap keeps a backing's count of values that are no int32
+    /// (`OTHERS_FROM_VALUES`, holes included), zero exactly when every element below the length is
+    /// an int32, and `hoist_arrays` guards that count at the loop's entry. The count stays zero
+    /// because every store of the loop is an int32 through `array`'s own register (`int32_stores`),
+    /// and a store past the end leaves to the VM instead of making a hole (`dense_element_write`).
+    /// Only an array the loop reads as int32s (`int32_read_at`) qualifies, so the guard never
+    /// leaves for an array the loop would not read as one.
+    pub(super) fn int32_loop(&self, array: LoopArray) -> bool {
+        let ArraySource::Register(source) = array.source else { return false };
+        array.writable && array.views == ElementViews::Dense && self.int32_stores(array, source)
+            && (array.header..=array.back).any(|pc| self.int32_read_at(pc, source) && !self.generic.contains(&pc))
+    }
+
+    /// Whether every store of the loop `array` belongs to is an int32 stored through `source`, the
+    /// array's own register (the loop never redefines it, so it names the same array), and no append
+    /// runs: an append or a store through another register could make a hole or a non-int32 element.
+    fn int32_stores(&self, array: LoopArray, source: Register) -> bool {
+        (array.header..=array.back).all(|pc| {
+            if super::native_calls::appends(&self.intrinsics, pc) { return false; }
+            match crate::vm::compiled::performed(self.unit.instructions[pc]) {
+                Some(crate::staged::Operation::ElementWrite { value, base, .. }) => base == source
+                    && self.facts.at(pc).and_then(|types| types.get(usize::from(value))).is_some_and(|ty| ty.is_subtype(Type::INT32)),
+                _ => true,
+            }
+        })
+    }
+
+    /// An element read of a hoisted dense `array` that `int32_read` admits, into `destination`: the
+    /// element's word, narrowed to its int32, past the bounds test alone (no hole, no tag test).
+    fn int32_element_read(&mut self, state: &mut State, (destination, key): (Register, crate::bytecode::Operand),
+        array: LoopArray, exit: ir::Block) -> bool {
+        let Some(index) = self.operand_index(state, key, exit) else { return false };
+        let (values, length) = self.hoisted_view(array);
+        let word = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let index = stage.uextend32(index);
+            let length = stage.uextend32(length);
+            let (_, word) = crate::staged::elements::packed_element(&mut stage, values, length, index, exit)
+                .expect("the emit stage continues past its guards");
+            word
+        };
+        let int = super::super::object_slots::emit(&mut self.builder).narrow(word);
+        self.set_int(state, destination, int);
+        true
     }
 
     /// An element read of a hoisted typed array of an int32 kind (`reads_int32`) into `destination`

@@ -6,6 +6,7 @@
 //! view (`number_domains::box_unboxed`), which the hot path never builds for a leave.
 
 use super::*;
+use super::super::exit_protocol::{LiveValue, Source};
 
 /// The caller registers a leave stores, by the view the cold block stores each from: the
 /// current tagged bits, or the int32, 64-bit integer or float64 view boxed there.
@@ -69,8 +70,9 @@ impl Lowering<'_, '_> {
     }
 
     /// The exit blocks: write back each one's registers, and an inlined callee's registers to the
-    /// window its recovery makes the activation from, then leave at the origin.
-    pub(super) fn fill_exits(&mut self) {
+    /// window its recovery makes the activation from, then leave at the origin. `None` where an
+    /// ahead body has a leave no base body entry continues (`leave_to_base`): no lane body then.
+    pub(super) fn fill_exits(&mut self) -> Option<()> {
         if super::clif_census::enabled() {
             let count = |stored: &ExitStores| [&stored.tagged, &stored.int, &stored.long, &stored.float].iter().map(|set| set.iter().count()).sum::<usize>();
             let private: Vec<(usize, usize)> = self.exits.iter().flatten().map(|exit| (count(&exit.stored), usize::from(matches!(self.unit.origins.first(), Some(_))))).collect();
@@ -89,6 +91,7 @@ impl Lowering<'_, '_> {
             for ExitBlock { stored, block } in std::mem::take(&mut self.exits[pc]) {
                 self.switch_to(block, true);
                 self.store_exit_registers(&stored);
+                if self.vm.ahead.is_some() { self.leave_to_base(pc)?; continue; }
                 let word = match self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end)) {
                     super::lane_unit::Origin::Caller(record) => LaneExit::At(record as usize).word(),
                     super::lane_unit::Origin::Inlined { frame, pc: record } => {
@@ -99,6 +102,31 @@ impl Lowering<'_, '_> {
                 self.return_at(word);
             }
         }
+        Some(())
+    }
+
+    /// Continues the activation at the base body's record this leave's origin names
+    /// (`AheadLeaves`). The stores are written and the entry words are the base body's, so it runs
+    /// on the same Frame; an inlined callee's registers go to the scratch window first.
+    // TODO: materialize the callee's activation (`body_inlined_activation_in_lane`); AOT has no helper for it yet.
+    /// `None` where the base body enters no record at the leave's origin.
+    pub(super) fn leave_to_base(&mut self, pc: usize) -> Option<()> {
+        let (namespace, key) = self.base_leave(pc)?;
+        if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc).copied() {
+            self.store_inlined_registers(pc, frame);
+        }
+        let target = crate::vm::jit_backend::symbol_address(&mut self.builder, namespace, key);
+        let signature = self.builder.func.signature.clone();
+        let signature = self.builder.import_signature(signature);
+        let (this, captures) = self.entry_words;
+        self.builder.ins().return_call_indirect(signature, target, &[self.context, this, captures, self.registers_base]);
+        Some(())
+    }
+
+    /// The `(namespace, key)` of the base body's entry the leave at `pc` continues at.
+    fn base_leave(&self, pc: usize) -> Option<(u32, u32)> {
+        let leaves = self.vm.ahead.expect("an ahead lowering names its base entries");
+        leaves.targets.get(pc).copied().flatten()
     }
 
     /// Each register of `stored` to the lane frame: its tagged bits, or its unboxed view boxed here.
@@ -133,18 +161,25 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// Each register of the frame and the frames around it, at its unit register past the
-    /// caller's (`LaneMethod::scratch_width`). Only the live ones: the activation reads no
-    /// other (`dispatch_fast::body_inlined_activation_in_lane`).
+    /// The values a leave at `pc` inside `frame` stores: the live registers of the frame and of
+    /// the frames around it (`is_live`, the one liveness query), each at its unit register past the
+    /// caller's (`LaneMethod::scratch_width`). The exit table records this same list (`ExitTable::of_unit`).
+    pub(super) fn inlined_stores(&self, pc: usize, frame: usize) -> Vec<LiveValue> {
+        self.unit.chain(frame).into_iter().flat_map(|index| {
+            let inlined = self.unit.frames[index];
+            inlined.base..inlined.base + inlined.registers
+        }).filter(|register| self.is_live(pc, *register))
+            .map(|register| LiveValue { slot: register, source: Source::Scratch(register - self.unit.caller_registers) })
+            .collect()
+    }
+
+    /// Stores the values `inlined_stores` gives a leave at `pc` inside `frame` to the scratch
+    /// window. Only the live ones: the activation reads no other (`dispatch_fast::body_inlined_activation_in_lane`).
     fn store_inlined_registers(&mut self, pc: usize, frame: usize) {
         let scratch = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, inlined));
-        for index in self.unit.chain(frame) {
-            let inlined = self.unit.frames[index];
-            for register in inlined.base..inlined.base + inlined.registers {
-                if !self.is_live(pc, register) { continue; }
-                let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
-                self.store_word(regions::frame(), bits, scratch, register_offset(register - self.unit.caller_registers));
-            }
+        for LiveValue { slot, source: Source::Scratch(at) } in self.inlined_stores(pc, frame) {
+            let bits = self.builder.use_var(self.registers.tagged[usize::from(slot)]);
+            self.store_word(regions::frame(), bits, scratch, register_offset(at));
         }
     }
 }

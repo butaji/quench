@@ -1,5 +1,6 @@
 //! The tests an online body's field reads make of slots whose type its dependencies hold.
 use super::*;
+use crate::bytecode::Class;
 
 /// The lowering of `source`'s `subject`, whose sites read `names` as own slots of one shape and
 /// type `ty`, under online facts (the invalidation word at `invalidation`) or the static ones.

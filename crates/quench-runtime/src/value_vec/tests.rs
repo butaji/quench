@@ -30,7 +30,7 @@ fn metadata_is_compact_and_ranges_preserve_values() {
     let mut values = ValueVec::new();
     for value in 0..9 {
         arena.register_shape(value + 1, value as usize + 1);
-        arena.push(&mut values, Value::number(f64::from(value)), value + 1);
+        arena.push(&mut values, Value::number(f64::from(value)), value + 1, 0);
         values.set_auxiliary(value + 1);
     }
     assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
@@ -394,7 +394,7 @@ fn reserved_young_runs_grow_in_place_until_their_reservation_or_cycle_ends() {
     let _next = arena.young_run_padded(&[Value::number(1.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1, 1).unwrap();
     for slot in 0..10 {
         assert!(arena.reserved_room(run, slot + 1));
-        arena.push(&mut run, Value::number(slot as f64), slot as u32 + 1);
+        arena.push(&mut run, Value::number(slot as f64), slot as u32 + 1, 0);
         run.set_auxiliary(slot as u32 + 1);
         assert_eq!(run.start(), start as usize, "the run grows within its reservation");
     }
@@ -405,7 +405,7 @@ fn reserved_young_runs_grow_in_place_until_their_reservation_or_cycle_ends() {
         assert_eq!(arena.get(run, slot).unwrap().as_number(), Some(slot as f64));
     }
     // Past the reservation the run moves, as any growth does.
-    arena.push(&mut run, Value::number(10.0), 11);
+    arena.push(&mut run, Value::number(10.0), 11, 0);
     run.set_auxiliary(11);
     assert_ne!(run.start(), start as usize);
     assert_eq!(arena.get(run, 10).unwrap().as_number(), Some(10.0));

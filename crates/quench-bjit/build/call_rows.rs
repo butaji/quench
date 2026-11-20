@@ -15,10 +15,22 @@ const DIRECT_MODES: [(&str, &str); 3] = [("strict", "STRICT"), ("sloppy", "SLOPP
 const DIRECT_CHECKS: [(&str, bool); 2] = [("", true), ("_unchecked", false)];
 
 /// Every `direct_row!` (each argument count, mode and identity check), then a `reload_row!` for every pinned place, named by it.
+/// Each direct row with arguments has a `_window` twin that reads no places (`PLACED` false): the planner names it when no
+/// leading argument is pinned, which is the common call. A call with no arguments has only the general row.
 pub fn invocations() -> String {
-    let direct = (0..=DIRECT_ARGC_MAX).flat_map(|argc| DIRECT_MODES.into_iter().flat_map(move |(mode, sloppy)| {
-        DIRECT_CHECKS.into_iter().map(move |(suffix, checked)| format!("direct_row!(call_direct_a{argc}_{mode}{suffix}, {argc}, {sloppy}, {checked});\n"))
-    }));
-    let pinned = (PIN..PIN + INT_PINS).chain(PINF..PINF + DOUBLE_PINS);
-    direct.chain(pinned.map(|place| format!("reload_row!(reload_{place}, {place});\n"))).collect()
+    let mut out = String::new();
+    for argc in 0..=DIRECT_ARGC_MAX {
+        for (mode, sloppy) in DIRECT_MODES {
+            for (suffix, checked) in DIRECT_CHECKS {
+                out += &format!("direct_row!(call_direct_a{argc}_{mode}{suffix}, {argc}, {sloppy}, {checked}, true);\n");
+                if argc > 0 {
+                    out += &format!("direct_row!(call_direct_a{argc}_{mode}{suffix}_window, {argc}, {sloppy}, {checked}, false);\n");
+                }
+            }
+        }
+    }
+    for place in (PIN..PIN + INT_PINS).chain(PINF..PINF + DOUBLE_PINS) {
+        out += &format!("reload_row!(reload_{place}, {place});\n");
+    }
+    out
 }

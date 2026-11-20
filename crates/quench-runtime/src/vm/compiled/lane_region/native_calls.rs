@@ -16,57 +16,48 @@
 //! int32.
 
 use super::*;
-use crate::staged::math::FloatUnary;
 use crate::heap::Native;
-use crate::vm::number::{MathFunction, math_function};
+use crate::staged::call_native::MathCall;
+use crate::vm::number::math_call;
 use crate::vm::global_facts::GlobalRead;
 use super::builtin_calls::Builtin;
+use super::data_view_calls::DataViewCall;
 use crate::vm::global_facts::scalar_native;
 
-/// A native a call runs inline: a Math function of Numbers, the wrapping product of two
-/// arguments' ToInt32 (`Math.imul`), or the machine operation the native's own definition
-/// applies (`staged::math`); or a builtin on its staged row (`Builtin`).
+/// A native a call runs inline: a Math function of Numbers that native code lowers
+/// (`MathCall::is_row`), computed by its staged row; or a builtin on its staged row (`Builtin`).
 #[derive(Clone, Copy)]
 pub(super) enum Inline {
-    Imul,
-    Unary(FloatUnary),
-    /// `Math.max` (true) or `Math.min` of two Numbers.
-    Extreme(bool),
-    /// `Math.clz32` of a Number: its ToUint32's leading zeros, an int32 (`staged::math::count_leading_zeros`).
-    LeadingZeros,
+    Math(MathCall),
     Builtin(Builtin),
     /// A scalar native (`global_facts::scalar_native`), called in place by its helper (`Lowering::scalar_native_call`).
     Scalar,
+    /// A DataView getter or setter of a fixed-width element, run on the view's bytes (`data_view_calls`).
+    DataView(DataViewCall),
 }
 
-/// The argument counts of the inline operations.
-const UNARY_ARGUMENTS: u16 = 1;
+/// The argument count of a scalar native's binary form, and of the scalar call that takes two.
 const BINARY_ARGUMENTS: u16 = 2;
 
 impl Inline {
-    /// The operation `native` runs inline, if any: the machine rows and the Number-only Math
-    /// functions of `number::math_function` that native code lowers, else a builtin's row.
+    /// The operation `native` runs inline, if any: the Math row `number::math_call` derives for
+    /// native code, else a builtin's row.
     fn of(native: Native) -> Option<Self> {
-        match math_function(native) {
-            Some(MathFunction::Row(operation)) => Some(Self::Unary(operation)),
-            Some(MathFunction::Extreme(maximum)) => Some(Self::Extreme(maximum)),
-            Some(MathFunction::Imul) => Some(Self::Imul),
-            _ if matches!(native, Native::MathClz32) => Some(Self::LeadingZeros),
-            _ => None,
-        }
-        .or_else(|| Builtin::of(native).map(Self::Builtin))
-        .or_else(|| scalar_native(native).then_some(Self::Scalar))
+        math_call(native).filter(|call| call.is_row()).map(Self::Math)
+            .or_else(|| Builtin::of(native).map(Self::Builtin))
+            .or_else(|| scalar_native(native).then_some(Self::Scalar))
+            .or_else(|| DataViewCall::of(native).map(Self::DataView))
     }
 
     /// The arguments the inline operation reads; a call passing another count takes the native.
     const fn arguments(self) -> u16 {
-        match self { Self::Imul | Self::Extreme(_) | Self::Scalar => BINARY_ARGUMENTS, Self::Unary(_) | Self::LeadingZeros => UNARY_ARGUMENTS, Self::Builtin(builtin) => builtin.arguments() }
+        match self { Self::Scalar => BINARY_ARGUMENTS, Self::Math(call) => call.arity(), Self::Builtin(builtin) => builtin.arguments(), Self::DataView(call) => call.required() }
     }
 
     /// Whether a call passing `count` arguments runs the operation inline: a scalar native takes one or two (`parseInt(s)`,
     /// `parseInt(s, 10)`), every other operation exactly `arguments`.
     const fn accepts(self, count: u16) -> bool {
-        match self { Self::Scalar => count == 1 || count == BINARY_ARGUMENTS, _ => count == self.arguments() }
+        match self { Self::Scalar => count == 1 || count == BINARY_ARGUMENTS, Self::DataView(call) => call.accepts(count), _ => count == self.arguments() }
     }
 
     /// Whether the operation may change an array's elements, which a loop's hoisted views
@@ -98,15 +89,6 @@ impl Inline {
         matches!(self, Self::Builtin(Builtin::CharCodeAt))
     }
 
-    /// The operation on `numbers`: a Float64 value; `Imul` is lowered by the caller.
-    fn emit(self, builder: &mut FunctionBuilder<'_>, numbers: &[ir::Value]) -> ir::Value {
-        let mut stage = super::super::object_slots::emit(builder);
-        match (self, numbers) {
-            (Self::Unary(operation), &[value]) => crate::staged::math::unary(&mut stage, operation, value),
-            (Self::Extreme(maximum), &[left, right]) => crate::staged::math::extreme(&mut stage, maximum, left, right),
-            _ => unreachable!("an inline Math operation reads its own argument count"),
-        }
-    }
 }
 
 /// The inline operation of each call of a unit, by PC (`intrinsic_calls`).
@@ -224,7 +206,8 @@ impl Lowering<'_, '_> {
         match inline {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
             Inline::Scalar => self.scalar_native_call(state, pc, instruction, held, exit),
-            _ => self.math_call(state, instruction, inline, exit),
+            Inline::Math(call) => self.math_call(state, instruction, call, exit),
+            Inline::DataView(call) => self.data_view_call(state, instruction, call, exit),
         }
         true
     }
@@ -254,24 +237,35 @@ impl Lowering<'_, '_> {
         self.set_tagged(state, instruction.result_register(), value);
     }
 
-    /// The Math call `inline` of Numbers, its result an unboxed Number (an int32 for `imul`).
-    fn math_call(&mut self, state: &mut State, instruction: WideInstruction, inline: Inline, exit: ir::Block) {
+    /// The Math call `call` of Numbers, its result an unboxed Number (an int32 for `Math.imul` and `Math.clz32`).
+    fn math_call(&mut self, state: &mut State, instruction: WideInstruction, call: MathCall, exit: ir::Block) {
         let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-        let numbers: Vec<ir::Value> = (window..window + inline.arguments()).map(|register| self.number(state, register, exit)).collect();
+        let numbers: Vec<ir::Value> = (window..window + call.arity()).map(|register| self.number(state, register, exit)).collect();
         let result = instruction.result_register();
-        if let Inline::Imul = inline {
-            let [left, right] = [numbers[0], numbers[1]].map(|number| self.number_to_int32(number, exit));
-            let mut stage = super::super::object_slots::emit(&mut self.builder);
-            let product = crate::staged::math::multiply(&mut stage, left, right);
-            self.set_int(state, result, product);
-        } else if let Inline::LeadingZeros = inline {
-            let word = self.number_to_int32(numbers[0], exit);
-            let mut stage = super::super::object_slots::emit(&mut self.builder);
-            let count = crate::staged::math::count_leading_zeros(&mut stage, word);
-            self.set_int(state, result, count);
-        } else {
-            let number = inline.emit(&mut self.builder, &numbers);
-            self.set_number(state, result, number);
+        match call {
+            MathCall::Imul => {
+                let [left, right] = [numbers[0], numbers[1]].map(|number| self.number_to_int32(number, exit));
+                let mut stage = super::super::object_slots::emit(&mut self.builder);
+                let product = crate::staged::math::multiply(&mut stage, left, right);
+                self.set_int(state, result, product);
+            }
+            MathCall::LeadingZeros => {
+                let word = self.number_to_int32(numbers[0], exit);
+                let mut stage = super::super::object_slots::emit(&mut self.builder);
+                let count = crate::staged::math::count_leading_zeros(&mut stage, word);
+                self.set_int(state, result, count);
+            }
+            MathCall::Unary(operation) => {
+                let mut stage = super::super::object_slots::emit(&mut self.builder);
+                let number = crate::staged::math::unary(&mut stage, operation, numbers[0]);
+                self.set_number(state, result, number);
+            }
+            MathCall::Extreme(maximum) => {
+                let mut stage = super::super::object_slots::emit(&mut self.builder);
+                let number = crate::staged::math::extreme(&mut stage, maximum, numbers[0], numbers[1]);
+                self.set_number(state, result, number);
+            }
+            MathCall::Libm(_) | MathCall::Binary(_) => unreachable!("an inline Math call is a staged row"),
         }
     }
 }

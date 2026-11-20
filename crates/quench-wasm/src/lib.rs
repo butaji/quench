@@ -1,7 +1,7 @@
 //! WebAssembly format: parse, validate and lower for the shared VM.
 //!
 //! This crate owns the binary and text formats. Quench's shared VM owns execution; the
-//! spec-suite (WAST) harness lives in quench-wasm-test, so builds of quench-node do not
+//! spec-suite (WAST) harness lives in quench-wasm-test, so builds of quench do not
 //! compile the harness host's copy of the VM.
 
 use std::fmt;

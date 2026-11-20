@@ -25,6 +25,10 @@ impl Lowering<'_, '_> {
         let Some(Operation::CompareJump { comparison, .. }) = self.compare_row(instruction) else {
             unreachable!("a comparison jump decodes")
         };
+        if let Some(pending) = self.pending_unit.take().filter(|pending| pending.pc == pc) {
+            self.unit_compare_jump(state, pc, instruction, pending);
+            return true;
+        }
         if let Some((comparison, operands)) = self.nullish_test(state, instruction) {
             self.staged_jump(state, pc, instruction, comparison, operands);
             return true;
@@ -33,6 +37,19 @@ impl Lowering<'_, '_> {
             return true;
         }
         self.relation_jump(state, pc, instruction, comparison)
+    }
+
+    /// The jump of a strict comparison of a string element's unit with a one-unit constant
+    /// (`Lowering::unit_compare`): where the comparison fails the jump is taken, as `staged_jump` takes
+    /// it. The unit is the one-character string's, so `===` holds exactly where the unit is the constant's.
+    fn unit_compare_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, pending: PendingUnit) {
+        let target = instruction.jump_target() as usize;
+        if target <= pc { self.interrupt_check(state, pc as u32); }
+        let equal = self.raw_compare_imm(Relation::Equal, pending.unit, i64::from(pending.constant));
+        let holds = if pending.negated { self.raw_binary_imm(Binary::Xor, equal, 1) } else { equal };
+        let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
+        self.branch_if(holds, (fall, &[]), (taken, &[]));
+        self.continue_branch(state, pc, target, taken, fall);
     }
 
     /// A strict (in)equality jump of two operands not both typed Numbers, where the lane has its

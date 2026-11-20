@@ -643,8 +643,6 @@ pub(crate) struct RegExpArgumentShare {
 
 struct ProgramEntry {
     residual: Residual,
-    #[cfg(feature = "native-execution")]
-    native_js: Option<Rc<super::native_program::NativeJsCode>>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     /// Its materialized constants, with room for those its first-call chunks append, which
     /// never move them (`AppendVec`).
@@ -800,6 +798,9 @@ pub(crate) struct ProgramStore {
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
+    /// The id of each program `insert_shared` holds, by its code's address: `find_shared` is one
+    /// probe, not a scan of every program (the Wasm boundary asks it per call).
+    shared_ids: FxHashMap<usize, ProgramId>,
     /// Advanced by every change to a program the store holds or to the set it holds, and by
     /// the VM's changes to cache layouts and tables (`bump_context_epoch`): a program context
     /// derived at another epoch is derived again (`Vm::program_context`).
@@ -857,6 +858,7 @@ impl Default for ProgramStore {
             lane_compiles: Default::default(),
             lane_plan_ir: Default::default(),
             programs: Vec::new(),
+            shared_ids: FxHashMap::default(),
             // Each store's epochs start apart from every other's, so a context derived from
             // a store a snapshot or reset replaced never matches its successor's.
             context_epoch: {
@@ -922,12 +924,8 @@ impl ProgramStore {
         self.programs.get(id.index())?.as_deref()
     }
 
-    /// Linked functions have native entries instead of interpreter lane views.
     fn entry_in_lane(&self, id: ProgramId) -> Option<&ProgramEntry> {
-        let entry = self.entry(id)?;
-        #[cfg(feature = "native-execution")]
-        if entry.native_js.is_some() { return None; }
-        Some(entry)
+        self.entry(id)
     }
 
     /// Every mutation goes through here, so it also marks the program's roots pending.
@@ -1049,6 +1047,12 @@ impl ProgramStore {
                 reclaimed_wasm_baselines.0 += 1;
                 reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
             }
+            if let Some(code) = entry.residual.if_decoded()
+                && let key = Rc::as_ptr(code) as usize
+                && self.shared_ids.get(&key).copied() == ProgramId::from_index(index)
+            {
+                self.shared_ids.remove(&key);
+            }
             *slot = None;
             self.context_epoch += 1;
             reclaimed.extend(ProgramId::from_index(index));
@@ -1088,6 +1092,7 @@ impl ProgramStore {
         self.strict_direct_eval_code.clear();
         self.owned_scripts.clear();
         self.programs.clear();
+        self.shared_ids.clear();
         self.context_epoch += 1;
         self.unchecked_reclaimable = 0;
         self.js_jit_tracked_functions = 0;
@@ -1270,12 +1275,16 @@ impl ProgramStore {
     }
 
     pub(crate) fn find_shared(&self, program: &Rc<ResidualProgram>) -> Option<ProgramId> {
+        if let Some(&id) = self.shared_ids.get(&(Rc::as_ptr(program) as usize)) {
+            return Some(id);
+        }
+        // A program a snapshot restored is not in the index. Only a decoded one can be the
+        // caller's code: the caller's `Rc` exists only once the residual is decoded, so the scan
+        // decodes nothing.
         self.programs
             .iter()
             .position(|entry| {
-                entry
-                    .as_ref()
-                    .is_some_and(|entry| Rc::ptr_eq(&entry.residual, program))
+                entry.as_ref().and_then(|entry| entry.residual.if_decoded()).is_some_and(|code| Rc::ptr_eq(code, program))
             })
             .and_then(ProgramId::from_index)
     }
@@ -1298,10 +1307,9 @@ impl ProgramStore {
         let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.context_epoch += 1;
+        self.shared_ids.entry(Rc::as_ptr(&program) as usize).or_insert(id);
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
-            #[cfg(feature = "native-execution")]
-            native_js: None,
             wasm_signatures: None,
             constants: Vec::new().into(),
             const_arrays: FxHashMap::default(),
@@ -2462,7 +2470,7 @@ impl ProgramStore {
         attempts % JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL == 0
     }
 
-    #[cfg(all(test, feature = "aot", not(quench_profiled)))]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn js_jit_call_site_counts(
         &self,
         id: ProgramId,
@@ -2630,17 +2638,13 @@ impl ProgramStore {
     }
 
     /// What a lane run's context reads of program `id` (`Vm::lane_context`), from one look at
-    /// its entry: its lane views (`lane_views`, none for a program linked to native entries or
-    /// one the store does not hold) and its constants (`constants`).
+    /// its entry: its lane views (`lane_views`, none for a program the store does not hold) and
+    /// its constants (`constants`).
     #[inline(always)]
     pub(super) fn lane_tables(&self, id: ProgramId) -> (&[LaneViewCell], &[Value]) {
         let Some(entry) = self.entry(id) else {
             return (&[], &[]);
         };
-        #[cfg(feature = "native-execution")]
-        if entry.native_js.is_some() {
-            return (&[], &entry.constants[..]);
-        }
         (entry.views_in_lane.of(&entry.residual), &entry.constants[..])
     }
 
@@ -2740,25 +2744,6 @@ impl ProgramStore {
     pub(crate) fn constants(&self, id: ProgramId) -> &[Value] {
         self.entry(id)
             .map_or(&[], |entry| &entry.constants[..])
-    }
-
-    #[cfg(feature = "native-execution")]
-    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: Rc<super::native_program::NativeJsCode>) -> Result<(), String> {
-        let entry = self.entry_mut(id).ok_or("native JS program is missing")?;
-        if entry.native_js.is_some() {
-            return Err("native JS program already has code".into());
-        }
-        if code.entries().len() != entry.residual.function_count() {
-            return Err("native entry count does not match program functions".into());
-        }
-        entry.views_in_lane = LaneViews::default();
-        entry.native_js = Some(code);
-        Ok(())
-    }
-
-    #[cfg(feature = "native-execution")]
-    pub(super) fn native_js_code(&self, id: ProgramId) -> Option<&Rc<super::native_program::NativeJsCode>> {
-        self.entry(id)?.native_js.as_ref()
     }
 
     pub(crate) fn const_array(

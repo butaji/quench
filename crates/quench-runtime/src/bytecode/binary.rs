@@ -511,7 +511,6 @@ pub(super) fn decode_compact_program(
     decode_program(&bytes, encoding, ReadAtoms::Compact(intern), Some(text))
 }
 
-#[cfg(feature = "aot")]
 pub(super) fn encode_native_program(program: &super::ResidualProgram) -> Vec<u8> {
     crate::vm::freeze_call_sites(program);
     sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::Included).0)
@@ -1135,7 +1134,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u8(u8::from(function.is_generator));
         out.u8(u8::from(function.is_class_constructor));
         out.u8(u8::from(function.derived_constructor));
-        out.option_u32(function.instance_initializer);
+        out.option_u32(function.instance_initializer());
         write_constant_fields(out, &function.constant_fields);
         out.option_atom(function.super_home_atom);
         out.u8(u8::from(function.constructible));
@@ -1488,7 +1487,6 @@ fn read_function(input: &mut BinaryReader<'_>, header: Option<&super::FunctionHe
             is_generator,
             is_class_constructor,
             derived_constructor,
-            instance_initializer,
             constant_fields: constant_fields.into(),
             super_home_atom,
             constructible,
@@ -2007,6 +2005,35 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
             out.string(name);
         }
     }
+    out.u32(declared.local_members.len() as u32);
+    for member in &declared.local_members {
+        out.u32(member.function);
+        out.string(&member.local);
+        out.string(&member.member);
+        out.u16(member.languages);
+    }
+    match &declared.type_names {
+        None => out.u8(0),
+        Some(names) => {
+            out.u8(1);
+            out.u32(names.len() as u32);
+            for name in names.iter() {
+                out.string(&name.name);
+                out.u16(name.languages);
+                out.bool(name.alias);
+                out.bool(name.class.is_some());
+                out.u32(name.class.unwrap_or(0));
+                out.bool(name.members.is_some());
+                if let Some(members) = &name.members {
+                    out.u32(members.len() as u32);
+                    for (member, languages) in members.iter() {
+                        out.string(member);
+                        out.u16(*languages);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
@@ -2074,8 +2101,36 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         let names = input.list(|input| Ok(input.string()?.into_boxed_str()))?;
         Ok(super::declared_types::DeclaredLayout { class_start, names: names.into_boxed_slice() })
     })?;
+    let local_members = input.list(|input| {
+        Ok(super::DeclaredLocalMember {
+            function: input.u32()?,
+            local: input.string()?.into_boxed_str(),
+            member: input.string()?.into_boxed_str(),
+            languages: input.u16()?,
+        })
+    })?;
+    let type_names = match input.u8()? {
+        0 => None,
+        1 => {
+            let names = input.list(|input| {
+                let name = input.string()?.into_boxed_str();
+                let languages = input.u16()?;
+                let alias = input.bool()?;
+                let has_class = input.bool()?;
+                let class = input.u32()?;
+                let members = if input.bool()? {
+                    Some(input.list(|input| Ok((input.string()?.into_boxed_str(), input.u16()?)))?.into_boxed_slice())
+                } else {
+                    None
+                };
+                Ok(super::SavedTypeName { name, languages, alias, class: has_class.then_some(class), members })
+            })?;
+            Some(names.into())
+        }
+        _ => return Err("invalid saved type names tag".to_string()),
+    };
     Ok(Some(Box::new(super::DeclaredTypes {
-        declared, enum_constants, fields, signatures, locals, members, parameter_classes, parameters, layouts,
+        declared, enum_constants, fields, signatures, locals, members, local_members, parameter_classes, parameters, layouts, type_names,
     })))
 }
 

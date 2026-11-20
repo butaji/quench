@@ -6,18 +6,21 @@
 
 use super::value::{is_direct_string, is_double, is_heap, is_int};
 use super::*;
+#[cfg(not(stencil_build))]
 use crate::bytecode::OperandKind;
 use crate::value::ValueLayout;
 #[cfg(not(stencil_build))]
 use crate::vm::operations::equality_operator;
 use crate::Value;
 
+#[cfg(not(stencil_build))]
 /// Whether `operand` names a register or a program constant: the operands a `Binary` or an
 /// `Equality` row reads (`NumericFrame::operand_word`).
 pub(super) fn is_value_operand(operand: Operand) -> bool {
     matches!(operand.kind(), Some(OperandKind::Register | OperandKind::Constant))
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where a `Binary`
@@ -94,20 +97,27 @@ impl<W, P> Operation<W, P> {
 
 /// Run the value step `operation`; the other operations are `Unresolved`.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::Void { destination } => void(stage, frame, destination),
-        Operation::PropertyKey { destination, source } => property_key(stage, frame, destination, source),
+        Operation::Void { destination } => if const { super::op_kind::admits(KIND, &[super::op_kind::VOID]) } { void(stage, frame, destination) } else { unreachable!() },
+        Operation::PropertyKey { destination, source } => if const { super::op_kind::admits(KIND, &[super::op_kind::PROPERTY_KEY]) } { property_key(stage, frame, destination, source) } else { unreachable!() },
         Operation::Equality { destination, left, right, strict, negated } =>
-            equality(stage, frame, destination, [left, right], (strict, negated)),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::EQUALITY]) } { equality(stage, frame, destination, [left, right], (strict, negated)) } else { unreachable!() },
         Operation::Binary { destination, left, right, operator } if frame.general_operators() =>
-            super::callout::calling(stage, frame, CallOut::Binary { left, right, operator }, Some(destination)),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::BINARY]) } { super::callout::calling(stage, frame, CallOut::Binary { left, right, operator }, Some(destination)) } else { unreachable!() },
         Operation::Unary { destination, source, operator } if frame.general_operators() =>
-            super::callout::calling(stage, frame, CallOut::Unary { operator, value: source }, Some(destination)),
-        Operation::CompareJump { .. } => super::compare::step(stage, frame, operation),
-        _ => Step::Unresolved,
+            if const { super::op_kind::admits(KIND, &[super::op_kind::UNARY]) } { super::callout::calling(stage, frame, CallOut::Unary { operator, value: source }, Some(destination)) } else { unreachable!() },
+        Operation::CompareJump { .. } => if const { super::op_kind::admits(KIND, &[super::op_kind::COMPARE_JUMP]) } { super::compare::step_of::<KIND, _, _>(stage, frame, operation) } else { unreachable!() },
+        _ => if const { super::op_kind::outside(KIND, &[super::op_kind::VOID, super::op_kind::PROPERTY_KEY, super::op_kind::EQUALITY, super::op_kind::COMPARE_JUMP]) } { Step::Unresolved } else { unreachable!() },
     }
+}
+
+/// `step_of` for any operation.
+#[inline(always)]
+pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
 /// `undefined` into `destination`.
@@ -184,7 +194,20 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
     let by_words = stage.either(identical, ints);
     let (left_nullish, right_nullish) = (nullish(stage, left), nullish(stage, right));
     let nullish_pair = stage.both(left_nullish, right_nullish);
-    (stage.either(by_words, nullish_pair), stage.either(same, nullish_pair))
+    // One nullish side and one that is no nullish value: unequal under `==` unless the other side
+    // is an [[IsHTMLDDA]] object, which is a heap cell that is neither a direct object nor a direct
+    // array (`compare::loosely_nullish`). So a primitive word or a recorded object settles it.
+    let one_nullish = stage.either(left_nullish, right_nullish);
+    let other = stage.select(left_nullish, right, left);
+    let other_heap = is_heap(stage, other);
+    let (other_object, other_array) = (super::value::is_direct_object(stage, other), super::value::is_direct_array(stage, other));
+    let recorded = stage.either(other_object, other_array);
+    let other_primitive = stage.not(other_heap);
+    let settles = stage.either(other_primitive, recorded);
+    let nullish_apart = stage.both(one_nullish, settles);
+    let decided = stage.either(by_words, nullish_pair);
+    // `same` is false for a nullish side against a non-nullish word, so `equal` needs no change.
+    (stage.either(decided, nullish_apart), stage.either(same, nullish_pair))
 }
 
 /// The canonical boolean of the pair's equality, negated for `!=` and `!==`; the VM's where the

@@ -93,7 +93,8 @@ impl Compiler<'_> {
         );
         let binds_dynamically = direct_eval.binds_dynamically();
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
-        let declared_parameters = super::typescript::declared_parameters(&value.params, self.checked_parameters.as_deref());
+        let names = self.formal_type_names();
+        let declared_parameters = super::typescript::declared_parameters(&value.params, self.checked_parameters.as_deref(), names.as_ref());
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -167,7 +168,6 @@ impl Compiler<'_> {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             constant_fields: Default::default(),
             super_home_atom,
             constructible: false,

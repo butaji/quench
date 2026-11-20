@@ -73,6 +73,8 @@ impl Stage for Concrete {
     fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
     super::word_ops::word_stage_ops!();
     #[inline(always)]
+    fn shr(&mut self, a: u64, b: u64) -> u64 { a.wrapping_shr(b as u32) }
+    #[inline(always)]
     fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_add(imm) }
     #[inline(always)]
     fn mul_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_mul(imm) }
@@ -86,6 +88,22 @@ impl Stage for Concrete {
     fn ne_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a != imm }
     #[inline(always)]
     fn ugt_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a > imm }
+    #[inline(always)]
+    fn eq(&mut self, a: u64, b: u64) -> bool { a == b }
+    /// A plain Rust loop: the body runs on the state until it says the loop ends.
+    #[inline(always)]
+    fn loop_words<const N: usize>(&mut self, init: [u64; N], mut body: impl FnMut(&mut Self, [u64; N]) -> (bool, [u64; N]))
+        -> [u64; N] {
+        let mut state = init;
+        loop {
+            let (go_on, next) = body(self, state);
+            state = next;
+            if !go_on {
+                break;
+            }
+        }
+        state
+    }
     #[inline(always)]
     fn uextend32(&mut self, a: u64) -> u64 { a }
     #[inline(always)]
@@ -128,7 +146,7 @@ impl Stage for Concrete {
     fn f64_to_f32(&mut self, a: u64) -> u64 { u64::from((f64::from_bits(a) as f32).to_bits()) }
     #[inline(always)]
     fn clamp_u8(&mut self, a: u64) -> u64 {
-        u64::from(crate::value::number_to_uint8_clamp(f64::from_bits(a)))
+        u64::from(super::math::clamp_u8(f64::from_bits(a)))
     }
     #[inline(always)]
     fn fill_window(&mut self, top: u64, undefined: u64, prefix: &[u64], passed: super::Passed<'_, u64>, registers: u16) {
@@ -165,6 +183,15 @@ impl Stage for Concrete {
     fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
         // SAFETY: a stage that stores holds its live heap.
         !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
+    }
+    #[inline(always)]
+    fn immediate_store_open(&mut self) -> bool {
+        if self.heap.is_null() {
+            // A stage that holds no heap (the interpreter's rows) reads whether any heap counts.
+            return !crate::heap::rc::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
+        }
+        // SAFETY: a stage that stores holds its live heap.
+        unsafe { (*self.heap).immediate_store_unlogged() }
     }
     #[inline(always)]
     fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {

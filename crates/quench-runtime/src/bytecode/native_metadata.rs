@@ -23,7 +23,6 @@ impl NativeProgramNamespace {
         })
     }
 
-    #[cfg(feature = "aot")]
     pub fn encode(&self, program: &ResidualProgram) -> Result<Vec<u8>, String> {
         self.prepare_encoding(program)?;
         let mut bytes = binary::encode_native_program(program);
@@ -32,7 +31,6 @@ impl NativeProgramNamespace {
     }
 
     /// Native metadata whose original source lives in the image's shared asset pool.
-    #[cfg(feature = "aot")]
     pub fn encode_with_external_source(&self, program: &ResidualProgram) -> Result<Vec<u8>, String> {
         self.prepare_encoding(program)?;
         let mut bytes = binary::encode_snapshot_program(program);
@@ -41,7 +39,6 @@ impl NativeProgramNamespace {
         Ok(bytes)
     }
 
-    #[cfg(feature = "aot")]
     fn prepare_encoding(&self, program: &ResidualProgram) -> Result<(), String> {
         program.validate_unless_proven()?;
         if program.atoms.len() > self.atoms.len()
@@ -110,7 +107,7 @@ fn source_fingerprint(source: Option<&str>) -> u64 {
     hash.finish()
 }
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

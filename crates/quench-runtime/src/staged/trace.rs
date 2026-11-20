@@ -59,6 +59,7 @@ impl Stage for Trace {
     fn add(&mut self, a: u32, b: u32) -> u32 { self.word(format!("add w{a} w{b}")) }
     fn or(&mut self, a: u32, b: u32) -> u32 { self.word(format!("or w{a} w{b}")) }
     fn and(&mut self, a: u32, b: u32) -> u32 { self.word(format!("and w{a} w{b}")) }
+    fn shr(&mut self, a: u32, b: u32) -> u32 { self.word(format!("shr w{a} w{b}")) }
     fn add_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("add_imm w{a} {}", Self::operand(imm.into()))) }
     fn mul_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("mul_imm w{a} {}", Self::operand(imm.into()))) }
     fn and_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("and_imm w{a} {}", Self::operand(imm.into()))) }
@@ -69,12 +70,23 @@ impl Stage for Trace {
     fn ne_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ne_imm w{a} {}", Self::operand(imm.into()))) }
     fn ugt_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ugt_imm w{a} {}", Self::operand(imm.into()))) }
     fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u32, value: u32) -> u32 { self.word(format!("store_gate {space:?} w{record_id} w{value}")) }
+    fn immediate_store_open(&mut self) -> u32 { self.word("immediate_store_open".to_string()) }
     fn number_operator(&mut self, operator: Imm, passed: u32, constant: u32) -> (u32, u32) {
         let value = self.word(format!("number_operator {} w{passed} w{constant}", Self::operand(operator)));
         (value, value)
     }
     fn assumption(&mut self, watch: Imm) -> u32 { self.word(format!("assumption {}", Self::operand(watch))) }
     fn ult(&mut self, a: u32, b: u32) -> u32 { self.word(format!("ult w{a} w{b}")) }
+    fn eq(&mut self, a: u32, b: u32) -> u32 { self.word(format!("eq w{a} w{b}")) }
+    /// The body is recorded once, over fresh carried words, and its exits are fresh words too.
+    fn loop_words<const N: usize>(&mut self, init: [u32; N], mut body: impl FnMut(&mut Self, [u32; N]) -> (u32, [u32; N]))
+        -> [u32; N] {
+        let carried = init.map(|word| self.word(format!("loop_carried w{word}")));
+        self.ops.push(format!("loop {carried:?}"));
+        let (go_on, next) = body(self, carried);
+        self.ops.push(format!("loop_back w{go_on} {next:?}"));
+        std::array::from_fn(|index| self.word(format!("loop_exit {index} of {carried:?}")))
+    }
     fn uextend32(&mut self, a: u32) -> u32 { self.word(format!("uextend32 w{a}")) }
     fn sub(&mut self, a: u32, b: u32) -> u32 { self.word(format!("sub w{a} w{b}")) }
     fn select(&mut self, cond: u32, then: u32, otherwise: u32) -> u32 { self.word(format!("select w{cond} w{then} w{otherwise}")) }

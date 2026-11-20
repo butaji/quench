@@ -265,7 +265,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                     && register_window_in_bounds(value, u32::from(window.count), bounds.registers)
             }
             FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
-            FieldLayout::SignedConstant => true,
+            FieldLayout::SignedConstant | FieldLayout::StaticOffset => true,
             FieldLayout::WasmPayloadType => crate::staged::wasm_exception::PayloadType::of_code(value).is_some(),
             FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister => instruction
                 .optional_register_b()
@@ -415,6 +415,7 @@ fn immediate_domains_in_bounds(
             instruction.property_definition_mode().is_some()
         }
         super::ImmediateRole::ArrayLength => instruction.array_length() <= super::MAX_ARRAY_LENGTH,
+        super::ImmediateRole::IntCaseMinimum => true,
         super::ImmediateRole::MethodSiteIndex => {
             instruction.method_site_index() < bounds.method_sites
         }
@@ -633,6 +634,12 @@ impl ResidualProgram {
             } else {
 function.plain_local_slots(&self.superinstructions)
             };
+            // The compiler records its plain-local proof (`lower_settled`); it must be the final code's.
+            if let Some(recorded) = function.plain_locals.get()
+                && recorded[..] != *plain_local_slots.words()
+            {
+                return Err(format!("function {index} records a plain-local set its code does not prove"));
+            }
             if let Some(initializer) = function.instance_initializer() {
                 let valid = self
                     .functions
@@ -1303,7 +1310,6 @@ mod tests {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,

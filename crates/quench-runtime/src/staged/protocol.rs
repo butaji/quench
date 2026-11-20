@@ -12,7 +12,8 @@
 //! - completion: the callee's value, or a construction's receiver, once it returned
 //!   (`complete_call`), every other status leaving at the caller's miss edge.
 //!
-//! The record a call saves and its return reads is `call::Record`; the receiver rule of a
+//! The record a call saves and its return reads is the frame (`staged::frame`, its header words
+//! and the lane's activation record); the receiver rule of a
 //! construction through an initializer is `construct`.
 
 use super::call::admit_room;
@@ -85,6 +86,14 @@ pub(crate) fn guard_callee<S: Stage>(stage: &mut S, held: S::Word, expected: u64
     stage.guard(same, miss)
 }
 
+/// `guard_callee` against an identity the frame reads as a word (`CallFrame::call_identity`).
+#[inline(always)]
+pub(crate) fn guard_callee_word<S: Stage>(stage: &mut S, held: S::Word, expected: S::Word, miss: S::Miss) -> Option<()> {
+    let difference = stage.sub(held, expected);
+    let same = stage.eq_imm(difference, 0u32);
+    stage.guard(same, miss)
+}
+
 /// Continues where a construction's receiver was allocated: the plan answers the deleted marker
 /// where it declines (a due collection, a plan that does not hold).
 #[inline(always)]
@@ -117,7 +126,15 @@ fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> 
 #[inline(always)]
 pub(crate) fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Option<u64>, miss: S::Miss)
     -> Option<S::Word> {
-    let Some(global) = sloppy else { return Some(receiver) };
+    bind_this_with(stage, receiver, sloppy.map(|global| move |stage: &mut S| stage.constant(global)), miss)
+}
+
+/// `bind_this` with the global a sloppy callee binds made by `global` where the binding needs it: a
+/// constant, or a word the frame reads (`CallFrame::call_global`).
+#[inline(always)]
+pub(crate) fn bind_this_with<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut S, receiver: S::Word, global: Option<G>, miss: S::Miss)
+    -> Option<S::Word> {
+    let Some(global) = global else { return Some(receiver) };
     let ordinary = is_direct_object(stage, receiver);
     // A stage that knows its words (the interpreter) binds the common ordinary object on that one test.
     if stage.known(ordinary) == Some(true) { return Some(receiver); }
@@ -127,7 +144,7 @@ pub(crate) fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Opti
     let nullish = stage.any(undefined, null);
     let bound = stage.any(object, nullish);
     stage.guard(bound, miss)?;
-    let global = stage.constant(global);
+    let global = global(stage);
     Some(stage.select(object, receiver, global))
 }
 

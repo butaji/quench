@@ -5,7 +5,6 @@
 //! the entry clears the class, so the proof holds until then. Any other store takes the
 //! helper (`field_set_in_lane`), which records the proof.
 use super::{emit_js_payload_word, Host, JsStepDispatch, Vm};
-use super::super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 use crate::bytecode::Atom;
 use crate::typed_ir::SlotType;
 use crate::vm::compiled::regions;

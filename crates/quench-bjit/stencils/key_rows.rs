@@ -9,7 +9,7 @@ use crate::heap_rows::word_at;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S};
 use crate::places::{DEST, LEFT, Places, finish_fast};
 use crate::stage::StencilStage;
-use crate::staged::{Frame, Operation, Stage, Step, object, step, step_generic, step_names, step_value};
+use crate::staged::{Frame, Operation, Stage, Step, object, op_kind, step_generic_of, step_names_of, step_of, step_value_of};
 use crate::words::hole64;
 
 /// `RequireIteratorResult`'s fast arm: the operand (hole 1) is a direct object or array record
@@ -18,7 +18,7 @@ use crate::words::hole64;
 fn object_row(s: S) -> Out {
     let mut frame = Places::<MEM, MEM, MEM>::new(s);
     let mut stage = StencilStage::from_hole(0);
-    let done = matches!(step_value(&mut stage, &mut frame, Operation::RequireIteratorResult { register: LEFT }), Step::Value(_));
+    let done = matches!(step_value_of::<{ op_kind::REQUIRE_ITERATOR_RESULT }, _, _>(&mut stage, &mut frame, Operation::RequireIteratorResult { register: LEFT }), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -28,7 +28,7 @@ fn object_row(s: S) -> Out {
 fn key_row(s: S) -> Out {
     let mut frame = Places::<MEM, MEM, MEM>::new(s);
     let mut stage = StencilStage::from_hole(0);
-    let done = matches!(step_generic(&mut stage, &mut frame, Operation::PropertyKey { destination: DEST, source: LEFT }), Step::Value(_));
+    let done = matches!(step_generic_of::<{ op_kind::PROPERTY_KEY }, _, _>(&mut stage, &mut frame, Operation::PropertyKey { destination: DEST, source: LEFT }), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -38,7 +38,7 @@ fn key_row(s: S) -> Out {
 fn typeof_index_row(s: S) -> Out {
     let mut frame = Places::<MEM, MEM, MEM>::new(s);
     let mut stage = StencilStage::from_hole(0);
-    let done = matches!(step(&mut stage, &mut frame, Operation::TypeofIndex { destination: DEST, source: LEFT }), Step::Value(_));
+    let done = matches!(step_of::<{ op_kind::TYPEOF_INDEX }, _, _>(&mut stage, &mut frame, Operation::TypeofIndex { destination: DEST, source: LEFT }), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -48,7 +48,7 @@ fn typeof_index_row(s: S) -> Out {
 fn typeof_string_row(s: S) -> Out {
     let mut frame = Places::<MEM, MEM, MEM>::new(s);
     let mut stage = StencilStage::from_hole(0);
-    let done = matches!(step(&mut stage, &mut frame, Operation::TypeofString { destination: DEST, source: LEFT }), Step::Value(_));
+    let done = matches!(step_of::<{ op_kind::TYPEOF_STRING }, _, _>(&mut stage, &mut frame, Operation::TypeofString { destination: DEST, source: LEFT }), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -82,7 +82,7 @@ fn typeof_is_row<const NEGATED: bool>(s: S) -> Out {
     let mut frame = Places::<MEM, MEM, MEM>::new(s);
     let mut stage = StencilStage::from_hole(HOLE_B);
     let index = stage.site(0);
-    let done = matches!(step(&mut stage, &mut frame, Operation::TypeofTest { destination: DEST, source: LEFT, index, negated: NEGATED }), Step::Value(_));
+    let done = matches!(step_of::<{ op_kind::TYPEOF_TEST }, _, _>(&mut stage, &mut frame, Operation::TypeofTest { destination: DEST, source: LEFT, index, negated: NEGATED }), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -94,7 +94,7 @@ fn typeof_is_row<const NEGATED: bool>(s: S) -> Out {
 fn for_in_row(s: S) -> Out {
     let mut frame = Places::<MEM, MEM, MEM>::new(s);
     let mut stage = StencilStage::from_hole(0);
-    let done = matches!(step_names(&mut stage, &mut frame, Operation::ForInNext { destination: DEST, state: LEFT }), Step::Control(()));
+    let done = matches!(step_names_of::<{ op_kind::FOR_IN_NEXT }, _, _>(&mut stage, &mut frame, Operation::ForInNext { destination: DEST, state: LEFT }), Step::Control(()));
     finish_fast(frame, done)
 }
 

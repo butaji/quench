@@ -13,7 +13,7 @@
 //! requested so the interpreter's safepoint runs, and an entry guard that finds a register that is
 //! no Number returns `LaneExit::Entry`.
 
-use super::lane_unit::{Frame as InlinedCall, Origin};
+use super::lane_unit::{InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
@@ -67,7 +67,8 @@ use decode::*;
 use entry_facts::*;
 use globals::*;
 use link::*;
-pub(in crate::vm::compiled) use link::{row_entries, rows_entry_offset};
+pub(in crate::vm::compiled) use link::row_entries;
+pub(in crate::vm) use link::SymbolSite;
 use plan::*;
 use repr::*;
 pub(in crate::vm) use resume::ResumeTable;
@@ -159,8 +160,9 @@ impl Known<'_> {
     }
 }
 
-/// Bytes of a register slot in the activation's register file.
-const SLOT: u64 = std::mem::size_of::<Value>() as u64;
+/// Bytes of a register slot in the activation's register file: the shared word (`call_record::REGISTER_BYTES`,
+/// which the call rows read the same slots by; a test pins it to `size_of::<Value>()`).
+const SLOT: u64 = quench_bjit::call_record::REGISTER_BYTES as u64;
 
 /// A pinned register and the register of the activation it holds.
 type Pin = (usize, Register);

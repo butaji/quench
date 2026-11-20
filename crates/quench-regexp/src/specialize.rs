@@ -41,6 +41,11 @@ use super::{equal, Frame, Inst, Program, Text, UnitTest, UNSET};
 
 /// The dynamic accesses the instructions make. Positions are `usize` here; a code-generating
 /// stage keeps the same operations over its own values.
+///
+/// Not folded into the engine's `staged::Stage`: `quench-runtime` depends on this crate, so the
+/// engine's trait cannot be named here. The native driver (`vm/regexp_native`) already emits
+/// through the engine's `staged::machine` traits, and implements this trait over them. A fold
+/// needs the matcher moved into `quench-runtime` or `staged::machine` moved below both crates.
 pub(super) trait Stage: Machine<Pos = usize, Unit = u32, Flag = bool, Test = UnitTest> {
     /// The start of the run of units from at least `to` up to `from` that pass `test`.
     fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize;

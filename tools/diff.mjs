@@ -131,18 +131,18 @@ const sourceSha256 = createHash("sha256").update(
 
 const entries = [
   {
-    label: "quench-node",
-    command: process.env.QUENCH_NODE_BIN ?? "target/iteration/quench-node",
+    label: "quench",
+    command: process.env.QUENCH_NODE_BIN ?? "target/iteration/quench",
     args: () => [absoluteSource],
   },
   {
     label: engineRoles.specialized,
-    command: process.env.QUENCH_BIN ?? "target/iteration/quench",
+    command: process.env.QUENCH_BIN ?? "target/iteration/quench-runtime",
     args: () => [absoluteSource],
   },
   {
     label: engineRoles.generic,
-    command: process.env.QUENCH_BIN ?? "target/iteration/quench",
+    command: process.env.QUENCH_BIN ?? "target/iteration/quench-runtime",
     args: () => ["--generic", absoluteSource],
   },
   {

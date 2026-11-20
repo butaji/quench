@@ -1,0 +1,7 @@
+# Startup budget for the quench-gate `startup` step (crates/quench-gate/src/startup.rs).
+# One row per measurement: `<case> <mode> <metric> <ceiling>`.
+#   case: empty (an empty .js), hello (console.log("hi")), module (require of a generated 200-function module).
+#   mode: --no-jit, --b-jit, --u-jit.
+#   metric: ir (callgrind instructions of the whole run), rss_kb (peak resident set, wait4 ru_maxrss).
+# A measurement more than 2% over its ceiling fails. More than 10% under it fails too: lower the ceiling.
+# Shrink-only: QUENCH_DEBT_WRITE=1 quench-gate --only startup rewrites the ceilings from the measurements (never up).

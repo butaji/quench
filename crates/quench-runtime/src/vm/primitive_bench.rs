@@ -59,7 +59,7 @@ fn call_boundary<const NATIVE: bool, const BODY: bool, const SPECIALIZED: bool>(
         }
         assert!(vm.active_call_roots.is_empty());
         assert!(vm.frames.is_empty());
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
     };
     validate(&mut vm);
     b.iter(|| {

@@ -1,5 +1,5 @@
 // Smallest possible Hono-style server built only on the `node:` surface
-// `quench-node` exposes. A route table (`app.get`) dispatches each
+// `quench` exposes. A route table (`app.get`) dispatches each
 // request through a fetch-style handler; `http.createServer` serves it
 // over a real loopback socket, and a `net` client asserts the response.
 

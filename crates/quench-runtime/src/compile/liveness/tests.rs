@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Instr;
 
 #[test]
 fn fixed_transfers_match_the_general_derivation() {
@@ -47,7 +48,7 @@ fn function_of(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::
     Function {
         parent: None, name: None, inferred_name: None, is_arrow: false, self_binding_slot: None, source_span: None,
         params: 0, length: 0, parameter_end_pc: 0, parameter_atoms: vec![].into(), rare: None, declared_functions: Default::default(), declared_captures: Default::default(), rest: false, is_async: false,
-        is_generator: false, is_class_constructor: false, derived_constructor: false, instance_initializer: None, constant_fields: Default::default(),
+        is_generator: false, is_class_constructor: false, derived_constructor: false, constant_fields: Default::default(),
         super_home_atom: None, constructible: true, class_initializer: false, parameter_eval_arguments_error: false,
         unaliased_arguments: false, rest_alias: false, prototype_unobservable: false, arguments_slot: None, simple_parameters: true,
         strict: false, locals: 0, local_atoms: vec![].into(), environment_atoms: vec![].into(),

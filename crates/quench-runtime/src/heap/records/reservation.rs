@@ -94,6 +94,11 @@ unsafe fn unmap_range(base: NonNull<u8>, layout: Layout) {
     unsafe { std::alloc::dealloc(base.as_ptr(), layout) };
 }
 
+/// The fewest records a space reserves where its whole range cannot be mapped: the prototype
+/// link window (`staged::object_encoding::PROTO_RECORD_WINDOW`), which every space kept before
+/// the spaces grew past it.
+const MIN_RESERVED_RECORDS: usize = crate::staged::object_encoding::PROTO_RECORD_WINDOW;
+
 impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
     /// Whether `base` names its address range.
     #[inline(always)]
@@ -111,21 +116,32 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         // The mapping is page aligned, so it serves any record alignment up to a page.
         const { assert!(std::mem::align_of::<MaybeUninit<T>>() <= 4096) };
         const { assert!(CAPACITY < u32::MAX as usize) };
-        let Ok(layout) = Layout::array::<MaybeUninit<T>>(CAPACITY) else {
-            self.reservation = Reservation::Failed;
-            return false;
-        };
-        // SAFETY: the layout is the nonzero record range; `Drop` releases it with the same layout.
-        let Some(base) = (unsafe { map_range(layout) }) else {
-            self.reservation = Reservation::Failed;
-            return false;
+        // The whole range where the address space allows it, else half of it, and so on down to
+        // `MIN_RESERVED_RECORDS`: a process whose address space is limited (an address-space
+        // rlimit, an instrumenting tool's own map) runs with smaller spaces rather than none.
+        // A space with a hole (`HOLE`) keeps the ids past it, so it never maps less than them.
+        let floor = CAPACITY.min(MIN_RESERVED_RECORDS.max(2 * HOLE));
+        let mut records = CAPACITY;
+        let base = loop {
+            let mapped = Layout::array::<MaybeUninit<T>>(records).ok()
+                // SAFETY: the layout is the nonzero record range; `Drop` releases it with the same layout.
+                .and_then(|layout| unsafe { map_range(layout) });
+            match mapped {
+                Some(base) => break base,
+                None if records > floor => records /= 2,
+                None => {
+                    self.reservation = Reservation::Failed;
+                    return false;
+                }
+            }
         };
         self.base = base.cast();
+        self.reserved = records;
         self.reservation = Reservation::Reserved;
         // The block metadata never moves either: room for every block the range can hold
         // is taken now, as address space only, and a block's pages are touched when it is
         // made. A pointer into it (`native_mark_blocks`) stays valid for the space's life.
-        self.blocks.reserve_exact(CAPACITY / RECORDS_PER_BLOCK);
+        self.blocks.reserve_exact(records.div_ceil(RECORDS_PER_BLOCK));
         true
     }
 }
@@ -135,7 +151,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Drop for RecordSpace<T, CAPACI
         if !self.is_reserved() {
             return;
         }
-        let layout = Layout::array::<MaybeUninit<T>>(CAPACITY)
+        let layout = Layout::array::<MaybeUninit<T>>(self.reserved)
             .expect("record-space layout was validated at reservation");
         // The cursor's unallocated run is occupied but uninitialized: its ids are not dropped.
         let cursor = self.cursor;

@@ -634,7 +634,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
 ///
 /// The young floor is `YOUNG_MINIMUM_ALLOCATION`, not the 384 headroom: at a sixty-fourth of a
 /// small live set the floor decides the interval, and 384 collected small programs every few
-/// hundred allocations without lowering their peak (TOD-161, quench-node scorecard, x86_64
+/// hundred allocations without lowering their peak (TOD-161, quench scorecard, x86_64
 /// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
 /// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {

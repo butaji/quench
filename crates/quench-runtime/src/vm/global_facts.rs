@@ -58,7 +58,6 @@ pub(crate) enum GlobalRead {
     Stable { value: Value, ty: Type, fact: GlobalFact, global: Value, realm_offset: i32 },
     /// A whole-program AOT fact: the cell's value at every read, checked once per read
     /// site and folded while it holds (`Division::Frozen`).
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     Frozen { value: Value, ty: Type },
     /// A `StoreName` or `LoadNameTypeof` of a slot of the global object held directly.
     Slot(GlobalSlot),
@@ -87,10 +86,10 @@ pub(crate) enum GlobalRead {
 
 /// The natives whose call a loop or body runs in place on scalar arguments and whose result allocates nothing: they
 /// run no guest code, change no array and observe no frame (`dispatch_fast::in_place_natives::primitive_leaf`, with a
-/// Number or Boolean result), and the Math functions of Numbers (`number::math_function`), which a loop calling one
+/// Number or Boolean result), and the Math functions of Numbers (`number::math_call`), which a loop calling one
 /// (`sin`, `cos`, ...) otherwise declines to run natively. A global cell holding one of them is read as a `GlobalRead::NativeSlot`.
 pub(in crate::vm) fn scalar_native(native: super::Native) -> bool {
-    matches!(native, super::Native::ParseInt | super::Native::NumberParseFloat) || super::number::math_function(native).is_some()
+    matches!(native, super::Native::ParseInt | super::Native::NumberParseFloat) || super::number::math_call(native).is_some()
 }
 
 /// Which tier a table of by-name global accesses is for (`Vm::global_table`): the lane specializer

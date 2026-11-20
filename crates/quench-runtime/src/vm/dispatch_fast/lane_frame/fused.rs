@@ -80,7 +80,7 @@ lane_handler! {
             };
             let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
             let mut stage = Concrete::new(std::ptr::null());
-            let carried = if const { LaneFields::<B>::RESULT_A } { Carried::script_in(cx, view) } else { view };
+            let carried = if const { LaneFields::<B>::RESULT_A } { Carried::past_result(view) } else { view };
             // The jump's direction: a branch table's is its `BACKWARD` (entry edges); any other jump's is the record's `MODE_BACKWARD`.
             let backward = if const { crate::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } { BACKWARD } else { mode & crate::staged::MODE_BACKWARD != 0 };
             let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
@@ -152,8 +152,11 @@ lane_handler! {
     pub(super) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, FAMILY: u8>(cx, r, ip, i, view) {
         // The head record's settings word, read before the links name their own records.
         let mode = i.mode;
+        // Each macro takes its link's record (`$ip`, `$i`) as arguments: a `macro_rules!` body's own
+        // `ip` and `i` would name the head record's (the handler's parameters, which its definition
+        // sees), not the link's that the `let`s below shadow them with.
         // Link `$k` at flag `$flag`; its double result is raw where `mode`'s raw mask has bit `$k`.
-        macro_rules! link_flag { ($L:ident, $k:literal, $flag:expr, $ip:ident, $i:ident) => {{
+        macro_rules! link_flag { ($ip:ident, $i:ident, $L:ident, $k:literal, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
@@ -172,14 +175,14 @@ lane_handler! {
                 Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
             }
         }}; }
-        macro_rules! value_link { ($L:ident, $k:literal, $ip:ident, $i:ident) => {
+        macro_rules! value_link { ($ip:ident, $i:ident, $L:ident, $k:literal) => {
             if LaneFields::<$L>::FLAG_ROLE {
-                if $i.imm() != 0 { link_flag!($L, $k, FLAG_SET, $ip, $i) } else { link_flag!($L, $k, FLAG_CLEAR, $ip, $i) }
+                if $i.imm() != 0 { link_flag!($ip, $i, $L, $k, FLAG_SET) } else { link_flag!($ip, $i, $L, $k, FLAG_CLEAR) }
             } else {
-                if const { FAMILY == crate::staged::FUSED_WINDOW } { link_flag!($L, $k, FLAG_WINDOW, $ip, $i) } else { link_flag!($L, $k, FLAG_UNREAD, $ip, $i) }
+                if const { FAMILY == crate::staged::FUSED_WINDOW } { link_flag!($ip, $i, $L, $k, FLAG_WINDOW) } else { link_flag!($ip, $i, $L, $k, FLAG_UNREAD) }
             }
         }; }
-        macro_rules! last_flag { ($L:ident, $flag:expr, $ip:ident, $i:ident) => {{
+        macro_rules! last_flag { ($ip:ident, $i:ident, $L:ident, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
@@ -205,9 +208,8 @@ lane_handler! {
                 Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
             }
         }}; }
-        macro_rules! last_link { ($L:ident, $ip:ident) => {{
-            let last = unsafe { &*$ip };
-            let fields = LaneFields::<$L>(last);
+        macro_rules! last_link { ($ip:ident, $i:ident, $L:ident) => {{
+        let fields = LaneFields::<$L>($i);
             if const { jumps_by_row(LaneFields::<$L>::OPCODE) } {
                 let decoded = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                     Operation::decode_names(crate::staged::Fields::wide(fields))
@@ -222,8 +224,8 @@ lane_handler! {
                 let mut stage = Concrete::new(std::ptr::null());
                 // A chain's last link is never a branch table, so its direction is the record's `MODE_BACKWARD`.
                 let backward = mode & crate::staged::MODE_BACKWARD != 0;
-                let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::script_in(cx, view) } else { view };
-                let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, $ip, last, view);
+                let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::past_result(view) } else { view };
+                let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, $ip, $i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                     Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump::<H>(cx, r, $ip, backward, carried, None)),
                     Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { $ip.add(1 + k as usize) }, backward, carried, None)),
@@ -238,24 +240,27 @@ lane_handler! {
                 }
             }
             if LaneFields::<$L>::FLAG_ROLE {
-                if last.imm() != 0 { last_flag!($L, FLAG_SET, $ip, last) } else { last_flag!($L, FLAG_CLEAR, $ip, last) }
+                if $i.imm() != 0 { last_flag!($ip, $i, $L, FLAG_SET) } else { last_flag!($ip, $i, $L, FLAG_CLEAR) }
             } else {
-                if const { FAMILY == crate::staged::FUSED_WINDOW } { last_flag!($L, FLAG_WINDOW, $ip, last) } else { last_flag!($L, FLAG_UNREAD, $ip, last) }
+                if const { FAMILY == crate::staged::FUSED_WINDOW } { last_flag!($ip, $i, $L, FLAG_WINDOW) } else { last_flag!($ip, $i, $L, FLAG_UNREAD) }
             }
         }}; }
-        value_link!(L0, 0, ip, i);
+        value_link!(ip, i, L0, 0);
         let ip = following(ip);
         // SAFETY: the next record of the running view (the chain's install checked its length).
         let i = unsafe { &*ip };
-        value_link!(L1, 1, ip, i);
+        value_link!(ip, i, L1, 1);
         let ip = following(ip);
+        // SAFETY: as above. Each link names its own record: a macro body sees only the bindings
+        // in scope where it was defined, so the record is passed in, not shadowed.
+        let i = unsafe { &*ip };
         if const { L3 == crate::staged::NO_LINK } {
-            last_link!(L2, ip)
+            last_link!(ip, i, L2)
         } else {
-            let i = unsafe { &*ip };
-            value_link!(L2, 2, ip, i);
+            value_link!(ip, i, L2, 2);
             let ip = following(ip);
-            last_link!(L3, ip)
+            let i = unsafe { &*ip };
+            last_link!(ip, i, L3)
         }
     }
 }
@@ -268,7 +273,7 @@ pub(in crate::vm::dispatch_fast) const fn chain_row<H: Host, const L0: u16, cons
 /// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
 /// an environment window's function, which `window_local_handler` gives its row.
 pub(in crate::vm::dispatch_fast) fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
-    generated_row::<H, OP, ACC_NONE, FLAG_WINDOW> as Handler as *const () == handler
+    generated_row!(H, OP, ACC_NONE, FLAG_WINDOW) as Handler as *const () == handler
 }
 
 /// `chains!` index `chain` within `staged::FUSED_CHAINS` (past its end, entry 0 again).
