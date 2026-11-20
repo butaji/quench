@@ -77,8 +77,11 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &crate::vm::global_facts::GlobalReads))
     -> Result<(RelocatableCode, bool), &'static str> {
+    // An image has no feedback and no later tier: every record lowers as one a previous body left
+    // at (`generic`), by the form whose miss calls the VM's own operation rather than leaving.
+    let generic: Vec<usize> = (0..unit.instructions.len()).collect();
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
+        global_reads, facts, &generic, &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
@@ -357,18 +360,28 @@ impl<H: Host> Vm<H> {
     /// rows call this one by its entry from now on (`BoundCalls::bind`). Nothing where no loaded image
     /// proves the call, or `target` is no closure of the proven function.
     pub(in crate::vm) fn rebind_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, super::super::dispatch_fast::ScriptCallTarget)) {
-        let Some(images) = self.programs.ahead_images(self.active_program, program) else { return };
-        let Some(live) = images.linked.as_ref() else { return };
-        let Some(key) = live.calls.key((function, pc)) else { return };
-        let facts = images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program));
-        if facts.function_facts(function).call_target(pc) != Some(target.function) { return; }
-        let Some(views) = self.programs.views_in_lane(self.active_program) else { return };
-        let Some(view) = views.get(function as usize).and_then(super::super::program_store::derived_lane_view) else { return };
-        let Some(mut direct) = super::super::dispatch_fast::direct_callee_in_lane(self, view, function, pc as usize, argc, target) else { return };
-        (direct.method, direct.body) = (None, None);
-        if live.calls.names(key, direct.callee) || !admits_proven(program, target.function, &direct) { return; }
-        live.calls.bind(key, direct, &mut self.heap);
+        let why = self.rebound_ahead_call(program, (function, pc), (argc, target));
+        // The common answers (no proof of the site, the record already names the callee) are not traced: every helper call makes one.
+        if !matches!(why, "unproven-site" | "already-named") && crate::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_REBIND function={function} pc={pc} callee={} {why}", target.function); }
     }
+
+    /// `rebind_ahead_call`, answering what it did.
+    fn rebound_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, super::super::dispatch_fast::ScriptCallTarget)) -> &'static str {
+        let Some(images) = self.programs.ahead_images(self.active_program, program) else { return "no-image" };
+        let Some(live) = images.linked.as_ref() else { return "unlinked" };
+        let Some(key) = live.calls.key((function, pc)) else { return "unproven-site" };
+        let facts = images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program));
+        if facts.function_facts(function).call_target(pc) != Some(target.function) { return "other-function" }
+        let Some(views) = self.programs.views_in_lane(self.active_program) else { return "no-views" };
+        let Some(view) = views.get(function as usize).and_then(super::super::program_store::derived_lane_view) else { return "no-view" };
+        let Some(mut direct) = super::super::dispatch_fast::direct_callee_in_lane(self, view, function, pc as usize, argc, target) else { return "no-direct" };
+        (direct.method, direct.body) = (None, None);
+        if live.calls.names(key, direct.callee) { return "already-named" }
+        if !admits_proven(program, target.function, &direct) { return "not-admitted" }
+        live.calls.bind(key, direct, &mut self.heap);
+        "bound"
+    }
+
 
     /// Takes `images`, links them into this VM, and keeps them for the program they were
     /// compiled from, whenever it runs.

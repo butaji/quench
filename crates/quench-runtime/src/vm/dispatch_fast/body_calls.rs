@@ -124,7 +124,15 @@ pub(in crate::vm) unsafe extern "C" fn body_call_helper<H: Host>(_vm: u64, _resi
     let status = native_frames::in_innermost_frame(cx, || unsafe { body_call_in_lane(cx, call_pc) });
     // SAFETY: `context` is the running lane's.
     unsafe { refresh_body_bases::<H>(context) };
+    note_call_status(cx, "call", call_pc, status);
     status
+}
+
+/// With `body-leave` tracing, names a body helper's call that did not complete in place.
+fn note_call_status<H: Host>(cx: *mut LaneContext<H>, helper: &str, call_pc: u64, status: u64) {
+    if status != LANE_CALL_COMPLETED && crate::trace::Channel::BodyLeave.on() {
+        eprintln!("QUENCH_CALL_STATUS helper={helper} function={} pc={call_pc} status={status}", running_function_in_lane(cx));
+    }
 }
 
 /// `body_call_helper` with the context of the running body, which a native callee's frame made the
@@ -223,6 +231,7 @@ pub(in crate::vm) unsafe extern "C" fn body_construct_helper<H: Host>(_vm: u64, 
     // makes no collection due, so it moves no base; anything else may have.
     // SAFETY: `context` is the running lane's.
     if moved { unsafe { refresh_body_bases::<H>(context) }; }
+    note_call_status(cx, "construct", call_pc, status);
     status
 }
 
@@ -430,11 +439,18 @@ fn body_run_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &
     let leave = move |resume: Ip, acc: Value| finish(cx, depth, resume, acc, constructs);
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::super::program_store::derived_lane_view);
-    let Some(own) = own else { return leave(start, Value::UNDEFINED) };
+    let Some(own) = own else {
+        if crate::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_LEAVE callee={} why=no-view", target.function); }
+        return leave(start, Value::UNDEFINED)
+    };
     let respecializes = own.respecializes();
     if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, respecializes, &[], None); }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
+        if crate::trace::Channel::BodyLeave.on() {
+            let why = if own.body_view_in_lane().is_some() { "not-admitted" } else if own.warming() { "warming" } else { "no-body" };
+            eprintln!("QUENCH_CALLEE_LEAVE callee={} why={why}", target.function);
+        }
         return leave(start, Value::UNDEFINED);
     };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };

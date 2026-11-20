@@ -332,7 +332,11 @@ unsafe fn admit(stage: &mut StencilStage, record: usize, payload: usize) -> Opti
         let (room, fill) = admit_native(stage, cell as u64, word_at(record, offset_of!(CallRecord, expected)), top, end, reserved, ())?;
         let depth = word_at(tops.plain_at as usize, PLAIN_DEPTH_AT);
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) + 1;
-        if depth + frames > word_at(payload, PLAIN_DEPTH_LIMIT) {
+        // The payload names the limit's cell (`LaneStack::plain_depth_limit`), which Rust zeroes when it changes the frames
+        // under a bound run or the run's window is a leaf's (`refuse_direct_calls_in_leaf`): the helper row calls then.
+        // Comparing against the cell's address instead admitted every call, so a body entered as a leaf pushed its callee
+        // over the leaf's pending activation (crypto's and deltablue's `--b-jit` failures).
+        if depth + frames > word_at(word_at(payload, PLAIN_DEPTH_LIMIT) as usize, 0) {
             return None;
         }
         let registers = word_at(tops.plain_at as usize, PLAIN_REGISTERS_AT);

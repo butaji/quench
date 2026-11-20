@@ -119,10 +119,10 @@ impl<H: Host> Vm<H> {
             // frames onto the lane stack's own tops, which the dispatch points at. A body entered
             // through its cell has an activation pending, which a leave pushes first: it makes no
             // direct call, the frames of which would sit above that activation's room.
-            // A b-jit body's direct call rows push whether or not the run names direct calls (`run.direct_calls`
-            // sizes only the shadow frames), so a leaf this body runs in becomes its activation first.
-            super::super::dispatch_fast::settle_leaf_before_direct_calls::<H>(run.lane_context, run.registers);
             let words = self.stack_words_in_lane(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
+            // A b-jit body's direct call rows push whether or not the run names direct calls (`run.direct_calls` sizes
+            // only the shadow frames), so in a leaf's window they refuse to the helper row.
+            super::super::dispatch_fast::refuse_direct_calls_in_leaf::<H>(run.lane_context, run.registers);
             words.bind(&mut *dispatch);
             &raw mut (*frame).context
         }

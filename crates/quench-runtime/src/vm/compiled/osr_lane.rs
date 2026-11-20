@@ -135,12 +135,13 @@ pub(super) unsafe fn enter<H: Host>(
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.vm = std::ptr::from_mut(vm).cast();
     context.program = program;
-    // A region's direct calls push their callees' windows at the values' top, where a running leaf's window lies.
-    if lend.is_some() {
-        super::dispatch_fast::settle_leaf_before_direct_calls::<H>(lane_context as *mut (), registers);
-    }
     // SAFETY: the region runs on the lane's activation at the lane stack's top, and `reclaim` follows the run.
     let payload = unsafe { payload_for(vm, dispatch, lend) };
+    // A region's direct calls push their callees' frames over the running activation, which a leaf has not made yet:
+    // they refuse there, once the lent payload's words (which set the limit) are bound.
+    if lend.is_some() {
+        super::dispatch_fast::refuse_direct_calls_in_leaf::<H>(lane_context as *mut (), registers);
+    }
     context.adapter_payload = payload.cast();
     // The region's call rows reload its payload's heap bases after the callee ran (`region_call_in_lane`).
     // SAFETY: `lane_context` is the running lane's.

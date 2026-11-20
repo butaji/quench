@@ -45,6 +45,7 @@ fn make<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, (step, instruction): (V
 /// As `body_general_step`; `record` is the record at `call_pc`.
 pub(super) unsafe fn activation_value_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> Option<u64> {
     let instruction = record.without_return();
+    if let Some(status) = unsafe { activation_field_read(cx, call_pc, instruction) } { return Some(status); }
     let step = instruction.op().value_step().filter(|_| instruction.result_flags() == 0)?;
     let r = unsafe { (*cx).registers };
     let Some(values) = operand_values(cx, r, step, instruction) else { return Some(LANE_CALL_MISSED) };
@@ -56,5 +57,28 @@ pub(super) unsafe fn activation_value_step<H: Host>(cx: *mut LaneContext<H>, cal
     if after.0 == r.0 { return Some(if made.jumps { LANE_CALL_BRANCHED } else { LANE_CALL_COMPLETED }); }
     let resume = if made.jumps { unsafe { (*cx).base.add(instruction.jump_target() as usize) } } else { following(ip) };
     unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = Value::UNDEFINED; }
+    Some(LANE_CALL_LEFT)
+}
+
+/// The named field read `instruction` at `call_pc` of the innermost activation (`GetField` of one atom off a register
+/// or the receiver, writing its result register alone), made by the interpreter's own cached read
+/// (`Vm::get_field_cached`) over the activation's registers: `LANE_CALL_COMPLETED` with the result written,
+/// `LANE_CALL_LEFT` where a getter it ran made the activations frames, `LANE_CALL_MISSED` where it raised; `None` for
+/// any other record, or a receiver that is no object (a primitive's read is the frame step's).
+///
+/// # Safety
+/// As `activation_value_step`.
+unsafe fn activation_field_read<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
+    if !matches!(instruction.op().class(), crate::bytecode::Class::GetField) || instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
+    let Some(crate::bytecode::FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() else { return None };
+    let r = unsafe { (*cx).registers };
+    let object = if base == crate::bytecode::FieldBase::THIS { r.this() } else { r.get(base.register_index()?) };
+    if !unsafe { vm(cx) }.is_object_like(object) { return None; }
+    let ip = unsafe { (*cx).base.add(call_pc as usize) };
+    let Some(value) = in_place_in_lane(cx, ip, |vm, code| vm.get_field_cached(code, object, atom, cache_site)) else { return Some(LANE_CALL_MISSED) };
+    let after = unsafe { (*cx).registers };
+    after.set(instruction.result_register(), value);
+    if after.0 == r.0 { return Some(LANE_CALL_COMPLETED); }
+    unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
     Some(LANE_CALL_LEFT)
 }
