@@ -1198,9 +1198,10 @@ impl ProgramCacheLayout {
 /// Entries of the in-loop call target cache, indexed by the callee's heap index.
 const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
-/// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), valid
-/// for `callee` until collection, realm transition or heap reset clears the cache.
-/// Its function kind, environment and realm are immutable during that lifetime.
+/// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), or construct
+/// in place (`construct`), valid for `callee` until collection, realm transition or heap reset
+/// clears the cache. Its function kind, environment, realm and body are immutable during that
+/// lifetime, so its classifications are computed once, when the entry is filled.
 #[derive(Clone, Copy)]
 struct InLoopCallTarget {
     callee: Value,
@@ -1208,6 +1209,7 @@ struct InLoopCallTarget {
     function: u32,
     env: Value,
     push: InLoopPush,
+    construct: ConstructKind,
 }
 /// How the dispatch loop pushes an in-loop callee.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1218,6 +1220,18 @@ enum InLoopPush {
     /// settles the promise the call returns and whose first suspension returns that promise
     /// to the caller; only a plain call pushes it.
     Settles,
+    /// A callee the loop does not push as a call; its entry serves `new` (`ConstructKind`).
+    Unpushed,
+}
+/// How `new` may push a cached callee in place (`Vm::inline_construct_target`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConstructKind {
+    /// Not admitted to an in-loop construction: `new` keeps `construct_value`.
+    No,
+    /// A base constructor (`Vm::inline_constructible`).
+    Base,
+    /// A derived class constructor (`Vm::inline_derived_constructible`).
+    Derived,
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     callee: Value::UNDEFINED,
@@ -1225,6 +1239,7 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     function: 0,
     env: Value::UNDEFINED,
     push: InLoopPush::Body,
+    construct: ConstructKind::No,
 };
 /// A table of empty targets, which no binding matches: its function is the root, never a callee.
 static NO_CALL_TARGETS: [InLoopCallTarget; CALL_TARGET_CACHE_SIZE] = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
