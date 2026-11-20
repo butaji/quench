@@ -130,7 +130,7 @@ typedef struct TsType {
 
 /* erased: the type parameters are instantiated to any (getErasedSignature, or an instantiation in context), so the
  * signature has none of its own */
-struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; bool erased; TsSymbol **psyms; TsSymbol *thisSym; };   /* psyms: the parameter symbols of this signature instance (instantiateSignature, cSigInstantiate; the non-this parameters in order); thisSym: its this parameter */
+struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; bool erased; TsSymbol **psyms; TsSymbol *thisSym; TsType **retCell; };   /* psyms: the parameter symbols of this signature instance (instantiateSignature, cSigInstantiate; the non-this parameters in order); thisSym: its this parameter; retCell: the resolved return type of this instance (getReturnTypeOfSignature caches it on the signature), shared by the copies of the instance */
 static void cSigInstantiate(CSig *dst, const CSig *src, struct TsMapper *m);   /* instantiateSignature parameters (below) */
 /* getSignatureInstantiation: the instances of a declared generic signature, one per type argument list (cached) */
 typedef struct CSigInst { TsNode *decl; TsType **args; int n; CSig sig; struct CSigInst *next; } CSigInst;
@@ -2430,7 +2430,10 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
 static void cSigInstantiate(CSig *dst, const CSig *src, struct TsMapper *m) {
   dst->psyms = NULL;
   dst->thisSym = NULL;
+  dst->retCell = NULL;
   if (!m) return;
+  dst->retCell = ts_arena_alloc(sizeof(TsType *));
+  *dst->retCell = NULL;
   TsList *pl = dst->decl->parameters;
   int np = 0;
   for (int i = 0; pl && i < pl->n; i++) if (!cIsThisParam(pl->v[i])) np++;

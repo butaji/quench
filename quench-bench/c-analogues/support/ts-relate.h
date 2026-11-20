@@ -453,7 +453,15 @@ static TsType *cInferReturnType(TsNode *d) {
   return r;
 }
 
+/* getReturnTypeOfSignature: the return type of an instance is resolved once (retCell); an error is not kept */
+static TsType *cReturnTypeOfUncached(CSig *sig);
 static TsType *cReturnTypeOf(CSig *sig) {
+  if (sig->retCell && *sig->retCell) return *sig->retCell;
+  TsType *r = cReturnTypeOfUncached(sig);
+  if (sig->retCell && r != cErrorType) *sig->retCell = r;
+  return r;
+}
+static TsType *cReturnTypeOfUncached(CSig *sig) {
   TsNode *d = sig->decl;
   if (d->kind == TSK_Constructor || (sig->isConstruct && !d->type)) {
     TsSymbol *cls = d->parent && d->parent->symbol ? cGetMergedSymbol(d->parent->symbol) : NULL;
