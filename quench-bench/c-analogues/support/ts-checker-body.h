@@ -1049,7 +1049,13 @@ static TsType *cContextualReturnOf(TsNode *fn);
 static TsType *cAssignmentTargetType(TsNode *left);
 static TsType *cApparentOf(TsType *o);
 static TsType *cGenericCallFnArgContext(CSig *sig, int idx);
+/* the contextual type of a function argument while the candidate of an overloaded call is checked (chooseOverload's
+ * second round): the parameter type of that candidate. Saved and restored around each argument check. */
+static TsNode *cCandFn;
+static TsType *cCandType;
+
 static TsType *cContextualType(TsNode *e) {
+  if (cCandFn && e == cCandFn) return cCandType;
   TsNode *c = e, *p = e->parent;
   while (p && p->kind == TSK_ParenthesizedExpression) { c = p; p = p->parent; }
   if (!p) return NULL;
@@ -1861,6 +1867,56 @@ static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsT
   return true;
 }
 
+/* isContextSensitive of a function expression or arrow (hasContextSensitiveParameters: a parameter without a type, and no
+ * type parameters) */
+static bool cIsContextSensitiveFn(TsNode *a) {
+  TsNode *f = cSkipParens(a);
+  if (!f || (f->kind != TSK_ArrowFunction && f->kind != TSK_FunctionExpression)) return false;
+  if (f->typeParameters && f->typeParameters->n) return false;
+  if (!f->parameters) return false;
+  for (int i = 0; i < f->parameters->n; i++) if (!f->parameters->v[i]->type) return true;
+  return false;
+}
+
+/* the type of a function argument checked with the parameter type of a candidate (the contextual type of the argument) */
+static TsType *cExprTypeWithContext(TsNode *arg, TsType *ptype) {
+  TsNode *saveFn = cCandFn;
+  TsType *saveType = cCandType;
+  cCandFn = cSkipParens(arg);
+  cCandType = ptype;
+  TsType *t = cExprType(arg);
+  cCandFn = saveFn;
+  cCandType = saveType;
+  return t;
+}
+
+/* chooseOverload with context-sensitive function arguments (5.9.2): each candidate is first checked with those arguments
+ * left out (anyFunctionType, related to any function-like target); the applicable one then has its arguments checked with
+ * its parameter types, which fix the parameters of the arguments for good, and is checked again. Returns NULL when no
+ * candidate is applicable; *err is set when a parameter type is not ported. */
+static CSig *cChooseDeferredOverload(CSig *sigs, CParams *pss, bool *arityOk, int ns, TsType **at, bool *deferred, TsNode **args,
+                                     int na, bool *err) {
+  TsType **skip = ts_arena_alloc(sizeof(TsType *) * (size_t)(na ? na : 1));
+  for (int pass = 0; pass < 2; pass++) {
+    int rel = pass == 0 ? REL_Subtype : REL_Assignable;
+    for (int c = 0; c < ns; c++) {
+      if (!arityOk[c]) continue;
+      for (int i = 0; i < na; i++) skip[i] = deferred[i] ? cAnyFunctionType : at[i];
+      if (!cArgsApplicable(&pss[c], skip, na, &sigs[c], rel)) continue;
+      for (int i = 0; i < na; i++) {
+        if (!deferred[i]) continue;
+        bool ok;
+        TsType *pt = cSigParamType(&sigs[c], &pss[c], i, &ok);
+        if (!ok || pt == cErrorType) { *err = true; return NULL; }
+        at[i] = cExprTypeWithContext(args[i], pt);
+      }
+      if (!cArgsApplicable(&pss[c], at, na, &sigs[c], rel)) continue;
+      return &sigs[c];
+    }
+  }
+  return NULL;
+}
+
 /* the type of a call or new expression of non-generic signatures (resolveCall: chooseOverload with the subtype
  * relation first when there are several candidates, then the assignable relation). The first applicable candidate
  * gives the return type. Generic candidates, this parameters, spread arguments and no applicable candidate are not
@@ -1881,7 +1937,11 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
   for (int i = 0; i < na; i++)
     if (e->arguments->v[i]->kind == TSK_SpreadElement) return cUnported("spread argument");
   TsType **at = ts_arena_alloc(sizeof(TsType *) * (size_t)(na ? na : 1));
-  for (int i = 0; i < na; i++) at[i] = cExprType(e->arguments->v[i]);
+  /* the context-sensitive function arguments of several candidates are typed per candidate (chooseOverload) */
+  bool *deferred = ts_arena_zalloc(sizeof(bool) * (size_t)(na ? na : 1));
+  bool anyDeferred = false;
+  if (ns > 1) for (int i = 0; i < na; i++) if (cIsContextSensitiveFn(e->arguments->v[i])) { deferred[i] = true; anyDeferred = true; }
+  for (int i = 0; i < na; i++) if (!deferred[i]) at[i] = cExprType(e->arguments->v[i]);
   CParams *pss = ts_arena_alloc(sizeof(CParams) * (size_t)ns);
   bool *arityOk = ts_arena_alloc(sizeof(bool) * (size_t)ns);
   bool *generic = ts_arena_zalloc(sizeof(bool) * (size_t)ns);
@@ -1900,6 +1960,18 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
   /* the candidate that is applicable first (in declaration order, among those of the right arity) */
   int chosen = -1;
   CSig *chosenSig = NULL;
+  if (anyDeferred) {
+    if (anyGeneric) return cUnported("overloaded call with a function argument and generic candidates");
+    bool err = false;
+    chosenSig = cChooseDeferredOverload(sigs, pss, arityOk, ns, at, deferred, e->arguments->v, na, &err);
+    if (err) return cUnported("parameter type of a context-sensitive argument");
+    if (!chosenSig) {
+      /* no candidate: the arguments are typed without a context (unported) so that their bodies are still checked */
+      for (int i = 0; i < na; i++) if (deferred[i]) cExprType(e->arguments->v[i]);
+      return cUnported("no applicable signature");
+    }
+    chosen = 0;
+  }
   for (int pass = 0; pass < 2 && chosen < 0; pass++) {
     if (pass == 0 && ns == 1) continue;   /* a single candidate is checked with the assignable relation only */
     int rel = pass == 0 ? REL_Subtype : REL_Assignable;

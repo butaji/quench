@@ -45,6 +45,9 @@ static int cRelOverflows;                /* comparisons cut off by the depth lim
 /* marker types of the variance computation (markerSuperType, markerSubType, markerOtherType) */
 static TsType *cMarkerSuper, *cMarkerSub, *cMarkerOther;
 static TsType *cGlobalStructTypes[5];   /* String, Number, Boolean, BigInt, Symbol: declared types (lazy) */
+/* anyFunctionType: the placeholder of a context-sensitive function argument while a candidate is checked (checkMode
+ * SkipContextSensitive). It has no members; signaturesRelatedTo relates it to any signatures (signaturesRelatedTo, 71400s). */
+static TsType *cAnyFunctionType;
 
 static int cIsRelatedTo(TsType *s, TsType *t, int st);
 static bool cIsRelatedWith(TsType *s, TsType *t, int rel);
@@ -1381,11 +1384,29 @@ static int cIsRelatedTo(TsType *s, TsType *t, int st) {
 }
 
 /* ---- the entry points ---- */
+/* anyFunctionType as the source: its properties are none, so the target's required properties decide; its signatures
+ * are related to any target (signaturesRelatedTo). A target with index signatures is not ported. */
+static bool cAnyFunctionRelated(TsType *t) {
+  if (t == cAnyFunctionType || (t->flags & (TF_Any | TF_Unknown))) return true;
+  if (t->flags & TF_Union) {
+    for (int i = 0; i < t->ntypes; i++) if (cAnyFunctionRelated(t->types[i])) return true;
+    return false;
+  }
+  if (!(t->flags & TF_Object)) return false;
+  cResolveIndexInfos(t);
+  if (t->nindex) { cUnported("anyFunctionType against an index signature"); return true; }
+  TsSymbol **props;
+  int n = cPropertiesOf(t, &props);
+  for (int i = 0; i < n; i++) if (!(props[i]->flags & SF_Optional)) return false;
+  return true;
+}
+
 /* isTypeRelatedTo (69): any relation, Maybe counts as related at the top */
 static bool cIsRelatedWith(TsType *s, TsType *t, int rel) {
   /* isTypeRelatedTo: fresh literal types relate as their regular types */
   s = cRegularType(s);
   t = cRegularType(t);
+  if (s == cAnyFunctionType) return cAnyFunctionRelated(t);
   int saved = cCurRel;
   cCurRel = rel;
   bool r;
@@ -1416,6 +1437,8 @@ static bool cCheckTypeRelatedTo(TsType *s, TsType *t, int rel, TsNode *errNode, 
 }
 
 static void cInitRelations(void) {
+  cAnyFunctionType = cNewType(TF_Object);
+  cAnyFunctionType->objectFlags = OF_Anonymous;
   cMarkerSuper = cNewType(TF_TypeParameter);
   cMarkerSuper->symbol = cCreateSymbol(SF_TypeParameter, bnC("markerSuperType"));
   cMarkerSub = cNewType(TF_TypeParameter);
