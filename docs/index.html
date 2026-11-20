@@ -6,7 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust</title>
     <link rel="alternate" type="application/atom+xml" title="Quench engineering blog" href="/blog/feed.xml">
-    <meta name="description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+    <meta name="description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
     <meta name="keywords" content="TypeScript runtime, JavaScript runtime, WebAssembly runtime, AOT compiler, ahead-of-time compilation, compile TypeScript to native binary, Node.js alternative, Bun alternative, Rust JavaScript engine, JIT, Cranelift, copy-and-patch, low memory" />
     <meta name="author" content="Quench" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
@@ -17,14 +18,14 @@
     <meta property="og:site_name" content="Quench" />
     <meta property="og:url" content="https://quench.run/" />
     <meta property="og:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
-    <meta property="og:description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <meta property="og:description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
     <meta property="og:image" content="https://quench.run/og.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="Quench: TypeScript, JavaScript and WebAssembly runtime with AOT, written in Rust" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
-    <meta name="twitter:description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <meta name="twitter:description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
     <meta name="twitter:image" content="https://quench.run/og.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
@@ -1012,6 +1013,7 @@
                     <li><a class="tlink" href="/blog/where-quench-stands/">Where Quench stands: JetStream 3 with the JIT off</a></li>
                     <li><a class="tlink" href="/blog/an-instruction-budget-for-every-operation/">3 × C + 6: an instruction budget for every operation</a></li>
                     <li><a class="tlink" href="/blog/one-interpreter-four-outputs/">One interpreter, four outputs</a></li>
+                    <li><a class="tlink" href="/benchmarks/">All benchmarks, dated, with weak spots</a></li>
                     <li><a class="tlink" href="/blog/">All 17 posts</a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
                 </ul>
             </div>
@@ -1041,6 +1043,10 @@
                         <p>With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. The JIT tiers are still being brought up to their goal.</p>
                     </details>
                     <details>
+                        <summary>Is Quench Test262 compliant?</summary>
+                        <p>Yes. Quench passes 53,353 Test262 tests with 0 failing, with the JIT off and on. 53 cases are waived because they fail exactly the way Node fails them, and they stay counted as failures in every report. The WebAssembly spec suite passes 67,124 of 67,124. <a href="/test262-compliant-javascript-engine/">Details</a>.</p>
+                    </details>
+                    <details>
                         <summary>Is Quench compatible with Node.js?</summary>
                         <p>Quench implements Node-compatible APIs in a separate host crate and checks changed behavior against Node itself: values, errors, ordering and exit status. Compatibility is being built out, so expect gaps.</p>
                     </details>
@@ -1062,7 +1068,7 @@
             </div>
         </section>
 
-        <p class="foot">Quench · MIT licensed · <a href="/blog/">blog</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></p>
+        <p class="foot">Quench · MIT licensed · <a href="/benchmarks/">benchmarks</a> · <a href="/blog/">blog</a> · <a href="/fastest-javascript-runtime-in-rust/">Rust JS runtime</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node alternative</a> · <a href="/compile-javascript-to-native-executable/">JS to native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></p>
     </main>
 
     <script type="application/ld+json">
@@ -1075,7 +1081,7 @@
       "Quench runtime",
       "Quench JavaScript engine"
     ],
-    "url": "https://quench.run",
+    "url": "https://quench.run/",
     "applicationCategory": "DeveloperApplication",
     "applicationSubCategory": "JavaScript, TypeScript and WebAssembly runtime",
     "operatingSystem": "Linux",
@@ -1088,8 +1094,9 @@
     "programmingLanguage": [
       "Rust"
     ],
-    "description": "Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary.",
+    "description": "JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables.",
     "featureList": [
+      "Test262: 53,353 passing, 0 failing",
       "Runs TypeScript, JavaScript and WebAssembly",
       "Ahead-of-time (AOT) compilation to a native executable",
       "Register-bytecode interpreter",
@@ -1101,7 +1108,12 @@
     ],
     "codeRepository": "https://github.com/butaji/quench",
     "isAccessibleForFree": true,
-    "inLanguage": "en"
+    "inLanguage": "en",
+    "softwareHelp": {
+      "@type": "CreativeWork",
+      "url": "https://github.com/butaji/quench#quick-start"
+    },
+    "dateModified": "2026-11-20"
   },
   {
     "@context": "https://schema.org",
@@ -1151,6 +1163,14 @@
         "acceptedAnswer": {
           "@type": "Answer",
           "text": "With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. The JIT tiers are still being brought up to their goal."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Quench Test262 compliant?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Quench passes 53,353 Test262 tests with 0 failing, with the JIT off and on. 53 cases are waived because they fail exactly the way Node fails them, and they stay counted as failures in every report. The WebAssembly spec suite passes 67,124 of 67,124."
         }
       },
       {
