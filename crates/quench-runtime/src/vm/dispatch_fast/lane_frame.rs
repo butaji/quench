@@ -1973,6 +1973,10 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     fn tagged_number_fact(&self) -> Option<Boxing> { Some(Boxing::Value) }
     #[inline(always)]
     fn number_fact(&self) -> Boxing { Boxing::Double }
+    /// A row that holds the lane's pure binary (`binary_values`, a generic row's) asks it where its
+    /// words leave an operator, as a string key's `"k" + i`: an answer it declines stays unresolved.
+    #[inline(always)]
+    fn general_operators(&self) -> bool { self.binary.is_some() }
 }
 
 #[path = "lane_frame/staged_ops.rs"]
