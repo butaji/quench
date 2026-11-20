@@ -464,6 +464,7 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
     case TSK_VoidKeyword: return cVoidType;
     case TSK_IntrinsicKeyword: return cIntrinsicMarkerType;
     case TSK_ParenthesizedType: return cTypeFromNode(n->type);
+    case TSK_TypePredicate: return n->assertsModifier ? cVoidType : cBooleanType; /* getTypeFromTypeNodeWorker */
     case TSK_TypeOperator:
       if (n->extra != TSK_UniqueKeyword) return cUnported("type operator");
       if (!n->type || n->type->kind != TSK_SymbolKeyword) return cUnported("unique operand");

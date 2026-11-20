@@ -62,4 +62,25 @@ static void cCheckExpressionNode(TsNode *n) {
     cCheckAssignmentOperator(n);
 }
 
+/* checkSourceElement over the declarations and type nodes of a file: the type annotation of every declaration
+ * is resolved with getTypeFromTypeNode (checkVariableLikeDeclaration, checkParameter, checkPropertyDeclaration,
+ * checkSignatureDeclaration, checkTypeReferenceNode), and every type alias declares its type. */
+static void cCheckDeclarationTypes(TsNode *n) {
+  switch (n->kind) {
+    case TSK_Parameter: case TSK_VariableDeclaration: case TSK_PropertyDeclaration: case TSK_PropertySignature:
+    case TSK_MethodDeclaration: case TSK_MethodSignature: case TSK_FunctionDeclaration: case TSK_ArrowFunction:
+    case TSK_FunctionExpression: case TSK_GetAccessor: case TSK_SetAccessor: case TSK_CallSignature:
+    case TSK_ConstructSignature: case TSK_IndexSignature: case TSK_FunctionType: case TSK_ConstructorType:
+      if (n->type) cTypeFromNode(n->type);
+      break;
+    case TSK_TypeReference:
+      cTypeFromNode(n);
+      break;
+    case TSK_TypeAliasDeclaration:
+      if (n->symbol) cDeclaredTypeOfTypeAlias(cGetMergedSymbol(n->symbol));
+      break;
+    default: break;
+  }
+}
+
 #endif
