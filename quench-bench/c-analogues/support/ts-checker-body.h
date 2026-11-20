@@ -1943,6 +1943,52 @@ static bool cContainsUndefinedType(TsType *t) {
   return false;
 }
 
+/* isGenericType / isGenericIndexType of a type in the ported subset: 1 when generic, 0 when not, -1 when not decided here */
+static int cGenericKind(TsType *t) {
+  if (t == cErrorType) return -1;
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    int any = 0;
+    for (int i = 0; i < t->ntypes; i++) {
+      int k = cGenericKind(t->types[i]);
+      if (k < 0) return -1;
+      if (k > 0) any = 1;
+    }
+    return any;
+  }
+  if (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Conditional | TF_Index)) return 1;
+  if ((t->flags & (TF_TemplateLiteral | TF_StringMapping)) && !cIsPatternLiteralType(t)) return 1;
+  if (t->flags & TF_Object) {
+    if (t->objectFlags & (OF_Mapped | OF_Tuple)) return -1;
+    return 0;
+  }
+  return 0;
+}
+
+static TsType *cContextualType(TsNode *e);   /* below: getContextualType */
+
+/* getNarrowableTypeForReference (76095): the constraint of a type parameter with a union constraint replaces it when the
+ * reference is in a constraint position (a property access, a call or new callee, an element access object whose argument
+ * is not a generic index) or has a contextual type that is not generic. Returns 1 to substitute, 0 not, -1 not ported. */
+static int cSubstituteConstraintFor(TsNode *e) {
+  TsNode *p = e->parent;
+  if (!p) return 0;
+  if (p->kind == TSK_PropertyAccessExpression) return 1;
+  if ((p->kind == TSK_CallExpression || p->kind == TSK_NewExpression) && p->expression == e) return 1;
+  if (p->kind == TSK_ElementAccessExpression && p->expression == e) {
+    TsType *at = cExprType(p->argumentExpression);
+    if (at == cErrorType) return -1;
+    int gk = cGenericKind(at);
+    if (gk < 0) return -1;
+    if (gk == 0) return 1;
+  }
+  TsType *cx = cContextualType(e);
+  if (cx == cErrorType) return -1;
+  if (!cx) return 0;
+  int gk = cGenericKind(cx);
+  if (gk < 0) return -1;
+  return gk == 0 ? 1 : 0;
+}
+
 /* the type of an identifier reference (checkIdentifier): the flow type of a variable, else the type of the symbol */
 static TsType *cIdentifierType(TsNode *e) {
   BName nm = bnEscapeText(e->text, e->textLen);
@@ -1957,8 +2003,15 @@ static TsType *cIdentifierType(TsNode *e) {
   TsType *d = cReferenceDeclaredType(e, s, &outer, &startInit);
   if (d == cErrorType) return d;
   if (d->flags & TF_TypeParameter) {
+    /* isGenericTypeWithUnionConstraint: the base constraint is a union (or nullable) of types that are not generic */
     TsType *c = cConstraintOf(d);
-    if (c && (c->flags & TF_Union)) return cUnported("reference of a type parameter with a union constraint");
+    if (c && (c->flags & (TF_Union | TF_Null | TF_Undefined))) {
+      int gc = cGenericKind(c);
+      if (gc != 0) return cUnported("reference of a type parameter with a union constraint");
+      int sub = cSubstituteConstraintFor(e);
+      if (sub < 0) return cUnported("reference of a type parameter with a union constraint");
+      if (sub > 0) d = c;
+    }
   }
   /* checkIdentifier: the flow container moves up past the function expressions, arrows and object-literal methods that
    * create the reference, for a const variable, and for a parameter or mutable local past its last assignment. The walk
