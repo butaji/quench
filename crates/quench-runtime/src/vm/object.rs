@@ -3358,7 +3358,7 @@ impl<H: Host> Vm<H> {
             super::accessor_cache::GetterEntryRead::Call(getter) => return self.call_value(p, getter, object, &[]),
             super::accessor_cache::GetterEntryRead::Miss => {}
         }
-        if let Some(getter) = self.cached_field_getter(object, atom, site) {
+        if let Some(getter) = self.cached_getter_after_miss(object, atom, site) {
             return self.call_value(p, getter, object, &[]);
         }
         if let Some(value) = self.field_miss_data_value(object, atom, site) {
@@ -3509,13 +3509,15 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The getter (`setter` false) or setter the fact table gives `atom` on the record
-    /// `receiver` (`record_accessor_fact`): `Some` with the part, or `Some(None)` for an
-    /// accessor without it, wherever the table holds an accessor answer; `None` otherwise.
+    /// The getter (`setter` false) or setter the fact table gives `key` on the record
+    /// `receiver` (`record_accessor_fact`, `record_accessor` of a symbol-keyed proof): `Some`
+    /// with the part, or `Some(None)` for an accessor without it, wherever the table holds an
+    /// accessor answer; `None` otherwise. The one decoder of an accessor fact, for both named
+    /// and symbol-keyed reads (`Vm::proved_getter`).
     #[inline(always)]
-    pub(super) fn fact_accessor(&self, receiver: &Object, atom: Atom, setter: bool) -> Option<Option<Value>> {
+    pub(super) fn fact_accessor(&self, receiver: &Object, key: PropertyKey, setter: bool) -> Option<Option<Value>> {
         use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
-        let key32 = PropertyKey::string(atom).key32()?;
+        let key32 = key.key32()?;
         let layout = receiver.layout_id();
         let word = self.symbol_load_proofs.word(layout, key32)?;
         let kind = word.kind();
