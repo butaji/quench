@@ -2,6 +2,13 @@
 //! `Concrete` and the tiers generate with `Emit`.
 use super::*;
 
+/// `step` out of line, for a generated row whose opcode has no family step (`RowStep::Full`): one instance per
+/// stage and frame type rather than the whole interpreter inlined into every such row's instance (`row_step!`).
+#[inline(never)]
+pub(crate) fn step_out_of_line<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    step(stage, frame, operation)
+}
+
 /// Run `operation` on `frame`; its word or where control goes.
 #[inline(always)]
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {

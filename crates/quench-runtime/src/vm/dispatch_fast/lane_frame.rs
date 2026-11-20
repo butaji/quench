@@ -2522,7 +2522,9 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::WasmMemory) } { crate::staged::step_wasm_access($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmVector) } { crate::staged::step_wasm_vector($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::Entry) } { crate::staged::step_entry($stage, $frame, $operation) }
-        else { crate::staged::step($stage, $frame, $operation) }
+        // An opcode with no family step runs the whole `step`, out of line: inlined, it put every arm of the
+        // interpreter into each of its row instances (1065 instances, half of the crate's code before optimization).
+        else { crate::staged::step_out_of_line($stage, $frame, $operation) }
     }};
 }
 
