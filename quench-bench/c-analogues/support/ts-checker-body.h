@@ -1943,6 +1943,52 @@ static bool cContainsUndefinedType(TsType *t) {
   return false;
 }
 
+/* isGenericType / isGenericIndexType of a type in the ported subset: 1 when generic, 0 when not, -1 when not decided here */
+static int cGenericKind(TsType *t) {
+  if (t == cErrorType) return -1;
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    int any = 0;
+    for (int i = 0; i < t->ntypes; i++) {
+      int k = cGenericKind(t->types[i]);
+      if (k < 0) return -1;
+      if (k > 0) any = 1;
+    }
+    return any;
+  }
+  if (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Conditional | TF_Index)) return 1;
+  if ((t->flags & (TF_TemplateLiteral | TF_StringMapping)) && !cIsPatternLiteralType(t)) return 1;
+  if (t->flags & TF_Object) {
+    if (t->objectFlags & (OF_Mapped | OF_Tuple)) return -1;
+    return 0;
+  }
+  return 0;
+}
+
+static TsType *cContextualType(TsNode *e);   /* below: getContextualType */
+
+/* getNarrowableTypeForReference (76095): the constraint of a type parameter with a union constraint replaces it when the
+ * reference is in a constraint position (a property access, a call or new callee, an element access object whose argument
+ * is not a generic index) or has a contextual type that is not generic. Returns 1 to substitute, 0 not, -1 not ported. */
+static int cSubstituteConstraintFor(TsNode *e) {
+  TsNode *p = e->parent;
+  if (!p) return 0;
+  if (p->kind == TSK_PropertyAccessExpression) return 1;
+  if ((p->kind == TSK_CallExpression || p->kind == TSK_NewExpression) && p->expression == e) return 1;
+  if (p->kind == TSK_ElementAccessExpression && p->expression == e) {
+    TsType *at = cExprType(p->argumentExpression);
+    if (at == cErrorType) return -1;
+    int gk = cGenericKind(at);
+    if (gk < 0) return -1;
+    if (gk == 0) return 1;
+  }
+  TsType *cx = cContextualType(e);
+  if (cx == cErrorType) return -1;
+  if (!cx) return 0;
+  int gk = cGenericKind(cx);
+  if (gk < 0) return -1;
+  return gk == 0 ? 1 : 0;
+}
+
 /* the type of an identifier reference (checkIdentifier): the flow type of a variable, else the type of the symbol */
 static TsType *cIdentifierType(TsNode *e) {
   BName nm = bnEscapeText(e->text, e->textLen);
@@ -1957,8 +2003,15 @@ static TsType *cIdentifierType(TsNode *e) {
   TsType *d = cReferenceDeclaredType(e, s, &outer, &startInit);
   if (d == cErrorType) return d;
   if (d->flags & TF_TypeParameter) {
+    /* isGenericTypeWithUnionConstraint: the base constraint is a union (or nullable) of types that are not generic */
     TsType *c = cConstraintOf(d);
-    if (c && (c->flags & TF_Union)) return cUnported("reference of a type parameter with a union constraint");
+    if (c && (c->flags & (TF_Union | TF_Null | TF_Undefined))) {
+      int gc = cGenericKind(c);
+      if (gc != 0) return cUnported("reference of a type parameter with a union constraint");
+      int sub = cSubstituteConstraintFor(e);
+      if (sub < 0) return cUnported("reference of a type parameter with a union constraint");
+      if (sub > 0) d = c;
+    }
   }
   /* checkIdentifier: the flow container moves up past the function expressions, arrows and object-literal methods that
    * create the reference, for a const variable, and for a parameter or mutable local past its last assignment. The walk
@@ -2018,6 +2071,7 @@ static TsType *cGenericCallFnArgContext(CSig *sig, int idx);
 static TsNode *cCandFn;
 static TsType *cCandType;
 
+static bool cIsInitializedDeclParam(TsNode *p);
 static TsType *cContextualType(TsNode *e) {
   if (cCandFn && e == cCandFn) return cCandType;
   TsNode *c = e, *p = e->parent;
@@ -2027,6 +2081,11 @@ static TsType *cContextualType(TsNode *e) {
     case TSK_VariableDeclaration:
       if (p->initializer != c) return cUnported("contextual type of a declaration name");
       return p->type ? cTypeFromNode(p->type) : NULL;
+    case TSK_Parameter:
+      /* getContextualTypeForInitializerExpression: a parameter of a function that is not contextually typed has none */
+      if (p->initializer != c) return cUnported("contextual type of a parameter name");
+      if (cIsInitializedDeclParam(p)) return NULL;
+      return cUnported("contextual type");
     case TSK_PropertyDeclaration:
       if (p->initializer != c) return cUnported("contextual type of a property");
       return p->type ? cTypeFromNode(p->type) : NULL;
@@ -2080,6 +2139,16 @@ static TsType *cContextualType(TsNode *e) {
       bool ok;
       TsType *pt = cSigParamType(sig, &ps, idx, &ok);
       return ok ? pt : NULL;
+    }
+    case TSK_TemplateSpan: return NULL;   /* a template span has no contextual type */
+    case TSK_ObjectLiteralExpression: {
+      /* getContextualTypeForObjectLiteralMethod: the property of the object literal's contextual type named by the method */
+      if (c->kind != TSK_MethodDeclaration || !c->name || c->name->kind != TSK_Identifier) return cUnported("contextual type of an object literal member");
+      TsType *oc = cContextualType(p);
+      if (oc == NULL || oc == cErrorType) return oc;
+      if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
+      TsSymbol *ps = cPropertyOf(oc, bnEscapeText(c->name->text, c->name->textLen));
+      return ps ? cTypeOfSymbol(ps) : NULL;
     }
     case TSK_PropertyAssignment: {
       /* the property of the contextual type of the object literal */
@@ -2191,16 +2260,39 @@ static bool cIsUntypedDeclParam(TsNode *p) {
 /* getContextuallyTypedParameterType and assignContextualParameterTypes: an unannotated parameter of a function expression or
  * arrow has the type at its position in the contextual signature. Parameters with an initializer, optional or rest
  * parameters, binding patterns and the parameters of other functions (implicit any) are not ported. */
+/* a parameter without annotation and with an initializer, of a function declaration or of a method that is not an object
+ * literal member: it has no contextual type (getContextuallyTypedParameterType is undefined), so its type is the widened
+ * type of the initializer (getTypeForVariableLikeDeclaration) */
+static bool cIsInitializedDeclParam(TsNode *p) {
+  TsNode *fn = p->parent;
+  if (!fn || p->type || !p->initializer || p->questionToken || p->dotDotDotToken) return false;
+  if (!p->name || p->name->kind != TSK_Identifier || (p->name->textLen == 4 && memcmp(p->name->text, "this", 4) == 0)) return false;
+  if (fn->kind != TSK_FunctionDeclaration && fn->kind != TSK_MethodDeclaration) return false;
+  return !(fn->parent && fn->parent->kind == TSK_ObjectLiteralExpression);
+}
+
 static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
   (void)sym;
   if (cIsUntypedDeclParam(d)) return cAnyType;
+  if (cIsInitializedDeclParam(d)) {
+    /* getTypeOfParameter: the initializer's widened type, with undefined (the parameter is optional) */
+    if (d->inferState == 1) return cUnported("circular parameter type");
+    d->inferState = 1;
+    TsType *t = cExprType(d->initializer);
+    if (t != cErrorType) t = cAddUndefined(cMutableLocationType(d->initializer, t));
+    d->inferState = 0;
+    return t;
+  }
   TsNode *fn = d->parent;
-  if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction)) return cUnported("parameter without annotation");
+  /* an object literal method is context sensitive too (isContextSensitiveFunctionOrObjectLiteralMethod) */
+  bool objMethod = fn && fn->kind == TSK_MethodDeclaration && fn->parent && fn->parent->kind == TSK_ObjectLiteralExpression;
+  if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction && !objMethod)) return cUnported("parameter without annotation");
   if (d->initializer || d->questionToken || d->dotDotDotToken || !d->name || d->name->kind != TSK_Identifier)
     return cUnported("parameter without annotation");
   if (d->inferState == 1) return cUnported("circular parameter type");
   d->inferState = 1;
-  TsType *t = cUnported("parameter without annotation");
+  /* the refusal is counted only when no type is found: a counted placeholder would end the inference or narrowing around it */
+  TsType *t = NULL;
   bool err = false;
   CSig *cs = cContextualSignature(fn, &err);
   if (!err && cs) {
@@ -2216,6 +2308,7 @@ static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
     }
   }
   d->inferState = 0;
+  if (!t || t == cErrorType) return cUnported("parameter without annotation");
   return t;
 }
 
@@ -2348,6 +2441,35 @@ static TsType *cMemberType(TsType *o, TsSymbol *p, TsNode *e) {
   return cTypeOfSymbol(p);
 }
 
+/* the symbols of the global interfaces that give the members of every object: Object, CallableFunction (an object with call
+ * signatures, strictBindCallApply) and NewableFunction (one with construct signatures). Their own declared members are read
+ * from the binder table (none of these interfaces has a base to inherit from). */
+static TsSymbol *cGlobalMemberIface(int idx) {
+  static const char *const names[3] = { "Object", "CallableFunction", "NewableFunction" };
+  return bTableGet(cGlobals, bnC(names[idx]));   /* not cached: the globals are rebuilt by every checker run */
+}
+
+/* getPropertyOfType of an object type (the non-union case): its member, else the member of CallableFunction or
+ * NewableFunction when it has call or construct signatures, else the member of Object. *ok is false when the global
+ * interface is not in the program. */
+static TsSymbol *cPropertyOfObjectOrGlobal(TsType *o, BName name, bool *ok) {
+  *ok = true;
+  TsSymbol *p = cPropertyOf(o, name);
+  if (p) return p;
+  cResolveSignatures(o);
+  int fi = o->ncall ? 1 : (o->nconstruct ? 2 : 0);
+  if (fi) {
+    TsSymbol *g = cGlobalMemberIface(fi);
+    if (!g) { *ok = false; return NULL; }
+    TsSymbol *m = g->members ? bTableGet(g->members, name) : NULL;
+    if (m && (m->flags & SF_Value) && !(m->flags & SF_Signature)) return m;
+  }
+  TsSymbol *ob = cGlobalMemberIface(0);
+  if (!ob) { *ok = false; return NULL; }
+  TsSymbol *m = ob->members ? bTableGet(ob->members, name) : NULL;
+  return (m && (m->flags & SF_Value) && !(m->flags & SF_Signature)) ? m : NULL;
+}
+
 /* the type of a member access e.expression.name (checkPropertyAccessExpression) */
 static TsType *cPropertyAccessType(TsNode *e) {
   if (e->questionDotToken) return cUnported("optional chain");
@@ -2364,7 +2486,9 @@ static TsType *cPropertyAccessType(TsNode *e) {
     if (!p) return cUnported("property of a union");
   } else {
     if (!(o->flags & TF_Object)) return cUnported("property access on a non-object");
-    p = cPropertyOf(o, pname);
+    bool gok;
+    p = cPropertyOfObjectOrGlobal(o, pname, &gok);
+    if (!gok) return cUnported("property access: no global object member");
     if (!p) return cUnported("property access: no property");
   }
   TsType *declared = cMemberType(o, p, e);
@@ -2998,12 +3122,14 @@ static TsType *cExprTypeWithContext(TsNode *arg, TsType *ptype) {
 }
 
 /* an argument whose type can depend on the contextual type, which is the parameter type of the candidate in an overloaded
- * call (getContextualType of a call argument with several signatures): everything but the expressions that never do */
+ * call (getContextualType of a call argument with several signatures): everything but the expressions that never do (an
+ * element access and a non-null assertion take their type from their operands) */
 static bool cArgNeedsContext(TsNode *a) {
   TsNode *c = cSkipParens(a);
   switch (c->kind) {
     case TSK_Identifier: case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
     case TSK_NullKeyword: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_PropertyAccessExpression:
+    case TSK_ElementAccessExpression: case TSK_NonNullExpression:
       return false;
     default: return true;
   }
@@ -3410,6 +3536,108 @@ static TsType *cBinaryType(TsNode *e) {
   return cUnported("binary operator");
 }
 
+/* ---- template expressions (checkTemplateExpression, 84988) ---- */
+/* a span that node's evaluate (23423) may fold to a value: a literal, a template whose spans may all fold, a binary
+ * operator of two such operands, a unary + - ~ of one, an entity name (a const variable, an enum member, Infinity, NaN)
+ * or an access of a name. The other expressions give no value (evaluate gives undefined). */
+static bool cSpanMayEvaluate(TsNode *e) {
+  e = cSkipParens(e);
+  switch (e->kind) {
+    case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral: return true;
+    case TSK_TemplateExpression:
+      for (int i = 0; e->spans && i < e->spans->n; i++) if (!cSpanMayEvaluate(e->spans->v[i]->expression)) return false;
+      return true;
+    case TSK_BinaryExpression: return cSpanMayEvaluate(e->left) && cSpanMayEvaluate(e->right);
+    case TSK_PrefixUnaryExpression:
+      return (e->extra == TSK_PlusToken || e->extra == TSK_MinusToken || e->extra == TSK_TildeToken) && cSpanMayEvaluate(e->operand);
+    case TSK_PropertyAccessExpression: {
+      TsNode *r = e;
+      while (r->kind == TSK_PropertyAccessExpression) r = cSkipParens(r->expression);
+      return r->kind == TSK_Identifier;
+    }
+    case TSK_ElementAccessExpression: return true;
+    case TSK_Identifier: {
+      if (e->textLen == 8 && memcmp(e->text, "Infinity", 8) == 0) return true;
+      if (e->textLen == 3 && memcmp(e->text, "NaN", 3) == 0) return true;
+      TsSymbol *s = cResolveValueName(e, bnEscapeText(e->text, e->textLen));
+      if (!s) return false;
+      if (s->flags & SF_EnumMember) return true;
+      TsNode *d = cFirstDeclOf(s);
+      return d && d->kind == TSK_VariableDeclaration && cIsConstVariableDecl(d);
+    }
+    default: return false;
+  }
+}
+
+/* isTemplateLiteralContext: a parenthesized expression of one, or the argument of an element access */
+static bool cIsTemplateLiteralCtx(TsNode *n) {
+  TsNode *p = n->parent;
+  if (p && p->kind == TSK_ParenthesizedExpression) return cIsTemplateLiteralCtx(p);
+  return p && p->kind == TSK_ElementAccessExpression && p->argumentExpression == n;
+}
+
+/* isConstContext: 1 in a const context, 0 out of one, -1 when an assertion on the way up is not ported */
+static int cIsConstContextState(TsNode *n) {
+  TsNode *p = n->parent;
+  if (!p) return 0;
+  switch (p->kind) {
+    case TSK_AsExpression: case TSK_TypeAssertionExpression: return -1;
+    case TSK_ParenthesizedExpression: case TSK_ArrayLiteralExpression: case TSK_SpreadElement: return cIsConstContextState(p);
+    case TSK_PropertyAssignment: case TSK_ShorthandPropertyAssignment: case TSK_TemplateSpan:
+      return p->parent ? cIsConstContextState(p->parent) : 0;
+    default: return 0;
+  }
+}
+
+/* checkTemplateExpression: each span is checked in order and related to the template constraint (a span that is not is
+ * string). The template literal type is kept in a const context, in a template literal context, or under a contextual type
+ * with a literal or template member; otherwise the type is string. A template whose spans may all fold to a value is not
+ * ported (evaluate), and neither is a span of a symbol type or a generic contextual type. */
+static TsType *cTemplateExprType(TsNode *e) {
+  int ns = e->spans ? e->spans->n : 0;
+  CStr *texts = ts_arena_alloc(sizeof(CStr) * (size_t)(ns + 1));
+  TsType **types = ts_arena_alloc(sizeof(TsType *) * (size_t)(ns ? ns : 1));
+  texts[0].s = e->head->text;
+  texts[0].n = e->head->textLen;
+  bool err = false, allMaybe = ns > 0;
+  TsType *tc = cGetUnionType((TsType *[]){cStringType, cNumberType, cBigIntType, cBooleanType, cNullType, cUndefinedType}, 6);
+  for (int i = 0; i < ns; i++) {
+    TsNode *sp = e->spans->v[i];
+    TsType *t = cExprType(sp->expression);
+    if (!cSpanMayEvaluate(sp->expression)) allMaybe = false;
+    texts[i + 1].s = sp->literal->text;
+    texts[i + 1].n = sp->literal->textLen;
+    if (t == cErrorType) { err = true; types[i] = cErrorType; continue; }
+    int nm = (t->flags & TF_Union) ? t->ntypes : 1;
+    for (int k = 0; k < nm; k++) {
+      TsType *m = (t->flags & TF_Union) ? t->types[k] : t;
+      if (m->flags & (TF_ESSymbol | TF_UniqueESSymbol)) return cUnported("template of a symbol");
+    }
+    types[i] = cIsRelatedWith(t, tc, REL_Assignable) ? t : cStringType;
+  }
+  if (err) return cErrorType;
+  for (int i = 0; i <= ns; i++) if (cHasEscapeOrNonAscii(texts[i].s, texts[i].n)) return cUnported("template with an escape");
+  if (allMaybe) return cUnported("template that may fold to a value");
+  bool lit = false;
+  int cs = cIsConstContextState(e);
+  if (cs < 0) return cUnported("template in an assertion");
+  lit = cs > 0 || cIsTemplateLiteralCtx(e);
+  if (!lit) {
+    TsType *cx = cContextualType(e);
+    if (cx == cErrorType) return cx;
+    if (cx) {
+      int n = (cx->flags & TF_Union) ? cx->ntypes : 1;
+      for (int i = 0; i < n; i++) {
+        TsType *m = (cx->flags & TF_Union) ? cx->types[i] : cx;
+        if (m->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Conditional)) return cUnported("template with a generic contextual type");
+        if (m->flags & (TF_StringLiteral | TF_TemplateLiteral)) lit = true;
+      }
+    }
+  }
+  if (!lit) return cStringType;
+  return cGetTemplateLiteralType(texts, types, ns);
+}
+
 static TsType *cExprWorker(TsNode *e) {
   switch (e->kind) {
     case TSK_ParenthesizedExpression: return cExprType(e->expression);
@@ -3466,6 +3694,7 @@ static TsType *cExprWorker(TsNode *e) {
     case TSK_ElementAccessExpression: return cElementAccessType(e);
     case TSK_CallExpression: return cCallType(e);
     case TSK_NewExpression: return cNewType2(e);
+    case TSK_TemplateExpression: return cTemplateExprType(e);
     case TSK_ArrayLiteralExpression: {
       TsType *ac = cContextualType(e);
       if (ac == cErrorType) return ac;
