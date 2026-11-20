@@ -1796,6 +1796,14 @@ impl Carried {
         Self { integers: incoming.integers, ..Self::script(cx) }
     }
 
+    /// What a record that writes its result register carries on: `incoming` with no accumulator, since
+    /// no earlier producer's accumulator holds past the write. The memory view stays: a Wasm record
+    /// (`WasmI32AddImmediateJumpNonZero`) runs where later records address linear memory through it.
+    #[inline(always)]
+    fn past_result(incoming: Carried) -> Self {
+        Self { acc: Slot::unset(), ..incoming }
+    }
+
     /// What the general step of `instruction` carries on: `script_in`, with the accumulator its
     /// result register now holds, since the record was selected as an accumulator producer
     /// (`LaneHandler::produces`) and the next record may read the accumulator for it.
@@ -4601,8 +4609,33 @@ lane_handler! {
         }
         // SAFETY: the step continues at a record of the running frame's view.
         let target = unsafe { (*cx).base.add(next) };
-        if next > pc { next!(cx, r, target, Carried::stepped(cx, view, r, instruction)) } else { exit(target) }
+        if next > pc { next!(cx, r, target, Carried { memory: memory_after_step(cx, view.memory), ..Carried::stepped(cx, view, r, instruction) }) } else { exit(target) }
     }
+}
+
+/// The memory view the record after a general step carries: a Wasm run's frame memory, read again
+/// as a call's return reads it (`complete_call`: the step may have grown it), never the script
+/// view `Carried::stepped` makes. A Wasm record addressing through the script view wrote and read
+/// the lane context's own bytes as linear memory (JetStream argon2-wasm: `argon2_hash` stored its
+/// costs after a `v128.store`, which a general step makes, past the context, so validation read
+/// zeros). `incoming` is the view the step's record ran with; one that is not the run's resolved
+/// memory is none, whose accesses take the general path.
+#[inline(always)]
+fn memory_after_step<H: Host>(cx: *mut LaneContext<H>, incoming: MemoryView) -> MemoryView {
+    // SAFETY: the context's program outlives the lane run.
+    if unsafe { (*(*cx).code).kind } != crate::bytecode::ProgramKind::Wasm {
+        return MemoryView::script(cx);
+    }
+    let (binding, resolved) = unsafe { (*cx).resolved };
+    let memory = if incoming.bytes == resolved.bytes {
+        let fresh = memory_view(unsafe { vm(cx) }, binding);
+        unsafe { (*cx).resolved = (binding, fresh) };
+        fresh
+    } else {
+        MemoryView::NONE
+    };
+    unsafe { (*cx).memory = memory };
+    memory
 }
 
 /// `general_step_in_lane` within a frameless activation: a value step (`Vm::call_out`) of
@@ -4641,7 +4674,8 @@ fn step_beside_activations_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Register
     if let (Some(value), Some(result)) = (value, result) {
         r.set(result, value);
     }
-    Resumed::At(r, following(ip), Carried::stepped(cx, Carried::script(cx), r, instruction))
+    let memory = memory_after_step(cx, unsafe { (*cx).memory });
+    Resumed::At(r, following(ip), Carried { memory, ..Carried::stepped(cx, Carried::script(cx), r, instruction) })
 }
 
 /// Make `operation` of the record at `ip` from the lane, as its general step would: in a

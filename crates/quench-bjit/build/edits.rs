@@ -5,6 +5,11 @@
 //! constant, an `impl` header, a macro, a `use`, a file added or removed) is a structural edit, and so is a change
 //! to a `const fn` body (it may run at compile time, where no symbol of it is left to reach).
 //!
+//! Two kinds of attributes are not structural. A codegen hint on a function (`inline`, `cold`) changes only the
+//! code of that function's callers, so it counts as an edit of that function, `const fn` included (constant
+//! evaluation ignores it). A lint attribute (`allow`, `expect`, `warn`, `deny`, `forbid`, `must_use`) changes no
+//! code at all and is dropped.
+//!
 //! A function nested in a changed body, and a closure of it, have the outer function's name in their symbols, so
 //! the outer name covers them (`reach::identifiers`).
 
@@ -139,16 +144,64 @@ struct Body<'t, 'a> {
     name: &'a str,
     is_const: bool,
     tokens: &'t [Token<'a>],
+    /// The function's codegen hints (`HINTS`), in order.
+    hints: Vec<&'t [Token<'a>]>,
+}
+
+/// Attributes that only hint how a function's callers compile it.
+const HINTS: &[&str] = &["inline", "cold"];
+/// Attributes that change no code.
+const LINTS: &[&str] = &["allow", "expect", "warn", "deny", "forbid", "must_use"];
+
+/// The end (the index of its `]`) and the name of the outer attribute starting at `i` (`#[name...]`), if one does.
+fn attribute_at<'a>(tokens: &[Token<'a>], i: usize) -> Option<(usize, &'a str)> {
+    if tokens.get(i) != Some(&Token::Punct(b'#')) || tokens.get(i + 1) != Some(&Token::Punct(b'[')) {
+        return None;
+    }
+    let Some(Token::Word(name)) = tokens.get(i + 2) else { return None };
+    let mut depth = 0i32;
+    for (j, token) in tokens.iter().enumerate().skip(i + 1) {
+        match token {
+            Token::Punct(b'[') => depth += 1,
+            Token::Punct(b']') => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((j, name));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The outline of `tokens` (every outermost fn body replaced by one `{}`) and the bodies.
 fn split<'t, 'a>(tokens: &'t [Token<'a>]) -> (Vec<&'t Token<'a>>, Vec<Body<'t, 'a>>) {
     let mut outline = Vec::new();
     let mut bodies = Vec::new();
+    // The hints read since the last item boundary, for the next `fn`.
+    let mut hints: Vec<&'t [Token<'a>]> = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
+        if let Some((end, name)) = attribute_at(tokens, i) {
+            if HINTS.contains(&name) {
+                hints.push(&tokens[i..=end]);
+                i = end + 1;
+                continue;
+            }
+            if LINTS.contains(&name) {
+                i = end + 1;
+                continue;
+            }
+        }
         let is_fn = tokens[i] == Token::Word("fn") && matches!(tokens.get(i + 1), Some(Token::Word(_)));
         if !is_fn {
+            // Hints on anything but a function stay structural.
+            if matches!(tokens[i], Token::Punct(b';' | b'{' | b'}')) {
+                for hint in hints.drain(..) {
+                    outline.extend(hint);
+                }
+            }
             outline.push(&tokens[i]);
             i += 1;
             continue;
@@ -174,6 +227,9 @@ fn split<'t, 'a>(tokens: &'t [Token<'a>]) -> (Vec<&'t Token<'a>>, Vec<Body<'t, '
             j += 1;
         }
         let Some(open) = open else {
+            for hint in hints.drain(..) {
+                outline.extend(hint);
+            }
             outline.extend(&tokens[i..j.min(tokens.len())]);
             i = j;
             continue;
@@ -197,7 +253,7 @@ fn split<'t, 'a>(tokens: &'t [Token<'a>]) -> (Vec<&'t Token<'a>>, Vec<Body<'t, '
         outline.extend(&tokens[i..open]);
         outline.push(&Token::Punct(b'{'));
         outline.push(&Token::Punct(b'}'));
-        bodies.push(Body { name, is_const, tokens: &tokens[open..=close] });
+        bodies.push(Body { name, is_const, tokens: &tokens[open..=close], hints: std::mem::take(&mut hints) });
         i = close + 1;
     }
     (outline, bodies)
@@ -221,6 +277,9 @@ pub fn changed_functions(old: &str, new: &str) -> Option<BTreeSet<String>> {
             if was.is_const || now.is_const {
                 return None;
             }
+            names.insert(now.name.to_string());
+        }
+        if was.hints != now.hints {
             names.insert(now.name.to_string());
         }
     }
@@ -248,10 +307,20 @@ mod tests {
     }
 
     #[test]
+    fn hints_name_their_function_and_lints_nothing() {
+        let names = |new: String| changed_functions(BASE, &new).map(|set| set.into_iter().collect::<Vec<_>>());
+        assert_eq!(names(BASE.replace("pub(crate) fn", "#[inline]\npub(crate) fn")), Some(vec!["alpha".to_string()]));
+        assert_eq!(names(BASE.replace("const fn beta", "#[inline(always)]\nconst fn beta")), Some(vec!["beta".to_string()]));
+        assert_eq!(names(BASE.replace("pub(crate) fn", "#[allow(dead_code)]\npub(crate) fn")), Some(vec![]));
+        assert_eq!(names(BASE.replace("struct S", "#[allow(dead_code)]\nstruct S")), Some(vec![]));
+    }
+
+    #[test]
     fn structural_edits_are_refused() {
         assert_eq!(changed_functions(BASE, &BASE.replace("a: u8", "a: u16")), None);
         assert_eq!(changed_functions(BASE, &BASE.replace("x: u32) -> u32", "x: u64) -> u32")), None);
         assert_eq!(changed_functions(BASE, &BASE.replace("{ 1 }", "{ 2 }")), None, "a const fn body");
-        assert_eq!(changed_functions(BASE, &BASE.replace("pub(crate) fn", "#[inline]\npub(crate) fn")), None);
+        assert_eq!(changed_functions(BASE, &BASE.replace("struct S", "#[repr(C)]\nstruct S")), None, "a layout attribute");
+        assert_eq!(changed_functions(BASE, &BASE.replace("struct S", "#[inline]\nstruct S")), None, "a hint off a function");
     }
 }

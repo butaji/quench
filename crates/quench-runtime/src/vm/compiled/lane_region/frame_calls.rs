@@ -236,7 +236,8 @@ fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destin
     stage.builder.switch_to_block(slow);
     stage.builder.seal_block(slow);
     let address = frame.helpers.address(&mut stage.builder, helper);
-    let value = emit_lane_helper_call(stage.builder, payload, address, arguments);
+    // The allocators take the payload after the VM and residual (`compiled_new_object`, `new_array_in_lane`), as `allocate` passes it.
+    let value = emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
     stage.goto(joined, &[value]);
 
     stage.builder.switch_to_block(joined);
