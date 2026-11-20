@@ -1359,11 +1359,23 @@ static bool cHasLiteralOrVariable(TsType *t) {
   return false;
 }
 
+/* a parameter of a method or function declaration without annotation, initializer, optional or rest marker: its type is any
+ * (getContextuallyTypedParameterType is undefined for these, and the implicit any is not reported without noImplicitAny).
+ * An object literal method is context sensitive, and so is a `this` parameter: not covered here. */
+static bool cIsUntypedDeclParam(TsNode *p) {
+  TsNode *fn = p->parent;
+  if (!fn || (fn->kind != TSK_MethodDeclaration && fn->kind != TSK_FunctionDeclaration)) return false;
+  if (p->type || p->initializer || p->questionToken || p->dotDotDotToken) return false;
+  if (!p->name || p->name->kind != TSK_Identifier || (p->name->textLen == 4 && memcmp(p->name->text, "this", 4) == 0)) return false;
+  return !(fn->parent && fn->parent->kind == TSK_ObjectLiteralExpression);
+}
+
 /* getContextuallyTypedParameterType and assignContextualParameterTypes: an unannotated parameter of a function expression or
  * arrow has the type at its position in the contextual signature. Parameters with an initializer, optional or rest
  * parameters, binding patterns and the parameters of other functions (implicit any) are not ported. */
 static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
   (void)sym;
+  if (cIsUntypedDeclParam(d)) return cAnyType;
   TsNode *fn = d->parent;
   if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction)) return cUnported("parameter without annotation");
   if (d->initializer || d->questionToken || d->dotDotDotToken || !d->name || d->name->kind != TSK_Identifier)
