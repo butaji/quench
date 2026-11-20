@@ -1,4 +1,3 @@
-use super::property_key::PropertyKey;
 use super::*;
 
 /// Keys an object lists, held inline up to a count most objects stay within, so listing
@@ -83,7 +82,8 @@ impl<H: Host> Vm<H> {
         if let Some(slots) = self.shape_enumerable_slots(object) {
             return Some(slots.iter().map(|(atom, _)| *atom).collect());
         }
-        self.shape_enumerable_key_walk(object).map(EnumerableKeys::from_vec)
+        self.shape_enumerable_key_walk(object)
+            .map(|slots| EnumerableKeys::from_vec(slots.into_iter().map(|(atom, _)| atom).collect()))
     }
 
     /// The own enumerable string keys of `object` as atoms, in OrdinaryOwnPropertyKeys order,
@@ -157,13 +157,10 @@ impl<H: Host> Vm<H> {
         if let Some(slots) = self.enumerable_keys.get(shape) {
             return Some(slots);
         }
-        let keys = self.shape_enumerable_key_walk(object)?;
-        let entries = keys
+        let entries = self
+            .shape_enumerable_key_walk(object)?
             .into_iter()
-            .map(|atom| {
-                let slot = self.property_shape_slot(shape, PropertyKey::string(atom))?;
-                Some((atom, u32::try_from(slot).ok()?))
-            })
+            .map(|(atom, slot)| Some((atom, u32::try_from(slot).ok()?)))
             .collect::<Option<Vec<(Atom, u32)>>>()?;
         let storage_len = self.shapes[shape as usize].storage_len();
         let slots = super::enumerable_key_memo::EnumerableSlots::new(entries.into(), storage_len);
@@ -198,18 +195,17 @@ impl<H: Host> Vm<H> {
             && self.object_data(object).is_some_and(|data| !data.is_module_namespace())
     }
 
-    fn shape_enumerable_key_walk(&self, object: Value) -> Option<Vec<Atom>> {
+    /// The enumerable own string keys of `object` with their slots, in OrdinaryOwnPropertyKeys
+    /// order, each slot read once (`own_named_slots`) and its enumerability from that slot's
+    /// attributes (`own_slot_enumerable`), which no second resolve of the key repeats.
+    fn shape_enumerable_key_walk(&self, object: Value) -> Option<Vec<(Atom, usize)>> {
         if !self.shape_lists_enumerable_keys(object) {
             return None;
         }
         Some(
-            self.own_named_keys(object)
+            self.own_named_slots(object)
                 .into_iter()
-                .filter(|atom| {
-                    self.property_attributes(object, PropertyKey::string(*atom))
-                        .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
-                        .enumerable
-                })
+                .filter(|&(atom, slot)| self.own_slot_enumerable(object, atom, slot))
                 .collect(),
         )
     }

@@ -519,7 +519,8 @@ impl<H: Host> Vm<H> {
 
     /// Array.prototype.concat: the dense body (`array_concat_dense`) first, on the boxed receiver,
     /// which answers when no step can be observed; otherwise the general steps, which read each
-    /// item's `@@isConcatSpreadable` and length and copy its elements by [[Get]].
+    /// item's `@@isConcatSpreadable` (`concat_item_spreadable`) and length and copy its elements
+    /// through `copy_present_range`.
     pub(super) fn array_concat_native(
         &mut self,
         p: &ResidualProgram,
@@ -556,26 +557,40 @@ impl<H: Host> Vm<H> {
                 if next.saturating_add(length) as f64 > MAX_SAFE_INTEGER {
                     return Err(vm.type_error(p, "array concat length exceeds safe integer".into()));
                 }
-                // Present own data elements read without observing anything, and append as
-                // the definitions would.
-                if let Some(values) = vm.present_dense_elements(item, 0..length).map(|values| values.into_owned())
-                    && vm.append_dense_definitions(target, next, &values)
-                {
-                    next += length;
-                    continue;
-                }
-                for index in 0..length {
-                    let source_key = Value::number(index as f64);
-                    if vm.has_property(p, item, source_key)? {
-                        let value = vm.get_index(p, item, source_key)?;
-                        vm.create_data_property_or_throw(p, target, next, value)?;
-                    }
-                    next += 1;
-                }
+                vm.copy_present_range(p, target, next, item, 0..length)?;
+                next += length;
             }
             vm.set_array_like_length(p, target, next)?;
             Ok(target)
         })
+    }
+
+    /// The copy step of `concat` and `slice`: the indices `source_range` of `source` defined on
+    /// `target` from index `dest` on. Present own data elements of the range are defined as a run
+    /// (`append_dense_definitions`), which observes nothing; any other range goes index by index
+    /// through HasProperty, Get and CreateDataPropertyOrThrow, a hole leaving its index undefined.
+    pub(super) fn copy_present_range(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        dest: usize,
+        source: Value,
+        source_range: std::ops::Range<usize>,
+    ) -> Result<(), JsError> {
+        let (first, count) = (source_range.start, source_range.len());
+        if let Some(values) = self.present_dense_elements(source, source_range).map(|values| values.into_owned())
+            && self.append_dense_definitions(target, dest, &values)
+        {
+            return Ok(());
+        }
+        for offset in 0..count {
+            let source_key = Value::number((first + offset) as f64);
+            if self.has_property(p, source, source_key)? {
+                let value = self.get_index(p, source, source_key)?;
+                self.create_data_property_or_throw(p, target, dest + offset, value)?;
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn array_push_native(
@@ -967,13 +982,7 @@ impl<H: Host> Vm<H> {
         let result = self.array_species_create(p, object, count)?;
         // `result` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([result], |vm| {
-            for (destination, source) in (start..end).enumerate() {
-                let key = Value::number(source as f64);
-                if vm.has_property(p, object, key)? {
-                    let value = vm.get_index(p, object, key)?;
-                    vm.create_data_property_or_throw(p, result, destination, value)?;
-                }
-            }
+            vm.copy_present_range(p, result, 0, object, start..start + count)?;
             vm.set_array_like_length(p, result, count)?;
             Ok(result)
         })

@@ -1,9 +1,13 @@
-//! `String.prototype.replace` and `replaceAll` at a string pattern: the match offsets and the replaced
-//! string, once. `match_starts` is the one search of matches, which `Vm::replace_units` walks to
-//! append each replacement (its GetSubstitution where the template holds a `$`). `ascii_plan` is the
-//! flat ASCII case of the same matches: a template with no `$` is written in one fill (`write_replaced`).
+//! `String.prototype.replace` and `replaceAll` at a string pattern, and every replace's walk of its
+//! matches. `match_starts` is the one search of a string pattern's matches. `walk_matches` is the one
+//! gap-then-match step: each unmatched run of the input is handed to the caller, then each match in
+//! turn, so the replacement texts are written in input order by every caller (`Vm::replace_units`,
+//! `Vm::replace_with_callback`, the RegExp fast paths). `ascii_plan` is the flat ASCII case of the
+//! same matches: a template with no `$` is written in one fill (`replaced_ascii`).
 
+use std::convert::Infallible;
 use std::mem::MaybeUninit;
+use std::ops::Range;
 
 use crate::vm::wtf16::{JsString, MAX_STRING_UNITS, Units};
 
@@ -11,6 +15,9 @@ use crate::vm::wtf16::{JsString, MAX_STRING_UNITS, Units};
 const REPLACE_INLINE_MATCHES: usize = 8;
 /// The start offsets of the matches of a replace, in order.
 type MatchOffsets = smallvec::SmallVec<[usize; REPLACE_INLINE_MATCHES]>;
+/// The longest piece `put` writes byte by byte: two machine words, as a copy call costs more than
+/// a few bytes.
+const INLINE_PIECE_BYTES: usize = 2 * size_of::<usize>();
 
 /// The start offsets of the matches of `search` in `input`, in order: only the first unless
 /// `replace_all`. Matches of a non-empty search do not overlap, so each search starts past the
@@ -22,6 +29,35 @@ pub(crate) fn match_starts<'a>(input: Units<'a>, search: Units<'a>, replace_all:
         let next = index + advance;
         if replace_all && next <= input.len() { input.find(search, next) } else { None }
     })
+}
+
+/// One step of a replace's walk of its input: an unmatched run of input units, or a match.
+pub(crate) enum Piece<T> {
+    /// The input units between the previous match and the next (possibly empty), or the tail
+    /// after the last match.
+    Gap(Range<usize>),
+    /// A match, whose replacement the caller writes in its place.
+    Match(T),
+}
+
+/// Walks an input of `input_len` units with its `matches` in order, handing `emit` the unmatched
+/// gap before each match, then the match, then the gap after the last one. Each match's range
+/// begins at or past the previous match's end. This is the one gap-then-match order of every
+/// replace; the callers differ only in the match scan they feed it and in what a match writes.
+pub(crate) fn walk_matches<T, E>(
+    input_len: usize,
+    matches: impl IntoIterator<Item = T>,
+    range: impl Fn(&T) -> Range<usize>,
+    mut emit: impl FnMut(Piece<T>) -> Result<(), E>,
+) -> Result<(), E> {
+    let mut next = 0;
+    for found in matches {
+        let span = range(&found);
+        emit(Piece::Gap(next..span.start))?;
+        next = span.end;
+        emit(Piece::Match(found))?;
+    }
+    emit(Piece::Gap(next..input_len))
 }
 
 /// What a flat ASCII replace comes to: the receiver as it is, or the string it makes.
@@ -44,8 +80,8 @@ pub(crate) fn ascii_plan(text: &[u8], needle: &[u8], with: &[u8], replace_all: b
         return Some(ReplacePlan::Unchanged);
     }
     let length = replaced_len(text.len(), needle.len(), with.len(), offsets.len())?;
-    let string = JsString::from_ascii_filled(length, |out| write_replaced(out, text, needle.len(), with, &offsets));
-    Some(ReplacePlan::Derived(string))
+    let ranges = offsets.iter().map(|&index| index..index + needle.len());
+    Some(ReplacePlan::Derived(replaced_ascii(text, with, ranges, length)))
 }
 
 /// The length of a replace's result: `text_len` less `count` matches of `needle_len` bytes, plus
@@ -56,32 +92,40 @@ fn replaced_len(text_len: usize, needle_len: usize, with_len: usize, count: usiz
     (length <= MAX_STRING_UNITS).then_some(length)
 }
 
-/// Writes `text` into `out` with each match at `offsets` (of `needle_len` bytes) replaced by
-/// `with`. `out` is exactly the length `replaced_len` gives, and every byte of it is written
-/// (checked below), so no byte of the uninitialized storage is left unset.
-fn write_replaced(out: &mut [MaybeUninit<u8>], text: &[u8], needle_len: usize, with: &[u8], offsets: &[usize]) {
-    let mut at = 0;
-    let mut cursor = 0;
-    for &index in offsets {
-        at = put(out, at, &text[cursor..index]);
-        at = put(out, at, with);
-        cursor = index + needle_len;
-    }
-    at = put(out, at, &text[cursor..]);
-    assert_eq!(at, out.len(), "the matches fill the length `replaced_len` counted");
+/// `text` with each of `ranges` (in order, as `walk_matches` takes them) replaced by `with`,
+/// written once into storage of `length` bytes. `length` is the total the caller counted for the
+/// replace, and the write checks that every byte of the uninitialized storage is filled.
+pub(crate) fn replaced_ascii(
+    text: &[u8],
+    with: &[u8],
+    ranges: impl IntoIterator<Item = Range<usize>>,
+    length: usize,
+) -> JsString {
+    JsString::from_ascii_filled(length, |out| {
+        let mut at = 0;
+        let written = walk_matches(text.len(), ranges, Range::clone, |piece| -> Result<(), Infallible> {
+            at = match piece {
+                Piece::Gap(gap) => put(out, at, &text[gap]),
+                Piece::Match(_) => put(out, at, with),
+            };
+            Ok(())
+        });
+        written.unwrap_or_else(|never| match never {});
+        assert_eq!(at, out.len(), "the matches fill the length the replace counted");
+    })
 }
 
-/// Copies `bytes` into `out` at `at`, returning the offset past them; a single byte is one store.
+/// Copies `bytes` into `out` at `at`, returning the offset past them; a short piece is written
+/// byte by byte, as a call to copy a few bytes costs more than the bytes.
 #[inline(always)]
 fn put(out: &mut [MaybeUninit<u8>], at: usize, bytes: &[u8]) -> usize {
-    if let [byte] = bytes {
-        out[at].write(*byte);
-        return at + 1;
-    }
     let target = &mut out[at..at + bytes.len()];
-    // SAFETY: `target` has exactly `bytes.len()` slots, which `bytes` cannot overlap (it is a
-    // borrow of the heap or of the pattern text, never of `out`); `u8` and `MaybeUninit<u8>`
-    // share a layout, so the copy initializes the slots.
-    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), target.as_mut_ptr().cast::<u8>(), bytes.len()) };
+    if bytes.len() <= INLINE_PIECE_BYTES {
+        for (unit, byte) in target.iter_mut().zip(bytes) {
+            unit.write(*byte);
+        }
+    } else {
+        target.write_copy_of_slice(bytes);
+    }
     at + bytes.len()
 }

@@ -288,15 +288,16 @@ impl<H: Host> Vm<H> {
     }
 
     /// The for-in key snapshot of `object` (`Vm::for_in_start`): every enumerable string key
-    /// along its prototype chain, each once, in EnumerateObjectProperties order.
+    /// along its prototype chain, each once, in EnumerateObjectProperties order. A chain of
+    /// ordinary objects is listed by `shape_for_in_keys` in one walk. Otherwise this walk takes
+    /// the chain object by object: an ordinary object's names come from its shape through the
+    /// same per-object step (`for_in_ordinary_names`), an exotic one (Proxy, array, typed array,
+    /// String wrapper, module namespace) through its own key and [[GetOwnProperty]] reads.
     pub(super) fn object_for_in_keys(&mut self, p: &ResidualProgram, object: Value) -> Result<Value, JsError> {
-        let mut current = object;
-        if let Some(keys) = self.list_own_for_in_keys(current) {
+        if let Some(keys) = self.shape_for_in_keys(object) {
             return Ok(keys);
         }
-        if let Some(keys) = self.shape_for_in_keys(current) {
-            return Ok(self.array_of(&keys));
-        }
+        let mut current = object;
         let mut visited_objects = FxHashMap::default();
         // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.
         #[allow(clippy::mutable_key_type)]
@@ -307,35 +308,54 @@ impl<H: Host> Vm<H> {
             while !current.is_null() && !visited_objects.contains_key(&current) {
                 let current_root = self.heap.root(current);
                 visited_objects.insert(current, current_root);
-                own_keys = self
-                    .object_own_key_values(p, self.heap.root_value(current_root).unwrap())?
-                    .into_iter()
-                    .map(|key| self.heap.root(key))
-                    .collect();
-                for key in &own_keys {
-                    let Some(name) = self.heap.string(self.heap.root_value(*key).unwrap())
-                    else {
-                        continue;
-                    };
-                    let name = name.clone();
-                    if visited_names.contains(&name) {
-                        continue;
+                if self.shape_lists_enumerable_keys(self.heap.root_value(current_root).unwrap()) {
+                    // No guest code runs for an ordinary object, so its names are held unrooted
+                    // until each is rooted as a key.
+                    for (atom, enumerable) in self.for_in_ordinary_names(self.heap.root_value(current_root).unwrap()) {
+                        let name = self.atom_string(atom);
+                        let Some(text) = self.heap.string(name) else {
+                            continue;
+                        };
+                        let text = text.clone();
+                        if visited_names.contains(&text) {
+                            continue;
+                        }
+                        visited_names.insert(text);
+                        if enumerable {
+                            keys.push(self.heap.root(name));
+                        }
                     }
-                    let Some(enumerable) = self.own_property_enumerable(
-                        p,
-                        self.heap.root_value(current_root).unwrap(),
-                        self.heap.root_value(*key).unwrap(),
-                    )?
-                    else {
-                        continue;
-                    };
-                    visited_names.insert(name);
-                    if enumerable {
-                        keys.push(self.heap.root(self.heap.root_value(*key).unwrap()));
+                } else {
+                    own_keys = self
+                        .object_own_key_values(p, self.heap.root_value(current_root).unwrap())?
+                        .into_iter()
+                        .map(|key| self.heap.root(key))
+                        .collect();
+                    for key in &own_keys {
+                        let Some(name) = self.heap.string(self.heap.root_value(*key).unwrap())
+                        else {
+                            continue;
+                        };
+                        let name = name.clone();
+                        if visited_names.contains(&name) {
+                            continue;
+                        }
+                        let Some(enumerable) = self.own_property_enumerable(
+                            p,
+                            self.heap.root_value(current_root).unwrap(),
+                            self.heap.root_value(*key).unwrap(),
+                        )?
+                        else {
+                            continue;
+                        };
+                        visited_names.insert(name);
+                        if enumerable {
+                            keys.push(self.heap.root(self.heap.root_value(*key).unwrap()));
+                        }
                     }
-                }
-                for root in own_keys.drain(..) {
-                    self.heap.release_root(root);
+                    for root in own_keys.drain(..) {
+                        self.heap.release_root(root);
+                    }
                 }
                 current =
                     self.object_get_prototype_of(p, self.heap.root_value(current_root).unwrap())?;
@@ -352,84 +372,19 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    /// The for-in keys of a receiver whose prototype chain holds only plain objects
-    /// (`shape_lists_enumerable_keys`): every enumerable string key along the chain, each once,
-    /// in EnumerateObjectProperties order. The walk stops at the last object with an enumerable
-    /// key, since later objects can neither add a key nor shadow one. A name an earlier object
-    /// owns shadows the same name further on, enumerable or not (`for_in_shadowed`). The last
-    /// object's enumerable keys come from its memoized slots (`shape_enumerable_slots`); the
-    /// others are read off their own slots, enumerability from each slot's attributes. `None`
-    /// sends other chains to the generic walk.
-    fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
-        let mut last = None;
-        let mut depth = 0;
-        let mut current = receiver;
-        while !current.is_null() {
-            if !self.shape_lists_enumerable_keys(current) {
-                return None;
-            }
-            let data = self.object_data(current)?;
-            if self.has_own_enumerable_key(current) {
-                last = Some(depth);
-            }
-            current = data.proto();
-            depth += 1;
-        }
-        let Some(last) = last else {
-            return Some(Vec::new());
-        };
-        let mut visited = FxHashSet::default();
-        let mut result = Vec::new();
-        let mut current = receiver;
-        for depth in 0..=last {
-            let next = self.object_data(current)?.proto();
-            if depth == last && let Some(slots) = self.shape_enumerable_slots(current) {
-                for &(atom, _) in slots.iter() {
-                    if !Self::for_in_shadowed(&mut visited, atom, depth, last) {
-                        result.push(self.atom_string(atom));
-                    }
-                }
-            } else {
-                for (atom, slot) in self.own_named_slots(current) {
-                    let enumerable = self.own_slot_enumerable(current, atom, slot);
-                    if Self::for_in_shadowed(&mut visited, atom, depth, last) || !enumerable {
-                        continue;
-                    }
-                    result.push(self.atom_string(atom));
-                }
-            }
-            current = next;
-        }
-        Some(result)
-    }
-
-    /// Whether `atom`, an own name of chain object `depth`, is shadowed by an earlier object of
-    /// the chain. Objects before `last` record their names in `visited` for the objects after
-    /// them, whatever the names' enumerability; the last object only checks.
-    #[inline(always)]
-    fn for_in_shadowed(visited: &mut FxHashSet<Atom>, atom: Atom, depth: usize, last: usize) -> bool {
-        if depth < last {
-            !visited.insert(atom) && depth > 0
-        } else {
-            depth > 0 && visited.contains(&atom)
-        }
-    }
-
-    /// Whether `object` owns a shape-held string key that is enumerable, from its memoized slots
-    /// where it has them (`shape_enumerable_slots`).
-    fn has_own_enumerable_key(&self, object: Value) -> bool {
-        match self.shape_enumerable_slots(object) {
-            Some(slots) => !slots.is_empty(),
-            None => self
-                .own_named_slots(object)
-                .into_iter()
-                .any(|(atom, slot)| self.own_slot_enumerable(object, atom, slot)),
-        }
+    /// The own string names of ordinary `object` as atoms with their enumerability, in
+    /// OrdinaryOwnPropertyKeys order: the per-object step of a for-in walk (`shape_for_in_keys`,
+    /// `object_for_in_keys`), read from the shape's slots alone.
+    fn for_in_ordinary_names(&self, object: Value) -> Vec<(Atom, bool)> {
+        self.own_named_slots(object)
+            .into_iter()
+            .map(|(atom, slot)| (atom, self.own_slot_enumerable(object, atom, slot)))
+            .collect()
     }
 
     /// The enumerability of `object`'s own key `atom` at `slot`, read from the slot's attributes.
     /// A slot without attributes of its own is a side descriptor, or enumerable by default.
-    fn own_slot_enumerable(&self, object: Value, atom: Atom, slot: usize) -> bool {
+    pub(super) fn own_slot_enumerable(&self, object: Value, atom: Atom, slot: usize) -> bool {
         let Some(data) = self.object_data(object) else {
             return true;
         };

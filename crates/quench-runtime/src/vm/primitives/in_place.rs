@@ -1,7 +1,7 @@
 //! String methods answered from a flat receiver's units in place, without copying it.
 
 use super::*;
-use crate::staged::string_replace::{self, ReplacePlan};
+use crate::staged::string_replace::{self, Piece, ReplacePlan};
 use crate::staged::{string_search, string_split};
 use crate::vm::wtf16::Units;
 use crate::vm::wtf16::split::SplitParts;
@@ -185,14 +185,22 @@ impl<H: Host> Vm<H> {
         };
         let units = template.units();
         let substitutes = (0..units.len()).any(|index| units.at(index) == u16::from(b'$'));
+        let search_length = search.units().len();
         let mut output = crate::vm::wtf16::JsStringBuilder::default();
-        let mut cursor = 0;
-        for index in std::iter::once(first).chain(starts) {
-            output.append_slice(input, cursor..index);
-            self.append_replacement(p, &mut output, substitutes, template, input, index, search)?;
-            cursor = index + search.units().len();
-        }
-        output.append_slice(input, cursor..input.units().len());
+        string_replace::walk_matches(
+            input.units().len(),
+            std::iter::once(first).chain(starts),
+            |&index| index..index + search_length,
+            |piece| -> Result<(), JsError> {
+                match piece {
+                    Piece::Gap(gap) => {
+                        output.append_slice(input, gap);
+                        Ok(())
+                    }
+                    Piece::Match(index) => self.append_replacement(p, &mut output, substitutes, template, input, index, search),
+                }
+            },
+        )?;
         let output = self.string_build_result(p, output.finish())?;
         Ok(Some(self.heap.alloc_string(output)))
     }

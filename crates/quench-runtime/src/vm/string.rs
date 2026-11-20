@@ -1,4 +1,5 @@
 use super::*;
+use crate::staged::string_replace::{self, Piece};
 use crate::staged::strings::{ConcreteString, concrete_char_at, concrete_char_code_at};
 
 enum StringReplacement {
@@ -761,10 +762,7 @@ impl<H: Host> Vm<H> {
                 }
                 StringReplacement::Callable(method) => method,
             };
-            let Some(first) = input.find_units(search.units(), 0) else {
-                return Ok(vm.heap.alloc_string(input));
-            };
-            vm.replace_with_callback(p, &input, &search, first, method, replace_all)
+            vm.replace_with_callback(p, &input, &search, method, replace_all)
         })
     }
 
@@ -812,40 +810,45 @@ impl<H: Host> Vm<H> {
     }
 
     /// The replacement of each match of `search` in `input` by `method`'s result (coerced to a
-    /// string), from the first match at `first`: every later match for `replaceAll`. The matches
-    /// are found in the immutable `input` and `search`, which the callbacks cannot change.
+    /// string): every match for `replaceAll`, else the first. The matches are those of
+    /// `string_replace::match_starts`, found in the immutable `input` and `search`, which the
+    /// callbacks cannot change. A pattern with no match answers `input` itself, unchanged.
     fn replace_with_callback(
         &mut self,
         p: &ResidualProgram,
         input: &JsString,
         search: &JsString,
-        first: usize,
         method: Value,
         replace_all: bool,
     ) -> Result<Value, JsError> {
+        let search_length = search.units().len();
+        let mut starts = string_replace::match_starts(input.units(), search.units(), replace_all);
+        let Some(first) = starts.next() else {
+            return Ok(self.heap.alloc_string(input.clone()));
+        };
         let callback_inputs = [self.heap.alloc_string(search.clone()), self.heap.alloc_string(input.clone())];
         self.with_call_roots(callback_inputs, |vm| {
-            let search_length = search.units().len();
-            // Empty matches occur at each code-unit boundary.
-            let advance = search_length.max(1);
-            let mut position = Some(first);
-            let mut cursor = 0;
+            let [matched, whole] = callback_inputs;
             let mut output = super::wtf16::JsStringBuilder::default();
-            while let Some(index) = position {
-                output.append_slice(input, cursor..index);
-                let [matched, whole] = callback_inputs;
-                let value = vm.call_value(p, method, Value::UNDEFINED, &[matched, Value::number(index as f64), whole])?;
-                let text = vm.coerce_js_string(p, value)?;
-                output.append(&text);
-                cursor = index + search_length;
-                let next = index + advance;
-                position = if replace_all && next <= input.units().len() {
-                    input.find_units(search.units(), next)
-                } else {
-                    None
-                };
-            }
-            output.append_slice(input, cursor..input.units().len());
+            string_replace::walk_matches(
+                input.units().len(),
+                std::iter::once(first).chain(starts),
+                |&index| index..index + search_length,
+                |piece| -> Result<(), JsError> {
+                    match piece {
+                        Piece::Gap(gap) => {
+                            output.append_slice(input, gap);
+                            Ok(())
+                        }
+                        Piece::Match(index) => {
+                            let value = vm.call_value(p, method, Value::UNDEFINED, &[matched, Value::number(index as f64), whole])?;
+                            let text = vm.coerce_js_string(p, value)?;
+                            output.append(&text);
+                            Ok(())
+                        }
+                    }
+                },
+            )?;
             let output = vm.string_build_result(p, output.finish())?;
             Ok(vm.heap.alloc_string(output))
         })

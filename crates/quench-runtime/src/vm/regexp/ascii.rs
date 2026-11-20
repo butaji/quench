@@ -1,5 +1,6 @@
 //! Regexp searches of flat ASCII subjects made in place, from their bytes.
 use super::*;
+use crate::staged::string_replace;
 
 /// The result of a replace of a flat ASCII subject by a flat ASCII template with no `$`, made
 /// from both borrowed out of the heap, and whether it is too long to be a string.
@@ -52,7 +53,9 @@ impl AsciiReplace {
             .iter()
             .try_fold(bytes.len(), |length, range| (length - range.len()).checked_add(literal.len()))
             .filter(|length| *length <= super::wtf16::MAX_STRING_UNITS);
-        let output = length.filter(|_| result_used && !ranges.is_empty()).map(|length| ascii_replaced(bytes, literal, ranges, length));
+        let output = length
+            .filter(|_| result_used && !ranges.is_empty())
+            .map(|length| string_replace::replaced_ascii(bytes, literal, ranges.iter().cloned(), length));
         Some(Self { output, too_long: length.is_none() })
     }
 }
@@ -89,40 +92,6 @@ fn ascii_match_ranges(
     }
     ranges.extend(matcher.find_range_ascii(bytes, 0, false)?);
     Some(())
-}
-
-/// `bytes` with each of `ranges` replaced by `literal`, written once into storage of its
-/// total `length`.
-pub(super) fn ascii_replaced(bytes: &[u8], literal: &[u8], ranges: &[Range<usize>], length: usize) -> JsString {
-    JsString::from_ascii_filled(length, |output| {
-        let mut at = 0;
-        let mut copied = 0;
-        for range in ranges {
-            put(output, &mut at, &bytes[copied..range.start]);
-            put(output, &mut at, literal);
-            copied = range.end;
-        }
-        put(output, &mut at, &bytes[copied..]);
-        debug_assert_eq!(at, output.len(), "the pieces fill the string's length");
-    })
-}
-
-/// The longest piece `put` writes byte by byte: two machine words.
-const INLINE_PIECE_BYTES: usize = 2 * size_of::<usize>();
-
-/// `piece` written at `at` of `output`, which moves on: a short piece byte by byte, as a
-/// call to copy a few bytes costs more than the bytes.
-#[inline(always)]
-fn put(output: &mut [std::mem::MaybeUninit<u8>], at: &mut usize, piece: &[u8]) {
-    let target = &mut output[*at..*at + piece.len()];
-    if piece.len() <= INLINE_PIECE_BYTES {
-        for (unit, byte) in target.iter_mut().zip(piece) {
-            unit.write(*byte);
-        }
-    } else {
-        target.write_copy_of_slice(piece);
-    }
-    *at += piece.len();
 }
 
 impl<H: Host> Vm<H> {

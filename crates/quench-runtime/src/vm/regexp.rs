@@ -1,5 +1,6 @@
 use super::wtf16::FlatUnits;
 use super::*;
+use crate::staged::string_replace::{self, Piece};
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -1045,8 +1046,14 @@ impl<H: Host> Vm<H> {
             FastReplacement::Function(function) => function,
         };
         self.with_prepared_callback(callee, Value::UNDEFINED, |vm, prepared| -> Result<(), JsError> {
-            let mut next_source = 0;
-            for found in &matches {
+            string_replace::walk_matches(input.units().len(), matches, |found| found.range.clone(), |piece| -> Result<(), JsError> {
+                let found = match piece {
+                    Piece::Gap(gap) => {
+                        output.append_slice(input, gap);
+                        return Ok(());
+                    }
+                    Piece::Match(found) => found,
+                };
                 let position = found.range.start;
                 let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
                 let captures = found
@@ -1060,7 +1067,7 @@ impl<H: Host> Vm<H> {
                         })
                     })
                     .collect::<Vec<_>>();
-                let named = regexp_named_capture_ranges(found);
+                let named = regexp_named_capture_ranges(&found);
                 let groups = vm.regexp_groups_object(&named, input.units())?;
                 let text = vm.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
                     match replacement {
@@ -1082,12 +1089,9 @@ impl<H: Host> Vm<H> {
                         }
                     }
                 })?;
-                output.append_slice(input, next_source..position);
                 output.append(&text);
-                next_source = found.range.end;
-            }
-            output.append_slice(input, next_source..input.units().len());
-            Ok(())
+                Ok(())
+            })
         })?;
         let output = self.string_build_result(p, output.finish())?;
         Ok(self.heap.alloc_string(output))
@@ -1187,13 +1191,13 @@ impl<H: Host> Vm<H> {
             }
         }
         let mut output = super::wtf16::JsStringBuilder::default();
-        let mut next_source = 0;
-        for range in ranges {
-            output.append_slice(input, next_source..range.start);
-            output.append(template);
-            next_source = range.end;
-        }
-        output.append_slice(input, next_source..input.units().len());
+        string_replace::walk_matches(input.units().len(), ranges, Range::clone, |piece| -> Result<(), JsError> {
+            match piece {
+                Piece::Gap(gap) => output.append_slice(input, gap),
+                Piece::Match(_) => output.append(template),
+            }
+            Ok(())
+        })?;
         let output = self.string_build_result(p, output.finish())?;
         Ok(self.heap.alloc_string(output))
     }
