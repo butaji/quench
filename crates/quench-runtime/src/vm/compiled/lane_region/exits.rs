@@ -69,8 +69,9 @@ impl Lowering<'_, '_> {
     }
 
     /// The exit blocks: write back each one's registers, and an inlined callee's registers to the
-    /// window its recovery makes the activation from, then leave at the origin.
-    pub(super) fn fill_exits(&mut self) {
+    /// window its recovery makes the activation from, then leave at the origin. `None` where an
+    /// ahead body has a leave no base body entry continues (`leave_to_base`): no lane body then.
+    pub(super) fn fill_exits(&mut self) -> Option<()> {
         if super::clif_census::enabled() {
             let count = |stored: &ExitStores| [&stored.tagged, &stored.int, &stored.long, &stored.float].iter().map(|set| set.iter().count()).sum::<usize>();
             let private: Vec<(usize, usize)> = self.exits.iter().flatten().map(|exit| (count(&exit.stored), usize::from(matches!(self.unit.origins.first(), Some(_))))).collect();
@@ -89,7 +90,7 @@ impl Lowering<'_, '_> {
             for ExitBlock { stored, block } in std::mem::take(&mut self.exits[pc]) {
                 self.switch_to(block, true);
                 self.store_exit_registers(&stored);
-                if self.vm.ahead.is_some() { self.leave_to_base(pc); continue; }
+                if self.vm.ahead.is_some() { self.leave_to_base(pc)?; continue; }
                 let word = match self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end)) {
                     super::lane_unit::Origin::Caller(record) => LaneExit::At(record as usize).word(),
                     super::lane_unit::Origin::Inlined { frame, pc: record } => {
@@ -100,28 +101,31 @@ impl Lowering<'_, '_> {
                 self.return_at(word);
             }
         }
+        Some(())
     }
 
     /// Continues the activation at the base body's record this leave's origin names
     /// (`AheadLeaves`). The stores are written and the entry words are the base body's, so it runs
     /// on the same Frame; an inlined callee's registers go to the scratch window first.
     // TODO: materialize the callee's activation (`body_inlined_activation_in_lane`); AOT has no helper for it yet.
-    pub(super) fn leave_to_base(&mut self, pc: usize) {
+    /// `None` where the base body enters no record at the leave's origin.
+    pub(super) fn leave_to_base(&mut self, pc: usize) -> Option<()> {
+        let (namespace, key) = self.base_leave(pc)?;
         if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc).copied() {
             self.store_inlined_registers(pc, frame);
         }
-        let (namespace, key) = self.base_leave(pc);
         let target = crate::vm::jit_backend::symbol_address(&mut self.builder, namespace, key);
         let signature = self.builder.func.signature.clone();
         let signature = self.builder.import_signature(signature);
         let (this, captures) = self.entry_words;
         self.builder.ins().return_call_indirect(signature, target, &[self.context, this, captures, self.registers_base]);
+        Some(())
     }
 
     /// The `(namespace, key)` of the base body's entry the leave at `pc` continues at.
-    fn base_leave(&self, pc: usize) -> (u32, u32) {
+    fn base_leave(&self, pc: usize) -> Option<(u32, u32)> {
         let leaves = self.vm.ahead.expect("an ahead lowering names its base entries");
-        leaves.targets[pc].expect("a leave continues at a record the base body enters")
+        leaves.targets.get(pc).copied().flatten()
     }
 
     /// Each register of `stored` to the lane frame: its tagged bits, or its unboxed view boxed here.

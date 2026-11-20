@@ -243,11 +243,17 @@ pub(in crate::vm) struct ImageBody {
 pub(in crate::vm) fn image_body(program: &ResidualProgram, function: u32, facts: &crate::compile::aot_facts::AotFacts) -> Result<ImageBody, String> {
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let code: Vec<WideInstruction> = body.instructions().collect();
-    if !super::base_region::covers(&code) {
-        return Err("a wasm instruction has no base row".into());
+    // A dense int `switch` lowers to a `WasmBranchTable`, which the base body plans as a compare tree
+    // (`Step::Switch`); every other Wasm opcode is the Wasm tiers'.
+    let planned = |instruction: &WideInstruction| instruction.op() == crate::bytecode::Op::WasmBranchTable
+        || super::base_region::covers(std::slice::from_ref(instruction));
+    if let Some(wasm) = code.iter().find(|instruction| !planned(instruction)) {
+        return Err(format!("function {function}: the wasm instruction {:?} has no base row", wasm.op()));
     }
     let callees = Callees::proven(program, function, &code, facts);
-    let region = LoopRegion::of_function(code, &[], program.shared_register_root_masks(function)).ok_or("no loop region")?;
+    let (length, live) = (code.len(), program.shared_register_root_masks(function));
+    let reason = if length == 0 { "an empty function" } else { "no liveness masks" };
+    let region = LoopRegion::of_whole_function(code, &[], live).ok_or_else(|| format!("function {function} ({length} instructions) has no base span: {reason}"))?;
     let known = Known {
         program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
         invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],

@@ -2236,7 +2236,7 @@ pub(super) fn lower(
     }
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Leaves, now - mark); mark = now; }
     lowering.fill_call_out_stop();
-    lowering.fill_exits();
+    lowering.fill_exits()?;
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Exits, now - mark); mark = now; }
     lowering.builder.switch_to_block(stop);
     let word = lowering.builder.block_params(stop)[0];
