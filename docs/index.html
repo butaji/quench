@@ -254,8 +254,10 @@
             cursor: pointer;
             background: none;
             border: 0;
-            padding: 12px 14px;
-            margin: -12px -14px;
+            padding: 16px 14px;
+            margin: -16px -14px;
+            position: relative;
+            z-index: 1;
             border-radius: 8px;
             font-family: 'Inter', sans-serif;
             font-weight: 400;
@@ -457,7 +459,136 @@
             transform: scale(1.1) rotate(-4deg);
         }
 
-        .card { background: #111716; border-color: #111716; }
+        /* ─── Assembly Loading Animation ─── */
+        .card {
+            opacity: 0.01;
+            transform: scale(0.92) translateY(30px);
+            animation: assembleCard 0.70s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+                       cardSolid 0.50s ease forwards;
+            animation-delay: 0.10s, 1.30s;
+        }
+
+        @keyframes assembleCard {
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .brand-panel {
+            opacity: 0.01;
+            transform: translateX(-60px);
+            animation: slideInRight 0.60s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.35s;
+        }
+
+        .metal-panel {
+            opacity: 0.01;
+            transform: translateX(60px);
+            animation: slideInLeft 0.60s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.45s;
+        }
+
+        .divider {
+            transform: scaleX(0);
+            animation: expandX 0.40s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+                       fadeIn 0.30s ease forwards;
+            animation-delay: 0.55s, 1.20s;
+        }
+
+        .orange-panel {
+            opacity: 0.01;
+            transform: translateY(50px);
+            animation: slideInUp 0.60s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.65s;
+        }
+
+        .content-panel {
+            opacity: 0.01;
+            transform: translateX(60px);
+            animation: slideInLeft 0.60s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.75s;
+        }
+
+        .github-link {
+            opacity: 0.01;
+            transform: translateY(-20px);
+            animation: slideInDown 0.50s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 1.00s;
+        }
+
+        .nav-row,
+        .code-block {
+            opacity: 0.01;
+            animation: fadeIn 0.50s ease forwards;
+        }
+
+        .nav-row   { animation-delay: 0.90s; }
+        .code-block { animation-delay: 1.05s; }
+
+        .brand-text,
+        .brand-dot {
+            opacity: 0.01;
+            animation: fadeIn 0.40s ease forwards;
+            animation-delay: 0.55s;
+        }
+
+        .stripes {
+            opacity: 0.01;
+            transform: scaleY(0);
+            transform-origin: top;
+            animation: expandY 0.40s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.85s;
+        }
+
+        .metric-area {
+            opacity: 0.01;
+            animation: fadeIn 0.40s ease forwards;
+            animation-delay: 1.00s;
+        }
+
+        @keyframes slideInRight {
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes slideInLeft {
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes slideInUp {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes slideInDown {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes expandX {
+            to { transform: scaleX(1); }
+        }
+
+        @keyframes expandY {
+            to { opacity: 1; transform: scaleY(1); }
+        }
+
+        @keyframes cardSolid {
+            to {
+                background: #111716;
+                border-color: #111716;
+            }
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+    
+        @media (prefers-reduced-motion: reduce) {
+            .card, .brand-panel, .metal-panel, .divider, .orange-panel, .content-panel, .github-link,
+            .nav-row, .code-block, .brand-text, .brand-dot, .stripes, .metric-area, .dots, .scroll-hint {
+                animation: none !important; opacity: 1 !important; transform: none !important;
+            }
+            .card { background: #111716; border-color: #111716; }
+        }
 
         /* ─── Carousel UX ─── */
         .nav-arrow:focus-visible,
@@ -486,7 +617,7 @@
             display: flex;
             gap: 6px;
             margin-top: 1rem;
-            opacity: 0;
+            opacity: 0.01;
             animation: fadeIn 0.5s ease forwards;
             animation-delay: 1.05s;
         }
@@ -495,7 +626,12 @@
             flex: 1;
             height: 4px;
             border: 0;
-            padding: 0;
+            padding: 18px 0;
+            margin: -18px 0;
+            position: relative;
+            z-index: 1;
+            background-clip: content-box;
+            box-sizing: content-box;
             border-radius: 2px;
             background: #D4D4D4;
             cursor: pointer;
@@ -519,9 +655,9 @@
             padding: 6px 12px;
             border-radius: 8px;
             z-index: 10;
-            opacity: 0;
+            opacity: 0.01;
             animation: fadeIn 0.5s ease forwards;
-            animation-delay: 1.4s;
+            animation-delay: 1.40s;
         }
 
         .scroll-hint:hover { color: #EF5102; }
