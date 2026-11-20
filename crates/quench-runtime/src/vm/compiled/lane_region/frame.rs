@@ -442,6 +442,14 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
             .expect("a numeric operand is a register or an immediate"))
     }
 
+    /// A register its facts prove an int32: its int view, whose test (if any) never fails.
+    fn held_int(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand) -> Option<ir::Value> {
+        let register = operand.register_index()?;
+        if !self.state.values[usize::from(register)].value.ty.is_subtype(Type::INT32) { return None; }
+        let miss = crate::staged::NumericFrame::miss(self);
+        Some(register_int_value(stage.builder, self.registers, self.state, register, miss))
+    }
+
     fn number_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
         miss: ir::Block) -> Option<ir::Value> {
         Some(operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
