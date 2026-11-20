@@ -117,10 +117,11 @@ impl<H: Host> Vm<H> {
             args.first().copied().unwrap_or(Value::UNDEFINED),
             args.get(1).copied().unwrap_or(Value::UNDEFINED),
         ];
-        let mut result = String::new();
+        let separator = JsString::from_str(",");
+        let mut result = super::wtf16::JsStringBuilder::default();
         for index in 0..length {
             if index != 0 {
-                result.push(',');
+                result.append(&separator);
             }
             let value = self.get_index(p, object, Value::number(index as f64))?;
             if value.is_null() || value.is_undefined() {
@@ -131,9 +132,11 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "toLocaleString is not callable".into()));
             }
             let element = self.call_value(p, method, value, &invoke_arguments)?;
-            result.push_str(&self.to_string(p, element)?);
+            // The element's units are appended as they are, so a lone surrogate survives.
+            result.append(&self.coerce_js_string(p, element)?);
         }
-        Ok(self.heap.alloc_string(result.into()))
+        let output = self.string_build_result(p, result.finish())?;
+        Ok(self.heap.alloc_string(output))
     }
 
     fn array_of_native(

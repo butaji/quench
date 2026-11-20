@@ -791,25 +791,29 @@ impl<H: Host> Vm<H> {
                         return Ok(entries.value_at(index));
                     }
                 let value = match native {
+                    // Nothing ran since the miss above, so the key is still absent and the plain
+                    // arm inserts without probing again.
                     Native::MapGetOrInsert => args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     Native::MapGetOrInsertComputed => {
                         let callback = computed_callback.unwrap_or(Value::UNDEFINED);
                         let canonical_key = canonicalize_keyed_collection_key(key);
-                        self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?
+                        let value = self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
+                        // The callback may have inserted the key, so only this arm probes again.
+                        if let Some(index) = self.map_entry_index_hashed(this, key, key_hash) {
+                            if let Some(entries) = self.heap.map_entries_mut(this) {
+                                entries.set_value(index, value);
+                            }
+                            return Ok(value);
+                        }
+                        value
                     }
                     _ => unreachable!("Map get-or-insert dispatch is exhaustive"),
                 };
-                if let Some(index) = self.map_entry_index_hashed(this, key, key_hash) {
-                    if let Some(entries) = self.heap.map_entries_mut(this) {
-                        entries.set_value(index, value);
+                self.heap.grow_collection_payload(this, |storage| {
+                    if let CollectionStorage::Map(entries) = storage {
+                        entries.push((key, value), key_hash);
                     }
-                } else {
-                    self.heap.grow_collection_payload(this, |storage| {
-                        if let CollectionStorage::Map(entries) = storage {
-                            entries.push((key, value), key_hash);
-                        }
-                    });
-                }
+                });
                 Ok(value)
             }
             Native::MapGroupBy => self.group_by(p, args, GroupByKind::Map),

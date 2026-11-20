@@ -152,6 +152,26 @@ pub(crate) fn sign<S: NumericStage>(stage: &mut S, number: S::Word) -> S::Word {
     stage.select(kept, number, unit)
 }
 
+/// `2^52`, the binary64 whose unit in the last place is one: adding it to a binary64 in `[0, 2^52)` leaves no
+/// fraction bits, so the addition itself rounds the value to an integer, ties to even.
+const ROUNDING_BIAS: f64 = 4_503_599_627_370_496.0;
+
+/// ToUint8Clamp of the binary64 `number`, the one body the interpreter (`Concrete::clamp_u8`), the b-jit stencil
+/// (`units::clamp_u8`) and `number_to_uint8_clamp` share: NaN and anything at or below zero give 0, `u8::MAX` and
+/// above give `u8::MAX`, and the rest round to the nearest integer, ties to even. Where `number` lies in
+/// `(0, u8::MAX)`, `number + 2^52` is `2^52` plus that integer, so the integer is the low byte of the sum's bits.
+/// The constants are immediates (`machine::constant`), so the stencil build holds no constant pool.
+#[inline(always)]
+pub(crate) fn clamp_u8(number: f64) -> u8 {
+    if !(number > machine::constant(0.0)) {
+        return 0;
+    }
+    if number >= machine::constant(f64::from(u8::MAX)) {
+        return u8::MAX;
+    }
+    (number + machine::constant(ROUNDING_BIAS)).to_bits() as u8
+}
+
 /// The fraction of the halfway point between two integers: `Math.round` rounds up at it, and
 /// binary16 rounds to even at it.
 pub(crate) const ROUND_HALF: f64 = 0.5;

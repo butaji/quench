@@ -352,50 +352,93 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    /// for-in keys of an object whose prototype chain holds only objects with
-    /// shape-held keys (`shape_lists_enumerable_keys`). The
-    /// keys and their order are those of the generic walk; prototypes after
-    /// the last one with an enumerable key are skipped, since they can neither
-    /// add a key nor shadow one. `None` sends other chains to the generic walk.
+    /// The for-in keys of a receiver whose prototype chain holds only plain objects
+    /// (`shape_lists_enumerable_keys`): every enumerable string key along the chain, each once,
+    /// in EnumerateObjectProperties order. The walk stops at the last object with an enumerable
+    /// key, since later objects can neither add a key nor shadow one. A name an earlier object
+    /// owns shadows the same name further on, enumerable or not (`for_in_shadowed`). The last
+    /// object's enumerable keys come from its memoized slots (`shape_enumerable_slots`); the
+    /// others are read off their own slots, enumerability from each slot's attributes. `None`
+    /// sends other chains to the generic walk.
     fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
-        let mut chain = Vec::new();
+        let mut last = None;
+        let mut depth = 0;
         let mut current = receiver;
         while !current.is_null() {
-            let plain = self.shape_lists_enumerable_keys(current);
-            let prototype = self.object_data(current).filter(|_| plain)?.proto();
-            let keys = self
-                .own_named_keys(current)
-                .into_iter()
-                .map(|atom| {
-                    let enumerable = self
-                        .property_attributes(current, PropertyKey::string(atom))
-                        .is_none_or(|attributes| attributes.enumerable);
-                    (atom, enumerable)
-                })
-                .collect::<Vec<_>>();
-            chain.push(keys);
-            current = prototype;
+            if !self.shape_lists_enumerable_keys(current) {
+                return None;
+            }
+            let data = self.object_data(current)?;
+            if self.has_own_enumerable_key(current) {
+                last = Some(depth);
+            }
+            current = data.proto();
+            depth += 1;
         }
-        let Some(last) = chain
-            .iter()
-            .rposition(|keys| keys.iter().any(|(_, enumerable)| *enumerable))
-        else {
+        let Some(last) = last else {
             return Some(Vec::new());
         };
         let mut visited = FxHashSet::default();
         let mut result = Vec::new();
-        for keys in &chain[..=last] {
-            for &(atom, enumerable) in keys {
-                if last > 0 && !visited.insert(atom) {
-                    continue;
+        let mut current = receiver;
+        for depth in 0..=last {
+            let next = self.object_data(current)?.proto();
+            if depth == last && let Some(slots) = self.shape_enumerable_slots(current) {
+                for &(atom, _) in slots.iter() {
+                    if !Self::for_in_shadowed(&mut visited, atom, depth, last) {
+                        result.push(self.atom_string(atom));
+                    }
                 }
-                if enumerable {
-                    let name = self.atom_value(atom);
-                    result.push(self.intern_dynamic_value(name));
+            } else {
+                for (atom, slot) in self.own_named_slots(current) {
+                    let enumerable = self.own_slot_enumerable(current, atom, slot);
+                    if Self::for_in_shadowed(&mut visited, atom, depth, last) || !enumerable {
+                        continue;
+                    }
+                    result.push(self.atom_string(atom));
                 }
             }
+            current = next;
         }
         Some(result)
+    }
+
+    /// Whether `atom`, an own name of chain object `depth`, is shadowed by an earlier object of
+    /// the chain. Objects before `last` record their names in `visited` for the objects after
+    /// them, whatever the names' enumerability; the last object only checks.
+    #[inline(always)]
+    fn for_in_shadowed(visited: &mut FxHashSet<Atom>, atom: Atom, depth: usize, last: usize) -> bool {
+        if depth < last {
+            !visited.insert(atom) && depth > 0
+        } else {
+            depth > 0 && visited.contains(&atom)
+        }
+    }
+
+    /// Whether `object` owns a shape-held string key that is enumerable, from its memoized slots
+    /// where it has them (`shape_enumerable_slots`).
+    fn has_own_enumerable_key(&self, object: Value) -> bool {
+        match self.shape_enumerable_slots(object) {
+            Some(slots) => !slots.is_empty(),
+            None => self
+                .own_named_slots(object)
+                .into_iter()
+                .any(|(atom, slot)| self.own_slot_enumerable(object, atom, slot)),
+        }
+    }
+
+    /// The enumerability of `object`'s own key `atom` at `slot`, read from the slot's attributes.
+    /// A slot without attributes of its own is a side descriptor, or enumerable by default.
+    fn own_slot_enumerable(&self, object: Value, atom: Atom, slot: usize) -> bool {
+        let Some(data) = self.object_data(object) else {
+            return true;
+        };
+        match self.slot_attributes(data, slot) {
+            Some(attributes) => attributes.enumerable,
+            None => self
+                .side_descriptor(object, PropertyKey::string(atom))
+                .is_none_or(|attributes| attributes.enumerable),
+        }
     }
 
     pub(super) fn object_for_in_key_is_enumerable(

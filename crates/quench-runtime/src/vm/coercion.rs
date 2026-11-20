@@ -279,12 +279,10 @@ impl<H: Host> Vm<H> {
             }
             _ => {}
         }
-        if let Some(atom) = self.lookup_atom("valueOf") {
-            let function = self.get_property(program, value, atom)?;
-            if !function.is_undefined() {
-                let result = self.call_value(program, function, value, &[])?;
-                return self.to_number(program, result);
-            }
+        let function = self.get_property(program, value, self.runtime_atoms.value_of)?;
+        if !function.is_undefined() {
+            let result = self.call_value(program, function, value, &[])?;
+            return self.to_number(program, result);
         }
         Ok(f64::NAN)
     }
@@ -315,20 +313,16 @@ impl<H: Host> Vm<H> {
             Some(Cell::Date { milliseconds, .. }) => return Ok(milliseconds.to_string()),
             _ => {}
         }
-        if let Some(atom) = self.lookup_atom("toString") {
-            let function = self.get_property(program, value, atom)?;
-            if self.is_function(function) {
-                let result = self.call_value(program, function, value, &[])?;
-                return self.to_string(program, result);
-            }
+        let function = self.get_property(program, value, self.runtime_atoms.to_string)?;
+        if self.is_function(function) {
+            let result = self.call_value(program, function, value, &[])?;
+            return self.to_string(program, result);
         }
-        if let Some(atom) = self.lookup_atom("valueOf") {
-            let function = self.get_property(program, value, atom)?;
-            if self.is_function(function) {
-                let result = self.call_value(program, function, value, &[])?;
-                if !result.is_heap() || self.heap.is_string(result) {
-                    return self.to_string(program, result);
-                }
+        let function = self.get_property(program, value, self.runtime_atoms.value_of)?;
+        if self.is_function(function) {
+            let result = self.call_value(program, function, value, &[])?;
+            if !result.is_heap() || self.heap.is_string(result) {
+                return self.to_string(program, result);
             }
         }
         Ok("[object Object]".into())

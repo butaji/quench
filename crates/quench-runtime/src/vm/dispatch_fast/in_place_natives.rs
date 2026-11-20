@@ -43,6 +43,21 @@ impl<H: Host> Vm<H> {
         }
         value
     }
+
+    /// `fast_declined` for `indexOf` and `includes`, whose dense walk (`dense_search_resume`)
+    /// can stop at a hole with the general steps still to run: the walk's index is recorded
+    /// with `declined_fast`, so the general native resumes there.
+    #[inline(always)]
+    pub(in crate::vm) fn fast_search_declined(&mut self, native: Native, found: Result<Value, Option<usize>>) -> Option<Value> {
+        match found {
+            Ok(value) => Some(value),
+            Err(resume) => {
+                self.declined_fast = Some(native);
+                self.declined_resume = resume;
+                None
+            }
+        }
+    }
 }
 
 /// `in_place_native_value` after its steady case: a native's in-place row (`in_place_row_value`),

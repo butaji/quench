@@ -50,6 +50,7 @@ impl<H: Host> Vm<H> {
             native_microtask_running: _,
             queue_resumed: _,
             declined_fast: _,
+            declined_resume: _,
             shared_entry_pair: _,
             share_entry_pair: _,
             main_realm,

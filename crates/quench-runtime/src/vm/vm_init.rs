@@ -16,6 +16,7 @@ impl<H: Host> Vm<H> {
             queue_resumed: Value::UNDEFINED,
             unobserved_jobs_entered: false,
             declined_fast: None,
+            declined_resume: None,
             job_queue_programs: Vec::new(),
             queue_chains: false,
             chainable_job: false,

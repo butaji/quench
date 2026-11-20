@@ -191,7 +191,6 @@ impl<H: Host> Vm<H> {
             }
             vm.set_array_like_length(p, removed, delete_count)?;
 
-            let items = args.iter().copied().skip(2).collect::<Vec<_>>();
             let new_length = length
                 .checked_sub(delete_count)
                 .and_then(|length| length.checked_add(items.len()))
@@ -219,7 +218,7 @@ impl<H: Host> Vm<H> {
                     )?;
                 }
             }
-            for (offset, value) in items.into_iter().enumerate() {
+            for (offset, value) in items.iter().copied().enumerate() {
                 vm.set_index_mode(
                     p,
                     object,
@@ -628,15 +627,14 @@ impl<H: Host> Vm<H> {
         this: Value,
         range: std::ops::Range<usize>,
     ) -> Option<std::borrow::Cow<'_, [Value]>> {
-        let view = self.array_read_view(this)?;
-        let elements = view.get(range.clone())?;
+        let elements = match self.array_read_view(this)? {
+            std::borrow::Cow::Borrowed(all) => std::borrow::Cow::Borrowed(all.get(range)?),
+            std::borrow::Cow::Owned(all) => std::borrow::Cow::Owned(all.get(range)?.to_vec()),
+        };
         if !elements.iter().all(|value| !value.is_deleted()) {
             return None;
         }
-        Some(match view {
-            std::borrow::Cow::Borrowed(all) => std::borrow::Cow::Borrowed(&all[range]),
-            std::borrow::Cow::Owned(all) => std::borrow::Cow::Owned(all[range].to_vec()),
-        })
+        Some(elements)
     }
 
     /// CreateDataPropertyOrThrow of `values` at indices `start..` of `array`, a dense array
@@ -1130,20 +1128,26 @@ impl<H: Host> Vm<H> {
         Ok(crate::units::relative_index(self.to_number(p, value)?, length))
     }
 
-    /// Array.prototype.includes: the dense search (`dense_search_call`) first, which decides a
+    /// Array.prototype.includes: the dense search (`dense_search_resume`) first, which decides a
     /// dense array from an immediate or absent `fromIndex`; otherwise the general steps, which
     /// resume the dense search at a hole a prototype may hold and read the rest by [[Get]].
+    /// A dispatcher's declined walk (`fast_search_declined`) supplies its resume index instead.
     pub(super) fn array_includes_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if self.declined_fast.take() != Some(Native::ArrayIncludes)
-            && let Some(found) = self.dense_search_call(Native::ArrayIncludes, this, args)
-        {
-            return Ok(found);
-        }
+        let declined = self.declined_fast.take() == Some(Native::ArrayIncludes);
+        let recorded = self.declined_resume.take();
+        let resume = if declined {
+            recorded
+        } else {
+            match self.dense_search_resume(Native::ArrayIncludes, this, args) {
+                Ok(found) => return Ok(found),
+                Err(resume) => resume,
+            }
+        };
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
@@ -1156,12 +1160,17 @@ impl<H: Host> Vm<H> {
             .map(|value| self.to_number(p, value))
             .transpose()?
             .unwrap_or(0.0);
-        let mut start = crate::units::relative_index(from, length);
-        match self.search_dense(object, start..length, false, search, Match::SameValueZero) {
-            Search::Found(_) => return Ok(Value::TRUE),
-            Search::Missing => return Ok(Value::FALSE),
-            Search::Resume(index) => start = index,
-        }
+        let start = match resume {
+            Some(index) => index,
+            None => {
+                let range = crate::units::relative_index(from, length);
+                match self.search_dense(object, range..length, false, search, Match::SameValueZero) {
+                    Search::Found(_) => return Ok(Value::TRUE),
+                    Search::Missing => return Ok(Value::FALSE),
+                    Search::Resume(index) => index,
+                }
+            }
+        };
         for index in start..length {
             let value = self.get_index(p, object, Value::number(index as f64))?;
             if self.same_value_zero(value, search) {

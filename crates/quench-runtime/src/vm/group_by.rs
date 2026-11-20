@@ -124,11 +124,13 @@ impl<H: Host> Vm<H> {
             GroupByKind::Object => {
                 if self.heap.is_symbol(key) {
                     self.symbol_property(result, key)
-                } else if let Some(name) = self.heap.string(key).cloned() {
-                    let atom = self.intern_js_atom(&name);
-                    self.own_property(result, atom)
                 } else {
-                    unreachable!("ToPropertyKey returns a string or symbol")
+                    // The atom is interned once and recorded on the key, so the group-creating
+                    // path below reads it back instead of interning the key again.
+                    let Some(atom) = self.string_key_atom(key) else {
+                        unreachable!("ToPropertyKey returns a string or symbol")
+                    };
+                    self.own_property(result, atom)
                 }
             }
             GroupByKind::Map => self.map_entry_index(result, key).map(|index| {
@@ -151,8 +153,7 @@ impl<H: Host> Vm<H> {
                 GroupByKind::Object => {
                     if self.heap.is_symbol(key) {
                         self.set_index(p, result, key, group)?;
-                    } else if let Some(name) = self.heap.string(key).cloned() {
-                        let atom = self.intern_js_atom(&name);
+                    } else if let Some(atom) = self.string_key_atom(key) {
                         self.set_property(result, atom, group)?;
                     } else {
                         unreachable!("ToPropertyKey returns a string or symbol");

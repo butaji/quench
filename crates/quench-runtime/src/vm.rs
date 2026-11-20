@@ -96,6 +96,9 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// ToPrimitive's method names, read on every object-to-primitive conversion.
+    value_of: Atom,
+    to_string: Atom,
     /// The iterator protocol's step method.
     next: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
@@ -2016,6 +2019,10 @@ pub(crate) struct Vm<H> {
     /// about to reach its general native, so that native skips that body (the one-shot flag is
     /// taken at each such native's entry, and cleared at each dispatcher attempt).
     declined_fast: Option<Native>,
+    /// The index a declined `indexOf` or `includes` dense walk stopped at (`Err(Some(index))` of
+    /// `dense_search_resume`), recorded with `declined_fast` naming that native and taken with it
+    /// by the general native, which resumes its steps there instead of rescanning the prefix.
+    declined_resume: Option<usize>,
     /// The programs the running job queues return to, innermost last (`Vm::run_job_queue`):
     /// an await's job leaves its function's program active for the queue's next jobs, so a
     /// collection keeps each of these, which the queue makes active again when it ends.
@@ -3487,6 +3494,8 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            value_of: self.intern_atom("valueOf"),
+            to_string: self.intern_atom("toString"),
             next: self.intern_atom("next"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),

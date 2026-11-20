@@ -93,25 +93,34 @@ impl<H: Host> Vm<H> {
     }
 
     /// `Array.prototype.indexOf` or `includes` (`native`) of an array from an integer or absent
-    /// `fromIndex` that the view decides alone; `None` leaves any other call to the generic
-    /// algorithm.
-    pub(super) fn dense_search_call(&self, native: Native, array: Value, args: &[Value]) -> Option<Value> {
+    /// `fromIndex` that the view decides alone: `Ok` is the answer. `Err(None)` when the view
+    /// declined before walking; `Err(Some(index))` when the walk stopped at a hole a prototype
+    /// may fill, having covered every index before `index` from `fromIndex`. The generic
+    /// algorithm resumes at that index rather than searching the prefix again.
+    pub(super) fn dense_search_resume(&self, native: Native, array: Value, args: &[Value]) -> Result<Value, Option<usize>> {
         // One proof of the backing serves the length and the search.
-        let elements = self.array_search_elements(array)?;
+        let Some(elements) = self.array_search_elements(array) else {
+            return Err(None);
+        };
         let length = elements.len();
         let start = match args.get(1) {
             None => 0,
-            Some(from) => crate::units::relative_index(f64::from(from.as_int()?), length),
+            Some(from) => {
+                let Some(from) = from.as_int() else {
+                    return Err(None);
+                };
+                crate::units::relative_index(f64::from(from), length)
+            }
         };
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         let includes = native == Native::ArrayIncludes;
         let mode = if includes { Match::SameValueZero } else { Match::Strict };
-        Some(match self.search_elements(elements, array, start..length, false, search, mode) {
+        Ok(match self.search_elements(elements, array, start..length, false, search, mode) {
             Search::Found(_) if includes => Value::TRUE,
             Search::Found(index) => Value::number(index as f64),
             Search::Missing if includes => Value::FALSE,
             Search::Missing => Value::number(-1.0),
-            Search::Resume(_) => return None,
+            Search::Resume(index) => return Err(Some(index)),
         })
     }
 }
