@@ -20763,7 +20763,12 @@ impl<H: Host> Vm<H> {
                 unsafe { restore_context_in_lane(cx, std::ptr::read(&prepared.caller)) };
                 // SAFETY: the lane's program outlives its run.
                 let code = unsafe { &*prepared.caller.code };
-                let executing = super::dispatch_frame::ExecutingProgram { id: program, retained: prepared.executing.retained.take() };
+                // The program the run left in: a frame call the lane made into another program
+                // switched it (`push_frame_call_in_lane`), and the general loop resumes there.
+                let executing = super::dispatch_frame::ExecutingProgram {
+                    id: std::mem::replace(&mut prepared.executing.id, program),
+                    retained: prepared.executing.retained.take(),
+                };
                 let exited = super::dispatch_frame::LaneExit { executing, raised };
                 let result = self.run_frames_after_lane_exit(code, frame, &mut prepared.pending, exited);
                 debug_assert_eq!(self.frames.len(), site.frames + 1, "the loop leaves the callback's frame");
