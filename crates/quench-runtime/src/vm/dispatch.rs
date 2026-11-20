@@ -723,7 +723,9 @@ impl<H: Host> Vm<H> {
         if i.result_flags() == 0 || i.op().result_layout().allowed_flags() == 0 {
             return Self::decode_row(i, context).map(|operation| (operation, 0));
         }
-        crate::staged::Operation::<u64, ()>::decode_completed(i, context)
+        // Every decoder the row takes (`decode_row`: the general one, a name load, the lane's), over the record without its flags.
+        let (plain, flags) = crate::staged::Operation::<u64, ()>::completion_split(i)?;
+        Self::decode_row(plain, context).map(|operation| (operation, flags))
     }
 
     /// Runs `operation` as its staged row, then completes the frame as the record asks: a return of the
