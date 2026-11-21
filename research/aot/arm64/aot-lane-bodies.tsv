@@ -127,3 +127,11 @@ tier_net_negative	so the lane-body tier is net-negative on this corpus by constr
 # Making it pay needs the entry contract to prove what the body assumes (shape/value kinds at the
 # entry, one check per region) rather than optimistic per-row guards, i.e. the "prove facts once
 # per region" work — not more op coverage.
+# Startup: the 0.73 s figure was cold page-in (2026-11-21).
+startup_warm	measured five times in a row (page cache warm, the same basis Node's number was taken on):
+# empty program, image 0.00 s vs node 0.03-0.04 s; Basic image 4.48-4.50 s (first run 5.16 s) vs node
+# 0.25 s. The image's *startup* is at or below Node's; the earlier 0.62-0.73 s on an empty program was
+# the first (cold) run reading the 56.5 MB binary from disk, not start-up work.
+startup_correction	so "AOT time better than Node and Bun" holds for start-up on this host when measured the
+# way Node's is: image 0.00 s vs node 0.03 s on an empty program. What does not hold is the row's
+# execution time (Basic 4.48 s vs node 0.25 s), which is the compiled-code gap, not the image's size.
