@@ -37,6 +37,11 @@ lane_handler! {
     pub(in crate::vm::dispatch_fast) fn fused_rows<A: u16, B: u16, BACKWARD: bool, FAMILY: u8, TEST: u16, PREFIX: u16, CMP: u8>(cx, r, ip, i, view) {
         // The settings word of this record (the pair's head), read before `B`'s record is named.
         let mode = i.mode;
+        // A proven loop step (`PROVEN_STEP` of `CMP`, `prove_loop_steps`): `A` is `i++` of a register the
+        // view's int32 kinds prove (`int_kinds`), read with no tag test, and the test's left operand is
+        // that register, whose new value this record holds. Its decrement flag is clear.
+        let proven = const { FAMILY == crate::staged::FUSED_TARGET && CMP & PROVEN_STEP != 0 };
+        let mut held: u64 = 0;
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
@@ -49,8 +54,10 @@ lane_handler! {
             let mut frame = row_frame::<H, A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             let raw_result = mode & crate::staged::raw_bit(0) != 0;
             frame.raw_result = raw_result;
+            if proven { frame.operands_int = true; }
             match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
+                    held = value;
                     if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) } && mode & crate::staged::MODE_DEAD_FIRST == 0 {
                         r.set(i.a, raw_word(raw_result, value));
                     }
@@ -58,7 +65,9 @@ lane_handler! {
                 Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<A>::OPCODE) }, r, ip, view),
             }
         }}; }
-        if LaneFields::<A>::FLAG_ROLE {
+        if proven && LaneFields::<A>::FLAG_ROLE {
+            step_a!(FLAG_CLEAR)
+        } else if LaneFields::<A>::FLAG_ROLE {
             if i.imm() != 0 { step_a!(FLAG_SET) } else { step_a!(FLAG_CLEAR) }
         } else if const { FAMILY == crate::staged::FUSED_WINDOW } {
             step_a!(FLAG_WINDOW)
@@ -89,7 +98,11 @@ lane_handler! {
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(LaneControl::Edge(Edge::Target)) => {
                     if const { FAMILY == crate::staged::FUSED_TARGET } {
-                        target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, CMP)
+                        if proven {
+                            target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, { CMP & !PROVEN_STEP }, held)
+                        } else {
+                            target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, { CMP & !PROVEN_STEP })
+                        }
                     } else {
                         resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None))
                     }
