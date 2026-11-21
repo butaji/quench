@@ -1991,11 +1991,9 @@ impl ProgramStore {
     }
 
     pub(super) fn enable_js_lane_methods(&mut self) {
-        // AArch64's lane-body tier miscompiles a loop whose body calls a function that steps out
-        // (`typeof` in a callee runs extra iterations; `--u-jit`, `--no-jit` and memory-first are
-        // exact), so it stays out of every mode there while the loop regions (which the policy's
-        // `js_function_tiers` admits) compile and run. Debt (TOD-1202): the tier returns when that
-        // call continuation is fixed.
+        // AArch64's lane-body tier is exact but slower than the interpreter on this corpus until
+        // its bodies stop leaving mid-body (`ty2`/`raytrace` leaves at At(5)/At(16)/At(23)), so it
+        // stays out of every mode there while the loop regions compile and run. Debt (TOD-1202).
         #[cfg(target_arch = "aarch64")]
         return;
         #[cfg(not(target_arch = "aarch64"))]

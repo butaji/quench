@@ -959,6 +959,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// (`JsStepDispatch::exit_line`).
     #[track_caller]
     fn exit(&mut self, state: &mut State, pc: u32) {
+
         if self.vm.diagnostics && !self.completion.numeric() {
             let line = self.raw_const(Lane::I64, i64::from(std::panic::Location::caller().line()));
             self.store_word(regions::dispatch(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
@@ -1000,6 +1001,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// filled after the region, since the current block is still open.
     #[track_caller]
     fn guard_exit(&mut self, state: &State, pc: u32) -> ir::Block {
+
         if self.proving_entry {
             let builder = &mut self.builder;
             return *self.entry_exit.get_or_insert_with(|| cold_block(builder));
@@ -3815,6 +3817,15 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         };
+        // A construction the op match did not take as one (`is_construction` needs the site's
+        // invocation) is still a construction here: it has no direct callee to call, and its
+        // own lowering makes it by the site's plan (`constructions::construct`).
+        if site.constructs() {
+            return match self.construct(state, pc, instruction) {
+                Some(falls) => falls,
+                None => { self.exit(state, pc as u32); false }
+            };
+        }
         // An image body makes a call its helper misses by the interpreter's step, and continues (`fill_stepped_miss`).
         let stepped = self.stepped_record(pc);
         let missed = if stepped.is_none() { self.guard_exit(state, pc as u32) } else { cold_block(&mut self.builder) };
