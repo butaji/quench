@@ -3567,8 +3567,18 @@ script_handler! {
         match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
             Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
             Step::Control(_) | Step::Unresolved => {
-                requicken::<H>(ip, generic);
-                sibling!(generic, r, ip, view)
+                // An int32 form whose result left int32 (`h * 31` overflowing, a fraction) widens to
+                // its Number form over the same operands, not to the generic row: only a pair the
+                // Number form refuses too goes generic.
+                let widened: Handler = if const { FORM == OPERANDS_REGISTER_INT32 } {
+                    operator_row::<H, OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT> as Handler
+                } else if const { FORM == OPERANDS_INT32 } {
+                    operator_row::<H, OP, ACC, OPERATOR, OPERANDS_ANY> as Handler
+                } else {
+                    generic
+                };
+                requicken::<H>(ip, widened);
+                sibling!(widened, r, ip, view)
             }
         }
     }
