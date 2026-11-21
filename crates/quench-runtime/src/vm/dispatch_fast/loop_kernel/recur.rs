@@ -484,7 +484,50 @@ impl Fold {
         true
     }
 
+    /// `(s ± c) | 0` with `c` an int32 scalar, in closed form: the binary64 sum of two int32s is
+    /// exact, so each step is the wrapping int32 sum, and `len` of them add `c * len` modulo 2^32
+    /// (`c - s` alternates between two values). `false` (nothing done) where `s` is no int32.
+    fn run_constant(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) -> bool {
+        let Arg::Scalar(_) = self.operand else { return false };
+        if !self.int32 || self.outs != [None, None] || len == 0 {
+            return false;
+        }
+        let entry = phis[0] as i32;
+        if f64::from(entry) != phis[0] {
+            return false;
+        }
+        let Some(x) = super::run::exact_int32(self.scalar(scalars)) else { return false };
+        // The last step's untruncated sum keeps a -0 operand's sign (`-0 + -0` is -0).
+        let negative_zero = |v: f64| v == 0.0 && v.is_sign_negative();
+        if self.lasts != [None, None] && (negative_zero(phis[0]) || negative_zero(self.scalar(scalars))) {
+            return false;
+        }
+        // The value after `count` steps.
+        let after = |count: usize| -> Option<i32> {
+            Some(match (self.op, self.left) {
+                (NumberArithmetic::Add, _) => entry.wrapping_add(x.wrapping_mul(count as i32)),
+                (NumberArithmetic::Subtract, true) => entry.wrapping_sub(x.wrapping_mul(count as i32)),
+                (NumberArithmetic::Subtract, false) => if count % 2 == 0 { entry } else { x.wrapping_sub(entry) },
+                _ => return None,
+            })
+        };
+        let (Some(before), Some(value)) = (after(len - 1), after(len)) else { return false };
+        if self.lasts != [None, None] {
+            let sum = if self.left { arith(self.op, f64::from(before), f64::from(x)) } else { arith(self.op, f64::from(x), f64::from(before)) };
+            for (out, result) in self.lasts.iter().zip([sum, f64::from(value)]) {
+                if let Some(id) = out {
+                    scratch[usize::from(*id) * CHUNK + len - 1] = result;
+                }
+            }
+        }
+        phis[0] = f64::from(value);
+        true
+    }
+
     fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) {
+        if self.run_constant(phis, scalars, scratch, len) {
+            return;
+        }
         macro_rules! fold {
             ($left:expr, $int32:expr) => {
                 match self.op {
