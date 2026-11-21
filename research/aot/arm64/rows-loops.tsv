@@ -1,0 +1,11 @@
+# Loop regions restored on AArch64 (js_function_tiers back on; lane-body tier still off).
+# bench/AOT speedups; a row wins at >= 1.50 on C, Node and Bun. Micro-suite: micro/budget.tsv.
+row	aot_ms	c_ms	node_ms	bun_ms	c_x_aot	node_x_aot	bun_x_aot
+Basic	5876.2	510	214.3	180.2	0.09	0.04	0.03
+ai-astar	3026.0	580	371.1	293.1	0.19	0.12	0.10
+async-fs	1.7	250	1.7	0.6	148.19	0.99	0.34
+deltablue	2449.1	310	90.3	154.6	0.13	0.04	0.06
+doxbee-async	1015.0	580	390.9	72.5	0.57	0.39	0.07
+gaussian-blur	1738.9	590	527.8	467.0	0.34	0.30	0.27
+navier-stokes	799.7	400	251.7	0.0	0.50	0.31	-
+raytrace	9599.5	320	569.0	357.9	0.03	0.06	0.04
