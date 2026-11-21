@@ -4637,6 +4637,54 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `binary_miss_in_lane` of a record whose operator is `OPERATOR`, a constant of the instance: where
+    /// its operator row's Number form refused an operand pair (a string's `+`, a Boolean among Numbers),
+    /// the pure operation (`binary_values`) folds to that operator's arms, with no generic row decoding
+    /// the record and stepping the Number arms again first. What it leaves takes the general step.
+    #[inline(never)]
+    pub(super) fn binary_operator_miss<OPERATOR: u8>(cx, r, ip, i, view) {
+        debug_assert_eq!(i.imm(), u32::from(OPERATOR), "an operator row's record names its operator");
+        if let (Some(left), Some(right)) = (operand_value_in_lane(cx, r, i.b), operand_value_in_lane(cx, r, i.c))
+            && let Some(value) = unsafe { binary_values::<H>(cx, u32::from(OPERATOR), left, right) }
+        {
+            note_allocation(unsafe { vm(cx) });
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..Carried::script_in(cx, view) })
+        }
+        sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// A plain `Binary` of `===` (`!==` where `NEGATE`): equal words are one value but a NaN, and two
+    /// unequal int32 words two Numbers; any other pair is the strict equality's pure answer
+    /// (`binary_values`), else the general step. No generic row decodes the operator first.
+    #[inline(never)]
+    pub(super) fn strict_equality_row<NEGATE: bool>(cx, r, ip, i, view) {
+        let operator = if NEGATE { oxc_ast::ast::BinaryOperator::StrictInequality } else { oxc_ast::ast::BinaryOperator::StrictEquality } as u32;
+        let (Some(left), Some(right)) = (operand_value_in_lane(cx, r, i.b), operand_value_in_lane(cx, r, i.c)) else {
+            sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        let equal = if left.to_bits() == right.to_bits() {
+            (!left.as_number().is_some_and(f64::is_nan)).then_some(true)
+        } else if left.as_int().is_some() && right.as_int().is_some() {
+            Some(false)
+        } else {
+            None
+        };
+        let value = match equal {
+            Some(equal) => Value::boolean(equal != NEGATE),
+            None => match unsafe { binary_values::<H>(cx, operator, left, right) } {
+                Some(value) => value,
+                None => sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view)),
+            },
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..Carried::script_in(cx, view) })
+    }
+}
+
 /// The memory view the record after a general step carries: a Wasm run's frame memory, read again
 /// as a call's return reads it (`complete_call`: the step may have grown it), never the script
 /// view `Carried::stepped` makes. A Wasm record addressing through the script view wrote and read
@@ -5141,9 +5189,14 @@ lane_handler! {
         };
         let vm = unsafe { vm(cx) };
         let key = vm.canonical_index_key(key);
+        // A register-operand read (the element row's form) that found a typed element switches to
+        // the typed row of its kind (`row_typed_element`), so the next read makes no protocol miss.
+        let registers = i.a <= crate::bytecode::REGISTER_MASK
+            && i.b <= crate::bytecode::REGISTER_MASK
+            && i.c <= crate::bytecode::REGISTER_MASK;
         let Some(value) = vm
             .dense_array_element(base, key)
-            .or_else(|| vm.plain_typed_element(base, key))
+            .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
             .or_else(|| string_element_in_lane(vm, base, key))
             .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
@@ -5409,6 +5462,9 @@ fn row_typed_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: Value, v
         .array_index_key(key)
         .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
     if stored {
+        // The typed row proves the view the VM publishes (`LaneFrame::kept_view`): unpublished, every
+        // store would miss back here.
+        vm.publish_typed_view(object);
         requicken_typed::<H>(ip, false, vm.typed_array_kind_of(object));
     }
     stored
@@ -8415,10 +8471,17 @@ fn loop_run_native_in_lane<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<LoopContinuation> {
-    if site.tier.borrow_mut().awaits_code(unsafe { vm(cx) }, site) {
+    let mut tier = site.tier.borrow_mut();
+    if tier.awaits_code(unsafe { vm(cx) }, site) {
+        // The code is compiling: the back edges until the next look run the header untried
+        // (`skips_entry`) rather than each paying the whole entry attempt (~200 Ir) to count
+        // the wait down.
+        site.skipped_entries.set(tier.take_wait());
+        drop(tier);
         site.count_decline(RegionDecline::Awaiting);
         return None;
     }
+    drop(tier);
     let views = match loop_entry_checked_in_lane(cx, r, region, entry) {
         Ok(views) => views,
         Err(decline) => {
@@ -19280,6 +19343,11 @@ fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &
             _ if int32_constant(left) || int32_constant(right) => OPERANDS_INT32,
             _ => OPERANDS_ANY,
         };
+        // The int32 form's constant, folded into the record (`operator_row` reads it from `mode`, which
+        // no fused record has here: fusion runs after this pass and assigns `mode` with its handler).
+        if form == OPERANDS_REGISTER_INT32 && let Some(constant) = constants.get(usize::from(right.payload())).and_then(|constant| constant.as_int()) {
+            records[pc].mode = u64::from(constant as u32);
+        }
         macro_rules! at_form {
             ($acc:expr, $op:expr) => {
                 match form {
@@ -19302,6 +19370,10 @@ fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &
         }
         if let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) {
             records[pc].handler = handler as *const ();
+        } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
+            records[pc].handler = strict_equality_row::<H, false> as Handler as *const ();
+        } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictInequality as u32 {
+            records[pc].handler = strict_equality_row::<H, true> as Handler as *const ();
         }
     }
 }
@@ -19451,8 +19523,29 @@ fn pair_target_form<H: Host, const A: u16, const B: u16, const PREFIX: u16, cons
     (
         target_run_holds::<H, PREFIX, { crate::staged::NO_LINK }, TEST> as fn(*const (), &dyn Fn(usize) -> *const ()) -> bool,
         // `B` is a jump whose direction is its distance (`fused_rows` reads `BACKWARD` only for a branch table).
-        lane_frame::fused_rows::<H, A, B, false, { crate::staged::FUSED_TARGET }, TEST, PREFIX> as Handler,
+        lane_frame::fused_rows::<H, A, B, false, { crate::staged::FUSED_TARGET }, TEST, PREFIX, 0> as Handler,
     )
+}
+
+/// The `(IncDec, Jump)` back edge whose target is its loop's test alone, `fused_rows` with the test's
+/// comparison fixed (`CMP`, `lane_frame::target_comparison`).
+const fn inc_dec_test_row<H: Host, const CMP: u8>() -> Handler {
+    lane_frame::fused_rows::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, false, { crate::staged::FUSED_TARGET },
+        { crate::bytecode::Op::JumpBinaryFalse as u16 }, { crate::staged::NO_LINK }, CMP> as Handler
+}
+
+/// `handler`, a back edge's `FUSED_TARGET` record, with its test's comparison fixed where it is the
+/// `(IncDec, Jump)` pair's run of the test `test` alone and that test is one `target_comparison`
+/// fixes: the loop's step then switches on no operator. Any other handler is itself.
+fn fixed_comparison<H: Host>(handler: Handler, test: &LaneInstruction) -> Handler {
+    if handler as *const () != inc_dec_test_row::<H, 0>() as *const () { return handler }
+    match lane_frame::target_comparison(test) {
+        1 => inc_dec_test_row::<H, 1>(), 2 => inc_dec_test_row::<H, 2>(), 3 => inc_dec_test_row::<H, 3>(),
+        4 => inc_dec_test_row::<H, 4>(), 5 => inc_dec_test_row::<H, 5>(), 6 => inc_dec_test_row::<H, 6>(),
+        7 => inc_dec_test_row::<H, 7>(), 8 => inc_dec_test_row::<H, 8>(), 9 => inc_dec_test_row::<H, 9>(),
+        10 => inc_dec_test_row::<H, 10>(), 11 => inc_dec_test_row::<H, 11>(), 12 => inc_dec_test_row::<H, 12>(),
+        _ => handler,
+    }
 }
 
 /// The `FUSED_TARGET` form of a lone backward jump whose target run is `PREFIX` then `TEST`: the jump's
@@ -19597,6 +19690,7 @@ fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: boo
             let latch = osr_loop && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first));
             if !latch {
                 if let Some(handler) = target_run_handler(forms, target_handler, &after) {
+                    let handler = fixed_comparison::<H>(handler, &records[target]);
                     let word = target_word(&records[jump]);
                     records[head].handler = handler as *const ();
                     records[head].mode = word;
@@ -19638,6 +19732,8 @@ fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction, targ
         // (a copy is a value row, so the record after it is one too).
         let after = |k: usize| unsafe { (*(0..k).fold(target, |at, _| following(at))).handler };
         if let Some(handler) = target_run_handler(&forms, target_handler, &after) {
+            // SAFETY: as the read of `target_handler`.
+            let handler = fixed_comparison::<H>(handler, unsafe { &*target });
             return Some((handler, target_word(jump)));
         }
     }

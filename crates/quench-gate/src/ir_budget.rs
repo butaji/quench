@@ -38,7 +38,7 @@
 
 use std::{collections::{BTreeMap, BTreeSet}, env, fs, path::Path};
 
-use crate::{build::NODE, config::Config, ir_floor, process, step::Verdict, tiers::INTERPRETER};
+use crate::{build::NODE, config::Config, ir_floor, op_budget, process, step::Verdict, tiers::INTERPRETER};
 
 const BUDGETS: &str = "crates/quench-tier-corpus/ir_budget.txt";
 const HANDLERS: &str = "crates/quench-tier-corpus/ir_budget_handlers.txt";
@@ -516,6 +516,24 @@ fn measured_report(measured: &[Measured], rows: &BTreeMap<String, Row>) -> Strin
     format!("{}\n\n{}\n\n{}", table(measured, rows), ranking(measured), waste(measured))
 }
 
+/// The per-op budgets (`op_budget`) over the tiers measured (`[no-jit, b-jit, u-jit]`, a tier not
+/// run is empty): each tier's overruns held by its debt list, and the report.
+fn op_budgets(config: &Config, ops: &[String], runs: [&[Measured]; 3]) -> Result<(Vec<String>, String), String> {
+    let path = config.root.join(op_budget::BUDGETS);
+    let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let budgets = op_budget::parse(&text)?;
+    let tier_runs: Vec<(&str, Vec<op_budget::Run>)> = op_budget::OVER.iter().zip(runs).filter(|(_, run)| !run.is_empty())
+        .map(|((tier, _), run)| (*tier, run.iter().map(|(op, count, split, _)| op_budget::Run { op, count: *count, split }).collect())).collect();
+    let tiers: Vec<(&str, &[op_budget::Run])> = tier_runs.iter().map(|(tier, runs)| (*tier, runs.as_slice())).collect();
+    let (verdicts, report) = op_budget::judge(&tiers, &budgets);
+    let mut failures = Vec::new();
+    for (tier, list) in op_budget::OVER {
+        let Some(verdict) = verdicts.get(tier) else { continue };
+        failures.extend(hold_debt(config, list, &verdict.over, &verdict.judged, debt_write(ops))?);
+    }
+    Ok((failures, report))
+}
+
 /// The step. The default (`tiers`) measures every op under all three tiers and fails on a tier
 /// inversion or a u-jit count past its budget that its debt list does not hold, as well as on the
 /// interpreter's ceilings, floor and budget debt. `no-jit` runs the interpreter alone; `b-jit` and
@@ -550,10 +568,13 @@ pub fn run(config: &Config) -> Verdict {
     grown.extend(floor_grown);
     let measured_names: BTreeSet<String> = measured.iter().map(|(name, ..)| name.clone()).collect();
     grown.extend(hold_debt(config, INTERPRETER_OVER, &over_budget, &measured_names, debt_write(&ops))?);
+    let (op_failures, op_report) = op_budgets(config, &ops, [measured.as_slice(), baseline.as_slice(), optimized.as_slice()])?;
+    grown.extend(op_failures);
     let mut report = format!("{}\n\n{floor_report}", measured_report(&measured, &rows));
     if tiered {
         report = format!("{report}\n\n{tier_report}");
     }
+    report = format!("{report}\n\n{op_report}");
     // A failing run records nothing: a ceiling it lowered would hide the trade it made.
     if !grown.is_empty() {
         return Err(format!("{}\n\n{report}", grown.join("\n")));

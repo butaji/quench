@@ -22,6 +22,7 @@ mod js3_budgets;
 mod known_lists;
 mod lint;
 mod no_jit_ir;
+mod op_budget;
 mod oracle;
 mod owners;
 mod passed;

@@ -10,6 +10,9 @@ use super::stored_length;
 /// append costs the units it adds, where a copy of the whole prefix (or a rope node and
 /// copied leaf) cost one allocation and a copy of the prefix or a leaf each
 /// (SpiderMonkey's extensible strings and CPython's in-place `+=` make the same trade).
+// `#[repr(C)]`, so its units' address is its first word (`string_form::APPEND_UNITS_OFFSET`), which
+// native rows read through an `AsciiPrefix` record.
+#[repr(C)]
 pub(crate) struct AppendBuffer<T> {
     units: std::ptr::NonNull<MaybeUninit<T>>,
     capacity: usize,
@@ -23,6 +26,8 @@ pub(crate) struct AppendBuffer<T> {
 /// An append buffer holds this many times the units it is made for, so appends copy each
 /// unit a bounded number of times however long the text grows.
 const APPEND_BUFFER_GROWTH: usize = 2;
+
+const _: () = assert!(std::mem::offset_of!(AppendBuffer<u8>, units) == crate::staged::string_form::APPEND_UNITS_OFFSET as usize);
 
 impl<T: Copy> AppendBuffer<T> {
     /// A buffer holding `prefix` then `tail`, with room for as many units again.

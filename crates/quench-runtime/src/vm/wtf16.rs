@@ -195,7 +195,7 @@ pub(crate) enum FlatUnits {
     WideSlice(Rc<WideSlice>),
     /// The first `length` units of an ASCII append buffer (`AppendBuffer`): text built by
     /// appends, which later appends extend in place past this string's end.
-    AsciiPrefix(Rc<AppendBuffer<u8>>, u32),
+    AsciiPrefix(Rc<AppendBuffer<u8>>, u32) = native_string::TAG_ASCII_PREFIX,
     /// The first `length` units of a UTF-16 append buffer. As with `WideSlice`, its units
     /// may all be ASCII (a wide slice's text appended to), so it is never taken to be ASCII.
     WidePrefix(Rc<AppendBuffer<u16>>, u32),
@@ -256,10 +256,10 @@ impl FlatUnits {
     /// zeroing. `fill` must write every byte of the slice it is given.
     fn ascii_with(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
         if length <= SHORT_ASCII_CAPACITY {
-            let mut bytes = [MaybeUninit::new(0); SHORT_ASCII_CAPACITY];
-            fill(&mut bytes[..length]);
-            // SAFETY: every byte started initialized, and `fill` writes only bytes.
-            let bytes = bytes.map(|byte| unsafe { byte.assume_init() });
+            let mut bytes = [0u8; SHORT_ASCII_CAPACITY];
+            // SAFETY: `MaybeUninit<u8>` and `u8` share a layout, every byte starts initialized, and
+            // `fill` writes only bytes, so the array stays initialized: no per-byte `assume_init` copy.
+            fill(unsafe { &mut *(&raw mut bytes[..length] as *mut [MaybeUninit<u8>]) });
             debug_assert!(bytes.is_ascii());
             return Self::Short(ShortAscii {
                 length: length as u8,

@@ -84,6 +84,20 @@ pub(in crate::vm) fn immediate_number_pair(left: Value, right: Value) -> Option<
     Some((left.immediate_number()?, right.immediate_number()?))
 }
 
+/// ToNumber of an int32 Number, a Boolean or `null` as an int32: `None` for any other value.
+#[inline(always)]
+fn immediate_int(value: Value) -> Option<i32> {
+    value.as_int().or_else(|| {
+        if value == Value::TRUE {
+            Some(1)
+        } else if value == Value::FALSE || value == Value::NULL {
+            Some(0)
+        } else {
+            None
+        }
+    })
+}
+
 impl<H: Host> Vm<H> {
     /// A numeric operator or a relational comparison of operands that are Numbers or
     /// immediate primitives (`undefined`, `null`, a Boolean): their ToPrimitive is themselves
@@ -91,6 +105,15 @@ impl<H: Host> Vm<H> {
     /// compute as those Numbers. Equality compares types first, and a heap operand may convert
     /// through guest code: `None` leaves both to the caller.
     pub(in crate::vm) fn immediate_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+        // Int32 operands, a Boolean and `null` among them (`a + true`, `flags | null`), compute as
+        // int32s (`integer_binary`), as two int32 Numbers do. Only a numeric or relational operator:
+        // an equality compares types first, which `integer_binary`'s relations would not.
+        if let (Some(a), Some(b)) = (immediate_int(left), immediate_int(right))
+            && (numeric_binary_operator(op).is_some() || RelationalOperator::from_immediate(op).is_some())
+            && let Some(value) = super::integer_binary(op, a, b)
+        {
+            return Some(value);
+        }
         let (left, right) = immediate_number_pair(left, right)?;
         match RelationalOperator::from_immediate(op) {
             Some(relation) => Some(Value::boolean(relation.compare_numbers(left, right))),

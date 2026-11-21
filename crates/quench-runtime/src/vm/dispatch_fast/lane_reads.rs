@@ -109,6 +109,13 @@ impl Reads {
             captures: None }
     }
 
+    /// These reads with every constant operand answered by `immediate`: a record whose one constant
+    /// the view folded into the record (`specialize_plain_operators`' int32 form).
+    #[inline(always)]
+    pub(super) fn with_immediate(self, immediate: Value) -> Self {
+        Self { immediate: Some(immediate), ..self }
+    }
+
     /// The reads of a capture access of the running lane's `cx`.
     #[inline(always)]
     pub(super) fn of_captures<H: Host>(cx: *mut LaneContext<H>) -> Self {

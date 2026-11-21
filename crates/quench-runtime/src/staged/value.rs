@@ -371,10 +371,18 @@ impl TypeofKind {
 #[inline(always)]
 pub(crate) fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
     let (number, boolean, null) = typeof_classes(stage, bits);
-    let unset = [crate::Value::UNDEFINED, crate::Value::DELETED].map(|value| stage.eq_imm(bits, value.to_bits()));
-    let decided = [number, boolean, null, unset[0], unset[1]].into_iter().reduce(|any, each| stage.any(any, each)).expect("five tag classes");
+    // Spelled out, not as array `map`s: the interpreter's row ran each closure as a call.
+    let undefined_value = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
+    let deleted = stage.eq_imm(bits, crate::Value::DELETED.to_bits());
+    let decided = stage.any(number, boolean);
+    let decided = stage.any(decided, null);
+    let decided = stage.any(decided, undefined_value);
+    let decided = stage.any(decided, deleted);
     stage.guard(decided, miss)?;
-    let [undefined, object, boolean_name, number_name] = [TYPEOF_UNDEFINED, TYPEOF_OBJECT, TYPEOF_BOOLEAN, TYPEOF_NUMBER].map(|index| stage.constant(index));
+    let undefined = stage.constant(TYPEOF_UNDEFINED);
+    let object = stage.constant(TYPEOF_OBJECT);
+    let boolean_name = stage.constant(TYPEOF_BOOLEAN);
+    let number_name = stage.constant(TYPEOF_NUMBER);
     let word = stage.select(boolean, boolean_name, undefined);
     let word = stage.select(null, object, word);
     Some(stage.select(number, number_name, word))

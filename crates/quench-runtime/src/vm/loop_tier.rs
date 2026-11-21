@@ -194,6 +194,12 @@ impl LoopTier {
         self.poll_pending(vm, site)
     }
 
+    /// The entries left before the next look, which the caller runs untried (`LoopSite::skips_entry`):
+    /// the next entry looks.
+    pub(super) fn take_wait(&mut self) -> u32 {
+        u32::from(std::mem::take(&mut self.wait))
+    }
+
     #[cold]
     fn poll_pending<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
         let Some(pending) = self.pending.take() else { return false };

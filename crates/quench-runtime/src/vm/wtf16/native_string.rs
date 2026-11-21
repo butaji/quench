@@ -8,7 +8,7 @@ use crate::staged::string_form::{ShortFormHead, SharedFormHead};
 use std::mem::offset_of;
 use std::rc::Rc;
 
-pub(crate) use quench_bjit::shared_words::string_tag::{TAG_ASCII, TAG_LATIN1, TAG_OFFSET, TAG_SHORT, TAG_WIDE};
+pub(crate) use quench_bjit::shared_words::string_tag::{TAG_ASCII, TAG_ASCII_PREFIX, TAG_LATIN1, TAG_OFFSET, TAG_SHORT, TAG_WIDE};
 /// The offsets and sizes are the shared head's (`staged/string_form.rs`), which the stencils take too.
 pub(crate) use crate::staged::string_form::{
     shared_units_offset, RECORD_SIZE, SHARED_LENGTH_OFFSET, SHARED_POINTER_OFFSET, SHORT_LENGTH_OFFSET,
@@ -25,6 +25,10 @@ const _: () = assert!(offset_of!(ShortForm, text) + offset_of!(ShortAscii, lengt
 const _: () = assert!(offset_of!(ShortForm, text) + offset_of!(ShortAscii, bytes) == SHORT_UNITS_OFFSET as usize);
 const _: () = assert!(offset_of!(SharedForm<str>, storage) == SHARED_POINTER_OFFSET as usize);
 const _: () = assert!(offset_of!(SharedForm<[u16]>, storage) == SHARED_POINTER_OFFSET as usize);
+/// The runtime's prefix form: the head with its buffer's `Rc`.
+type PrefixForm = crate::staged::string_form::PrefixFormHead<Rc<super::append_buffer::AppendBuffer<u8>>>;
+const _: () = assert!(offset_of!(PrefixForm, buffer) == crate::staged::string_form::PREFIX_BUFFER_OFFSET as usize);
+const _: () = assert!(offset_of!(PrefixForm, length) == crate::staged::string_form::PREFIX_LENGTH_OFFSET as usize);
 
 #[cfg(test)]
 #[test]

@@ -201,7 +201,7 @@ lane_handler! {
                 if records == 0 || hint.receiver == crate::vm::NO_FIELD_RECEIVER {
                     sibling!(crate::vm::dispatch_fast::local_field_miss::<H>, r, ip, Carried::script_in(script, view))
                 }
-                frame.plan = Some(RecordPlan::own(hint.receiver, hint.slot, records));
+                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
             } else if const { crate::vm::dispatch_fast::inherited_site(FLAG) } {
                 // A read through the record's inherited hint (`IcOp::Held` over the layout its proof
                 // last answered); at the other site, of any receiver's object part.
@@ -253,7 +253,7 @@ lane_handler! {
                 if records == 0 { property_miss!() }
                 if const { crate::vm::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 let hint = i.field_hint();
-                frame.plan = Some(RecordPlan::own(hint.receiver, hint.slot, records));
+                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
             } else if const { crate::vm::dispatch_fast::cell_own_site(FLAG) } {
                 // A receiver outside the object records (a function) by its layout id; a direct
                 // object, should the site meet one, through the bound records.
@@ -353,7 +353,7 @@ lane_handler! {
             // A fixed form is the hint's layout's own (`own_formed_handler` chose the row by it),
             // stated so the read takes it as a constant, not from the layout table.
             if let Some(form) = fixed { unsafe { std::hint::assert_unchecked(crate::staged::ic::layout_form(hint.receiver) == form) } }
-            frame.plan = Some(RecordPlan::own(hint.receiver, hint.slot, records));
+            frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
             }
         }
         match row_step!(LaneFields::<OP, FLAG>::OPCODE, &mut stage, &mut frame, operation) {
