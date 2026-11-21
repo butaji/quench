@@ -6,7 +6,7 @@
 //! per operator (`Fold`); a longer one runs its links per iteration (`Chain`). Nodes that read
 //! the recurrence without feeding it run as columns after the pass. A loop with any other
 //! recurrence keeps its own records.
-use super::super::super::operations::{NumberArithmetic, NumberBitwise};
+use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation, PartialOrderStage, int32_bitwise_bits};
 use super::run::{CHUNK, apply, arith};
 use super::shape::{Arg, NodeOp, Shape};
 
@@ -25,9 +25,9 @@ pub(super) struct Fold {
     /// needs as a column): the iota's affine slot and node. The fold then runs on int32 words,
     /// the induction stepped in a register, and the iota's column is never written.
     words: Option<(u8, u16)>,
-    /// For `s + x` and `s - x` (no truncation) with `x` an induction or a bitwise column only
-    /// the fold reads: their words, summed on integers where binary64 is exact (`run_exact`).
-    exact: Option<Fusion>,
+    /// For `s + x` and `s - x` (no truncation) with `x` an induction or a word DAG only the
+    /// fold reads: their words, summed on integers where binary64 is exact (`run_exact`).
+    exact: Option<Words>,
 }
 
 /// The inductions of a chunk: each affine slot's value at iteration 0 and its step, and the
@@ -280,8 +280,7 @@ impl Recurrence {
         };
         let exact = match operand {
             Arg::Col(n) if !int32 && left && matches!(op, NumberArithmetic::Add | NumberArithmetic::Subtract) && outs == [None, None] => {
-                let (mut iotas, mut fused) = (Vec::new(), Vec::new());
-                fuse(shape, side, n, &mut iotas, &mut fused).then_some(Fusion { iotas, fused })
+                Words::of(shape, side, first, n)
             }
             _ => None,
         };
@@ -308,7 +307,7 @@ impl Recurrence {
     pub(super) fn unread_column(&self, id: usize) -> bool {
         match &self.pass {
             Pass::Fold(Fold { words: Some((_, n)), .. }) => usize::from(*n) == id,
-            Pass::Fold(Fold { exact: Some(fusion), .. }) => fusion.contains(id),
+            Pass::Fold(Fold { exact: Some(words), .. }) => words.contains(id),
             Pass::Chain(chain) => chain.fusion.contains(id),
             _ => false,
         }
@@ -444,15 +443,15 @@ impl Fold {
     /// where the sum might leave the integers binary64 holds exactly, or `s` is -0 under a
     /// subtraction (`-0 - 0` is -0). Every partial sum is then an exact integer, as is the
     /// binary64 sum of an exact integer and an int32.
-    fn run_exact(&self, fusion: &Fusion, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) -> bool {
+    fn run_exact(&self, words_dag: &Words, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) -> bool {
         const EXACT: f64 = 9007199254740992.0;
-        let Arg::Col(n) = self.operand else { return false };
+        let Arg::Col(_) = self.operand else { return false };
         let entry = phis[0];
         let subtract = self.op == NumberArithmetic::Subtract;
         if !(entry.abs() < EXACT && entry.trunc() == entry) || (subtract && entry == 0.0 && entry.is_sign_negative()) {
             return false;
         }
-        let sum: i64 = if let Some(&(_, slot)) = fusion.iotas.iter().find(|&&(m, _)| m == n) {
+        let sum: i64 = if let Some(slot) = words_dag.root_iota() {
             let (first, step) = (iotas.firsts[usize::from(slot)], iotas.steps[usize::from(slot)]);
             let start = first + step * iotas.done as i64;
             let end = start + step * (len as i64 - 1).max(0);
@@ -463,14 +462,11 @@ impl Fold {
             let len = len as i64;
             start * len + step * (len * (len - 1) / 2)
         } else {
-            let unsigned = fusion.fused.iter().any(|&(m, op, ..)| m == n && op == NumberBitwise::ShiftRightUnsigned);
             if entry.abs() + 4294967296.0 * len as f64 >= EXACT {
                 return false;
             }
-            let mut words = [0i32; CHUNK];
-            let words = &mut words[..len];
-            fusion.eval(Arg::Col(n), scalars, scratch, len, iotas, words);
-            if unsigned { words.iter().map(|&w| i64::from(w as u32)).sum() } else { words.iter().map(|&w| i64::from(w)).sum() }
+            let Some(sum) = words_dag.sum(scalars, scratch, len, iotas) else { return false };
+            sum
         };
         let value = if subtract { entry as i64 - sum } else { entry as i64 + sum };
         // `-0 + 0` is +0, as is the integer sum's binary64.
@@ -819,10 +815,11 @@ impl Chain {
         }
         let column = &scratch[link.operand as usize..][..len];
         let mut exact = true;
+        // Only an int32 column is bounded by 2^31 (`exact_int32` wraps any integer below 2^51).
         for (o, &value) in x.iter_mut().zip(column) {
-            let word = super::run::exact_int32(value);
-            exact &= word.is_some();
-            *o = word.unwrap_or(0);
+            let word = super::run::exact_int32(value).unwrap_or(0);
+            exact &= f64::from(word) == value;
+            *o = word;
         }
         exact.then_some((Part::Column, 2147483648.0))
     }
@@ -1114,4 +1111,367 @@ fn is_broadcast(broadcasts: &[(u8, u32)], offset: u32) -> bool {
 #[inline(always)]
 fn int32_word(x: f64) -> i32 {
     super::run::exact_int32(x).unwrap_or_else(|| crate::units::to_int32(x))
+}
+
+/// The most nodes a fold's word DAG computes (`Words`).
+const MAX_WORDS: usize = 16;
+
+/// What a word node computes.
+#[derive(Clone, Copy, PartialEq)]
+enum WordOp {
+    Iota(u8),
+    Bits(NumberBitwise),
+    Cmp(NumberRelation),
+    Arith(NumberArithmetic),
+}
+
+/// One operand of a word node: an earlier word node's words (its position), a scalar, or a
+/// column another operation wrote.
+#[derive(Clone, Copy)]
+enum Source {
+    Word(usize),
+    Scalar(u8),
+    Column(u16),
+}
+
+/// The int32 words of an operand over a chunk: a column, or one broadcast word.
+#[derive(Clone, Copy)]
+enum Lane<'a> {
+    Words(&'a [i32]),
+    Const(i32),
+}
+
+/// The closed interval of values a word node takes over a chunk.
+type Range = (i64, i64);
+const INT32: Range = (i32::MIN as i64, i32::MAX as i64);
+
+fn within_int32((lo, hi): Range) -> bool {
+    lo >= INT32.0 && hi <= INT32.1
+}
+
+/// One word node: the node, its operation, its operands as words and as the shape's arguments.
+#[derive(Clone, Copy)]
+struct WordNode {
+    id: u16,
+    op: WordOp,
+    a: Source,
+    b: Source,
+    args: (Arg, Arg),
+}
+
+/// The column nodes a fold `s += x` / `s -= x` reads through `x` and nothing else reads: iotas,
+/// bitwise, relational and `+ - *` nodes over each other, scalars and columns, computed as
+/// int32 words in node order (a DAG: a node may have several readers in the set). A chunk runs
+/// on the words only where its value ranges prove every relational and arithmetic word the
+/// exact Number the staged row computes (`word_range`), so no binary64 column is written;
+/// otherwise the pass writes the columns (`materialize`) and folds them.
+pub(super) struct Words {
+    nodes: Vec<WordNode>,
+    /// Each node's words over a chunk, then two operand conversions: written before read, kept
+    /// across chunks so no chunk clears them.
+    store: std::cell::RefCell<Box<[i32]>>,
+}
+
+impl Words {
+    /// The word DAG under the fold's operand `root` (`None` where `root` is no word node).
+    fn of(shape: &Shape, side: &[u16], fold: u16, root: u16) -> Option<Self> {
+        let count = shape.nodes.len();
+        let mut set = vec![false; count];
+        let mut work = vec![root];
+        while let Some(m) = work.pop() {
+            let node = shape.nodes[usize::from(m)];
+            if set[usize::from(m)] || node.seq || node.dead || node.hoisted || read_later(shape, side, m) {
+                continue;
+            }
+            match node.op {
+                NodeOp::Iota { .. } => {}
+                NodeOp::Bits(_) | NodeOp::Cmp(_) | NodeOp::Arith(NumberArithmetic::Add | NumberArithmetic::Subtract | NumberArithmetic::Multiply) => {
+                    for arg in [node.a, node.b] {
+                        match arg {
+                            Arg::Col(n) => work.push(n),
+                            Arg::Scalar(_) => {}
+                            Arg::Phi(_) | Arg::Affine(_) => return None,
+                        }
+                    }
+                }
+                _ => continue,
+            }
+            set[usize::from(m)] = true;
+        }
+        // A node another computed node reads keeps its column (only the fold reads the root).
+        loop {
+            let mut changed = false;
+            for m in 0..count {
+                let read = Arg::Col(m as u16);
+                let outside = |(id, other): (usize, &super::shape::Node)| {
+                    !other.dead && !set[id] && (other.a == read || other.b == read) && !(id == usize::from(fold) && m == usize::from(root))
+                };
+                if set[m] && shape.nodes.iter().enumerate().any(outside) {
+                    set[m] = false;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        if !set[usize::from(root)] || set.iter().filter(|&&s| s).count() > MAX_WORDS {
+            return None;
+        }
+        let mut nodes: Vec<WordNode> = Vec::new();
+        for (id, node) in shape.nodes.iter().enumerate() {
+            if !set[id] {
+                continue;
+            }
+            let source = |arg: Arg| match arg {
+                Arg::Col(n) => nodes.iter().position(|word| word.id == n).map_or(Source::Column(n), Source::Word),
+                Arg::Scalar(slot) => Source::Scalar(slot),
+                Arg::Phi(_) | Arg::Affine(_) => unreachable!("a word node reads columns and scalars"),
+            };
+            let (op, a, b) = match node.op {
+                NodeOp::Iota { index } => (WordOp::Iota(index), Source::Scalar(0), Source::Scalar(0)),
+                NodeOp::Bits(op) => (WordOp::Bits(op), source(node.a), source(node.b)),
+                NodeOp::Cmp(relation) => (WordOp::Cmp(relation), source(node.a), source(node.b)),
+                NodeOp::Arith(op) => (WordOp::Arith(op), source(node.a), source(node.b)),
+                NodeOp::Load { .. } => unreachable!("not a word node"),
+            };
+            nodes.push(WordNode { id: id as u16, op, a, b, args: (node.a, node.b) });
+        }
+        // The root, the last node by order (its operands precede it), is what the fold reads.
+        let store = std::cell::RefCell::new(vec![0; (nodes.len() + 2) * CHUNK].into_boxed_slice());
+        (nodes.last().map(|word| word.id) == Some(root)).then_some(Self { nodes, store })
+    }
+
+    fn contains(&self, id: usize) -> bool {
+        self.nodes.iter().any(|word| usize::from(word.id) == id)
+    }
+
+    /// The root's affine slot, where the root is an iota.
+    fn root_iota(&self) -> Option<u8> {
+        match self.nodes.last()?.op {
+            WordOp::Iota(slot) => Some(slot),
+            _ => None,
+        }
+    }
+
+    /// Whether the root's word is a zero-fill shift's (its Number is the unsigned word).
+    fn root_unsigned(&self) -> bool {
+        self.nodes.last().is_some_and(|word| word.op == WordOp::Bits(NumberBitwise::ShiftRightUnsigned))
+    }
+
+    /// The words of every node over the chunk into `store`; `false` where the chunk's ranges do not
+    /// prove every relational and arithmetic word exact, or an operand that must be an exact
+    /// int32 is another Number.
+    /// The sum of the root's Numbers over the chunk (`eval`): eight int32 lanes per vector
+    /// operation where the processor has AVX2, four otherwise.
+    fn sum(&self, scalars: &[f64], scratch: &[f64], len: usize, iotas: Iotas) -> Option<i64> {
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: the processor has AVX2.
+            return unsafe { self.sum_avx2(scalars, scratch, len, iotas) };
+        }
+        self.sum_words(scalars, scratch, len, iotas)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn sum_avx2(&self, scalars: &[f64], scratch: &[f64], len: usize, iotas: Iotas) -> Option<i64> {
+        self.sum_words(scalars, scratch, len, iotas)
+    }
+
+    #[inline(always)]
+    fn sum_words(&self, scalars: &[f64], scratch: &[f64], len: usize, iotas: Iotas) -> Option<i64> {
+        let mut store = self.store.borrow_mut();
+        let count = self.nodes.len();
+        let (words, converted) = store.split_at_mut(count * CHUNK);
+        if !self.eval(scalars, scratch, len, iotas, words, converted) {
+            return None;
+        }
+        let root = &words[(count - 1) * CHUNK..][..len];
+        Some(if self.root_unsigned() { root.iter().map(|&w| i64::from(w as u32)).sum() } else { root.iter().map(|&w| i64::from(w)).sum() })
+    }
+
+    #[inline(always)]
+    fn eval(&self, scalars: &[f64], scratch: &[f64], len: usize, iotas: Iotas, store: &mut [i32], converted: &mut [i32]) -> bool {
+        let mut ranges = [(0i64, 0i64); MAX_WORDS];
+        for (at, word) in self.nodes.iter().enumerate() {
+            let (earlier, rest) = store.split_at_mut(at * CHUNK);
+            let target = &mut rest[..len];
+            if let WordOp::Iota(slot) = word.op {
+                let (first, step) = (iotas.firsts[usize::from(slot)], iotas.steps[usize::from(slot)]);
+                let start = first + step * iotas.done as i64;
+                let end = start + step * (len as i64 - 1).max(0);
+                ranges[at] = (start.min(end), start.max(end));
+                let (mut x, step) = (start as i32, step as i32);
+                for o in target.iter_mut() {
+                    *o = x;
+                    x = x.wrapping_add(step);
+                }
+                continue;
+            }
+            // A relational or arithmetic node reads exact int32s; a bitwise node their ToInt32.
+            let exact = !matches!(word.op, WordOp::Bits(_));
+            let (left, right) = converted.split_at_mut(CHUNK);
+            let earlier: &[i32] = earlier;
+            let a = lane(word.a, exact, scalars, scratch, earlier, &ranges, len, left);
+            let b = lane(word.b, exact, scalars, scratch, earlier, &ranges, len, right);
+            let (Some((ra, la)), Some((rb, lb))) = (a, b) else { return false };
+            let Some(range) = word_range(word.op, ra, rb) else { return false };
+            ranges[at] = range;
+            word_column(word.op, target, la, lb);
+        }
+        true
+    }
+
+    /// The binary64 columns of the word nodes, for the pass's fallback: each node's staged
+    /// operation on its operands' Numbers, in node order.
+    fn materialize(&self, scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) {
+        for word in &self.nodes {
+            let n = usize::from(word.id);
+            let op = match word.op {
+                WordOp::Iota(slot) => {
+                    let (first, step) = (iotas.firsts[usize::from(slot)], iotas.steps[usize::from(slot)]);
+                    for (k, out) in scratch[n * CHUNK..][..len].iter_mut().enumerate() {
+                        *out = (first + step * (iotas.done + k as u64) as i64) as f64;
+                    }
+                    continue;
+                }
+                WordOp::Bits(op) => NodeOp::Bits(op),
+                WordOp::Cmp(relation) => NodeOp::Cmp(relation),
+                WordOp::Arith(op) => NodeOp::Arith(op),
+            };
+            for k in 0..len {
+                let value = |arg: Arg| match arg {
+                    Arg::Col(m) => scratch[usize::from(m) * CHUNK + k],
+                    Arg::Scalar(slot) => scalars[usize::from(slot)],
+                    Arg::Phi(_) | Arg::Affine(_) => unreachable!("a word node reads columns and scalars"),
+                };
+                let result = apply(op, value(word.args.0), value(word.args.1));
+                scratch[n * CHUNK + k] = result;
+            }
+        }
+    }
+}
+
+/// A word node's operand over the chunk and its range: an earlier word node's words, a scalar's
+/// broadcast word, or a column's words converted into `buffer`. With `exact`, `None` where the
+/// operand is no exact int32 (a -0, a fraction, a word past int32); otherwise its ToInt32.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn lane<'a>(source: Source, exact: bool, scalars: &[f64], scratch: &[f64], earlier: &'a [i32], ranges: &[Range], len: usize, buffer: &'a mut [i32]) -> Option<(Range, Lane<'a>)> {
+    match source {
+        Source::Word(at) => {
+            let range = ranges[at];
+            if exact && !within_int32(range) {
+                return None;
+            }
+            Some((range, Lane::Words(&earlier[at * CHUNK..][..len])))
+        }
+        Source::Scalar(slot) => {
+            let x = scalars[usize::from(slot)];
+            // `exact_int32` wraps any integer below 2^51: only one equal to its word is exact.
+            match super::run::exact_int32(x) {
+                Some(word) if f64::from(word) == x && !(x == 0.0 && x.is_sign_negative()) => Some(((i64::from(word), i64::from(word)), Lane::Const(word))),
+                _ if exact => None,
+                _ => Some((INT32, Lane::Const(int32_word(x)))),
+            }
+        }
+        Source::Column(n) => {
+            let column = &scratch[usize::from(n) * CHUNK..][..len];
+            let buffer = &mut buffer[..len];
+            let mut all = true;
+            for (o, &x) in buffer.iter_mut().zip(column) {
+                let word = super::run::exact_int32(x).unwrap_or(0);
+                all &= (f64::from(word) == x) & !(x == 0.0 && x.is_sign_negative());
+                *o = word;
+            }
+            if !all {
+                if exact {
+                    return None;
+                }
+                for (o, &x) in buffer.iter_mut().zip(column) {
+                    *o = int32_word(x);
+                }
+            }
+            Some((INT32, Lane::Words(buffer)))
+        }
+    }
+}
+
+/// The range of a word node's value from its operands' ranges; `None` where a relational or
+/// arithmetic word might not be the exact Number (an operand or result past int32, or a product
+/// that might be -0).
+fn word_range(op: WordOp, a: Range, b: Range) -> Option<Range> {
+    let natural = |range: Range| range.0 >= 0 && range.1 <= INT32.1;
+    Some(match op {
+        WordOp::Iota(_) => unreachable!("an iota has no operands"),
+        WordOp::Cmp(_) => (0, 1),
+        WordOp::Bits(NumberBitwise::And) => match (natural(a), natural(b)) {
+            (true, true) => (0, a.1.min(b.1)),
+            (true, false) => (0, a.1),
+            (false, true) => (0, b.1),
+            (false, false) => INT32,
+        },
+        WordOp::Bits(NumberBitwise::ShiftRightUnsigned) => (0, u32::MAX as i64),
+        WordOp::Bits(_) => INT32,
+        WordOp::Arith(op) => {
+            let range = match op {
+                NumberArithmetic::Add => (a.0 + b.0, a.1 + b.1),
+                NumberArithmetic::Subtract => (a.0 - b.1, a.1 - b.0),
+                NumberArithmetic::Multiply => {
+                    // `0 * -k` is -0: no word holds it.
+                    let zero = |r: Range| r.0 <= 0 && r.1 >= 0;
+                    if (zero(a) && b.0 < 0) || (zero(b) && a.0 < 0) {
+                        return None;
+                    }
+                    let products = [a.0 * b.0, a.0 * b.1, a.1 * b.0, a.1 * b.1];
+                    (*products.iter().min()?, *products.iter().max()?)
+                }
+                NumberArithmetic::Divide => return None,
+            };
+            if !within_int32(range) {
+                return None;
+            }
+            range
+        }
+    })
+}
+
+/// A word node's words: its operation on two lanes, one loop per operation and operand form.
+#[inline(always)]
+fn word_column(op: WordOp, out: &mut [i32], a: Lane, b: Lane) {
+    #[inline(always)]
+    fn map(out: &mut [i32], a: Lane, b: Lane, f: impl Fn(i32, i32) -> i32) {
+        match (a, b) {
+            (Lane::Words(x), Lane::Words(y)) => out.iter_mut().zip(x).zip(y).for_each(|((o, &x), &y)| *o = f(x, y)),
+            (Lane::Words(x), Lane::Const(y)) => out.iter_mut().zip(x).for_each(|(o, &x)| *o = f(x, y)),
+            (Lane::Const(x), Lane::Words(y)) => out.iter_mut().zip(y).for_each(|(o, &y)| *o = f(x, y)),
+            (Lane::Const(x), Lane::Const(y)) => out.fill(f(x, y)),
+        }
+    }
+    macro_rules! relation {
+        ($relation:expr) => {
+            map(out, a, b, |x, y| i32::from($relation.apply(&mut PartialOrderStage, x, y)))
+        };
+    }
+    match op {
+        WordOp::Iota(_) => unreachable!("an iota has no operands"),
+        WordOp::Bits(NumberBitwise::And) => map(out, a, b, |x, y| x & y),
+        WordOp::Bits(NumberBitwise::Or) => map(out, a, b, |x, y| x | y),
+        WordOp::Bits(NumberBitwise::Xor) => map(out, a, b, |x, y| x ^ y),
+        WordOp::Bits(NumberBitwise::ShiftLeft) => map(out, a, b, |x, y| int32_bitwise_bits(NumberBitwise::ShiftLeft, x, y)),
+        WordOp::Bits(NumberBitwise::ShiftRight) => map(out, a, b, |x, y| int32_bitwise_bits(NumberBitwise::ShiftRight, x, y)),
+        WordOp::Bits(NumberBitwise::ShiftRightUnsigned) => map(out, a, b, |x, y| int32_bitwise_bits(NumberBitwise::ShiftRightUnsigned, x, y)),
+        WordOp::Cmp(NumberRelation::LessThan) => relation!(NumberRelation::LessThan),
+        WordOp::Cmp(NumberRelation::LessEqual) => relation!(NumberRelation::LessEqual),
+        WordOp::Cmp(NumberRelation::GreaterThan) => relation!(NumberRelation::GreaterThan),
+        WordOp::Cmp(NumberRelation::GreaterEqual) => relation!(NumberRelation::GreaterEqual),
+        WordOp::Cmp(NumberRelation::Equal) => relation!(NumberRelation::Equal),
+        WordOp::Cmp(NumberRelation::NotEqual) => relation!(NumberRelation::NotEqual),
+        // The ranges proved every sum, difference and product an int32: no word wraps.
+        WordOp::Arith(NumberArithmetic::Add) => map(out, a, b, i32::wrapping_add),
+        WordOp::Arith(NumberArithmetic::Subtract) => map(out, a, b, i32::wrapping_sub),
+        WordOp::Arith(NumberArithmetic::Multiply) => map(out, a, b, i32::wrapping_mul),
+        WordOp::Arith(NumberArithmetic::Divide) => unreachable!("no word node divides"),
+    }
 }
