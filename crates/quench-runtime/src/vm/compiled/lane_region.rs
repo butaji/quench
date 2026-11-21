@@ -3845,6 +3845,21 @@ impl Lowering<'_, '_> {
             _ => {
                 let owned = callees.first().copied();
                 let callee = owned.map(DirectSite::Owned).or(proven.map(DirectSite::Proven));
+                // A region's call with no callee it can call is the lane's: an in-region step of it
+                // costs 86 ns a call against the lane's 8.6 (`op_call.js`), so the region leaves at
+                // the call instead of running its own helper. An image body keeps its step (the
+                // interpreter's step of the record continues the body, `fill_stepped_miss`).
+                if callee.is_none() && stepped.is_none() {
+                    self.exit(state, pc as u32);
+                    return false;
+                }
+                // A callee with no published body refuses the direct row every iteration, and the
+                // region's step of it costs 86 ns a call where the lane's leaf call costs 8.6
+                // (`op_call.js`): the region leaves at the call and the lane runs it.
+                if owned.is_some_and(|callee| callee.method.is_none()) && stepped.is_none() {
+                    self.exit(state, pc as u32);
+                    return false;
+                }
                 if callee.is_some() && !site.returns && !site.constructs() && let Some(ty) = self.observed.at(pc).filter(|ty| self.typed_native_result(pc, *ty)) {
                     let returned = self.builder.create_block();
                     self.builder.append_block_param(returned, types::I64);
