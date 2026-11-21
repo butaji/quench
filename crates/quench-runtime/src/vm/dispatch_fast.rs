@@ -19518,8 +19518,29 @@ fn pair_target_form<H: Host, const A: u16, const B: u16, const PREFIX: u16, cons
     (
         target_run_holds::<H, PREFIX, { crate::staged::NO_LINK }, TEST> as fn(*const (), &dyn Fn(usize) -> *const ()) -> bool,
         // `B` is a jump whose direction is its distance (`fused_rows` reads `BACKWARD` only for a branch table).
-        lane_frame::fused_rows::<H, A, B, false, { crate::staged::FUSED_TARGET }, TEST, PREFIX> as Handler,
+        lane_frame::fused_rows::<H, A, B, false, { crate::staged::FUSED_TARGET }, TEST, PREFIX, 0> as Handler,
     )
+}
+
+/// The `(IncDec, Jump)` back edge whose target is its loop's test alone, `fused_rows` with the test's
+/// comparison fixed (`CMP`, `lane_frame::target_comparison`).
+const fn inc_dec_test_row<H: Host, const CMP: u8>() -> Handler {
+    lane_frame::fused_rows::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, false, { crate::staged::FUSED_TARGET },
+        { crate::bytecode::Op::JumpBinaryFalse as u16 }, { crate::staged::NO_LINK }, CMP> as Handler
+}
+
+/// `handler`, a back edge's `FUSED_TARGET` record, with its test's comparison fixed where it is the
+/// `(IncDec, Jump)` pair's run of the test `test` alone and that test is one `target_comparison`
+/// fixes: the loop's step then switches on no operator. Any other handler is itself.
+fn fixed_comparison<H: Host>(handler: Handler, test: &LaneInstruction) -> Handler {
+    if handler as *const () != inc_dec_test_row::<H, 0>() as *const () { return handler }
+    match lane_frame::target_comparison(test) {
+        1 => inc_dec_test_row::<H, 1>(), 2 => inc_dec_test_row::<H, 2>(), 3 => inc_dec_test_row::<H, 3>(),
+        4 => inc_dec_test_row::<H, 4>(), 5 => inc_dec_test_row::<H, 5>(), 6 => inc_dec_test_row::<H, 6>(),
+        7 => inc_dec_test_row::<H, 7>(), 8 => inc_dec_test_row::<H, 8>(), 9 => inc_dec_test_row::<H, 9>(),
+        10 => inc_dec_test_row::<H, 10>(), 11 => inc_dec_test_row::<H, 11>(), 12 => inc_dec_test_row::<H, 12>(),
+        _ => handler,
+    }
 }
 
 /// The `FUSED_TARGET` form of a lone backward jump whose target run is `PREFIX` then `TEST`: the jump's
@@ -19664,6 +19685,7 @@ fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: boo
             let latch = osr_loop && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first));
             if !latch {
                 if let Some(handler) = target_run_handler(forms, target_handler, &after) {
+                    let handler = fixed_comparison::<H>(handler, &records[target]);
                     let word = target_word(&records[jump]);
                     records[head].handler = handler as *const ();
                     records[head].mode = word;
@@ -19705,6 +19727,8 @@ fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction, targ
         // (a copy is a value row, so the record after it is one too).
         let after = |k: usize| unsafe { (*(0..k).fold(target, |at, _| following(at))).handler };
         if let Some(handler) = target_run_handler(&forms, target_handler, &after) {
+            // SAFETY: as the read of `target_handler`.
+            let handler = fixed_comparison::<H>(handler, unsafe { &*target });
             return Some((handler, target_word(jump)));
         }
     }

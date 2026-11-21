@@ -30,9 +30,11 @@ lane_handler! {
     /// operator, reads as its operand; `MODE_RAW_OUT` keeps `B`'s own double result raw for the next record.
     /// `FUSED_TARGET` (a backward `B` whose target run holds: `PREFIX` (or none) then the test `TEST`):
     /// the back edge's fuel check and the target run in this record (`target_run`), which continues at
-    /// the test's taken or fall-through edge. Any other family ignores `PREFIX` and `TEST`.
+    /// the test's taken or fall-through edge. Any other family ignores `PREFIX` and `TEST`. `CMP`, where
+    /// not 0, fixes the test's comparison and operand form at install (`target_comparison`), so the
+    /// back edge runs that one test with no switch on the record's operator.
     #[inline(never)]
-    pub(in crate::vm::dispatch_fast) fn fused_rows<A: u16, B: u16, BACKWARD: bool, FAMILY: u8, TEST: u16, PREFIX: u16>(cx, r, ip, i, view) {
+    pub(in crate::vm::dispatch_fast) fn fused_rows<A: u16, B: u16, BACKWARD: bool, FAMILY: u8, TEST: u16, PREFIX: u16, CMP: u8>(cx, r, ip, i, view) {
         // The settings word of this record (the pair's head), read before `B`'s record is named.
         let mode = i.mode;
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
@@ -87,7 +89,7 @@ lane_handler! {
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(LaneControl::Edge(Edge::Target)) => {
                     if const { FAMILY == crate::staged::FUSED_TARGET } {
-                        target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST)
+                        target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, CMP)
                     } else {
                         resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None))
                     }
@@ -446,9 +448,9 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
 /// both directions name one record and one instance.
 pub(in crate::vm::dispatch_fast) fn fused_row<H: Host, const A: u16, const B: u16, const FAMILY: u8>(backward: bool) -> Handler {
     if const { crate::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } {
-        if backward { fused_rows::<H, A, B, true, FAMILY, B, { crate::staged::NO_LINK }> } else { fused_rows::<H, A, B, false, FAMILY, B, { crate::staged::NO_LINK }> }
+        if backward { fused_rows::<H, A, B, true, FAMILY, B, { crate::staged::NO_LINK }, 0> } else { fused_rows::<H, A, B, false, FAMILY, B, { crate::staged::NO_LINK }, 0> }
     } else {
-        fused_rows::<H, A, B, false, FAMILY, B, { crate::staged::NO_LINK }>
+        fused_rows::<H, A, B, false, FAMILY, B, { crate::staged::NO_LINK }, 0>
     }
 }
 

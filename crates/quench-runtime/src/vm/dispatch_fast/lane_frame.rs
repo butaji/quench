@@ -2719,7 +2719,12 @@ macro_rules! target_prefix_row {
 /// edge. A miss takes the missing row's own miss at its record, as a fused record's miss does. Every path returns.
 /// `$cx`, `$r`, `$ip` and `$carried` are the handler's own names; `$prefix`, `$copy` and `$test` are its const params.
 macro_rules! target_run {
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => {{
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => {
+        target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, 0)
+    };
+    // `$cmp`, where not 0, is the test's comparison and operand form fixed at install
+    // (`target_comparison`): the arm runs that test alone, with no switch on the record's operator.
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr) => {{
         // SAFETY: the view records the distance to a validated jump target.
         let target: crate::vm::dispatch_fast::Ip = unsafe { $ip.byte_offset((*$ip).jump()) };
         if script_fuel_out($cx) {
@@ -2765,6 +2770,10 @@ macro_rules! target_run {
                 Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
             }
         }}; }
+        if const { $test == crate::bytecode::Op::JumpBinaryFalse as u16 && $cmp != 0 } {
+            let (operator, constant) = const { target_comparison_of($cmp) };
+            test_run!(Some(Comparison::of_operator(operator)), Some(constant))
+        }
         if const { $test == crate::bytecode::Op::JumpBinaryFalse as u16 } {
             // A loop's test is almost always a relation or a strict equality: each of those runs its own
             // arm, any other comparison the record's decode.
@@ -2802,6 +2811,35 @@ macro_rules! target_run {
         }
         test_run!(None::<Comparison>, None::<bool>)
     }};
+}
+
+/// The comparisons a target run's test may fix at install (`target_comparison`), in code order.
+const TARGET_COMPARISONS: [u32; 6] = {
+    use oxc_ast::ast::BinaryOperator as B;
+    [B::LessThan as u32, B::LessEqualThan as u32, B::GreaterThan as u32, B::GreaterEqualThan as u32,
+        B::StrictEquality as u32, B::StrictInequality as u32]
+};
+
+/// The operator and operand form (`true`: a register and a constant; `false`: two registers) of the
+/// fixed comparison code `code` (1 to 12, `target_comparison`).
+pub(in crate::vm::dispatch_fast) const fn target_comparison_of(code: u8) -> (u32, bool) {
+    // Code 0 (no fixed comparison) is evaluated too where its arm is not taken: it reads the first.
+    let index = code.saturating_sub(1) as usize;
+    (TARGET_COMPARISONS[index / 2], index % 2 == 1)
+}
+
+/// The fixed comparison code of the `JumpBinaryFalse` record `test` (`target_run`'s `$cmp`): its
+/// operator among `TARGET_COMPARISONS` and its operands a register and a register or a constant.
+/// `0` (the record's own comparison, switched on at run time) for any other.
+pub(in crate::vm::dispatch_fast) fn target_comparison(test: &crate::vm::dispatch_fast::LaneInstruction) -> u8 {
+    use crate::bytecode::OperandKind::{Constant, Register};
+    let Some(index) = TARGET_COMPARISONS.iter().position(|operator| *operator == u32::from(test.a)) else { return 0 };
+    let constant = match (Operand(test.b).kind(), Operand(test.c).kind()) {
+        (Some(Register), Some(Register)) => false,
+        (Some(Register), Some(Constant)) => true,
+        _ => return 0,
+    };
+    1 + (index * 2) as u8 + u8::from(constant)
 }
 
 /// The `FUSED_TARGET` copy slot of no row: `target_run`'s `$copy` for a target run with no copy.
