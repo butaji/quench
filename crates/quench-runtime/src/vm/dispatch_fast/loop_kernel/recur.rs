@@ -72,7 +72,7 @@ impl Code {
             (NodeOp::Arith(NumberArithmetic::Divide), true) => Self::Divide,
             (NodeOp::Arith(NumberArithmetic::Divide), false) => Self::DivideInto,
             (NodeOp::Bits(op), left) => Self::Bits { op, reversed: !left },
-            (NodeOp::Load { .. } | NodeOp::Iota { .. }, _) => unreachable!("a recurrence's nodes are operators"),
+            (NodeOp::Load { .. } | NodeOp::Iota { .. } | NodeOp::Cmp(_), _) => unreachable!("a recurrence's nodes are arithmetic or bitwise"),
         }
     }
 
@@ -175,6 +175,10 @@ impl Recurrence {
     pub(super) fn of(shape: &Shape) -> Option<Self> {
         if shape.phis.is_empty() {
             return Some(Self { pass: Pass::None, side: Vec::new() });
+        }
+        // A branch whose condition reads a recurrence has no pass (`if (s < k) s++`).
+        if shape.seq.iter().any(|&n| matches!(shape.nodes[usize::from(n)].op, NodeOp::Cmp(_))) {
+            return None;
         }
         Self::single(shape)
             .or_else(|| {
@@ -613,6 +617,5 @@ impl Chain {
 /// ToInt32 of a Number: the Number itself for an int32 (one conversion and compare).
 #[inline(always)]
 fn int32_word(x: f64) -> i32 {
-    let fast = x as i32;
-    if f64::from(fast) == x { fast } else { crate::units::to_int32(x) }
+    super::run::exact_int32(x).unwrap_or_else(|| crate::units::to_int32(x))
 }

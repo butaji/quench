@@ -57,6 +57,9 @@ pub(super) enum NodeOp {
     Load { base: u8, index: u8 },
     /// An affine operand of arithmetic, as a column.
     Iota { index: u8 },
+    /// A relation of two Numbers as 1 (holds) or 0: a branch's condition in the body, which
+    /// the body's predicated writes read (`Graph::pass`).
+    Cmp(NumberRelation),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -68,6 +71,9 @@ pub(super) struct Node {
     pub(super) seq: bool,
     /// Reads only scalars: computed once at entry as a scalar, never as a column.
     pub(super) hoisted: bool,
+    /// No recurrence, store or final value reads it: never computed (a branch's untaken
+    /// predicate, a select's unused half).
+    pub(super) dead: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -114,6 +120,9 @@ pub(crate) struct Shape {
     pub(super) inductions: Vec<(u16, Stride)>,
     /// The other registers the body writes, with their values at an iteration's end.
     pub(super) temps: Vec<(u16, Arg)>,
+    /// Registers the body writes on some paths only (under a branch) and no path past it reads:
+    /// they keep no final value, so the kernel holds only where they are dead past the loop.
+    pub(super) guarded: Vec<u16>,
 }
 
 impl Shape {
@@ -152,15 +161,19 @@ enum Sym {
     /// A field of an unwritten register, by atom: read once at entry, which holds only for an
     /// array's or a string's `length` (`Scalar::Length`).
     Field(u16, u32),
+    /// A register written on one path of the body only, read past that path: its value there is
+    /// the register's on the other path, which no column holds.
+    Poison,
 }
 
 /// A symbolic pass's operation, before lowering.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum SymOp {
     Arith(NumberArithmetic),
     Bits(NumberBitwise),
     Load { base: u16, index: (u16, i32) },
     Iota { index: (u16, i32) },
+    Cmp(NumberRelation),
 }
 
 /// One symbolic pass's graph.
@@ -181,6 +194,13 @@ impl<'a> Graph<'a> {
     }
 
     fn node(&mut self, op: SymOp, a: Sym, b: Sym) -> Option<Sym> {
+        // An operator of the same operands computed before is the same column (loads, which
+        // stores order, are kept apart).
+        if !matches!(op, SymOp::Load { .. }) {
+            if let Some(id) = self.nodes.iter().position(|&node| node == (op, a, b)) {
+                return Some(Sym::Node(id as u16));
+            }
+        }
         lower::traced((self.nodes.len() < MAX_NODES).then_some(()), "more nodes")?;
         self.nodes.push((op, a, b));
         Some(Sym::Node((self.nodes.len() - 1) as u16))
@@ -342,20 +362,124 @@ impl<'a> Graph<'a> {
         value.map(Some).ok_or(())
     }
 
-    /// One pass over `body` from the register file `file`.
-    fn pass(&mut self, body: &[WideInstruction], file: &mut [Sym]) -> Option<()> {
-        for &instruction in body {
-            let Ok(value) = self.step(instruction, file) else {
-                if crate::trace::Channel::LoopKernel.on() {
-                    eprintln!("loop-kernel:   no model for {:?} {:?}", instruction.op(), instruction.binary_operator());
+    /// One pass over `body`, whose first instruction is at `start`, from the register file
+    /// `file`. Forward branches inside the body are if-converted: every instruction runs under
+    /// its path's predicate (a 1-or-0 node; paths into a join are exclusive, so the join's
+    /// predicate is their sum). A write under a predicate is `r = r ± k` as a select
+    /// (`r - (0 - p * k)`, which keeps `-0` where `p` is 0), or a write to a register only
+    /// that path reads (`Sym::Poison` past it).
+    fn pass(&mut self, body: &[WideInstruction], start: usize, file: &mut [Sym]) -> Option<()> {
+        const TRUE: Sym = Sym::Const(1.0);
+        let trace = |instruction: WideInstruction| {
+            if crate::trace::Channel::LoopKernel.on() {
+                eprintln!("loop-kernel:   no model for {:?} {:?}", instruction.op(), instruction.binary_operator());
+            }
+        };
+        // Each path also carries its share of the iterations' paths: a branch halves its path's
+        // share, a join adds the shares, and a join of every path (share 1) runs under `TRUE`.
+        let mut paths: Vec<Option<(Sym, f64)>> = vec![None; body.len() + 1];
+        paths[0] = Some((TRUE, 1.0));
+        let mut guards: Vec<(u16, Sym)> = Vec::new();
+        for (k, &instruction) in body.iter().enumerate() {
+            let Some((path, share)) = paths[k] else { continue };
+            Self::poison(&mut guards, file, path)?;
+            if instruction.op().control_flow_layout().jumps() {
+                let target = (instruction.jump_target() as usize).checked_sub(start)?;
+                if target <= k || target > body.len() {
+                    trace(instruction);
+                    return None;
                 }
+                if matches!(staged_operation(instruction), Some(crate::staged::Operation::Jump)) {
+                    self.join(&mut paths[target], (path, share))?;
+                } else if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
+                    let relation = NumberRelation::from_operator(instruction.binary_operator_field())?;
+                    let a = self.operand(file, instruction.operand_b())?;
+                    let b = self.operand(file, instruction.operand_c())?;
+                    let (a, b) = (self.arith_operand(a)?, self.arith_operand(b)?);
+                    let holds = self.node(SymOp::Cmp(relation), a, b)?;
+                    let fails = self.node(SymOp::Arith(NumberArithmetic::Subtract), Sym::Const(1.0), holds)?;
+                    let (through, jumped) = (self.and(path, holds)?, self.and(path, fails)?);
+                    self.join(&mut paths[k + 1], (through, share / 2.0))?;
+                    self.join(&mut paths[target], (jumped, share / 2.0))?;
+                } else {
+                    trace(instruction);
+                    return None;
+                }
+                continue;
+            }
+            if path != TRUE {
+                if let Some((register, delta)) = Self::stepped(instruction, file) {
+                    let old = self.arith_operand(*file.get(usize::from(register))?)?;
+                    let product = if delta == 1.0 { path } else { self.node(SymOp::Arith(NumberArithmetic::Multiply), path, Sym::Const(delta))? };
+                    let negated = self.node(SymOp::Arith(NumberArithmetic::Subtract), Sym::Const(0.0), product)?;
+                    *file.get_mut(usize::from(register))? = self.node(SymOp::Arith(NumberArithmetic::Subtract), old, negated)?;
+                    self.join(&mut paths[k + 1], (path, share))?;
+                    continue;
+                }
+                if matches!(staged_operation(instruction), Some(crate::staged::Operation::ElementWrite { .. })) {
+                    trace(instruction);
+                    return None;
+                }
+            }
+            let Ok(value) = self.step(instruction, file) else {
+                trace(instruction);
                 return None;
             };
             if let Some(value) = value {
-                *file.get_mut(usize::from(instruction.result_register()))? = value;
+                let register = instruction.result_register();
+                *file.get_mut(usize::from(register))? = value;
+                if path != TRUE {
+                    guards.retain(|&(r, _)| r != register);
+                    guards.push((register, path));
+                }
             }
+            self.join(&mut paths[k + 1], (path, share))?;
         }
+        let (end, _) = paths[body.len()]?;
+        Self::poison(&mut guards, file, end)
+    }
+
+    /// Poisons the registers written under a predicate other than `path`.
+    fn poison(guards: &mut Vec<(u16, Sym)>, file: &mut [Sym], path: Sym) -> Option<()> {
+        let mut result = Some(());
+        guards.retain(|&(register, written)| {
+            if written == path {
+                return true;
+            }
+            match file.get_mut(usize::from(register)) {
+                Some(slot) => *slot = Sym::Poison,
+                None => result = None,
+            }
+            false
+        });
+        result
+    }
+
+    /// `path && condition` of two 1-or-0 values.
+    fn and(&mut self, path: Sym, condition: Sym) -> Option<Sym> {
+        if path == Sym::Const(1.0) { Some(condition) } else { self.node(SymOp::Arith(NumberArithmetic::Multiply), path, condition) }
+    }
+
+    /// Adds the exclusive path `path`, with its share, into a join.
+    fn join(&mut self, slot: &mut Option<(Sym, f64)>, (path, share): (Sym, f64)) -> Option<()> {
+        *slot = Some(match *slot {
+            None => (path, share),
+            Some((_, other)) if other + share == 1.0 => (Sym::Const(1.0), 1.0),
+            Some((other, other_share)) => (self.node(SymOp::Arith(NumberArithmetic::Add), other, path)?, other_share + share),
+        });
         Some(())
+    }
+
+    /// `(register, k)` for an instruction that is `register = register ± k`, `k` a finite
+    /// constant: an increment, or an add or subtract of a constant into its own operand.
+    fn stepped(instruction: WideInstruction, file: &[Sym]) -> Option<(u16, f64)> {
+        let _ = file;
+        match staged_operation(instruction) {
+            Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { source, decrement, .. })) => {
+                (source == instruction.result_register()).then_some((source, if decrement { -1.0 } else { 1.0 }))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -424,7 +548,7 @@ impl Shape {
         let test = header + decoded[header..backedge].iter().position(leaves)?;
         let (pre, body) = (&decoded[header..test], &decoded[test + 1..backedge]);
         let jump = decoded[test];
-        if !crate::staged::compare_jump(jump.op()) || jump.jump_target() as usize != backedge + 1 || body.iter().any(leaves) {
+        if !crate::staged::compare_jump(jump.op()) || jump.jump_target() as usize != backedge + 1 {
             return None;
         }
         let relation = NumberRelation::from_operator(jump.binary_operator_field())?;
@@ -434,8 +558,8 @@ impl Shape {
         let all = vec![true; registers];
         let mut first = Graph::new(constants, &all, &written);
         let mut file = identity.clone();
-        first.pass(pre, &mut file)?;
-        first.pass(body, &mut file)?;
+        first.pass(pre, header, &mut file)?;
+        first.pass(body, test + 1, &mut file)?;
         let induction: Vec<bool> = (0..registers)
             .map(|register| {
                 written[register]
@@ -453,10 +577,10 @@ impl Shape {
             .map(|(register, &sym)| if written[register] && !induction[register] { Sym::Phi(register as u16) } else { sym })
             .collect();
         let mut graph = Graph::new(constants, &induction, &written);
-        graph.pass(pre, &mut file)?;
+        graph.pass(pre, header, &mut file)?;
         let left = graph.operand(&file, jump.operand_b())?;
         let right = graph.operand(&file, jump.operand_c())?;
-        graph.pass(body, &mut file)?;
+        graph.pass(body, test + 1, &mut file)?;
         Lowering::new(&induction, &written).lower(graph, &file, (left, relation, right))
     }
 }
@@ -524,7 +648,7 @@ impl<'a> Lowering<'a> {
             Sym::Affine(register, offset) => Arg::Affine(self.affine((register, offset))?),
             Sym::Capture(imm) => self.scalar(Scalar::Capture(imm))?,
             Sym::Field(register, atom) => self.scalar(Scalar::Length { register, atom })?,
-            Sym::Strided(..) => return None,
+            Sym::Strided(..) | Sym::Poison => return None,
         })
     }
 
@@ -543,21 +667,22 @@ impl<'a> Lowering<'a> {
             SymOp::Bits(bits) => NodeOp::Bits(bits),
             SymOp::Load { base, index } => NodeOp::Load { base: self.base(base)?, index: self.affine(index)? },
             SymOp::Iota { index } => NodeOp::Iota { index: self.affine(index)? },
+            SymOp::Cmp(relation) => NodeOp::Cmp(relation),
         };
         let (a, b) = match op {
-            NodeOp::Arith(_) | NodeOp::Bits(_) => (self.arg(a)?, self.arg(b)?),
+            NodeOp::Arith(_) | NodeOp::Bits(_) | NodeOp::Cmp(_) => (self.arg(a)?, self.arg(b)?),
             _ => (Arg::Scalar(0), Arg::Scalar(0)),
         };
         // Arithmetic over scalars alone is the same every iteration: one scalar at entry.
         let hoisted = match (op, a, b) {
-            (NodeOp::Arith(_) | NodeOp::Bits(_), Arg::Scalar(a), Arg::Scalar(b)) => {
+            (NodeOp::Arith(_) | NodeOp::Bits(_) | NodeOp::Cmp(_), Arg::Scalar(a), Arg::Scalar(b)) => {
                 self.scalars.push(Scalar::Computed { op, a, b });
                 Some(u8::try_from(self.scalars.len() - 1).ok().filter(|&slot| usize::from(slot) < MAX_SLOTS)?)
             }
             _ => None,
         };
         self.hoisted.push(hoisted);
-        Some(Node { op, a, b, seq: false, hoisted: hoisted.is_some() })
+        Some(Node { op, a, b, seq: false, hoisted: hoisted.is_some(), dead: false })
     }
 
     /// The test as `counter REL bound`, the counter an induction at offset 0.

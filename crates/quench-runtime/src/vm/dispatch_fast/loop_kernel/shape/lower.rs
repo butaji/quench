@@ -13,11 +13,12 @@ impl Lowering<'_> {
         let stores = traced(self.stores(&graph), "a store")?;
         let (counter, relation, bound) = traced(self.test(test), "the loop test")?;
         let inductions = traced(self.inductions(file), "an induction")?;
-        let (phis, temps) = traced(self.finals(file), "a written register's final value")?;
+        let (phis, temps, guarded) = traced(self.finals(file), "a written register's final value")?;
         for affine in &mut self.affines {
             affine.step = inductions.iter().find(|(register, _)| *register == affine.register).map_or(Stride::Const(0), |&(_, step)| step);
         }
         traced(disjoint_stores(&stores, &self.affines).then_some(()), "stores into one array")?;
+        mark_dead(&mut nodes, &phis, &temps, &stores);
         let seq = sequential(&mut nodes, &phis);
         Some(Shape {
             counter,
@@ -33,6 +34,7 @@ impl Lowering<'_> {
             phis,
             inductions,
             temps,
+            guarded,
         })
     }
 
@@ -61,17 +63,22 @@ impl Lowering<'_> {
     /// The recurrences' and the other written registers' values at an iteration's end. A
     /// final value may read another recurrence, which joins the list.
     #[allow(clippy::type_complexity)]
-    fn finals(&mut self, file: &[Sym]) -> Option<(Vec<(u16, Arg)>, Vec<(u16, Arg)>)> {
+    fn finals(&mut self, file: &[Sym]) -> Option<(Vec<(u16, Arg)>, Vec<(u16, Arg)>, Vec<u16>)> {
         let mut phis = Vec::new();
         while phis.len() < self.phis.len() {
             let register = self.phis[phis.len()];
             phis.push((register, self.arg(file[usize::from(register)])?));
         }
         let mut temps = Vec::new();
+        let mut guarded = Vec::new();
         for register in 0..file.len() as u16 {
             let index = usize::from(register);
             if self.written[index] && !self.induction[index] && !self.phis.contains(&register) {
-                temps.push((register, self.arg(file[index])?));
+                if file[index] == Sym::Poison {
+                    guarded.push(register);
+                } else {
+                    temps.push((register, self.arg(file[index])?));
+                }
             }
         }
         // A temp's value may read a recurrence first met here.
@@ -80,7 +87,25 @@ impl Lowering<'_> {
             phis.push((register, self.arg(file[usize::from(register)])?));
         }
         temps.retain(|(register, _)| !self.phis.contains(register));
-        Some((phis, temps))
+        Some((phis, temps, guarded))
+    }
+}
+
+/// Marks the operators no recurrence, temp or store reads, directly or through other nodes.
+fn mark_dead(nodes: &mut [Node], phis: &[(u16, Arg)], temps: &[(u16, Arg)], stores: &[Store]) {
+    let mut live = vec![false; nodes.len()];
+    let mut work: Vec<u16> = phis.iter().chain(temps).map(|&(_, arg)| arg).chain(stores.iter().map(|store| store.value))
+        .filter_map(|arg| if let Arg::Col(n) = arg { Some(n) } else { None })
+        .collect();
+    while let Some(n) = work.pop() {
+        if std::mem::replace(&mut live[usize::from(n)], true) {
+            continue;
+        }
+        let node = nodes[usize::from(n)];
+        work.extend([node.a, node.b].into_iter().filter_map(|arg| if let Arg::Col(m) = arg { Some(m) } else { None }));
+    }
+    for (node, live) in nodes.iter_mut().zip(live) {
+        node.dead = !live && matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_) | NodeOp::Cmp(_) | NodeOp::Iota { .. });
     }
 }
 
@@ -111,7 +136,7 @@ fn sequential(nodes: &mut [Node], phis: &[(u16, Arg)]) -> Vec<u16> {
                 Arg::Col(n) => nodes[usize::from(n)].seq,
                 _ => false,
             };
-            let seq = matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_)) && (reads(node.a) || reads(node.b));
+            let seq = !node.dead && matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_) | NodeOp::Cmp(_)) && (reads(node.a) || reads(node.b));
             nodes[id].seq = seq;
         }
         let next: Vec<Option<(u16, u8)>> = phis
