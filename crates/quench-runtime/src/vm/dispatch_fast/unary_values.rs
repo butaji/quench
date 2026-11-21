@@ -13,8 +13,16 @@ pub(super) unsafe fn unary_value<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
-    let operator = i.imm();
-    let operand = r.get(i.b);
+    unsafe { unary_values(cx, i.imm(), r.get(i.b)) }
+}
+
+/// `unary_value` of `operator` over `operand` (the lane frame's answer to a row's `Unary`
+/// call-out, `LaneFrame::vm_step`).
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+pub(super) unsafe fn unary_values<H: Host>(cx: *mut LaneContext<H>, operator: u32, operand: Value) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // A Number operand of a Number operator (negation, plus, increments): its result made
     // here, where `Vm::unary` would be a call (Box2D's `-x` on doubles).

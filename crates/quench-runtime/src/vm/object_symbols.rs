@@ -375,7 +375,20 @@ impl<H: Host> Vm<H> {
     ) -> bool {
         // `Object.assign` onto an empty target takes the source's shape when no key could meet
         // `__proto__`, an accessor or a read-only property on the target's chain.
+        let before = self.heap.object_record(target).map(|data| (data.shape(), data.proto(), data.was_used_as_prototype()));
         if matches!(kind, PropertyCopyKind::Set) && excluded.is_empty() && self.adopt_source_shape_for_set(target, source) {
+            // The next copy of this source shape into such an empty target takes the memo
+            // (`copy_into_fresh_empty`) rather than walking the chain for each key again: the
+            // adoption proved the chain's keys plain, which holds under the cell made now.
+            if let Some((target_shape, target_proto, false)) = before
+                && let Some(shape) = self.object_data(target).map(Object::shape)
+                && let Some(slots) = self.shape_enumerable_slots(source)
+                && let Some(cell) = self.chain_cell_to_end(target_proto)
+            {
+                let words = self.plain_copy_words_epoch(shape, shape, &slots);
+                let entry = super::shape_memo::PlainAssignShape { shape, cell, words };
+                self.plain_assign_shapes.record(target_shape, (shape, target_proto), entry);
+            }
             return true;
         }
         let Some(slots) = self.shape_enumerable_slots(source) else {

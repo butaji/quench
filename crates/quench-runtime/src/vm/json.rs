@@ -1447,8 +1447,19 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     /// and `number_value` reads its value.
     fn number(&mut self) -> Result<JsonNumber, JsonParseError> {
         let start = self.index;
-        self.take_if(b'-');
+        let negative = self.take_if(b'-');
+        let digits = self.index;
         self.integer_part()?;
+        // An integer of at most nine digits, the common key or count, is its digits' value read
+        // once here: no second scan of the literal (`number_value`). `-0` stays a double.
+        let next = self.peek();
+        if next != Some(u16::from(b'.')) && !exponent_mark(next) && self.index - digits <= 9 {
+            let magnitude = self.units[digits..self.index].iter()
+                .fold(0_i32, |value, unit| value * 10 + i32::from(unit.unit() - JSON_DIGIT_START));
+            if !(negative && magnitude == 0) {
+                return Ok(JsonNumber::Integer(if negative { -magnitude } else { magnitude }));
+            }
+        }
         if self.take_if(b'.') {
             if self.digit_value().is_none() {
                 return Err(self.error(JsonSyntax::UnterminatedFraction));
