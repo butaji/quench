@@ -12,7 +12,6 @@ use super::shape::{Arg, NodeOp, Shape};
 
 /// One recurrence folded by one arithmetic operator, maybe truncated to int32 after
 /// (`(s op x) | 0`): `s = op(s, x[k])`, or `op(x[k], s)` when the recurrence is the right operand.
-#[derive(Clone, Copy)]
 pub(super) struct Fold {
     op: NumberArithmetic,
     left: bool,
@@ -26,6 +25,9 @@ pub(super) struct Fold {
     /// needs as a column): the iota's affine slot and node. The fold then runs on int32 words,
     /// the induction stepped in a register, and the iota's column is never written.
     words: Option<(u8, u16)>,
+    /// For `s + x` and `s - x` (no truncation) with `x` an induction or a bitwise column only
+    /// the fold reads: their words, summed on integers where binary64 is exact (`run_exact`).
+    exact: Option<Fusion>,
 }
 
 /// The inductions of a chunk: each affine slot's value at iteration 0 and its step, and the
@@ -106,6 +108,13 @@ pub(super) struct Chain {
     /// is then one `v = (v & A) ^ B` per iteration, its masks computed column by column
     /// (`run_masks`).
     masks: bool,
+    /// Whether the chain is integer arithmetic ending in an int32 bitwise link (`(a * 3 + i) | 0`):
+    /// it then runs on int32 words where binary64 is exact (`run_wrap`).
+    wrap: bool,
+    /// The column nodes only the chain reads, whose words it computes itself.
+    fusion: Fusion,
+    /// The dump column's element offset.
+    dump: u32,
 }
 
 enum Pass {
@@ -197,7 +206,7 @@ impl Recurrence {
             // A general chain dispatches each link at about 40 Ir: with a bitwise link it beats
             // the records only where they run a multiply or divide out of line (int_mul 171 →
             // 113, ushr 87 → 149).
-            Pass::Chain(chain) if !chain.int32 && !chain.masks => {
+            Pass::Chain(chain) if !chain.int32 && !chain.masks && !chain.wrap => {
                 chain.links.iter().any(|link| matches!(link.code, Code::Bits { .. }))
                     && !chain.links.iter().any(|link| matches!(link.code, Code::Multiply | Code::Divide | Code::DivideInto))
             }
@@ -213,6 +222,7 @@ impl Recurrence {
             Pass::Fold(_) => "kernel (fold)",
             Pass::Chain(chain) if chain.masks => "kernel (mask chain)",
             Pass::Chain(chain) if chain.int32 => "kernel (int32 chain)",
+            Pass::Chain(chain) if chain.wrap => "kernel (integer chain)",
             Pass::Chain(_) => "kernel (chain)",
             Pass::Machine(_) => "kernel (machine)",
         }
@@ -268,7 +278,14 @@ impl Recurrence {
             }
             _ => None,
         };
-        Some(Fold { op, left, operand, int32, outs, lasts, words })
+        let exact = match operand {
+            Arg::Col(n) if !int32 && left && matches!(op, NumberArithmetic::Add | NumberArithmetic::Subtract) && outs == [None, None] => {
+                let (mut iotas, mut fused) = (Vec::new(), Vec::new());
+                fuse(shape, side, n, &mut iotas, &mut fused).then_some(Fusion { iotas, fused })
+            }
+            _ => None,
+        };
+        Some(Fold { op, left, operand, int32, outs, lasts, words, exact })
     }
 
     /// The scratch columns a run needs.
@@ -289,7 +306,12 @@ impl Recurrence {
     /// The pass over a chunk of `len` iterations: updates `phis`, writes the columns read later.
     /// Whether node `id`'s column is never read: the pass reads it as an induction in a register.
     pub(super) fn unread_column(&self, id: usize) -> bool {
-        matches!(&self.pass, Pass::Fold(Fold { words: Some((_, n)), .. }) if usize::from(*n) == id)
+        match &self.pass {
+            Pass::Fold(Fold { words: Some((_, n)), .. }) => usize::from(*n) == id,
+            Pass::Fold(Fold { exact: Some(fusion), .. }) => fusion.contains(id),
+            Pass::Chain(chain) => chain.fusion.contains(id),
+            _ => false,
+        }
     }
 
     pub(super) fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) {
@@ -306,9 +328,25 @@ impl Recurrence {
                         *out = (first + step * (iotas.done + k as u64) as i64) as f64;
                     }
                 }
+                if let Some(fusion) = &fold.exact {
+                    if fold.run_exact(fusion, phis, scalars, scratch, len, iotas) {
+                        return;
+                    }
+                    fusion.materialize(scalars, scratch, len, iotas);
+                }
                 fold.run(phis, scalars, scratch, len)
             }
-            Pass::Chain(chain) => chain.run(phis, scalars, scratch, len),
+            Pass::Chain(chain) => {
+                if chain.masks {
+                    return chain.run_masks(phis, scalars, scratch, len, iotas);
+                }
+                if chain.wrap && chain.run_wrap(phis, scalars, scratch, len, iotas) {
+                    return;
+                }
+                // Not this chunk: the fused columns, then the chain.
+                chain.fusion.materialize(scalars, scratch, len, iotas);
+                chain.run(phis, scalars, scratch, len)
+            }
             Pass::Machine(machine) => machine.run(phis, scalars, scratch, len),
         }
     }
@@ -399,6 +437,50 @@ impl Fold {
             }
         }
         phis[0] = f64::from(value);
+        true
+    }
+
+    /// `s += x` or `s -= x` with `x`'s words (`exact`) summed on i64: `false` (nothing done)
+    /// where the sum might leave the integers binary64 holds exactly, or `s` is -0 under a
+    /// subtraction (`-0 - 0` is -0). Every partial sum is then an exact integer, as is the
+    /// binary64 sum of an exact integer and an int32.
+    fn run_exact(&self, fusion: &Fusion, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) -> bool {
+        const EXACT: f64 = 9007199254740992.0;
+        let Arg::Col(n) = self.operand else { return false };
+        let entry = phis[0];
+        let subtract = self.op == NumberArithmetic::Subtract;
+        if !(entry.abs() < EXACT && entry.trunc() == entry) || (subtract && entry == 0.0 && entry.is_sign_negative()) {
+            return false;
+        }
+        let sum: i64 = if let Some(&(_, slot)) = fusion.iotas.iter().find(|&&(m, _)| m == n) {
+            let (first, step) = (iotas.firsts[usize::from(slot)], iotas.steps[usize::from(slot)]);
+            let start = first + step * iotas.done as i64;
+            let end = start + step * (len as i64 - 1).max(0);
+            let magnitude = start.unsigned_abs().max(end.unsigned_abs()) as f64;
+            if entry.abs() + magnitude * len as f64 >= EXACT {
+                return false;
+            }
+            let len = len as i64;
+            start * len + step * (len * (len - 1) / 2)
+        } else {
+            let unsigned = fusion.fused.iter().any(|&(m, op, ..)| m == n && op == NumberBitwise::ShiftRightUnsigned);
+            if entry.abs() + 4294967296.0 * len as f64 >= EXACT {
+                return false;
+            }
+            let mut words = [0i32; CHUNK];
+            let words = &mut words[..len];
+            fusion.eval(Arg::Col(n), scalars, scratch, len, iotas, words);
+            if unsigned { words.iter().map(|&w| i64::from(w as u32)).sum() } else { words.iter().map(|&w| i64::from(w)).sum() }
+        };
+        let value = if subtract { entry as i64 - sum } else { entry as i64 + sum };
+        // `-0 + 0` is +0, as is the integer sum's binary64.
+        let result = value as f64;
+        if len > 0 {
+            if let Some(id) = self.lasts[0] {
+                scratch[usize::from(id) * CHUNK + len - 1] = result;
+            }
+            phis[0] = result;
+        }
         true
     }
 
@@ -510,7 +592,23 @@ impl Chain {
         let int32 = links.iter().all(|link| matches!(link.code, Code::Bits { op, .. } if op != NumberBitwise::ShiftRightUnsigned));
         let logic = |link: &Link| matches!(link.code, Code::Bits { op: NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor, .. });
         let masks = links.iter().all(logic) && links[..links.len().saturating_sub(1)].iter().all(|link| link.out == dump);
-        Some(Self { links, broadcasts, int32, masks })
+        let integer = |link: &Link| matches!(link.code, Code::Add | Code::Multiply | Code::Subtract | Code::SubtractFrom);
+        let wrap = !int32
+            && !masks
+            && links.len() >= 2
+            && links.last().is_some_and(|link| matches!(link.code, Code::Bits { .. }))
+            && links[..links.len() - 1].iter().all(|link| integer(link) && link.out == dump);
+        let mut iotas = Vec::new();
+        let mut fused = Vec::new();
+        if wrap || masks {
+            for link in &links {
+                let n = link.operand as usize / CHUNK;
+                if n < shape.nodes.len() && !is_broadcast(&broadcasts, link.operand) {
+                    fuse(shape, side, n as u16, &mut iotas, &mut fused);
+                }
+            }
+        }
+        Some(Self { links, broadcasts, int32, masks, wrap, fusion: Fusion { iotas, fused }, dump })
     }
 
     /// Columns past the nodes' this chain uses: the dump and the broadcasts.
@@ -519,9 +617,6 @@ impl Chain {
     }
 
     fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) {
-        if self.masks {
-            return self.run_masks(phis, scalars, scratch, len);
-        }
         for &(slot, offset) in &self.broadcasts {
             scratch[offset as usize..][..len].fill(scalars[usize::from(slot)]);
         }
@@ -544,31 +639,174 @@ impl Chain {
         phis[0] = value;
     }
 
+    /// `run` for an integer chain on int32 words: `false` (nothing done) where an operand is no
+    /// int32 or binary64 might round. Each arithmetic link maps the value as `v -> v * a + b`
+    /// (`+ x`: (1, x); `- x`: (1, -x); `x -`: (-1, x); `* x`: (x, 0)); maps of that form compose,
+    /// so the links fold into one pair per iteration. Where every intermediate value stays below
+    /// 2^53 the binary64 results are the exact integers, and the last link's ToInt32 of an exact
+    /// integer is that integer modulo 2^32: the same as wrapping int32 arithmetic. A pair's
+    /// parts stay constants, or for `b` a linear function of the iteration (an induction), until
+    /// a column operand makes them columns; the recurrence then runs one multiply and add per
+    /// iteration, with the induction in a register (`(a * 3 + i) | 0`: imul, add, add).
+    fn run_wrap(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) -> bool {
+        const EXACT: f64 = 9007199254740992.0;
+        const WORD: f64 = 4294967296.0;
+        if len == 0 {
+            return true;
+        }
+        let entry = phis[0];
+        if !(entry.abs() <= WORD && entry.trunc() == entry) {
+            return false;
+        }
+        let Some((last, links)) = self.links.split_last() else { return false };
+        let mut x = [0i32; CHUNK];
+        let x = &mut x[..len];
+        let mut bound = WORD;
+        let mut a = Part::Const(1);
+        let mut b = Part::Const(0);
+        let (mut a_column, mut b_column) = ([0i32; CHUNK], [0i32; CHUNK]);
+        let (a_column, b_column) = (&mut a_column[..len], &mut b_column[..len]);
+        for link in links {
+            let Some((operand, magnitude)) = self.operand(link, scalars, scratch, len, iotas, x) else { return false };
+            let negate = matches!(link.code, Code::Subtract);
+            match link.code {
+                Code::Add | Code::Subtract => {
+                    let operand = if negate { operand.neg(x) } else { operand };
+                    b = b.add(operand, b_column, x);
+                    bound += magnitude;
+                }
+                Code::SubtractFrom => {
+                    a = a.neg(a_column);
+                    b = b.neg(b_column).add(operand, b_column, x);
+                    bound += magnitude;
+                }
+                Code::Multiply => {
+                    match operand {
+                        Part::Const(c) => {
+                            a = a.scale(c, a_column);
+                            b = b.scale(c, b_column);
+                        }
+                        _ => {
+                            operand.fill(x);
+                            a.fill(a_column);
+                            b.fill(b_column);
+                            a_column.iter_mut().zip(b_column.iter_mut()).zip(x.iter()).for_each(|((a, b), &x)| {
+                                *a = a.wrapping_mul(x);
+                                *b = b.wrapping_mul(x);
+                            });
+                            (a, b) = (Part::Column, Part::Column);
+                        }
+                    }
+                    bound *= magnitude;
+                }
+                _ => return false,
+            }
+            if bound >= EXACT {
+                return false;
+            }
+        }
+        let Code::Bits { op, reversed } = last.code else { return false };
+        let Some((operand, _)) = self.operand(last, scalars, scratch, len, iotas, x) else { return false };
+        // The last link as masks `(v & m) ^ p` where it is `& | ^` of a constant.
+        let masks = match (op, operand) {
+            (NumberBitwise::And, Part::Const(c)) => Some((c, 0)),
+            (NumberBitwise::Or, Part::Const(c)) => Some((!c, c)),
+            (NumberBitwise::Xor, Part::Const(c)) => Some((-1, c)),
+            _ => None,
+        };
+        if masks.is_none() {
+            operand.fill(x);
+        }
+        let unsigned = op == NumberBitwise::ShiftRightUnsigned;
+        let entry = entry as i64 as i32;
+        let write = last.out != self.dump;
+        let out = &mut scratch[last.out as usize..][..len];
+        let (a_column, b_column, x) = (&*a_column, &*b_column, &*x);
+        macro_rules! last {
+            ($a:expr, $b:expr) => {
+                match (masks, write) {
+                    (Some((-1, 0)), false) => sequence::<false>(entry, len, $a, $b, |v, _| v, out, unsigned),
+                    (Some((m, p)), false) => sequence::<false>(entry, len, $a, $b, |v, _| (v & m) ^ p, out, unsigned),
+                    (Some((m, p)), true) => sequence::<true>(entry, len, $a, $b, |v, _| (v & m) ^ p, out, unsigned),
+                    (None, _) => sequence::<true>(entry, len, $a, $b, |v, k| {
+                        let (left, right) = if reversed { (x[k], v) } else { (v, x[k]) };
+                        crate::vm::operations::int32_bitwise_bits(op, left, right)
+                    }, out, unsigned),
+                }
+            };
+        }
+        macro_rules! b {
+            ($a:expr) => {
+                match b {
+                    Part::Const(c) => last!($a, |_| c),
+                    Part::Linear { start, step } => last!($a, |k: usize| start.wrapping_add(step.wrapping_mul(k as i32))),
+                    Part::Column => last!($a, |k: usize| b_column[k]),
+                }
+            };
+        }
+        let value = match a {
+            Part::Const(1) => b!(|_| 1),
+            Part::Const(c) => b!(|_| c),
+            _ => b!(|k: usize| a_column[k]),
+        };
+        phis[0] = if unsigned { f64::from(value as u32) } else { f64::from(value) };
+        true
+    }
+
+    /// A link's operand as a pair part (a broadcast constant, an induction, or a column of
+    /// int32 words written into `x`) and its largest magnitude in the chunk; `None` where an
+    /// element is no int32.
+    fn operand(&self, link: &Link, scalars: &[f64], scratch: &[f64], len: usize, iotas: Iotas, x: &mut [i32]) -> Option<(Part, f64)> {
+        if let Some(&(slot, _)) = self.broadcasts.iter().find(|&&(_, offset)| offset == link.operand) {
+            let c = super::run::exact_int32(scalars[usize::from(slot)])?;
+            return Some((Part::Const(c), f64::from(c).abs()));
+        }
+        let n = link.operand as usize / CHUNK;
+        if let Some(&(_, slot)) = self.fusion.iotas.iter().find(|&&(m, _)| usize::from(m) == n) {
+            let (first, step) = (iotas.firsts[usize::from(slot)], iotas.steps[usize::from(slot)]);
+            let start = first + step * iotas.done as i64;
+            let end = start + step * (len as i64 - 1);
+            let magnitude = start.unsigned_abs().max(end.unsigned_abs()) as f64;
+            return Some((Part::Linear { start: start as i32, step: step as i32 }, magnitude));
+        }
+        if let Some(&(_, op, ..)) = self.fusion.fused.iter().find(|&&(m, ..)| usize::from(m) == n) {
+            self.fusion.eval(Arg::Col(n as u16), scalars, scratch, len, iotas, x);
+            let magnitude = if op == NumberBitwise::ShiftRightUnsigned { 4294967296.0 } else { 2147483648.0 };
+            return Some((Part::Column, magnitude));
+        }
+        let column = &scratch[link.operand as usize..][..len];
+        let mut exact = true;
+        for (o, &value) in x.iter_mut().zip(column) {
+            let word = super::run::exact_int32(value);
+            exact &= word.is_some();
+            *o = word.unwrap_or(0);
+        }
+        exact.then_some((Part::Column, 2147483648.0))
+    }
+
     /// A chain of `& | ^` links as masks: each link maps the value as `v -> (v & a) ^ b` (`& x`:
     /// a = x, b = 0; `| x`: a = !x, b = x; `^ x`: a = !0, b = x), and maps of that form compose
     /// (`(v & a1 ^ b1) & a2 ^ b2 = v & (a1 & a2) ^ (b1 & a2 ^ b2)`), so the links fold column by
     /// column into one pair per iteration and the recurrence runs one and, one xor per iteration.
-    fn run_masks(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) {
+    fn run_masks(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) {
         if len == 0 {
             return;
         }
         let mut and = [-1i32; CHUNK];
         let mut xor = [0i32; CHUNK];
-        let (and, xor) = (&mut and[..len], &mut xor[..len]);
+        let mut words = [0i32; CHUNK];
+        let (and, xor, words) = (&mut and[..len], &mut xor[..len], &mut words[..len]);
         for link in &self.links {
             let Code::Bits { op, .. } = link.code else { unreachable!("a mask chain's links are bitwise") };
             let broadcast = self.broadcasts.iter().find(|&&(_, offset)| offset == link.operand).map(|&(slot, _)| int32_word(scalars[usize::from(slot)]));
+            if broadcast.is_none() {
+                self.fusion.eval(Arg::Col((link.operand as usize / CHUNK) as u16), scalars, scratch, len, iotas, words);
+            }
             macro_rules! fold {
                 (|$x:ident, $a:ident, $b:ident| $body:expr) => {
                     match broadcast {
                         Some($x) => and.iter_mut().zip(xor.iter_mut()).for_each(|($a, $b)| $body),
-                        None => {
-                            let column = &scratch[link.operand as usize..][..len];
-                            and.iter_mut().zip(xor.iter_mut()).zip(column).for_each(|(($a, $b), &x)| {
-                                let $x = int32_word(x);
-                                $body
-                            })
-                        }
+                        None => and.iter_mut().zip(xor.iter_mut()).zip(words.iter()).for_each(|(($a, $b), &$x)| $body),
                     }
                 };
             }
@@ -580,10 +818,16 @@ impl Chain {
             }
         }
         let mut value = int32_word(phis[0]);
-        let last = self.links.last().map_or(0, |link| link.out as usize);
-        for ((&a, &b), out) in and.iter().zip(xor.iter()).zip(&mut scratch[last..][..len]) {
-            value = (value & a) ^ b;
-            *out = f64::from(value);
+        let last = self.links.last().map_or(self.dump, |link| link.out);
+        if last == self.dump {
+            for (&a, &b) in and.iter().zip(xor.iter()) {
+                value = (value & a) ^ b;
+            }
+        } else {
+            for ((&a, &b), out) in and.iter().zip(xor.iter()).zip(&mut scratch[last as usize..][..len]) {
+                value = (value & a) ^ b;
+                *out = f64::from(value);
+            }
         }
         phis[0] = f64::from(value);
     }
@@ -612,6 +856,215 @@ impl Chain {
         }
         phis[0] = f64::from(value);
     }
+}
+
+/// A part of an integer chain's per-iteration pair `v -> v * a + b` (`Chain::run_wrap`): the same
+/// word every iteration, an induction's `start + step * k`, or a column of words.
+#[derive(Clone, Copy)]
+enum Part {
+    Const(i32),
+    Linear { start: i32, step: i32 },
+    Column,
+}
+
+impl Part {
+    #[inline(always)]
+    fn at(self, k: usize, column: &[i32]) -> i32 {
+        match self {
+            Self::Const(c) => c,
+            Self::Linear { start, step } => start.wrapping_add(step.wrapping_mul(k as i32)),
+            Self::Column => column[k],
+        }
+    }
+
+    /// Writes the part's words into `column` (a column part's words are there already).
+    fn fill(self, column: &mut [i32]) {
+        match self {
+            Self::Const(c) => column.fill(c),
+            Self::Linear { .. } => {
+                for (k, o) in column.iter_mut().enumerate() {
+                    *o = self.at(k, &[]);
+                }
+            }
+            Self::Column => {}
+        }
+    }
+
+    fn neg(self, column: &mut [i32]) -> Self {
+        match self {
+            Self::Const(c) => Self::Const(c.wrapping_neg()),
+            Self::Linear { start, step } => Self::Linear { start: start.wrapping_neg(), step: step.wrapping_neg() },
+            Self::Column => {
+                column.iter_mut().for_each(|o| *o = o.wrapping_neg());
+                Self::Column
+            }
+        }
+    }
+
+    fn scale(self, c: i32, column: &mut [i32]) -> Self {
+        match self {
+            Self::Const(v) => Self::Const(v.wrapping_mul(c)),
+            Self::Linear { start, step } => Self::Linear { start: start.wrapping_mul(c), step: step.wrapping_mul(c) },
+            Self::Column => {
+                column.iter_mut().for_each(|o| *o = o.wrapping_mul(c));
+                Self::Column
+            }
+        }
+    }
+
+    /// `self + other`, with a column part's words in `column` (self's) and `x` (other's).
+    fn add(self, other: Self, column: &mut [i32], x: &[i32]) -> Self {
+        match (self, other) {
+            (Self::Const(a), Self::Const(b)) => Self::Const(a.wrapping_add(b)),
+            (Self::Const(c), Self::Linear { start, step }) | (Self::Linear { start, step }, Self::Const(c)) => {
+                Self::Linear { start: start.wrapping_add(c), step }
+            }
+            (Self::Linear { start: s1, step: t1 }, Self::Linear { start: s2, step: t2 }) => {
+                Self::Linear { start: s1.wrapping_add(s2), step: t1.wrapping_add(t2) }
+            }
+            _ => {
+                self.fill(column);
+                for (k, o) in column.iter_mut().enumerate() {
+                    *o = o.wrapping_add(other.at(k, x));
+                }
+                Self::Column
+            }
+        }
+    }
+}
+
+/// The recurrence `v = last(v * a(k) + b(k), k)` over `len` iterations from `value`, writing
+/// each value to `out` where `WRITE`.
+#[inline(always)]
+fn sequence<const WRITE: bool>(mut value: i32, len: usize, a: impl Fn(usize) -> i32, b: impl Fn(usize) -> i32,
+    last: impl Fn(i32, usize) -> i32, out: &mut [f64], unsigned: bool) -> i32 {
+    for k in 0..len {
+        value = last(value.wrapping_mul(a(k)).wrapping_add(b(k)), k);
+        if WRITE {
+            out[k] = if unsigned { f64::from(value as u32) } else { f64::from(value) };
+        }
+    }
+    value
+}
+
+/// Column nodes only one pass reads, whose int32 words it computes itself (`eval`): iotas from
+/// their inductions (`iotas`: node, affine slot), and bitwise nodes over scalars and columns in
+/// node order (`fused`). Their binary64 columns are written only where the pass falls back.
+pub(super) struct Fusion {
+    iotas: Vec<(u16, u8)>,
+    fused: Vec<(u16, NumberBitwise, Arg, Arg)>,
+}
+
+impl Fusion {
+    fn contains(&self, id: usize) -> bool {
+        self.iotas.iter().any(|&(n, _)| usize::from(n) == id) || self.fused.iter().any(|&(n, ..)| usize::from(n) == id)
+    }
+
+    /// The binary64 columns of the fused nodes, for a pass's fallback.
+    fn materialize(&self, scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) {
+        for &(n, slot) in &self.iotas {
+            let (first, step) = (iotas.firsts[usize::from(slot)], iotas.steps[usize::from(slot)]);
+            for (k, out) in scratch[usize::from(n) * CHUNK..][..len].iter_mut().enumerate() {
+                *out = (first + step * (iotas.done + k as u64) as i64) as f64;
+            }
+        }
+        for &(n, op, ..) in &self.fused {
+            let mut words = [0i32; CHUNK];
+            self.eval(Arg::Col(n), scalars, scratch, len, iotas, &mut words[..len]);
+            let unsigned = op == NumberBitwise::ShiftRightUnsigned;
+            for (out, &word) in scratch[usize::from(n) * CHUNK..][..len].iter_mut().zip(&words[..len]) {
+                *out = if unsigned { f64::from(word as u32) } else { f64::from(word) };
+            }
+        }
+    }
+
+    /// The int32 words (ToInt32) of `arg` over the chunk into `out`: a fused node's computed
+    /// here from its operands, an exclusive iota's from its induction, a scalar's broadcast, and
+    /// any other column's converted.
+    fn eval(&self, arg: Arg, scalars: &[f64], scratch: &[f64], len: usize, iotas: Iotas, out: &mut [i32]) {
+        match arg {
+            Arg::Scalar(slot) => out.fill(int32_word(scalars[usize::from(slot)])),
+            Arg::Col(n) => {
+                if let Some(&(_, slot)) = self.iotas.iter().find(|&&(m, _)| m == n) {
+                    let (first, step) = (iotas.firsts[usize::from(slot)], iotas.steps[usize::from(slot)]);
+                    let (mut x, step) = ((first + step * iotas.done as i64) as i32, step as i32);
+                    for o in out.iter_mut() {
+                        *o = x;
+                        x = x.wrapping_add(step);
+                    }
+                } else if let Some(&(_, op, a, b)) = self.fused.iter().find(|&&(m, ..)| m == n) {
+                    self.eval(a, scalars, scratch, len, iotas, out);
+                    let mut right = [0i32; CHUNK];
+                    let right = &mut right[..len];
+                    let constant = match b {
+                        Arg::Scalar(slot) => Some(int32_word(scalars[usize::from(slot)])),
+                        _ => {
+                            self.eval(b, scalars, scratch, len, iotas, right);
+                            None
+                        }
+                    };
+                    macro_rules! combine {
+                        ($f:expr) => {
+                            match constant {
+                                Some(c) => out.iter_mut().for_each(|o| *o = $f(*o, c)),
+                                None => out.iter_mut().zip(right.iter()).for_each(|(o, &r)| *o = $f(*o, r)),
+                            }
+                        };
+                    }
+                    match op {
+                        NumberBitwise::And => combine!(|l: i32, r: i32| l & r),
+                        NumberBitwise::Or => combine!(|l: i32, r: i32| l | r),
+                        NumberBitwise::Xor => combine!(|l: i32, r: i32| l ^ r),
+                        _ => combine!(|l: i32, r: i32| crate::vm::operations::int32_bitwise_bits(op, l, r)),
+                    }
+                } else {
+                    for (o, &x) in out.iter_mut().zip(&scratch[usize::from(n) * CHUNK..][..len]) {
+                        *o = int32_word(x);
+                    }
+                }
+            }
+            Arg::Phi(_) | Arg::Affine(_) => unreachable!("a fused node reads columns and scalars"),
+        }
+    }
+
+}
+
+/// Whether node `n` only the chain reads (one reader, no later reader), and then marks it fused:
+/// an iota (`iotas`), or a bitwise column node whose operands are scalars or columns (`fused`,
+/// its operands fused first where they can be). `false` where `n` keeps its column.
+fn fuse(shape: &Shape, side: &[u16], n: u16, iotas: &mut Vec<(u16, u8)>, fused: &mut Vec<(u16, NumberBitwise, Arg, Arg)>) -> bool {
+    let node = shape.nodes[usize::from(n)];
+    let readers = shape.nodes.iter().map(|other| usize::from(other.a == Arg::Col(n)) + usize::from(other.b == Arg::Col(n))).sum::<usize>();
+    if readers != 1 || read_later(shape, side, n) || node.seq || node.dead {
+        return false;
+    }
+    if iotas.iter().any(|&(m, _)| m == n) || fused.iter().any(|&(m, ..)| m == n) {
+        return true;
+    }
+    match node.op {
+        NodeOp::Iota { index } => {
+            iotas.push((n, index));
+            true
+        }
+        NodeOp::Bits(op) if !node.hoisted => {
+            let leaf = |arg: Arg| matches!(arg, Arg::Scalar(_) | Arg::Col(_));
+            if !leaf(node.a) || !leaf(node.b) {
+                return false;
+            }
+            for arg in [node.a, node.b] {
+                if let Arg::Col(m) = arg {
+                    fuse(shape, side, m, iotas, fused);
+                }
+            }
+            fused.push((n, op, node.a, node.b));
+            true
+        }
+        _ => false,
+    }
+}
+
+fn is_broadcast(broadcasts: &[(u8, u32)], offset: u32) -> bool {
+    broadcasts.iter().any(|&(_, o)| o == offset)
 }
 
 /// ToInt32 of a Number: the Number itself for an int32 (one conversion and compare).
