@@ -1,0 +1,12 @@
+[package]
+name = "quench-symbols"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Link-layout tools (symbol-order, bolt-profile): std only, so training a link order builds in seconds instead of rebuilding the runtime under another package's feature set"
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true

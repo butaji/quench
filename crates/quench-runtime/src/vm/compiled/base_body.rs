@@ -65,7 +65,7 @@ impl LaneMethod {
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(crate::jit_mode::Tier::Base) || !direct.is_empty(),
-            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
+            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(), ahead: false,
         })
     }
 }
@@ -83,7 +83,7 @@ impl LaneMethod {
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&[]).reaching(scratch), fault_poll: false,
             names_shapes: false, exits: ExitTable::default(), scratch_width: 0, framed: true,
             caller_registers: registers, frame_reach: scratch, amortizes: true,
-            direct: Box::new([]), closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(),
+            direct: Box::new([]), closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(), ahead: false,
         }
     }
 }
@@ -276,9 +276,12 @@ pub(in crate::vm) fn image_body(program: &ResidualProgram, function: u32, facts:
     let (length, live) = (code.len(), program.shared_register_root_masks(function));
     let reason = if length == 0 { "an empty function" } else { "no liveness masks" };
     let region = LoopRegion::of_whole_function(code, &[], live).ok_or_else(|| format!("function {function} ({length} instructions) has no base span: {reason}"))?;
+    // An image names no heap value by its address: its constant loads take the immediates alone (`undefined`, `null`, a
+    // boolean, a Number), and any other constant is the deleted marker, which no constant row takes (`value_row`).
+    let constants: Vec<Value> = program.constants.iter().map(|constant| super::facts::immediate(constant).unwrap_or(Value::DELETED)).collect();
     let known = Known {
         program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
-        invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
+        invalidation: None, constants: &constants, typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
     let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).

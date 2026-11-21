@@ -105,9 +105,53 @@ pub fn reached(ll: &str, is_row: impl Fn(&str) -> bool) -> BTreeSet<String> {
     out
 }
 
+/// Every identifier of the functions rustc lists as a shard's mono items (`-Z print-mono-items`, one
+/// `MONO_ITEM fn <path> @@ <units>` line each): a superset of what its rows reach, since a crate's mono items are
+/// every function instantiated in it, which holds every function a row runs. Each path's identifiers are its words
+/// (a module, a type, a function, a closure's enclosing function), as `identifiers` reads them from a symbol.
+pub fn mono_items(listing: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for line in listing.lines() {
+        let Some(item) = line.strip_prefix("MONO_ITEM ") else { continue };
+        let path = item.split(" @@ ").next().unwrap_or(item);
+        let path = path.strip_prefix("fn ").unwrap_or(path);
+        for word in path.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            if word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                out.insert(word.to_string());
+            }
+        }
+        // Every two adjacent identifier segments of each path, `module::function` among them (`edits` names a
+        // file's own function so); a type's segments in `<..>` are paths of their own.
+        for part in path.split(|c: char| matches!(c, '<' | '>' | ',' | '(' | ')' | '[' | ']' | ';' | '&' | '*' | ' ' | '{' | '}')) {
+            let segments: Vec<&str> = part.split("::").filter(|s| s.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).collect();
+            for pair in segments.windows(2) {
+                out.insert(format!("{}::{}", pair[0], pair[1]));
+            }
+        }
+    }
+    // Marks a reach that lists the pairs, which an older reach (from LLVM IR) does not.
+    out.insert(PAIRS.to_string());
+    out
+}
+
+/// The line a reach with `module::function` pairs holds (`mono_items`).
+pub const PAIRS: &str = "#pairs";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mono_items_read_every_word_of_each_path() {
+        let listing = "MONO_ITEM fn staged::ic::run::<stage::StencilStage> @@ rows.cgu.0[Internal]\n\
+                       MONO_ITEM fn h_1_0 @@ rows.cgu.0[External]\nwarning: noise\n";
+        let ids = mono_items(listing);
+        assert!(ids.contains("ic") && ids.contains("run") && ids.contains("StencilStage") && ids.contains("h_1_0"));
+        assert!(ids.contains("ic::run") && ids.contains("staged::ic") && ids.contains(PAIRS));
+        assert!(!ids.contains("run::StencilStage"));
+        assert!(!ids.contains("rows") && !ids.contains("noise"));
+    }
 
     #[test]
     fn reach_follows_uses_and_reads_identifiers() {

@@ -110,6 +110,7 @@ impl Reads {
     }
 
     /// The reads of a capture access of the running lane's `cx`.
+    #[inline(always)]
     pub(super) fn of_captures<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { captures: Some(CaptureReads { context: cx.cast(), read: |context, depth, slot, root|
             capture_slot_read(context.cast::<LaneContext<H>>(), depth, slot, root) }), ..Self::NONE }

@@ -99,6 +99,7 @@ use captures::RootedRead;
 use call_frames::{CallSite, DirectSite, Leave, ReturnSite, Site};
 pub(super) use call_frames::ProvenCall;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
+#[path = "lane_region/general_steps.rs"] mod general_steps;
 #[path = "lane_region/jumps.rs"] mod jumps;
 #[path = "lane_region/call_rows.rs"] mod call_rows;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
@@ -985,7 +986,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         // A caller-frame leave of a body differs from another storing the same registers only
         // by its exit word: one block stores them for all, the word its parameter.
         let origin = self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end));
-        if let (Completion::Body, super::lane_unit::Origin::Caller(record), None) = (self.completion, origin, self.vm.ahead) {
+        if let (Completion::Body, super::lane_unit::Origin::Caller(record)) = (self.completion, origin) {
             let block = self.shared_exit_block(stored);
             let word = self.raw_const(Lane::I64, LaneExit::At(record as usize).word() as i64);
             self.goto(block, &[word]);
@@ -1025,7 +1026,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         // No block's entry state keeps a receiver as its fields (`virtual_objects`): the
         // instruction that ends a block allocates any live one first, so one reaching an
         // edge is a lowering this code does not make.
-        if state.virtuals.iter().any(|kept| self.is_live(pc, kept.register)) { self.valid = false; }
+        if state.virtuals.iter().any(|kept| self.is_live(pc, kept.register)) { self.valid = false; declined("a kept receiver reaches an edge", pc); }
         state.virtuals.clear();
         if !self.coverage.lowered(pc) {
             self.exit(state, pc as u32);
@@ -1035,7 +1036,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let lowered = pc > self.at || self.entered.contains(pc);
         match self.blocks.get(pc).copied().flatten().filter(|_| lowered) {
             // An edge the forward analysis did not see reaches a sealed block: decline.
-            Some(_) if pc <= self.at && self.sealable.contains(pc) => self.valid = false,
+            Some(_) if pc <= self.at && self.sealable.contains(pc) => { self.valid = false; declined("an unseen edge reaches a sealed block", pc); }
             Some(block) => {
                 self.entered.insert(pc);
                 self.finishes |= pc <= self.at;
@@ -1238,7 +1239,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let Some(types) = self.facts.at(pc) else { return state };
         for (index, ty) in types.iter().copied().enumerate() {
             if !self.is_live(pc, index as Register) { continue; }
-            let Some(fact) = self.entry_fact(pc, ty) else { self.valid = false; return state; };
+            let Some(fact) = self.entry_fact(pc, ty) else { self.valid = false; declined("no entry fact for a live register", pc); return state; };
             state.values[index] = fact;
         }
         state
@@ -1792,6 +1793,18 @@ impl Specializer for RegionSpecializer<'_> {
     }
 }
 
+thread_local! {
+    /// The first reason this thread's current lowering declined, and its PC (`usize::MAX`: none).
+    static DECLINED: std::cell::Cell<Option<(&'static str, usize)>> = const { std::cell::Cell::new(None) };
+    /// The opcodes this thread's current lowering leaves at because it has no lowering for them.
+    static UNLOWERED: std::cell::RefCell<std::collections::BTreeSet<String>> = const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
+}
+
+/// Notes why the lowering declines, for `QUENCH_TRACE=aot-lanes`; the first reason stands.
+fn declined(why: &'static str, pc: usize) {
+    DECLINED.with(|declined| if declined.get().is_none() { declined.set(Some((why, pc))); });
+}
+
 /// Lowers `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
 /// gives the proved shapes and slots of; `None` where it does not lower.
 #[allow(clippy::too_many_arguments)]
@@ -1809,6 +1822,8 @@ pub(super) fn lower_body(
     number_reads: &[super::facts::ObservedRead],
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
+    DECLINED.with(|declined| declined.set(None));
+    UNLOWERED.with(|unlowered| unlowered.borrow_mut().clear());
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
@@ -1816,7 +1831,13 @@ pub(super) fn lower_body(
     // The scalar entry lowers first: the body calls it only where it exists.
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
     let scalar = abi.and_then(|abi| scalar::lowered(program, RegionSpecializer { generic: &[], facts: VmFacts { scalar: Some(abi), ..vm }, plan: scalar::plan(abi), ..body }));
-    let region = RegionSpecializer { facts: VmFacts { scalar: abi.filter(|_| scalar.is_some()), ..vm }, ..body }.specialize(program).ok()?;
+    let region = RegionSpecializer { facts: VmFacts { scalar: abi.filter(|_| scalar.is_some()), ..vm }, ..body }.specialize(program)
+        .inspect_err(|_| if helpers == LaneHelpers::Ahead && crate::trace::Channel::AotLanes.on() {
+            let (why, pc) = DECLINED.with(|declined| declined.get()).unwrap_or(("a decline no note names", usize::MAX));
+            let op = unit.instructions.get(pc).map(|instruction| format!("{:?}", instruction.op())).unwrap_or_default();
+            let unlowered = UNLOWERED.with(|unlowered| unlowered.borrow().iter().cloned().collect::<Vec<_>>().join(","));
+            eprintln!("aot-lanes: function {function_id}: lowering declines: {why} {op} [leaves at {unlowered}]");
+        }).ok()?;
     // The proven entry lowers the same body with its parameters' entry guards taken as proved (`VmFacts::proven_entry`).
     // It is kept only where it folds exactly the body's Stable facts, which its publication takes once for both.
     let params = program.function_get(function_id as usize).is_some_and(|function| function.params > 0);
@@ -1830,14 +1851,16 @@ pub(super) fn lower_body(
     Some(LoweredLane { region, clif, scalar, proven })
 }
 
-/// Where an ahead lane body's leaves continue: per unit PC, the `(namespace, key)` of the base
-/// body's `Symbol::BasePc` the origin there names, `None` where the base body enters no record.
-/// Present, a leave tail-jumps to that entry instead of returning its exit word (`exits.rs`).
+/// What an ahead lane body reads of its image. Its leaves return their exit words, as a JIT lane's
+/// do: a base body is entered only at its start (a record inside it has no resume stub to load
+/// its pinned registers), and a base body leaves the same way.
 #[derive(Clone, Copy)]
 pub(super) struct AheadLeaves<'a> {
-    pub(super) targets: &'a [Option<(u32, u32)>],
     /// By unit PC, the calls the closed world proves whose records the body reads (`ProvenCall`).
     pub(super) calls: &'a BTreeMap<usize, ProvenCall>,
+    /// By constant pool slot, the heap value key (`HeapValueRecipe::String`) of each string
+    /// constant the unit loads.
+    pub(super) strings: &'a BTreeMap<usize, u32>,
 }
 
 /// The position a failed entry contract takes in a lane body's leave set
@@ -1882,8 +1905,9 @@ pub(super) fn lower(
     let numeric = completion.numeric();
     if numeric && (!super::super::js_compiled::function_candidate(function, program)
         || !scalar::numeric_unit(program, unit, completion != Completion::Number, direct) || function.params > unit.caller_registers) { return None; }
-    if fields.iter().flatten().flatten().any(|field| !field.valid()) { return None; }
+    if fields.iter().flatten().flatten().any(|field| !field.valid()) { declined("an invalid field site", usize::MAX); return None; }
     if unit.instructions.is_empty() || unit.instructions.len() > MAX_NATIVE_RECORDS {
+        declined("past the native record count", usize::MAX);
         return None;
     }
     let signature = completion.signature(isa.pointer_type(), isa.default_call_conv());
@@ -1942,7 +1966,7 @@ pub(super) fn lower(
     // it branches there (`Lowering::inline_call`).
     let mut leaders = leaders(&unit.instructions);
     let entry_pc = coverage.entry();
-    if !matches!(unit.origins.get(entry_pc), Some(super::lane_unit::Origin::Caller(_))) { return None; }
+    if !matches!(unit.origins.get(entry_pc), Some(super::lane_unit::Origin::Caller(_))) { declined("the entry is not the caller's", entry_pc); return None; }
     leaders.insert(entry_pc);
     for alternative in unit.frames.iter().filter_map(|frame| frame.alternative) {
         if alternative < unit.instructions.len() { leaders.insert(alternative); }
@@ -2308,6 +2332,9 @@ pub(super) fn lower(
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Tail, now - mark); mark = now; }
     for GuardExit { block, values, homed, virtuals, pc, line } in lowering.take_leaves() {
         lowering.switch_to(block, true);
+        if helpers == LaneHelpers::Ahead && crate::trace::Channel::AotLanes.on() {
+            eprintln!("aot-lanes: function {function_id}: a leave at {pc} (lowering line {line})");
+        }
         let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new(), virtuals };
         if lowering.vm.diagnostics {
             let line = lowering.raw_const(Lane::I64, i64::from(line));
@@ -2317,7 +2344,7 @@ pub(super) fn lower(
     }
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Leaves, now - mark); mark = now; }
     lowering.fill_call_out_stop();
-    lowering.fill_exits()?;
+    if lowering.fill_exits().is_none() { declined("an exit fill declines", usize::MAX); return None; }
     let exits = ExitTable::of_unit(unit, |pc, frame| lowering.inlined_stores(pc, frame));
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Exits, now - mark); mark = now; }
     lowering.builder.switch_to_block(stop);
@@ -2343,6 +2370,7 @@ pub(super) fn lower(
         Coverage::Loop { .. } => !unit.frames.is_empty(),
     };
     if !lowering.valid || (completion.status_and_pc() && must_finish && !lowering.finishes) {
+        if lowering.valid { declined("the body does not finish", usize::MAX); }
         return None;
     }
     let number_result = numeric.then(|| lowering.finish_number_returns());
@@ -2505,7 +2533,7 @@ impl Lowering<'_, '_> {
     /// A join no verified fact describes invalidates the region.
     fn join_states(&mut self, state: &mut State, incoming: &State, pc: usize) {
         // A kept receiver never reaches a join: the block that would carry it allocates it.
-        if !state.virtuals.is_empty() || !incoming.virtuals.is_empty() { self.valid = false; }
+        if !state.virtuals.is_empty() || !incoming.virtuals.is_empty() { self.valid = false; declined("a kept receiver reaches a join", pc); }
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
         state.join_kept_shapes(incoming);
@@ -2526,7 +2554,7 @@ impl Lowering<'_, '_> {
                     ty: current.value.ty.join(incoming.value.ty), representation,
                     binding: BindingTime::Dynamic, proof: Proof::Definition,
                     projection: Projection::Exact,
-                }) else { self.valid = false; return; };
+                }) else { self.valid = false; declined("a join no fact describes", pc); return; };
                 // A tagged view no later use reads is dropped (`demand`): a leave rebuilds it from the unboxed view.
                 fact.tagged = if current.tagged == incoming.tagged { current.tagged }
                     else if current.tagged.current() && incoming.tagged.current()
@@ -2575,6 +2603,7 @@ impl Lowering<'_, '_> {
         self.finishes = true;
         if !state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) {
             self.valid = false;
+            declined("a number return of a non-number", pc as usize);
             self.return_at(0);
             return;
         }
@@ -3160,11 +3189,20 @@ impl Lowering<'_, '_> {
                 if falls { self.conform_declared_definitions(state, pc, instruction); }
                 falls
             }
+            None if let Some(falls) = self.general_step(state, pc, instruction) => {
+                self.native += 1;
+                falls
+            }
             None => {
                 super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
+                if self.helpers == LaneHelpers::Ahead && crate::trace::Channel::AotLanes.on() {
+                    let name = instruction.op().loads_name().then(|| self.program.atoms.get(instruction.atom_index() as usize).map(|atom| format!("({atom})"))).flatten();
+                    UNLOWERED.with(|unlowered| unlowered.borrow_mut().insert(format!("{:?}{}", instruction.op(), name.unwrap_or_default())));
+                }
                 if self.coverage.full() && (self.completion.numeric()
                     || !((matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) && plain) || instruction.returns_from_frame())) {
                     self.valid = false;
+                    declined("an unlowered instruction in full coverage", pc);
                 }
                 self.exit(state, pc32);
                 false
@@ -3349,7 +3387,7 @@ impl Lowering<'_, '_> {
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
-        let mut stage = Emit { builder: &mut self.builder, property_values, gate };
+        let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload) };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
             stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
@@ -3388,7 +3426,7 @@ impl Lowering<'_, '_> {
         false
     }
 
-    fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    fn typeof_index(&mut self, state: &mut State, _pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_b();
         let ty = state.values[usize::from(source)].value.ty;
         let known = [crate::ValueType::Number, crate::ValueType::Boolean, crate::ValueType::Null,
@@ -3425,11 +3463,36 @@ impl Lowering<'_, '_> {
     fn decided_relation(&mut self, state: &mut State, pc: u32, operator: u32, left: Operand, right: Operand) -> Option<ir::Value> {
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
+        // A relational operator of operands no fact types (a field's value, a call's result): two
+        // int-tagged words compare as int32 in place, as the interpreter's integer path does
+        // (`operations::integer_binary`); any other pair is the helper's.
+        let Some(relation) = super::operations::NumberRelation::from_operator(operator) else {
+            return Some(self.decided_words(left, right, operator, exit));
+        };
+        let (left_int, right_int) = (is_int_tagged(&mut self.builder, left), is_int_tagged(&mut self.builder, right));
+        let ints = self.raw_binary(Binary::And, left_int, right_int);
+        let (int_block, other, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let holds = self.builder.append_block_param(join, types::I8);
+        self.branch_if(ints, (int_block, &[]), (other, &[]));
+        self.builder.switch_to_block(int_block);
+        let (left_bits, right_bits) = (self.raw_unary(Unary::Narrow(Lane::I32), left), self.raw_unary(Unary::Narrow(Lane::I32), right));
+        let int_holds = crate::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left_bits, right_bits, NumberRelationDomain::Int32);
+        self.goto(join, &[int_holds]);
+        self.builder.switch_to_block(other);
+        let decided = self.decided_words(left, right, operator, exit);
+        self.goto(join, &[decided]);
+        self.builder.switch_to_block(join);
+        Some(holds)
+    }
+
+    /// The `Decide` helper's Boolean of `left operator right`, leaving at `exit` where only the
+    /// full algorithm decides it (`comparison_decision`).
+    fn decided_words(&mut self, left: ir::Value, right: ir::Value, operator: u32, exit: ir::Block) -> ir::Value {
         let operator = self.raw_const(Lane::I64, i64::from(operator));
         let holds = self.helper_call(LaneHelper::Decide, &[left, right, operator]);
         let decided = self.raw_compare_imm(Relation::NotEqual, holds, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, decided, exit);
-        Some(self.raw_unary(Unary::Narrow(Lane::I8), holds))
+        self.raw_unary(Unary::Narrow(Lane::I8), holds)
     }
 
     /// `number === other` where `number` is a Number: equal only where `other` is a Number too
@@ -3750,7 +3813,9 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         };
-        let missed = self.guard_exit(state, pc as u32);
+        // An image body makes a call its helper misses by the interpreter's step, and continues (`fill_stepped_miss`).
+        let stepped = self.stepped_record(pc);
+        let missed = if stepped.is_none() { self.guard_exit(state, pc as u32) } else { cold_block(&mut self.builder) };
         self.home_written(state, pc);
         let completed = self.builder.create_block();
         let raised = cold_block(&mut self.builder);
@@ -3758,6 +3823,7 @@ impl Lowering<'_, '_> {
         // The callee's exception block is filled before the call's blocks, from the state the call is made in.
         self.goto(entered, &[]);
         self.raised_call(state, pc, record, raised);
+        if let Some(record) = stepped { self.fill_stepped_miss(state, pc, record, missed, completed); }
         self.builder.switch_to_block(entered);
         // SAFETY: the body owns its callees for as long as its code runs.
         let callees: Vec<&DirectCallee> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
@@ -4847,7 +4913,9 @@ impl Lowering<'_, '_> {
         // again.
         // The site's own shapes still store in place first: a body that left here once (before
         // the site cached a shape, say) keeps its arms, and only their miss adds.
-        if self.generic.contains(&pc) && self.completion.status_and_pc() {
+        // An image body has no runtime feedback to say a store adds: every store may, and its
+        // miss of the site's own shapes adds through the VM's entries rather than leaving.
+        if (self.generic.contains(&pc) || self.helpers == LaneHelpers::Ahead) && self.completion.status_and_pc() {
             let (arms, _) = self.site_store_plan(instruction.cache_site_index(), ty);
             let admitted = (!arms.is_empty()).then(|| self.store_atom_admitted(state, instruction.atom_index(), exit));
             state.proofs.write_field(instruction.atom_index());

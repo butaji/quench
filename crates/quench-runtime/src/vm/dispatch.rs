@@ -766,6 +766,10 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn run_row_completed(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool,
         operation: crate::staged::Operation<u64, ()>, completes: crate::bytecode::Register) -> RowRun {
+        // A numeric local target names a local slot, not a register: the plain row writes its result to the
+        // register of that index, which holds another value (a hoisted closure in TypeScript's checker), so the
+        // register is put back once the local has the result.
+        let kept = i.numeric_local_target().map(|local| self.read(f, local));
         // A read that writes `this` pushes no getter: its value is stored to `this` once it is read.
         let run = self.run_row(p, f, i, pc, allow_inline_calls && !i.writes_current_this(), operation);
         if !matches!(run, RowRun::Done(_)) {
@@ -782,6 +786,7 @@ impl<H: Host> Vm<H> {
         if let Some(local) = i.numeric_local_target() {
             let value = self.read(f, i.result_register());
             self.frames[f].locals[local as usize] = value;
+            if let Some(kept) = kept { self.write(f, local, kept); }
             self.profile
                 .virtual_opcode(self.frames[f].program.raw(), crate::staged::STORE_LOCAL_PLAIN_ROW as usize);
         }

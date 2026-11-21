@@ -22,7 +22,9 @@ pub(crate) enum InitializerValue {
     /// Number `constant`: `this.y = x + 1`. Any other argument leaves the stores to the body.
     Numeric { parameter: u16, operator: u8, constant: f64 },
     /// A fresh object of the constructor a capture and a property chain name, constructed from
-    /// primitive constants: `this.color = new NS.Color(0, 0, 0)`.
+    /// primitive constants: `this.color = new NS.Color(0, 0, 0)`; or, where it does not
+    /// construct (`NestedConstruct::constructs`), the value that chain reads:
+    /// `this.color = Info.defaultColor`.
     Construct(NestedConstruct),
 }
 
@@ -33,7 +35,7 @@ pub(crate) const NESTED_ARGUMENTS: usize = 4;
 
 /// `new <capture>.<chain>(<constants>)`: the constructor read from the captured binding
 /// `capture` (a `LoadCapture` immediate) through `chain[..depth]`, called with
-/// `arguments[..count]`.
+/// `arguments[..count]`; or `<capture>.<chain>` itself where it does not `constructs`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NestedConstruct {
     pub(crate) capture: u32,
@@ -41,6 +43,7 @@ pub(crate) struct NestedConstruct {
     pub(crate) depth: u8,
     pub(crate) arguments: [InitializerConstant; NESTED_ARGUMENTS],
     pub(crate) count: u8,
+    pub(crate) constructs: bool,
 }
 
 impl InitializerStore {
@@ -145,7 +148,8 @@ impl Temporaries {
 
 /// The stores a nested construction adds to those of its body: the instructions from pc `at`
 /// that read the constructor (`LoadCapture` and a chain of `GetField`), load the constant
-/// arguments into the window, construct, and store the result into `this`; with how many
+/// arguments into the window, construct, and store the result into `this` (or store the read
+/// itself, `NestedConstruct::constructs`); with how many
 /// instructions they take. The registers they write are the body's temporaries, above its
 /// parameters, which nothing else reads.
 fn nested_store(instructions: &[WideInstruction], at: usize, params: u16, constants: &[Constant]) -> Option<(InitializerStore, usize)> {
@@ -153,6 +157,11 @@ fn nested_store(instructions: &[WideInstruction], at: usize, params: u16, consta
     let (chain, depth, register) = constructor_chain(instructions, at + 1, load.result_register(), params);
     (depth > 0).then_some(())?;
     let pc = at + 1 + depth;
+    // `this.f = <capture>.<chain>`: the read itself.
+    if let Some(set) = instructions.get(pc).filter(|set| set.stores_to_this() && set.register_a() == register) {
+        let read = NestedConstruct { capture: load.imm(), chain, depth: depth as u8, arguments: [InitializerConstant::Undefined; NESTED_ARGUMENTS], count: 0, constructs: false };
+        return Some((InitializerStore { atom: set.imm(), site: set.c(), value: InitializerValue::Construct(read) }, pc + 1 - at));
+    }
     let (arguments, loaded) = constant_arguments(instructions, pc, params, constants)?;
     let pc = pc + loaded.len();
     let construct = instructions.get(pc).filter(|construct| construct.op().traits().has(Traits::CONSTRUCTION) && construct.register_b() == register
@@ -164,7 +173,7 @@ fn nested_store(instructions: &[WideInstruction], at: usize, params: u16, consta
         .then_some(())?;
     let store = pc + 1;
     let set = instructions.get(store).filter(|set| set.stores_to_this() && set.register_a() == construct.result_register())?;
-    let construct = NestedConstruct { capture: load.imm(), chain, depth: depth as u8, arguments, count: loaded.len() as u8 };
+    let construct = NestedConstruct { capture: load.imm(), chain, depth: depth as u8, arguments, count: loaded.len() as u8, constructs: true };
     Some((InitializerStore { atom: set.imm(), site: set.c(), value: InitializerValue::Construct(construct) }, store + 1 - at))
 }
 

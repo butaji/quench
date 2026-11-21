@@ -121,6 +121,16 @@ pub(super) fn thunk(ending: Ending, rows_at: usize, proven_at: usize) -> Result<
     Ok(code)
 }
 
+/// The length of the entry thunk `thunk` builds for `ending`, without building it: the routines it copies
+/// (in the same order), whose lengths its patches never change. `place_rows` checks it against the built thunk.
+pub(super) fn thunk_len(ending: Ending) -> Result<usize, String> {
+    let names: &[&str] = match ending {
+        Ending::Region => &["entry_thunk"],
+        Ending::Body => &["entry_body", "entry_rows", "entry_rows"],
+    };
+    names.iter().try_fold(0, |len, name| Ok(len + routine(name)?.code.len()))
+}
+
 /// Where a body's row entry (`entry_rows`) lies in its code: past `entry_body`, which starts it.
 pub(in crate::vm::compiled) fn rows_entry_offset() -> Option<usize> {
     routine("entry_body").ok().map(|stencil| stencil.code.len())

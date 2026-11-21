@@ -51,7 +51,7 @@
 use crate::layout::call_record::{helper_outcome, CallRecord, DirectHole, HelperHole, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
-use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_ACTIVATION_COUNT, JS_STEP_BODY_TABLE, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_ACTIVATION_COUNT, JS_STEP_BODY_TABLE, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::staged::frame::{PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
@@ -332,7 +332,11 @@ unsafe fn admit(stage: &mut StencilStage, record: usize, payload: usize) -> Opti
         let (room, fill) = admit_native(stage, cell as u64, word_at(record, offset_of!(CallRecord, expected)), top, end, reserved, ())?;
         let depth = word_at(tops.plain_at as usize, PLAIN_DEPTH_AT);
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) + 1;
-        if depth + frames > word_at(payload, PLAIN_DEPTH_LIMIT) {
+        // The payload names the limit's cell (`LaneStack::plain_depth_limit`), which Rust zeroes when it changes the frames
+        // under a bound run or the run's window is a leaf's (`refuse_direct_calls_in_leaf`): the helper row calls then.
+        // Comparing against the cell's address instead admitted every call, so a body entered as a leaf pushed its callee
+        // over the leaf's pending activation (crypto's and deltablue's `--b-jit` failures).
+        if depth + frames > word_at(word_at(payload, PLAIN_DEPTH_LIMIT) as usize, 0) {
             return None;
         }
         let registers = word_at(tops.plain_at as usize, PLAIN_REGISTERS_AT);
@@ -360,6 +364,9 @@ unsafe fn push<const ARGC: usize, const PLACED: bool>(s: &S, file: u64, record: 
         }
         set_context_word(a.top, CONTEXT_BODY, captures);
         let field = |at: usize| word_at(record, at);
+        // The callee's environment and captures pointer, which the interpreter reads from a linked frame.
+        set_context_word(a.top, CONTEXT_ENV, field(offset_of!(CallRecord, env)));
+        set_context_word(a.top, CONTEXT_CAPTURE, field(offset_of!(CallRecord, capture)));
         let header = protocol::BodyHeader { call: field(offset_of!(CallRecord, call)), caller_registers: file, caller_base: field(offset_of!(CallRecord, caller_base)),
             packed: field(offset_of!(CallRecord, packed)), callee: field(offset_of!(CallRecord, callee)) };
         let mut stage = StencilStage::from_hole(0);
@@ -430,7 +437,7 @@ unsafe fn enter<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PL
         let window = register_index(record, offset_of!(CallRecord, args_register));
         let mut stage = StencilStage::from_hole(0);
         // The caller's register file: the call protocol's frame hook (`Places::call_registers`).
-        let mut frame = Places::<0, 0, 0>::new(S { frame: s.frame, ctx: s.ctx, p: s.p, f: s.f });
+        let mut frame = Places::new::<0, 0, 0>(S { frame: s.frame, ctx: s.ctx, p: s.p, f: s.f });
         let Some(file) = CallFrame::call_registers(&mut frame, &mut stage) else { return Entered::Refused };
         // Identity (checked rows only), then the receiver the callee binds (strict as it is, sloppy by `protocol::bind_this`).
         if CHECKED {

@@ -23,7 +23,7 @@ fn sum_loop() -> (ir::Function, usize) {
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entering, &[]), &[], &[],
+        &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entering, &[], &[]), &[], &[],
         Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Typed(Some(Kind::Float64)), true)
         .expect("the loop lowers");
     (region.function, written.len())

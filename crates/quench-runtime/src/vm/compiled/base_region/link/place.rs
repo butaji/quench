@@ -33,25 +33,29 @@ fn symbol_sites(rows: &[Placed], symbols: &[Symbolic], head: usize) -> Result<Ve
 /// each row and, for a loop region, of the resume thunk (`entry_resume`), which follows the stubs;
 /// each resume stub's `jumps` is patched to its row.
 pub(in super::super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize, symbols: &[Symbolic]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
-    let head = thunk(ending, 0, 0)?.len();
+    let head = thunk_len(ending)?;
     let resume: &[u8] = if ending == Ending::Region { &routine("entry_resume")?.code } else { &[] };
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
     let stubs = exits.iter().flatten().filter(|target| matches!(target, Target::Stub { .. })).count();
+    // The rows' length and starts, known before any copy: the stubs and routines lie after the copied code, and the
+    // exits' addresses (which the copy patches in) come from the starts.
+    let (len, starts) = quench_bjit::placement(rows);
     let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + stubs * EXIT_STUB_LEN + resume.len();
     let mut code = vec![0u8; head + bound + tail];
     let base = code.as_mut_ptr();
-    // SAFETY: `base + head` has room for every stencil's full length, which bounds the rows.
-    let (len, starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |_, _| base as usize) };
     let (routine_at, at) = append_routines(&mut code, head + len, routines);
     let (addresses, mut at) = exit_addresses(&mut code, (base as usize + head, &starts), at, (exits, &routine_at))?;
-    // SAFETY: as above; the stubs lie after the copied code inside `code`.
-    let (_, starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, kind| addresses[row].get(kind as usize).copied().unwrap_or(base as usize)) };
+    // SAFETY: `base + head` has room for every stencil's full length, which bounds the rows; the stubs and
+    // routines written above lie after the copied code (`head + len`), so the copy does not overlap them.
+    let (copied, copied_starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, kind| addresses[row].get(kind as usize).copied().unwrap_or(base as usize)) };
+    debug_assert_eq!((copied, &copied_starts), (len, &starts));
     for jump in jumps {
         patch_jump(&mut code, head + starts[jump.row], starts[jump.target] as i64 - starts[jump.row] as i64)?;
     }
     let sites = symbol_sites(rows, symbols, head)?;
     let proven_at = head + starts.get(proven_row).copied().unwrap_or(0);
     let thunk_bytes = thunk(ending, head, proven_at)?;
+    debug_assert_eq!(thunk_bytes.len(), head);
     code[..head].copy_from_slice(&thunk_bytes);
     code[at..at + resume.len()].copy_from_slice(resume);
     let resume_at = at;

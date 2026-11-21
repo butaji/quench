@@ -185,7 +185,7 @@ pub(super) fn super_construction<H: Host>(
     let mut stores = ChainStores::new();
     let root = chain_stores(vm, callee, None, &mut stores, 0).filter(|root| *root != callee)?;
     let argument = construct_argument_in_lane(r, i);
-    let (this, added) = initialize_stores_in_lane(vm, callee, root, |vm, this, each| add_chain_stores(vm, this, &stores, &argument, each))?;
+    let (this, added) = initialize_stores_in_lane(vm, callee, root, Value::UNDEFINED, |vm, this, _, each| add_chain_stores(vm, this, &stores, &argument, each))?;
     added.then(|| {
         plan_super_parent(vm, callee);
         this

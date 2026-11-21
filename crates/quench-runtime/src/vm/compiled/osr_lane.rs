@@ -47,10 +47,10 @@ pub(super) unsafe fn bind_captures<H: Host>(
     region: &LoopRegion, entry: &LoopEntry, lane_context: usize, registers: *mut crate::value::Value, calls: bool,
     captures: &mut Vec<crate::Value>,
 ) {
-    // A region that reads and stores no capture and calls nothing binds no view. One that calls may
-    // test a captured callee's identity at its entry (`CAPTURE_IDENTITY_ROW`), which reads the view
-    // although no `LoadCapture` of its own is in `captures`.
-    if region.captures.is_empty() && region.stored_captures.is_empty() && !calls { return; }
+    // Every region binds a view, even one whose own instructions name no capture: its window's captures word is
+    // otherwise whatever the activation's push left there (an interpreter push writes none), and a base region's
+    // rows may read it all the same (richards under `--b-jit` read capture 34 through a deleted marker). One that
+    // calls may also test a captured callee's identity at its entry (`CAPTURE_IDENTITY_ROW`).
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.
     let live = (calls || !region.stored_captures.is_empty())
@@ -137,6 +137,11 @@ pub(super) unsafe fn enter<H: Host>(
     context.program = program;
     // SAFETY: the region runs on the lane's activation at the lane stack's top, and `reclaim` follows the run.
     let payload = unsafe { payload_for(vm, dispatch, lend) };
+    // A region's direct calls push their callees' frames over the running activation, which a leaf has not made yet:
+    // they refuse there, once the lent payload's words (which set the limit) are bound.
+    if lend.is_some() {
+        super::dispatch_fast::refuse_direct_calls_in_leaf::<H>(lane_context as *mut (), registers);
+    }
     context.adapter_payload = payload.cast();
     // The region's call rows reload its payload's heap bases after the callee ran (`region_call_in_lane`).
     // SAFETY: `lane_context` is the running lane's.

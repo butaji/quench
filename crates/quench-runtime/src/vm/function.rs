@@ -297,7 +297,7 @@ impl<H: Host> Vm<H> {
     /// The own data property `atom` of an ordinary object whose shape holds every own
     /// property's attributes and no getter (`Vm::plain_function_length`'s test): its value,
     /// read observing nothing. `None` for an accessor, an absent name or any other object.
-    fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
+    pub(super) fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
         let data = self.object_data(object)?;
         if data.has_side_descriptors() || self.shapes[data.shape() as usize].facts.slot_getters() {
             return None;

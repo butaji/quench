@@ -97,7 +97,7 @@ impl Comparison {
     /// The comparison `operator` names (a `JumpBinaryFalse`'s operator field): the widest Number
     /// relation, an equality, a bitwise test, `instanceof`, else the operator itself. A tier with
     /// more facts than the operator narrows it (the observed Numbers, the proved domain).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn of_operator(operator: u32) -> Self {
         equality_operator(operator)
             .map(|(strict, negated)| Self::Equality { strict, negated })
@@ -129,7 +129,9 @@ impl Comparison {
 #[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
-    /// The `JumpBinaryFalse` row: it jumps where the comparison fails.
+    /// The `JumpBinaryFalse` row: it jumps where the comparison fails. Inlined into the row,
+    /// which decodes its record on every run.
+    #[inline(always)]
     pub(super) fn decode_compare(instruction: WideInstruction) -> Self {
         let comparison = Comparison::of_operator(instruction.binary_operator_field());
         Self::CompareJump { comparison, left: instruction.operand_b(), right: instruction.operand_c(), negate: true }

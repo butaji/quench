@@ -280,20 +280,15 @@ fn compile(options: Options) -> Result<(), String> {
         None => {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().map_err(|error| format!("automatic support build requires the compiler checkout: {error}; use --sdk-report with existing support artifacts"))?;
             // The `experiment` profile takes nightly flags, as the standard build does (`RUSTC_BOOTSTRAP`).
+            // A dynamic-source image links the standard build's library (`cargo build -p quench`, default
+            // features), which that build left fresh: this cargo run only reports it. A static image's
+            // support leaves out the JIT and the bundled sources, a build of its own.
             let mut cargo = Command::new("cargo");
-            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args([
-                "build",
-                "--locked",
-                "--profile",
-                &options.profile,
-                "-p",
-                "quench",
-                "--no-default-features",
-                "--features",
-                if support.allows_dynamic_source() { "native-execution,jit" } else { "native-execution" },
-                "--lib",
-                "--message-format=json",
-            ]);
+            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args(["build", "--locked", "--profile", &options.profile, "-p", "quench"]);
+            if !support.allows_dynamic_source() {
+                cargo.args(["--no-default-features", "--features", "native-execution"]);
+            }
+            cargo.args(["--lib", "--message-format=json"]);
             String::from_utf8(quench_runtime::native_link::checked_output(
                 &mut cargo,
                 "native execution support build",
@@ -302,6 +297,7 @@ fn compile(options: Options) -> Result<(), String> {
         }
     };
     let support = NativeSupport::from_cargo_report_with_support(&support_report, support)?;
+    support.check_build()?;
     report["support_artifacts"] = support.report();
     let driver = work.0.join("driver.rs");
     fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;
@@ -310,10 +306,13 @@ fn compile(options: Options) -> Result<(), String> {
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
-    let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
-    report["symbol_audit_stage"] = json!("before_symbol_removal");
-    report["binary_bytes"] = json!(payload.binary_bytes);
-    report["payload_reduction"] = json!(payload);
+    // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
+    if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
+        let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
+        report["symbol_audit_stage"] = json!("before_symbol_removal");
+        report["binary_bytes"] = json!(payload.binary_bytes);
+        report["payload_reduction"] = json!(payload);
+    }
     report["native_dependencies"] = json!(native_dependencies(&staged)?);
     report["status"] = json!("compiled");
     // Publish only an audited executable. A failed compile leaves existing output intact.

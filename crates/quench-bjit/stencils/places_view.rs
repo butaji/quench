@@ -31,24 +31,24 @@ pub(crate) const ELEMENT_SITES: u8 = 3;
 /// A row's places with the loop entry's view of the array. Every register-frame trait delegates to
 /// `places`; `kept_view` answers the entry's view, and the element hooks `Places` overrides
 /// (`array_records`, `index_key`, `array_store_gate`) delegate to it.
-pub(crate) struct PlacesView<'a, const D: u8, const A: u8, const B: u8> {
-    pub(crate) places: &'a mut Places<D, A, B>,
+pub(crate) struct PlacesView<'a> {
+    pub(crate) places: &'a mut Places,
     /// The array register of the row; its frame slot is not read (see the module docs).
     array: Register,
     /// The entry's view of the array, proved by the loop's entering edge.
     view: ElementView<u64>,
 }
 
-impl<'a, const D: u8, const A: u8, const B: u8> PlacesView<'a, D, A, B> {
+impl<'a> PlacesView<'a> {
     /// The row's places with the loop entry's `view` of the array in register `array`: the frame a row's own
     /// `ElementRead` or `ElementWrite` runs over (`step`), where the array is not read from its frame slot.
     #[inline(always)]
-    pub(crate) fn new(places: &'a mut Places<D, A, B>, array: Register, view: ElementView<u64>) -> Self {
+    pub(crate) fn new(places: &'a mut Places, array: Register, view: ElementView<u64>) -> Self {
         Self { places, array, view }
     }
 }
 
-impl<'a, const D: u8, const A: u8, const B: u8> Frame<Concrete> for PlacesView<'a, D, A, B> {
+impl<'a> Frame<Concrete> for PlacesView<'a> {
     type Fact = Representation;
     type Control = ();
 
@@ -109,7 +109,7 @@ impl<'a, const D: u8, const A: u8, const B: u8> Frame<Concrete> for PlacesView<'
     fn heap_records(&mut self, stage: &mut Concrete) -> Option<(u64, u64, u64)> { self.places.heap_records(stage) }
 }
 
-impl<'a, const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for PlacesView<'a, D, A, B> {
+impl<'a> NumericFrame<Concrete> for PlacesView<'a> {
     #[inline(always)]
     fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<u64> {
         self.places.int32_operand(stage, operand, miss)
@@ -140,14 +140,14 @@ impl<'a, const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Place
     fn number_fact(&self) -> Representation { self.places.number_fact() }
 }
 
-impl<'a, const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for PlacesView<'a, D, A, B> {}
-impl<'a, const D: u8, const A: u8, const B: u8> CallFrame<Concrete> for PlacesView<'a, D, A, B> {}
-impl<'a, const D: u8, const A: u8, const B: u8> PropertyFrame<Concrete> for PlacesView<'a, D, A, B> {
+impl<'a> GlobalFrame<Concrete> for PlacesView<'a> {}
+impl<'a> CallFrame<Concrete> for PlacesView<'a> {}
+impl<'a> PropertyFrame<Concrete> for PlacesView<'a> {
     type Plans = crate::staged::NoPlans;
     fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
 }
 
-impl<'a, const D: u8, const A: u8, const B: u8> ElementFrame<Concrete> for PlacesView<'a, D, A, B> {
+impl<'a> ElementFrame<Concrete> for PlacesView<'a> {
     #[inline(always)]
     fn array_records(&mut self, stage: &mut Concrete) -> Option<u64> {
         ElementFrame::<Concrete>::array_records(&mut *self.places, stage)

@@ -190,7 +190,7 @@ pub(crate) fn deliver_number<const D: u8>(mut s: S, word: u64) -> Out {
 /// The row's outcome for the staged step `step` over `frame`: `next` where the step produced its word
 /// and every result fit its place, else the row leaves with the state as it was.
 #[inline(always)]
-pub(crate) fn settle<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, step: Step<u64, ()>, next: fn(S) -> Out) -> Out {
+pub(crate) fn settle(frame: Places, step: Step<u64, ()>, next: fn(S) -> Out) -> Out {
     match step {
         Step::Value(_) if !frame.refused => next(frame.s),
         _ => Out::Exit(frame.s),
@@ -200,13 +200,13 @@ pub(crate) fn settle<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, 
 /// The row's outcome: continue where the staged work was done and every result fit its place, else leave with
 /// the registers as they were.
 #[inline(always)]
-pub(crate) fn finish<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, done: bool) -> Out {
+pub(crate) fn finish(frame: Places, done: bool) -> Out {
     if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
 /// `finish` for a fast arm: where it continues it hops past the helper step laid out after the row (`hop`).
 #[inline(always)]
-pub(crate) fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
+pub(crate) fn finish_fast(frame: Places, done: bool) -> Out {
     hop(finish(frame, done))
 }
 
@@ -275,28 +275,63 @@ fn string_truthy(s: &S, word: u64) -> Option<bool> {
 /// tested both operands for int words, so a frame slot is read as an int without a second
 /// test; `refused` that a result did not fit its place, so the row leaves; `taken` that a
 /// branch the row decided goes to its taken successor.
-pub(crate) struct Places<const D: u8, const A: u8, const B: u8> {
+///
+/// The places are fields, not type parameters: every row builds its frame from its own constants
+/// (`new`), and the row inlines the whole staged step, so LLVM folds each `at_place!` to the row's one
+/// arm. As type parameters they made the staged chain an instance per row's place triple (47,750
+/// instances in a Number shard of 1536 rows, most of its compile time in rustc's collector).
+pub(crate) struct Places {
     pub(crate) s: S,
     pub(crate) proved: bool,
     pub(crate) refused: bool,
     pub(crate) taken: bool,
+    pub(crate) d: u8,
+    pub(crate) a: u8,
+    pub(crate) b: u8,
 }
+
+/// `$body` with `$P` the constant of the place code `$place` (a run-time value that the row's constants
+/// fold): one arm per place code, so a generic `f::<$P, _>` names the instance of that place.
+macro_rules! at_place {
+    ($place:expr, |$P:ident| $body:expr) => {
+        match $place {
+            0 => { const $P: u8 = 0; $body }
+            1 => { const $P: u8 = 1; $body }
+            2 => { const $P: u8 = 2; $body }
+            3 => { const $P: u8 = 3; $body }
+            4 => { const $P: u8 = 4; $body }
+            5 => { const $P: u8 = 5; $body }
+            6 => { const $P: u8 = 6; $body }
+            7 => { const $P: u8 = 7; $body }
+            8 => { const $P: u8 = 8; $body }
+            9 => { const $P: u8 = 9; $body }
+            10 => { const $P: u8 = 10; $body }
+            11 => { const $P: u8 = 11; $body }
+            12 => { const $P: u8 = 12; $body }
+            13 => { const $P: u8 = 13; $body }
+            14 => { const $P: u8 = 14; $body }
+            _ => { const $P: u8 = 15; $body }
+        }
+    };
+}
+pub(crate) use at_place;
+const _: () = assert!(PLACE_CODE_COUNT as usize == 16, "at_place! names every place code");
 
 /// `f::<place, hole>` of the place `register` names.
 macro_rules! by_place {
-    ($register:expr, $f:ident($($arg:expr),*)) => {
+    ($self:ident, $register:expr, $f:ident($($arg:expr),*)) => {
         match $register {
-            LEFT => $f::<A, HOLE_A>($($arg),*),
-            RIGHT => $f::<B, HOLE_B>($($arg),*),
-            _ => $f::<D, 0>($($arg),*),
+            LEFT => at_place!($self.a, |P| $f::<P, HOLE_A>($($arg),*)),
+            RIGHT => at_place!($self.b, |P| $f::<P, HOLE_B>($($arg),*)),
+            _ => at_place!($self.d, |P| $f::<P, 0>($($arg),*)),
         }
     };
 }
 
-impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
+impl Places {
     #[inline(always)]
-    pub(crate) fn new(s: S) -> Self {
-        Self { s, proved: false, refused: false, taken: false }
+    pub(crate) fn new<const D: u8, const A: u8, const B: u8>(s: S) -> Self {
+        Self { s, proved: false, refused: false, taken: false, d: D, a: A, b: B }
     }
 
     /// Records that a dispatch proved both operand words int words.
@@ -308,7 +343,7 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     /// Whether both operands are int words, from their tagged words.
     #[inline(always)]
     pub(crate) fn both_int(&self) -> bool {
-        both_int(tagged_place::<A, HOLE_A>(&self.s), tagged_place::<B, HOLE_B>(&self.s))
+        both_int(at_place!(self.a, |P| tagged_place::<P, HOLE_A>(&self.s)), at_place!(self.b, |P| tagged_place::<P, HOLE_B>(&self.s)))
     }
 
     /// Whether the row may continue: nothing the staged row did was refused by a place.
@@ -318,16 +353,16 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     }
 }
 
-impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> {
+impl Frame<Concrete> for Places {
     type Fact = Representation;
     type Control = ();
 
     #[inline(always)]
     fn fact(&self, register: Register) -> Representation {
         match register {
-            LEFT => rep_of(A),
-            RIGHT => rep_of(B),
-            _ => rep_of(D),
+            LEFT => rep_of(self.a),
+            RIGHT => rep_of(self.b),
+            _ => rep_of(self.d),
         }
     }
 
@@ -336,9 +371,9 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     #[inline(always)]
     fn register_type(&self, register: Register) -> Option<crate::typed_ir::Type> {
         let place = match register {
-            LEFT => A,
-            RIGHT => B,
-            DEST => D,
+            LEFT => self.a,
+            RIGHT => self.b,
+            DEST => self.d,
             _ => return None,
         };
         match place {
@@ -353,17 +388,17 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
 
     #[inline(always)]
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
-        by_place!(register, read_place(&self.s))
+        by_place!(self, register, read_place(&self.s))
     }
 
     #[inline(always)]
     fn tagged(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
-        by_place!(register, tagged_place(&self.s))
+        by_place!(self, register, tagged_place(&self.s))
     }
 
     #[inline(always)]
     fn write(&mut self, _stage: &mut Concrete, _register: Register, value: u64, fact: Representation) {
-        self.refused |= !put::<D>(&mut self.s, value, fact);
+        self.refused |= !at_place!(self.d, |P| put::<P>(&mut self.s, value, fact));
     }
 
     #[inline(always)]
@@ -372,7 +407,7 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
     #[inline(always)]
     fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, this: u64) {
-        self.refused |= !put::<D>(&mut self.s, this, Representation::Tagged);
+        self.refused |= !at_place!(self.d, |P| put::<P>(&mut self.s, this, Representation::Tagged));
     }
     /// A program constant as its tagged word (`Constant::value`, the runtime's `Value` bits): the staged rows read
     /// `void`'s `undefined` this way, where a Number row's constants are its places.
@@ -382,7 +417,7 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
     #[inline(always)]
     fn truthiness(&mut self, _stage: &mut Concrete, register: Register) -> Option<bool> {
-        by_place!(register, truthy(&self.s))
+        by_place!(self, register, truthy(&self.s))
     }
     #[inline(always)]
     fn branch(&mut self, _stage: &mut Concrete, condition: bool) {
@@ -487,32 +522,32 @@ fn local_slot(s: &S, slot: u16) -> Option<usize> {
     (locals != 0 && u64::from(slot) < count).then(|| locals + usize::from(slot) * core::mem::size_of::<u64>())
 }
 
-impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {
+impl crate::staged::PropertyFrame<Concrete> for Places {
     type Plans = crate::staged::NoPlans;
     fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
 }
 
-impl<const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Places<D, A, B> {
+impl NumericFrame<Concrete> for Places {
     /// ToInt32 of the operand: an int place as it is, a double truncated (`bitwise_place`).
     #[inline(always)]
     fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
-        by_place!(operand.register_index()?, bitwise_place(&self.s, true))
+        by_place!(self, operand.register_index()?, bitwise_place(&self.s, true))
     }
 
     #[inline(always)]
     fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let (register, proved) = (operand.register_index()?, self.proved);
-        by_place!(register, int_place(&self.s, proved))
+        by_place!(self, register, int_place(&self.s, proved))
     }
 
     #[inline(always)]
     fn number_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
-        by_place!(operand.register_index()?, number_place(&self.s))
+        by_place!(self, operand.register_index()?, number_place(&self.s))
     }
 
     #[inline(always)]
     fn prove_number(&mut self, _stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
-        by_place!(register, number_place(&self.s)).map(|_| ())
+        by_place!(self, register, number_place(&self.s)).map(|_| ())
     }
 
     #[inline(always)]

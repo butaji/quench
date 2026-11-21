@@ -313,6 +313,10 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
+    // An image body names the process statics its rows take by symbol: their addresses are this process's.
+    if helpers == LaneHelpers::Ahead {
+        planned.iter_mut().try_for_each(name_process_statics)?;
+    }
     let linked = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, linked.code.len());
     let generic = generic_records(&layout, &decoded, &reached, helpers);
@@ -335,6 +339,23 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes: linked.resumes, scratch, names_shapes, number_guards: linked.number_guards,
         uses_this: crate::bytecode::activation_reads_this(spec.known.program, function),
         symbols: linked.symbols.into(), entries: linked.entries.into(), generic })
+}
+
+/// Names by symbol each hole of `row` and its parts that holds a process static a row takes: the narrow
+/// decode's upper-word table (`NarrowLayout::upper_words`: field and element reads) and the attention byte
+/// (`execution_interrupt::attention_address`: polls). An image's loader fills them, as the compiling
+/// process's addresses mean nothing where the image runs.
+fn name_process_statics(row: &mut Planned) -> Result<(), String> {
+    use crate::vm::aot_image::Symbol;
+    let statics = [(crate::value::NarrowLayout::upper_words() as u64, Symbol::NarrowUpperWords), (crate::execution_interrupt::attention_address(), Symbol::Attention)];
+    row.pre.iter_mut().chain(row.post.iter_mut()).try_for_each(name_process_statics)?;
+    for hole in 0..row.holes.len() {
+        let Some(&(_, symbol)) = statics.iter().find(|(address, _)| row.holes[hole] == *address) else { continue };
+        if row.symbolic.iter().flatten().any(|(named, _)| usize::from(*named) == hole) { continue; }
+        let free = row.symbolic.iter_mut().find(|slot| slot.is_none()).ok_or("process static: no symbolic hole left")?;
+        *free = Some((hole as u8, symbol));
+    }
+    Ok(())
 }
 
 /// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):

@@ -149,7 +149,7 @@ mod site_posterior;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
 pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages; pub(in crate::vm) use ahead_images::closed_lane_image;
-pub(crate) use ahead_images::{AHEAD_BUILD_ID, ahead_program_fingerprint};
+pub(crate) use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fingerprint};
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
@@ -603,7 +603,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None };
     if view.uncounted {
         crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -3839,6 +3839,9 @@ pub(super) struct LaneMethod {
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
     /// types no call, so its summary is not read.
     withdrawn: std::cell::Cell<bool>,
+    /// Whether it is an ahead image's body (`Vm::install_ahead_body`): nothing replaces it, so no leave
+    /// retires it (`LaneView::note_lane_body_end`).
+    pub(in crate::vm) ahead: bool,
 }
 
 impl LaneMethod {
@@ -5177,8 +5180,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
     arguments: *const u64,
     result: *mut u64,
 ) -> i64 {
-    // Keep the opcode static through the shared exception/continuation boundary,
-    // so specialization resolves the operation and its guards in this body.
+    // The opcode resolves its operation statically; the boundary around the step is the same for
+    // every opcode, so one body per host runs it (`js_semantic_callout_with`): one copy per opcode was
+    // 290 instances of ~6 KB that every edit to a helper it inlines compiled again.
     let operation = const {
         if SINGLE_OPERATION {
             match Op::from_index(OPCODE) {
@@ -5192,6 +5196,20 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             None
         }
     };
+    // SAFETY: forwarded from this callout's contract.
+    unsafe { js_semantic_callout_with::<H, SINGLE_OPERATION>(operation, context, function, arguments, result) }
+}
+
+/// `js_semantic_callout`'s body, with the operation its opcode resolved (`None` for the dynamic entry).
+#[cfg(feature = "native-execution")]
+#[inline(never)]
+unsafe fn js_semantic_callout_with<H: Host, const SINGLE_OPERATION: bool>(
+    operation: Option<StaticJsOperation<H>>,
+    context: *mut CallContext,
+    function: u64,
+    arguments: *const u64,
+    result: *mut u64,
+) -> i64 {
     // The shared trampoline marks its active context while native code runs.
     // Clear it while Rust semantics and any host or guest helper run, so a
     // fault there is never mistaken for a generated-code fault.
@@ -9747,7 +9765,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None };
         let encoded = crate::staged::narrow::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();

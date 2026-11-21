@@ -1,6 +1,6 @@
 //! The object linker: an `AotImage` as a `NativeJsModule` for the system linker. Each function's
-//! entry is its lane body where it has one, else its base body; a lane's base PC leaves name the
-//! base body as a definition of its own. Helpers and semantic entries are imports the linker binds;
+//! entry is its base body; lane bodies stay in the image file, which the VM relinks each from
+//! when it installs it (`live::link_lane`). Helpers and semantic entries are imports the linker binds;
 //! a code relocation names its target by declaration index, with a PC leave's offset as addend. The
 //! generic rows' operand records are one data record, named with the record's offset as addend, and
 //! the proven calls' records another, writable: each names no callee until the runtime binds it
@@ -32,6 +32,8 @@ const ENTRY_TABLE_RECORD: usize = 1;
 const OPERANDS_RECORD: u32 = 2;
 /// The proven calls' records, after the operand records.
 const CALL_RECORDS_RECORD: u32 = 3;
+/// The object's copy of the narrow decode's upper-word table (`Symbol::NarrowUpperWords`), after the call records.
+const NARROW_WORDS_RECORD: u32 = 4;
 /// The bytes of one call record (`CallRecord`).
 const CALL_RECORD_BYTES: i64 = std::mem::size_of::<CallRecord>() as i64;
 /// The bytes of one operand record (`NativeJsOperands`).
@@ -60,19 +62,19 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
     let first = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
     let bases = base_declarations(image, first)?;
     let targets = Targets { image, imports: &imports, bases: &bases, conv: isa.default_call_conv() };
-    let mut definitions = image.functions.iter().map(|function| entry_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?;
-    definitions.extend(image.functions.iter().filter(|function| function.lane.is_some())
-        .map(|function| base_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?);
+    let definitions = image.functions.iter().map(|function| entry_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?;
     functions.extend(definitions);
     let file = file::to_bytes(image);
     let table = entry_table(isa, namespace, (&bases, first), file.len())?;
-    let data = vec![image_data(namespace, file), table, operand_data(namespace, image), call_data(namespace, image)];
+    let data = vec![image_data(namespace, file), table, operand_data(namespace, image), call_data(namespace, image), narrow_data(namespace)];
     Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
 }
 
-/// Every code an image's function holds: its base body, and its lane body where it has one.
+/// The code the object places for an image's function: its base body. A lane body names VM
+/// symbols (atoms, heap values, the invalidation word) only a loader resolves, so the VM links
+/// it from the image file when it installs it (`live::link_lane`), as it does in-process.
 fn codes(function: &AotFunction) -> impl Iterator<Item = &RelocatableCode> {
-    std::iter::once(&function.base.code).chain(function.lane.as_ref().map(|lane| &lane.code))
+    std::iter::once(&function.base.code)
 }
 
 /// Declares the helper and semantic-entry symbols the code names, after `functions`' existing
@@ -87,7 +89,9 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
         let import = match SymbolTable::decode(image, key.0, key.1) {
             Some(Symbol::Helper(helper)) => helper_import(isa, helper)?,
             Some(Symbol::SemanticEntry(op)) => operation_import(isa, op),
-            Some(Symbol::BasePc { .. } | Symbol::Operands { .. } | Symbol::CallRecord { .. }) => continue,
+            // The runtime exports the byte by name; the system linker resolves the word to it.
+            Some(Symbol::Attention) => NativeFunction::Import { name: crate::execution_interrupt::ATTENTION_SYMBOL.into(), signature: ir::Signature::new(isa.default_call_conv()) },
+            Some(Symbol::BasePc { .. } | Symbol::Operands { .. } | Symbol::CallRecord { .. } | Symbol::NarrowUpperWords) => continue,
             Some(symbol) => return Err(format!("{symbol:?} has no object form yet")),
             None => return Err("an AOT image names an unknown symbol".into()),
         };
@@ -111,30 +115,15 @@ fn operation_import(isa: &dyn TargetIsa, op: u16) -> NativeFunction {
     }
 }
 
-/// The declaration index of each function's base body. Entries come first, one per function
-/// (`first` plus the ID); a function with a lane body has its base body after them.
+/// The declaration index of each function's base body, which is its entry (`codes`): `first` plus the ID.
 fn base_declarations(image: &AotImage, first: u32) -> Result<Vec<u32>, String> {
-    let count = u32::try_from(image.functions.len()).map_err(|_| "native function count exceeds u32")?;
-    let mut next = first.checked_add(count).ok_or("native symbol count overflow")?;
-    image.functions.iter().enumerate().map(|(id, function)| -> Result<u32, String> {
-        if function.lane.is_none() {
-            return Ok(first + id as u32);
-        }
-        let at = next;
-        next = next.checked_add(1).ok_or("native symbol count overflow")?;
-        Ok(at)
-    }).collect()
+    u32::try_from(image.functions.len()).map_err(|_| "native function count exceeds u32")?;
+    Ok((0..image.functions.len() as u32).map(|id| first + id).collect())
 }
 
-/// Function `function`'s entry: its lane body where it has one, else its base body.
+/// Function `function`'s entry: its base body (`codes`).
 fn entry_definition(namespace: &str, function: &AotFunction, targets: &Targets<'_>) -> Result<NativeFunction, String> {
-    let code = function.lane.as_ref().map_or(&function.base.code, |lane| &lane.code);
-    definition(format!("{namespace}_function_{}", function.id), code, targets)
-}
-
-/// Function `function`'s base body as a definition of its own, where a lane body is its entry.
-fn base_definition(namespace: &str, function: &AotFunction, targets: &Targets<'_>) -> Result<NativeFunction, String> {
-    definition(format!("{namespace}_function_{}_base", function.id), &function.base.code, targets)
+    definition(format!("{namespace}_function_{}", function.id), &function.base.code, targets)
 }
 
 fn definition(name: String, code: &RelocatableCode, targets: &Targets<'_>) -> Result<NativeFunction, String> {
@@ -165,6 +154,7 @@ impl Targets<'_> {
             }
             Some(Symbol::Operands { .. }) => Ok((NATIVE_DATA_NAMESPACE, OPERANDS_RECORD, addend + i64::from(key) * OPERAND_RECORD_BYTES)),
             Some(Symbol::CallRecord { .. }) => Ok((NATIVE_DATA_NAMESPACE, CALL_RECORDS_RECORD, addend + i64::from(key) * CALL_RECORD_BYTES)),
+            Some(Symbol::NarrowUpperWords) => Ok((NATIVE_DATA_NAMESPACE, NARROW_WORDS_RECORD, addend)),
             _ => self.imports.get(&(namespace, key)).map(|index| (NATIVE_FUNCTION_NAMESPACE, *index, addend)).ok_or_else(|| "an AOT image symbol has no object form".into()),
         }
     }
@@ -189,6 +179,19 @@ fn operand_data(namespace: &str, image: &AotImage) -> NativeData {
     NativeData {
         name: format!("{namespace}_operands"),
         bytes: image.operands.iter().flat_map(|record| record.words).flat_map(u64::to_ne_bytes).collect(),
+        alignment: std::mem::align_of::<u64>() as u64,
+        writable: false,
+        function_addresses: Vec::new(),
+        data_addresses: Vec::new(),
+    }
+}
+
+/// The narrow decode's upper words by code (`NarrowLayout::upper_words`), the runtime's own constant
+/// table: a base body's field and element reads decode a narrow value through it.
+fn narrow_data(namespace: &str) -> NativeData {
+    NativeData {
+        name: format!("{namespace}_narrow_words"),
+        bytes: crate::staged::value_encoding::NARROW_UPPER_WORDS.iter().flat_map(|word| word.to_ne_bytes()).collect(),
         alignment: std::mem::align_of::<u64>() as u64,
         writable: false,
         function_addresses: Vec::new(),
