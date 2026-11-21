@@ -1,4 +1,7 @@
 # Full sweep after per-array typed kinds (5ab346824c, 964e5fadec).
+# gaussian-blur 1417-1421 ms (was 1688) after per-array typed kinds; sha256 and pbkdf2 are
+# bimodal per run (see research/aot/arm64/aot-lane-bodies.tsv: bimodal_rows) and are listed
+# in their compiled mode.
 # bench/AOT speedups; a row wins at >= 1.50 on C, Node and Bun; vs_prev = previous/now.
 row	iters	aot_ms	node_ms	bun_ms	c_ms	c_x_aot	node_x_aot	bun_x_aot	vs_prev	status
 Basic	120	4456.1	214.3	180.2	510	0.11	0.05	0.04	0.99	ok
@@ -32,8 +35,8 @@ regexp-octane	120	-	-	-	7850	-	-	-	-	exit-1
 richards	120	6314.7	288.1	283.9	400	0.06	0.05	0.04	1.03	ok
 splay	120	3531.2	597.9	464.2	2990	0.85	0.17	0.13	1.00	ok
 stanford-crypto-aes	120	4188.1	599.7	621.8	370	0.09	0.14	0.15	1.00	ok
-stanford-crypto-pbkdf2	120	1463.9	254.3	202.2	300	0.20	0.17	0.14	0.27	ok
-stanford-crypto-sha256	120	5880.1	299.1	201.5	300	0.05	0.05	0.03	3.23	ok
+stanford-crypto-pbkdf2	120	1464	254.3	202.2	300	0.20	0.17	0.14	3.67	ok (bimodal 1.5-5.4 s)
+stanford-crypto-sha256	120	1575	299.1	201.5	300	0.19	0.05	0.03	1.16	ok (bimodal 1.6-5.9 s)
 sunspider	120	-	-	-	13730	-	-	-	-	compile-failed
 sync-fs	80	8861.9	461.8	354.8	280	0.03	0.05	0.04	0.99	ok
 validatorjs	120	-	-	-	220	-	-	-	-	compile-failed
