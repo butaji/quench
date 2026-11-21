@@ -17,17 +17,6 @@ impl<H: Host> Vm<H> {
     /// reaches that same shape, and a shape carries only keys, slots and attributes. Excluded
     /// keys (a rest pattern) disqualify the copy. Runs no guest code and cannot throw; `false`,
     /// before any effect, leaves the copy to the general path.
-    ///
-    /// The chain walk is a fact of the source shape alone, so it is memoized per (target shape,
-    /// source shape) in `adopted_shapes`: a hit skips the walk. The object checks above run on
-    /// every call, as the target's and the source's flags are not in their shapes. Each record is
-    /// read once and each object's key eligibility checked once; the source's slots come from
-    /// `shape_enumerable_slots_checked`. The copy plan is always the source's storage in order: a
-    /// chain of adds gives key `i` slot `i`.
-    ///
-    /// The target is an empty root shape that no object takes as its prototype (checked above), so
-    /// no method cache's prototype chain holds it and the copy's adds invalidate nothing
-    /// (`note_plain_copy_atoms`). The copy therefore notes no atom.
     pub(super) fn adopt_source_shape(&mut self, target: Value, source: Value, exclusions: Value) -> bool {
         if self.heap.array_elements(exclusions).is_some_and(|elements| !elements.is_empty()) {
             return false;
@@ -78,36 +67,24 @@ impl<H: Host> Vm<H> {
                 {
                     atoms.push(atom)
                 }
-                self.adopted_shapes.record(target_shape, source_shape, source_shape);
-                source_shape
+                _ => return false,
             }
-        };
-        let storage_len = self.shapes[shape as usize].storage_len();
-        if storage_len == 0 {
+            current = parent;
+        }
+        // Adds take slots in order from the root, so after the reversal the i-th key owns slot i.
+        if self.shapes[source_shape as usize].storage_len() != atoms.len() {
+            return false;
+        }
+        atoms.reverse();
+        if atoms.is_empty() {
             return true;
         }
-        // The slots are the storage in order: a contiguous list of `storage_len` slots.
-        let Some(slots) = self.shape_enumerable_slots_checked(source, source_data) else {
-            return false;
-        };
-        if !slots.contiguous() || slots.len() != storage_len {
-            return false;
-        }
-        // The target takes the source's own shape, so their slots encode alike by construction
-        // (one owner): the source's words become the target's in one run copy, no decode or recode.
-        if self.heap.copy_slot_words(target, source, shape) {
-            return true;
-        }
-        // The copy declined before any effect; the source's record is read again for the values.
-        let Some(source_data) = self.object_data(source) else {
-            return false;
-        };
-        let mut values = smallvec::SmallVec::<[Value; ADOPT_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, storage_len);
-        for (slot, value) in values.iter_mut().enumerate() {
-            let Some(read) = self.heap.property_get(source_data, slot) else {
+        let mut values = smallvec::SmallVec::<[Value; ADOPT_INLINE_PROPERTIES]>::new();
+        for slot in 0..atoms.len() {
+            let Some(value) = self.heap.property_get(source_data, slot) else {
                 return false;
             };
-            *value = read;
+            values.push(value);
         }
         self.initialize_plain_copy(target, source_shape, &values, atoms.iter().copied());
         self.plain_copy_shapes.record(target_shape, source_shape, source_shape);
