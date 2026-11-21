@@ -340,6 +340,9 @@ pub(crate) const PROPERTY_BUFFER_BASE: usize = core::mem::offset_of!(super::prop
 pub(crate) const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - super::shared_words::CAPTURE_ADDRESS_BITS;
 /// The record a completed body names (`LANE_BODY_RETURNED`).
 pub(crate) const JS_STEP_RETURNED_PC: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, returned_pc);
+/// The activation's environment record, which an environment-resident local reads and writes
+/// through (`staged::environment`'s dense-slot rows); zero where the activation has none.
+pub(crate) const JS_STEP_ENVIRONMENT_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
 /// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
 /// context (a helper call's first three arguments), the lane stack's free span and the shadow
 /// frames' span. Checked against the runtime by `stencil_layout_matches`.

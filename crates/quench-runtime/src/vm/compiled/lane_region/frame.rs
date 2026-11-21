@@ -48,6 +48,11 @@ pub(super) struct EmitFrame<'a> {
     /// Whether this region may read or write the activation's local slots
     /// (`JsStepDispatch::native_locals`); a numeric region's activation has none.
     pub(super) locals: bool,
+    /// Whether the activation's environment names nothing at run time, so an environment-resident
+    /// local reads straight from its dense storage (`Frame::environment`): a function with a
+    /// dynamic scope (`with`, eval) resolves names through it instead, and one with a mapped
+    /// `arguments` answers it through the VM.
+    pub(super) environment_owned: bool,
     /// The running body's dispatch payload, which semantic helpers take.
     pub(super) payload: ir::Value,
     /// The helper table a callout addresses.
@@ -125,6 +130,22 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn tagged(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> ir::Value {
         register_tagged(stage.builder, self.registers, self.state, register)
+    }
+
+    /// The activation's environment record, whose dense slots an environment-resident local reads
+    /// (`staged::environment::environment_slot`): the running body's dispatch payload names it,
+    /// and an activation with none leaves at the miss edge (the VM's read answers it there).
+    fn environment(&mut self, stage: &mut Emit<'_, '_>) -> Option<(ir::Value, RegisterFact)> {
+        if !self.environment_owned { return None; }
+        let offset = crate::staged::layout_offsets::JS_STEP_ENVIRONMENT_STORAGE as i32;
+        let storage = stage.raw_load(Lane::I64, regions::dispatch(), self.payload, offset);
+        let present = stage.ne_imm(storage, 0u32);
+        let miss = match self.edges {
+            Edges::ValueGuarded { miss } | Edges::Branch { miss, .. } => miss,
+            _ => unreachable!("an environment access has a miss edge"),
+        };
+        stage.guard(present, miss)?;
+        Some((storage, RegisterFact::canonical()))
     }
 
     #[inline(always)]
@@ -498,6 +519,7 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
             _ => unreachable!("a numeric operation has a miss edge"),
         }
     }
+
 
     fn local_miss(&self) -> Option<ir::Block> {
         matches!(self.edges, Edges::ValueGuarded { .. }).then(|| self.miss())

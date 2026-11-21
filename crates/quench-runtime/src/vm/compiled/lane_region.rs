@@ -3391,8 +3391,10 @@ impl Lowering<'_, '_> {
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
             stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
+        let function = self.program.function(self.function_id as usize);
+        let environment_owned = !function.has_dynamic_scope_access() && function.arguments_slot.is_none();
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
-            state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
+            state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this), environment_owned,
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
