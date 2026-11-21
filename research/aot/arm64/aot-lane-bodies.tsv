@@ -249,3 +249,9 @@ field_base_skips_it\tthe quickening is only on the register-operand branch (`reg
 # Field-base typed quickening is possible but inert on gbemu (2026-11-21).
 imm_free_for_elements\t`GetIndex`'s `meaning Unused` means the record's immediate is free for an element access (which is why `requicken_typed` stores the kind index there and `generated_row` reads `native_kind_at(i.imm())`); so the quickening *can* be extended to a field-base record without a new slot -- the same `element_typed_read_row` reads the base through its operand.\tdispatch_fast.rs requicken_typed / generated_row.rs
 try_inert\tcalling `row_typed_element` for the field-base arm too (`get_index_miss`) leaves gbemu at 23.2 s and changes nothing measurable (ta_read 1.74, ta_store 1.47, all reproducers exact): gbemu's hot typed accesses are its `this.mem[i]` *stores* (the read side is not what the sampler's `by_word` hits), or the chain is not the dominant cost. Reverted; the next probe is a typed *store* record from a field base (`set_index` reads `r.get(i.b)`, registers only).\t-
+# by_word call rate in gbemu (2026-11-21, counter in `typed_elements::by_word`): 40M calls in 12 s
+# of a 23 s run, i.e. ~76M per row, ~3.3M/s. At a 9-kind Concrete chain (~20-40 ns with the
+# conversions) that is ~2-3 s of the 23 s row: worth fixing (the field-base/kind quickening), but
+# not the row's bulk.
+by_word_rate\tcounted in `by_word` (`stencil_build`-gated counter): 0 -> 20M -> 40M in 12 s on gbemu; extrapolated ~76M per row. The chain is a real 2-3 s, not the 21 s.\tcounter probe, reverted
+gbemu_bulk\tso after ~10 turns on gbemu, its 23 s is: ~1 s compiled regions, ~2-3 s `by_word` chains, and the rest the general interpreter loop plus guest work. The merge's 15 -> 23 s regression is a *different* cost (the interpreter was 18.65 s no-jit before it), and bisecting that remains the higher-value target than further type quickening.\t-
