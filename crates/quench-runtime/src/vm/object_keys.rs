@@ -92,6 +92,12 @@ impl Vm {
     /// every object `shape_enumerable_slots` declines (Proxy, array, typed array, String
     /// wrapper, module namespace, side descriptors, dictionary shapes), which keep the general path.
     pub(crate) fn own_enumerable_keys_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Atom]>> {
+        // A memo entry was made from an object its shape answers for; a Proxy, array or other
+        // exotic object can carry the same shape (a Proxy's record keeps the empty root shape),
+        // so the test comes before the lookup, not only before the fill.
+        if !self.shape_lists_enumerable_keys(object) {
+            return None;
+        }
         let data = self.object_data(object)?;
         let shape = data.shape();
         if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
@@ -116,6 +122,9 @@ impl Vm {
     /// until the next collection, and a caller that holds one across a collection roots it as
     /// it would any other value. `None` wherever `own_enumerable_keys_cached` is `None`.
     pub(crate) fn own_enumerable_key_values_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Value]>> {
+        if !self.shape_lists_enumerable_keys(object) {
+            return None;
+        }
         let data = self.object_data(object)?;
         let shape = data.shape();
         if data.has_side_descriptors() || self.shape_is_dictionary(shape) {

@@ -30,7 +30,16 @@ impl Vm {
         -> Result<Value, JsError> {
         let (program, running) = (self.owner_view(owner).program(), self.owner_view(owner).function());
         let module_root = p.is_module() && running == ROOT_FUNCTION_ID && self.programs.module_environment(program) == Some(env);
-        let cached = if module_root { self.cached_functions_in_environment(program, function, env).next() } else { None };
+        // A module's hoisted declaration is the closure its instance made at instantiation
+        // (`ModuleFunctions`), which a cyclic importer may already hold; the body's own
+        // declaration of it is that closure, not a second one.
+        let cached = if module_root {
+            self.module_function(program, function)
+                .filter(|closure| matches!(self.heap.function(*closure), Some(crate::heap::FunctionRecord { env: closure_env, .. }) if *closure_env == env))
+                .or_else(|| self.cached_functions_in_environment(program, function, env).next())
+        } else {
+            None
+        };
         match cached {
             Some(closure) => Ok(closure),
             None => self.closure(p, function, env),
