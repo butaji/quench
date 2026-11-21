@@ -2,7 +2,7 @@ use super::*;
 use crate::{bytecode::{FieldBase, FieldLookup, FieldSite}, profile::field_primitives::Path, test_host::TestHost};
 
 /// Single reads and special length reads are not two ordinary field probes.
-fn single_reads_count_no_pair(vm: &mut Vm<TestHost>, program: &ResidualProgram, site: &mut FieldSite, first: Value) {
+fn single_reads_count_no_pair(vm: &mut Vm, program: &ResidualProgram, site: &mut FieldSite, first: Value) {
     let cache = site.first.1;
     for second_step in [None, Some((vm.length_atom, cache))] {
         site.second = second_step;

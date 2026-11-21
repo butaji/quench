@@ -44,7 +44,7 @@ impl ProxyTrap {
 
 pub(super) const PROXY_TRAP_COUNT: usize = PROXY_TRAP_NAMES.len();
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The atom naming `trap`, interned once.
     pub(super) fn trap_atom(&self, trap: ProxyTrap) -> Atom {
         self.runtime_atoms.proxy_traps[trap as usize]

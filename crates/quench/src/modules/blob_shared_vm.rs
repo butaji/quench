@@ -13,7 +13,7 @@ use crate::modules::webstreams_shared_vm::{
 };
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Member, "blobMembers", [
@@ -98,13 +98,13 @@ const FILE_MEMBERS: [ClassMember<Member>; 2] =
 
 /// `[Blob, File]`, built once.
 pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
-    let cached = c.host_mut().shared_state().borrow().builtin_cache.get(CLASSES).copied();
+    let cached = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(CLASSES).copied();
     let table = match cached {
         Some(table) => table,
         None => {
             let table = c.with_startup_intrinsics(build)?;
             let retained = c.retain(table)?;
-            c.host_mut().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
+            c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
             table
         }
     };

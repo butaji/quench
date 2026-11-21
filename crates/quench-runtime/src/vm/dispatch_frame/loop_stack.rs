@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The native stack guard of a general loop run. A lane exit's activations are already
     /// frames, so exhaustion on resuming them is raised at the exit's record (`raised`) and
     /// unwinds them, as an error of the lane's call would; any other entry fails with it.

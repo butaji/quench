@@ -13,9 +13,9 @@
 
 use super::*;
 
-/// `vm_call_callout::<H>`, the `CALL_VM` row's callout: (context, defined function index,
+/// `vm_call_callout`, the `CALL_VM` row's callout: (context, defined function index,
 /// argument words, result word) -> status, 0 when the call returned.
-pub(super) unsafe extern "C" fn vm_call_callout<H: Host>(
+pub(super) unsafe extern "C" fn vm_call_callout(
     context: *mut CallContext,
     function: u64,
     args: *const u64,
@@ -25,7 +25,7 @@ pub(super) unsafe extern "C" fn vm_call_callout<H: Host>(
     // that call, and the argument and result words of this call.
     let context = unsafe { &mut *context };
     note_compiled_callout(context.known_callouts);
-    let vm_pointer = context.vm.cast::<Vm<H>>();
+    let vm_pointer = context.vm.cast::<Vm>();
     let (program, env) = (context.program, context.env);
     // The VM's own code runs outside compiled code: no guard fault is ours.
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
@@ -42,8 +42,8 @@ pub(super) unsafe extern "C" fn vm_call_callout<H: Host>(
 
 /// Runs defined function `function` of `program` in `env` with the argument words at `args`, its
 /// result word to `out`.
-unsafe fn run_defined<H: Host>(
-    vm: &mut Vm<H>,
+unsafe fn run_defined(
+    vm: &mut Vm,
     program: ProgramId,
     env: Value,
     function: u64,
@@ -65,8 +65,8 @@ unsafe fn run_defined<H: Host>(
 }
 
 /// The parameter types and the result type of defined function `defined`.
-fn signature_of<H: Host>(
-    vm: &Vm<H>,
+fn signature_of(
+    vm: &Vm,
     program: ProgramId,
     defined: u32,
 ) -> Result<(smallvec::SmallVec<[crate::WasmType; 8]>, Option<crate::WasmType>), JsError> {
@@ -82,8 +82,8 @@ fn signature_of<H: Host>(
 ///
 /// # Safety
 /// `args` holds one word per parameter.
-unsafe fn encode_arguments<H: Host>(
-    vm: &mut Vm<H>,
+unsafe fn encode_arguments(
+    vm: &mut Vm,
     params: &[crate::WasmType],
     args: *const u64,
 ) -> Result<smallvec::SmallVec<[Value; 8]>, JsError> {
@@ -99,8 +99,8 @@ unsafe fn encode_arguments<H: Host>(
 
 /// The VM's call of defined function `defined` without a compiled entry: its function value,
 /// resolved by Wasm's absolute index, called with the void receiver.
-fn call_in_vm<H: Host>(
-    vm: &mut Vm<H>,
+fn call_in_vm(
+    vm: &mut Vm,
     program: ProgramId,
     env: Value,
     defined: u32,
@@ -120,7 +120,7 @@ fn call_in_vm<H: Host>(
 }
 
 /// The absolute index of defined function `defined`: the imports come first.
-fn absolute_index<H: Host>(vm: &Vm<H>, program: ProgramId, defined: u32) -> Result<u32, JsError> {
+fn absolute_index(vm: &Vm, program: ProgramId, defined: u32) -> Result<u32, JsError> {
     let imports = vm
         .programs
         .wasm_signatures(program)
@@ -134,7 +134,7 @@ fn absolute_index<H: Host>(vm: &Vm<H>, program: ProgramId, defined: u32) -> Resu
 }
 
 /// The result word of `result` as `result_type` (none for a void function, whose word is 0).
-fn result_bits<H: Host>(vm: &Vm<H>, result: Value, result_type: Option<crate::WasmType>) -> Result<u64, JsError> {
+fn result_bits(vm: &Vm, result: Value, result_type: Option<crate::WasmType>) -> Result<u64, JsError> {
     let Some(ty) = result_type else {
         return Ok(0);
     };

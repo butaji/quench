@@ -11,7 +11,7 @@ use crate::staged::wasm::Width;
 use crate::staged::wasm_flow::{Flow, Leave};
 use cranelift_codegen::ir;
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Lowers a flow step; whether control continues to the next instruction.
     pub(super) fn flow(
         &mut self,
@@ -82,7 +82,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks a flow step's operands and applies its register writes. `result` is the type the
     /// function returns.
     pub(super) fn transfer_flow(

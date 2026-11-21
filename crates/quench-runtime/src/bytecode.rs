@@ -741,9 +741,9 @@ macro_rules! opcodes {
             const VALUE_STEPS: [Option<ValueStep>; Self::COUNT] = [$(opcodes!(@value $($value)?)),+];
             #[inline(always)] pub(crate) const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
             #[cfg(feature = "native-execution")]
-            pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
+            pub(crate) fn native_semantic_entry(self) -> crate::NativeJsOperationEntry {
                 match self {
-                    $(Self::$name => crate::native_js_operation_entry::<H, { Self::$name as usize }>),+
+                    $(Self::$name => crate::native_js_operation_entry::<{ Self::$name as usize }>),+
                 }
             }
             const EFFECTS: [Effect; Self::COUNT] = [$($effect),+];

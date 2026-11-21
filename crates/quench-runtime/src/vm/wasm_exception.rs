@@ -6,15 +6,15 @@ use crate::staged::wasm_exception::{self as rules, WasmException};
 
 /// The VM's heap, as a stage the exception rules run on (`staged::wasm_exception`). A reference is
 /// its Value bits; a flag is 0 or 1.
-pub(in crate::vm) struct ExceptionStage<'a, H: Host> {
-    pub(in crate::vm) vm: &'a mut Vm<H>,
+pub(in crate::vm) struct ExceptionStage<'a> {
+    pub(in crate::vm) vm: &'a mut Vm,
 }
 
-impl<H: Host> Machine for ExceptionStage<'_, H> {
+impl Machine for ExceptionStage<'_> {
     type Word = u64;
 }
 
-impl<H: Host> MachineStage for ExceptionStage<'_, H> {
+impl MachineStage for ExceptionStage<'_> {
     type Exit = JsError;
 
     crate::staged::wasm_concrete::scalar_operators! {}
@@ -24,7 +24,7 @@ impl<H: Host> MachineStage for ExceptionStage<'_, H> {
     }
 }
 
-impl<H: Host> WasmException for ExceptionStage<'_, H> {
+impl WasmException for ExceptionStage<'_> {
     fn is_tag(&mut self, value: u64) -> u64 {
         u64::from(matches!(self.vm.heap.get(Value::from_bits(value)), Some(Cell::WasmTag { .. })))
     }
@@ -80,7 +80,7 @@ impl<H: Host> WasmException for ExceptionStage<'_, H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn wasm_exception_new(
         &mut self,
         tag: Value,
@@ -136,7 +136,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `new WebAssembly.Tag({ parameters })`: a fresh tag whose payload has those types.
     pub(super) fn construct_wasm_tag(
         &mut self,

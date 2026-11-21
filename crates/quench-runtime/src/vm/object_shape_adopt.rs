@@ -5,7 +5,7 @@ use super::*;
 /// Properties an adopted shape gathers without allocating.
 const ADOPT_INLINE_PROPERTIES: usize = 16;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `copy_plain_data_properties` for `{...source}` into an empty ordinary target. Holds when
     /// the target is an extensible ordinary object with no own property (a root shape, storage
     /// empty, not a prototype) and the source's prototype; the source is an ordinary object

@@ -10,7 +10,7 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
     let function = program.function(1);
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
-    let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
+    let helpers = LaneHelpers::Process(LaneHelper::addresses());
     let region = lower(&program, 1, &unit, helpers, &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     assert!(region.fault_poll);
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();

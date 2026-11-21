@@ -1,7 +1,7 @@
 //! Node's mutable public `STATUS_CODES` object.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 pub(crate) fn codes(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let object = c.object_rooted()?;

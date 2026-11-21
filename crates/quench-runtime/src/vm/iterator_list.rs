@@ -1,6 +1,6 @@
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     // On success the caller owns the value roots; on error this operation releases them.
     pub(super) fn rooted_iterator_list(
         &mut self,

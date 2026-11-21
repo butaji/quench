@@ -31,8 +31,8 @@ pub fn invalid_xof_length() -> openssl::error::ErrorStack {
     }
     openssl::error::ErrorStack::get()
 }
-pub fn throw<H: Host>(
-    context: &mut NativeContext<'_, H>,
+pub fn throw(
+    context: &mut NativeContext<'_>,
     operation: Operation<'_>,
     error: DigestError,
 ) -> RootedError {

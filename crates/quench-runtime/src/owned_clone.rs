@@ -64,11 +64,11 @@ pub struct Graph {
     pub root: Value,
     pub nodes: Vec<Node>,
 }
-fn get<H: Host>(c: &mut NativeContext<'_, H>, o: RootId, k: &str) -> Result<RootId, RootedError> {
+fn get(c: &mut NativeContext<'_>, o: RootId, k: &str) -> Result<RootId, RootedError> {
     let k = c.string_rooted(k);
     c.get_property_rooted(o, k)
 }
-fn num<H: Host>(c: &mut NativeContext<'_, H>, o: RootId, k: &str) -> Result<usize, RootedError> {
+fn num(c: &mut NativeContext<'_>, o: RootId, k: &str) -> Result<usize, RootedError> {
     let v = get(c, o, k)?;
     Ok(c.to_number(v)? as usize)
 }
@@ -77,9 +77,9 @@ struct Capture {
     nodes: Vec<Option<Node>>,
 }
 impl Capture {
-    fn value<H: Host>(
+    fn value(
         &mut self,
-        c: &mut NativeContext<'_, H>,
+        c: &mut NativeContext<'_>,
         r: RootId,
     ) -> Result<Value, RootedError> {
         let v = c
@@ -214,8 +214,8 @@ impl Capture {
         Ok(Value::Ref(id))
     }
 }
-pub fn capture<H: Host>(
-    c: &mut NativeContext<'_, H>,
+pub fn capture(
+    c: &mut NativeContext<'_>,
     source: RootId,
     transfers: &[RootId],
 ) -> Result<Graph, RootedError> {
@@ -234,8 +234,8 @@ pub fn capture<H: Host>(
         })
     }
 }
-fn primitive<H: Host>(
-    c: &mut NativeContext<'_, H>,
+fn primitive(
+    c: &mut NativeContext<'_>,
     v: &Value,
     roots: &[Option<RootId>],
 ) -> Result<RootId, RootedError> {
@@ -253,8 +253,8 @@ fn primitive<H: Host>(
             .ok_or_else(|| RootedError::host("unallocated owned clone reference"))?,
     })
 }
-fn define<H: Host>(
-    c: &mut NativeContext<'_, H>,
+fn define(
+    c: &mut NativeContext<'_>,
     o: RootId,
     k: &[u16],
     v: RootId,
@@ -266,7 +266,7 @@ fn define<H: Host>(
     }
     Ok(())
 }
-pub fn import<H: Host>(c: &mut NativeContext<'_, H>, g: &Graph) -> Result<RootId, RootedError> {
+pub fn import(c: &mut NativeContext<'_>, g: &Graph) -> Result<RootId, RootedError> {
     let mut roots = vec![None; g.nodes.len()];
     for (i, node) in g.nodes.iter().enumerate() {
         if matches!(node, Node::View { .. }) {

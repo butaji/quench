@@ -17,7 +17,7 @@ fn field_width(ty: ir::Type) -> Width {
     if ty == types::I32 { Width::I32 } else { Width::I64 }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// The call of the function at index `entry` of the instance at `record`, a row's other
     /// instance: its status jumps to `done`; an instance this artifact cannot call across, or one
     /// whose code table has no body for the function, leaves for `slow`.
@@ -71,7 +71,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         // The record's length is the one its code was last published with: the memory may have
         // grown since (TOD-1790), so the length is read from the memory itself on the way in,
         // and again on the way out, as the callee may have grown a memory the caller shares.
-        let leaf = switched_memory_length::<H> as *const () as usize;
+        let leaf = switched_memory_length as *const () as usize;
         let length = self.call_leaf(leaf, &[context]);
         let depth = self.push_root(record);
         let length = self.memory.length.then_some(length);
@@ -112,11 +112,11 @@ impl<H: Host> Emitter<'_, '_, H> {
 
 /// The length of the memory of the instance the context runs now, read from the memory and
 /// written to the context, which every access after it reads (`WasmMemory::memory_length`).
-unsafe extern "C" fn switched_memory_length<H: Host>(context: *mut CallContext) -> u64 {
+unsafe extern "C" fn switched_memory_length(context: *mut CallContext) -> u64 {
     // SAFETY: compiled code passes the context `run_compiled` made, whose VM is suspended in
     // that call.
     let context = unsafe { &mut *context };
-    let vm = unsafe { &*context.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &*context.vm.cast::<Vm>() };
     refresh_memory_length(context, vm);
     context.memory_length
 }

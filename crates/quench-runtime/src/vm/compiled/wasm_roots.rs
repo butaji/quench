@@ -26,7 +26,7 @@ use cranelift_codegen::ir::{self, MemFlagsData};
 /// The bytes of one native root.
 const ROOT: usize = size_of::<crate::Value>();
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Holds the reference registers the instruction being emitted holds (`Emitter::roots`) in the
     /// native roots, and returns the depth before them for `unroot`. Where the roots have no room
     /// for them, the call traps `CallStackExhausted`, as the native stack's budget would. An
@@ -51,7 +51,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> WasmRoots for Emitter<'_, '_, H> {
+impl WasmRoots for Emitter<'_, '_> {
     /// The roots' address, a value in the function: the rule loads it once and every access reuses it.
     type Roots = ir::Value;
 

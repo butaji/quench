@@ -174,7 +174,7 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
 /// `fs.constants`, shared by `fs.promises.constants`.
 pub(crate) fn fs_constants(c: &mut Context<'_>) -> Outcome {
     const CACHE_KEY: &str = "\0builtin:fs/constants";
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(constants) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(constants);
     }
@@ -402,7 +402,7 @@ pub(crate) fn promises_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outc
 /// The stream class an accessor's data names, made on first use.
 fn stream_class(c: &mut Context<'_>, index: usize) -> Outcome {
     let (key, build) = STREAM_CLASSES[index];
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(class) = shared.borrow().builtin_cache.get(key).copied() {
         return Ok(class);
     }
@@ -428,7 +428,7 @@ pub(crate) fn stream_class_set(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
     let (key, _) = STREAM_CLASSES[data_index(c)?];
     let value = arg(c, args, 0);
     let retained = c.retain(value)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), retained);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), retained);
     Ok(c.undefined())
 }
 
@@ -452,7 +452,7 @@ pub(crate) fn to_unix_timestamp(c: &mut Context<'_>, _: RootId, args: &[RootId])
 /// `process.emitWarning(message, 'DeprecationWarning', code, deprecated)` the first time
 /// `code` is deprecated, unless `--no-deprecation` silences it.
 pub(crate) fn emit_deprecation(c: &mut Context<'_>, message: &str, code: &str, deprecated: RootId) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if shared.borrow().fs_classes.deprecations.iter().any(|warned| warned == code) {
         return Ok(());
     }

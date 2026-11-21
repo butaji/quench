@@ -51,7 +51,7 @@ impl<'b> Builds<'b> for Emit<'_, 'b> {
     }
 }
 
-impl<'b, H: Host> Builds<'b> for Emitter<'_, 'b, H> {
+impl<'b> Builds<'b> for Emitter<'_, 'b> {
     fn function_builder(&mut self) -> &mut FunctionBuilder<'b> {
         &mut self.body.core.builder
     }

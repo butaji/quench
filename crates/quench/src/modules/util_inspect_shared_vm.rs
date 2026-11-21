@@ -4,7 +4,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, BuiltinData, DescriptorFields, NativeContext, PromiseSnapshot, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// `kMinLineWidth`: strings at most this long are never split into lines.
 const MIN_LINE_WIDTH: usize = 16;

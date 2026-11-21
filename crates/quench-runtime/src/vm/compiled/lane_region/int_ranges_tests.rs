@@ -15,7 +15,7 @@ fn lowered_entered(source: &str, name: &str, entering: Option<IntRange>) -> ir::
     let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
         &|_, _| Vec::new(), &|id| program.function_get(id as usize)).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
-    let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let addresses = LaneHelper::addresses();
     let (coverage, observed) = match entering {
         None => (Coverage::Full, Vec::new()),
         Some(range) => {

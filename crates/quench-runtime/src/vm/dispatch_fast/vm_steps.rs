@@ -11,16 +11,16 @@ use super::*;
 /// `LANE_CALL_LEFT` where guest code it ran made the lane's activations frames, which leave the
 /// body at the next record. A decision (`CallOut::Decide`) completes with `LANE_CALL_HOLDS` where
 /// the comparison held.
-pub(in crate::vm) unsafe extern "C" fn vm_operation_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(in crate::vm) unsafe extern "C" fn vm_operation_step(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // An ahead body runs from its entry trampoline, with no lane run to step in: it leaves at
     // the record, which the entry's per-PC fallback executes (as `body_call_helper`).
     if context == 0 { return super::super::compiled::LANE_CALL_MISSED; }
-    let cx = context as usize as *mut LaneContext<H>;
+    let cx = context as usize as *mut LaneContext;
     let status = native_frames::in_innermost_frame(cx, || unsafe { vm_operation_step_in(cx, call_pc) });
     // SAFETY: `context` is the running lane's; the step may have allocated or run guest code.
-    unsafe { refresh_body_bases::<H>(context) };
+    unsafe { refresh_body_bases(context) };
     // SAFETY: as above; a region the lane runs reads its payload's bases after the step too.
-    unsafe { refresh_region_bases_of::<H>(context) };
+    unsafe { refresh_region_bases_of(context) };
     status
 }
 
@@ -29,7 +29,7 @@ pub(in crate::vm) unsafe extern "C" fn vm_operation_step<H: Host>(_vm: u64, _res
 ///
 /// # Safety
 /// As `vm_operation_step`.
-unsafe fn vm_operation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+unsafe fn vm_operation_step_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let function = running_function_in_lane(cx);
@@ -69,9 +69,9 @@ unsafe fn vm_operation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
 /// string) as `Vm::primitive_concatenation` defines it: `LANE_CALL_COMPLETED` with the result in
 /// its register, or `LANE_CALL_MISSED` before any effect where the operands are no such pair
 /// (guest code never runs, so the body is never left).
-pub(in crate::vm) unsafe extern "C" fn body_string_concat<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(in crate::vm) unsafe extern "C" fn body_string_concat(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
-    let cx = context as usize as *mut LaneContext<H>;
+    let cx = context as usize as *mut LaneContext;
     let vm = unsafe { vm(cx) };
     let r = unsafe { (*cx).registers };
     // Read where it is (no spill, one-frame-one-call.md F4).
@@ -97,7 +97,7 @@ pub(in crate::vm) unsafe extern "C" fn body_string_concat<H: Host>(_vm: u64, _re
 /// (`Vm::steady_instanceof`) and `in` of a string key in an ordinary object (`Vm::plain_in`);
 /// `None` for any other pair, which the full algorithm decides. The one rule of the interpreter's
 /// staged frame and of the lane's decide helper.
-pub(super) fn comparison_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: Value, right: Value) -> Option<bool> {
+pub(super) fn comparison_decision(vm: &mut Vm, operator: u32, left: Value, right: Value) -> Option<bool> {
     // Two Numbers: the Number comparison (`operations::number_relation`), which runs no guest code.
     if let Some((holds, _)) = crate::vm::operations::number_relation(operator, left, right) {
         return Some(holds);
@@ -114,9 +114,9 @@ pub(super) fn comparison_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: 
 /// A lane body's decision of `left operator right` by the words a `CallOut::Decide` carries, which
 /// needs no record of the VM's: `Value::TRUE` or `Value::FALSE`, or `Value::DELETED` where only
 /// the full algorithm decides, which leaves the body at the test (`comparison_decision`).
-pub(in crate::vm) unsafe extern "C" fn decide_comparison<H: Host>(vm: u64, _residual: u64, left: u64, right: u64, operator: u64) -> u64 {
+pub(in crate::vm) unsafe extern "C" fn decide_comparison(vm: u64, _residual: u64, left: u64, right: u64, operator: u64) -> u64 {
     // SAFETY: as `field_set_in_lane`; the decision reads the heap, runs no guest code and allocates nothing.
-    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let vm = unsafe { &mut *(vm as *mut Vm) };
     comparison_decision(vm, operator as u32, Value::from_bits(left), Value::from_bits(right))
         .map_or_else(|| Value::DELETED.to_bits(), |holds| Value::boolean(holds).to_bits())
 }
@@ -132,7 +132,7 @@ pub(in crate::vm) unsafe extern "C" fn decide_comparison<H: Host>(vm: u64, _resi
 ///
 /// # Safety
 /// As `body_general_step`; `record` is the record at `call_pc` of the innermost activation's function.
-unsafe fn frames_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> u64 {
+unsafe fn frames_step_in(cx: *mut LaneContext, call_pc: u64, record: WideInstruction) -> u64 {
     use super::super::compiled::LANE_CALL_MISSED;
     let instruction = record.without_return();
     if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
@@ -160,7 +160,7 @@ unsafe fn frames_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record:
 ///
 /// # Safety
 /// `cx` is the running lane's context.
-unsafe fn left_operand_at<H: Host>(cx: *mut LaneContext<H>, resume: Ip) -> u64 {
+unsafe fn left_operand_at(cx: *mut LaneContext, resume: Ip) -> u64 {
     unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = Value::UNDEFINED; }
     super::super::compiled::LANE_CALL_LEFT
 }
@@ -175,7 +175,7 @@ unsafe fn left_operand_at<H: Host>(cx: *mut LaneContext<H>, resume: Ip) -> u64 {
 ///
 /// # Safety
 /// As `frames_step_in`.
-unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> u64 {
+unsafe fn owner_step_in(cx: *mut LaneContext, call_pc: u64, record: WideInstruction) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let instruction = record.without_return();
     let (base, pc) = unsafe { ((*cx).base, call_pc as usize) };
@@ -221,24 +221,24 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
 ///
 /// # Safety
 /// As `body_general_step_record`.
-pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(in crate::vm) unsafe extern "C" fn body_general_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // A comparison jump a pure decision settles (an image body's `!=` of two objects through a Number row) runs no
     // guest code and moves nothing: no step, no base to refresh.
-    if let Some(status) = unsafe { decided_compare_jump::<H>(context as usize as *mut LaneContext<H>, call_pc) } { return status; }
+    if let Some(status) = unsafe { decided_compare_jump(context as usize as *mut LaneContext, call_pc) } { return status; }
     // SAFETY: the caller's contract.
     let traced = crate::trace::Channel::BodyLeave.on().then(|| {
-        let cx = context as usize as *mut LaneContext<H>;
+        let cx = context as usize as *mut LaneContext;
         let function = running_function_in_lane(cx);
         let op = unsafe { &*(*cx).code }.function(function as usize).code.get(call_pc as usize).map(|word| word.op());
         (function, op, unsafe { self::vm(cx) }.lane_stack.has_frames())
     });
-    let status = unsafe { lane_body_step_record::<H>(vm, residual, context, call_pc) };
+    let status = unsafe { lane_body_step_record(vm, residual, context, call_pc) };
     if let Some((function, op, activations)) = traced && status != super::super::compiled::LANE_CALL_COMPLETED {
         eprintln!("QUENCH_CALL_STATUS helper=step function={function} pc={call_pc} op={op:?} activations={activations} status={status}");
     }
-    unsafe { refresh_body_bases::<H>(context) };
+    unsafe { refresh_body_bases(context) };
     // SAFETY: as `lane_body_step_record`; a region the lane runs reads its payload's bases after the step too.
-    unsafe { refresh_region_bases_of::<H>(context) };
+    unsafe { refresh_region_bases_of(context) };
     status
 }
 
@@ -248,17 +248,17 @@ pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, resid
 ///
 /// # Safety
 /// As `lane_body_step`, and `first` and `imm` are the packed words of the record at `call_pc`.
-pub(in crate::vm) unsafe extern "C" fn lane_body_step_packed<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64, first: u64, imm: u64) -> u64 {
-    let cx = context as usize as *mut LaneContext<H>;
+pub(in crate::vm) unsafe extern "C" fn lane_body_step_packed(vm: u64, residual: u64, context: u64, call_pc: u64, first: u64, imm: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext;
     // SAFETY: the caller's contract.
-    if let Some(status) = unsafe { family_helpers::direct::<H>(cx, first, imm) } {
+    if let Some(status) = unsafe { family_helpers::direct(cx, first, imm) } {
         return status;
     }
-    unsafe { body_general_step::<H>(vm, residual, context, call_pc) }
+    unsafe { body_general_step(vm, residual, context, call_pc) }
 }
 
-unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    let cx = context as usize as *mut LaneContext<H>;
+unsafe fn lane_body_step_record(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext;
     native_frames::in_innermost_frame(cx, || unsafe { body_general_step_in(cx, call_pc) })
 }
 
@@ -268,7 +268,7 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
 ///
 /// # Safety
 /// As `body_general_step`.
-unsafe fn activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+unsafe fn activation_step_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
     let body = unsafe { &*(*cx).code }.function(running_function_in_lane(cx) as usize);
     let record = body.widened(body.code[call_pc as usize]);
     if record.without_return().op().steps_on_owner() {
@@ -287,7 +287,7 @@ unsafe fn activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> 
 ///
 /// # Safety
 /// As `body_general_step`.
-unsafe fn body_general_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+unsafe fn body_general_step_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
@@ -323,14 +323,14 @@ unsafe fn body_general_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
 /// The allocation of the record at `call_pc`, a fixed-shape object the record defines (`Step::Allocate`): its value is
 /// written to the record's destination, `LANE_CALL_MISSED` where the lane's allocator declines, and the record is
 /// the interpreter's to make.
-pub(in crate::vm) unsafe extern "C" fn lane_allocate_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(in crate::vm) unsafe extern "C" fn lane_allocate_step(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     if context == 0 { return super::super::compiled::LANE_CALL_MISSED; }
-    let cx = context as usize as *mut LaneContext<H>;
+    let cx = context as usize as *mut LaneContext;
     let status = native_frames::in_innermost_frame(cx, || unsafe { lane_allocate_in(cx, call_pc) });
     // SAFETY: `context` is the running lane's; the allocation may have collected, which moves no register word.
-    unsafe { refresh_body_bases::<H>(context) };
+    unsafe { refresh_body_bases(context) };
     // SAFETY: as above; a region the lane runs reads its payload's bases after the allocation too.
-    unsafe { refresh_region_bases_of::<H>(context) };
+    unsafe { refresh_region_bases_of(context) };
     status
 }
 
@@ -338,7 +338,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_allocate_step<H: Host>(_vm: u64, _re
 ///
 /// # Safety
 /// As `lane_allocate_step`.
-unsafe fn lane_allocate_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+unsafe fn lane_allocate_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let r = unsafe { (*cx).registers };
     let function = running_function_in_lane(cx);
@@ -347,7 +347,7 @@ unsafe fn lane_allocate_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u6
     let body = code.function(function as usize);
     let instruction = body.widened(body.code[call_pc as usize]);
     let Some((destination, allocation)) = crate::staged::Allocation::decode(instruction, &[]) else { return LANE_CALL_MISSED };
-    let Some(value) = (unsafe { super::lane_frame::lane_allocation::<H>(cx.cast(), r, allocation) }) else { return LANE_CALL_MISSED };
+    let Some(value) = (unsafe { super::lane_frame::lane_allocation(cx.cast(), r, allocation) }) else { return LANE_CALL_MISSED };
     // SAFETY: the allocation ran no guest code, so the lane's register file is `r`'s still.
     unsafe { (*cx).registers }.set(destination, value);
     LANE_CALL_COMPLETED
@@ -360,7 +360,7 @@ unsafe fn lane_allocate_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u6
 ///
 /// # Safety
 /// As `body_general_step`.
-unsafe fn decided_compare_jump<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> Option<u64> {
+unsafe fn decided_compare_jump(cx: *mut LaneContext, call_pc: u64) -> Option<u64> {
     use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED};
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(running_function_in_lane(cx) as usize);

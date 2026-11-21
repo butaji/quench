@@ -265,7 +265,7 @@ impl State {
 
 /// Run `f` over the module's host state.
 fn with_state<T>(c: &mut Context<'_>, f: impl FnOnce(&mut State) -> T) -> T {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut shared = shared.borrow_mut();
     f(&mut shared.http2)
 }

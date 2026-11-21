@@ -98,7 +98,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
         _ => {}
     }
     let is_pair = PRIMARY || matches!(CASE, PAIR | PAIR_NON_OBJECT | PAIR_SECOND_MISS);
-    let read = |vm: &super::super::Vm<TestHost>, first_entry, second_entry, object| {
+    let read = |vm: &super::super::Vm, first_entry, second_entry, object| {
         let value = vm.record_field_entry_hit(first_entry, object)?;
         if is_pair { vm.record_field_entry_hit(second_entry, value) } else { Some(value) }
     };

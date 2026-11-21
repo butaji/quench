@@ -113,7 +113,7 @@ impl ActivationView {
     /// The memory view its caller runs with: a Wasm callee's caller's memory, else the script
     /// view (`ActivationKind::Wasm`).
     #[inline(always)]
-    pub(super) fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
+    pub(super) fn caller_memory(&self, cx: *mut LaneContext) -> MemoryView {
         match self.kind {
             ActivationKind::Wasm { memory, .. } => memory,
             ActivationKind::Native | ActivationKind::Script(_) | ActivationKind::WasmEntry { .. } => MemoryView::script(cx),

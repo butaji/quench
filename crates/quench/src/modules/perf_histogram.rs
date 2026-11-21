@@ -271,7 +271,7 @@ pub(crate) fn record(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> 
 }
 
 fn clock_ns(c: &mut Context<'_>) -> i64 {
-    let control = c.host_mut().shared_state().borrow().process_control.clone();
+    let control = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.clone();
     control.monotonic_now_ns().unwrap_or_default() as i64
 }
 

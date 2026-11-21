@@ -17,7 +17,7 @@ pub(super) enum InheritedReceiver {
     Builtin,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The object an inherited entry's receiver test reads, and its kind: an object record;
     /// a function, which an entry answers only where its shape holds the name
     /// (`InheritedFieldCache::function_links`); or an array or ordinary builtin (a
@@ -225,7 +225,7 @@ pub(super) enum FieldCacheProbe {
 }
 
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The data field a receiver any heap cell holds (a function's `f.call`) inherits from its
     /// immediate prototype, among its site's recorded entries (`megamorphic_field_cache`): the
     /// holder tier `polymorphic_field_hit` probes for a record receiver. Every function named

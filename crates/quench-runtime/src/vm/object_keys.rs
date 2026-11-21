@@ -25,7 +25,7 @@ impl EnumerableOwnPropertyKind {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// EnumerableOwnProperties of an object whose shape answers it: `Object.keys` takes the key
     /// memo first (`plain_key_list`), `Object.values` and `Object.entries` the shape's data items
     /// (`shape_enumerable_data_items`). No guest code runs and nothing raises. `None` leaves

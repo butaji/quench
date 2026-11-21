@@ -166,7 +166,7 @@ fn merge_runs<T: Copy, E>(
     outcome
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The order a prepared comparator (`Vm::with_prepared_callback`, receiver `undefined`)
     /// gives `left` and `right`, which the caller keeps reachable. An int32 result, as `x - y`
     /// gives on integers, maps its sign directly; a double is compared as a Number, and any
@@ -175,7 +175,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn compare_sort_callback(
         &mut self,
         p: &ResidualProgram,
-        comparator: &mut super::PreparedCallback<H>,
+        comparator: &mut super::PreparedCallback,
         left: Value,
         right: Value,
     ) -> Result<Ordering, JsError> {

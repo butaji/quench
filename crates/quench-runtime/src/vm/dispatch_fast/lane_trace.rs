@@ -101,7 +101,7 @@ mod tests {
         program.functions[0].register_roots = crate::bytecode::RegisterRoots::new(false);
         let mut vm = Vm::new(TestHost::default());
         vm.execute(&program).unwrap();
-        let held = vm.heap.alloc_object(Vm::<TestHost>::empty_object(vm.object_proto));
+        let held = vm.heap.alloc_object(Vm::empty_object(vm.object_proto));
         let registers = [held, Value::integer(7)];
         let wasm = Activation::of_parts(
             0,

@@ -7,7 +7,7 @@ pub(super) enum GroupByKind {
     Map,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn group_by(
         &mut self,
         p: &ResidualProgram,

@@ -183,7 +183,7 @@ impl LoopTier {
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
     /// between looks count down, and a look publishes code that is ready.
     #[inline(always)]
-    pub(super) fn awaits_code<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
+    pub(super) fn awaits_code(&mut self, vm: &mut Vm, site: &LoopSite) -> bool {
         // A site with published code, or none under way, has nothing to wait for. A look still
         // counting down is one decrement here; only the look itself leaves the inline path.
         if self.pending.is_none() { return false; }
@@ -195,7 +195,7 @@ impl LoopTier {
     }
 
     #[cold]
-    fn poll_pending<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
+    fn poll_pending(&mut self, vm: &mut Vm, site: &LoopSite) -> bool {
         let Some(pending) = self.pending.take() else { return false };
         if self.wait > 0 {
             self.wait -= 1;
@@ -228,7 +228,7 @@ impl LoopTier {
 
     /// Holds the compile `started`, while the facts its code names hold, and looks for its
     /// code at once.
-    fn start<H: Host>(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, vm: &mut Vm<H>, site: &LoopSite) {
+    fn start(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, vm: &mut Vm, site: &LoopSite) {
         self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs)).map(Box::new);
         self.wait = 0;
         if self.pending.is_none() {
@@ -242,7 +242,7 @@ impl LoopTier {
     }
 
     /// Publishes `region` while the facts its code names hold (`ProgramStore::publish_region`).
-    fn publish<H: Host>(&mut self, vm: &mut Vm<H>, region: super::super::compiled::CompiledOsrRegion) {
+    fn publish(&mut self, vm: &mut Vm, region: super::super::compiled::CompiledOsrRegion) {
         // A promoted site's stencil code goes as the u-jit region takes its place.
         if let Some(replaced) = self.code.take() { replaced.retire(); }
         self.promoting = false;
@@ -283,8 +283,8 @@ fn entry_types(region: &super::super::compiled::LoopRegion, r: Registers) -> Vec
 
 /// Starts compiling `site`'s region over the tier's element views from the running activation,
 /// and looks for its code at once: a code generator without its own thread has it ready.
-pub(super) fn loop_compile_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn loop_compile_in_lane(
+    cx: *mut LaneContext,
     r: Registers,
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
@@ -305,7 +305,7 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     tier.promote_at = super::super::compiled::loop_model::promotion_taken(machine.programs.tiers(), site.span());
     let program = machine.programs.get(machine.active_program);
     let function = site.function();
-    let helpers = super::super::compiled::process_lane_helpers::<H>();
+    let helpers = super::super::compiled::process_lane_helpers();
     machine.host.before_native_compilation();
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
@@ -349,7 +349,7 @@ pub(super) fn loop_compile_in_lane<H: Host>(
 
 /// The calls of `function` that a BaseJIT region of it may inline: the callees its call sites
 /// reached, which the lane would activate in place (`direct_callees_in_lane`).
-fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
+fn region_calls(cx: *mut LaneContext, machine: &mut Vm, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
@@ -359,7 +359,7 @@ fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: 
 
 /// The calls of `function` a Cranelift region of it calls by their entries: the callees its call
 /// sites reached, whose bodies are then in demand (`bind_callees`), as a lane body's are.
-fn unit_region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
+fn unit_region_calls(cx: *mut LaneContext, machine: &mut Vm, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
@@ -371,7 +371,7 @@ fn unit_region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, prog
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
-fn native_field_loads<H: Host>(machine: &Vm<H>, own: Option<&super::LaneView>, region: &super::super::compiled::LoopRegion)
+fn native_field_loads(machine: &Vm, own: Option<&super::LaneView>, region: &super::super::compiled::LoopRegion)
     -> Vec<Vec<super::super::compiled::NativeFieldLoad>> {
     let (properties_base, properties_len) = machine.heap.native_property_values();
     let available = machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
@@ -393,7 +393,7 @@ fn native_field_loads<H: Host>(machine: &Vm<H>, own: Option<&super::LaneView>, r
 
 /// The descriptors of the stores of `region`, by cache site: native
 /// code stores in place through the arms they give (`site_store_plan`), as a read does.
-fn native_store_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled::LoopRegion)
+fn native_store_loads(machine: &Vm, region: &super::super::compiled::LoopRegion)
     -> Vec<(u16, Vec<super::super::compiled::NativeFieldLoad>)> {
     let available = machine.heap.object_record_base().is_some() && region.inlining.is_none();
     // A receiver the region keeps stores through the same arms: a store with no read of its
@@ -411,7 +411,7 @@ fn native_store_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled:
 /// one a typed array a register holds whose elements the loop may address in place
 /// (`Vm::typed_array_elements_in_lane`), which its code views at the loop's header. A mix, or
 /// any other value, declines the entry; a string the loop only reads holds an empty slot.
-pub(super) fn loop_arrays_in_lane<H: Host>(vm: &mut Vm<H>, r: Registers, region: &LoopRegion, entry: &mut LoopEntry)
+pub(super) fn loop_arrays_in_lane(vm: &mut Vm, r: Registers, region: &LoopRegion, entry: &mut LoopEntry)
     -> Option<ElementViews> {
     let value_of = |(register, field): (crate::bytecode::Register, Option<usize>), entry: &LoopEntry| match field {
         None => r.get(register),
@@ -450,7 +450,7 @@ pub(super) fn loop_arrays_in_lane<H: Host>(vm: &mut Vm<H>, r: Registers, region:
 /// Pushes the raw doubles of the record array `value`, whose backing is double
 /// (`ElementViews::Double`), read in place; a `written` one must be dense, its backing owned
 /// alone, and no prototype may claim an index of it, as `push_dense_array` requires.
-fn push_double_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
+fn push_double_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
     if written && (vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value)) {
         return None;
     }
@@ -466,7 +466,7 @@ fn push_double_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry
 /// owned alone, and no prototype may claim an index of it: a store below the length or an
 /// append at it then defines or replaces an own data element and nothing else
 /// (`append_dense_element`, `fill_dense_hole`).
-fn push_dense_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
+fn push_dense_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
     if !written {
         // A region reads the values in place: a narrow backing widens first.
         vm.heap.widen_array_elements(value);
@@ -487,7 +487,7 @@ fn push_dense_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry:
 
 /// The running activation's function in `code`, the context's program: its index, body and
 /// decoded code, and the program's constants, from which a loop site's region is analyzed.
-pub(super) fn loop_function_in_lane<H: Host>(cx: *mut LaneContext<H>, code: &ResidualProgram)
+pub(super) fn loop_function_in_lane(cx: *mut LaneContext, code: &ResidualProgram)
     -> Option<(u32, &crate::bytecode::Function, Vec<WideInstruction>, Vec<Value>)> {
     let machine = unsafe { vm(cx) };
     let function_index = machine
@@ -502,7 +502,7 @@ pub(super) fn loop_function_in_lane<H: Host>(cx: *mut LaneContext<H>, code: &Res
 /// The plain region of `site`'s loop, which leaves at each method call the inliner declined
 /// (`MethodCalls::Exit`).
 #[inline(never)]
-pub(super) fn method_call_region_in_lane<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite) -> Option<LoopRegion> {
+pub(super) fn method_call_region_in_lane(cx: *mut LaneContext, site: &LoopSite) -> Option<LoopRegion> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let (function_index, function, decoded, constants) = loop_function_in_lane(cx, code)?;
@@ -522,7 +522,7 @@ pub(super) fn method_call_region_in_lane<H: Host>(cx: *mut LaneContext<H>, site:
 
 /// The depth-zero capture slots the running function reads that hold typed arrays now (an observation
 /// the compiled loop's entry checks): a loop indexing such a capture views it as a typed array.
-pub(super) fn typed_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
+pub(super) fn typed_capture_slots(cx: *mut LaneContext) -> Vec<u16> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let Some((_, function, _, _)) = loop_tier::loop_function_in_lane(cx, code) else { return Vec::new() };
@@ -531,14 +531,14 @@ pub(super) fn typed_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> 
         .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
     slots.sort_unstable();
     slots.dedup();
-    slots.retain(|slot| super::read_capture_value::<H, true>(cx, 0, *slot)
+    slots.retain(|slot| super::read_capture_value::<true>(cx, 0, *slot)
         .is_some_and(|value| unsafe { vm(cx) }.typed_array_elements_in_lane(value, false).is_some()));
     slots
 }
 
 /// The depth-zero capture slots the running function reads that hold int32s now (an observation
 /// the compiled loop's entry guard checks): a loop's integer arithmetic on such a capture stays int32.
-pub(super) fn int_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
+pub(super) fn int_capture_slots(cx: *mut LaneContext) -> Vec<u16> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let Some((_, function, _, _)) = loop_function_in_lane(cx, code) else { return Vec::new() };
@@ -547,7 +547,7 @@ pub(super) fn int_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
         .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
     slots.sort_unstable();
     slots.dedup();
-    slots.retain(|slot| super::read_capture_value::<H, true>(cx, 0, *slot).is_some_and(|value| value.as_int().is_some()));
+    slots.retain(|slot| super::read_capture_value::<true>(cx, 0, *slot).is_some_and(|value| value.as_int().is_some()));
     slots
 }
 
@@ -566,7 +566,7 @@ const SAMPLED_ELEMENTS: usize = 64;
 /// The registers of `region`'s arrays whose first elements, sampled on entry, are all int32s or all
 /// Numbers (int32 or double, no hole), with that type: an observation (a guess the code checks at
 /// every read), not a proof.
-pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::Type)> {
+pub(super) fn number_arrays(vm: &Vm, r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::Type)> {
     region.arrays.iter().filter(|array| array.field.is_none())
         .filter_map(|array| sample_array(vm, r.get(array.register)).map(|ty| (array.register, ty))).collect()
 }
@@ -574,11 +574,11 @@ pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegi
 /// The type the first elements of the array `value` all have, int32 or Number (no hole), sampled:
 /// an observation (a guess the code checks at every read), not a proof.
 /// The array-typed values among `values` (register order), sampled: what a lane body's loops read typed.
-pub(super) fn sampled_arrays<H: Host>(vm: &Vm<H>, values: impl Iterator<Item = Value>) -> Vec<(crate::bytecode::Register, crate::typed_ir::Type)> {
+pub(super) fn sampled_arrays(vm: &Vm, values: impl Iterator<Item = Value>) -> Vec<(crate::bytecode::Register, crate::typed_ir::Type)> {
     values.enumerate().filter_map(|(register, value)| sample_array(vm, value).map(|ty| (register as crate::bytecode::Register, ty))).collect()
 }
 
-pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::typed_ir::Type> {
+pub(super) fn sample_array(vm: &Vm, value: Value) -> Option<crate::typed_ir::Type> {
     use crate::typed_ir::Type;
     // A float typed array's kind fixes its elements as Numbers, as a C array's element type does.
     if let Some(kind) = vm.typed_array_kind(value) {

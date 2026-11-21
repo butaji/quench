@@ -12,7 +12,7 @@ enum PlainWriteTarget {
     Add,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The chain walk of `set_plain_named_property` for a key the caller admitted: `None` for
     /// a global, exotic, namespace or non-extensible object on the chain, a side-table
     /// descriptor of the key, or an accessor or read-only property deciding the write.

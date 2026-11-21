@@ -38,7 +38,7 @@ pub(in crate::vm::dispatch_fast) enum Suspender {
 impl Suspender {
     /// How the running activation of `cx` suspends a `yield`, in the order the lane tries them;
     /// `None` where it suspends in place by none, and the general path suspends its frame.
-    pub(in crate::vm::dispatch_fast) fn of_yield<H: Host>(cx: *mut LaneContext<H>) -> Option<Self> {
+    pub(in crate::vm::dispatch_fast) fn of_yield(cx: *mut LaneContext) -> Option<Self> {
         let vm = unsafe { vm(cx) };
         if super::super::generator_windows::running_generator(vm) {
             return Some(Self::Window);
@@ -56,7 +56,7 @@ impl Suspender {
     /// request parks, a settling body hands its frame over, and a promise job's run suspends into
     /// its owner. `None` where it suspends in place by none, and the general path suspends its frame.
     #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn of_await<H: Host>(cx: *mut LaneContext<H>) -> Option<Self> {
+    pub(in crate::vm::dispatch_fast) fn of_await(cx: *mut LaneContext) -> Option<Self> {
         let vm = unsafe { vm(cx) };
         let activation = vm.lane_stack.activations().last()?;
         let script = activation.script()?;
@@ -100,14 +100,14 @@ pub(in crate::vm::dispatch_fast) struct LaneSuspends {
 
 impl LaneSuspends {
     /// The suspensions of the record at `ip` in the lane context `cx`, by `suspender`.
-    fn of<H: Host>(cx: *mut LaneContext<H>, ip: Ip, suspender: Suspender) -> Self {
+    fn of(cx: *mut LaneContext, ip: Ip, suspender: Suspender) -> Self {
         Self {
             cx: cx.cast(),
             ip,
             suspender,
             in_place: |context, r, ip, [delegate, method, input]|
-                super::super::generator_windows::delegate_in_place_in_lane(context.cast::<LaneContext<H>>(), r, ip, (delegate, method, input)),
-            result_parts: |context, result| unsafe { vm(context.cast::<LaneContext<H>>()) }.own_iterator_result_parts(result),
+                super::super::generator_windows::delegate_in_place_in_lane(context.cast::<LaneContext>(), r, ip, (delegate, method, input)),
+            result_parts: |context, result| unsafe { vm(context.cast::<LaneContext>()) }.own_iterator_result_parts(result),
         }
     }
 
@@ -155,16 +155,16 @@ pub(in crate::vm::dispatch_fast) fn yield_star_kind(i: &LaneInstruction) -> Susp
 /// goes on, and a row the frame declined, before any effect, exits at the record.
 // Inlined into each handler, so a suspender known there folds the frame and the suspension.
 #[inline(always)]
-pub(in crate::vm::dispatch_fast) fn suspension_row_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction,
+pub(in crate::vm::dispatch_fast) fn suspension_row_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction,
     (kind, suspender): (Suspension, Suspender)) -> Resumed {
     let mut stage = Concrete::new(std::ptr::null());
     // Only an async activation's or an await's conversion resolves promises through the lane's host.
     let mut frame = if suspender.asynchronous() || kind == Suspension::Await {
-        LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx)
+        LaneFrame::<ACC_NONE>::hosted(r, Carried::script(cx), cx)
     } else {
         LaneFrame::<ACC_NONE>::new(r, Carried::script(cx))
     };
-    frame.suspends = Some(LaneSuspends::of::<H>(cx, ip, suspender));
+    frame.suspends = Some(LaneSuspends::of(cx, ip, suspender));
     let destination = i.a & crate::bytecode::REGISTER_MASK;
     match crate::staged::suspension_step(&mut stage, &mut frame, kind, destination, i.b) {
         Step::Value(_) => Resumed::At(r, following(ip), Carried::script(cx)),

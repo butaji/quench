@@ -3,7 +3,7 @@
 use super::super::object_symbols::{PLAIN_COPY_INLINE_PROPERTIES, PropertyCopyKind};
 use super::super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Object.keys(object)` of a plain object whose shape lists its enumerable string keys
     /// (`shape_enumerable_slots`), as V8's enum cache answers it: the shape's key strings
     /// (`Vm::own_enumerable_key_values_cached`, made once per shape and collection) are copied

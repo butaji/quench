@@ -36,40 +36,40 @@ pub(in crate::vm::dispatch_fast) const fn leaf_of(parameters: u8) -> Option<(u8,
 }
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::LEAF_CALL | parameters }>`).
-pub(in crate::vm::dispatch_fast) const fn leaf_call_miss_of<H: Host>(parameters: u8) -> Handler {
+/// (`protocol_row::<OP, ACC, { protocol_family::LEAF_CALL | parameters }>`).
+pub(in crate::vm::dispatch_fast) const fn leaf_call_miss_of(parameters: u8) -> Handler {
     let payload = parameters & PAYLOAD_MASK;
     match parameters & KIND_MASK {
-        BUILTIN_KIND => builtin_miss_of::<H>(payload),
-        MATH_KIND => math_miss_of::<H>(payload),
-        REFLECT_GET_KIND => reflect_get_miss::<H>,
-        _ => leaf_miss_of_form::<H>(payload),
+        BUILTIN_KIND => builtin_miss_of(payload),
+        MATH_KIND => math_miss_of(payload),
+        REFLECT_GET_KIND => reflect_get_miss,
+        _ => leaf_miss_of_form(payload),
     }
 }
 
 /// The leaf call body of a leaf-form payload (`leaf_parameters`).
-const fn leaf_miss_of_form<H: Host>(payload: u8) -> Handler {
+const fn leaf_miss_of_form(payload: u8) -> Handler {
     match (payload >> 3, payload & 7) {
-        (PLAIN_LEAF, 0) => script_call_leaf_miss::<H, PLAIN_LEAF, 0> as Handler,
-        (PLAIN_LEAF, 1) => script_call_leaf_miss::<H, PLAIN_LEAF, 1> as Handler,
-        (PLAIN_LEAF, 2) => script_call_leaf_miss::<H, PLAIN_LEAF, 2> as Handler,
-        (PLAIN_LEAF, 3) => script_call_leaf_miss::<H, PLAIN_LEAF, 3> as Handler,
-        (PLAIN_LEAF, 4) => script_call_leaf_miss::<H, PLAIN_LEAF, 4> as Handler,
-        (CAPTURE_LEAF, 0) => script_call_leaf_miss::<H, CAPTURE_LEAF, 0> as Handler,
-        (CAPTURE_LEAF, 1) => script_call_leaf_miss::<H, CAPTURE_LEAF, 1> as Handler,
-        (CAPTURE_LEAF, 2) => script_call_leaf_miss::<H, CAPTURE_LEAF, 2> as Handler,
-        (CAPTURE_LEAF, 3) => script_call_leaf_miss::<H, CAPTURE_LEAF, 3> as Handler,
-        (CAPTURE_LEAF, 4) => script_call_leaf_miss::<H, CAPTURE_LEAF, 4> as Handler,
-        (CONTEXT_LEAF, 0) => script_call_leaf_miss::<H, CONTEXT_LEAF, 0> as Handler,
-        (CONTEXT_LEAF, 1) => script_call_leaf_miss::<H, CONTEXT_LEAF, 1> as Handler,
-        (CONTEXT_LEAF, 2) => script_call_leaf_miss::<H, CONTEXT_LEAF, 2> as Handler,
-        (CONTEXT_LEAF, 3) => script_call_leaf_miss::<H, CONTEXT_LEAF, 3> as Handler,
-        (CONTEXT_LEAF, 4) => script_call_leaf_miss::<H, CONTEXT_LEAF, 4> as Handler,
-        (THIS_LEAF, 0) => script_call_leaf_miss::<H, THIS_LEAF, 0> as Handler,
-        (THIS_LEAF, 1) => script_call_leaf_miss::<H, THIS_LEAF, 1> as Handler,
-        (THIS_LEAF, 2) => script_call_leaf_miss::<H, THIS_LEAF, 2> as Handler,
-        (THIS_LEAF, 3) => script_call_leaf_miss::<H, THIS_LEAF, 3> as Handler,
-        (THIS_LEAF, 4) => script_call_leaf_miss::<H, THIS_LEAF, 4> as Handler,
-        _ => script_call_full_miss::<H>,
+        (PLAIN_LEAF, 0) => script_call_leaf_miss::<PLAIN_LEAF, 0> as Handler,
+        (PLAIN_LEAF, 1) => script_call_leaf_miss::<PLAIN_LEAF, 1> as Handler,
+        (PLAIN_LEAF, 2) => script_call_leaf_miss::<PLAIN_LEAF, 2> as Handler,
+        (PLAIN_LEAF, 3) => script_call_leaf_miss::<PLAIN_LEAF, 3> as Handler,
+        (PLAIN_LEAF, 4) => script_call_leaf_miss::<PLAIN_LEAF, 4> as Handler,
+        (CAPTURE_LEAF, 0) => script_call_leaf_miss::<CAPTURE_LEAF, 0> as Handler,
+        (CAPTURE_LEAF, 1) => script_call_leaf_miss::<CAPTURE_LEAF, 1> as Handler,
+        (CAPTURE_LEAF, 2) => script_call_leaf_miss::<CAPTURE_LEAF, 2> as Handler,
+        (CAPTURE_LEAF, 3) => script_call_leaf_miss::<CAPTURE_LEAF, 3> as Handler,
+        (CAPTURE_LEAF, 4) => script_call_leaf_miss::<CAPTURE_LEAF, 4> as Handler,
+        (CONTEXT_LEAF, 0) => script_call_leaf_miss::<CONTEXT_LEAF, 0> as Handler,
+        (CONTEXT_LEAF, 1) => script_call_leaf_miss::<CONTEXT_LEAF, 1> as Handler,
+        (CONTEXT_LEAF, 2) => script_call_leaf_miss::<CONTEXT_LEAF, 2> as Handler,
+        (CONTEXT_LEAF, 3) => script_call_leaf_miss::<CONTEXT_LEAF, 3> as Handler,
+        (CONTEXT_LEAF, 4) => script_call_leaf_miss::<CONTEXT_LEAF, 4> as Handler,
+        (THIS_LEAF, 0) => script_call_leaf_miss::<THIS_LEAF, 0> as Handler,
+        (THIS_LEAF, 1) => script_call_leaf_miss::<THIS_LEAF, 1> as Handler,
+        (THIS_LEAF, 2) => script_call_leaf_miss::<THIS_LEAF, 2> as Handler,
+        (THIS_LEAF, 3) => script_call_leaf_miss::<THIS_LEAF, 3> as Handler,
+        (THIS_LEAF, 4) => script_call_leaf_miss::<THIS_LEAF, 4> as Handler,
+        _ => script_call_full_miss,
     }
 }

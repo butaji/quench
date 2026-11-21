@@ -369,7 +369,7 @@ impl PrivateClasses {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Records a closure `constructor` of class constructor `function` of the active program,
     /// whose prototype object is `prototype`: a class evaluation, which makes the homes of the
     /// private names the class declares (`PrivateClasses`). A constructor of another program

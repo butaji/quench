@@ -4,7 +4,7 @@
 use super::*;
 use super::super::activation::FrameRecord;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether the lane resumes `frame`, suspended by a function of `code`, over its register
     /// file, and whether its window carries an environment after the registers: a frame of the
     /// active program whose function lays out as its registers or with an environment window

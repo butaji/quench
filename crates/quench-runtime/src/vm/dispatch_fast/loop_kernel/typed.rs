@@ -49,7 +49,7 @@ pub(super) unsafe fn load(kind: TypedArrayKind, elements: *const u8, first: i64,
 /// Every element written lies inside the typed array whose first element is at `elements`,
 /// whose buffer is the view's alone.
 #[inline(always)]
-pub(super) unsafe fn store<H: Host>(
+pub(super) unsafe fn store(
     kind: TypedArrayKind,
     elements: *mut u8,
     first: isize,

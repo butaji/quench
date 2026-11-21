@@ -16,7 +16,7 @@ pub(super) type StreamedStubs = FxHashSet<(ProgramId, u32)>;
 
 pub(super) type FirstChunks = FxHashMap<(ProgramId, u32), (Weak<ResidualProgram>, Weak<ResidualProgram>, FunctionKind)>;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `i`, at `pc`, the stub body of frame `f`'s callee (`CallFirstChunk`): points the
     /// callee at its chunk's function, compiling the chunk if the callee still runs the stub,
     /// then calls or constructs it as the stub was, with the arguments array of register B.

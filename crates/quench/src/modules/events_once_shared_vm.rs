@@ -4,7 +4,7 @@ use super::event_target_shared_vm::{api, argument, flag, get, is_nullish, is_und
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 use crate::modules::keys::ERROR_EVENT;
 use crate::modules::keys::ABORT_EVENT;

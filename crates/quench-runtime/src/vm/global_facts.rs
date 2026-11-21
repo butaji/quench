@@ -142,7 +142,7 @@ impl FromIterator<(usize, GlobalRead)> for GlobalReads {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The read of `atom` through cache `site` from the active realm's global scope as a Stable
     /// fact, where the cell the lane's own read resolves it to (`Vm::global_name_read`) is not
     /// `Mutable`: an initialized global lexical binding, or the global object's own data field; a lexical
@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
     /// The byte offset in the VM of the active realm's global object, which code that folds a
     /// realm's global cells reads to prove that realm active (`Lowering::prove_realm`, `Heap::Realm`).
     pub(super) fn realm_globals_offset() -> i32 {
-        i32::try_from(std::mem::offset_of!(Vm<H>, realm) + std::mem::offset_of!(super::Realm, globals)).expect("the realm's global lies within the VM")
+        i32::try_from(std::mem::offset_of!(Vm, realm) + std::mem::offset_of!(super::Realm, globals)).expect("the realm's global lies within the VM")
     }
 
     /// The global object's own data property `atom` as a slot a lane body holds, for its

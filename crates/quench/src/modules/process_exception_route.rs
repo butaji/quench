@@ -23,9 +23,9 @@ pub(crate) trait Context {
     /// frame. A NativeContext adapter therefore leaves disposal to its frame.
     fn release_owned(&mut self, root: RootId);
 }
-impl Context for NativeContext<'_, NodeHost> {
+impl Context for NativeContext<'_> {
     fn shared(&mut self) -> Rc<RefCell<SharedNodeState>> {
-        self.host_mut().shared_state()
+        self.host_as::<crate::host::NodeHost>().shared_state()
     }
     fn text(&mut self, text: &str) -> RootId {
         self.string_rooted(text)

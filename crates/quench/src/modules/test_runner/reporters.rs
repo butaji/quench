@@ -12,7 +12,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 /// The property naming a Transform instance's reporter.

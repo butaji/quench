@@ -34,7 +34,7 @@ enum Search {
     Includes,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `%TypedArray%.prototype.at` (`Native::TypedArrayAt`): the element at an int32 index, which
     /// a negative index counts from the end, as a Number; `undefined` past either end. `None`
     /// for a BigInt kind or an index that is not an int32.

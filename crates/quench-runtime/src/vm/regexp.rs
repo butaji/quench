@@ -203,7 +203,7 @@ enum FastReplacement<'a> {
     Function(Value),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn regexp_intrinsic_constructor(&self) -> Value {
         self.realm
             .intrinsics

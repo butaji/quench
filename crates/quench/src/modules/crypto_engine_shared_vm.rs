@@ -15,7 +15,7 @@ pub(crate) enum Failure {
     Initialize,
 }
 
-pub(crate) fn error(context: &mut NativeContext<'_, NodeHost>, failure: Failure) -> RootedError {
+pub(crate) fn error(context: &mut NativeContext<'_>, failure: Failure) -> RootedError {
     match failure {
         Failure::Search(stack, name) if stack.errors().is_empty() => {
             match context.error_rooted(&format!("Engine \"{name}\" was not found")) {
@@ -43,7 +43,7 @@ pub(crate) fn error(context: &mut NativeContext<'_, NodeHost>, failure: Failure)
 }
 
 fn engine_arguments(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     args: &[RootId],
 ) -> Result<(String, u32), RootedError> {
     let id = args.first().copied().unwrap_or_else(|| context.undefined());
@@ -77,7 +77,7 @@ fn engine_arguments(
 /// The private binding returns the actual native engine-selection result;
 /// the configured standard library owns the public error and warning policy.
 pub(crate) fn set_engine_binding(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

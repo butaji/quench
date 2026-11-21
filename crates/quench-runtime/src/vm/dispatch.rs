@@ -31,7 +31,7 @@ mod call_forms;
 mod increment;
 pub(super) use increment::number_increment;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn module_import_value(
         &self,
         program: ProgramId,
@@ -1140,7 +1140,7 @@ const RUNNERS: [Runner; Op::COUNT] = {
     table
 };
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The new array of the `count` constants from `start` of `program` (a `MakeConstArray`
     /// record's immediate and element count); `None` for a range outside the program's
     /// constants.

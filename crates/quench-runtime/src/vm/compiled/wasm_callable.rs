@@ -5,7 +5,7 @@ use super::{Analysis, Host, Plan};
 use crate::bitset::BitSet;
 use crate::bytecode::{FieldLayout, InstructionField};
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Each function's full plan from `allowed`, `None` outside the callable set, and the
     /// memory slot those plans compile against.
     pub(super) fn settle_callable(&self, allowed: &BitSet) -> (Vec<Option<Plan>>, Option<u32>) {

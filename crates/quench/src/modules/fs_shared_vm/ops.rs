@@ -199,7 +199,7 @@ fn status(code: libc::c_int) -> io::Result<()> {
 
 /// Run `operation` on the descriptor `fd` from the host's descriptor table.
 pub(crate) fn with_descriptor<T>(c: &mut Context<'_>, fd: i32, operation: impl FnOnce(&mut std::fs::File) -> io::Result<T>) -> io::Result<T> {
-    let fs = c.host_mut().shared_state().borrow().fs.clone();
+    let fs = c.host_as::<crate::host::NodeHost>().shared_state().borrow().fs.clone();
     fs.with_descriptor(fd, operation)
 }
 
@@ -563,7 +563,7 @@ fn mkdtemp(c: &mut Context<'_>, args: &[RootId]) -> Call {
 /// `warnOnNonPortableTemplate`: once per process, since platforms disagree on whether a
 /// trailing `X` of the prefix joins the random suffix.
 fn warn_platform_dependent_template(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if std::mem::replace(&mut shared.borrow_mut().fs_classes.template_warned, true) {
         return Ok(());
     }
@@ -610,7 +610,7 @@ fn mkdtemp_disposable(c: &mut Context<'_>, args: &[RootId], flavor: Flavor) -> C
     };
     // `path.resolve(process.cwd(), path)`: the host's descriptor-relative path would follow
     // the descriptor of the directory current now, which a `chdir` replaces.
-    let cwd = c.host_mut().shared_state().borrow().cwd.clone();
+    let cwd = c.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.clone();
     let directory = match cwd.query_path() {
         Ok(directory) => directory,
         Err(error) => return Ok(Err(failure::system(c, &error, Syscall::bare("uv_cwd")))),
@@ -734,7 +734,7 @@ fn realpath(c: &mut Context<'_>, args: &[RootId], native: bool) -> Call {
     Ok(match std::fs::canonicalize(&path.io) {
         Ok(resolved) => encoding.project(c, resolved.as_os_str().as_bytes().to_vec()).map(Reply::Value),
         Err(error) if !native => {
-            let cwd = c.host_mut().shared_state().borrow().cwd.clone();
+            let cwd = c.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.clone();
             let cwd = cwd.current_path().map_err(|error| RootedError::host(error.to_string()))?;
             let absolute = crate::modules::path_algorithms::posix::resolve_strings(std::slice::from_ref(&path.shown), &cwd.to_string_lossy());
             match failing_prefix(Path::new(&absolute)) {
@@ -796,7 +796,7 @@ fn open_file(path: &Path, flags: i32, mode: u32) -> io::Result<std::fs::File> {
 pub(crate) fn open_descriptor(c: &mut Context<'_>, path: &FsPath, flags: i32, mode: u32) -> Result<i32, RootedError> {
     let file = open_file(&path.io, flags, mode);
     let file = failure::check(c, file, Syscall::at("open", &path.shown))?;
-    Ok(c.host_mut().shared_state().borrow().fs.insert_descriptor(file))
+    Ok(c.host_as::<crate::host::NodeHost>().shared_state().borrow().fs.insert_descriptor(file))
 }
 
 fn open(c: &mut Context<'_>, args: &[RootId]) -> Call {
@@ -807,7 +807,7 @@ fn open(c: &mut Context<'_>, args: &[RootId]) -> Call {
 }
 
 pub(crate) fn close_descriptor(c: &mut Context<'_>, fd: i32) -> Result<(), RootedError> {
-    let result = c.host_mut().shared_state().borrow().fs.close_descriptor(fd);
+    let result = c.host_as::<crate::host::NodeHost>().shared_state().borrow().fs.close_descriptor(fd);
     failure::check(c, result, Syscall::bare("close"))
 }
 
@@ -853,7 +853,7 @@ fn offset_length_read(c: &mut Context<'_>, offset: f64, length: f64, capacity: u
 
 /// Read `length` bytes at `position` into `view[offset..]`: the bytes read.
 pub(crate) fn read_into(c: &mut Context<'_>, fd: i32, view: RootId, offset: usize, length: usize, position: Option<u64>) -> io::Result<usize> {
-    let fs = c.host_mut().shared_state().borrow().fs.clone();
+    let fs = c.host_as::<crate::host::NodeHost>().shared_state().borrow().fs.clone();
     let read = c.with_buffer_bytes_mut_rooted(view, |bytes| {
         let window = &mut bytes[offset..offset + length];
         fs.with_descriptor(fd, |file| match position {
@@ -952,7 +952,7 @@ fn offset_length_write(c: &mut Context<'_>, offset: f64, length: f64, capacity: 
 
 /// Write all of `bytes` at `position` (or the descriptor's offset): the bytes written.
 pub(crate) fn write_bytes(c: &mut Context<'_>, fd: i32, bytes: &[u8], position: Option<u64>) -> io::Result<usize> {
-    let fs = c.host_mut().shared_state().borrow().fs.clone();
+    let fs = c.host_as::<crate::host::NodeHost>().shared_state().borrow().fs.clone();
     fs.write_descriptor(fd, bytes, position)
 }
 

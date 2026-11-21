@@ -4,8 +4,8 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 pub(crate) mod internal;
 mod schema;
 const CACHE_KEY: &str = "\0native:options";
-pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+pub(crate) fn binding(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(root) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(root);
     }
@@ -32,7 +32,7 @@ pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
 /// `getCLIOptionsInfo()`: `{ options, aliases }`, Maps from each option to its
 /// `{ type, defaultIsTrue }` and from each alias to the options it stands for.
 pub(crate) fn info(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -66,8 +66,8 @@ pub(crate) fn info(
     Ok(result)
 }
 /// Original arguments in startup precedence order, retained for permission policy.
-pub(crate) fn option_flags(context: &mut NativeContext<'_, NodeHost>) -> Vec<String> {
-    let exec_argv = context.host_mut().shared_state().borrow().exec_argv.clone();
+pub(crate) fn option_flags(context: &mut NativeContext<'_>) -> Vec<String> {
+    let exec_argv = context.host_as::<crate::host::NodeHost>().shared_state().borrow().exec_argv.clone();
     let mut flags = Vec::new();
     if let Ok(node_options) = std::env::var("NODE_OPTIONS") {
         if let Ok(arguments) = crate::modules::cli_options::parse_node_options(&node_options) {
@@ -81,11 +81,11 @@ pub(crate) fn option_flags(context: &mut NativeContext<'_, NodeHost>) -> Vec<Str
 }
 
 pub(crate) fn flags(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let options = context.host_mut().shared_state().borrow().cli_options.clone();
+    let options = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cli_options.clone();
     let values = options.flags()
         .map(|flag| context.string_rooted(&flag))
         .collect::<Vec<_>>();
@@ -172,7 +172,7 @@ fn config_value_as_string(value: &serde_json::Value) -> Option<String> {
     }
 }
 pub(crate) fn embedder_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -193,12 +193,12 @@ pub(crate) fn embedder_options(
     Ok(result)
 }
 pub(crate) fn values(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let options = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .cli_options
@@ -245,7 +245,7 @@ pub(crate) fn values(
     Ok(result)
 }
 pub(crate) fn parse_environment(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

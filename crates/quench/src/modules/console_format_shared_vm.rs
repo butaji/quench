@@ -8,7 +8,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// `inspectDefaultOptions.depth`.
 pub(crate) const DEFAULT_DEPTH: f64 = 2.0;

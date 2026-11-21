@@ -4,7 +4,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 use crate::modules::keys::DEFAULT_PROMPT;
 /// The prompt while lines are buffered (Node's `...` with its trailing space).
@@ -93,12 +93,12 @@ fn interface_constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 }
 
 fn cache(c: &mut Context<'_>, name: &str) -> Option<RootId> {
-    c.host_mut().shared_state().borrow().builtin_cache.get(name).copied()
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(name).copied()
 }
 
 fn remember(c: &mut Context<'_>, name: &str, value: RootId) -> Result<RootId, RootedError> {
     let value = c.retain(value)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(name.to_owned(), value);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(name.to_owned(), value);
     Ok(value)
 }
 
@@ -251,7 +251,7 @@ pub(crate) fn construct(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     let output = option(c, options, "output")?;
     if !c.truthy_rooted(input)? && !c.truthy_rooted(output)? {
         if !c.truthy_rooted(stream)? {
-            stream = c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process missing"))?;
+            stream = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process missing"))?;
         }
         let stdin = get(c, stream, "stdin")?;
         let stdout = get(c, stream, "stdout")?;
@@ -428,7 +428,7 @@ fn finisher(c: &mut Context<'_>, server: RootId, line: &str) -> Result<RootId, R
 
 /// The next `REPLn` resource name, numbered across every REPL of the process.
 fn resource_name(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let number = {
         let mut state = shared.borrow_mut();
         state.repl_resources += 1;
@@ -1014,7 +1014,7 @@ pub(crate) fn start_interactive(c: &mut Context<'_>) -> Result<(), RootedError> 
         "Welcome to Node.js v{}.\nType \".help\" for more information.\n",
         crate::modules::process_state::NODE_VERSION
     );
-    let process = c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process missing"))?;
+    let process = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process missing"))?;
     let stdout = get(c, process, "stdout")?;
     let welcome = c.string_rooted(&welcome);
     call(c, stdout, "write", &[welcome])?;

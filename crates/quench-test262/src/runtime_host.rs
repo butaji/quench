@@ -81,7 +81,7 @@ fn compile_native_unit(
     program: quench_runtime::ResidualProgram,
     compilation: &mut crate::NativeCompilation,
     output: Option<&Path>,
-) -> Result<quench_runtime::NativeJsProgram<Test262RuntimeHost>, String> {
+) -> Result<quench_runtime::NativeJsProgram, String> {
     let name = format!("test262_unit_{}", compilation.units.len());
     let module = quench_runtime::lower_native_js_module(&program, &name).map_err(|error| format!("quench AOT lowering: {error}"))?;
     let object = quench_runtime::emit_native_module(&name, module.functions, module.data)
@@ -181,9 +181,9 @@ pub struct NativeCasePrograms {
 
 /// Compiler-bound code and exact module inputs for one standalone test variant.
 pub struct LinkedCasePrograms {
-    pub harness: Vec<quench_runtime::NativeJsProgram<Test262RuntimeHost>>,
-    pub modules: Vec<quench_runtime::NativeJsProgram<Test262RuntimeHost>>,
-    pub entry: quench_runtime::NativeJsProgram<Test262RuntimeHost>,
+    pub harness: Vec<quench_runtime::NativeJsProgram>,
+    pub modules: Vec<quench_runtime::NativeJsProgram>,
+    pub entry: quench_runtime::NativeJsProgram,
     pub module_sources: Vec<ModuleSource>,
 }
 
@@ -239,15 +239,15 @@ impl Host for Test262RuntimeHost {
         self.can_block
     }
 
-    fn functions(&self) -> &[HostFunction<Self>] {
+    fn functions(&self) -> &[HostFunction] {
         quench_runtime::host_functions![
             method "test262SetTimeout" (2) => set_timeout,
             method "test262ClearTimeout" (1) => clear_timeout,
         ]
     }
 
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        if !context.host_mut().async_test {
+    fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
+        if !context.host_as::<Test262RuntimeHost>().async_test {
             return Ok(());
         }
         let global = context.global_root()?;
@@ -495,7 +495,7 @@ impl Test262RuntimeHost {
     pub fn execute_linked_programs(
         &mut self,
         graph: LinkedCasePrograms,
-        resolver: impl Fn(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> + 'static,
+        resolver: impl Fn(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram>, quench_runtime::NativeSourceError> + 'static,
     ) -> Result<(), String> {
         self.execute_linked_programs_resolved(graph,Box::new(resolver))
     }
@@ -504,7 +504,7 @@ impl Test262RuntimeHost {
     // closure type does not specialize VM construction or the completion loop.
     #[inline(never)]
     fn execute_linked_programs_resolved(
-        &mut self, graph:LinkedCasePrograms, resolver:Box<quench_runtime::NativeProgramResolver<Self>>,
+        &mut self, graph:LinkedCasePrograms, resolver:Box<quench_runtime::NativeProgramResolver>,
     ) -> Result<(),String> {
         self.done = None;
         let execution_mode = self.runtime_execution_mode();
@@ -618,7 +618,7 @@ impl Test262RuntimeHost {
 }
 
 fn set_timeout(
-    context: &mut NativeContext<'_, Test262RuntimeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -646,7 +646,7 @@ fn set_timeout(
     for arg in args.iter().skip(2).copied() {
         retained_args.push(context.retain(arg)?);
     }
-    let host = context.host_mut();
+    let host = context.host_as::<Test262RuntimeHost>();
     let id = host.next_timer_id;
     host.next_timer_id = id
         .checked_add(1)
@@ -661,7 +661,7 @@ fn set_timeout(
 }
 
 fn clear_timeout(
-    context: &mut NativeContext<'_, Test262RuntimeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -671,7 +671,7 @@ fn clear_timeout(
         .map(|value| context.to_number(value))
         .transpose()?;
     if let Some(id) = id.filter(|id| id.is_finite() && *id >= 0.0) {
-        if let Some(timer) = context.host_mut().cancel_timer(id as u64) {
+        if let Some(timer) = context.host_as::<Test262RuntimeHost>().cancel_timer(id as u64) {
             context.release_root(timer.callback);
             for arg in timer.args {
                 context.release_root(arg);

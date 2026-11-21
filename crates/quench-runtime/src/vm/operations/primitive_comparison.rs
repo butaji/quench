@@ -4,7 +4,7 @@
 //! Symbol's conversion error stay with the general operation.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `==`, `!=` or a relational operator of two primitives, which each decide as the
     /// specification's tables do; `None` for strict equality (`identity_equality` decides it),
     /// any other operator, an object, and a pair that converts through a BigInt or raises.

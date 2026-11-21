@@ -3,7 +3,7 @@ use super::*;
 /// Room for `[object <brand>]` of every builtin brand (`builtin_brand_string`).
 const BRAND_TEXT_CAPACITY: usize = 48;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn is_string(&self, v: Value) -> bool {
         self.heap.is_string(v)
     }

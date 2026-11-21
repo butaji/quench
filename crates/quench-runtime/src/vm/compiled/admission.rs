@@ -119,7 +119,7 @@ pub(in crate::vm) fn record(refusal: Refusal) {
 
 /// Counts `refusal` and, where the lane diagnostics name it as a plan miss, counts that too
 /// (`lane_body_stats::miss`, which also names the decline reason).
-pub(in crate::vm) fn refuse<H: Host>(vm: &Vm<H>, refusal: Refusal) {
+pub(in crate::vm) fn refuse(vm: &Vm, refusal: Refusal) {
     record(refusal);
     if let Some(reason) = refusal.miss() { miss(vm, reason); }
 }

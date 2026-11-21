@@ -62,7 +62,7 @@ struct DurationPart {
     unit: Option<&'static str>,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_duration_format_for_realm(
         &mut self,
         intl: Value,

@@ -22,7 +22,7 @@ struct Decoded {
     failed: bool,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn typed_array_base64_native(
         &mut self,
         p: &ResidualProgram,

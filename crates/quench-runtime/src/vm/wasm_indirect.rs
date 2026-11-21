@@ -9,7 +9,7 @@ use crate::staged::wasm_machine::ConcreteTable;
 use crate::heap::{TableTarget, WasmTableElements};
 use super::compiled::InstanceContext;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// What a table element holding `value` presents to an indirect call (`TableTarget`): the
     /// null row for the null reference; for a function of a module its canonical signature, its
     /// index and its instance's record (`InstanceContext::address`); the foreign row for anything the VM compares against

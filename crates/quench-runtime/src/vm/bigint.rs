@@ -1,7 +1,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_bigint(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let constructor = self.native_value(Native::BigInt);
         self.install_bigint_for_realm(p, self.realm.globals, self.object_proto, constructor)

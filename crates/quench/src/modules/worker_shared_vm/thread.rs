@@ -217,12 +217,12 @@ pub(crate) fn capture_fatal(runtime: &mut quench_runtime::Runtime<NodeHost>, exc
 
 /// `workerCaptureError(exception)`: serialize a worker's fatal exception into its control.
 pub(crate) fn capture_error(
-    c: &mut NativeContext<'_, NodeHost>,
+    c: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let exception = args.first().copied().unwrap_or_else(|| c.undefined());
-    let control = c.host_mut().shared_state().borrow().messaging.context.as_ref().map(|context| context.control.clone());
+    let control = c.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.context.as_ref().map(|context| context.control.clone());
     if let Some(control) = control {
         let failure = match c.serialize_rooted(exception, &[], &[]) {
             Ok(value) => Failure::Thrown(value),

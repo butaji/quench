@@ -14,7 +14,7 @@ fn global_types_match(declared: &crate::WasmTypes, (actual, declarations): (crat
     declarations.value_subtype(actual, declared, ty) && (!mutable || declared.value_subtype(ty, declarations, actual))
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The value import `index` of `imports` names, for an import of `kind`.
     fn wasm_import_value(&self, imports: &[RootId], index: u32, kind: &str) -> Result<Value, JsError> {
         self.root_value(imports[index as usize])

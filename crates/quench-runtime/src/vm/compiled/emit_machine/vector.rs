@@ -20,7 +20,7 @@ fn type_in_lane(lanes: Lanes) -> ir::Type {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     fn shift_in_lane(&mut self, op: NativeOp, left: ir::Value, count: ir::Value) -> ir::Value {
         let ins = self.body.core.builder.ins();
         match op {
@@ -48,7 +48,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> MachineVector for Emitter<'_, '_, H> {
+impl MachineVector for Emitter<'_, '_> {
     fn operation_in_lane(&mut self, native: Native, left: ir::Value, right: Option<ir::Value>) -> ir::Value {
         let left = self.vector_view(native.lanes, left);
         match (native.op, right) {

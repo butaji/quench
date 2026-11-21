@@ -26,7 +26,7 @@ pub(in crate::vm) struct WindowHome {
     pub(in crate::vm) window: *mut Value,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Leaves the scopes of the `with` statements the exception left in `home`: those past the
     /// depth `handler` was entered at.
     pub(super) fn unwind_handler_scopes(&mut self, home: HandlerHome, handler: Handler) {

@@ -2,7 +2,7 @@
 use super::*;
 use super::super::global_facts::{GlobalRead, GlobalReads, GlobalSlot, GlobalTable, StableCell, scalar_native};
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
     /// (`dispatch_fast::name_resolution`): in a function whose unresolved names are
     /// global and resolve statically, a name no internal binding owns; each with its constant

@@ -35,7 +35,7 @@ impl RootedError {
         }
     }
 
-    pub(crate) fn retain<H: Host>(vm: &mut crate::vm::Vm<H>, error: JsError) -> Self {
+    pub(crate) fn retain(vm: &mut crate::vm::Vm, error: JsError) -> Self {
         Self {
             exception: error.thrown_value().map(|value| vm.root(value)),
             error,
@@ -43,7 +43,7 @@ impl RootedError {
     }
 }
 
-impl<H: Host> Runtime<H> {
+impl<H: crate::Host> Runtime<H> {
     /// Count actual heap record/arena capacities and unique live payloads without guest effects.
     pub fn heap_memory_composition(&self) -> crate::HeapMemoryComposition {
         self.vm.embedding_heap_memory_composition()

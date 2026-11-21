@@ -32,7 +32,7 @@ fn store_class(value: Value) -> Option<SlotType> {
 /// Records on `site`'s entry the class of `value`, which a native-preserving helper store just
 /// wrote through it without widening its slot's representation, where the class proves
 /// every later store of it (`store_class`).
-pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Value) {
+pub(super) fn record_store_class(vm: &mut Vm, site: u16, value: Value) {
     let Some(class) = store_class(value) else { return };
     // A native store writes the value's tagged word, which a slot of raw doubles does not hold.
     let entry = vm.field_cache_entry(site);

@@ -8,18 +8,18 @@ use super::wasm_table::copy_length_type;
 
 /// The value of register `register` the helper reads: the tier's value where `register` is one of
 /// the two operand registers, else the running frame's.
-fn operand_reader<H: Host>(
+fn operand_reader(
     frame: usize,
     operands: [Option<Register>; 2],
     values: [Option<Value>; 2],
-) -> impl Fn(&Vm<H>, Register) -> Value + Copy {
-    move |vm: &Vm<H>, register: Register| {
+) -> impl Fn(&Vm, Register) -> Value + Copy {
+    move |vm: &Vm, register: Register| {
         let given = (0..2).find(|&k| operands[k] == Some(register)).and_then(|k| values[k]);
         given.unwrap_or_else(|| vm.read(frame, register))
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The Wasm `step` of its operand values (`first` is the first operand register's value,
     /// `second` the second's): the value it defines, if any.
     pub(super) fn wasm_host_step(&mut self, _p: &ResidualProgram, _site: super::call_out::CallSite, step: WasmHostStep,
@@ -27,7 +27,7 @@ impl<H: Host> Vm<H> {
         let i = step.fields().instruction();
         let frame = self.own_frame();
         let (program, env) = (self.frames[frame].program, self.frames[frame].env);
-        let read = operand_reader::<H>(frame, operands(i), [first, second]);
+        let read = operand_reader(frame, operands(i), [first, second]);
         match step {
             WasmHostStep::WasmTableSize(_) => {
                 let table = read(&*self, i.register_b());

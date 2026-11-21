@@ -95,7 +95,7 @@ struct SiteFacts {
     globals: Option<crate::vm::global_facts::GlobalReads>,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The body of `function`, which a call site recorded `callee` running, where a body may inline it:
     /// its realm is the active one, so its rows run under the globals the caller's do (the fold is
     /// refused otherwise), and the inlining body proves that realm active at its entry (`RealmProof`).
@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
         let speculated = widened(generic);
         let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
-        let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
+        let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)
     }
 

@@ -2,7 +2,7 @@
 //! program keeps the string as its text (`SourceText::Owned`).
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Evaluates host source the caller owns as a Script: the classic, entry or TypeScript form,
     /// as the matching `evaluate_embedding_*_with_origin` evaluates a `&str`.
     pub(crate) fn evaluate_embedding_owned_script_with_origin(

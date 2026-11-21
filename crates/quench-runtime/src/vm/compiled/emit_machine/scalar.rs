@@ -332,7 +332,7 @@ fn conversion_row(operator: Conversion, result: Lane) -> Unary {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// A comparison's flag as the `I32` word the stage contract names.
     fn flag_word(&mut self, flag: ir::Value) -> ir::Value {
         self.raw_unary(Unary::ZeroExtend(Lane::I32), flag)
@@ -356,7 +356,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> MachineStage for Emitter<'_, '_, H> {
+impl MachineStage for Emitter<'_, '_> {
     type Exit = Infallible;
 
     fn constant(&mut self, width: Width, value: i64) -> ir::Value {

@@ -89,18 +89,18 @@ const WRITERS: [Stream; 5] = [Stream::Stdout, Stream::Stdout, Stream::Stdout, St
 /// The `%` that starts a format specifier in the SDK's `formatWithOptions`.
 const FORMAT_SPECIFIER: char = '%';
 
-fn cached(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Option<RootId> {
-    context.host_mut().shared_state().borrow().builtin_cache.get(name).copied()
+fn cached(context: &mut NativeContext<'_>, name: &str) -> Option<RootId> {
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(name).copied()
 }
 
-fn cache(context: &mut NativeContext<'_, NodeHost>, name: &str, value: RootId) -> Result<(), RootedError> {
+fn cache(context: &mut NativeContext<'_>, name: &str, value: RootId) -> Result<(), RootedError> {
     let value = context.retain(value)?;
-    context.host_mut().shared_state().borrow_mut().builtin_cache.insert(name.into(), value);
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(name.into(), value);
     Ok(())
 }
 
 /// The global console, made on first use.
-pub(crate) fn facade(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn facade(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     if let Some(console) = cached(context, CONSOLE) {
         return Ok(console);
     }
@@ -143,7 +143,7 @@ pub(crate) fn facade(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 }
 
 /// The lazy members' initializer: the global console's members after its writers.
-pub(crate) fn load(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn load(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let console = facade(context)?;
     super::console_class_shared_vm::install_global_members(context, console, &CONSOLE_KEYS[WRITERS.len()..])?;
     Ok(context.undefined())
@@ -151,11 +151,11 @@ pub(crate) fn load(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[Ro
 
 /// A writing method of the global console: `args` are the writer's index (`WRITERS`), bound
 /// ahead of the call's arguments.
-pub(crate) fn write(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn write(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     write_line(context, args)
 }
 
-fn write_line(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<RootId, RootedError> {
+fn write_line(context: &mut NativeContext<'_>, args: &[RootId]) -> Result<RootId, RootedError> {
     let (&index, args) = args.split_first().ok_or_else(|| RootedError::host("console writer without its index"))?;
     let index = context.to_number(index)? as usize;
     let stream = *WRITERS.get(index).ok_or_else(|| RootedError::host("console writer index out of range"))?;
@@ -173,7 +173,7 @@ fn write_line(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Res
 /// colors and no `inspect` beyond what `inspect_primitive` and `inspect_flat` reproduce
 /// (`formatWithOptions`: a lone string as it is; strings as they are, every other argument
 /// as `inspect` with default options), joined by spaces.
-fn plain_line(context: &mut NativeContext<'_, NodeHost>, stream: Stream, args: &[RootId]) -> Result<Option<String>, RootedError> {
+fn plain_line(context: &mut NativeContext<'_>, stream: Stream, args: &[RootId]) -> Result<Option<String>, RootedError> {
     use quench_runtime::ValueType;
     if let [first, _, ..] = args {
         let first = *first;
@@ -200,7 +200,7 @@ fn plain_line(context: &mut NativeContext<'_, NodeHost>, stream: Stream, args: &
 
 /// `formatPrimitive` with default options for a primitive other than a string; `None` for
 /// any other value.
-fn inspect_primitive(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Option<String>, RootedError> {
+fn inspect_primitive(context: &mut NativeContext<'_>, value: RootId) -> Result<Option<String>, RootedError> {
     use quench_runtime::ValueType;
     Ok(match context.value_type_rooted(value) {
         Some(ValueType::Number) => {
@@ -284,7 +284,7 @@ struct Inspection {
 /// builtin brand, another prototype or constructor, a `Symbol.toStringTag` or
 /// `util.inspect.custom` member, a symbol, accessor or non-identifier key, a hole, a circular
 /// reference, or a string `strEscape` would change.
-pub(super) fn inspect_flat(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Option<String>, RootedError> {
+pub(super) fn inspect_flat(context: &mut NativeContext<'_>, value: RootId) -> Result<Option<String>, RootedError> {
     if context.value_type_rooted(value) != Some(quench_runtime::ValueType::Object) {
         return Ok(None);
     }
@@ -293,7 +293,7 @@ pub(super) fn inspect_flat(context: &mut NativeContext<'_, NodeHost>, value: Roo
 
 /// `formatValue` of a property value at `recurse_times`.
 fn inspect_value(
-    context: &mut NativeContext<'_, NodeHost>, inspection: &mut Inspection, value: RootId, recurse_times: usize,
+    context: &mut NativeContext<'_>, inspection: &mut Inspection, value: RootId, recurse_times: usize,
 ) -> Result<Option<String>, RootedError> {
     use quench_runtime::ValueType;
     match context.value_type_rooted(value) {
@@ -311,7 +311,7 @@ fn inspect_value(
 
 /// `formatRaw` and `reduceToSingleString` for a plain object or short array.
 fn inspect_container(
-    context: &mut NativeContext<'_, NodeHost>, inspection: &mut Inspection, value: RootId, recurse_times: usize,
+    context: &mut NativeContext<'_>, inspection: &mut Inspection, value: RootId, recurse_times: usize,
 ) -> Result<Option<String>, RootedError> {
     use quench_runtime::ValueType;
     for brand in INSPECTED_BRANDS {
@@ -493,9 +493,9 @@ fn group_array_elements(entries: Vec<String>, numeric: bool, indentation: usize)
 
 /// Whether the SDK console could colorize `stream` (`shouldColorize`): `FORCE_COLOR` is set
 /// or the stream is a terminal.
-fn may_colorize(context: &mut NativeContext<'_, NodeHost>, stream: Stream) -> Result<bool, RootedError> {
+fn may_colorize(context: &mut NativeContext<'_>, stream: Stream) -> Result<bool, RootedError> {
     let process = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -515,19 +515,19 @@ fn may_colorize(context: &mut NativeContext<'_, NodeHost>, stream: Stream) -> Re
 }
 
 /// Called as `internal/util/inspect.js` finishes loading (`INSPECT_LOADED`).
-pub(crate) fn note_inspect_loaded(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn note_inspect_loaded(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     let marker = context.boolean(true);
     cache(context, INSPECT_LOADED, marker)
 }
 
 /// Writes `text` to `process[stream]`, the stream cached once first written, as the SDK
 /// console does, which ignores write errors.
-pub(super) fn write_stream(context: &mut NativeContext<'_, NodeHost>, stream: Stream, text: &str) -> Result<RootId, RootedError> {
+pub(super) fn write_stream(context: &mut NativeContext<'_>, stream: Stream, text: &str) -> Result<RootId, RootedError> {
     let stream = match cached(context, stream.cache_key()) {
         Some(cached_stream) => cached_stream,
         None => {
             let process = context
-                .host_mut()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow()
                 .process_module
@@ -546,7 +546,7 @@ pub(super) fn write_stream(context: &mut NativeContext<'_, NodeHost>, stream: St
 }
 
 /// The `console` module: the global console itself.
-pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let console = facade(context)?;
     context.materialize_lazy_data_property_rooted(console, CONSOLE_KEYS[WRITERS.len()].0)?;
     Ok(console)

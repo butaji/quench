@@ -46,7 +46,7 @@ const UNRESOLVABLE_NAME_REFERENCE: Value = Value::UNDEFINED;
 // ResolveName's other bases are objects, so null names this allocation-free base.
 const GLOBAL_LEXICAL_NAME_REFERENCE: Value = Value::NULL;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn root_global_var_atom(
         &self,
         program: &ResidualProgram,
@@ -2444,11 +2444,11 @@ impl<'a> NameLookup<'a> {
         }
     }
 
-    pub(super) fn named<H: Host>(&self, vm: &Vm<H>) -> Option<crate::bytecode::EvalBinding> {
+    pub(super) fn named(&self, vm: &Vm) -> Option<crate::bytecode::EvalBinding> {
         *self.named.get_or_init(|| vm.name_binding(self.caller, self.atom))
     }
 
-    pub(super) fn static_owner<H: Host>(&self, vm: &Vm<H>) -> Option<(Value, usize)> {
+    pub(super) fn static_owner(&self, vm: &Vm) -> Option<(Value, usize)> {
         *self.static_owner.get_or_init(|| {
             vm.outer_environment_binding(vm.captured_parent_environment(self.caller), self.atom)
         })

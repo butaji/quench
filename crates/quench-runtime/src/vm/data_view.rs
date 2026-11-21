@@ -14,7 +14,7 @@ const DATA_VIEW_VALUE_ARGUMENT: usize = 1;
 const DATA_VIEW_GET_ENDIAN_ARGUMENT: usize = 1;
 const DATA_VIEW_SET_ENDIAN_ARGUMENT: usize = 2;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_data_view(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let constructor = self.native_value(Native::DataView);
         self.set_builtin_function_name(constructor, "DataView")?;

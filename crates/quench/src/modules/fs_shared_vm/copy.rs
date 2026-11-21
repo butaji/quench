@@ -276,7 +276,7 @@ impl Copy {
     fn link(&self, c: &mut Context<'_>, source: &FsPath, destination: &FsPath) -> Result<(), RootedError> {
         let target = std::fs::read_link(&source.io);
         let mut target = failure::check(c, target, Syscall::at("readlink", &source.shown))?;
-        let cwd = c.host_mut().shared_state().borrow().cwd.clone();
+        let cwd = c.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.clone();
         let cwd = cwd.current_path().map_err(|error| RootedError::host(error.to_string()))?;
         let cwd = cwd.to_string_lossy();
         if !self.options.verbatim_symlinks && target.is_relative() {

@@ -8,7 +8,7 @@ use crate::vm::tier_events::Event;
 const WIDE_PROGRAM_SITES: usize = 20_000;
 
 /// Runs `source` in `vm`; the number it leaves in `globalThis.answer`.
-fn answer(vm: &mut Vm<TestHost>, source: &str, name: &str) -> Option<f64> {
+fn answer(vm: &mut Vm, source: &str, name: &str) -> Option<f64> {
     let program = Engine::specialize(source, name).unwrap();
     vm.execute(&program).unwrap();
     let atom = vm.intern_atom("answer");

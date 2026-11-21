@@ -24,7 +24,7 @@ const JSON_RETAINED_KEY_BYTES: usize = 1 << 16;
 /// SerializeJSONObject's and SerializeJSONArray's TypeError for a value already being written.
 const JSON_CIRCULAR_MESSAGE: &str = "Converting circular structure to JSON";
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `JSON.stringify(value)`'s steady call, when it passes no replacer and no gap (arguments
     /// past those two are not read): the one writer with no program (`json_run`), which
     /// answers where the value is plain data; `None` leaves the call to the native, having

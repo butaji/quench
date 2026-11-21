@@ -4,7 +4,7 @@
 use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A native call's value where its common case completes in place: the steady cases
     /// first (`Vm::steady_native_value`), then Math, the pure string methods, objects, collections
     /// and arrays, and primitives. `None` leaves the call to the native itself.
@@ -64,7 +64,7 @@ impl<H: Host> Vm<H> {
 /// else the families of `families` other than `STEADY`, in order, each answering or declining.
 /// Out of line, so the steady case inlined into the caller does not carry this cascade's frame.
 #[inline(never)]
-fn in_place_family_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value,
+fn in_place_family_value(vm: &mut Vm, code: &ResidualProgram, native: Native, callee: Value,
     receiver: Value, args: &[Value], families: u16) -> Option<Value> {
     // A native with an in-place row answers from its row's body alone (`in_place_row_value`).
     if families & ROW != 0 {
@@ -196,7 +196,7 @@ const fn string_leaf(native: Native) -> bool {
 /// general path's native activation and roots: none is observable, since the body runs no guest
 /// code and no collection. A call that fails had no effect, so the general path repeats it to
 /// raise its error under its activation.
-fn primitive_leaf_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value,
+fn primitive_leaf_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: Value,
     args: &[Value]) -> Option<Value> {
     // Immediates, strings and BigInts: values whose conversions run no guest code.
     let primitive = |value: Value| !value.is_heap() || vm.heap.is_string(value) || matches!(vm.heap.get(value), Some(Cell::BigInt(_)));
@@ -251,7 +251,7 @@ fn math_value(native: Native, args: &[Value]) -> Option<Value> {
 /// reads (`Reflect.get` and `Reflect.getPrototypeOf` of an ordinary target, whose data
 /// property read ignores the receiver), `Symbol.for` of a string and `Object.prototype.toString`
 /// (`object_to_string_in_place`). `Object.keys` and `Object.assign` are rows (`native_calls`).
-fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+fn object_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
         Native::ObjectCreate if args.get(1).is_none_or(|properties| properties.is_undefined()) => vm.object_create(argument),
@@ -283,7 +283,7 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
 /// `Reflect.get` and `Reflect.has` of a target whose chain shapes decide the answer
 /// (`Vm::reflect_chain_read`); a symbol or index key of an ordinary target reads as a plain
 /// keyed read. An accessor is a present property, whose getter only `get` calls.
-fn reflect_value<H: Host>(vm: &mut Vm<H>, native: Native, args: &[Value]) -> Option<Value> {
+fn reflect_value(vm: &mut Vm, native: Native, args: &[Value]) -> Option<Value> {
     let (target, key) = (*args.first()?, *args.get(1)?);
     if native == Native::ReflectGet && !vm.heap.is_string(key) {
         vm.heap.ordinary_object(target)?;
@@ -302,7 +302,7 @@ fn reflect_value<H: Host>(vm: &mut Vm<H>, native: Native, args: &[Value]) -> Opt
 /// a plain lookup reads (`Vm::plain_keyed_get`, which declines accessors on the chain): its
 /// brand and its tag then run no guest code. A proxy, whose brand asks `IsArray` of its
 /// target, and a primitive, which the tag reads through its wrapper, take the native.
-fn object_to_string_in_place<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, receiver: Value) -> Option<Value> {
+fn object_to_string_in_place(vm: &mut Vm, code: &ResidualProgram, receiver: Value) -> Option<Value> {
     if receiver.is_heap() {
         if matches!(vm.heap.get(receiver), Some(Cell::Proxy { .. })) || !vm.is_object_like(receiver) {
             return None;
@@ -318,7 +318,7 @@ fn object_to_string_in_place<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, re
 /// Steps of collections and built-in records on their own receivers: the Map and Set
 /// mutators (`Vm::plain_collection_mutation`, a dense `Map#set` first), a DataView element
 /// get or set that raises nothing, a Date getter of a Date, and `ArrayBuffer.isView`.
-fn collection_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+fn collection_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     match COLLECTION_ARMS[native as usize] {
         MAP_SET_ARM if vm.map_set(receiver, args) => Some(receiver),
         MAP_SET_ARM | MUTATION_ARM => vm.plain_collection_mutation(code, native, receiver, args),
@@ -388,7 +388,7 @@ const COLLECTION_ARMS: [u8; Native::COUNT as usize] = {
 /// (`Vm::collection_iterator` of a Map, which allocates the iterator), an iterator's close where
 /// it has no `return` (`Vm::iterator_close_in_place`), and a legacy `RegExp` static getter
 /// (`Vm::regexp_legacy_getter_in_place`). Any other receiver leaves the native to throw.
-fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, receiver: Value) -> Option<Value> {
+fn internal_slot_value(vm: &mut Vm, native: Native, callee: Value, receiver: Value) -> Option<Value> {
     use crate::heap::IteratorKind;
     let kind = match native {
         Native::MapKeys => IteratorKind::MapKeys,
@@ -406,7 +406,7 @@ fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, r
 /// A dense array's `splice`, `unshift`, `shift` and `lastIndexOf`, and the array-building and
 /// reversing methods over a plain array, and an array iterator's step over a plain array.
 /// The rows of `native_calls` answer the others (`in_place_row_value`).
-fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value, receiver: Value,
+fn array_value(vm: &mut Vm, code: &ResidualProgram, native: Native, callee: Value, receiver: Value,
     args: &[Value]) -> Option<Value> {
     match native {
         Native::ArraySplice => vm.plain_array_splice(code, callee, receiver, args),
@@ -431,7 +431,7 @@ fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, 
 /// primitive, `Number` of a primitive, decimal `Number.prototype.toString`, the global
 /// `isNaN` and `isFinite`, the `Number` predicates (`number::number_predicate`), and a
 /// default-collation `localeCompare` of two strings (`default_locale_compare`).
-fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+fn primitive_value(vm: &mut Vm, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
         Native::StringFromCharCode => vm.from_char_code_numbers(args),
@@ -453,7 +453,7 @@ fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, arg
 /// `String.prototype.localeCompare` of two strings under the default collation, once a call
 /// without locales or options has made it (`Vm::locale_compare_collation`): neither string
 /// converts and no guest code runs.
-fn default_locale_compare<H: Host>(vm: &Vm<H>, receiver: Value, args: &[Value]) -> Option<Value> {
+fn default_locale_compare(vm: &Vm, receiver: Value, args: &[Value]) -> Option<Value> {
     // Its locales and options, the only arguments it reads past the other string, are absent.
     let [other, settings @ ..] = args else { return None };
     let (locales, options) = (settings.first(), settings.get(1));

@@ -11,7 +11,7 @@ use crate::staged::wasm_call::Call;
 /// The running program's signature pool, cached on the lane for the program it was found for
 /// (`LaneContext::signatures`). `None` where the program has none; the general path raises that.
 #[inline(always)]
-fn lane_signatures<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::wasm::WasmSignatures> {
+fn lane_signatures(cx: *mut LaneContext) -> Option<*const crate::wasm::WasmSignatures> {
     // SAFETY: the context outlives the lane run; the cache's pool is kept by the context until
     // the program changes, and no step in a lane target's check changes the program.
     unsafe {
@@ -32,7 +32,7 @@ fn lane_signatures<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::was
 /// the reference it writes to its result register, and the row it matched, which the reference
 /// call right after the target reads its callee from (`IndirectSlot`).
 #[inline(always)]
-fn lane_indirect_target<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, i: WideInstruction, ip: Ip, r: Registers) -> Option<Value> {
+fn lane_indirect_target(cx: *mut LaneContext, vm: &Vm, i: WideInstruction, ip: Ip, r: Registers) -> Option<Value> {
     // SAFETY: `lane_signatures` returned a pool the context holds for this step.
     let pool = unsafe { lane_signatures(cx)?.as_ref() };
     let (value, row) = vm.wasm_indirect_row_with(pool, r.get(i.register_b()), r.get(i.register_c()), i.imm()).ok()?;
@@ -63,11 +63,11 @@ const fn gc_op<const OP: u16>() -> Op {
 /// (`Vm::wasm_field_operands`), then the staged `field_write` or `field_read` over the heap. `Some`
 /// of a read's value (`None` for a write); `None` for a miss or trap, which takes the general path.
 #[inline(always)]
-fn lane_gc_field<H: Host>(
-    vm: &mut Vm<H>,
+fn lane_gc_field(
+    vm: &mut Vm,
     step: GcStep,
     i: WideInstruction,
-    read: impl Fn(&Vm<H>, u16) -> Value,
+    read: impl Fn(&Vm, u16) -> Value,
 ) -> Option<Option<Value>> {
     let operands = vm.wasm_field_operands(step, i, read).ok()?;
     let (aggregate, index) = match operands.location {
@@ -91,11 +91,11 @@ fn lane_gc_field<H: Host>(
 /// `array.fill` and `array.copy` (`GcStep::ArrayFill`, `ArrayCopy`) as the staged rules run them
 /// over the heap, their operands decoded by `Vm::wasm_array_bulk_operands`.
 #[inline(always)]
-fn lane_gc_array_bulk<H: Host>(
-    vm: &mut Vm<H>,
+fn lane_gc_array_bulk(
+    vm: &mut Vm,
     step: GcStep,
     i: WideInstruction,
-    read: impl Fn(&Vm<H>, u16) -> Value,
+    read: impl Fn(&Vm, u16) -> Value,
 ) -> Result<Option<Value>, crate::vm::JsError> {
     let copy = step == GcStep::ArrayCopy;
     let ops = vm.wasm_array_bulk_operands(i, read, copy)?;
@@ -111,11 +111,11 @@ fn lane_gc_array_bulk<H: Host>(
 /// `array.len`, `array.fill` and `array.copy`. `None` for the others, which the interpreter's step
 /// makes (`Vm::wasm_gc_value_step`).
 #[inline(always)]
-fn lane_gc_rule<H: Host>(
-    vm: &mut Vm<H>,
+fn lane_gc_rule(
+    vm: &mut Vm,
     step: GcStep,
     i: WideInstruction,
-    read: impl Fn(&Vm<H>, u16) -> Value + Copy,
+    read: impl Fn(&Vm, u16) -> Value + Copy,
 ) -> Option<Result<Option<Value>, crate::vm::JsError>> {
     match step {
         GcStep::AsNonNull => {
@@ -215,25 +215,25 @@ lane_handler! {
 }
 
 /// The handler of a `wasm_gc_value_op` (`lane_wasm_gc_step`), for `op` if it is one.
-pub(super) const fn wasm_gc_handler<H: Host>(op: Op) -> Option<Handler> {
+pub(super) const fn wasm_gc_handler(op: Op) -> Option<Handler> {
     let raw = op.traits().has(crate::bytecode::Traits::RAW_FORM);
     match (crate::staged::wasm_gc::GcStep::of(op), raw) {
         (Some(crate::staged::wasm_gc::GcStep::StructGet { signed: None }), false) => {
-            return Some(lane_wasm_field_read::<H, false, false>);
+            return Some(lane_wasm_field_read::<false, false>);
         }
         (Some(crate::staged::wasm_gc::GcStep::StructGet { signed: None }), true) => {
-            return Some(lane_wasm_field_read::<H, false, true>);
+            return Some(lane_wasm_field_read::<false, true>);
         }
         (Some(crate::staged::wasm_gc::GcStep::ArrayGet { signed: None }), false) => {
-            return Some(lane_wasm_field_read::<H, true, false>);
+            return Some(lane_wasm_field_read::<true, false>);
         }
         (Some(crate::staged::wasm_gc::GcStep::ArrayGet { signed: None }), true) => {
-            return Some(lane_wasm_field_read::<H, true, true>);
+            return Some(lane_wasm_field_read::<true, true>);
         }
         _ => {}
     }
     macro_rules! handlers {
-        ($($name:ident)*) => { match op { $(Op::$name => Some(lane_wasm_gc_step::<H, { Op::$name as u16 }>),)* _ => None } };
+        ($($name:ident)*) => { match op { $(Op::$name => Some(lane_wasm_gc_step::<{ Op::$name as u16 }>),)* _ => None } };
     }
     super::super::dispatch_wasm::wasm_gc_value_ops!(handlers)
 }

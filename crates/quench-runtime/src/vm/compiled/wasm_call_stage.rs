@@ -32,7 +32,7 @@ pub(super) fn is_tail_call(instruction: WideInstruction) -> bool {
         && matches!(Step::of(instruction.op(), instruction.imm()), Some(Step::Call(_)))
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Lowers a call step.
     pub(super) fn call(&mut self, pc: usize, instruction: WideInstruction, call: Call) {
         match call {
@@ -140,7 +140,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks a call step has a compiled denotation in `state` and applies its register
     /// writes; `callable` holds the functions assumed to compile.
     pub(super) fn transfer_call(

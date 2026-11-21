@@ -5,7 +5,7 @@ use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, req
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The hook callbacks `AsyncHook` reads, in `initialize_hook`'s argument order.
 const HOOK_CALLBACKS: [&str; 6] = ["init", "before", "after", "destroy", "promiseResolve", "trackPromises"];

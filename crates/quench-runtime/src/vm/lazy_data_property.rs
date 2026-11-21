@@ -99,7 +99,7 @@ impl GroupState {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Defines each of `members` on `holder` as one lazy group of configurable properties
     /// that `initializer` defines when any of them is observed. With `completes_keys`, the
     /// initializer also adds keys the members do not name, and listing the holder's keys

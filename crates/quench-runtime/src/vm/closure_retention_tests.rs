@@ -432,7 +432,7 @@ fn compilations(source: &str, name: &str) -> [(&'static str, crate::bytecode::Re
 }
 
 /// Whether the object `weak[label]` refers to survived the last collection.
-fn probe_alive(vm: &mut Vm<TestHost>, program: &crate::bytecode::ResidualProgram, label: &str) -> bool {
+fn probe_alive(vm: &mut Vm, program: &crate::bytecode::ResidualProgram, label: &str) -> bool {
     let weak = vm.intern_atom("weak");
     let weak = vm.own_property(vm.realm.globals, weak).unwrap();
     let label_atom = vm.intern_atom(label);
@@ -446,7 +446,7 @@ fn probe_alive(vm: &mut Vm<TestHost>, program: &crate::bytecode::ResidualProgram
 }
 
 /// A full collection after the script's job: its WeakRef targets are released first.
-fn collect(vm: &mut Vm<TestHost>, program: &crate::bytecode::ResidualProgram) {
+fn collect(vm: &mut Vm, program: &crate::bytecode::ResidualProgram) {
     vm.clear_kept_objects();
     vm.collect_now(program);
 }

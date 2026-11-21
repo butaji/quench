@@ -4,7 +4,7 @@
 use super::*;
 
 /// The lane-body compilation of the named function of `source`, after it ran.
-fn compiled_lane_body(source: &str, name: &str) -> (Vm<crate::test_host::TestHost>, ResidualProgram, LaneMethod) {
+fn compiled_lane_body(source: &str, name: &str) -> (Vm, ResidualProgram, LaneMethod) {
     let program = crate::Engine::specialize(source, "stable-facts.js").unwrap();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     vm.execute(&program).unwrap();
@@ -17,7 +17,7 @@ fn compiled_lane_body(source: &str, name: &str) -> (Vm<crate::test_host::TestHos
 }
 
 /// Installs a method cache entry for `owner.atom`, as a call site's first call does.
-fn name_in_a_method_cache(vm: &mut Vm<crate::test_host::TestHost>, owner: Value, atom: Atom) {
+fn name_in_a_method_cache(vm: &mut Vm, owner: Value, atom: Atom) {
     let callee = vm.own_property(owner, atom).unwrap();
     let shape = vm.heap.object_record(owner).unwrap().shape();
     let target = vm.call_target(callee).unwrap();
@@ -68,7 +68,7 @@ fn a_folded_prototype_value_retires_its_readers_when_it_changes() {
 }
 
 /// The prototype of the object the global `name` holds.
-fn prototype_of(vm: &mut Vm<crate::test_host::TestHost>, name: &str) -> Value {
+fn prototype_of(vm: &mut Vm, name: &str) -> Value {
     let atom = vm.intern_atom(name);
     let instance = vm.own_property(vm.realm.globals, atom).unwrap();
     vm.heap.object(instance).unwrap().proto()
@@ -148,7 +148,7 @@ fn a_folded_global_value_retires_its_readers_when_written_and_folds_no_more_once
     assert!(invalidation.is_set());
     let function = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap() as u32;
-    let recompile = |vm: &mut Vm<crate::test_host::TestHost>| vm.compile_lane_method(&program, function,
+    let recompile = |vm: &mut Vm| vm.compile_lane_method(&program, function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
     assert_eq!(recompile(&mut vm).stable.globals.len(), 1, "written once, the global still folds");
     vm.heap.property_set(globals, slot, value);

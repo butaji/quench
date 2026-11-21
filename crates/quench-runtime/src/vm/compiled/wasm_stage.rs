@@ -17,7 +17,7 @@ pub(super) fn infallible<T>(result: Result<T, Infallible>) -> T {
     result.unwrap_or_else(|never| match never {})
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// `operator` at `width`, whose traps leave through the function's trap blocks.
     pub(super) fn integer(
         &mut self,

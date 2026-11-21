@@ -79,7 +79,7 @@ pub(super) fn unpack(packed: u64, imm: u64) -> WideInstruction {
 
 /// The Value of an operand the emitted code spilled: an i32 from its low word, an i64 boxed
 /// where its payload does not fit, a reference as its Value bits.
-pub(super) fn operand_value<H: Host>(vm: &mut Vm<H>, kind: u64, bits: u64) -> Value {
+pub(super) fn operand_value(vm: &mut Vm, kind: u64, bits: u64) -> Value {
     if kind == Kind::I32 as u64 {
         Value::integer(bits as u32 as i32)
     } else if kind == Kind::I64 as u64 {
@@ -92,7 +92,7 @@ pub(super) fn operand_value<H: Host>(vm: &mut Vm<H>, kind: u64, bits: u64) -> Va
 /// The allocating step `packed` (with immediate `imm`) over the operand block the emitted code
 /// spilled: `count` registers, their kinds and their Wasm bits, then the result word `out`. The
 /// step's result, if any, is its Wasm bits: a reference's Value bits, a descriptor test's flag.
-unsafe extern "C" fn gc_allocate<H: Host>(
+unsafe extern "C" fn gc_allocate(
     context: *mut CallContext,
     packed: u64,
     imm: u64,
@@ -105,7 +105,7 @@ unsafe extern "C" fn gc_allocate<H: Host>(
     let instruction = unpack(packed, imm);
     let count = count as usize;
     // SAFETY: the emitted code spilled `count` registers, kinds and words, then `out`.
-    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm>() };
     let values: Vec<(u16, Value)> = (0..count)
         .map(|index| unsafe {
             let (register, kind, bits) = (*operands.add(index), *operands.add(count + index), *operands.add(2 * count + index));
@@ -129,14 +129,14 @@ unsafe extern "C" fn gc_allocate<H: Host>(
 /// The interpreter's step of an allocating `instruction` over `operands` (each register's Value),
 /// as its Wasm bits: a reference's Value bits, a descriptor test's flag, or 0 where the step has no
 /// result. Both allocation callouts (the u-jit's `gc_allocate`, the b-jit's `allocate_frame`) run it.
-pub(super) fn allocating_bits<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn allocating_bits(
+    vm: &mut Vm,
     program: ProgramId,
     env: Value,
     instruction: WideInstruction,
     operands: &[(u16, Value)],
 ) -> Result<u64, JsError> {
-    let read = |_: &Vm<H>, register: u16| {
+    let read = |_: &Vm, register: u16| {
         operands.iter().find(|(index, _)| *index == register).map_or(Value::UNDEFINED, |(_, value)| *value)
     };
     Ok(match vm.wasm_gc_value_step(program, env, instruction, read)? {
@@ -155,7 +155,7 @@ pub(super) fn allocating_bits<H: Host>(
 /// # Safety
 /// `context` is the live context of the row's call, `frame` the stitched frame whose registers
 /// the descriptor names, `descriptor` holds `count` words, and `out` is a word the row owns.
-pub(super) unsafe extern "C" fn allocate_frame<H: Host>(
+pub(super) unsafe extern "C" fn allocate_frame(
     context: *mut CallContext,
     packed: u64,
     meta: u64,
@@ -168,7 +168,7 @@ pub(super) unsafe extern "C" fn allocate_frame<H: Host>(
     let instruction = unpack(packed, meta & u64::from(u32::MAX));
     let count = ((meta >> 32) & 0xff) as usize;
     // SAFETY: as above; the VM outlives the call.
-    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm>() };
     let operands: Vec<(u16, Value)> = (0..count)
         .map(|index| unsafe {
             let entry = *descriptor.add(index);
@@ -191,7 +191,7 @@ pub(super) unsafe extern "C" fn allocate_frame<H: Host>(
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks an allocating step: each operand it reads holds a value, and its result takes the
     /// kind the step returns.
     pub(super) fn transfer_allocating(
@@ -211,7 +211,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Stores the operand block of `reads` in `slot`: each register, its kind's code and its Wasm
     /// bits, one word each per operand, in three runs (`gc_allocate` unpacks them so).
     fn spill_operands(&mut self, slot: ir::StackSlot, reads: &[(u16, Kind)]) {
@@ -251,7 +251,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let operands = self.slot_address(slot, 0);
         let count = self.constant(Width::I64, operand_count as i64);
         let out = self.slot_address(slot, (3 * operand_count * WORD) as i32);
-        let target = gc_allocate::<H> as *const () as usize;
+        let target = gc_allocate as *const () as usize;
         let status = self.call_leaf(target, &[context, packed, imm, operands, count, out]);
         self.propagate(status);
         if let Some(kind) = allocating_result(instruction.op()) {

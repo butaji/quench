@@ -1,7 +1,7 @@
 use super::promise::{PromiseRejectionState, PromiseState, RejectionNotification};
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The state of `promise`, or `None` when the value is not a promise.
     pub(super) fn promise_record(&self, promise: Value) -> Option<&super::promise::PromiseRecord> {
         self.heap.promise(promise).map(|promise| &promise.record)
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
                 .collect::<Vec<_>>();
             self.with_call_roots(roots, |vm| {
                 let mut context = crate::NativeContext::new(vm);
-                H::promise_settled(&mut context, resource)
+                (context.host_statics().promise_settled)(&mut context, resource)
                     .map_err(|error| context.finish_error(error))
             })?;
         }

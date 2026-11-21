@@ -41,7 +41,7 @@ enum Callee {
     Method { receiver: Value, atom: crate::bytecode::Atom },
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `error` with the callee named when it is the call paths' failure to call or construct
     /// the callee of the call at `pc` (`NOT_CALLABLE_MESSAGE`, `NOT_CONSTRUCTOR_MESSAGE`):
     /// the TypeError V8 throws there. Any other error is returned as it is.

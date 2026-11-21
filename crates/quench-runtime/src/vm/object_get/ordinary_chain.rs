@@ -17,7 +17,7 @@ pub(in crate::vm) enum ChainRead {
     Exotic(Value),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// One step of `get_property_with_receiver`'s walk from `object`: the read's completion
     /// where the ordinary chain decides it (a getter is called with `receiver`), else the
     /// link the general read continues from. Private names are not chain keys.

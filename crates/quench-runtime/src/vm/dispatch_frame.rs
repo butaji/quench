@@ -198,7 +198,7 @@ impl GeneralCodeCursor {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A code cursor for `function`, with its lane view where the lane runs.
     pub(super) fn general_cursor(
         &self,

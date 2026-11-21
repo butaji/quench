@@ -1,7 +1,7 @@
 //! Global matches of a pattern that is a literal run (`quench_regexp::RangeSearcher::literal_matches`).
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The result of a global builtin exec loop that found `count` matches of `length` units,
     /// the last at `last`: lastIndex stored 0 as the loop's first step stores it, the legacy
     /// statics left pending on the last match, and the array of the matches, `null` without

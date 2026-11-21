@@ -37,11 +37,11 @@ fn interrupt_host(started: mpsc::Sender<()>, dropped: Arc<AtomicBool>) -> TestHo
         .with_state(std::rc::Rc::new(InterruptProbe { started, dropped }))
 }
 fn signal_started(
-    ctx: &mut NativeContext<'_, TestHost>,
+    ctx: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    ctx.host_mut().state::<InterruptProbe>().started.send(()).unwrap();
+    ctx.host_as::<TestHost>().state::<InterruptProbe>().started.send(()).unwrap();
     Ok(ctx.undefined())
 }
 #[test]

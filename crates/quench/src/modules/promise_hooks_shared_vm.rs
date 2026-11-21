@@ -25,7 +25,7 @@ impl Kind {
 /// `internalBinding('async_wrap').setPromiseHooks`'s host side: the registry whose
 /// `emit(kind, ...args)` runs the hooks Node's `internal/promise_hooks` last set.
 pub(crate) fn set_registry(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -37,12 +37,12 @@ pub(crate) fn set_registry(
 /// Retain the guest registry so host Promise callbacks can reach subscriptions
 /// without creating a dependency on the v8 module loader.
 fn bind_registry(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     registry: RootId,
 ) -> Result<(), RootedError> {
     let retained = context.retain(registry)?;
     let previous = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .async_hooks
@@ -55,20 +55,20 @@ fn bind_registry(
 }
 
 /// No hook is subscribed: promises are no longer observed.
-pub(crate) fn clear_registry(context: &mut NativeContext<'_, NodeHost>) {
-    let previous = context.host_mut().shared_state().borrow_mut().async_hooks.promise_hook_registry.take();
+pub(crate) fn clear_registry(context: &mut NativeContext<'_>) {
+    let previous = context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().async_hooks.promise_hook_registry.take();
     if let Some(previous) = previous {
         context.release_root(previous);
     }
 }
 
 pub(crate) fn emit(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     kind: Kind,
     args: &[RootId],
 ) -> Result<(), RootedError> {
     let registry = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .async_hooks

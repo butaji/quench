@@ -8,7 +8,7 @@ use super::console_shared_vm::Stream;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The cache key of the private symbol naming a console's slot.
 const SLOT_KEY: &str = "\0node/console/slot";
@@ -114,7 +114,7 @@ fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
 }
 
 fn slot_key(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(key) = shared.borrow().builtin_cache.get(SLOT_KEY).copied() {
         return Ok(key);
     }
@@ -377,7 +377,7 @@ fn run(c: &mut Context<'_>, console: RootId, method: Method, args: &[RootId]) ->
             let global = super::console_shared_vm::facade(c)?;
             let stream = if c.strict_equal_rooted(console, global)? {
                 let process = c
-                    .host_mut()
+                    .host_as::<crate::host::NodeHost>()
                     .shared_state()
                     .borrow()
                     .process_module
@@ -463,7 +463,7 @@ fn table(c: &mut Context<'_>, console: RootId, name: &str) -> Result<RootId, Roo
 /// the error handlers and `Console`, in `CONSOLE_KEYS` order.
 pub(super) fn install_global_members(c: &mut Context<'_>, console: RootId, keys: &[(&str, bool)]) -> Result<(), RootedError> {
     let process = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -543,7 +543,7 @@ pub(crate) fn task_run(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resul
 /// The `Console` class, built once.
 pub(crate) fn class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CLASS_KEY: &str = "\0node/console/class";
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(class) = shared.borrow().builtin_cache.get(CLASS_KEY).copied() {
         return Ok(class);
     }

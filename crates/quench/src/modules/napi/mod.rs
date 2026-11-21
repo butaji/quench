@@ -55,7 +55,7 @@ pub(crate) fn drain_wake() {
     work::drain_wake();
 }
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The environment an addon receives as `napi_env`. One is created per loaded addon module;
 /// its address stays fixed for the process lifetime because native code retains it.

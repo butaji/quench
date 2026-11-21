@@ -39,27 +39,27 @@ const ARRAY_LENGTH_BYTES: usize = std::mem::size_of::<u64>();
 ///
 /// # Safety
 /// `context` is the live context of the call that runs the callout.
-unsafe fn machine<'a, H: Host>(context: *const CallContext) -> &'a mut Vm<H> {
+unsafe fn machine<'a>(context: *const CallContext) -> &'a mut Vm {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() }
+    unsafe { &mut *(*context).head.vm.cast::<Vm>() }
 }
 
 /// The heap primitives of `WasmGc`, one callout each; every one returns a word, zero where the
 /// primitive has none. The rules have checked each argument before the callout runs.
-unsafe extern "C" fn gc_is_object<H: Host>(context: *mut CallContext, reference: u64) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.is_object(reference)
+unsafe extern "C" fn gc_is_object(context: *mut CallContext, reference: u64) -> u64 {
+    HeapStage { vm: unsafe { machine(context) } }.is_object(reference)
 }
 
-unsafe extern "C" fn gc_field_slot<H: Host>(context: *mut CallContext, reference: u64, index: u64) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.field_slot(reference, index)
+unsafe extern "C" fn gc_field_slot(context: *mut CallContext, reference: u64, index: u64) -> u64 {
+    HeapStage { vm: unsafe { machine(context) } }.field_slot(reference, index)
 }
 
-unsafe extern "C" fn gc_field_slot_for_write<H: Host>(context: *mut CallContext, reference: u64, index: u64) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.field_slot_for_write(reference, index)
+unsafe extern "C" fn gc_field_slot_for_write(context: *mut CallContext, reference: u64, index: u64) -> u64 {
+    HeapStage { vm: unsafe { machine(context) } }.field_slot_for_write(reference, index)
 }
 
-unsafe extern "C" fn gc_field_count<H: Host>(context: *mut CallContext, reference: u64) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.field_count(reference)
+unsafe extern "C" fn gc_field_count(context: *mut CallContext, reference: u64) -> u64 {
+    HeapStage { vm: unsafe { machine(context) } }.field_count(reference)
 }
 
 /// The machine cell of `field`'s storage (`GcField::size`): the lane a compiled access loads and
@@ -73,26 +73,26 @@ fn field_lane(field: GcField) -> Lane {
     }
 }
 
-unsafe extern "C" fn gc_array_mutable<H: Host>(context: *mut CallContext, reference: u64) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.array_mutable(reference)
+unsafe extern "C" fn gc_array_mutable(context: *mut CallContext, reference: u64) -> u64 {
+    HeapStage { vm: unsafe { machine(context) } }.array_mutable(reference)
 }
 
-unsafe extern "C" fn gc_storage_admits<H: Host>(context: *mut CallContext, source: u64, destination: u64) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.storage_admits(source, destination)
+unsafe extern "C" fn gc_storage_admits(context: *mut CallContext, source: u64, destination: u64) -> u64 {
+    HeapStage { vm: unsafe { machine(context) } }.storage_admits(source, destination)
 }
 
-unsafe extern "C" fn gc_fields_exceed<H: Host>(context: *mut CallContext, reference: u64, index: u64, extent: u64) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.fields_exceed(reference, index, extent)
+unsafe extern "C" fn gc_fields_exceed(context: *mut CallContext, reference: u64, index: u64, extent: u64) -> u64 {
+    HeapStage { vm: unsafe { machine(context) } }.fields_exceed(reference, index, extent)
 }
 
 /// Stores the Wasm bits `bits` in `extent` elements of the array; the element storage the array
 /// holds gives the value's form.
-unsafe extern "C" fn gc_fill_fields<H: Host>(context: *mut CallContext, reference: u64, index: u64, extent: u64, bits: u64) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.fill_field_bits(reference, index, extent, bits);
+unsafe extern "C" fn gc_fill_fields(context: *mut CallContext, reference: u64, index: u64, extent: u64, bits: u64) -> u64 {
+    HeapStage { vm: unsafe { machine(context) } }.fill_field_bits(reference, index, extent, bits);
     0
 }
 
-unsafe extern "C" fn gc_copy_fields<H: Host>(
+unsafe extern "C" fn gc_copy_fields(
     context: *mut CallContext,
     destination: u64,
     output: u64,
@@ -100,14 +100,14 @@ unsafe extern "C" fn gc_copy_fields<H: Host>(
     input: u64,
     extent: u64,
 ) -> u64 {
-    HeapStage { vm: unsafe { machine::<H>(context) } }.copy_fields(destination, output, source, input, extent);
+    HeapStage { vm: unsafe { machine(context) } }.copy_fields(destination, output, source, input, extent);
     0
 }
 
 /// Whether `reference` passes a cast to the target `target` (a `ReferenceTarget` tag), by the
 /// declarations of the running program.
-unsafe extern "C" fn gc_admits<H: Host>(context: *mut CallContext, reference: u64, target: u64) -> u64 {
-    let vm = unsafe { machine::<H>(context) };
+unsafe extern "C" fn gc_admits(context: *mut CallContext, reference: u64, target: u64) -> u64 {
+    let vm = unsafe { machine(context) };
     let program = unsafe { (*context).head.program };
     let Some(signatures) = vm.programs.wasm_signatures_shared(program) else {
         return 0;
@@ -126,7 +126,7 @@ unsafe extern "C" fn gc_reject(context: *mut CallContext, reason: u64, length: u
     finish_callout(unsafe { &mut *context }, Ok(Err(JsError::validation(message.into()))))
 }
 
-impl<H: Host> WasmGc for Emitter<'_, '_, H> {
+impl WasmGc for Emitter<'_, '_> {
     const PROVEN_STRUCT_READS: bool = true;
 
     fn is_null(&mut self, reference: ir::Value) -> ir::Value {
@@ -136,12 +136,12 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
 
     fn is_object(&mut self, reference: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_is_object::<H> as *const () as usize, &[context, reference])
+        self.call_leaf(gc_is_object as *const () as usize, &[context, reference])
     }
 
     fn field_slot(&mut self, reference: ir::Value, index: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_field_slot::<H> as *const () as usize, &[context, reference, index])
+        self.call_leaf(gc_field_slot as *const () as usize, &[context, reference, index])
     }
 
     /// An array element's read address, inline (`array_element_address`), where the reference is a
@@ -162,12 +162,12 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
 
     fn field_slot_for_write(&mut self, reference: ir::Value, index: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_field_slot_for_write::<H> as *const () as usize, &[context, reference, index])
+        self.call_leaf(gc_field_slot_for_write as *const () as usize, &[context, reference, index])
     }
 
     fn field_count(&mut self, reference: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_field_count::<H> as *const () as usize, &[context, reference])
+        self.call_leaf(gc_field_count as *const () as usize, &[context, reference])
     }
 
     /// One load of the field's storage, zero-extended to the word: the field's static type says
@@ -186,22 +186,22 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
 
     fn array_mutable(&mut self, reference: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_array_mutable::<H> as *const () as usize, &[context, reference])
+        self.call_leaf(gc_array_mutable as *const () as usize, &[context, reference])
     }
 
     fn storage_admits(&mut self, source: ir::Value, destination: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_storage_admits::<H> as *const () as usize, &[context, source, destination])
+        self.call_leaf(gc_storage_admits as *const () as usize, &[context, source, destination])
     }
 
     fn fields_exceed(&mut self, reference: ir::Value, index: ir::Value, extent: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_fields_exceed::<H> as *const () as usize, &[context, reference, index, extent])
+        self.call_leaf(gc_fields_exceed as *const () as usize, &[context, reference, index, extent])
     }
 
     fn fill_fields(&mut self, reference: ir::Value, index: ir::Value, extent: ir::Value, value: ir::Value) {
         let context = self.body.core.context;
-        self.call_leaf(gc_fill_fields::<H> as *const () as usize, &[context, reference, index, extent, value]);
+        self.call_leaf(gc_fill_fields as *const () as usize, &[context, reference, index, extent, value]);
     }
 
     fn copy_fields(
@@ -214,7 +214,7 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
     ) {
         let context = self.body.core.context;
         let arguments = [context, destination, output, source, input, extent];
-        self.call_leaf(gc_copy_fields::<H> as *const () as usize, &arguments);
+        self.call_leaf(gc_copy_fields as *const () as usize, &arguments);
     }
 
     /// The cast's declarations are the running program's, which the callout reads itself; the
@@ -222,7 +222,7 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
     fn admits(&mut self, reference: ir::Value, target: ReferenceTarget, _declarations: &WasmTypes) -> ir::Value {
         let context = self.body.core.context;
         let tag = self.constant(Width::I64, i64::from(target.tag()));
-        self.call_leaf(gc_admits::<H> as *const () as usize, &[context, reference, tag])
+        self.call_leaf(gc_admits as *const () as usize, &[context, reference, tag])
     }
 
     /// Continues where `flag` is 0; where it is 1, the emitted code raises `reason` as the
@@ -243,7 +243,7 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// The address of a field of `reference`, a Wasm GC record: `address` gives it from the record's
     /// payload, inline where the record range is made (`base` nonzero) and the reference names a
     /// record; otherwise the `field_slot` callout answers.
@@ -268,7 +268,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let address = address(self, payload);
         self.goto(join, &[address]);
         self.enter(callout);
-        let address = self.call_leaf(gc_field_slot::<H> as *const () as usize, &[context, reference, index]);
+        let address = self.call_leaf(gc_field_slot as *const () as usize, &[context, reference, index]);
         self.goto(join, &[address]);
         self.enter(join);
         slot
@@ -361,7 +361,7 @@ fn transfer_field(registers: u16, instruction: WideInstruction, state: &mut Anal
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks a GC step and gives its result the kind its operation returns: references are
     /// `Reference` words, a reference test's and a length's operands as named, and a field write's
     /// value the kind of its storage. An allocating operation checks its own operands
@@ -406,7 +406,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Lowers a GC step as its staged rule, over the frame's registers, or an allocating step as
     /// its callout (`gc_allocate`).
     pub(super) fn gc(&mut self, pc: usize, instruction: WideInstruction, op: GcOp) {

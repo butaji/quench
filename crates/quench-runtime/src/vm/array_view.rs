@@ -11,7 +11,7 @@ use super::*;
 use crate::staged::array_search::{self, Needle};
 pub(super) use crate::staged::array_search::{Match, Search};
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The element backing of an array whose indices are all own data properties of it: no
     /// indexed descriptors, sparse storage or arguments mapping. A slot holding the hole
     /// marker is a hole. Reading it runs no guest code; a search reads it in place.

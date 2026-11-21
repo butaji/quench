@@ -11,7 +11,7 @@ enum TableCopy {
     Map(crate::heap::Entries<(Value, Value)>),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// AddEntriesFromIterable when no step can run guest code: the adder is the intrinsic
     /// `Set.prototype.add` or `Map.prototype.set` and the iterable iterates intact
     /// (`intact_iteration_kind`). `false` (nothing added) leaves every other case to the

@@ -252,7 +252,7 @@ impl Symbol {
 /// symbol, for a recipe `vm` cannot build from the image alone (`Constant`), and for one the
 /// running program has not made yet (`PrototypeOf` before the root activation creates the
 /// closure): a lane body that names one links when it is published (`live::link_lane`).
-pub(crate) fn resolve_recipe<H: Host>(symbol: Symbol, image: &AotImage, vm: &mut Vm<H>) -> Option<u64> {
+pub(crate) fn resolve_recipe(symbol: Symbol, image: &AotImage, vm: &mut Vm) -> Option<u64> {
     match symbol {
         Symbol::HeapValue(key) => Some(heap_value(image, vm, key)?.to_bits()),
         Symbol::Shape(key) => Some(u64::from(shape(image, vm, key)?)),
@@ -261,7 +261,7 @@ pub(crate) fn resolve_recipe<H: Host>(symbol: Symbol, image: &AotImage, vm: &mut
 }
 
 /// The value of heap value recipe `key`, in `vm`.
-fn heap_value<H: Host>(image: &AotImage, vm: &mut Vm<H>, key: u32) -> Option<Value> {
+fn heap_value(image: &AotImage, vm: &mut Vm, key: u32) -> Option<Value> {
     match *image.heap_values.get(key as usize)? {
         HeapValueRecipe::Intrinsic(id) => Some(vm.native_value(*crate::heap::Native::ALL.get(id as usize)?)),
         HeapValueRecipe::Global(atom) => {
@@ -281,14 +281,14 @@ fn heap_value<H: Host>(image: &AotImage, vm: &mut Vm<H>, key: u32) -> Option<Val
 /// Function `function`'s closure in the running program, where the program made exactly one (a
 /// top-level function, recorded as `Vm::cached_functions` finds it): with several, no one closure
 /// is the function's, so the recipe resolves to none.
-fn closure_of<H: Host>(vm: &Vm<H>, function: u32) -> Option<Value> {
+fn closure_of(vm: &Vm, function: u32) -> Option<Value> {
     let mut closures = vm.cached_functions(vm.active_program, function);
     let closure = closures.next()?;
     closures.next().is_none().then_some(closure)
 }
 
 /// The own `prototype` of function `function`'s one closure (`closure_of`), an object.
-fn prototype_of<H: Host>(vm: &mut Vm<H>, function: u32) -> Option<Value> {
+fn prototype_of(vm: &mut Vm, function: u32) -> Option<Value> {
     let closure = closure_of(vm, function)?;
     let atom = vm.prototype_atom();
     vm.own_property(closure, atom).filter(|prototype| prototype.is_heap())
@@ -296,13 +296,13 @@ fn prototype_of<H: Host>(vm: &mut Vm<H>, function: u32) -> Option<Value> {
 
 /// The shape of shape recipe `key`: the empty object of its prototype, then each field added
 /// in order, along the VM's transitions.
-fn shape<H: Host>(image: &AotImage, vm: &mut Vm<H>, key: u32) -> Option<u32> {
+fn shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
     let recipe = image.shapes.get(key as usize)?;
     let prototype = match recipe.prototype {
         Some(prototype) => heap_value(image, vm, prototype)?,
         None => Value::NULL,
     };
-    let mut shape = Vm::<H>::empty_object(prototype).shape();
+    let mut shape = Vm::empty_object(prototype).shape();
     for &(atom, attributes) in recipe.fields.iter() {
         let atom = vm.intern_atom(image.atoms.get(atom as usize)?);
         shape = vm.transition_data_property_shape(shape, PropertyKey::string(atom), data_attributes(attributes));

@@ -84,7 +84,7 @@ pub(crate) struct ObjectTemplate {
     _roots: Box<[RootId]>,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A template of `template`'s graph, found against `witness`, which a second
     /// construction of the same call built, with `probes` (holder, key) read now. `None`
     /// when the two differ other than by objects each made anew, a node is not a plain

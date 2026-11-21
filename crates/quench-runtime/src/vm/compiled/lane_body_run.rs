@@ -49,7 +49,7 @@ impl LaneStackWords {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Runs `run`'s body; where it left, or that it returned.
     pub(in crate::vm) fn run_lane_body(&mut self, run: &BodyRun) -> LaneExit {
         let frame = frame_in_lane();
@@ -110,7 +110,7 @@ impl<H: Host> Vm<H> {
             }
             debug_assert_eq!((*dispatch).head.field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
-            let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context, run.registers, super::super::dispatch_fast::LocalsOf::Body);
+            let locals = super::super::dispatch_fast::body_locals(run.lane_context, run.registers, super::super::dispatch_fast::LocalsOf::Body);
             ((*dispatch).head.native_locals, (*dispatch).head.local_count, (*dispatch).head.environment_storage) = (locals.locals, locals.count, locals.environment);
             if !run.bases_stand { (*dispatch).refresh_object_bases_at_entry(self); }
             let vm = self as *mut Self;
@@ -122,7 +122,7 @@ impl<H: Host> Vm<H> {
             let words = self.stack_words_in_lane(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
             // A b-jit body's direct call rows push whether or not the run names direct calls (`run.direct_calls` sizes
             // only the shadow frames), so in a leaf's window they refuse to the helper row.
-            super::super::dispatch_fast::refuse_direct_calls_in_leaf::<H>(run.lane_context, run.registers);
+            super::super::dispatch_fast::refuse_direct_calls_in_leaf(run.lane_context, run.registers);
             words.bind(&mut *dispatch);
             &raw mut (*frame).context
         }

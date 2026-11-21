@@ -7,38 +7,38 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn initialize_storage(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let identity = context.host_mut().shared_state().borrow().async_hooks.identity.clone();
+    let identity = context.host_as::<crate::host::NodeHost>().shared_state().borrow().async_hooks.identity.clone();
     let id = identity.allocate_local_storage_id();
     set_number(context, receiver, LOCAL_ID, id)?;
     Ok(receiver)
 }
 
 /// The storage ID `initialize_storage` gave `receiver`.
-fn storage_id(context: &mut NativeContext<'_, NodeHost>, receiver: RootId) -> Result<u64, RootedError> {
+fn storage_id(context: &mut NativeContext<'_>, receiver: RootId) -> Result<u64, RootedError> {
     number_property(context, receiver, LOCAL_ID)?.ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))
 }
 
 pub(crate) fn enter_with(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let store = args.first().copied().unwrap_or_else(|| context.undefined());
     let local_id = storage_id(context, receiver)?;
     let store = context.retain(store)?;
-    let store_context = context.host_mut().shared_state().borrow().async_hooks.identity.store_context();
+    let store_context = context.host_as::<crate::host::NodeHost>().shared_state().borrow().async_hooks.identity.store_context();
     put_local_store(context, store_context, local_id, store);
     Ok(context.undefined())
 }
 
 /// Puts the retained `store` in storage `local_id`'s slot of `store_context`'s frame and
 /// releases the value it replaced when that was its last reference.
-fn put_local_store(context: &mut NativeContext<'_, NodeHost>, store_context: StoreContext, local_id: u64, store: RootId) {
-    let shared = context.host_mut().shared_state();
+fn put_local_store(context: &mut NativeContext<'_>, store_context: StoreContext, local_id: u64, store: RootId) {
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let released = replace_local_store(&mut shared.borrow_mut().async_hooks, store_context, local_id, store);
     if let Some(released) = released {
         context.release_root(released);
@@ -69,7 +69,7 @@ fn local_store(state: &SharedAsyncHooksState, context: StoreContext, local_id: u
 /// directly as the public `run` method so deeply nested synchronous calls do
 /// not accumulate an extra guest-JavaScript method frame per nesting level.
 pub(crate) fn run_storage(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -78,7 +78,7 @@ pub(crate) fn run_storage(
         return invalid_function(context, "callback");
     }
     let local_id = storage_id(context, receiver)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let store_context = shared.borrow().async_hooks.identity.store_context();
     let previous = local_store(&shared.borrow().async_hooks, store_context, local_id);
     let previous = match previous {
@@ -98,7 +98,7 @@ pub(crate) fn run_storage(
 }
 
 pub(crate) fn get_store(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -109,13 +109,13 @@ pub(crate) fn get_store(
 }
 
 pub(crate) fn disable_storage(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let local_id = storage_id(context, receiver)?;
     let released = {
-        let shared_state = context.host_mut().shared_state();
+        let shared_state = context.host_as::<crate::host::NodeHost>().shared_state();
         let mut shared = shared_state.borrow_mut();
         let current = shared.async_hooks.identity.store_context();
         shared.async_hooks.enabled_local_storages.remove(local_id);
@@ -126,9 +126,9 @@ pub(crate) fn disable_storage(
     Ok(context.undefined())
 }
 
-pub(super) fn current_local_store(context: &mut NativeContext<'_, NodeHost>, receiver: RootId) -> Result<Option<RootId>, RootedError> {
+pub(super) fn current_local_store(context: &mut NativeContext<'_>, receiver: RootId) -> Result<Option<RootId>, RootedError> {
     let local_id = storage_id(context, receiver)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
     Ok(local_store(&state.async_hooks, state.async_hooks.identity.store_context(), local_id))
 }

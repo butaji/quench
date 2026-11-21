@@ -98,7 +98,7 @@ fn finished_closure_slots(
     slots
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The creation realm of a function record: its override, else the main realm.
     #[inline(always)]
     pub(super) fn record_realm(&self, record: &FunctionRecord) -> Value {

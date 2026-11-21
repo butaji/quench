@@ -9,7 +9,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The generator's lifecycle: not yet run, waiting for ticks, or finished.
 #[derive(Clone, Copy, PartialEq, Eq)]

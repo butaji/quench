@@ -76,7 +76,7 @@ enum ChainStep {
     Ran(Stop),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether the resumption of `job` by a queue that chains may chain (`Vm::run_job_chain`): an
     /// async function's activation that a microtask drain resumes (`queue_resumed`) with no lane
     /// run live, so the run is not nested (`Vm::run_job`).

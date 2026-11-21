@@ -398,13 +398,13 @@ impl ValueDeserializer {
 }
 
 /// The serializer's embedder hooks (V8's `ValueSerializer::Delegate`).
-pub(crate) trait WriteHooks<H: Host> {
+pub(crate) trait WriteHooks {
     /// Write a host object's contents after its tag; a returned value is written next,
     /// through this serializer.
-    fn write_host_object(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, output: &WireOutput, object: Value) -> Result<Option<Value>, JsError>;
-    fn shared_array_buffer_id(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, buffer: Value) -> Result<u32, JsError>;
+    fn write_host_object(&mut self, vm: &mut Vm, program: &ResidualProgram, output: &WireOutput, object: Value) -> Result<Option<Value>, JsError>;
+    fn shared_array_buffer_id(&mut self, vm: &mut Vm, program: &ResidualProgram, buffer: Value) -> Result<u32, JsError>;
     /// The exception for a value that cannot be cloned.
-    fn data_clone_error(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, message: &str) -> JsError;
+    fn data_clone_error(&mut self, vm: &mut Vm, program: &ResidualProgram, message: &str) -> JsError;
 }
 
 /// The deserializer's embedder hooks (V8's `ValueDeserializer::Delegate`).
@@ -415,9 +415,9 @@ pub enum HostObjectRead<T> {
     NextValue,
 }
 
-pub(crate) trait ReadHooks<H: Host> {
-    fn read_host_object(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, input: &SharedWireInput) -> Result<HostObjectRead<Value>, JsError>;
-    fn shared_array_buffer(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, id: u32) -> Result<Value, JsError>;
+pub(crate) trait ReadHooks {
+    fn read_host_object(&mut self, vm: &mut Vm, program: &ResidualProgram, input: &SharedWireInput) -> Result<HostObjectRead<Value>, JsError>;
+    fn shared_array_buffer(&mut self, vm: &mut Vm, program: &ResidualProgram, id: u32) -> Result<Value, JsError>;
 }
 
 /// Why a read stopped: malformed input, or an exception already thrown.
@@ -471,8 +471,8 @@ struct MessageHooks {
     shared: Vec<Arc<SharedBacking>>,
 }
 
-impl<H: Host> WriteHooks<H> for MessageHooks {
-    fn write_host_object(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, output: &WireOutput, object: Value) -> Result<Option<Value>, JsError> {
+impl WriteHooks for MessageHooks {
+    fn write_host_object(&mut self, vm: &mut Vm, program: &ResidualProgram, output: &WireOutput, object: Value) -> Result<Option<Value>, JsError> {
         if let Some(index) = self.host_objects.iter().position(|host| *host == object) {
             write_uint32(output, index as u32);
             return Ok(None);
@@ -490,7 +490,7 @@ impl<H: Host> WriteHooks<H> for MessageHooks {
         ))
     }
 
-    fn shared_array_buffer_id(&mut self, vm: &mut Vm<H>, _: &ResidualProgram, buffer: Value) -> Result<u32, JsError> {
+    fn shared_array_buffer_id(&mut self, vm: &mut Vm, _: &ResidualProgram, buffer: Value) -> Result<u32, JsError> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = vm.heap.get(buffer) else {
             unreachable!("a shared buffer remains an ArrayBuffer");
         };
@@ -502,19 +502,19 @@ impl<H: Host> WriteHooks<H> for MessageHooks {
         Ok(self.shared.len() as u32 - 1)
     }
 
-    fn data_clone_error(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, message: &str) -> JsError {
+    fn data_clone_error(&mut self, vm: &mut Vm, program: &ResidualProgram, message: &str) -> JsError {
         vm.data_clone_error(program, message)
     }
 }
 
-impl<H: Host> ReadHooks<H> for MessageHooks {
-    fn read_host_object(&mut self, _: &mut Vm<H>, _: &ResidualProgram, input: &SharedWireInput) -> Result<HostObjectRead<Value>, JsError> {
+impl ReadHooks for MessageHooks {
+    fn read_host_object(&mut self, _: &mut Vm, _: &ResidualProgram, input: &SharedWireInput) -> Result<HostObjectRead<Value>, JsError> {
         let index = input.borrow_mut().read_uint32();
         let object = index.and_then(|index| self.host_objects.get(index as usize).copied()).unwrap_or(Value::UNDEFINED);
         Ok(HostObjectRead::Object(object))
     }
 
-    fn shared_array_buffer(&mut self, vm: &mut Vm<H>, _: &ResidualProgram, id: u32) -> Result<Value, JsError> {
+    fn shared_array_buffer(&mut self, vm: &mut Vm, _: &ResidualProgram, id: u32) -> Result<Value, JsError> {
         Ok(match self.shared.get(id as usize) {
             Some(backing) => {
                 let backing = backing.clone_for_agent();
@@ -527,7 +527,7 @@ impl<H: Host> ReadHooks<H> for MessageHooks {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(crate) fn embedding_mark_untransferable(&mut self, source: RootId) -> Result<(), JsError> {
         let source = self.embedding_value(source)?;
         if let Some(object) = self.object_data_mut(source) {
@@ -700,13 +700,13 @@ impl<H: Host> Vm<H> {
         deserializer.transfers.insert(id, root);
     }
 
-    fn uncloneable_with<D: WriteHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, hooks: &mut D, value: Value) -> JsError {
+    fn uncloneable_with<D: WriteHooks + ?Sized>(&mut self, program: &ResidualProgram, hooks: &mut D, value: Value) -> JsError {
         let message = format!("{} could not be cloned.", self.clone_description(value));
         hooks.data_clone_error(self, program, &message)
     }
 
     /// `WriteObject`.
-    pub(crate) fn wire_write<D: WriteHooks<H> + ?Sized>(
+    pub(crate) fn wire_write<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -757,7 +757,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `WriteJSReceiver`: a reference to an earlier object, or a newly numbered one.
-    fn wire_receiver<D: WriteHooks<H> + ?Sized>(
+    fn wire_receiver<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -855,7 +855,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `WriteHostObject`: the tag, then the embedder's contents.
-    fn wire_host_object<D: WriteHooks<H> + ?Sized>(
+    fn wire_host_object<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -876,7 +876,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Write rooted values in order, releasing every root.
-    fn wire_rooted_sequence<D: WriteHooks<H> + ?Sized>(
+    fn wire_rooted_sequence<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -894,7 +894,7 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    fn wire_primitive_wrapper<D: WriteHooks<H> + ?Sized>(
+    fn wire_primitive_wrapper<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         output: &WireOutput,
@@ -963,7 +963,7 @@ impl<H: Host> Vm<H> {
 
     /// `WriteJSObjectPropertiesSlow`: each key still present, then its value; the count
     /// written. Releases the key roots.
-    fn wire_properties<D: WriteHooks<H> + ?Sized>(
+    fn wire_properties<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -1004,7 +1004,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Array index keys are numbers on the wire.
-    fn wire_property_key<D: WriteHooks<H> + ?Sized>(
+    fn wire_property_key<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -1021,7 +1021,7 @@ impl<H: Host> Vm<H> {
 
     /// `WriteJSArray`: arrays whose elements are all present data properties are dense,
     /// others sparse key/value lists.
-    fn wire_array<D: WriteHooks<H> + ?Sized>(
+    fn wire_array<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -1093,7 +1093,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn wire_array_buffer<D: WriteHooks<H> + ?Sized>(
+    fn wire_array_buffer<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -1144,7 +1144,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `WriteJSArrayBufferView`; its buffer was written just before.
-    fn wire_view<D: WriteHooks<H> + ?Sized>(
+    fn wire_view<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         output: &WireOutput,
@@ -1190,7 +1190,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `WriteJSError`: prototype, message and stack, then a cause that may refer back.
-    fn wire_error<D: WriteHooks<H> + ?Sized>(
+    fn wire_error<D: WriteHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         serializer: &mut ValueSerializer,
@@ -1275,7 +1275,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadValue`: one value, or "Unable to deserialize cloned data." for bad input.
-    pub(crate) fn wire_read_value<D: ReadHooks<H> + ?Sized>(
+    pub(crate) fn wire_read_value<D: ReadHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         deserializer: &mut ValueDeserializer,
@@ -1289,7 +1289,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadObject`: a value; an ArrayBuffer followed by a view tag yields the view.
-    fn wire_read<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
+    fn wire_read<D: ReadHooks + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
         let _stack = self.enter_stack()?;
         let value = self.wire_read_internal(program, deserializer, hooks)?;
         let view_follows = matches!(self.heap.get(value), Some(Cell::ArrayBuffer { .. }))
@@ -1346,7 +1346,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadString`: a string record.
-    fn wire_read_tagged_string<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<JsString> {
+    fn wire_read_tagged_string<D: ReadHooks + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<JsString> {
         let value = self.wire_read(program, deserializer, hooks)?;
         self.heap.string(value).cloned().ok_or(ReadFailure::Invalid)
     }
@@ -1363,7 +1363,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::bigint(value)))
     }
 
-    fn wire_read_internal<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
+    fn wire_read_internal<D: ReadHooks + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
         let tag = valid(deserializer.input.borrow_mut().read_tag())?;
         match tag {
             tag::VERIFY_OBJECT_COUNT => {
@@ -1554,7 +1554,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn wire_read_host_object<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
+    fn wire_read_host_object<D: ReadHooks + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
         let id = Self::wire_reserve_id(deserializer);
         let input = deserializer.input.clone();
         let object = match hooks.read_host_object(self, program, &input)? {
@@ -1585,7 +1585,7 @@ impl<H: Host> Vm<H> {
 
     /// `ReadJSObjectProperties`: key/value pairs until `end`; keys are strings or numbers,
     /// each defined once.
-    fn wire_read_properties<D: ReadHooks<H> + ?Sized>(
+    fn wire_read_properties<D: ReadHooks + ?Sized>(
         &mut self,
         program: &ResidualProgram,
         deserializer: &mut ValueDeserializer,
@@ -1669,7 +1669,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadJSError`.
-    fn wire_read_error<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
+    fn wire_read_error<D: ReadHooks + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
         let id = Self::wire_reserve_id(deserializer);
         let next = |deserializer: &mut ValueDeserializer| valid(deserializer.input.borrow_mut().read_byte_varint());
         let mut tag = next(deserializer)?;

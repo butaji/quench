@@ -33,7 +33,7 @@ fn presence_index(shape: u32, atom: Atom) -> usize {
     (shape ^ atom) as usize % IN_PRESENCES
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Remembers that `key in object` for the key `atom` was `present`, where `object` is a direct object of a
     /// layout a shape names exactly and so is each prototype on its chain (a dictionary's layout is its own).
     pub(super) fn remember_presence(&mut self, object: Value, atom: Atom, present: bool) {

@@ -30,7 +30,7 @@ fn private_brand_key(brand: PrivateBrand) -> PropertyKey {
     PropertyKey::private(brand.home, brand.name | BRAND_ONLY)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The slot of `object`'s private field `brand`.
     #[inline]
     pub(super) fn private_field_slot(&self, object: Value, brand: PrivateBrand) -> Option<usize> {

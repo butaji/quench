@@ -1,6 +1,6 @@
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_shadow_realm(
         &mut self,
         program: &ResidualProgram,

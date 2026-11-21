@@ -108,14 +108,14 @@ impl CallerView for WindowScope {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The owner of the variable environment of the activation that runs: the innermost frame,
     /// or, beside the lane's frameless activations (`lane_deferred`), the innermost activation's
     /// window, which a step of its function reads where it stands (a plain activation's, registers only,
     /// has no locals: `scoped_names::plain_scope`).
     pub(in crate::vm) fn running_owner(&mut self) -> VarOwner {
         if let Some(DeferredLaneCall { cx, call_pc, .. }) = self.lane_deferred {
-            let cx = cx.cast::<LaneContext<H>>();
+            let cx = cx.cast::<LaneContext>();
             // SAFETY: the deferred call's lane runs, so its context lives, and the call's record
             // lies in the view of the innermost activation's function.
             let (registers, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc)) };

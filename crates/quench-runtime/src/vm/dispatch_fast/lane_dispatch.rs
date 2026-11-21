@@ -6,7 +6,7 @@ use super::*;
 
 /// Dispatch lane records from `ip` until a handler exits; the record it exits at.
 #[inline(always)]
-pub(super) fn dispatch_in_lane<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
+pub(super) fn dispatch_in_lane(cx: *mut LaneContext, mut ip: Ip) -> Ip {
     loop {
         #[cfg(feature = "profile-lane-exits")]
         {

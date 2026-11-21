@@ -755,7 +755,7 @@ fn normalize(c: &mut Context<'_>, value: RootId, operation: Operation) -> Result
 const EXPERIMENTAL_ALGORITHMS: [Algorithm; 2] = [Algorithm::Ed448, Algorithm::X448];
 
 fn warn_experimental(c: &mut Context<'_>, algorithm: Algorithm) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if shared.borrow().crypto.experimental_warned.contains(&algorithm) {
         return Ok(());
     }

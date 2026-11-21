@@ -1,7 +1,7 @@
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn delete_name(
         &mut self,
         p: &ResidualProgram,

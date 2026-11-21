@@ -3,7 +3,7 @@
 use super::*;
 use crate::staged::protocol_values::ValueStep;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The by-name, environment, string and iteration-cleanup `step` of its operand values (`first` is the first operand register's
     /// value, `second` the second's): the value it defines, if any.
     pub(super) fn value_step(&mut self, p: &ResidualProgram, site: super::call_out::CallSite, step: ValueStep, first: Option<Value>, second: Option<Value>)

@@ -42,7 +42,7 @@ impl ConcatMemo {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The memo key of a concatenation operand: its value's bits, for an integer or a string,
     /// whose slot names it until a collection (`ConcatMemo`); `None` for any other value.
     #[inline(always)]

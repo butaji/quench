@@ -12,7 +12,7 @@ function check(got, want, what) { if (got !== want) throw Error(what + ': ' + go
 function thrown(f) { try { f(); return 'none'; } catch (e) { return e.constructor.name; } }
 "#;
 
-fn run(source: &str) -> (Vm<TestHost>, crate::bytecode::ResidualProgram) {
+fn run(source: &str) -> (Vm, crate::bytecode::ResidualProgram) {
     let program = Engine::specialize(&format!("{HELPERS}{source}"), "name-scope.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.execute(&program).unwrap();

@@ -19,7 +19,7 @@ const fn storage_width(storage: Storage) -> Width {
 
 /// A global's native slot is read and written in place: its payload is the value the tier
 /// computes with, so an access is one load or one store, with no box and no callout.
-impl<H: Host> WasmInstance for Emitter<'_, '_, H> {
+impl WasmInstance for Emitter<'_, '_> {
     fn global_load(&mut self, slot: u32, storage: Storage) -> ir::Value {
         let address = self.global_address(slot);
         let flags = self.flags(Region::Globals);
@@ -39,7 +39,7 @@ impl<H: Host> WasmInstance for Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Lowers a register, constant, binding or global step.
     pub(super) fn instance(&mut self, pc: usize, instruction: WideInstruction, step: Instance) {
         let (a, b) = (instruction.a(), instruction.b());
@@ -130,7 +130,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks a register, constant, binding or global step has a compiled denotation in `state`
     /// and applies its register writes. A global is admitted where its type is a scalar the
     /// tier holds in a register: a reference or a vector stays interpreted.

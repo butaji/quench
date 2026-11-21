@@ -4,7 +4,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 include!("node_legacy_bindings.rs");
 
 fn name(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     args: &[RootId],
 ) -> Result<(String, RootId), RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
@@ -24,7 +24,7 @@ fn name(
 /// A fresh legacy wrapper object: `util`'s type predicates, the public `util.types`
 /// functions; `natives` maps builtin ids to their JavaScript source, and no Quench builtin
 /// has any.
-fn legacy_wrapper(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<RootId, RootedError> {
+fn legacy_wrapper(context: &mut NativeContext<'_>, name: &str) -> Result<RootId, RootedError> {
     let result = context.object_rooted()?;
     if name == UTIL_BINDING {
         let util = super::util_shared_vm::module(context)?;
@@ -40,12 +40,12 @@ fn legacy_wrapper(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Resu
 }
 
 pub(crate) fn binding(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let permission_enabled = {
-        let shared = context.host_mut().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let state = shared.borrow();
         state.cli_options.enabled("--permission") || state.cli_options.enabled("--permission-audit")
     };
@@ -65,7 +65,7 @@ pub(crate) fn binding(
     let (name, value) = name(context, args)?;
     if RUNTIME_DEPRECATED_BINDINGS.contains(&name.as_str()) {
         let process = context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .process_module

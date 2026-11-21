@@ -18,7 +18,7 @@ const SOURCE: &str = r#"
     var list = [anchor];
 "#;
 
-fn test_vm() -> Vm<TestHost> {
+fn test_vm() -> Vm {
     let mut vm = Vm::new(TestHost::default());
     vm.set_memory_policy(crate::MemoryPolicy::Throughput);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
@@ -32,7 +32,7 @@ fn function_named(program: &crate::bytecode::ResidualProgram, name: &str) -> usi
         .expect("receiver-departure loop function")
 }
 
-fn sum_and_objects(vm: &mut Vm<TestHost>) -> (Value, Value, Value) {
+fn sum_and_objects(vm: &mut Vm) -> (Value, Value, Value) {
     let globals = vm.realm.globals;
     let mut get = |name: &str| {
         let atom = vm.intern_atom(name);
@@ -41,7 +41,7 @@ fn sum_and_objects(vm: &mut Vm<TestHost>) -> (Value, Value, Value) {
     (get("sum"), get("anchor"), get("list"))
 }
 
-fn depart(vm: &mut Vm<TestHost>, anchor: Value, shape: u32, round: i32) -> u32 {
+fn depart(vm: &mut Vm, anchor: Value, shape: u32, round: i32) -> u32 {
     let atom = vm.intern_atom(&format!("extra-{round}"));
     let next = vm.transition_shape(shape, atom);
     vm.heap.property_add(anchor, Value::integer(round), next);
@@ -50,7 +50,7 @@ fn depart(vm: &mut Vm<TestHost>, anchor: Value, shape: u32, round: i32) -> u32 {
 
 /// The OSR site of `function_id`'s outermost loop: the first header's, closed by its last
 /// backward jump.
-fn osr_site(vm: &Vm<TestHost>, function_id: usize) -> crate::vm::dispatch_fast::OsrSiteDiagnostics {
+fn osr_site(vm: &Vm, function_id: usize) -> crate::vm::dispatch_fast::OsrSiteDiagnostics {
     let osr = vm
         .programs
         .views_in_lane(crate::vm::program_store::ProgramId::MAIN)
@@ -220,7 +220,7 @@ fn shared_osr_remainder_matches_the_interpreter_across_int32_edges_and_doubles()
 
 /// What `program` prints run in `mode` under `policy`, with its VM.
 fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::ExecutionMode, policy: crate::MemoryPolicy)
-    -> (Vec<String>, Vm<TestHost>) {
+    -> (Vec<String>, Vm) {
     let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(policy);
@@ -234,7 +234,7 @@ fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::Executio
 /// Runs `source` interpreted, then compiled under every memory policy: each prints what the
 /// interpreter prints, and each loop of `native` (one per function) runs natively wherever
 /// the policy compiles loops. The throughput run's VM.
-fn assert_typed_osr(source: &str, native: &[&str]) -> Vm<TestHost> {
+fn assert_typed_osr(source: &str, native: &[&str]) -> Vm {
     // The fixtures are too small to repay a compile at the wall-clock cost the model has learned.
     crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-typed.js")).unwrap();
@@ -428,7 +428,7 @@ fn repatch_leaves_in_mode(changes: i32) -> Vec<(u64, u64)> {
     let mut vm = test_vm();
     vm.execute(&program).unwrap();
     let (sum, anchor, list) = sum_and_objects(&mut vm);
-    let call = |vm: &mut Vm<TestHost>| {
+    let call = |vm: &mut Vm| {
         assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[list, Value::number(3000.0)]).unwrap(), Value::number(3000.0));
         let site = osr_site(vm, function_id);
         (site.exits, site.native_region_runs)

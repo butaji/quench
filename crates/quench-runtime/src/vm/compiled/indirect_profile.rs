@@ -37,7 +37,7 @@ impl SiteHits {
 }
 
 /// The rows of the table bound at environment slot `slot` of `env`.
-fn table_rows<H: Host>(vm: &Vm<H>, env: Value, slot: u32) -> Option<&[TableTarget]> {
+fn table_rows(vm: &Vm, env: Value, slot: u32) -> Option<&[TableTarget]> {
     let binding = vm.heap.environment_slot(env, slot as usize)?;
     match vm.heap.get(binding)? {
         Cell::WasmTable { elements, .. } => Some(elements.targets()),
@@ -53,9 +53,9 @@ impl CompiledProgram {
 
     /// The targets resolved at call sites of a selective root's static closure that their
     /// tables still hold for the instance `env`, hottest first.
-    pub(in crate::vm) fn profiled_indirect_targets<H: Host>(
+    pub(in crate::vm) fn profiled_indirect_targets(
         &self,
-        vm: &Vm<H>,
+        vm: &Vm,
         program: ProgramId,
         env: Value,
         callers: &[bool],

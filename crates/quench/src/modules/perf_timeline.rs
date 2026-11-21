@@ -161,7 +161,7 @@ const LIST_METHODS: [Method; 3] = [
 ];
 
 fn timeline<T>(c: &mut Context<'_>, f: impl FnOnce(&mut Timeline) -> T) -> T {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut state = shared.borrow_mut();
     f(&mut state.performance_native.timeline)
 }

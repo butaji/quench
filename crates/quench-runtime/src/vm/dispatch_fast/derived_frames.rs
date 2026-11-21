@@ -25,7 +25,7 @@ script_handler! {
 }
 
 /// `super_construct_in_frame`'s push, or the general path's `exit`.
-fn super_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Ip {
+fn super_construct(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Ip {
     let vm = unsafe { vm(cx) };
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     // SAFETY: the running lane's context.
@@ -67,8 +67,8 @@ fn super_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &L
 /// makes active and the loop's executing one sets aside. A failed push (the guest call depth)
 /// throws at the construction, as the general path's.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn push_construction_frame<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn push_construction_frame(
+    cx: *mut LaneContext,
     ip: Ip,
     i: &LaneInstruction,
     frame: usize,
@@ -119,7 +119,7 @@ pub(super) fn push_construction_frame<H: Host>(
 
 /// The lane going on in the constructor's frame `push_construction_frame` pushed, above its
 /// caller's, with `call` pending for the general loop as its own push leaves it.
-fn enter_pushed_constructor<H: Host>(cx: *mut LaneContext<H>, call: PendingGeneralCall) -> Ip {
+fn enter_pushed_constructor(cx: *mut LaneContext, call: PendingGeneralCall) -> Ip {
     let vm = unsafe { vm(cx) };
     let callee_frame = call.caller + 1;
     // SAFETY: the general loop's pending calls outlive the lane run.
@@ -136,7 +136,7 @@ fn enter_pushed_constructor<H: Host>(cx: *mut LaneContext<H>, call: PendingGener
 
 /// Make `program` the lane's and the general loop's executing one for a constructor of it the
 /// lane pushes, as `lane_push_frame_call` does for a call: the caller's, set aside, for its return.
-fn enter_callee_program<H: Host>(cx: *mut LaneContext<H>, program: ProgramId) -> super::super::dispatch_frame::SavedProgram {
+fn enter_callee_program(cx: *mut LaneContext, program: ProgramId) -> super::super::dispatch_frame::SavedProgram {
     let vm = unsafe { vm(cx) };
     // SAFETY: the general loop's executing program outlives the lane run.
     let executing = unsafe { &mut *(*cx).executing };
@@ -150,7 +150,7 @@ fn enter_callee_program<H: Host>(cx: *mut LaneContext<H>, program: ProgramId) ->
 }
 
 /// The caller's program `saved` executing again, a push `enter_callee_program` made having failed.
-fn leave_callee_program<H: Host>(cx: *mut LaneContext<H>, saved: super::super::dispatch_frame::SavedProgram) {
+fn leave_callee_program(cx: *mut LaneContext, saved: super::super::dispatch_frame::SavedProgram) {
     // SAFETY: as `enter_callee_program`.
     let executing = unsafe { &mut *(*cx).executing };
     executing.id = saved.id;

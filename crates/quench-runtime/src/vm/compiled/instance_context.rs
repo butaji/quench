@@ -195,7 +195,7 @@ impl InstanceContext {
     /// the artifact's words are written when it differs from the last, the memory's each time,
     /// as it may have grown.
     /// Returns whether the artifact changed, so the rows that name this instance take its bodies.
-    pub(super) fn publish<H: Host>(&mut self, compiled: &Rc<CompiledProgram>, memory: &MemoryBinding) -> bool {
+    pub(super) fn publish(&mut self, compiled: &Rc<CompiledProgram>, memory: &MemoryBinding) -> bool {
         let changed = !std::ptr::eq(self.compiled, Rc::as_ptr(compiled));
         if changed {
             self.compiled = Rc::as_ptr(compiled);
@@ -203,7 +203,7 @@ impl InstanceContext {
             self.abi = compiled.abi();
             let stats = compiled.diagnostics.as_ref();
             self.call_reference_diagnostic = stats.map_or(0, |_| {
-                diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
+                diagnostic_reference_callout as DiagnosticReferenceCallout as usize
             });
             self.reference_call_sites = stats.map_or(std::ptr::null(), |stats| stats.reference_call_sites.as_ptr());
             self.reference_call_site_count = stats.map_or(0, |stats| stats.reference_call_sites.len());
@@ -284,7 +284,7 @@ impl CompiledProgram {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The environment slot of `env`'s instance record: the last before the imported functions,
     /// which end the layout (`wasm_function_reference` derives their base from the end).
     pub(crate) fn wasm_context_slot(&self, env: Value, program: ProgramId) -> Option<usize> {
@@ -384,7 +384,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let address = &**record as *const InstanceContext as usize;
-        let changed = record.publish::<H>(compiled, &memory);
+        let changed = record.publish(compiled, &memory);
         if changed {
             self.refresh_wasm_bodies(address, compiled);
         }

@@ -2,9 +2,9 @@
 
 use super::{ProgramId, Vm};
 use crate::{Host, JsError, ResidualProgram, Value};
-use std::{marker::PhantomData, rc::Rc};
+use std::rc::Rc;
 
-pub type NativeProgramResolver<H> = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError>;
+pub type NativeProgramResolver = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;
 
 /// The AOT image the system linker placed in this executable for a program (`aot_image::object`):
 /// a VM that runs the program loads it as its ahead images (`Vm::load_linked_image`), and its
@@ -57,21 +57,20 @@ impl Clone for FrozenAssumptions {
 }
 
 /// A program bound to native entries compiled for the same host and semantic ABI.
-pub struct NativeJsProgram<H> {
+pub struct NativeJsProgram {
     program: Rc<ResidualProgram>,
     code: Rc<NativeJsCode>,
     counts: NativeJsPublicationCounts,
     frozen: Option<FrozenAssumptions>,
-    host: PhantomData<fn(&mut H)>,
 }
 
-impl<H: Host> Clone for NativeJsProgram<H> {
+impl Clone for NativeJsProgram {
     fn clone(&self) -> Self {
-        Self { program: self.program.clone(), code: self.code.clone(), counts: self.counts, frozen: self.frozen.clone(), host: PhantomData }
+        Self { program: self.program.clone(), code: self.code.clone(), counts: self.counts, frozen: self.frozen.clone() }
     }
 }
 
-impl<H: Host> NativeJsProgram<H> {
+impl NativeJsProgram {
     /// Compile every function before execution as one AOT image. No hotness or fallback tier.
     pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
         super::compiled::compile_eager_native(program)
@@ -151,12 +150,11 @@ impl<H: Host> NativeJsProgram<H> {
             code: Rc::new(code),
             counts,
             frozen,
-            host: PhantomData,
         })
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Loads the image the system linker placed for program `id` (`NativeJsCode`) as its ahead
     /// images (`Vm::load_linked_image`).
     pub(super) fn attach_native_js(&mut self, id: ProgramId, code: &NativeJsCode) -> Result<(), String> {
@@ -164,15 +162,15 @@ impl<H: Host> Vm<H> {
         self.load_linked_image(&program, &code.table)
     }
 
-    pub(crate) fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError> + 'static) {
+    pub(crate) fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError> + 'static) {
         self.set_native_program_resolver_boxed(Box::new(resolver));
     }
 
-    pub(crate) fn set_native_program_resolver_boxed(&mut self, resolver: Box<NativeProgramResolver<H>>) {
+    pub(crate) fn set_native_program_resolver_boxed(&mut self, resolver: Box<NativeProgramResolver>) {
         self.native_program_resolver = Some(resolver);
     }
 
-    pub(super) fn resolve_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError> {
+    pub(super) fn resolve_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError> {
         if let Some(resolver) = &self.native_program_resolver
             && let Some(program) = resolver(name, parts)? { return Ok(Some(program)); }
         self.host.kept_native_program(name, parts)
@@ -190,7 +188,7 @@ impl<H: Host> Vm<H> {
         self.store_native_module_program(native).map(Some)
     }
 
-    pub(super) fn store_native_module_program(&mut self, native: NativeJsProgram<H>) -> Result<ProgramId, JsError> {
+    pub(super) fn store_native_module_program(&mut self, native: NativeJsProgram) -> Result<ProgramId, JsError> {
         if native.program.kind != crate::bytecode::ProgramKind::Module {
             return Err(JsError::validation("native module has the wrong parse goal".into()));
         }
@@ -205,7 +203,7 @@ impl<H: Host> Vm<H> {
     /// Native operands already contain atom IDs. Only an identical prefix of
     /// the initialized VM namespace can be adopted without rewriting the code.
     pub(super) fn prepare_native_script(
-        &mut self, native: NativeJsProgram<H>,
+        &mut self, native: NativeJsProgram,
     ) -> Result<crate::PreparedScript, JsError> {
         self.validate_native_namespace(&native)?;
         self.materialize_frozen_constants(&native);
@@ -216,7 +214,7 @@ impl<H: Host> Vm<H> {
         Ok(crate::PreparedScript { program: Rc::new(program), native: Some(native.code) })
     }
 
-    fn validate_native_namespace(&self, native: &NativeJsProgram<H>) -> Result<(), JsError> {
+    fn validate_native_namespace(&self, native: &NativeJsProgram) -> Result<(), JsError> {
         if native.program.specialized != self.specialized {
             return Err(JsError::validation("native script specialization does not match runtime".into()));
         }
@@ -235,8 +233,8 @@ impl<H: Host> Vm<H> {
     pub(crate) fn restore_native_snapshot(
         &mut self,
         bytes: crate::KeptBytes,
-        native: &NativeJsProgram<H>,
-        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+        native: &NativeJsProgram,
+        read_host: impl FnOnce(&mut dyn Host, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<(), JsError> {
         self.check_execution_interrupt()?;
         self.restore_snapshot_state(bytes, Some(&native.program), read_host).map_err(|error| JsError::validation(error.0))?;
@@ -246,7 +244,7 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn execute_native_program(
         &mut self,
-        native: &NativeJsProgram<H>,
+        native: &NativeJsProgram,
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
         self.execute_native_with_scripts(&[], &[], native, drain_jobs)
@@ -254,14 +252,14 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn execute_native_after_scripts(
         &mut self,
-        scripts: &[NativeJsProgram<H>],
-        native: &NativeJsProgram<H>,
+        scripts: &[NativeJsProgram],
+        native: &NativeJsProgram,
     ) -> Result<Value, JsError> {
         self.execute_native_with_scripts(scripts, &[], native, true)
     }
 
     pub(crate) fn execute_native_module_graph(
-        &mut self, scripts: &[NativeJsProgram<H>], modules: &[NativeJsProgram<H>], native: &NativeJsProgram<H>,
+        &mut self, scripts: &[NativeJsProgram], modules: &[NativeJsProgram], native: &NativeJsProgram,
     ) -> Result<Value, JsError> {
         self.execute_native_with_scripts(scripts, modules, native, true)
     }
@@ -270,7 +268,7 @@ impl<H: Host> Vm<H> {
     /// method atom sets the image's invalidation word; the code then leaves at its
     /// invalidation point, and the shared body runs instead. The subscription retires it
     /// if a later call names one.
-    fn replay_frozen_assumptions(&mut self, native: &NativeJsProgram<H>) {
+    fn replay_frozen_assumptions(&mut self, native: &NativeJsProgram) {
         let Some(frozen) = &native.frozen else { return };
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = frozen.watch.clone();
         for &atom in frozen.atoms.iter() {
@@ -283,7 +281,7 @@ impl<H: Host> Vm<H> {
 
     /// Materializes the image's constant block in the fresh realm: strings are allocated once
     /// here, so the compiled literal reads the block instead of materializing per use.
-    fn materialize_frozen_constants(&mut self, native: &NativeJsProgram<H>) {
+    fn materialize_frozen_constants(&mut self, native: &NativeJsProgram) {
         let Some(frozen) = &native.frozen else { return };
         let mut slots = frozen.constants.borrow_mut();
         for (index, constant) in native.program.constants.iter().enumerate() {
@@ -297,9 +295,9 @@ impl<H: Host> Vm<H> {
 
     fn execute_native_with_scripts(
         &mut self,
-        scripts: &[NativeJsProgram<H>],
-        modules: &[NativeJsProgram<H>],
-        native: &NativeJsProgram<H>,
+        scripts: &[NativeJsProgram],
+        modules: &[NativeJsProgram],
+        native: &NativeJsProgram,
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
