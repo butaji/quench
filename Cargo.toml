@@ -126,6 +126,13 @@ lto = "off"
 inherits = "experiment"
 lto = "off"
 
+# quench-runtime holds every row since the host is erased (TOD-2034): an incremental session of
+# it peaks at 13.5 GB at -j1 or -j2 (fresh, or after a one-line edit), and the 13.8 GB box kills
+# it. Non-incremental it peaks at about 6 GB at -j1 (820 s, 717 s of it LLVM on one thread) and
+# 12 GB at -j2 (8 min). Until the crate's compile memory is cut, it builds non-incremental here.
+[profile.smoke.package.quench-runtime]
+incremental = false
+
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.
 [profile.native-support]
