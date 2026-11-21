@@ -3178,7 +3178,10 @@ impl LaneStack {
     fn function_target(&self, program: ProgramId, function: u32, cross: bool) -> Option<ScriptCallTarget> {
         let targets = if cross { &self.cross_function_targets } else { &self.function_targets };
         let known = targets[function as usize & (FUNCTION_TARGETS - 1)];
-        (known.generation() == self.generation && known.program() == program && known.function == function)
+        // A target made under other diagnostics (`Admission::DIAGNOSED`) is admitted by no link
+        // test (`Admission::admits`): resolving it again would loop, so it is made anew.
+        (known.generation() == self.generation && known.program() == program && known.function == function
+            && (known.admission.0 ^ self.admission.0) & Admission::DIAGNOSED == 0)
             .then_some(known)
     }
 
@@ -3470,6 +3473,14 @@ impl LaneStack {
     #[inline(always)]
     fn refuses(&self) -> bool {
         self.refused & Admission::REFUSED != 0
+    }
+
+    /// The admission a script call target of `program` made now holds: this generation's, with
+    /// the lane's diagnostics (`Admission::DIAGNOSED`), which every link test compares whole
+    /// (`Admission::admits`); without them no link would hold under `QUENCH_TRACE=js-jit`.
+    #[inline(always)]
+    fn target_admission(&self, program: ProgramId) -> Admission {
+        Admission(Admission::new(self.generation, program).0 | self.refused & Admission::DIAGNOSED)
     }
 
     /// The admission a target or memo made now holds: the lane's, without its conditions.
@@ -10186,7 +10197,7 @@ impl<H: Host> Vm<H> {
             // without resolving it again.
             let target = ScriptCallTarget {
                 callee,
-                admission: Admission::new(self.lane_stack.generation, program),
+                admission: self.lane_stack.target_admission(program),
                 function,
                 env,
                 entry: CallEntry::Frame,
@@ -10237,7 +10248,7 @@ impl<H: Host> Vm<H> {
         let capture = self.target_capture(code, program, env);
         let target = ScriptCallTarget {
             callee,
-            admission: Admission::new(self.lane_stack.generation, program),
+            admission: self.lane_stack.target_admission(program),
             function,
             env,
             view,
