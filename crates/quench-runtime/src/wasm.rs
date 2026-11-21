@@ -1553,6 +1553,14 @@ impl ModuleBindings<'_> {
         let solved = crate::compile::liveness::raw_webs::use_raw_forms(&mut function, &constant_neutral, returns_wide);
         let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
         function.register_roots = crate::compile::liveness::register_roots_from(&function, no_method_sites, &[], &[], solved);
+        // Every Wasm local is a frame slot by construction: no environment, dead zone or name
+        // binding can observe it (`ResidualProgram::validate`). The lowering records that set,
+        // as `compile::lower_settled` records a script function's proof, so the first query
+        // (`Function::plain_local`, the call plan's `reflects_live_parameters`) does not derive
+        // the script rule, which finds no binding atoms for these slots and proves none plain.
+        let plain = crate::bitset::BitSet::from_fn(usize::from(function.locals), |_| true);
+        let words: crate::heap::ThinBoxSlice<u64> = plain.words().to_vec().into();
+        function.plain_locals = std::cell::OnceCell::from(words);
         *constants = lowering_constants;
         Ok(function)
     }
