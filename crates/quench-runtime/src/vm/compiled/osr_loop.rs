@@ -1674,10 +1674,6 @@ fn admit_region(
     if !crate::jit_mode::base_only()
         && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls, native_call)
     {
-        if crate::trace::Channel::OsrReject.on() {
-            let op = instructions[offset].op();
-            eprintln!("ITERATION_BLOCKS op={} pc={}", crate::bytecode::opcode_name(op as usize), header as usize + offset);
-        }
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
     match admit_register_roles(
@@ -2289,11 +2285,6 @@ fn admit(
         // A dense int switch's slot is an int32 the region computes (`jumps::int_case_index`): the
         // register is defined in the loop, so it takes no entry role, and every read of it is the
         // branch table's (also admitted here, as a jump).
-        // The receiver, which the region's entry holds (`Entry::this`): a tagged value the loop
-        // reads, never one it defines.
-        opcode if opcode == crate::bytecode::Op::LoadThis => {
-            admission.tagged(instruction.result_register())?;
-        }
         opcode if crate::staged::selects_int_case(opcode) => {}
         opcode if crate::staged::branch_table(opcode) => {}
         opcode if crate::staged::returns(opcode) || crate::staged::jumps(opcode) => {}
