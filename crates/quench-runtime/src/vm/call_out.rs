@@ -334,7 +334,6 @@ impl<H: Host> Vm<H> {
         let source = operand.unwrap_or(Value::UNDEFINED);
         match step {
             Protocol::GetIterator => self.get_iterator(p, source).map(Some),
-            Protocol::GetAsyncIterator => self.get_async_iterator(p, source).map(Some),
             Protocol::ForInStart => self.for_in_start(p, source).map(Some),
             Protocol::IteratorClose => self.iterator_close(p, source).map(Some),
             Protocol::RestView { .. } => unreachable!("a rest view's step reads its activation (`rest_view_step`)"),

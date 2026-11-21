@@ -18,9 +18,6 @@ use crate::Value;
 pub(crate) enum Protocol {
     /// The iterator of the operand (`GetIterator`).
     GetIterator,
-    /// The async iterator of the operand (`GetAsyncIterator`): its `@@asyncIterator`, else the
-    /// async-from-sync wrapper of its `@@iterator` (`Vm::get_async_iterator`).
-    GetAsyncIterator,
     /// The for-in state over the operand's key snapshot (`ForInStart`).
     ForInStart,
     /// Close the iterator in the operand (`IteratorClose`).
@@ -121,7 +118,6 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
             spread: instruction.boolean_field(crate::bytecode::InstructionField::C)? },
             None, [Some(instruction.register_a()), instruction.optional_register_b()]),
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
-        Op::GetAsyncIterator => (Protocol::GetAsyncIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ConstantFieldsHeld => (Protocol::ConstantFieldsHeld { site: instruction.cache_site_index() },
