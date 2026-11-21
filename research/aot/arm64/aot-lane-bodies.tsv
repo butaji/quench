@@ -9,3 +9,9 @@ callee_loop_fault	a callee whose body contains a loop (or a switch with cases) f
 callee_ok_shapes	a callee with no loop and no switch is exact (inlined, chained, try/catch)	c2.js 59999, c3.js 39999, r1.js n=20000
 region_context	loop regions run with the lane context as their CallContext (`code.run(..., (cx as usize, ...))`); an ahead activation's rows read payload = [ctx + CALL_CONTEXT_ADAPTER_PAYLOAD] and get the LoopEntry's words (6, 3 = guard masks) instead	dispatch_fast.rs region_run_in_lane 8852-8870; the observed payload words are the entry masks
 big_rows	the same fault hits the whole-benchmark rows once lane bodies install	Basic exit 138, deltablue exit 138 (SIGBUS) with lanes on
+# After the previous lines: with enrollment preserved and the image claimed, the *base* body path
+# (the image's stitched body, no lane body) is also broken on Apple AArch64 and slower than the
+# interpreter where it runs:
+base_bodies_fault	setting `lane = None` (base body only), c1/v4/s2 exit 139 in body_general_step and Basic exits 138; raytrace exits 1	c1 139, v4 139, Basic 138, raytrace 1
+base_body_slow	where the image's base body runs (a 2M-iteration int loop), it is 20x slower than the interpreter: 0.68 s vs 0.03 s (--no-jit), same result s=-1455759936	loop2.js: aot 0.68 s, --no-jit 0.03 s, --u-jit 0.02 s
+callee_context	a non-inlined callee body is entered with a heap pointer as its CallContext (crash x21=0xbd8c0b8c8, x20=1, fault at body_general_step+0xbc reading 0x1e), although the caller's own rows read vm/residual/lane_context correctly (STEP vm=0x16d3eb720 residual=0x7000006650 context=0x16d3e8d28 pc=0x2)	crash report + link map: body_general_step+0xbc in an image run of c1.js
