@@ -104,3 +104,12 @@ construct_design	to make an escaping `new C(args)` run in a body: (a) guard `Con
 # `exit`; none of them is reached, so the `At(1)` leave is produced before the record's lowering —
 # the next probe is the body's entry (`entry_rows`/declined/guard) at the same pc, not the ops.
 at1_not_the_ops	construct()'s early returns, the allocation row and the UNLOWERED fallback were each instrumented for the first six events with the tier enabled: no output, so the body's `At(1)` leave happens before the op lowering. Next: instrument the body entry path (`entry_rows`, `declined`, `guard_exit`) for the same pc.	probes in constructions.rs / lane_region.rs, reverted
+# Which path produces At(1)? Probed and excluded (2026-11-21, tier enabled, raytrace fn 43):
+#  - Lowering::construct's early returns: no print;
+#  - allocation_row / the UNLOWERED fallback: no print;
+#  - construct_in_lane's miss (the helper a body's construction calls): no print.
+at1_unattributed	so `At(1)` is not from the construction lowering, the allocation row, the general step,
+# the lowering fallback, or the construction helper: it is produced before the first record is
+# lowered, i.e. by an entry guard (`entry_conform`/`guard_enter...`'s `guard_exit`) or by the
+# body's exit machinery itself. The next probe must instrument `guard_exit`/`exit` (the one place
+# every leave is made) with the pc and a per-call-site tag, not the ops.
