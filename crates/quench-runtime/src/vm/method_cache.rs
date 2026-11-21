@@ -288,7 +288,12 @@ impl<H: Host> Vm<H> {
         (holder.shape() == guard.owner_shape).then_some(holder)
     }
 
-    fn method_cache_guard(&self, receiver: Value, atom: Atom) -> Option<MethodGuard> {
+    /// The data property `atom` of `receiver` that a method refill caches, found in one walk of
+    /// its prototype chain: the guard naming the holder that owns it (with the holder's depth)
+    /// and the property's value. The walk runs no guest code, so the guard describes the chain as
+    /// it was when the property was found. `None` for an accessor or a link a shape cannot
+    /// answer; the caller then reads through `get_field_cached`.
+    fn method_cache_lookup(&self, receiver: Value, atom: Atom) -> Option<(MethodGuard, Value)> {
         let receiver_shape = self.object_data(receiver)?.shape();
         if self.shape_is_dictionary(receiver_shape) {
             return None;
@@ -300,20 +305,25 @@ impl<H: Host> Vm<H> {
             self.heap.object_record(owner)?;
             let data = self.shape_property_lookup(owner, atom)?;
             if let Some(slot) = self.shape_slot(data.shape(), atom) {
+                // The slot the shape resolved serves the attributes too, so it is not looked up again.
                 if slot > u16::MAX as usize
                     || self
-                        .property_attributes(owner, key)
+                        .property_attributes_at(owner, key, Some(slot))
                         .is_some_and(|attributes| attributes.accessor)
-                    || self.heap.property_get(data, slot).is_none()
                 {
                     return None;
                 }
-                return Some(MethodGuard {
+                let value = self.heap.property_get(data, slot)?;
+                if self.is_accessor_pair(data.shape(), value) {
+                    return None;
+                }
+                let guard = MethodGuard {
                     owner,
                     owner_shape: data.shape(),
                     slot: slot as u16,
                     depth,
-                });
+                };
+                return Some((guard, value));
             }
             if self.property_attributes(owner, key).is_some() {
                 return None;
@@ -443,12 +453,8 @@ impl<H: Host> Vm<H> {
             );
         }
 
-        // The guard only feeds a specialized refill, so an unspecialized site walks the chain once,
-        // for the callee alone. It is taken before the callee, which may run a getter that changes it.
-        let guard = if specialized { self.method_cache_guard(this, metadata.atom) } else { None };
-        let callee = self.get_field_cached(p, this, metadata.atom, metadata.cache)?;
-        if specialized
-            && let Some(guard) = guard
+        let (callee, guard) = self.method_refill_read(p, this, metadata.atom, metadata.cache, specialized)?;
+        if let Some(guard) = guard
             && self.heap.is_function_value(callee)
             && let Ok(target) = self.call_target(callee)
         {
@@ -472,6 +478,28 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// The callee a method site's miss reads, with the guard that caches it when one exists. A
+    /// specialized site takes a single walk (`method_cache_lookup`), which yields the holder and
+    /// the value together. The walk comes after `prepare_named_function_info_lookup`, which the
+    /// read prepares first and which can change a function's shape. An accessor, a lookup the
+    /// walk does not answer, and an unspecialized site take `get_field_cached` alone, uncached.
+    fn method_refill_read(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        atom: Atom,
+        cache: u16,
+        specialized: bool,
+    ) -> Result<(Value, Option<MethodGuard>), JsError> {
+        if specialized {
+            self.prepare_named_function_info_lookup(this, atom);
+            if let Some((guard, callee)) = self.method_cache_lookup(this, atom) {
+                return Ok((callee, Some(guard)));
+            }
+        }
+        Ok((self.get_field_cached(p, this, atom, cache)?, None))
+    }
+
     /// The shape and prototype method caches key a lookup on `this` by: an object's own, else
     /// the key no entry serves (`NON_OBJECT_RECEIVER_SHAPE`).
     fn method_receiver_key(&self, this: Value) -> (u32, Value) {
