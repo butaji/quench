@@ -14135,6 +14135,12 @@ fn enter_program_in_lane(cx: *mut LaneContext, program: ProgramId) {
     let vm = unsafe { vm(cx) };
     let context = vm.program_context_in_lane(program);
     vm.activate_context(program, context);
+    // The innermost plain activation's caller program (`PlainFrames::program`) is the program
+    // the next plain push runs under. An emitted direct call bumps the plain depth without
+    // writing it, so after a crossing push (whose side record keeps its own caller program)
+    // the word must name the entered program, or a plain frame pushed above it by emitted
+    // code reads its caller as the crossing frame's caller program.
+    vm.lane_stack.plain.program.set(program);
     // SAFETY: the context outlives the lane run; the store keeps the program's residual,
     // views and constants for it, and its context names them.
     unsafe {
