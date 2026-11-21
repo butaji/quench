@@ -68,6 +68,15 @@ impl<H: Host> Vm<H> {
         if !slots.contiguous() || slots.len() != storage_len {
             return false;
         }
+        // The target takes the source's own shape, so their slots encode alike by construction
+        // (one owner): the source's words become the target's in one run copy, no decode or recode.
+        if self.heap.copy_slot_words(target, source, shape) {
+            self.note_plain_copy_atoms(target, slots.iter().map(|&(atom, _)| atom));
+            return true;
+        }
+        let Some(source_data) = self.object_data(source) else {
+            return false;
+        };
         let mut values = smallvec::SmallVec::<[Value; ADOPT_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, storage_len);
         for (slot, value) in values.iter_mut().enumerate() {
             let Some(read) = self.heap.property_get(source_data, slot) else {
