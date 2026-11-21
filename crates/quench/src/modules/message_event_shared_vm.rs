@@ -2,7 +2,6 @@
 //! `CloseEvent` and `ErrorEvent`. Each is an `Event` with read-only fields from its init
 //! dictionary; one table describes every interface's fields and their Web IDL types.
 
-use crate::host::NodeHost;
 use crate::modules::host_members::{captured, current, function, members};
 use crate::modules::webstreams_shared_vm::{self as web, arg, get, is_nullish, is_undefined, put, record};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};

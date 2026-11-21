@@ -1,5 +1,5 @@
 use super::Runtime;
-use crate::{Host, JsError, RootId, Value};
+use crate::{JsError, RootId, Value};
 use std::fmt;
 
 /// An embedding failure and its retained guest exception, if one was thrown.

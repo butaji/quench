@@ -1,7 +1,6 @@
 //! `_stream_wrap`: Node's deprecated `JSStreamSocket`, a `net.Socket` over any Duplex stream.
 //! The class is a native constructor that extends `net.Socket` the way TLSSocket does; its
 //! methods and the stream listeners are host functions over the wrapped stream.
-use crate::host::NodeHost;
 use crate::modules::host_members::{captured, constructor, current, function, leading, members, methods};
 use crate::modules::stream_shared_vm::{get, inherit, is_undefined};
 use quench_runtime::{NativeContext, RootId, RootedError};

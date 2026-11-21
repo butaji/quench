@@ -1,6 +1,5 @@
 //! TLS Server projects accepted TCP owners into actual SSL sessions.
 use super::socket::{get, method, set};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// The handshake deadline a server gives each connection unless `handshakeTimeout` sets

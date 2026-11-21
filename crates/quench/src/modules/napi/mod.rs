@@ -11,7 +11,6 @@
 //! JavaScript exceptions raised while an addon runs become the environment's pending
 //! exception; the trampoline rethrows it when the addon returns, as Node does.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{
     cell::{Cell, RefCell},

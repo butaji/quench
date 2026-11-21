@@ -1,6 +1,5 @@
 //! Promise consumers own a private FIFO; the shared event handle owns kernel work.
 use super::{get, nullish, set};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const DEFAULT_MAX_QUEUE: f64 = 2048.0;

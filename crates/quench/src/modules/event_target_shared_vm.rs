@@ -5,7 +5,6 @@
 //! list of listener records in registration order, as Node keeps them: a removed record
 //! keeps its `next`, so a dispatch walking the list continues past it, and a listener added
 //! during a dispatch is reached unless it follows the record running.
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

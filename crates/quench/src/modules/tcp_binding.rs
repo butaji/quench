@@ -1,6 +1,5 @@
 //! Native TCP binding over Transport's actual socket ownership.
 use super::{event_constructor_shared_vm::get, net_shared_vm as net};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 const LIBUV_PROTOTYPE: &str = "\0native:LibuvStreamWrapPrototype";

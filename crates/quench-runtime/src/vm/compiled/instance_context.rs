@@ -7,7 +7,7 @@
 //! long as the environment the function keeps alive.
 
 use super::{
-    CallContext, CompiledProgram, DiagnosticReferenceCallout, Host, MemoryArguments,
+    CallContext, CompiledProgram, DiagnosticReferenceCallout, MemoryArguments,
     ProgramId, ReferenceCallSiteDiagnostics, Vm, diagnostic_reference_callout, displacement_base,
 };
 use crate::Value;

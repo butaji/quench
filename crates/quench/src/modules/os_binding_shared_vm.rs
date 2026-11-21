@@ -2,7 +2,6 @@
 //!
 //! Every operation mirrors the source libuv reads for Node on the host
 //! platform, so the projected values keep Node's identities and units.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::ffi::CStr;
 type Context<'a> = NativeContext<'a>;

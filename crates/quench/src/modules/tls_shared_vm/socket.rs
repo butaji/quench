@@ -1,5 +1,4 @@
 //! TLS session operations share the existing physical net socket owner.
-use crate::host::NodeHost;
 use foreign_types::ForeignTypeRef;
 use openssl::ssl::{Ssl, SslContextRef, SslSession, SslVerifyMode};
 use quench_runtime::{NativeContext, RootId, RootedError};

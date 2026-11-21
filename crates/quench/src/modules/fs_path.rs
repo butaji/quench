@@ -1,5 +1,4 @@
 //! Node path validation and raw bytes at the filesystem boundary.
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 use std::path::PathBuf;
 

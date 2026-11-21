@@ -2,7 +2,6 @@
 //! connections the HTTP connection listener serves; its `Agent` is an HTTP agent whose
 //! connections are `tls.connect` sockets, with a TLS session cache per origin.
 
-use crate::host::NodeHost;
 use crate::modules::host_members::{captured, constructor, current, function, members, methods};
 use crate::modules::http_shared_vm::server;
 use crate::modules::stream_shared_vm::{call_method, get, is_nullish, is_undefined, on, once, put, put_number};

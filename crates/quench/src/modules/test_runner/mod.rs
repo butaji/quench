@@ -12,7 +12,6 @@ pub(crate) mod reporters;
 pub(crate) mod run;
 pub(crate) mod wait_for;
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::time::Instant;
 

@@ -1,6 +1,5 @@
 //! TLS handle methods resolve genuine session identity through a Core weak map.
 use super::socket::{get, set};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 pub(crate) fn registry(c: &mut Context<'_>) -> Result<RootId, RootedError> {

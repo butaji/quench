@@ -2,7 +2,7 @@
 //! production admission/alias analysis is deliberately not implemented here.
 use super::*;
 use super::super::operations::{ADDITION, immediate_number_pair, number_operator, number_value_operator};
-use crate::heap::{ArrayObject, ArrayStorageProofs, Cell, Heap, LaneProofScope, Object};
+use crate::heap::{ArrayObject, ArrayStorageProofs, Heap, LaneProofScope, Object};
 
 #[derive(Clone, Copy)]
 #[repr(u16)]

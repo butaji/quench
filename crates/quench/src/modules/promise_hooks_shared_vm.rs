@@ -1,6 +1,5 @@
 //! V8-style Promise hook subscriptions backed by the VM's Promise lifecycle.
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 #[derive(Clone, Copy)]

@@ -1,5 +1,4 @@
 //! CLI eval's lazy builtin globals, using the original Module loader and VM properties.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 type Context<'a> = NativeContext<'a>;
 

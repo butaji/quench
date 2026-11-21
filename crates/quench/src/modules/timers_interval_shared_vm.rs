@@ -6,7 +6,6 @@
 //! waiting `next()` or is counted; counted ticks are yielded before an abort is observed. An
 //! abort clears the interval and rejects the waiting `next()` with an `AbortError`; `return`
 //! and `throw` finish the generator.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

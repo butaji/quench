@@ -4,7 +4,6 @@
 //! A handle holds its parts (buffers and the ranges they cover) under a private symbol,
 //! so slices share bytes and the collector owns their lifetime. Every part of a
 //! Quench Blob is memory-resident, so a reader answers each pull synchronously.
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 

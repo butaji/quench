@@ -305,7 +305,6 @@ pub(crate) const NODE_FLAGS: &[&str] = &[
     "-r",
 ];
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// The variable through which Node's start-up requests V8 coverage.

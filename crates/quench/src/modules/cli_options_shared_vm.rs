@@ -1,5 +1,4 @@
 //! Native option queries project the same startup state used by feature gates.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 pub(crate) mod internal;
 mod schema;

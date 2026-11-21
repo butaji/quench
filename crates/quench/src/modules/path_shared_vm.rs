@@ -1,6 +1,5 @@
 //! Shared-VM adapter for the canonical Node Path string algorithms.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 #[derive(Clone, Copy)]

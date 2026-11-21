@@ -3,7 +3,6 @@
 //! name/value list (alternating strings).
 use super::private_slots as slots;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

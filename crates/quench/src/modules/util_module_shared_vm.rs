@@ -1,7 +1,6 @@
 //! `node:util` in Rust (lib/util.js): the module's exports over the native inspector
 //! (`util_inspect_shared_vm`), predicates, comparisons and policies.
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use crate::modules::util_inspect_shared_vm::{self as inspect, DefaultOption};
 use crate::modules::util_shared_vm::validate_function;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, ValueType};

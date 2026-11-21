@@ -4,7 +4,6 @@
 //! `'error'` listeners through the uncaught-exception capture callback.
 use super::event_constructor_shared_vm::get;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

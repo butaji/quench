@@ -2,7 +2,6 @@
 //! `url` crate. A URL keeps its serialization in a private slot; a search-params object
 //! keeps its name/value list (alternating strings) and the URL it belongs to.
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 use super::private_slots as slots;
 use url::Url;

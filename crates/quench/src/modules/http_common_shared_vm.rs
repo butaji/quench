@@ -2,7 +2,6 @@
 //! header-value rules, the patterns the HTTP classes match header values with, and the
 //! parser helpers.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// Node's `chunkExpression` and `continueExpression`.

@@ -1,6 +1,5 @@
 //! Net endpoint overloads select TCP ports or local paths before OS effects.
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn normalize(

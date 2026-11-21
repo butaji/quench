@@ -4,7 +4,6 @@ use super::{
     crypto_asymmetric_operations::{RsaOperation, RsaOptions},
     crypto_digest::Digest,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 fn coded(c: &mut Context<'_>, code: &str, text: &str) -> RootedError {

@@ -1,7 +1,6 @@
 //! Public async-hooks classes over the shared context and hook engines.
 use super::async_hooks_shared_vm as engine;
 use super::host_members::leading;
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 pub(super) type Context<'a> = NativeContext<'a>;
 

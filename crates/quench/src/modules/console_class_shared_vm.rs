@@ -5,7 +5,6 @@
 //! streams are its `_stdout` and `_stderr`; the global console writes to the process's.
 use super::console_format_shared_vm::{self as format, Options};
 use super::console_shared_vm::Stream;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

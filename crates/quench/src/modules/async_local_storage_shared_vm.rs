@@ -3,7 +3,6 @@
 use super::async_hooks_shared_vm::{invalid_function, number_property, set_number, LOCAL_ID};
 use super::async_hooks_state::{SharedAsyncHooksState, StoreContext};
 use super::host_members::leading;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn initialize_storage(

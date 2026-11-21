@@ -1,6 +1,5 @@
 //! Genuine Unix process facts: the `process_methods` binding, and the public methods
 //! Node's `wrapProcessMethods` (lib/internal/process/per_thread.js) makes over it.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 

@@ -1,6 +1,5 @@
 //! `node:buffer` is Node's lib/buffer.js over `internalBinding('buffer')`; this module
 //! gives host code its canonical `Buffer`, `FastBuffer` and prototype.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 

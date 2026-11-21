@@ -2,7 +2,6 @@
 //! event group's shared data (`SharedNodeState::event_targets_api`) that builds the DOM event
 //! family on first use.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

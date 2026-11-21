@@ -3,7 +3,6 @@
 //! cursor helpers.
 
 use super::stream_shared_vm::{arg, call_method, captures, get, inherit, is_undefined, put, put_bool, Context, Outcome};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 
 const MODULE_CACHE: &str = "\0builtin:tty";

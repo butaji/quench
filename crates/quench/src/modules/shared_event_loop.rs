@@ -1,6 +1,5 @@
 //! Scheduler queues and callbacks owned by the shared Node host.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::{HashMap, HashSet, VecDeque};
 

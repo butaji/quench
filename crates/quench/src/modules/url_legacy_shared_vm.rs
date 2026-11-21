@@ -1,7 +1,6 @@
 //! Node's legacy URL API (lib/url.js): the `Url` class with `parse`, `format`, `resolve`,
 //! `resolveObject` and `parseHost`, and the module functions over it.
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;

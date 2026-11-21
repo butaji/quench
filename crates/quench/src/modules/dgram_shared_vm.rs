@@ -2,7 +2,6 @@
 //! private state names its handle and its bind and connect phases. Sends and connects made
 //! before the socket is bound wait in its queue until it is listening.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

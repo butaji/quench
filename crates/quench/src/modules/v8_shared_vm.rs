@@ -3,7 +3,6 @@
 //! runtime's heap accounting, under Node's default heap limit. A heap snapshot is V8's
 //! format holding only its root; the GC profiler and coverage report nothing collected.
 
-use crate::host::NodeHost;
 use crate::modules::util_shared_vm::validate_function;
 use quench_runtime::{NativeContext, RootId, RootedError};
 

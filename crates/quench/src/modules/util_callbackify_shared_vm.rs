@@ -1,5 +1,4 @@
 //! Native callbackify lifecycle: call original, settle, queue, invoke.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn function(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {

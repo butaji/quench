@@ -1,7 +1,6 @@
 //! `process.execve`'s system call. Node's `wrapProcessMethods` validates the path, the
 //! arguments and the environment and emits the experimental warning and the diagnostics
 //! channel message; this native then replaces the process image as Node's `Execve` does.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::ffi::CString;
 type Context<'a> = NativeContext<'a>;

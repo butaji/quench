@@ -1,5 +1,4 @@
 //! Socket option requests and their cached Node-visible transitions.
-use crate::host::NodeHost;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 
 pub(crate) const MILLISECONDS_PER_SECOND: f64 = 1000.0;

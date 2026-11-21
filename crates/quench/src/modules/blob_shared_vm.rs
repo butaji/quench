@@ -4,7 +4,6 @@
 //! A Blob's slots are its binding handle (`internalBinding('blob')`), size and type; the
 //! handle's parts own the bytes, so slices share them.
 
-use crate::host::NodeHost;
 use crate::modules::blob_binding_shared_vm as binding;
 use crate::modules::host_members::{captured, current, function, members};
 use crate::modules::webstreams_shared_vm::{

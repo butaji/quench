@@ -1,7 +1,6 @@
 //! Net lookup callbacks retain endpoint ownership before requesting OS connect.
 use super::event_constructor_shared_vm::get;
 use super::net_shared_vm;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 

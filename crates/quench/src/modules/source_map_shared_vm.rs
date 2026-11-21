@@ -4,7 +4,6 @@
 use super::event_constructor_shared_vm::get;
 use super::util_shared_vm::validate_boolean;
 use crate::host::shared_vm::{commonjs, operation};
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 use std::cell::Cell;
 

@@ -1,5 +1,4 @@
 //! Node argument parsing over the shared VM's original ECMAScript operations.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 

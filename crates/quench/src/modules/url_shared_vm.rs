@@ -2,7 +2,6 @@
 //! through: the WHATWG classes (`url_whatwg_shared_vm`), the legacy API
 //! (`url_legacy_shared_vm`) and the file URL conversions.
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;

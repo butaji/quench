@@ -1,7 +1,6 @@
 //! `events.EventEmitterAsyncResource`: an EventEmitter whose emits run in the scope of its own
 //! `AsyncResource`, an `EventEmitterReferencingAsyncResource` that names it back.
 use super::event_target_shared_vm::{api, argument, attach_slot, get, put, receiver_slot, require_new};
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

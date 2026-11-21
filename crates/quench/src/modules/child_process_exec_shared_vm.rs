@@ -1,6 +1,5 @@
 //! execFile output collection and its single terminal callback transition.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) const DEFAULT_MAX_BUFFER: f64 = (1024 * 1024) as f64;

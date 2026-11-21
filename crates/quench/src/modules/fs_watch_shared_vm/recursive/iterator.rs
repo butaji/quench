@@ -1,6 +1,5 @@
 //! One pending next() owns its listener, resolver, and optional abort subscription.
 use super::{closed, get, method, nullish, operation, set};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn done(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {

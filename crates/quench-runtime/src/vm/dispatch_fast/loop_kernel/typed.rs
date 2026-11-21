@@ -1,6 +1,5 @@
 //! A kernel's loads and stores of typed array elements: each kind's element as an f64, and
 //! an f64 stored as the kind's element, as the typed array element get and set do.
-use super::*;
 use crate::heap::TypedArrayKind;
 use crate::staged::typed_elements::{
     element_number, store_double_element, store_number_element, NATIVE_LITTLE_ENDIAN,

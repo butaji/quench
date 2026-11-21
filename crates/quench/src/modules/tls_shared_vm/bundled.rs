@@ -1,5 +1,4 @@
 //! The public bundled trust list and SSL contexts share immutable PEM product data.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 

@@ -1,5 +1,4 @@
 //! Native provider facts consumed by the configured SDK normalization policy.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 #[path = "crypto_provider_facts.rs"]
 pub(crate) mod native;

@@ -3,7 +3,6 @@ use super::event_target_shared_vm::{
     api, argument, attach_slot, get, install_members, install_tag_and_inspect, invalid_this, put, require_new, slot,
     to_dom_string, Member,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

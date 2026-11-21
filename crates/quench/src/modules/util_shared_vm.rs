@@ -1,6 +1,5 @@
 //! Shared-VM utilities and native builtin-brand predicates.
 
-use crate::host::NodeHost;
 use crate::modules::event_constructor_shared_vm::get;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 

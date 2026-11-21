@@ -3,7 +3,6 @@
 //! Server is an EventEmitter whose listener the transport owns. Every member reads the
 //! module's operation table (its function data) for the transport operations it projects.
 
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

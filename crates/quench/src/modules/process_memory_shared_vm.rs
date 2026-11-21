@@ -1,5 +1,4 @@
 //! Genuine OS memory facts for process APIs, independent of guest fs overrides.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 pub(crate) fn available(
     context: &mut NativeContext<'_>,

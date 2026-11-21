@@ -1,5 +1,4 @@
 //! Native UTF-8 operations used by Node's encoding algorithms.
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 use crate::modules::util_shared_vm::named_get as get;

@@ -1,7 +1,6 @@
 //! Internal slots of host classes (Node's `#private` fields): own properties keyed by
 //! host-private symbols, which script can neither see nor reach. Each slot's symbol is
 //! made once per realm and cached under its name.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

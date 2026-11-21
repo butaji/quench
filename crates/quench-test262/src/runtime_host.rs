@@ -383,7 +383,7 @@ impl Test262RuntimeHost {
                 Some(Self::prepare_for_runtime(&mut runtime, harness, source, name, kind)?)
             } else { None };
             let program = if execution_mode == ExecutionMode::NativeOnly {
-                { prepared.as_ref().expect("native preparation").entry.clone() }
+                prepared.as_ref().expect("native preparation").entry.clone()
             } else { match kind {
                 SourceKind::Script => Engine::specialize(source, name),
                 SourceKind::Module => Engine::specialize_module_unspecialized(source, name),

@@ -5,7 +5,6 @@
 //! `perf_histogram`; this module assembles them and keeps the group's shared data
 //! (`api`): private slot keys, the classes' prototypes and the intrinsics they use.
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, missing_args, put};
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 pub(super) use crate::modules::util_shared_vm::{validate_function, validate_number};

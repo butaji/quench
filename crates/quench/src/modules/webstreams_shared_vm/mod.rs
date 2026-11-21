@@ -17,7 +17,6 @@ pub(crate) mod strategies;
 pub(crate) mod transform;
 pub(crate) mod writable;
 
-use crate::host::NodeHost;
 use crate::modules::host_members::{self, Members};
 use quench_runtime::{DescriptorFields, NativeContext, PromiseSnapshot, RootId, RootedError};
 

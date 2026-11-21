@@ -2,7 +2,6 @@
 //! or `--permission-audit`, answering from the grants of Node's normalized startup options.
 use super::event_constructor_shared_vm::get;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::cell::RefCell;
 

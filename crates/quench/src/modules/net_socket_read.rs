@@ -1,6 +1,5 @@
 //! Socket pull requests and native read interest retain the original handle hooks.
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn method(

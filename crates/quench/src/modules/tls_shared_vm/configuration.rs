@@ -1,5 +1,4 @@
 //! Configuration values are read once; public native-method hooks retain their effects.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 pub(crate) const METHODS: &[&str] = &[
     "setCiphers",

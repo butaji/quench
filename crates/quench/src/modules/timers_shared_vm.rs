@@ -1,4 +1,3 @@
-use crate::host::NodeHost;
 use crate::modules::shared_event_loop::SharedCallback;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 use std::time::Duration;

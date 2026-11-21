@@ -1,5 +1,4 @@
 use super::net_connect_error::TcpConnectFailure;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;

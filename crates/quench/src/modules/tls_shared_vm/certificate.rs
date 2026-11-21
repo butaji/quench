@@ -1,5 +1,4 @@
 //! Actual X509 data supplies TLS peer-certificate projections.
-use crate::host::NodeHost;
 use openssl::x509::{X509NameRef, X509Ref};
 use quench_runtime::{NativeContext, RootId, RootedError};
 fn name_object(

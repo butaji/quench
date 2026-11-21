@@ -2,7 +2,6 @@
 //! (`async_hooks_shared_vm`, `async_hook_registry_shared_vm`): `AsyncLocalStorage`,
 //! `AsyncResource`, `createHook`'s `AsyncHook`, and the execution context queries.
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, require_new};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

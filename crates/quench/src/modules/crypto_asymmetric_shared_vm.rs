@@ -4,7 +4,6 @@ use super::{
     crypto_asymmetric::{Encoding, Format, KeyError, KeyKind, OwnedKey},
     crypto_secret_material::Material,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Arc;
 type Context<'a> = NativeContext<'a>;

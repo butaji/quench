@@ -1,7 +1,6 @@
 //! Child options are snapshotted once, validated in Node order, then projected
 //! into syscall-safe identity values. No guest access runs in pre-exec.
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::process::Command;
 

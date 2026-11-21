@@ -1,5 +1,4 @@
 //! Fork policy projects the shared spawn path; it never launches a second host.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 use crate::modules::util_shared_vm::named_get as get;

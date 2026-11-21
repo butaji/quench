@@ -2,7 +2,6 @@
 //! upgrade, its frames, the close handshake and the `open`, `message`, `error` and `close`
 //! events.
 
-use crate::host::NodeHost;
 use crate::modules::host_members::{captured, current, function, members};
 use crate::modules::message_event_shared_vm::{self as events, Event};
 use crate::modules::webstreams_shared_vm::{self as web, arg, get, is_nullish, is_undefined, literal, num, put, put_num, record};

@@ -20,7 +20,6 @@ pub(crate) mod state;
 pub(crate) mod utils;
 pub(crate) mod writable;
 
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 pub(crate) type Context<'a> = NativeContext<'a>;

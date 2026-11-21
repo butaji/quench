@@ -2,7 +2,6 @@
 //! the rows and columns of its data, drawn as a box.
 
 use super::console_format_shared_vm::{self as format, Options};
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

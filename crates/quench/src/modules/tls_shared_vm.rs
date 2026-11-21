@@ -1,5 +1,4 @@
 //! Native TLS configuration, discovery, and certificate name authorization.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) mod bundled;

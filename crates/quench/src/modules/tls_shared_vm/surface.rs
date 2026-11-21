@@ -3,7 +3,6 @@
 //! and the module functions.
 
 use super::socket::{get, method, set};
-use crate::host::NodeHost;
 use crate::modules::host_members::{accessors, constructor, current, function, members, methods};
 use quench_runtime::{NativeContext, RootId, RootedError};
 

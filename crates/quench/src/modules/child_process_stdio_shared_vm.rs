@@ -1,5 +1,4 @@
 //! One normalized stdio specification for OS descriptors and guest projections.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::process::Stdio;
 

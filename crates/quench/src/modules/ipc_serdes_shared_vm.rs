@@ -3,7 +3,6 @@
 //! buffer views are host objects tagged by type (Node Buffers keep their class) and other
 //! host objects travel as shallow copies.
 
-use crate::host::NodeHost;
 use quench_runtime::{
     DeserializerDelegate, HostObjectRead, NativeContext, RootId, RootedError, SerializerDelegate,
     SharedWireInput, ValueDeserializer, ValueSerializer, WireInput, WireOutput,

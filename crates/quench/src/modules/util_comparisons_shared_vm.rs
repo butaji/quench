@@ -1,7 +1,6 @@
 //! Node's deep equality (lib/internal/util/comparisons.js: `isDeepEqual`,
 //! `isDeepStrictEqual` and `isPartialStrictEqual`) and its line diff (`util.diff`,
 //! internal/assert/myers_diff.js).
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, BuiltinData, NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;

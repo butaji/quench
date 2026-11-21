@@ -1,6 +1,5 @@
 //! EventEmitter inspection derives copies and counts from its listener store.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 

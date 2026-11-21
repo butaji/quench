@@ -8,7 +8,6 @@ use super::event_constructor_shared_vm::get;
 use super::util_shared_vm::{
     argument_type_error, argument_type_error_with_expected, argument_value_error, validate_boolean, validate_string,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;

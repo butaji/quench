@@ -1,7 +1,6 @@
 //! `node:repl`: `REPLServer`, a readline `Interface` that evaluates each line (or the
 //! lines a recoverable syntax error buffers) in its context and writes the result with
 //! its writer; `.`-commands; and the interactive REPL `-i` starts.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

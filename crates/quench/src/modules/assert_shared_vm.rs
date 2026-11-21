@@ -7,7 +7,6 @@
 //! source for `ok`, and the throws/rejects/match families' explanations.
 use super::console_format_shared_vm::{self as format, Layout, Options};
 use super::util_comparisons_shared_vm::{self as comparisons, Mode};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;

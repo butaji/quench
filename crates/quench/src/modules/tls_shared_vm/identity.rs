@@ -1,5 +1,4 @@
 //! Certificate name authorization shared by public TLS and encrypted sockets.
-use crate::host::NodeHost;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 use std::net::IpAddr;
 

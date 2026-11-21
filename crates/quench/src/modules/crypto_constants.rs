@@ -1,7 +1,6 @@
 //! Native ABI constants shared by the public and internal crypto namespaces.
 //! Padding values come from the linked OpenSSL headers; the salt/check flags
 //! below are the literal ABI definitions in openssl/rsa.h and openssl/dh.h.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 // node_constants.cc retains this historical ABI when OpenSSL removes its macro.
 const RSA_SSLV23_PADDING: i32 = 2;

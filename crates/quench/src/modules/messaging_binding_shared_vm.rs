@@ -1,6 +1,5 @@
 //! Native messaging primitives consumed by Node's `internal/worker` library.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

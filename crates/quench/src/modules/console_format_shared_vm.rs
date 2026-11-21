@@ -5,7 +5,6 @@
 //! (`console_shared_vm::inspect_flat`), and anything else is written structurally here:
 //! primitives, functions, errors (their stack), symbols, custom inspectors, dates, regular
 //! expressions, maps, sets, arrays and objects with their constructor's name, to a depth.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

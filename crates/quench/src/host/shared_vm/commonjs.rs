@@ -1,7 +1,7 @@
 //! CommonJS host policy. Guest code, objects and calls belong to the shared VM.
 
 use super::typescript_files::TypeScriptFile;
-use crate::host::{EntryGoal, NodeHost};
+use crate::host::EntryGoal;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 

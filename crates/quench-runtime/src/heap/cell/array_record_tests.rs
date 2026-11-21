@@ -2,7 +2,6 @@
 
 use super::*;
 
-use super::*;
 use super::super::ArrayElements;
 
 fn values(array: &ArrayObject) -> Vec<Value> {

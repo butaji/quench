@@ -6,7 +6,6 @@ use std::io::Write;
 
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-use crate::host::NodeHost;
 
 type Context<'a> = NativeContext<'a>;
 

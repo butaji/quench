@@ -1,5 +1,4 @@
 //! WebIDL ByteString conversion and HTTP header-field checks, in Rust.
-use crate::host::NodeHost;
 use quench_runtime::{IntactBuiltin, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

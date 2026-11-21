@@ -1,6 +1,5 @@
 //! WHATWG TextEncoder over the runtime's UTF-16 strings and byte views.
 
-use crate::host::NodeHost;
 use quench_runtime::{
     BuiltinBrand, DescriptorFields, NativeContext, RootId, RootedError, ValueType,
 };

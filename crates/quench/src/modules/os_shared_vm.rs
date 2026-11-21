@@ -1,7 +1,6 @@
 //! `node:os` in Rust: lib/os.js over the native OS binding on Unix, and the host facts
 //! `sysinfo` reports elsewhere.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 #[cfg(not(target_os = "macos"))]
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

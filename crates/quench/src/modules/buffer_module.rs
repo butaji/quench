@@ -2,7 +2,6 @@
 //! its statics, its prototype and the module's exports. Byte work goes through the buffer
 //! binding (`buffer_binding_shared_vm`) and codecs (`buffer_codec`).
 
-use crate::host::NodeHost;
 use crate::modules::buffer_binding_shared_vm as binding;
 use crate::modules::buffer_codec as codec;
 use crate::modules::util_shared_vm::validate_number;

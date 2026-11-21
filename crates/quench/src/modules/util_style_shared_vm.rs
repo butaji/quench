@@ -1,5 +1,4 @@
 //! ANSI color facts and native util.styleText policy.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const DEFAULT_FOREGROUND: u16 = 39;

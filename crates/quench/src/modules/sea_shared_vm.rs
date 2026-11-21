@@ -1,7 +1,6 @@
 //! `node:sea` (lib/sea.js) for an executable that is never a single-executable application:
 //! `isSea()` is false and every asset accessor fails as Node's does outside one.
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

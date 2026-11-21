@@ -3,7 +3,6 @@
 //! spellings of the same host. Each object keeps its native state as a byte record under a
 //! private slot: a SocketAddress one record, a BlockList its rules newest first.
 
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 use std::net::{Ipv4Addr, Ipv6Addr};
 

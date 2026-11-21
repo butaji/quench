@@ -1,6 +1,5 @@
 //! Native net option validation before any transport effect.
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::net::IpAddr;
 

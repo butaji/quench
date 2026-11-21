@@ -1,6 +1,5 @@
 //! Raw directory scanning for the configured Node filesystem policy.
 use super::fs_shared_vm::{self as fs, UV_DIRENT_DIR, UV_DIRENT_LINK, UV_DIRENT_UNKNOWN};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 type Context<'a> = NativeContext<'a>;

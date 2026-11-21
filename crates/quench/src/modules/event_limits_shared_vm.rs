@@ -1,6 +1,5 @@
 //! Node's shared listener limit and its emitter/target projections.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) const DEFAULT_MAX_LISTENERS: f64 = 10.0;

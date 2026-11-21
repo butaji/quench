@@ -14,7 +14,7 @@
 use cranelift_codegen::ir::InstBuilder;
 use super::wasm_instance_stage::value_kind;
 use super::{
-    Analysis, AnalysisState, BODY_CALL_CONV, Emitter, Host, Kind, Plan, Slot, function_name,
+    Analysis, AnalysisState, BODY_CALL_CONV, Emitter, Kind, Plan, Slot, function_name,
     internal_signature,
 };
 use crate::WasmSignature;

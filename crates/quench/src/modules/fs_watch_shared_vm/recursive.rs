@@ -1,7 +1,6 @@
 //! Recursive watch policy composes the canonical public per-path watcher.
 //! Private class data owns the tree in the VM heap, so callback cycles are GC-visible.
 use super::{get, nullish, set};
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 pub(crate) mod iterator;
 

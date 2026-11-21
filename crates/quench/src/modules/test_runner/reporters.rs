@@ -5,7 +5,6 @@ use super::report::{Directive, Kind, Reporter, Style, TestReport};
 #[path = "reporters_failure.rs"]
 mod failure_text;
 use crate::host::shared_vm::commonjs::{cached_native_binding, stream_module};
-use crate::host::NodeHost;
 use crate::modules::host_members::{captured, constructor, current, function, leading, members, methods};
 use crate::modules::stream_shared_vm::{get, inherit, is_undefined, put};
 use quench_runtime::{NativeContext, RootId, RootedError};

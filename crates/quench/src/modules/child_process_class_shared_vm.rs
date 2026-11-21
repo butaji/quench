@@ -3,7 +3,6 @@
 //! operations own the OS process and its pipes; a ChildProcess projects their events
 //! (`__quenchDispatch`) onto its streams and its own `exit`/`close` events.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

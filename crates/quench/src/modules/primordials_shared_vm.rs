@@ -9,7 +9,6 @@
 //! renamed keys, descriptor fields, `uncurryThis`, `applyBind` and `bind` wrappers, and the
 //! same `Reflect.defineProperty` results.
 
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

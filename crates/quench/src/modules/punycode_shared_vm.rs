@@ -1,6 +1,5 @@
 //! `node:punycode` in Rust: Punycode.js (RFC 3492 Bootstring), which lib/punycode.js is.
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

@@ -1,6 +1,5 @@
 //! Callable EventEmitter construction and the canonical capture policy.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn get(

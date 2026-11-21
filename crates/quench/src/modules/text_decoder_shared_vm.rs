@@ -1,6 +1,5 @@
 //! Shared-VM TextDecoder facade over the Node-owned decoder semantics.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 

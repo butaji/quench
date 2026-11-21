@@ -1,7 +1,6 @@
 //! net.Server listen generations and DNS callbacks share the public Node lifecycle.
 use super::event_constructor_shared_vm::get;
 use super::net_shared_vm;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 

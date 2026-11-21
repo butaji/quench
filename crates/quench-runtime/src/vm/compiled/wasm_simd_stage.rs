@@ -6,7 +6,7 @@
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
-    Analysis, AnalysisState, Emitter, Host, Kind, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
+    Analysis, AnalysisState, Emitter, Kind, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
     SIMD_KERNEL_RIGHT, SIMD_KERNEL_WORDS, Slot, VECTOR_IR, compiled_simd_kernel,
 };
 use crate::WasmType;

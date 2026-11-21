@@ -3,7 +3,6 @@
 //! together on the first read of any of them (`process_surface::LAZY_MEMBERS`).
 use super::event_constructor_shared_vm::get;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

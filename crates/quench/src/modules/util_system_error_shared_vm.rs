@@ -1,5 +1,4 @@
 //! Target libuv protocol facts shared by Node utility and host I/O errors.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 include!("uv_errors.rs");

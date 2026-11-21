@@ -1,6 +1,5 @@
 //! Child environment enumeration and coercion shared by async and sync spawn.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{collections::HashSet, process::Command};
 

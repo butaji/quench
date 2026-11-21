@@ -4,7 +4,6 @@
 //! (`console_class_shared_vm`) defines on first use. A writer writes a call of plain strings
 //! and primitives directly (`plain_line`), and formats any other (`console_format_shared_vm`).
 use super::util_inspect_shared_vm::identifier_key;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// The global console (`facade`).

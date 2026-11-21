@@ -13,7 +13,7 @@ use super::wasm_stage::infallible;
 use super::wasm_call_stage::is_tail_call;
 use super::{
     Analysis, BODY_CALL_CONV, CONTEXT_CALL_REFERENCE, CONTEXT_CALL_REFERENCE_DIAGNOSTIC,
-    CONTEXT_INSTANCE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Host, Kind,
+    CONTEXT_INSTANCE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Kind,
     Slot, Vm, internal_signature, invariant,
 };
 use crate::bytecode::WideInstruction;

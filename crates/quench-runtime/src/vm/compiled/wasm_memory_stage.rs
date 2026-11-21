@@ -5,7 +5,7 @@
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
-    Analysis, AnalysisState, CONTEXT_MEMORY_LENGTH, CallContext, Emitter, Host, Kind, Region, Slot,
+    Analysis, AnalysisState, CONTEXT_MEMORY_LENGTH, CallContext, Emitter, Kind, Region, Slot,
     Vm, compiled_memory_copy, compiled_memory_fill, refresh_memory_length,
 };
 use crate::bytecode::{Function, WideInstruction};

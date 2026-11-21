@@ -1,6 +1,5 @@
 //! Node's lazy data properties: a property that reads a library module's export on first
 //! access (SetLazyDataProperty), and the globals the bootstrap defines that way.
-use crate::host::NodeHost;
 use crate::modules::event_constructor_shared_vm::get;
 use quench_runtime::{NativeContext, RootId, RootedError};
 

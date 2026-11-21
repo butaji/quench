@@ -1,6 +1,5 @@
 //! Public endpoint views follow original handle methods and Node's lazy caches.
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn set(

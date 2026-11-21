@@ -3,7 +3,6 @@
 //!
 //! A report is one document of plain objects (`document`): `getReport` returns it, and the
 //! binding's `getReport` and `writeReport` serialize it.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 type Context<'a> = NativeContext<'a>;
 

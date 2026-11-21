@@ -1,5 +1,4 @@
 //! Dynamic C++ fatal-exception boundary, separated from the replaceable default.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 type Context<'a> = NativeContext<'a>;
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {

@@ -1,5 +1,4 @@
 //! Node's mutable public `STATUS_CODES` object.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 

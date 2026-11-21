@@ -1,6 +1,5 @@
 //! `node:string_decoder` in Rust (lib/string_decoder.js) over the native decoder state.
 use super::string_decoder_codec::{DecoderState, Layout, StringTooLong, ENCODINGS};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 use crate::modules::util_shared_vm::named_put as put;

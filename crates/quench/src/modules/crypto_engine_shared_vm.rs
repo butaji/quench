@@ -1,5 +1,4 @@
 //! Shared OpenSSL engine loading and errors for crypto and TLS.
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) const ENGINE_METHOD_ALL: u32 = 0xffff;

@@ -8,7 +8,6 @@
 pub(crate) mod child;
 pub(crate) mod primary;
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 

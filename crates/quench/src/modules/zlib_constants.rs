@@ -1,6 +1,5 @@
 //! `internalBinding('zlib')`'s mode ABI and `internalBinding('constants').zlib`
 //! (src/node_zlib.cc `node_zlib_mode`, `DefineZlibConstants`).
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// node_zlib.cc `node_zlib_mode`: the numbers lib/zlib.js passes to the handles.

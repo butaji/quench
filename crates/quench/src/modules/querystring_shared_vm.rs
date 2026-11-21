@@ -1,7 +1,6 @@
 //! `node:querystring` in Rust (lib/querystring.js and internal/querystring.js), over
 //! UTF-16 code units as the JavaScript implementation reads them.
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;

@@ -9,7 +9,6 @@ pub(crate) mod headers;
 pub(crate) mod request;
 pub(crate) mod response;
 
-use crate::host::NodeHost;
 use crate::modules::host_members::Members;
 use crate::modules::webstreams_shared_vm::{self as web, get, put, record};
 use quench_runtime::{NativeContext, RootId, RootedError};

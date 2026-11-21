@@ -1,6 +1,5 @@
 //! Payload-word tests of the object record.
 
-use super::*;
 
 use super::Object;
 use crate::value::Value;

@@ -8,7 +8,6 @@
 //! it to `ActiveChannel`, the last removal back to `Channel`; `_subscribers` projects the
 //! registry list and `_stores` holds its bound stores.
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, put, queue_uncaught, require_new};
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError, ValueType};
 use std::collections::HashMap;
 

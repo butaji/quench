@@ -4,7 +4,6 @@
 //! process retains each enabled one (`TraceState::enabled`).
 use super::event_constructor_shared_vm::get;
 use super::trace_state::EnabledTracing;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const MAX_ENABLED_TRACING_WITHOUT_WARNING: usize = 10;

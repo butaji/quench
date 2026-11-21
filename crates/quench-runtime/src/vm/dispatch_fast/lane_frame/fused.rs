@@ -41,7 +41,7 @@ lane_handler! {
         // view's int32 kinds prove (`int_kinds`), read with no tag test, and the test's left operand is
         // that register, whose new value this record holds. Its decrement flag is clear.
         let proven = const { FAMILY == crate::staged::FUSED_TARGET && CMP & PROVEN_STEP != 0 };
-        let mut held: u64 = 0;
+        #[allow(unused_assignments)] let mut held: u64 = 0;
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
@@ -99,7 +99,7 @@ lane_handler! {
                 Step::Control(LaneControl::Edge(Edge::Target)) => {
                     if const { FAMILY == crate::staged::FUSED_TARGET } {
                         if proven {
-                            target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, { CMP & !PROVEN_STEP }, held)
+                            target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, CMP & !PROVEN_STEP, held)
                         } else {
                             target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, { CMP & !PROVEN_STEP })
                         }

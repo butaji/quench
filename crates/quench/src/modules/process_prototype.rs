@@ -1,7 +1,6 @@
 //! `process`'s prototype chain (lib/internal/bootstrap/node.js): `process` is an object of a
 //! function named `process`, and that function's prototype inherits `EventEmitter.prototype`.
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// Gives `process` its own prototype, which holds only `constructor` and inherits

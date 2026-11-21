@@ -6,7 +6,6 @@ use crate::host::shared_vm::commonjs::util_module;
 use crate::modules::stream_shared_vm::{get, put};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-use crate::host::NodeHost;
 
 type Context<'a> = NativeContext<'a>;
 

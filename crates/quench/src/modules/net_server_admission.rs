@@ -1,6 +1,5 @@
 //! Admission and connection counts follow the original net.Server callback.
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn set(

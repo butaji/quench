@@ -21,7 +21,6 @@ use serde_json::json;
 use quench_wasm::ExternKind;
 
 use super::commonjs;
-use crate::host::node_host::NodeHost;
 
 /// The hidden global the facades call.
 pub(crate) const INSTANTIATE: &str = "\0quench:wasmInstantiate";

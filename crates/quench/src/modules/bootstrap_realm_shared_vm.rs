@@ -1,7 +1,6 @@
 //! `internal/bootstrap/realm` under `--expose-internals`: Node's `BuiltinModule` queries
 //! over the public builtin list (`module_shared_vm::BUILTIN_MODULES`), and `internalBinding`.
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

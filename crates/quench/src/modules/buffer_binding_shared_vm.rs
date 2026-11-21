@@ -3,7 +3,6 @@
 use super::buffer_codec as codec;
 use super::buffer_shared_vm::view_bytes;
 use super::string_decoder_codec::ENCODINGS;
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 
