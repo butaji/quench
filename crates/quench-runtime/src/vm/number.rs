@@ -106,7 +106,8 @@ const POWERS_OF_TEN: [u128; 21] = {
 /// written unsigned. A rounded magnitude that fits 64 bits with `digits` at most 20 is written into a
 /// stack buffer (`write_fixed_u64`); any other text is built by `fixed_text_wide`.
 pub(super) fn with_fixed_text<T>(number: f64, digits: usize, use_text: impl FnOnce(&[u8]) -> T) -> T {
-    if let Some(rounded) = fixed_rounded(number, digits).and_then(|value| u64::try_from(value).ok()) {
+    // A zero rounds to 0 at any `digits`, but its text is `digits + 1` places: only `digits` at most 20 fits the buffer.
+    if let Some(rounded) = fixed_rounded(number, digits).filter(|_| digits <= 20).and_then(|value| u64::try_from(value).ok()) {
         let mut buffer = [0u8; FIXED_INLINE_LEN];
         let length = write_fixed_u64(number < 0.0, rounded, digits, &mut buffer);
         return use_text(&buffer[..length]);
