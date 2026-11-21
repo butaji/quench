@@ -3575,7 +3575,8 @@ script_handler! {
                 } else if const { FORM == OPERANDS_INT32 } {
                     operator_row::<H, OP, ACC, OPERATOR, OPERANDS_ANY> as Handler
                 } else {
-                    generic
+                    // The Number form's operand pair is no Number pair: the operator's own pure operation.
+                    crate::vm::dispatch_fast::binary_operator_miss::<H, OPERATOR> as Handler
                 };
                 requicken::<H>(ip, widened);
                 sibling!(widened, r, ip, view)

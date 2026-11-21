@@ -4637,6 +4637,25 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `binary_miss_in_lane` of a record whose operator is `OPERATOR`, a constant of the instance: where
+    /// its operator row's Number form refused an operand pair (a string's `+`, a Boolean among Numbers),
+    /// the pure operation (`binary_values`) folds to that operator's arms, with no generic row decoding
+    /// the record and stepping the Number arms again first. What it leaves takes the general step.
+    #[inline(never)]
+    pub(super) fn binary_operator_miss<OPERATOR: u8>(cx, r, ip, i, view) {
+        debug_assert_eq!(i.imm(), u32::from(OPERATOR), "an operator row's record names its operator");
+        if let (Some(left), Some(right)) = (operand_value_in_lane(cx, r, i.b), operand_value_in_lane(cx, r, i.c))
+            && let Some(value) = unsafe { binary_values::<H>(cx, u32::from(OPERATOR), left, right) }
+        {
+            note_allocation(unsafe { vm(cx) });
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..Carried::script_in(cx, view) })
+        }
+        sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
+    }
+}
+
 /// The memory view the record after a general step carries: a Wasm run's frame memory, read again
 /// as a call's return reads it (`complete_call`: the step may have grown it), never the script
 /// view `Carried::stepped` makes. A Wasm record addressing through the script view wrote and read
