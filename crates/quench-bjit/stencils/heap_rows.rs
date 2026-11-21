@@ -56,7 +56,7 @@ use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
 /// `this` (`LoadThis`): the activation's receiver defined into the destination, where it holds one.
 #[inline(always)]
 fn this_row<const D: u8>(s: S) -> Out {
-    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let mut frame = Places::new::<D, MEM, MEM>(s);
     let load = Operation::LoadThis { destination: DEST };
     let done = matches!(step_value_of::<{ op_kind::LOAD_THIS }, _, _>(&mut StencilStage::from_hole(0), &mut frame, load), Step::Value(_));
     finish(frame, done)
@@ -65,7 +65,7 @@ fn this_row<const D: u8>(s: S) -> Out {
 /// A local slot read (`LoadLocalPlain`): the slot number is hole 1.
 #[inline(always)]
 fn load_local_row<const D: u8>(s: S) -> Out {
-    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let mut frame = Places::new::<D, MEM, MEM>(s);
     let load = Operation::LoadLocalPlain { destination: DEST, slot: hole::<HOLE_A>() as u16 };
     let done = matches!(step_local_of::<{ op_kind::LOAD_LOCAL_PLAIN }, _, _>(&mut StencilStage::from_hole(0), &mut frame, load), Step::Value(_));
     finish(frame, done)
@@ -75,7 +75,7 @@ fn load_local_row<const D: u8>(s: S) -> Out {
 /// TAKEN, as every row that has a helper step behind it does (`finish_fast`).
 #[inline(always)]
 fn store_local_row<const A: u8>(s: S) -> Out {
-    let mut frame = Places::<MEM, A, MEM>::new(s);
+    let mut frame = Places::new::<MEM, A, MEM>(s);
     let store = Operation::StoreLocalPlain { source: LEFT, slot: hole::<HOLE_B>() as u16, result: None };
     let done = matches!(step_local_of::<{ op_kind::STORE_LOCAL_PLAIN }, _, _>(&mut StencilStage::from_hole(0), &mut frame, store), Step::Value(_));
     finish_fast(frame, done)
@@ -85,7 +85,7 @@ fn store_local_row<const A: u8>(s: S) -> Out {
 /// the slot number is hole 1 (`LoadLocalChecked`, not numeric).
 #[inline(always)]
 fn load_checked_row<const D: u8>(s: S) -> Out {
-    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let mut frame = Places::new::<D, MEM, MEM>(s);
     let load = Operation::LoadLocalChecked { destination: DEST, slot: hole::<HOLE_A>() as u16, numeric: false };
     let done = matches!(step_local_of::<{ op_kind::LOAD_LOCAL_CHECKED }, _, _>(&mut StencilStage::from_hole(0), &mut frame, load), Step::Value(_));
     finish_fast(frame, done)
@@ -95,7 +95,7 @@ fn load_checked_row<const D: u8>(s: S) -> Out {
 /// hole 2 (`StoreLocalChecked`, not initializing, no result).
 #[inline(always)]
 fn store_checked_row<const A: u8>(s: S) -> Out {
-    let mut frame = Places::<MEM, A, MEM>::new(s);
+    let mut frame = Places::new::<MEM, A, MEM>(s);
     let store = Operation::StoreLocalChecked { source: LEFT, slot: hole::<HOLE_B>() as u16, result: None, initializing: false };
     let done = matches!(step_local_of::<{ op_kind::STORE_LOCAL_CHECKED }, _, _>(&mut StencilStage::from_hole(0), &mut frame, store), Step::Value(_));
     finish_fast(frame, done)
@@ -105,7 +105,7 @@ fn store_checked_row<const A: u8>(s: S) -> Out {
 /// leaves with nothing written where it fails.
 #[inline(always)]
 fn guard_row<const KIND: u16>(s: S, guard: Operation<u64, ()>) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut frame = Places::new::<MEM, MEM, MEM>(s);
     let held = matches!(step_of::<KIND, _, _>(&mut StencilStage::from_hole(0), &mut frame, guard), Step::Value(_));
     if held { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
@@ -177,7 +177,7 @@ fn stores_row(s: S) -> Out {
 /// `DirectArray`: continues where the register at hole 1 holds a direct array.
 #[inline(always)]
 fn array_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut frame = Places::new::<MEM, MEM, MEM>(s);
     let proof = Operation::DirectArray { source: LEFT };
     let done = matches!(step_of::<{ op_kind::DIRECT_ARRAY }, _, _>(&mut StencilStage::from_hole(0), &mut frame, proof), Step::Value(_));
     finish(frame, done)
@@ -186,7 +186,7 @@ fn array_row(s: S) -> Out {
 /// The staged element operation over the row's places (`ELEMENT_SITES`): its word, `None` where it
 /// left at its miss edge.
 #[inline(always)]
-fn staged_element<const KIND: u16, const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, operation: Operation<u64, ()>) -> Option<u64> {
+fn staged_element<const KIND: u16>(frame: &mut Places, operation: Operation<u64, ()>) -> Option<u64> {
     match step_of::<KIND, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), frame, operation) {
         Step::Value(word) => Some(word),
         _ => None,
@@ -200,7 +200,7 @@ fn staged_element<const KIND: u16, const D: u8, const A: u8, const B: u8>(frame:
 fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     if ENTRY {
         let view = entry_dense::<HOLE_A>(payload);
-        let mut places = Places::<D, MEM, B>::new(s);
+        let mut places = Places::new::<D, MEM, B>(s);
         let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
         let mut frame = PlacesView::new(&mut places, LEFT, view);
         match step_of::<{ op_kind::ELEMENT_READ }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
@@ -208,8 +208,8 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
             _ => Out::Exit(places.s),
         }
     } else {
-        let mut frame = Places::<D, MEM, B>::new(s);
-        match staged_element::<{ op_kind::ELEMENT_READ }, _, _, _>(&mut frame, Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST }) {
+        let mut frame = Places::new::<D, MEM, B>(s);
+        match staged_element::<{ op_kind::ELEMENT_READ }>(&mut frame, Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST }) {
             Some(word) => deliver::<D>(frame.s, word),
             None => Out::Exit(frame.s),
         }
@@ -222,7 +222,7 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
 fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     if ENTRY {
         let view = entry_dense::<0>(payload);
-        let mut places = Places::<MEM, A, B>::new(s);
+        let mut places = Places::new::<MEM, A, B>(s);
         let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
         let mut frame = PlacesView::new(&mut places, DEST, view);
         match step_of::<{ op_kind::ELEMENT_WRITE }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
@@ -230,8 +230,8 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
             _ => Out::Exit(places.s),
         }
     } else {
-        let mut frame = Places::<MEM, A, B>::new(s);
-        let done = staged_element::<{ op_kind::ELEMENT_WRITE }, _, _, _>(&mut frame, Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false }).is_some();
+        let mut frame = Places::new::<MEM, A, B>(s);
+        let done = staged_element::<{ op_kind::ELEMENT_WRITE }>(&mut frame, Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false }).is_some();
         finish(frame, done)
     }
 }
@@ -241,7 +241,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
 #[inline(always)]
 fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)));
-    let mut places = Places::<D, MEM, B>::new(s);
+    let mut places = Places::new::<D, MEM, B>(s);
     let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
     let mut frame = PlacesView::new(&mut places, LEFT, view);
     let word = match step_of::<{ op_kind::ELEMENT_READ }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
@@ -260,7 +260,7 @@ fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usiz
 #[inline(always)]
 fn typed_store_row<const KIND: u8, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (0, TYPED_STORE_ROW)));
-    let mut places = Places::<MEM, A, B>::new(s);
+    let mut places = Places::new::<MEM, A, B>(s);
     let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
     let mut frame = PlacesView::new(&mut places, DEST, view);
     match step_of::<{ op_kind::ELEMENT_WRITE }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
@@ -273,7 +273,7 @@ fn typed_store_row<const KIND: u8, const A: u8, const B: u8>(s: S, payload: usiz
 /// reads the entry words at the site hole 1 names (`places_heap.rs`).
 #[inline(always)]
 fn typed_length_row<const D: u8>(s: S) -> Out {
-    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let mut frame = Places::new::<D, MEM, MEM>(s);
     let length = Operation::TypedLength { destination: DEST, source: LEFT };
     let done = matches!(step_of::<{ op_kind::TYPED_LENGTH }, _, _>(&mut StencilStage::from_hole(HOLE_A), &mut frame, length), Step::Value(_));
     finish(frame, done)
@@ -341,7 +341,7 @@ fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
 /// length (`string_length::length_of`) is the fallback where the array operation does not hold.
 #[inline(always)]
 fn length_row<const D: u8>(s: S, payload: usize) -> Out {
-    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let mut frame = Places::new::<D, MEM, MEM>(s);
     let length = Operation::ArrayLength { destination: DEST, source: LEFT };
     if matches!(step_of::<{ op_kind::ARRAY_LENGTH }, _, _>(&mut StencilStage::from_hole(0), &mut frame, length), Step::Value(_)) {
         return finish(frame, true);
@@ -356,7 +356,7 @@ fn length_row<const D: u8>(s: S, payload: usize) -> Out {
 /// and its capacity word has room (`Places::heap_array_append`); a hit continues at TAKEN.
 #[inline(always)]
 fn append_row<const A: u8>(s: S) -> Out {
-    let mut frame = Places::<MEM, A, MEM>::new(s);
+    let mut frame = Places::new::<MEM, A, MEM>(s);
     let append = Operation::ArrayAppend { array: DEST, value: LEFT };
     let done = matches!(step_of::<{ op_kind::ARRAY_APPEND }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, append), Step::Value(_));
     finish_fast(frame, done)
@@ -367,7 +367,7 @@ fn append_row<const A: u8>(s: S) -> Out {
 #[inline(always)]
 fn char_code_at_row<const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let index = need!(s, index_of::<B, HOLE_B>(&s));
-    let mut frame = Places::<D, MEM, B>::new(s);
+    let mut frame = Places::new::<D, MEM, B>(s);
     let mut stage = StencilStage::from_hole(0);
     let base = frame.read(&mut stage, LEFT);
     let string = need!(frame.s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));
@@ -382,7 +382,7 @@ fn char_code_at_row<const D: u8, const B: u8>(s: S, payload: usize) -> Out {
 /// code units. Any other text leaves with nothing written.
 #[inline(always)]
 fn parse_int_row<const D: u8>(s: S, payload: usize) -> Out {
-    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let mut frame = Places::new::<D, MEM, MEM>(s);
     let mut stage = StencilStage::from_hole(0);
     let base = frame.read(&mut stage, LEFT);
     let string = need!(frame.s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));

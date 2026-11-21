@@ -26,7 +26,7 @@ use crate::words::{HOLE_A, Out, S, exit_here, hole};
 
 /// The Number operation over the row's places, whether it completed.
 #[inline(always)]
-fn number<const KIND: u8, const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, operation: NumberOperation, _: Kind<KIND>) -> bool {
+fn number<const KIND: u8>(frame: &mut Places, operation: NumberOperation, _: Kind<KIND>) -> bool {
     // `step_number`'s arm for a Number operation, with the variant `KIND` known (`numeric::step_of`).
     matches!(numeric::step_of::<KIND, _, _>(&mut Concrete::from_hole(0), frame, operation), Step::Value(_))
 }
@@ -49,7 +49,7 @@ const fn value_relation_of(kind: u8) -> NumberRelation {
 /// divisor's NaN, a negative dividend's `-0`) and for a double: the binary64 remainder is libm's
 /// `fmod`, a call a stencil cannot hold, so the VM's step takes the row then.
 #[inline(always)]
-pub(crate) fn remainder_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+pub(crate) fn remainder_row<const D: u8, const A: u8, const B: u8>(mut frame: Places) -> Out {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
     let remainder = NumberOperation::Remainder { destination: DEST, left, right, domain: Domain::Int32,
         zero: NegativeZero::Exit, divisor_nonzero: false };
@@ -65,7 +65,7 @@ pub(crate) fn remainder_row<const D: u8, const A: u8, const B: u8>(mut frame: Pl
 /// A relation as a value (`Binary` of `<`, `<=`, `>`, `>=`, `==`, `!=`): its Boolean into the destination
 /// (`NumberOperation::RelationValue`). The destination is a frame slot (a Boolean is no int word).
 #[inline(always)]
-pub(crate) fn relation_value_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+pub(crate) fn relation_value_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places) -> Out {
     let (left, right, relation) = (Operand::register(LEFT), Operand::register(RIGHT), value_relation_of(K));
     let value = |domain: Domain| NumberOperation::RelationValue { destination: DEST, left, right, relation, domain };
     let done = if const { any_double(D, A, B) } {
@@ -82,7 +82,7 @@ pub(crate) fn relation_value_row<const K: u8, const D: u8, const A: u8, const B:
 /// `~` of the operand into the destination as an int32 (`NumberOperation::BitwiseNot`); a Number that is no
 /// int32 leaves.
 #[inline(always)]
-pub(crate) fn bitwise_not_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+pub(crate) fn bitwise_not_row(mut frame: Places) -> Out {
     let done = number(&mut frame, NumberOperation::BitwiseNot { destination: DEST, source: Operand::register(LEFT) }, Kind::<{ numeric::kind::BITWISE_NOT }>);
     finish(frame, done)
 }
@@ -90,7 +90,7 @@ pub(crate) fn bitwise_not_row<const D: u8, const A: u8, const B: u8>(mut frame: 
 /// `InitializeTdz` of local slot `hole 1` (`Operation::InitializeLocal`): the slot takes the deleted marker. The
 /// row reads no operand place, so it is instantiated over `(MEM, MEM, MEM)` only.
 #[inline(always)]
-pub(crate) fn initialize_local_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+pub(crate) fn initialize_local_row(mut frame: Places) -> Out {
     let slot = hole::<HOLE_A>() as u16;
     let done = matches!(step_local_of::<{ op_kind::INITIALIZE_LOCAL }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::InitializeLocal { slot }), Step::Value(_));
     finish(frame, done)
@@ -99,7 +99,7 @@ pub(crate) fn initialize_local_row<const D: u8, const A: u8, const B: u8>(mut fr
 /// `RequireObjectCoercible` of the operand (`Operation::RequireObjectCoercible`): continues where the operand is
 /// neither `null` nor `undefined` (it writes nothing); a nullish operand leaves for the helper step, which raises.
 #[inline(always)]
-pub(crate) fn coercible_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+pub(crate) fn coercible_row(mut frame: Places) -> Out {
     let done = matches!(step_value_of::<{ op_kind::REQUIRE_OBJECT_COERCIBLE }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::RequireObjectCoercible { register: LEFT }), Step::Value(_));
     finish(frame, done)
 }
@@ -107,7 +107,7 @@ pub(crate) fn coercible_row<const D: u8, const A: u8, const B: u8>(mut frame: Pl
 /// `void` of anything into the destination (`Operation::Void`, `undefined` as the constant). The destination is a
 /// frame slot (`undefined` is no int word). Needs `Places::constant` to answer the constant (places.rs).
 #[inline(always)]
-pub(crate) fn void_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+pub(crate) fn void_row(mut frame: Places) -> Out {
     let done = matches!(step_generic_of::<{ op_kind::VOID }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::Void { destination: DEST }), Step::Value(_));
     finish(frame, done)
 }
@@ -116,7 +116,7 @@ pub(crate) fn void_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<
 /// two words decide it (`generic::decide`); any other pair (a string, a BigInt, an object) leaves for the VM.
 /// The destination is a frame slot.
 #[inline(always)]
-pub(crate) fn equality_row<const STRICT: bool, const NEGATED: bool, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+pub(crate) fn equality_row<const STRICT: bool, const NEGATED: bool>(mut frame: Places) -> Out {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
     let done = matches!(step_generic_of::<{ op_kind::EQUALITY }, _, _>(&mut Concrete::from_hole(0), &mut frame,
         Operation::Equality { destination: DEST, left, right, strict: STRICT, negated: NEGATED }), Step::Value(_));
@@ -127,25 +127,25 @@ pub(crate) fn equality_row<const STRICT: bool, const NEGATED: bool, const D: u8,
 #[inline(always)]
 pub(crate) fn run<const KIND: u8, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
     if const { KIND == STAGED_REMAINDER } {
-        remainder_row::<D, A, B>(Places::new(s))
+        remainder_row::<D, A, B>(Places::new::<D, A, B>(s))
     } else if const { (STAGED_RELVAL_LT <= KIND && KIND <= STAGED_RELVAL_NE) } {
-        relation_value_row::<KIND, D, A, B>(Places::new(s))
+        relation_value_row::<KIND, D, A, B>(Places::new::<D, A, B>(s))
     } else if const { KIND == STAGED_BITWISE_NOT } {
-        bitwise_not_row::<D, A, B>(Places::new(s))
+        bitwise_not_row(Places::new::<D, A, B>(s))
     } else if const { KIND == STAGED_INIT_LOCAL } {
-        initialize_local_row::<D, A, B>(Places::new(s))
+        initialize_local_row(Places::new::<D, A, B>(s))
     } else if const { KIND == STAGED_COERCIBLE } {
-        coercible_row::<D, A, B>(Places::new(s))
+        coercible_row(Places::new::<D, A, B>(s))
     } else if const { KIND == STAGED_VOID } {
-        void_row::<D, A, B>(Places::new(s))
+        void_row(Places::new::<D, A, B>(s))
     } else if const { KIND == STAGED_LOOSE_EQ } {
-        equality_row::<false, false, D, A, B>(Places::new(s))
+        equality_row::<false, false>(Places::new::<D, A, B>(s))
     } else if const { KIND == STAGED_LOOSE_NE } {
-        equality_row::<false, true, D, A, B>(Places::new(s))
+        equality_row::<false, true>(Places::new::<D, A, B>(s))
     } else if const { KIND == STAGED_STRICT_EQ } {
-        equality_row::<true, false, D, A, B>(Places::new(s))
+        equality_row::<true, false>(Places::new::<D, A, B>(s))
     } else if const { KIND == STAGED_STRICT_NE } {
-        equality_row::<true, true, D, A, B>(Places::new(s))
+        equality_row::<true, true>(Places::new::<D, A, B>(s))
     } else {
         exit_here(s)
     }

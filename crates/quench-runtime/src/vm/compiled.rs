@@ -3896,6 +3896,9 @@ pub(super) struct LaneMethod {
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
     /// types no call, so its summary is not read.
     withdrawn: std::cell::Cell<bool>,
+    /// Whether it is an ahead image's body (`Vm::install_ahead_body`): nothing replaces it, so no leave
+    /// retires it (`LaneView::note_lane_body_end`).
+    pub(in crate::vm) ahead: bool,
 }
 
 impl LaneMethod {
@@ -5218,8 +5221,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
     arguments: *const u64,
     result: *mut u64,
 ) -> i64 {
-    // Keep the opcode static through the shared exception/continuation boundary,
-    // so specialization resolves the operation and its guards in this body.
+    // The opcode resolves its operation statically; the boundary around the step is the same for
+    // every opcode, so one body per host runs it (`js_semantic_callout_with`): one copy per opcode was
+    // 290 instances of ~6 KB that every edit to a helper it inlines compiled again.
     let operation = const {
         if SINGLE_OPERATION {
             match Op::from_index(OPCODE) {
@@ -5233,6 +5237,20 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             None
         }
     };
+    // SAFETY: forwarded from this callout's contract.
+    unsafe { js_semantic_callout_with::<H, SINGLE_OPERATION>(operation, context, function, arguments, result) }
+}
+
+/// `js_semantic_callout`'s body, with the operation its opcode resolved (`None` for the dynamic entry).
+#[cfg(feature = "native-execution")]
+#[inline(never)]
+unsafe fn js_semantic_callout_with<H: Host, const SINGLE_OPERATION: bool>(
+    operation: Option<StaticJsOperation<H>>,
+    context: *mut CallContext,
+    function: u64,
+    arguments: *const u64,
+    result: *mut u64,
+) -> i64 {
     // The shared trampoline marks its active context while native code runs.
     // Clear it while Rust semantics and any host or guest helper run, so a
     // fault there is never mistaken for a generated-code fault.
@@ -8207,6 +8225,11 @@ impl<H: Host> Vm<H> {
             || (self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::jit_mode::Tier::Base]));
         if !claims || program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
+        }
+        // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size: its
+        // image body is compiled already, so there is no compile to amortize, and its callers' bodies are native.
+        if self.programs.js_jit_lane_methods_enabled() && self.programs.ahead_images(id, program).is_some() {
+            return true;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;

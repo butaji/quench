@@ -14,7 +14,7 @@ use crate::staged::region::Region;
 use crate::staged::{CallOut, Concrete, Frame, Stage, iteration};
 use crate::words::hole64;
 
-impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
+impl Places {
     /// The object record table the object-walking rows read (`JS_STEP_OBJECT_RECORD_BASE`).
     #[inline(always)]
     pub(crate) fn object_records(&self) -> u64 {

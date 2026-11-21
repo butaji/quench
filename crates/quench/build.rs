@@ -5,7 +5,7 @@
 //! On x86-64 Linux the functions the layout corpus executes are laid out first, by how many
 //! corpus programs execute them and then by exactly which, each program profiled with an
 //! empty and with a warm compile cache (`link/x86_64-linux.order`, written by
-//! `tools/link-order.sh` through `quench-wasm-test`'s `symbol-order --sets`, never from a
+//! `tools/link-order.sh` through `quench-symbols`' `symbol-order --sets`, never from a
 //! scored bench). A run touches whole pages, so executed code scattered among cold code keeps
 //! the cold neighbours' pages resident. Symbols the order names but a build lacks are ignored, so code changes
 //! erode the layout silently: retrain the order when start-up RSS rises. Symbol names

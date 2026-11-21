@@ -2310,6 +2310,10 @@ name = "quench-stack"
 version = "0.1.0"
 
 [[package]]
+name = "quench-symbols"
+version = "0.1.0"
+
+[[package]]
 name = "quench-temporal"
 version = "0.1.0"
 

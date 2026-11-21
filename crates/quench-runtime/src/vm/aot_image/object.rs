@@ -32,6 +32,8 @@ const ENTRY_TABLE_RECORD: usize = 1;
 const OPERANDS_RECORD: u32 = 2;
 /// The proven calls' records, after the operand records.
 const CALL_RECORDS_RECORD: u32 = 3;
+/// The object's copy of the narrow decode's upper-word table (`Symbol::NarrowUpperWords`), after the call records.
+const NARROW_WORDS_RECORD: u32 = 4;
 /// The bytes of one call record (`CallRecord`).
 const CALL_RECORD_BYTES: i64 = std::mem::size_of::<CallRecord>() as i64;
 /// The bytes of one operand record (`NativeJsOperands`).
@@ -64,7 +66,7 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
     functions.extend(definitions);
     let file = file::to_bytes(image);
     let table = entry_table(isa, namespace, (&bases, first), file.len())?;
-    let data = vec![image_data(namespace, file), table, operand_data(namespace, image), call_data(namespace, image)];
+    let data = vec![image_data(namespace, file), table, operand_data(namespace, image), call_data(namespace, image), narrow_data(namespace)];
     Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
 }
 
@@ -87,7 +89,9 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
         let import = match SymbolTable::decode(image, key.0, key.1) {
             Some(Symbol::Helper(helper)) => helper_import(isa, helper)?,
             Some(Symbol::SemanticEntry(op)) => operation_import(isa, op),
-            Some(Symbol::BasePc { .. } | Symbol::Operands { .. } | Symbol::CallRecord { .. }) => continue,
+            // The runtime exports the byte by name; the system linker resolves the word to it.
+            Some(Symbol::Attention) => NativeFunction::Import { name: crate::execution_interrupt::ATTENTION_SYMBOL.into(), signature: ir::Signature::new(isa.default_call_conv()) },
+            Some(Symbol::BasePc { .. } | Symbol::Operands { .. } | Symbol::CallRecord { .. } | Symbol::NarrowUpperWords) => continue,
             Some(symbol) => return Err(format!("{symbol:?} has no object form yet")),
             None => return Err("an AOT image names an unknown symbol".into()),
         };
@@ -150,6 +154,7 @@ impl Targets<'_> {
             }
             Some(Symbol::Operands { .. }) => Ok((NATIVE_DATA_NAMESPACE, OPERANDS_RECORD, addend + i64::from(key) * OPERAND_RECORD_BYTES)),
             Some(Symbol::CallRecord { .. }) => Ok((NATIVE_DATA_NAMESPACE, CALL_RECORDS_RECORD, addend + i64::from(key) * CALL_RECORD_BYTES)),
+            Some(Symbol::NarrowUpperWords) => Ok((NATIVE_DATA_NAMESPACE, NARROW_WORDS_RECORD, addend)),
             _ => self.imports.get(&(namespace, key)).map(|index| (NATIVE_FUNCTION_NAMESPACE, *index, addend)).ok_or_else(|| "an AOT image symbol has no object form".into()),
         }
     }
@@ -174,6 +179,19 @@ fn operand_data(namespace: &str, image: &AotImage) -> NativeData {
     NativeData {
         name: format!("{namespace}_operands"),
         bytes: image.operands.iter().flat_map(|record| record.words).flat_map(u64::to_ne_bytes).collect(),
+        alignment: std::mem::align_of::<u64>() as u64,
+        writable: false,
+        function_addresses: Vec::new(),
+        data_addresses: Vec::new(),
+    }
+}
+
+/// The narrow decode's upper words by code (`NarrowLayout::upper_words`), the runtime's own constant
+/// table: a base body's field and element reads decode a narrow value through it.
+fn narrow_data(namespace: &str) -> NativeData {
+    NativeData {
+        name: format!("{namespace}_narrow_words"),
+        bytes: crate::staged::value_encoding::NARROW_UPPER_WORDS.iter().flat_map(|word| word.to_ne_bytes()).collect(),
         alignment: std::mem::align_of::<u64>() as u64,
         writable: false,
         function_addresses: Vec::new(),

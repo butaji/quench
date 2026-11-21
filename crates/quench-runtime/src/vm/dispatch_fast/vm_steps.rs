@@ -92,14 +92,20 @@ pub(in crate::vm) unsafe extern "C" fn body_string_concat<H: Host>(_vm: u64, _re
     }
 }
 
-/// The decision of `left operator right` that runs no guest code and allocates nothing: a strict
-/// equality (`Vm::strict_equal`), `instanceof` by the remembered constructor layout
+/// The decision of `left operator right` that runs no guest code and allocates nothing: a comparison
+/// of two Numbers, a strict equality (`Vm::strict_equal`), a loose one no conversion decides, `instanceof` by the remembered constructor layout
 /// (`Vm::steady_instanceof`) and `in` of a string key in an ordinary object (`Vm::plain_in`);
 /// `None` for any other pair, which the full algorithm decides. The one rule of the interpreter's
 /// staged frame and of the lane's decide helper.
 pub(super) fn comparison_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: Value, right: Value) -> Option<bool> {
+    // Two Numbers: the Number comparison (`operations::number_relation`), which runs no guest code.
+    if let Some((holds, _)) = crate::vm::operations::number_relation(operator, left, right) {
+        return Some(holds);
+    }
     match crate::vm::operations::equality_operator(operator) {
-        Some((strict, negated)) => strict.then(|| vm.strict_equal(left, right) != negated),
+        Some((true, negated)) => Some(vm.strict_equal(left, right) != negated),
+        // A loose equality no conversion decides (`Vm::identity_equality`): nullish values, two objects, one type.
+        Some((false, _)) => vm.identity_equality(operator, left, right),
         None if operator == INSTANCEOF_OPERATOR => vm.steady_instanceof(left, right),
         None => vm.plain_in(operator, left, right).or_else(|| vm.string_relation(operator, left, right)),
     }
@@ -219,8 +225,20 @@ pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, resid
     // An ahead body runs from its entry trampoline, with no lane run to step in: it leaves at
     // the record, which the entry's per-PC fallback executes (as `vm_operation_step`).
     if context == 0 { return super::super::compiled::LANE_CALL_MISSED; }
+    // A comparison jump a pure decision settles (an image body's `!=` of two objects through a Number row) runs no
+    // guest code and moves nothing: no step, no base to refresh.
+    if let Some(status) = unsafe { decided_compare_jump::<H>(context as usize as *mut LaneContext<H>, call_pc) } { return status; }
     // SAFETY: the caller's contract.
+    let traced = crate::trace::Channel::BodyLeave.on().then(|| {
+        let cx = context as usize as *mut LaneContext<H>;
+        let function = running_function_in_lane(cx);
+        let op = unsafe { &*(*cx).code }.function(function as usize).code.get(call_pc as usize).map(|word| word.op());
+        (function, op, unsafe { self::vm(cx) }.lane_stack.has_frames())
+    });
     let status = unsafe { lane_body_step_record::<H>(vm, residual, context, call_pc) };
+    if let Some((function, op, activations)) = traced && status != super::super::compiled::LANE_CALL_COMPLETED {
+        eprintln!("QUENCH_CALL_STATUS helper=step function={function} pc={call_pc} op={op:?} activations={activations} status={status}");
+    }
     unsafe { refresh_body_bases::<H>(context) };
     // SAFETY: as `lane_body_step_record`; a region the lane runs reads its payload's bases after the step too.
     unsafe { refresh_region_bases_of::<H>(context) };
@@ -286,7 +304,9 @@ unsafe fn body_general_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     // A returning record (`return a + b`) is made as the step that writes its result register: the body's
     // own `Return` row completes the activation with it.
     let instruction = function.widened(function.code[call_pc as usize]).without_return();
-    if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
+    // A value step (an operator or a comparison jump) is an image body's guard miss: the frame's own step makes it.
+    let value_step = instruction.op().value_step().is_some() && instruction.result_flags() == 0;
+    if !(instruction.op().steps_in_body() || instruction.op().makes_script_call() || value_step) { return LANE_CALL_MISSED; }
     let following = call_pc as usize + 1;
     let branched = in_place_in_lane(cx, ip, |vm, code| {
         let mut next = following;
@@ -336,4 +356,23 @@ unsafe fn lane_allocate_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u6
     // SAFETY: the allocation ran no guest code, so the lane's register file is `r`'s still.
     unsafe { (*cx).registers }.set(destination, value);
     LANE_CALL_COMPLETED
+}
+
+/// The `JumpBinaryFalse` record at `call_pc` of the running body where `comparison_decision` decides it over its
+/// register and constant operands: `LANE_CALL_COMPLETED` where the comparison holds (the record falls through),
+/// `LANE_CALL_BRANCHED` where it does not (the record jumps); `None` for any other record or pair, which the
+/// general step makes.
+///
+/// # Safety
+/// As `body_general_step`.
+unsafe fn decided_compare_jump<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> Option<u64> {
+    use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED};
+    // SAFETY: the context's program outlives the lane run.
+    let body = unsafe { &*(*cx).code }.function(running_function_in_lane(cx) as usize);
+    let instruction = body.widened(*body.code.get(call_pc as usize)?);
+    if instruction.op() != crate::bytecode::Op::JumpBinaryFalse || instruction.result_flags() != 0 { return None; }
+    let r = unsafe { (*cx).registers };
+    let (left, right) = (operand_value_in_lane(cx, r, instruction.operand_b().0)?, operand_value_in_lane(cx, r, instruction.operand_c().0)?);
+    let holds = comparison_decision(unsafe { vm(cx) }, instruction.binary_operator_field(), left, right)?;
+    Some(if holds { LANE_CALL_COMPLETED } else { LANE_CALL_BRANCHED })
 }

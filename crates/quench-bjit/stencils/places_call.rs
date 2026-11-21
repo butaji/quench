@@ -8,7 +8,7 @@
 use crate::places::Places;
 use crate::staged::{CallFrame, Concrete};
 
-impl<const D: u8, const A: u8, const B: u8> CallFrame<Concrete> for Places<D, A, B> {
+impl CallFrame<Concrete> for Places {
     /// The caller's register file: the frame word the row was entered with.
     #[inline(always)]
     fn call_registers(&mut self, _stage: &mut Concrete) -> Option<u64> {
