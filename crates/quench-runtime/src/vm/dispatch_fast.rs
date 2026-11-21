@@ -9047,7 +9047,7 @@ fn loop_entry_checked_in_lane<H: Host>(
             if slot & super::compiled::CALLEE_CAPTURE != 0 {
                 let inlining = region.inlining.as_deref().ok_or(RegionDecline::CalleeCapture)?;
                 let &(frame, callee_slot) = inlining.callee_captures.get(usize::from(slot & !super::compiled::CALLEE_CAPTURE)).ok_or(RegionDecline::CalleeCapture)?;
-                let callee = lane_inlined_callee(cx, r, inlining.frames.get(frame).ok_or(RegionDecline::CalleeCapture)?).ok_or(RegionDecline::CalleeCapture)?;
+                let callee = inlined_callee_of_guard(cx, r, inlining.frames.get(frame).ok_or(RegionDecline::CalleeCapture)?).ok_or(RegionDecline::CalleeCapture)?;
                 let vm = unsafe { vm(cx) };
                 // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
                 let env = unsafe { &*vm.script_call_entry(callee).ok_or(RegionDecline::CalleeCapture)? }.env;
@@ -9165,7 +9165,7 @@ fn inlined_target_in_lane<H: Host>(
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
     let vm = unsafe { vm(cx) };
-    let target_pointer = vm.script_call_entry(lane_inlined_callee(cx, r, frame)?)?;
+    let target_pointer = vm.script_call_entry(inlined_callee_of_guard(cx, r, frame)?)?;
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
     let target = unsafe { &*target_pointer };
     (target.function == frame.function
@@ -9183,7 +9183,7 @@ fn inlined_target_in_lane<H: Host>(
 /// The callee an inlined `frame`'s call binds now: the closure its register or capture holds,
 /// which the region binds by its function (a fresh closure of it on each entry is one case,
 /// `osr_compile::unit_frames`), else the identity its field read guards.
-fn lane_inlined_callee<H: Host>(cx: *mut LaneContext<H>, r: Registers, frame: &super::compiled::InlineFrame) -> Option<Value> {
+fn inlined_callee_of_guard<H: Host>(cx: *mut LaneContext<H>, r: Registers, frame: &super::compiled::InlineFrame) -> Option<Value> {
     match frame.guard {
         super::compiled::InlineGuard::Capture(slot) => capture_read_value(cx, 0, slot),
         super::compiled::InlineGuard::Register(register) => Some(r.get(register)),
@@ -10685,7 +10685,7 @@ macro_rules! lane_plain_activation {
         debug_assert!(!target.settles(), "a settling target activates through its own call form");
         let callee_registers = fill_window_in_lane(vm, target, passed, argc);
         let (registers, base) = if $proven {
-            lane_enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
+            enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
         } else {
             enter_window_of_in_lane::<H, false, false, true>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None)
         };
@@ -11177,7 +11177,7 @@ script_handler! {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
         // SAFETY: the view checked the step's records (`for_of_step_in_lane`).
         let (done_read, value_read) = unsafe { (&*ip.add(FOR_OF_DONE_READ), &*ip.add(form.value_read())) };
-        let reads_step = call_iteration::concrete_reads_step(done_read.imm(), value_read.imm(), lane_step_atoms(vm));
+        let reads_step = call_iteration::concrete_reads_step(done_read.imm(), value_read.imm(), step_atoms_of(vm));
         let reads = call_iteration::StepReads { done: done_read.a, value: value_read.a, flag: None };
         let script_calls = unsafe { (*cx).script_calls };
         if !reads_step {
@@ -11231,7 +11231,7 @@ script_handler! {
         // SAFETY: the view checked the step's records (`binding_step_in_lane`).
         let (done_read, flag, value_read) =
             unsafe { (&*ip.add(BINDING_DONE_READ), &*ip.add(BINDING_DONE_MOVE), &*ip.add(BINDING_VALUE_READ)) };
-        let reads_step = call_iteration::concrete_reads_step(done_read.imm(), value_read.imm(), lane_step_atoms(vm));
+        let reads_step = call_iteration::concrete_reads_step(done_read.imm(), value_read.imm(), step_atoms_of(vm));
         let reads = call_iteration::StepReads { done: done_read.a, value: value_read.a, flag: Some(flag.a) };
         if !reads_step {
             sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view))
@@ -11264,7 +11264,7 @@ use crate::staged::call_iteration;
 /// The realm's atoms an iteration step's `done` and `value` reads name
 /// (`call_iteration::reads_step`).
 #[inline(always)]
-fn lane_step_atoms<H: Host>(vm: &Vm<H>) -> call_iteration::StepAtoms {
+fn step_atoms_of<H: Host>(vm: &Vm<H>) -> call_iteration::StepAtoms {
     call_iteration::StepAtoms { done: u64::from(vm.runtime_atoms.done), value: u64::from(vm.runtime_atoms.value) }
 }
 
@@ -12833,12 +12833,12 @@ fn call_native_out_in_lane<H: Host>(
     }
     // Arguments in the call's window are held by the frame parked at the call, so the native
     // roots only its receiver; any others (an `apply`'s elements) are rooted with it.
-    let in_window = lane_arguments_in_window(cx, args);
+    let in_window = arguments_in_window(cx, args);
     // SAFETY: `ip` is a record of the active view, which is the running function's.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // Without activations the window lies in the lane's frame's register file, which nothing
     // moves or writes while the frame is parked at the call: the native reads it in place.
-    if in_window && !vm.lane_stack.has_frames() && lane_registers_are_frames(vm, cx) {
+    if in_window && !vm.lane_stack.has_frames() && registers_are_frames(vm, cx) {
         return call_from_frame_in_lane(cx, ip, |vm, code| {
             vm.call_native_from_lane_arguments_held(code, native, receiver, args, callee)
         });
@@ -12895,7 +12895,7 @@ fn call_native_out_in_lane<H: Host>(
 /// a parked frame (`Frame::source_instruction_pc`). Values a call made of others (an `apply`'s
 /// array elements, a bound prefix) lie elsewhere. Only addresses are compared.
 #[inline(always)]
-fn lane_arguments_in_window<H: Host>(cx: *mut LaneContext<H>, args: &[Value]) -> bool {
+fn arguments_in_window<H: Host>(cx: *mut LaneContext<H>, args: &[Value]) -> bool {
     if args.is_empty() {
         return true;
     }
@@ -12910,7 +12910,7 @@ fn lane_arguments_in_window<H: Host>(cx: *mut LaneContext<H>, args: &[Value]) ->
 /// Whether the lane's registers are its frame's register file, which stays where it is while
 /// the frame is parked at a call.
 #[inline(always)]
-fn lane_registers_are_frames<H: Host>(vm: &Vm<H>, cx: *mut LaneContext<H>) -> bool {
+fn registers_are_frames<H: Host>(vm: &Vm<H>, cx: *mut LaneContext<H>) -> bool {
     // SAFETY: the lane runs, so its context lives.
     unsafe { (*cx).has_frame() && vm.frames[(*cx).frame()].registers.as_ptr() == (*cx).registers.0.cast_const() }
 }
@@ -14206,7 +14206,7 @@ script_handler! {
 /// Whether an activation of the function whose records start at `records` calls the newest
 /// activation, within `RECURSION_DEPTH` calls of it less `nearer` (those the caller already
 /// looked at): each activation's caller base is its caller's records.
-fn lane_reentered<H: Host>(vm: &Vm<H>, records: Ip, nearer: usize) -> bool {
+fn activation_reentered<H: Host>(vm: &Vm<H>, records: Ip, nearer: usize) -> bool {
     use super::compiled::tier_policy::RECURSION_DEPTH;
     vm.lane_stack.activations().iter().rev().take(RECURSION_DEPTH - nearer).any(|activation| activation.caller_base() == records)
 }
@@ -15085,7 +15085,7 @@ fn enter_cell_body_in_lane<H: Host>(
     // Most entries of a published body come through its cell: one of the audit's interpreted
     // epoch activates the call as the lane's own would (`lane_body_audit`).
     // SAFETY: the running context; its records are the caller's.
-    if own.audit_entry(false, || unsafe { (*cx).base } == own.records() || lane_reentered(vm, own.records(), 1)) {
+    if own.audit_entry(false, || unsafe { (*cx).base } == own.records() || activation_reentered(vm, own.records(), 1)) {
         return None;
     }
     let window = fill_window_in_lane(vm, target, passed, argc);
@@ -15252,7 +15252,7 @@ fn enter_window_of_in_lane<H: Host, const GENERAL: bool, const SETTLES: bool, co
 /// test. `depth` is the plain depth `LaneStack::plain_room` admitted it at.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn lane_enter_plain_window<H: Host>(
+fn enter_plain_window<H: Host>(
     cx: *mut LaneContext<H>,
     vm: &mut Vm<H>,
     r: Registers,

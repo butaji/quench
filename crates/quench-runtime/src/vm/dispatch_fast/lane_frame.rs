@@ -3367,7 +3367,7 @@ const fn call_activation<H: Host>(miss: u16) -> CallActivation {
 /// The plain activation of `target` past the lane frame's admission of the call record `record` at
 /// `ip` (`CallActivation`): the proved arm of `lane_plain_activation!` from its window on, its
 /// window filled from the record's (`fill_window_in_lane`) and its header pushed straight below it at
-/// the admitted `depth` (`lane_enter_plain_window`). `ARGC` is the record's argument count
+/// the admitted `depth` (`enter_plain_window`). `ARGC` is the record's argument count
 /// (`call_argument_count`).
 ///
 /// # Safety
@@ -3387,7 +3387,7 @@ unsafe fn plain_call_activation<H: Host, const ARGC: u16>(context: *mut (), r: R
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    lane_enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
+    enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
 }
 
 /// The leaf call of `target` of form `LEAF` past the lane frame's admission of the call record

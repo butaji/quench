@@ -563,7 +563,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `call_native_from_lane` of a call whose `args` are its call record's window in the
-    /// running function's registers (`dispatch_fast::lane_arguments_in_window`): the frame
+    /// running function's registers (`dispatch_fast::arguments_in_window`): the frame
     /// parked at the call (the lane's own, or the one its activation becomes, before any
     /// collection) holds them live at the call's pc, so only the receiver is rooted.
     pub(super) fn call_native_from_lane_arguments_held(&mut self, p: &ResidualProgram, native: Native, this: Value,

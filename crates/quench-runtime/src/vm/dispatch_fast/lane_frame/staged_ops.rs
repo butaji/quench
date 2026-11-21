@@ -279,7 +279,7 @@ impl<const ACC: u8> crate::staged::PrologueFrame<Concrete> for LaneFrame<ACC> {
 ///   receiver's, `PLAIN`) as the plan's bound `this`, a sloppy callee's through `bind_this` with the
 ///   realm's global object, any other the receiver as it is;
 /// - `call_room`: the one `plain_room` compare, at the plain depth it loads once;
-/// - `call_activate`: the window filled and the plain header pushed (`lane_enter_plain_window`,
+/// - `call_activate`: the window filled and the plain header pushed (`enter_plain_window`,
 ///   `protocol::push_plain_at`) or the leaf entered (`lane_run_leaf`), handed back as
 ///   `LaneControl::Resumed`.
 ///
