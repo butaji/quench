@@ -12861,23 +12861,7 @@ fn call_native_out_in_lane(
     if vm.lane_stack.has_frames()
         && (vm.runs_beside_activations(native, callee) || vm.steps_beside_activations(native, receiver))
     {
-        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-        let result = call(vm, unsafe { &*(*cx).code });
-        note_allocation(vm);
-        vm.lane_stack.refresh_activation_limit();
-        let unobserved = vm.lane_deferred.take().is_some();
-        return match result {
-            Ok(value) => Some(value),
-            Err(error) => {
-                // The general path raises it from the frames its activations become.
-                if unobserved {
-                    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-                    vm.materialize_deferred_lane();
-                }
-                vm.lane_completion.raise(error);
-                None
-            }
-        };
+        return call_deferred_native_in_lane(cx, call_pc, call);
     }
     #[cfg(feature = "profile-lane-exits")]
     if vm.lane_stack.has_frames() {
@@ -12887,6 +12871,36 @@ fn call_native_out_in_lane(
         });
     }
     call_from_frame_in_lane(cx, ip, call)
+}
+
+/// Runs a native call beside the lane's activations as a deferred call (`DeferredLaneCall`),
+/// whose frames the first observer makes; an error is raised for the general path as the
+/// call's own frames would raise it.
+#[cold]
+#[inline(never)]
+fn call_deferred_native_in_lane(
+    cx: *mut LaneContext,
+    call_pc: usize,
+    call: impl FnOnce(&mut Vm, &ResidualProgram) -> Result<Value, JsError>,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+    let result = call(vm, unsafe { &*(*cx).code });
+    note_allocation(vm);
+    vm.lane_stack.refresh_activation_limit();
+    let unobserved = vm.lane_deferred.take().is_some();
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            // The general path raises it from the frames its activations become.
+            if unobserved {
+                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+                vm.materialize_deferred_lane();
+            }
+            vm.lane_completion.raise(error);
+            None
+        }
+    }
 }
 
 /// Whether `args` lie in the running function's registers, as its call record's window does:
@@ -15359,8 +15373,6 @@ fn activate_environment_in_lane(
     let vm = unsafe { vm(cx) };
     // SAFETY: `ip` is a record of the running view.
     let i = unsafe { &*ip };
-    // Another program's callee enters its program and completes across (`Completion::Cross`).
-    let cross = target.program() != unsafe { (*cx).program };
     let Ok(argc) = u16::try_from(passed.len()) else {
         return Err(exit(ip));
     };
@@ -15371,8 +15383,55 @@ fn activate_environment_in_lane(
     // SAFETY: the program store keeps a derived view alive with its program, and an
     // environment target's view has a window (`ScriptCallTarget::entry`).
     let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
-    let (rest, self_binding) = (layout.rest, layout.self_binding);
-    // A body reading its `arguments` keeps every value passed past its parameters too, as
+    // The plain case: no rest array, no value passed past the parameters, and no captured
+    // local, so no environment is made and the values passed bind the window as they are.
+    if layout.rest || argc > target.params || layout.captured != 0 {
+        return activate_environment_with_extras_in_lane(cx, r, ip, target, passed, (this, constructs));
+    }
+    if vm.with_scope_entered {
+        return Err(exit(ip));
+    }
+    // Both stacks' room, one row (`call_environment::admit_environment`).
+    let needed = usize::from(target.room);
+    if !environment_row::concrete_admit_environment(
+        vm.lane_stack.activation_count() as u64,
+        vm.lane_stack.activation_limit.get() as u64,
+        vm.lane_stack.values.room() as u64,
+        needed as u64,
+    ) {
+        return Err(script_call_frame_in_lane(ip, needed));
+    }
+    push_environment_activation_in_lane(cx, r, ip, target, &layout, passed, argc, None, (this, constructs))
+}
+
+/// `activate_environment_in_lane` of a target with a rest parameter, more values passed than
+/// it has parameters, or a captured local: it gathers the rest array and the values past the
+/// parameters, checks the room they take, then makes the window.
+#[inline(never)]
+fn activate_environment_with_extras_in_lane(
+    cx: *mut LaneContext,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: &[Value],
+    (this, constructs): (Value, bool),
+) -> Result<(Registers, Ip), Ip> {
+    use crate::staged::call_environment as environment_row;
+    let vm = unsafe { vm(cx) };
+    // SAFETY: `ip` is a record of the running view.
+    let i = unsafe { &*ip };
+    let Ok(argc) = u16::try_from(passed.len()) else {
+        return Err(exit(ip));
+    };
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if returns && !returning_call_admitted(cx) {
+        return Err(exit(ip));
+    }
+    // SAFETY: the program store keeps a derived view alive with its program, and an
+    // environment target's view has a window (`ScriptCallTarget::entry`).
+    let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
+    let rest = layout.rest;
+    // A body reading its `arguments` keeps every value passed too, past its parameters, as
     // a frame does where legacy reflection (`f.arguments`) can read them; elsewhere nothing
     // observes them, and the window keeps only those its parameters bind. Only a call
     // passing more values than the parameters reads the body's plan.
@@ -15412,6 +15471,29 @@ fn activate_environment_in_lane(
     } else {
         None
     };
+    push_environment_activation_in_lane(cx, r, ip, target, &layout, passed, argc, gathered, (this, constructs))
+}
+
+/// The window of an environment activation and the activation it makes: `enter_environment`
+/// lays out its registers, locals and entries over the values passed (`gathered` being the
+/// rest array), the activation is pushed, and the lane enters the target's program when it is
+/// another one.
+#[inline(always)]
+fn push_environment_activation_in_lane(
+    cx: *mut LaneContext,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    layout: &EnvironmentWindow,
+    passed: &[Value],
+    argc: u16,
+    gathered: Option<Value>,
+    (this, constructs): (Value, bool),
+) -> Result<(Registers, Ip), Ip> {
+    use crate::staged::call_environment as environment_row;
+    let vm = unsafe { vm(cx) };
+    // Another program's callee enters its program and completes across (`Completion::Cross`).
+    let cross = target.program() != unsafe { (*cx).program };
     // The environment window, one row (`call_environment::enter_environment`): every register
     // live at entry (`ScriptCallTarget::fill`) and every local starts `undefined` within the
     // target's reserved room (`ScriptCallTarget::room`), the entries are laid out (the
@@ -15435,7 +15517,7 @@ fn activate_environment_in_lane(
     let held = shape.held();
     debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held) <= usize::from(target.room));
     let rest = if let Some(gathered) = gathered { Some((target.params - 1, gathered.to_bits())) } else { None };
-    let self_binding = if let Some(slot) = self_binding { Some((slot, target.callee.to_bits())) } else { None };
+    let self_binding = if let Some(slot) = layout.self_binding { Some((slot, target.callee.to_bits())) } else { None };
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
     // before the length covers it, and no activation's window moves.

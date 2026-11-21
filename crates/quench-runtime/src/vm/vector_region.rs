@@ -10,7 +10,7 @@
 //! written to its register only where a slot read or liveness needs it.
 //!
 //! Each record computes its staged row: its `Operation`, decoded once when the region is
-//! built, runs on a `RegionFrame` (`staged::step` and the Wasm row entries). The frame reads
+//! built, runs on a `RegionFrame` (`staged::step_out_of_line` and the Wasm row entries). The frame reads
 //! and writes the bank for the vector registers and the register file for the rest. A record
 //! no staged row answers keeps its own computation (`Step::Lanes`, `VectorMove`,
 //! `VectorConstant`, `Load`, `Store`). Every other record of the run keeps its own handler, so
@@ -260,14 +260,15 @@ impl staged::NumericFrame<staged::Concrete> for RegionFrame<'_> {
 }
 
 /// The staged row of `operation` on the run's frame: the Wasm vector, integer and access rows by
-/// their own entries, every other row through `staged::step`.
+/// their own entries, every other row out of line (`staged::step_out_of_line`), so the region
+/// loop does not inline the interpreter's whole row dispatch.
 #[inline(always)]
 fn run_row(stage: &mut staged::Concrete, frame: &mut RegionFrame<'_>, operation: Row) -> staged::Step<u64, Infallible> {
     match operation {
         Row::WasmVector(_) => staged::step_wasm_vector(stage, frame, operation),
         Row::WasmInt(_) => staged::step_wasm_int(stage, frame, operation),
         Row::WasmAccess(_) => staged::step_wasm_access(stage, frame, operation),
-        _ => staged::step(stage, frame, operation),
+        _ => staged::step_out_of_line(stage, frame, operation),
     }
 }
 
@@ -289,7 +290,7 @@ impl VectorRegion {
 
     /// Run the steps; `Err(at)` names the record the general path executes, once the
     /// registers it may read hold their values.
-    #[inline(always)]
+    #[inline]
     fn run(
         &self,
         vm: &mut Vm,
