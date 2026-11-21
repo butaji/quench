@@ -23,10 +23,11 @@ macro_rules! linked_source_pool {
     ($($tokens:tt)*) => { quench_runtime::linked_source_pool! { $($tokens)* } };
 }
 
-/// Node's host selection for the shared linked-program catalog.
+/// Node's host selection for the shared linked-program catalog: the catalog's programs are the
+/// erased host's (`ErasedHost`), which the driver wraps its `NodeHost` in.
 #[macro_export]
 macro_rules! linked_native_sources {
-    ($($tokens:tt)*) => { quench_runtime::linked_native_sources! { host $crate::NodeHost; $($tokens)* } };
+    ($($tokens:tt)*) => { quench_runtime::linked_native_sources! { host quench_runtime::ErasedHost; $($tokens)* } };
 }
 
 /// Derive a static loader archive from compiler-owned raw inputs and edges.
