@@ -113,3 +113,17 @@ at1_unattributed	so `At(1)` is not from the construction lowering, the allocatio
 # lowered, i.e. by an entry guard (`entry_conform`/`guard_enter...`'s `guard_exit`) or by the
 # body's exit machinery itself. The next probe must instrument `guard_exit`/`exit` (the one place
 # every leave is made) with the pc and a per-call-site tag, not the ops.
+# The remaining body leaves are dynamic guard failures, not lowering gaps (2026-11-21):
+# guard_exit/exit tagged with file:line, tier enabled, raytrace.
+leaves_are_dynamic	fn 46's leaves at At(29)/At(23)/At(16) come from three guards, all with code
+# paths that exist: `lane_region.rs:5177` (the arithmetic row's Number/constant guard),
+# `lane_region.rs:4777` (a field-path read's guard) and `lane_region.rs:3737` (`inline_call`'s
+# callee/parameter guard). They are emitted at compile time and *fail at run time* on the data,
+# so the body leaves mid-body: no lowering gap can close them.
+tier_net_negative	so the lane-body tier is net-negative on this corpus by construction: its
+# speculative guards miss on raytrace's polymorphic field/element/arithmetic values, every entry
+# does some work and surrenders, and the compile+warm-up is not repaid (raytrace 7954 vs 7390,
+# richards 8469 vs 6129, hash-map 10840 vs 10432, Basic 4740 vs 4347, deltablue 4974 vs 4227).
+# Making it pay needs the entry contract to prove what the body assumes (shape/value kinds at the
+# entry, one check per region) rather than optimistic per-row guards, i.e. the "prove facts once
+# per region" work — not more op coverage.
