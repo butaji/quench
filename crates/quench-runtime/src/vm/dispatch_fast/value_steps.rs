@@ -47,6 +47,7 @@ pub(super) unsafe fn activation_value_step(cx: *mut LaneContext, call_pc: u64, r
     let instruction = record.without_return();
     if let Some(status) = unsafe { activation_field_read(cx, call_pc, instruction) } { return Some(status); }
     if let Some(status) = unsafe { activation_field_write(cx, call_pc, instruction) } { return Some(status); }
+    if let Some(status) = unsafe { activation_element_step(cx, call_pc, instruction) } { return Some(status); }
     let step = instruction.op().value_step().filter(|_| instruction.result_flags() == 0)?;
     let r = unsafe { (*cx).registers };
     let Some(values) = operand_values(cx, r, step, instruction) else { return Some(LANE_CALL_MISSED) };
@@ -106,6 +107,43 @@ unsafe fn activation_field_write(cx: *mut LaneContext, call_pc: u64, instruction
     if in_place_in_lane(cx, ip, |vm, code| vm.set_field_cached(code, receiver, atom, value, site, strict)).is_none() { return Some(LANE_CALL_MISSED); }
     let after = unsafe { (*cx).registers };
     if after.0 == r.0 { return Some(LANE_CALL_COMPLETED); }
+    unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
+    Some(LANE_CALL_LEFT)
+}
+
+/// The element read or store `instruction` at `call_pc` of the innermost activation (`GetIndex`, `SetIndex`:
+/// `staged::Operation::ElementRead`, `ElementWrite`), made by the interpreter's own element access (`Vm::get_index`,
+/// `Vm::set_index_mode`) over the activation's registers: `LANE_CALL_COMPLETED` with its effect made,
+/// `LANE_CALL_LEFT` where guest code it ran (a getter, a setter, a key's conversion) made the activations frames,
+/// `LANE_CALL_MISSED` where it raised; `None` for any other record, or a base that is no object.
+///
+/// # Safety
+/// As `activation_value_step`.
+unsafe fn activation_element_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
+    if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let r = unsafe { (*cx).registers };
+    let ip = unsafe { (*cx).base.add(call_pc as usize) };
+    match crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))? {
+        crate::staged::Operation::ElementRead { base, key, destination } => {
+            let object = r.get(base);
+            if !unsafe { vm(cx) }.is_object_like(object) { return None; }
+            let key = operand_value_in_lane(cx, r, key.0)?;
+            let Some(value) = in_place_in_lane(cx, ip, |vm, code| vm.get_index(code, object, key)) else { return Some(LANE_CALL_MISSED) };
+            let after = unsafe { (*cx).registers };
+            after.set(destination, value);
+            if after.0 == r.0 { return Some(LANE_CALL_COMPLETED); }
+        }
+        crate::staged::Operation::ElementWrite { value, base, key, strict } => {
+            let object = r.get(base);
+            if !unsafe { vm(cx) }.is_object_like(object) { return None; }
+            let (key, value) = (r.get(key), r.get(value));
+            if in_place_in_lane(cx, ip, |vm, code| vm.set_index_mode(code, object, key, value, strict)).is_none() { return Some(LANE_CALL_MISSED); }
+            if unsafe { (*cx).registers }.0 == r.0 { return Some(LANE_CALL_COMPLETED); }
+        }
+        _ => return None,
+    }
     unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
     Some(LANE_CALL_LEFT)
 }
