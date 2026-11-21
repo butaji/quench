@@ -20,8 +20,14 @@ impl<H: Host> Vm<H> {
     ///
     /// The chain walk is a fact of the source shape alone, so it is memoized per (target shape,
     /// source shape) in `adopted_shapes`: a hit skips the walk. The object checks above run on
-    /// every call, as the target's and the source's flags are not in their shapes. The copy plan
-    /// is always the source's storage in order: a chain of adds gives key `i` slot `i`.
+    /// every call, as the target's and the source's flags are not in their shapes. Each record is
+    /// read once and each object's key eligibility checked once; the source's slots come from
+    /// `shape_enumerable_slots_checked`. The copy plan is always the source's storage in order: a
+    /// chain of adds gives key `i` slot `i`.
+    ///
+    /// The target is an empty root shape that no object takes as its prototype (checked above), so
+    /// no method cache's prototype chain holds it and the copy's adds invalidate nothing
+    /// (`note_plain_copy_atoms`). The copy therefore notes no atom.
     pub(super) fn adopt_source_shape(&mut self, target: Value, source: Value, exclusions: Value) -> bool {
         if self.heap.array_elements(exclusions).is_some_and(|elements| !elements.is_empty()) {
             return false;
@@ -61,8 +67,8 @@ impl<H: Host> Vm<H> {
         if storage_len == 0 {
             return true;
         }
-        // Each key's atom, for the method cache note; the slots are the storage in order.
-        let Some(slots) = self.shape_enumerable_slots(source) else {
+        // The slots are the storage in order: a contiguous list of `storage_len` slots.
+        let Some(slots) = self.shape_enumerable_slots_checked(source, source_data) else {
             return false;
         };
         if !slots.contiguous() || slots.len() != storage_len {
@@ -71,9 +77,9 @@ impl<H: Host> Vm<H> {
         // The target takes the source's own shape, so their slots encode alike by construction
         // (one owner): the source's words become the target's in one run copy, no decode or recode.
         if self.heap.copy_slot_words(target, source, shape) {
-            self.note_plain_copy_atoms(target, slots.iter().map(|&(atom, _)| atom));
             return true;
         }
+        // The copy declined before any effect; the source's record is read again for the values.
         let Some(source_data) = self.object_data(source) else {
             return false;
         };
@@ -84,7 +90,7 @@ impl<H: Host> Vm<H> {
             };
             *value = read;
         }
-        self.initialize_plain_copy(target, shape, &values, slots.iter().map(|&(atom, _)| atom));
+        self.heap.initialize_object_properties(target, shape, &values);
         true
     }
 
