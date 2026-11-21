@@ -14,7 +14,7 @@
 
 use super::elements::{prove_view, read_element, replace_present, DenseView};
 use super::property::Owner;
-use super::typed_elements::{typed_read, typed_write, TypedView};
+use super::typed_elements::{typed_read, typed_read_value, typed_write, TypedView};
 use super::{Concrete, ElementFrame, NumericFrame, NumericStage, Operation, Stage, Step};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
@@ -104,6 +104,7 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
     let index = frame.index_key(stage, key, miss)?;
     let index = stage.uextend32(index);
     match view {
+        ElementView::Typed(view) if frame.typed_values() => typed_read_value(stage, view, index, miss),
         ElementView::Typed(view) => typed_read(stage, view, index, miss),
         ElementView::Dense(view) => frame.element_probed(stage, miss,
             #[inline(always)] |stage, _, absent| read_element(stage, view, index, absent),

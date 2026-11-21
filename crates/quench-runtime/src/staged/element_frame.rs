@@ -65,6 +65,13 @@ pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
     #[inline(always)]
     fn reads_any_backing(&self) -> bool { false }
 
+    /// Whether a typed element a kept view reads is its `Value` word (`typed_read_value`) rather
+    /// than its Number's `f64` word (`typed_read`): a frame whose registers hold values (the
+    /// interpreter's lane) takes the value, so an int32 element stays an int32; a tier that keeps
+    /// the Number unboxed takes the `f64`.
+    #[inline(always)]
+    fn typed_values(&self) -> bool { false }
+
     /// The view of the array `base` an earlier access proved, or its loop's entering edge did for
     /// a typed array, which no storage change has retired; a view proved writable answers a read too.
     #[inline(always)]

@@ -921,7 +921,7 @@ opcodes!($;
     StringCaseIndex => Effect::PURE; layout Scalar; meaning ConstantIndex; class StringCaseIndex; staged Lane; step Body; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, ElementCount, Register),
     // `a` = the slot among the `b` dense int labels from `imm` the discriminant `c` names, when it is an
     // integral double in the run, else `b`: an int `switch`'s jump table index.
-    IntCaseIndex => Effect::PURE; layout Scalar; meaning IntCaseMinimum; staged Generic, @ Register, @ fields(ResultRegister, ElementCount, Register),
+    IntCaseIndex => Effect::PURE; layout Scalar; meaning IntCaseMinimum; staged Generic; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, ElementCount, Register),
     MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex; staged Literal; step Body; traits DISTANT_PRODUCER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject => CALL_EFFECT; layout Scalar; meaning Unused; js ObjectAllocation; class MakeObject; staged Literal; step Body; traits OBJECT_MAKE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObject2; staged Literal; step Body; traits RETURNING_OBJECT FRAME_RETURNABLE CONST_ARRAY_OBJECT2_TAIL PAIR_LITERAL_MAKE ROW_HANDLER MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Register, Register),

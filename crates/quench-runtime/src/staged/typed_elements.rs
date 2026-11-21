@@ -205,6 +205,21 @@ fn read_element<S: NumericStage>(stage: &mut S, values: S::Word, index: S::Word,
     Some(load_number(stage, native.element, address))
 }
 
+/// The `Value` word of element `index` of `values` for `native`: an int32-ranged integer element
+/// int-tagged from its load (no float round trip), any other element's Number boxed as
+/// `Value::number` boxes it (`Stage::box_number`: 3.0 is the int32 3, NaN the canonical NaN).
+#[inline(always)]
+fn read_element_value<S: NumericStage>(stage: &mut S, values: S::Word, index: S::Word, native: NativeKind) -> Option<S::Word> {
+    if let Element::Integer(integer) = native.element && native.is_int32() {
+        let address = element_address(stage, values, index, native.kind);
+        let word = load_integer(stage, integer, address);
+        let payload = stage.uextend32(word);
+        return Some(super::value::int_word(stage, payload));
+    }
+    let number = read_element(stage, values, index, native)?;
+    Some(stage.box_number(number))
+}
+
 /// Stores `number` at element `index` of `values` for `native`.
 #[inline(always)]
 fn write_element<S: NumericStage>(stage: &mut S, access: (S::Word, S::Word, S::Word), native: NativeKind,
@@ -233,6 +248,20 @@ pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word
         ViewKind::Static(native) => read_element(stage, view.values, index, native),
         ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
             &|stage, native| read_element(stage, view.values, index, native), miss),
+    }
+}
+
+/// `typed_read` as a `Value` word (`read_element_value`), for a frame that writes the read into a
+/// value register (`ElementFrame::typed_values`): every register holds `Value::number`'s encoding,
+/// so an Int32Array element reads as the int32 an array's element would.
+#[inline(always)]
+pub(crate) fn typed_read_value<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    bounded(stage, view, index, miss)?;
+    match view.kind {
+        ViewKind::Static(native) => read_element_value(stage, view.values, index, native),
+        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
+            &|stage, native| read_element_value(stage, view.values, index, native), miss),
     }
 }
 

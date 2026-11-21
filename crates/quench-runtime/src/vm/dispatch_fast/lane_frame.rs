@@ -1958,6 +1958,10 @@ impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn reads_any_backing(&self) -> bool { true }
 
+    /// The lane's registers hold values: a typed element reads as `Value::number` encodes it.
+    #[inline(always)]
+    fn typed_values(&self) -> bool { true }
+
     /// The array a proof of the lane's span gives (`proof_span`), where the row is one a proof names;
     /// `None` where the slot does not prove the array, which proves it on the access's own check.
     #[inline(always)]
