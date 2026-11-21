@@ -1,39 +1,39 @@
-# Full sweep after the region leaves a body-less callee to the lane (de2e6ba187).
+# Full sweep after the region inlines a callee copied into its call window (15258b5300).
 # bench/AOT speedups; a row wins at >= 1.50 on C, Node and Bun.
-row	iters	aot_ms	node_ms	bun_ms	c_ms	c_x_aot	node_x_aot	bun_x_aot	status
-Basic	120	4486.4	214.3	180.2	510	0.11	0.05	0.04	ok
-ML	60	39663.4	1156.1	985.9	210	0.01	0.03	0.02	ok
-UniPoker	120	5042.3	482.1	278.8	900	0.18	0.10	0.06	ok
-ai-astar	120	2791.3	371.1	293.1	580	0.21	0.13	0.11	ok
-air	120	4158.1	258.6	200.2	-	-	0.06	0.05	ok
-async-fs	80	1.9	1.7	0.6	250	133.62	0.90	0.31	ok
-bigint-noble-ed25519	30	496.4	357.2	83.5	490	0.99	0.72	0.17	ok
-box2d	120	7151.0	302.1	300.8	350	0.05	0.04	0.04	ok
-cdjs	120	-	-	-	-	-	-	-	exit-1
-crypto	120	1542.1	169.9	-	320	0.21	0.11	-	ok
-deltablue	120	4234.6	90.3	154.6	310	0.07	0.02	0.04	ok
-doxbee-async	120	1005.6	390.9	72.5	580	0.58	0.39	0.07	ok
-doxbee-promise	120	2140.9	536.1	148.1	560	0.26	0.25	0.07	ok
-earley-boyer	120	2612.7	259.6	255.1	370	0.14	0.10	0.10	ok
-gaussian-blur	120	1688.0	527.8	467.0	590	0.35	0.31	0.28	ok
-gbemu	120	15053.7	1267.7	-	500	0.03	0.08	-	ok
-hash-map	120	10443.8	370.4	239.5	440	0.04	0.04	0.02	ok
-js-tokens	120	5522.5	1080.5	525.4	450	0.08	0.20	0.10	ok
-json-parse-inspector	120	-	-	-	210	-	-	-	compile-failed
-json-stringify-inspector	120	-	-	-	210	-	-	-	compile-failed
-lazy-collections	120	8731.0	1466.6	563.4	600	0.07	0.17	0.06	ok
-navier-stokes	120	499.1	251.7	-	400	0.80	0.50	-	ok
-proxy-mobx	120	-	-	-	260	-	-	-	exit-1
-proxy-vue	120	39.3	5.9	7.2	240	6.11	0.15	0.18	ok
-raytrace	120	7415.1	569.0	357.9	320	0.04	0.08	0.05	ok
-raytrace-private-class-fields	120	33780.1	748.1	404.5	310	0.01	0.02	0.01	ok
-raytrace-public-class-fields	120	18808.9	617.3	364.7	320	0.02	0.03	0.02	ok
-regexp-octane	120	-	-	-	7850	-	-	-	exit-1
-richards	120	6118.0	288.1	283.9	400	0.07	0.05	0.05	ok
-splay	120	3521.5	597.9	464.2	2990	0.85	0.17	0.13	ok
-stanford-crypto-aes	120	4204.3	599.7	621.8	370	0.09	0.14	0.15	ok
-stanford-crypto-pbkdf2	120	5380.7	254.3	202.2	300	0.06	0.05	0.04	ok
-stanford-crypto-sha256	120	5859.5	299.1	201.5	300	0.05	0.05	0.03	ok
-sunspider	120	-	-	-	13730	-	-	-	compile-failed
-sync-fs	80	8918.8	461.8	354.8	280	0.03	0.05	0.04	ok
-validatorjs	120	-	-	-	220	-	-	-	compile-failed
+row	iters	aot_ms	node_ms	bun_ms	c_ms	c_x_aot	node_x_aot	bun_x_aot	prev_aot_ms	status
+Basic	120	4450.2	214.3	180.2	510	0.11	0.05	0.04	4486.4	ok
+ML	60	39592.4	1156.1	985.9	210	0.01	0.03	0.02	39663.4	ok
+UniPoker	120	5065.8	482.1	278.8	900	0.18	0.10	0.06	5042.3	ok
+ai-astar	120	2773.0	371.1	293.1	580	0.21	0.13	0.11	2791.3	ok
+air	120	4114.0	258.6	200.2	-	-	0.06	0.05	4158.1	ok
+async-fs	80	1.9	1.7	0.6	250	132.91	0.89	0.30	1.9	ok
+bigint-noble-ed25519	30	497.9	357.2	83.5	490	0.98	0.72	0.17	496.4	ok
+box2d	120	7146.1	302.1	300.8	350	0.05	0.04	0.04	7151.0	ok
+cdjs	120	-	-	-	-	-	-	-	-	exit-1
+crypto	120	1531.1	169.9	-	320	0.21	0.11	-	1542.1	ok
+deltablue	120	4226.6	90.3	154.6	310	0.07	0.02	0.04	4234.6	ok
+doxbee-async	120	1010.9	390.9	72.5	580	0.57	0.39	0.07	1005.6	ok
+doxbee-promise	120	2065.6	536.1	148.1	560	0.27	0.26	0.07	2140.9	ok
+earley-boyer	120	2614.9	259.6	255.1	370	0.14	0.10	0.10	2612.7	ok
+gaussian-blur	120	1688.1	527.8	467.0	590	0.35	0.31	0.28	1688.0	ok
+gbemu	120	15069.9	1267.7	-	500	0.03	0.08	-	15053.7	ok
+hash-map	120	10430.0	370.4	239.5	440	0.04	0.04	0.02	10443.8	ok
+js-tokens	120	5501.1	1080.5	525.4	450	0.08	0.20	0.10	5522.5	ok
+json-parse-inspector	120	-	-	-	210	-	-	-	-	compile-failed
+json-stringify-inspector	120	-	-	-	210	-	-	-	-	compile-failed
+lazy-collections	120	8729.8	1466.6	563.4	600	0.07	0.17	0.06	8731.0	ok
+navier-stokes	120	487.4	251.7	-	400	0.82	0.52	-	499.1	ok
+proxy-mobx	120	-	-	-	260	-	-	-	-	exit-1
+proxy-vue	120	39.7	5.9	7.2	240	6.05	0.15	0.18	39.3	ok
+raytrace	120	7429.3	569.0	357.9	320	0.04	0.08	0.05	7415.1	ok
+raytrace-private-class-fields	120	34315.1	748.1	404.5	310	0.01	0.02	0.01	33780.1	ok
+raytrace-public-class-fields	120	18755.8	617.3	364.7	320	0.02	0.03	0.02	18808.9	ok
+regexp-octane	120	-	-	-	7850	-	-	-	-	exit-1
+richards	120	6227.5	288.1	283.9	400	0.06	0.05	0.05	6118.0	ok
+splay	120	3534.7	597.9	464.2	2990	0.85	0.17	0.13	3521.5	ok
+stanford-crypto-aes	120	4213.6	599.7	621.8	370	0.09	0.14	0.15	4204.3	ok
+stanford-crypto-pbkdf2	120	5293.5	254.3	202.2	300	0.06	0.05	0.04	5380.7	ok
+stanford-crypto-sha256	120	1821.8	299.1	201.5	300	0.16	0.16	0.11	5859.5	ok
+sunspider	120	-	-	-	13730	-	-	-	-	compile-failed
+sync-fs	80	8880.8	461.8	354.8	280	0.03	0.05	0.04	8918.8	ok
+validatorjs	120	-	-	-	220	-	-	-	-	compile-failed
