@@ -259,7 +259,10 @@ impl Value {
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
     /// canonically. A value is integral exactly when its truncation converts back to the
     /// same bits, which also excludes -0 (+0's bits differ) and NaN.
-    #[inline] pub fn number(value: f64) -> Self {
+    #[inline] pub fn number(value: f64) -> Self { Self::number_inline(value) }
+
+    /// `number`, inlined where it is the hot path's own boxing (a typed or double element read).
+    #[inline(always)] pub(crate) fn number_inline(value: f64) -> Self {
         let integer = truncate_to_i32(value);
         let back = f64::from(integer);
         // Ordered and unequal (`fcmp one`, one `ucomisd` and `jne`): a non-integral double,

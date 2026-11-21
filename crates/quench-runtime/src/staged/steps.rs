@@ -399,7 +399,9 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
         Some(Decoder::Element) => RowStep::Keyed,
         Some(Decoder::WasmFloat) => RowStep::WasmFloat,
-        Some(Decoder::Generic) => if matches!(op, Op::Unary | Op::Binary | Op::NumericAdd | Op::NumericMultiply) { RowStep::Arith } else { RowStep::Generic },
+        // `IntCaseIndex` decodes to a Number operation (`NumberOperation::IntCase`), which the generic step does not run.
+        Some(Decoder::Generic) => if matches!(op, Op::IntCaseIndex) { RowStep::Number }
+            else if matches!(op, Op::Unary | Op::Binary | Op::NumericAdd | Op::NumericMultiply) { RowStep::Arith } else { RowStep::Generic },
         Some(Decoder::WasmJump) => RowStep::WasmJump,
         Some(Decoder::WasmState) => RowStep::WasmState,
         Some(Decoder::WasmMemory) => RowStep::WasmMemory,

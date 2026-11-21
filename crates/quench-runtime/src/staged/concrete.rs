@@ -131,7 +131,9 @@ impl Stage for Concrete {
     #[inline(always)]
     fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
     #[inline(always)]
-    fn box_number(&mut self, number: u64) -> u64 { crate::Value::number(f64::from_bits(number)).to_bits() }
+    // `Value::number` without its call (`Value::number_inline`): an element or slot read boxes its Number in
+    // place, as the row's other arms make their words.
+    fn box_number(&mut self, number: u64) -> u64 { crate::Value::number_inline(f64::from_bits(number)).to_bits() }
     #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
