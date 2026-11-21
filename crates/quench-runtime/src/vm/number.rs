@@ -168,7 +168,7 @@ fn fixed_rounded_exact(number: f64, digits: usize) -> BigInt {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Installs the `Number` constructor, its prototype and their constants in the main realm.
     pub(super) fn install_number(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let number = self.native_value(Native::Number);
@@ -591,7 +591,7 @@ pub(super) fn is_math_unary(native: Native) -> bool {
     math_call(native).is_some_and(MathCall::reads_one_number)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn math_hypot(
         &mut self,
         p: &ResidualProgram,

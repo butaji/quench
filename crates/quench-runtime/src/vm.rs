@@ -320,10 +320,10 @@ use wtf16::JsString;
 
 /// A native's callback prepared for a loop of calls (`Vm::with_prepared_callback`): the
 /// callee and receiver every call passes, and how its calls run (`CallbackProof`).
-pub(super) struct PreparedCallback<H: Host> {
+pub(super) struct PreparedCallback {
     callee: Value,
     this: Value,
-    proof: CallbackProof<H>,
+    proof: CallbackProof,
 }
 
 /// The life of a prepared callback's proof, one transition per loop: its first call runs as
@@ -332,12 +332,12 @@ pub(super) struct PreparedCallback<H: Host> {
 /// (`General`), and every later call reads that proof. Held in place for one loop, so the
 /// lane proof's size costs no allocation.
 #[allow(clippy::large_enum_variant)]
-enum CallbackProof<H: Host> {
+enum CallbackProof {
     First,
     Second,
     /// The lane proof, and the call roots from `roots` on that keep the callee, the receiver
     /// and, in the `PREPARED_ARGUMENT_ROOTS` after them, each call's arguments.
-    Lane { roots: usize, lane: dispatch_fast::PreparedLaneCallback<H> },
+    Lane { roots: usize, lane: dispatch_fast::PreparedLaneCallback },
     General,
 }
 
@@ -2042,7 +2042,7 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     getter: None,
     setter: None,
 };
-pub(crate) struct Vm<H> {
+pub(crate) struct Vm {
     /// Typed array views' element addresses by view (`typed_array_access::TypedViewCache`).
     typed_views: typed_array_access::TypedViewCache,
     /// VM-wide running-job admission for native microtask checkpoints.
@@ -2074,7 +2074,12 @@ pub(crate) struct Vm<H> {
     /// (`Vm::run_promise_job`), until the await resumption it runs takes it
     /// (`Vm::resume_queued_await`).
     chainable_job: bool,
-    pub(crate) host: H,
+    pub(crate) host: Box<dyn Host>,
+    /// The host type's associated functions (`HostStatics::of`), the only host calls that
+    /// are not methods of `host`.
+    pub(crate) host_statics: crate::host::HostStatics,
+    /// `Host::runs_lane`, read once: whether bodies run in the lane (`dispatch_fast`).
+    pub(crate) runs_lane: bool,
     specialized: bool,
     heap: Heap,
     realm: Realm,
@@ -2182,7 +2187,7 @@ pub(crate) struct Vm<H> {
     /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
     js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<compiled::NumericImage>>>,
     #[cfg(feature = "native-execution")]
-    native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
+    native_program_resolver: Option<Box<native_program::NativeProgramResolver>>,
     execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
     /// The frame index of each root activation this Vm's entry points are running (`call_root`,
@@ -2542,7 +2547,7 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Record a method-cache name, as a call site's first call does (tests).
     #[cfg(test)]
     pub(crate) fn name_method_atom(&mut self, atom: crate::bytecode::Atom) {
@@ -3327,6 +3332,17 @@ impl<H: Host> Vm<H> {
         );
         crate::report_allocator_memory(phase);
     }
+    /// The host as its own type (the VM holds it erased).
+    #[allow(dead_code)]
+    pub(crate) fn host_as<T: Host>(&mut self) -> &mut T {
+        crate::host::host_as::<T>(&mut *self.host)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn host_ref<T: Host>(&self) -> &T {
+        crate::host::host_ref_as::<T>(&*self.host)
+    }
+
     /// `Runtime::end_for_process_exit`: drops the host, and the program store when its drop
     /// reports, and leaves every other field to the operating system.
     pub(crate) fn end_for_process_exit(self) {
@@ -3935,7 +3951,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         callee: Value,
         this: Value,
-        body: impl FnOnce(&mut Self, &mut PreparedCallback<H>) -> R,
+        body: impl FnOnce(&mut Self, &mut PreparedCallback) -> R,
     ) -> R {
         let mut prepared = PreparedCallback { callee, this, proof: CallbackProof::First };
         let result = body(self, &mut prepared);
@@ -3953,7 +3969,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn call_prepared(
         &mut self,
         p: &ResidualProgram,
-        prepared: &mut PreparedCallback<H>,
+        prepared: &mut PreparedCallback,
         args: &[Value],
     ) -> Result<Value, JsError> {
         match &mut prepared.proof {

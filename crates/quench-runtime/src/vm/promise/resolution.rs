@@ -5,7 +5,7 @@
 
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(in crate::vm) fn promise_resolve_value(
         &mut self,
         p: &ResidualProgram,

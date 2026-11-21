@@ -4,7 +4,7 @@ use super::{embedder_options, flags, info, values};
 use crate::host::{shared_vm::operation, NodeHost};
 use quench_runtime::{HostFunctionId, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 type Projection = fn(&mut Context<'_>, RootId, &[RootId]) -> Outcome;
 
@@ -82,7 +82,7 @@ impl Slot {
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let state = c.null_object_rooted()?;
     let process = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module

@@ -1,7 +1,7 @@
 use super::native_rows::Holder;
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn object_define_properties(
         &mut self,
         p: &ResidualProgram,

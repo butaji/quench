@@ -508,9 +508,9 @@ impl PromiseRuntime {
 /// The compile-cache part naming a static module's analysis (`Vm::static_module_analysis`).
 const STATIC_MODULE_ANALYSIS_GOAL: &str = "static-module-analysis";
 
-impl<H: Host> Vm<H> {
+impl Vm {
     #[cfg(feature = "native-execution")]
-    pub(super) fn register_native_module(&mut self, native: crate::NativeJsProgram<H>) -> Result<(), JsError> {
+    pub(super) fn register_native_module(&mut self, native: crate::NativeJsProgram) -> Result<(), JsError> {
         let key = module_cache_key(&native.residual().source_name, "javascript");
         if self.realm.promise.modules.contains_key(&key) {
             return Err(JsError::validation("duplicate native module identity".into()));
@@ -819,7 +819,7 @@ impl<H: Host> Vm<H> {
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
             let resource = context.scoped_value(promise);
-            H::initialize_promise(&mut context, resource, identity)
+            (context.host_statics().initialize_promise)(&mut context, resource, identity)
                 .map_err(|error| context.finish_error(error))?;
         }
         Ok(promise)
@@ -2991,7 +2991,7 @@ impl<H: Host> Vm<H> {
             .and_then(|record| record.program)
             .and_then(|id| self.programs.get(id))
             .filter(|program| program.source_text().is_some_and(|text| crate::Engine::compiled_module_text_is(text, source)));
-        let host = &mut self.host;
+        let host = &mut *self.host;
         crate::Engine::static_module_analysis_with(source, name, module.typescript, |analyze| {
             // Derive the loader's memoized view from its admitted compiler result.
             if let Some(program) = program {

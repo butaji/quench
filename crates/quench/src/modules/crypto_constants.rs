@@ -73,8 +73,8 @@ enum Constant {
     Number(f64),
     Text(&'static str),
 }
-pub(crate) fn binding(c: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+pub(crate) fn binding(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(root) = shared.borrow().builtin_cache.get(CACHE).copied() {
         return Ok(root);
     }

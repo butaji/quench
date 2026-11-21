@@ -8,7 +8,7 @@ use crate::modules::http_shared_vm::server;
 use crate::modules::stream_shared_vm::{call_method, get, is_nullish, is_undefined, on, once, put, put_number};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Https, "httpsMembers", [

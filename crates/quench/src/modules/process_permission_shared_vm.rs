@@ -6,7 +6,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::cell::RefCell;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 const PERMISSION: &str = "permission";
 const ENABLE: &str = "--permission";
@@ -163,7 +163,7 @@ fn reference_path(c: &mut Context<'_>, scope: &str, reference: RootId) -> Result
 }
 
 fn resolve(c: &mut Context<'_>, path: &str) -> String {
-    let cwd = c.host_mut().shared_state().borrow().cwd.path();
+    let cwd = c.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.path();
     super::path_algorithms::posix::resolve_strings(&[path.to_owned()], &cwd.to_string_lossy())
 }
 
@@ -196,7 +196,7 @@ fn granted(c: &mut Context<'_>, scope: &'static Scope, target: Option<String>) -
         (Some(Grant::Paths(paths)), None) => paths.iter().any(|path| path == ANY_PATH),
         (paths, Some(target)) if path_scope(scope.name) => {
             let target = resolve(c, &target);
-            let process = c.host_mut().shared_state().borrow().process_module;
+            let process = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module;
             let entry = match process {
                 Some(process) => {
                     let argv = get(c, process, "argv")?;

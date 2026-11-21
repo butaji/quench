@@ -81,7 +81,7 @@ impl StartupIntrinsics {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Read a captured data property without temporarily changing guest state.
     /// This also works after a script makes its replacement non-configurable.
     pub(crate) fn startup_data_property(&self, holder: Value, name: &str) -> Option<Value> {

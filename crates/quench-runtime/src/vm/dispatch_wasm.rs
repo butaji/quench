@@ -28,7 +28,7 @@ use super::wasm_table::copy_length_type;
 mod gc;
 pub(super) use gc::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance, wasm_gc_value_ops};
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// One Wasm instruction, dispatched on its catalog step (`Step::of`).
     #[inline(never)]
     pub(super) fn step_wasm(
@@ -347,7 +347,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The word a register value of type `ty` gives a staged Wasm stage: a raw register holds
     /// it, a boxed slot decodes to it. An f64 operator that reads a NaN only as a NaN takes the
     /// slot's bits as they are (`float_bits64`).

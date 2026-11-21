@@ -2,12 +2,12 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-pub(crate) fn function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn function(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     context.host_function_named(crate::host::shared_vm::operation!("callbackify"), "callbackify")
 }
 
 pub(crate) fn callbackify(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -48,7 +48,7 @@ pub(crate) fn callbackify(
 }
 
 pub(crate) fn callbackified(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -78,7 +78,7 @@ pub(crate) fn callbackified(
 }
 
 pub(crate) fn settled(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -93,7 +93,7 @@ pub(crate) fn settled(
 }
 
 pub(crate) fn invoke(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -121,7 +121,7 @@ pub(crate) fn invoke(
 
 use crate::modules::util_shared_vm::named_get as get;
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,

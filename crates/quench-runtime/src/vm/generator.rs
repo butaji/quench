@@ -67,7 +67,7 @@ pub(super) enum MaterializedStop {
     Returned,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The result of a generator step `resume`, whose activation became a frame (the lane's
     /// activations materialize from the record, `push_generator_window_frame`) and whose popped
     /// `frame` stopped at `stop` with `value`, as `resume_generator_step` finishes it: a

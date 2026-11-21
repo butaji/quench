@@ -49,7 +49,7 @@ fn module() -> crate::WasmModule {
 type Entry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
 
 /// Function `index` of `module` stitched and placed, as its entry, with its code kept alive.
-fn stitched(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize) -> (CodeMemory, Entry) {
+fn stitched(vm: &Vm, module: &crate::WasmModule, index: usize) -> (CodeMemory, Entry) {
     // A module without globals binds its memory at slot 0.
     let memory_slot = (!module.memories.is_empty()).then_some(module.globals.len() as u32);
     let program = vm.programs.find_shared(&module.program).expect("an instantiated module");
@@ -110,7 +110,7 @@ fn run_over(entry: Entry, memory: &mut [u8], arguments: &[u64]) -> Result<u64, u
     if status == 0 { Ok(result) } else { Err(status) }
 }
 
-fn interpreted(vm: &mut Vm<crate::SystemHost>, instance: &crate::WasmInstance, index: u32, arguments: &[WasmValue]) -> Result<u64, u32> {
+fn interpreted(vm: &mut Vm, instance: &crate::WasmInstance, index: u32, arguments: &[WasmValue]) -> Result<u64, u32> {
     match vm.invoke_wasm(instance, index, arguments) {
         Ok(Some(value)) => Ok(value.word()),
         Ok(None) => Ok(0),

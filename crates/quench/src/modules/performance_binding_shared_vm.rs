@@ -3,7 +3,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
 include!("performance_constants.rs");
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 #[derive(Default)]
 pub(crate) struct State {
     counts: Option<RootId>,
@@ -68,7 +68,7 @@ fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c.set_property_rooted(milestones, key, unknown, milestones)?;
     }
     set_time_origins(c, milestones)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     put(c, module, "milestones", milestones)?;
     let retained_counts = c.retain(counts)?;
     let retained_milestones = match c.retain(milestones) {
@@ -107,7 +107,7 @@ const STARTUP_MILESTONE_GAP_NS: f64 = 1_000_000.0;
 
 /// The process's time origins in `milestones`: its own clocks' readings at its start.
 fn set_time_origins(c: &mut Context<'_>, milestones: RootId) -> Result<(), RootedError> {
-    let origins = c.host_mut().shared_state().borrow().process_control.performance_origins();
+    let origins = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.performance_origins();
     let Some((monotonic_ns, unix_micros)) = origins else {
         return unsupported(
             c,
@@ -132,7 +132,7 @@ fn set_time_origins(c: &mut Context<'_>, milestones: RootId) -> Result<(), Roote
 /// Replaces a restored snapshot's time origins, the builder's, with this process's, as
 /// Node's `refreshTimeOrigin` does after its own snapshot.
 pub(crate) fn refresh_time_origins(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let milestones = c.host_mut().shared_state().borrow().performance_native.milestones;
+    let milestones = c.host_as::<crate::host::NodeHost>().shared_state().borrow().performance_native.milestones;
     milestones.map_or(Ok(()), |milestones| set_time_origins(c, milestones))
 }
 
@@ -148,7 +148,7 @@ pub(crate) fn uv_metrics_info(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let state = c.host_mut().shared_state();
+    let state = c.host_as::<crate::host::NodeHost>().shared_state();
     let (number_buffer, bigint_buffer, process_control) = {
         let shared = state.borrow();
         (
@@ -178,13 +178,13 @@ pub(crate) fn loop_idle_time(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let control = shared.borrow().process_control.clone();
     let idle_ms = control.event_loop_idle_ms();
     Ok(c.number(idle_ms))
 }
 fn count(c: &mut Context<'_>, index: usize) -> Result<u32, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let counts = shared
         .borrow()
         .performance_native
@@ -213,7 +213,7 @@ pub(crate) fn notify_forced_gc(c: &mut Context<'_>, duration_ms: f64) -> Result<
     // Workers may expose global.gc() before Node's perf_hooks binding has
     // initialized the observer counters. With no counters there can be no GC
     // observer, so notification is a no-op.
-    if c.host_mut()
+    if c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .performance_native
@@ -242,7 +242,7 @@ fn constant_value(name: &str) -> u32 {
 /// The observer count of entry type `kind`, which host reporters read, moved by `delta`;
 /// types the host does not report have none.
 pub(crate) fn adjust_observer_count(c: &mut Context<'_>, kind: &str, delta: f64) -> Result<(), RootedError> {
-    let (Some(index), Some(counts)) = (entry(kind), c.host_mut().shared_state().borrow().performance_native.counts) else {
+    let (Some(index), Some(counts)) = (entry(kind), c.host_as::<crate::host::NodeHost>().shared_state().borrow().performance_native.counts) else {
         return Ok(());
     };
     let current = f64::from(count(c, index)?);
@@ -257,7 +257,7 @@ pub(crate) fn adjust_observer_count(c: &mut Context<'_>, kind: &str, delta: f64)
 pub(crate) fn milestone_ns(c: &mut Context<'_>, label: &str) -> Result<f64, RootedError> {
     binding(c)?;
     let milestones = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .performance_native
@@ -287,7 +287,7 @@ pub(crate) fn bootstrap_mark(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
     let milestones = state
         .performance_native

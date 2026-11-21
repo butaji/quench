@@ -33,7 +33,7 @@ fn geometry_slot(atom: Atom, layout: u32) -> usize {
 #[derive(Default)]
 pub(super) struct TypedArrayGeometryProofs([std::cell::Cell<Option<TypedArrayGeometryProof>>; TYPED_ARRAY_GEOMETRY_ENTRIES]);
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A read of a geometry name (`AtomClass::VIRTUAL_FIELD`) from typed array, DataView,
     /// Map or Set `object` that runs no guest code: the intrinsic accessor its chain resolves
     /// the name to, as a pure native read (`pure_native_getter_value`). `None` leaves the read to the

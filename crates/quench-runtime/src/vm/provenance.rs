@@ -114,7 +114,7 @@ pub(super) fn shape_function_length_reconfigured(shapes: &[Shape], shape: u32) -
     shapes[shape as usize].facts.length_reconfigured()
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn capture_function_name(&mut self, function: Value, name: Value) {
         let Some(name) = self.heap.string(name) else {
             return;

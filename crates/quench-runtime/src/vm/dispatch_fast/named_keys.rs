@@ -5,6 +5,6 @@ use super::*;
 
 /// `base[key]` of a string `key` that names no array index (`Vm::plain_string_keyed_get`).
 #[inline(always)]
-pub(super) fn named_key_element<H: Host>(vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
+pub(super) fn named_key_element(vm: &mut Vm, base: Value, key: Value) -> Option<Value> {
     vm.plain_string_keyed_get(base, key)
 }

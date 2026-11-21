@@ -14,7 +14,7 @@ pub(super) fn mutable_array_elements(
     elements.make_mut()
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn primitive_prototype(&self, value: Value) -> Option<Value> {
         if self.heap.is_string(value) {
             return Some(self.string_proto);
@@ -710,7 +710,7 @@ mod tests {
     fn high_array_index_stays_out_of_dense_storage() {
         let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
-                Vm::<TestHost>::empty_object(Value::NULL),
+                Vm::empty_object(Value::NULL),
                 vec![],
             ));
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
@@ -750,7 +750,7 @@ mod tests {
     fn bounded_sparse_write_promotes_to_dense_storage() {
         let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
-                Vm::<TestHost>::empty_object(Value::NULL),
+                Vm::empty_object(Value::NULL),
                 Vec::new(),
             ));
 
@@ -770,7 +770,7 @@ mod tests {
     fn shrinking_large_sparse_array_promotes_and_preserves_values() {
         let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
-                Vm::<TestHost>::empty_object(Value::NULL),
+                Vm::empty_object(Value::NULL),
                 Vec::new(),
             ));
         vm.heap.sparse_set_length(array, 1_000_000);
@@ -794,7 +794,7 @@ mod tests {
         let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
-                Vm::<TestHost>::empty_object(Value::NULL),
+                Vm::empty_object(Value::NULL),
                 Vec::new(),
             ));
         let atom_count = vm.atom_sequence.len();
@@ -820,7 +820,7 @@ mod tests {
     fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
         let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
-                Vm::<TestHost>::empty_object(Value::NULL),
+                Vm::empty_object(Value::NULL),
                 vec![Value::FALSE; 1024],
             ));
         let atom_count = vm.atom_sequence.len();

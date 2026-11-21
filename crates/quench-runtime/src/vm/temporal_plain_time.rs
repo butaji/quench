@@ -51,7 +51,7 @@ struct PlainTimeDifferenceOptions {
     rounding_mode: String,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_temporal_plain_time(
         &mut self,
         p: &ResidualProgram,

@@ -6,7 +6,7 @@ use super::event_target_shared_vm::{
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 pub(super) const SLOT: &str = "domExceptionSlot";
 use crate::modules::keys::NAME;

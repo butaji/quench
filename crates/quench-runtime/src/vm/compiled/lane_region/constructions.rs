@@ -13,7 +13,7 @@ impl Lowering<'_, '_> {
     /// no host, so it is named at the one host type.
     pub(super) fn initializes_on_construction(&self, function: u32) -> bool {
         let function = self.program.function(function as usize);
-        !function.rest && crate::vm::Vm::<crate::SystemHost>::inline_constructible(function)
+        !function.rest && crate::vm::Vm::inline_constructible(function)
             && function.only_initializes_this_fields(&self.program.constants)
     }
 

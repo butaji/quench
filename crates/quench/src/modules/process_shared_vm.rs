@@ -10,7 +10,7 @@ use std::io::Write;
 use std::rc::Rc;
 
 pub(crate) fn collect_garbage(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -29,9 +29,9 @@ use crate::CASE_RESULT_ENV;
 const MAX_SAFE_EXIT_CODE: f64 = quench_runtime::units::MAX_SAFE_INTEGER;
 const UNHANDLED_REJECTION_CLI_GUIDANCE: &str = "To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode).";
 
-pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -51,7 +51,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let capture_state = context.retain(capture_state)?;
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .process_capture_state = Some(capture_state);
@@ -153,7 +153,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     // The active domain (`node:domain`), none until one is entered.
     let null = context.null();
     install(context, process, "domain", null)?;
-    let shared_state = context.host_mut().shared_state();
+    let shared_state = context.host_as::<crate::host::NodeHost>().shared_state();
     let exec_argv = shared_state.borrow().exec_argv.clone();
     if let Some(pair) = exec_argv.windows(2).rev().find(|pair| {
         matches!(
@@ -215,7 +215,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     define_global_process(context, global, process)?;
     let retained = context.retain(process)?;
     let previous = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .process_module
@@ -228,8 +228,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 
 /// The process's arguments, executable and ids on `process`. A restored startup snapshot
 /// (`Host::resume`) holds another process's, which these replace in place.
-fn install_identity(context: &mut NativeContext<'_, NodeHost>, process: RootId) -> Result<(), RootedError> {
-    let shared_state = context.host_mut().shared_state();
+fn install_identity(context: &mut NativeContext<'_>, process: RootId) -> Result<(), RootedError> {
+    let shared_state = context.host_as::<crate::host::NodeHost>().shared_state();
     let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
     for (name, values) in [
@@ -294,9 +294,9 @@ fn install_identity(context: &mut NativeContext<'_, NodeHost>, process: RootId) 
 }
 
 /// `install_identity` on the installed `process` (`Host::resume`).
-pub(crate) fn refresh_identity(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn refresh_identity(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     let process = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -312,7 +312,7 @@ pub(crate) fn refresh_identity(context: &mut NativeContext<'_, NodeHost>) -> Res
 }
 
 /// `process.hrtime` with its `bigint`, and `process.__irMark` under `QUENCH_DEV=ir-mark`.
-fn install_clocks(context: &mut NativeContext<'_, NodeHost>, process: RootId) -> Result<(), RootedError> {
+fn install_clocks(context: &mut NativeContext<'_>, process: RootId) -> Result<(), RootedError> {
     let hrtime = context.host_function_named(crate::host::shared_vm::operation!("processHrtime"), "hrtime")?;
     let bigint = context.host_function_named(crate::host::shared_vm::operation!("processHrtimeBigint"), "bigint")?;
     install(context, hrtime, "bigint", bigint)?;
@@ -325,7 +325,7 @@ fn install_clocks(context: &mut NativeContext<'_, NodeHost>, process: RootId) ->
 }
 
 fn install_exit_code(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     process: RootId,
 ) -> Result<(), RootedError> {
     let getter = context.host_function(crate::host::shared_vm::operation!("processExitCodeGet"))?;
@@ -349,13 +349,13 @@ fn install_exit_code(
 }
 
 /// Whether the stream's descriptor is a terminal, as `isTTY`.
-fn install_terminal(context: &mut NativeContext<'_, NodeHost>, stream: RootId, fd: i32) -> Result<(), RootedError> {
+fn install_terminal(context: &mut NativeContext<'_>, stream: RootId, fd: i32) -> Result<(), RootedError> {
     let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
     install(context, stream, "isTTY", tty)
 }
 
 fn create_stream(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     fd: i32,
 ) -> Result<RootId, RootedError> {
     let stream = context.object_rooted()?;
@@ -395,7 +395,7 @@ const GLOBAL_PROCESS_SLOT: &str = "process";
 
 /// `globalThis.process`'s getter: the slot's current value.
 pub(crate) fn global_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -406,7 +406,7 @@ pub(crate) fn global_get(
 
 /// `globalThis.process`'s setter: replaces the slot's value.
 pub(crate) fn global_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -423,7 +423,7 @@ pub(crate) fn global_set(
 /// stream's own `write` and calls `callback` with the stream as `this` in a microtask; the
 /// descriptor stays open.
 pub(crate) fn stdio_end(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -462,7 +462,7 @@ pub(crate) fn stdio_end(
 
 /// Calls `stdio_end`'s callback with its stream as `this`.
 pub(crate) fn stdio_end_callback(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -476,7 +476,7 @@ pub(crate) fn stdio_end_callback(
 
 /// `process.stdout.ref()`/`unref()`: stdio has no handle to reference, so both return `this`.
 pub(crate) fn stdio_reference(
-    _: &mut NativeContext<'_, NodeHost>,
+    _: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -484,7 +484,7 @@ pub(crate) fn stdio_reference(
 }
 
 fn define_global_process(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     global: RootId,
     process: RootId,
 ) -> Result<(), RootedError> {
@@ -525,7 +525,7 @@ fn define_global_process(
 }
 
 fn install_config(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     process: RootId,
 ) -> Result<(), RootedError> {
     let config = context.object_rooted()?;
@@ -547,7 +547,7 @@ fn install_config(
 /// nor configurable. With `prevent_extensions_rooted` after the last one, the object is
 /// frozen without compiling a script to call `Object.freeze` (6 KiB of start-up malloc).
 fn install_frozen(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -561,7 +561,7 @@ fn install_frozen(
 }
 
 fn install_facts(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     process: RootId,
     property: &str,
     facts: &[(&'static str, ProcessFact)],
@@ -575,7 +575,7 @@ fn install_facts(
 }
 
 fn fact_value(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     fact: ProcessFact,
 ) -> Result<RootId, RootedError> {
     match fact {
@@ -594,7 +594,7 @@ fn fact_value(
 }
 
 fn install_versions(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     process: RootId,
 ) -> Result<(), RootedError> {
     let versions = context.object_rooted()?;
@@ -614,7 +614,7 @@ fn install_versions(
 }
 
 fn set_text(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     property: &str,
     value: &str,
@@ -624,7 +624,7 @@ fn set_text(
 }
 
 fn install(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -649,7 +649,7 @@ pub extern "C" fn quench_ir_mark() {
 
 /// `process.__irMark()` (`QUENCH_DEV=ir-mark`): one profiling boundary, `quench_ir_mark`.
 pub(crate) fn ir_mark(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -658,12 +658,12 @@ pub(crate) fn ir_mark(
 }
 
 pub(crate) fn uptime(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let seconds = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_control
@@ -672,12 +672,12 @@ pub(crate) fn uptime(
 }
 
 pub(crate) fn exit_code_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let code = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_control
@@ -690,13 +690,13 @@ pub(crate) fn exit_code_get(
 }
 
 pub(crate) fn exit_code_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(value_root) = args.first().copied() else {
         context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .process_control
@@ -708,7 +708,7 @@ pub(crate) fn exit_code_set(
         .ok_or_else(|| RootedError::host("invalid process.exitCode value root"))?;
     if value.is_undefined() || value.is_null() {
         context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .process_control
@@ -735,7 +735,7 @@ pub(crate) fn exit_code_set(
         return exit_code_range_error(context, number);
     }
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_control
@@ -746,12 +746,12 @@ pub(crate) fn exit_code_set(
 // Rust translation of original per_thread.js:exit. Property reads/calls stay
 // observable: callers may replace emit/reallyExit or the public _exiting flag.
 pub(crate) fn exit(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let process = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -793,7 +793,7 @@ pub(crate) fn exit(
     Ok(context.undefined())
 }
 fn public_exit_code(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     process: RootId,
 ) -> Result<RootId, RootedError> {
     let key = context.string_rooted("exitCode");
@@ -805,7 +805,7 @@ fn public_exit_code(
     }
 }
 fn set_exit_property(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     process: RootId,
     name: &str,
     value: RootId,
@@ -820,7 +820,7 @@ fn set_exit_property(
     Err(context.throw(error))
 }
 fn call_process_method(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     process: RootId,
     name: &str,
     args: &[RootId],
@@ -842,7 +842,7 @@ enum ExitEventOrigin {
 /// A replaced reallyExit or a caught listener throw leaves the event loop alive;
 /// Node emits again at eventual natural shutdown in those cases.
 pub(crate) fn emit_exit_event(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -850,11 +850,11 @@ pub(crate) fn emit_exit_event(
     emit_exit_event_inner(context, code, ExitEventOrigin::Natural)
 }
 fn emit_exit_event_inner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     code: RootId,
     origin: ExitEventOrigin,
 ) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let _span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "AtExit");
     if matches!(origin, ExitEventOrigin::Natural)
         && !state.borrow_mut().scheduler.begin_shared_exit()
@@ -873,7 +873,7 @@ fn emit_exit_event_inner(
 }
 
 pub(crate) fn really_exit(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -900,13 +900,13 @@ pub(crate) fn really_exit(
         }
     };
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_control
         .request_really_exit(code);
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -917,13 +917,13 @@ pub(crate) fn really_exit(
 }
 
 fn invalid_exit_code_type(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
 ) -> Result<RootId, RootedError> {
     Err(super::util_shared_vm::argument_type_error(context, value, "code", "number")?)
 }
 fn exit_code_range_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     number: f64,
 ) -> Result<RootId, RootedError> {
     let range = if number.is_finite() && number.fract() == 0.0 {
@@ -936,7 +936,7 @@ fn exit_code_range_error(
 }
 
 fn throw_with_code(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     error: RootId,
     code: &str,
 ) -> RootedError {
@@ -947,7 +947,7 @@ fn throw_with_code(
 }
 
 pub(crate) fn stream_write(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -990,7 +990,7 @@ pub(crate) fn stream_write(
             "of type string or an instance of Buffer, TypedArray, or DataView",
         )?);
     };
-    let worker = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.control.clone());
+    let worker = context.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.control.clone());
     if let Some(control) = worker {
         // A worker's stdio reaches its parent's `worker.stdout`/`worker.stderr`.
         control.write_output(fd == STDERR_FD, bytes);
@@ -1000,7 +1000,7 @@ pub(crate) fn stream_write(
             .write_all(&bytes)
             .map_err(|error| RootedError::host(error.to_string()))?;
     } else {
-        let shared = context.host_mut().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let state = shared.borrow();
         let output = state.stdout_output.clone().or_else(|| state.output.clone());
         drop(state);
@@ -1024,7 +1024,7 @@ pub(crate) fn stream_write(
     Ok(context.boolean(true))
 }
 
-fn invalid_stream_chunk(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn invalid_stream_chunk(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let error = context.type_error_rooted(
         "The \"chunk\" argument must be of type string or an instance of Buffer",
     )?;
@@ -1032,12 +1032,12 @@ fn invalid_stream_chunk(context: &mut NativeContext<'_, NodeHost>) -> Result<Roo
 }
 
 pub(crate) fn cwd(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     crate::host::startup_snapshot::refuse_process_state(context, "process.cwd()")?;
-    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    let cwd = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.clone();
     match cwd.query_path() {
         Ok(path) => Ok(context.string_rooted(&path.to_string_lossy())),
         Err(error) => {
@@ -1058,7 +1058,7 @@ pub(crate) fn cwd(
 }
 
 pub(crate) fn getuid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1070,7 +1070,7 @@ pub(crate) fn getuid(
 }
 
 pub(crate) fn geteuid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1082,7 +1082,7 @@ pub(crate) fn geteuid(
 }
 
 pub(crate) fn getgid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1094,7 +1094,7 @@ pub(crate) fn getgid(
 }
 
 pub(crate) fn getegid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1114,7 +1114,7 @@ enum CredentialKind {
 }
 
 pub(crate) fn setuid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1122,7 +1122,7 @@ pub(crate) fn setuid(
 }
 
 pub(crate) fn seteuid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1130,7 +1130,7 @@ pub(crate) fn seteuid(
 }
 
 pub(crate) fn setgid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1138,7 +1138,7 @@ pub(crate) fn setgid(
 }
 
 pub(crate) fn setegid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1146,7 +1146,7 @@ pub(crate) fn setegid(
 }
 
 pub(crate) fn setgroups(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1172,7 +1172,7 @@ pub(crate) fn setgroups(
 }
 
 pub(crate) fn initgroups(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1196,7 +1196,7 @@ pub(crate) fn initgroups(
     Ok(context.undefined())
 }
 
-fn is_array(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<bool, RootedError> {
+fn is_array(context: &mut NativeContext<'_>, value: RootId) -> Result<bool, RootedError> {
     let global = context.global_root()?;
     let array_key = context.string_rooted("Array");
     let array = context.get_property_rooted(global, array_key)?;
@@ -1210,7 +1210,7 @@ fn is_array(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<
 }
 
 fn parse_group_id(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     index: Option<usize>,
 ) -> Result<u32, RootedError> {
@@ -1239,7 +1239,7 @@ fn parse_group_id(
 }
 
 fn credential_user_name(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     user: RootId,
 ) -> Result<std::ffi::CString, RootedError> {
     let rooted = context
@@ -1273,7 +1273,7 @@ fn credential_user_name(
 }
 
 fn apply_groups(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     groups: &[u32],
 ) -> Result<RootId, RootedError> {
     if let Err(error) = setgroups_syscall(groups) {
@@ -1357,7 +1357,7 @@ fn credential_name_by_uid(_: u32) -> Option<std::ffi::CString> {
 }
 
 fn throw_os_process_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     syscall: &str,
     error: std::io::Error,
 ) -> Result<RootedError, RootedError> {
@@ -1369,7 +1369,7 @@ fn throw_os_process_error(
 /// Node's C++ `ErrnoException`: `"<code>, <strerror>"`, then ` '<path>'` when a path is
 /// given, with `errno` (positive), `code`, `path` and `syscall` set in that order.
 pub(crate) fn errno_exception(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     errno: i32,
     syscall: &str,
     path: Option<&str>,
@@ -1398,7 +1398,7 @@ pub(crate) fn errno_exception(
 }
 
 fn groups_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: Option<RootId>,
 ) -> Result<RootedError, RootedError> {
     let received = value.map_or_else(
@@ -1414,7 +1414,7 @@ fn groups_type_error(
 }
 
 fn user_argument_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: Option<RootId>,
 ) -> Result<RootedError, RootedError> {
     let received = value.map_or_else(
@@ -1430,7 +1430,7 @@ fn user_argument_type_error(
 }
 
 fn extra_group_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: Option<RootId>,
 ) -> Result<RootedError, RootedError> {
     let received = value.map_or_else(
@@ -1448,7 +1448,7 @@ fn extra_group_type_error(
 }
 
 fn group_argument_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     index: Option<usize>,
 ) -> Result<RootedError, RootedError> {
@@ -1465,7 +1465,7 @@ fn group_argument_type_error(
 }
 
 fn unknown_credential(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     kind: &str,
     name: &str,
 ) -> Result<RootedError, RootedError> {
@@ -1478,7 +1478,7 @@ fn unknown_credential(
 }
 
 fn set_credential(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: Option<RootId>,
     kind: CredentialKind,
 ) -> Result<RootId, RootedError> {
@@ -1490,7 +1490,7 @@ fn set_credential(
 }
 
 fn parse_credential_id(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     kind: CredentialKind,
 ) -> Result<u32, RootedError> {
@@ -1527,7 +1527,7 @@ fn parse_credential_id(
 }
 
 fn apply_credential(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     id: u32,
     kind: CredentialKind,
 ) -> Result<RootId, RootedError> {
@@ -1598,7 +1598,7 @@ fn credential_id_by_name(name: &str, kind: CredentialKind) -> Option<u32> {
 }
 
 fn credential_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: Option<RootId>,
 ) -> Result<RootedError, RootedError> {
     let received = match value {
@@ -1614,7 +1614,7 @@ fn credential_type_error(
 }
 
 fn throw_process_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     message: &str,
     code: &str,
     type_error: bool,
@@ -1652,9 +1652,9 @@ fn errno_name(errno: i32) -> &'static str {
 const NANOSECONDS_PER_SECOND: f64 = quench_runtime::units::NANOSECONDS_PER_SECOND as f64;
 
 /// The monotonic clock `process.hrtime` reads, in nanoseconds.
-fn monotonic_ns(context: &mut NativeContext<'_, NodeHost>) -> Result<f64, RootedError> {
+fn monotonic_ns(context: &mut NativeContext<'_>) -> Result<f64, RootedError> {
     let control = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_control
@@ -1671,7 +1671,7 @@ fn monotonic_ns(context: &mut NativeContext<'_, NodeHost>) -> Result<f64, Rooted
 
 /// `process.hrtime([time])`: `[seconds, nanoseconds]` now, or since `time`.
 pub(crate) fn hrtime(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1718,7 +1718,7 @@ pub(crate) fn hrtime(
 
 /// `process.hrtime.bigint()`: the monotonic clock in nanoseconds, as a BigInt.
 pub(crate) fn hrtime_bigint(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1727,7 +1727,7 @@ pub(crate) fn hrtime_bigint(
 }
 
 pub(crate) fn chdir(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1740,7 +1740,7 @@ pub(crate) fn chdir(
     let Some(directory) = context.string_text(directory)? else {
         return Err(chdir_type_error(context)?);
     };
-    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    let cwd = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.clone();
     match process_state::change_directory_cwd(&cwd, &directory) {
         Ok(()) => Ok(context.undefined()),
         Err(error) => {
@@ -1756,7 +1756,7 @@ pub(crate) fn chdir(
     }
 }
 
-fn chdir_type_error(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedError, RootedError> {
+fn chdir_type_error(context: &mut NativeContext<'_>) -> Result<RootedError, RootedError> {
     let error = context.type_error_rooted("The \"directory\" argument must be of type string")?;
     let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
     install(context, error, "code", code)?;
@@ -1765,7 +1765,7 @@ fn chdir_type_error(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedE
 
 /// The process binding's raw `umask(mask)`: an explicit undefined mask reads it, as none does.
 pub(crate) fn raw_umask(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1774,13 +1774,13 @@ pub(crate) fn raw_umask(
 }
 
 pub(crate) fn umask(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(mask) = args.first().copied() else {
         let current = context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .process_control
@@ -1816,7 +1816,7 @@ pub(crate) fn umask(
         return Err(context.throw(error));
     };
     let previous = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_control
@@ -1825,7 +1825,7 @@ pub(crate) fn umask(
 }
 
 pub(crate) fn kill_native(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1868,7 +1868,7 @@ pub(crate) fn kill_native(
 }
 
 pub(crate) fn raw_debug(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1881,9 +1881,9 @@ pub(crate) fn raw_debug(
     Ok(context.undefined())
 }
 
-fn capture_state(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn capture_state(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_capture_state
@@ -1891,7 +1891,7 @@ fn capture_state(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
 }
 
 pub(crate) fn set_uncaught_exception_capture_callback(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1944,7 +1944,7 @@ pub(crate) fn set_uncaught_exception_capture_callback(
 }
 
 pub(crate) fn has_uncaught_exception_capture_callback(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1958,7 +1958,7 @@ pub(crate) fn has_uncaught_exception_capture_callback(
 }
 
 pub(crate) fn add_uncaught_exception_capture_callback(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1977,7 +1977,7 @@ pub(crate) fn add_uncaught_exception_capture_callback(
     let no_primary = context.rooted_value(capture_fn).is_some_and(Value::is_null);
     let no_auxiliary = context.strict_equal_rooted(length, zero)?;
     let process = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -1998,11 +1998,11 @@ pub(crate) fn add_uncaught_exception_capture_callback(
 }
 
 pub(crate) fn get_active_handles(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
     let handles = state
         .net_sockets
@@ -2014,11 +2014,11 @@ pub(crate) fn get_active_handles(
 }
 
 pub(crate) fn get_active_network_resources(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
     let active_sockets = state
         .net_sockets
@@ -2054,7 +2054,7 @@ pub(crate) fn get_active_network_resources(
 }
 
 fn uncaught_capture_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: Option<RootId>,
 ) -> Result<RootedError, RootedError> {
     let value = value.unwrap_or_else(|| context.undefined());
@@ -2062,7 +2062,7 @@ fn uncaught_capture_type_error(
 }
 
 pub(crate) fn set_env(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2086,7 +2086,7 @@ pub(crate) fn set_env(
 }
 
 pub(crate) fn delete_env(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2105,7 +2105,7 @@ pub(crate) fn delete_env(
 }
 
 pub(crate) fn load_env_file(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2123,7 +2123,7 @@ pub(crate) fn load_env_file(
             }
         },
     };
-    let cwd = context.host_mut().shared_state().borrow().cwd.path();
+    let cwd = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.path();
     let requested = std::path::Path::new(&path_text);
     let path = if requested.is_absolute() {
         requested.to_path_buf()
@@ -2131,7 +2131,7 @@ pub(crate) fn load_env_file(
         cwd.join(requested)
     };
     let process = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -2147,7 +2147,7 @@ pub(crate) fn load_env_file(
             let allowed = context.call_rooted(has, permission, &[scope, reference])?;
             let allowed = context.truthy_rooted(allowed)?;
             let audit = context
-                .host_mut()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow()
                 .cli_options
@@ -2183,7 +2183,7 @@ pub(crate) fn load_env_file(
 }
 
 fn dotenv_permission_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     path: &str,
 ) -> RootedError {
     let error = match context.error_rooted(
@@ -2227,7 +2227,7 @@ fn dotenv_permission_error(
 }
 
 fn dotenv_file_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     path: &str,
     error: std::io::Error,
 ) -> RootedError {
@@ -2259,7 +2259,7 @@ fn dotenv_file_error(
 }
 
 fn format_raw_debug(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     args: &[RootId],
 ) -> Result<String, RootedError> {
     let Some((&first, rest)) = args.split_first() else {
@@ -2303,7 +2303,7 @@ fn format_raw_debug(
 
 #[cfg(not(target_os = "linux"))]
 fn integer_argument(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: Option<RootId>,
     name: &str,
 ) -> Result<i32, RootedError> {
@@ -3925,11 +3925,11 @@ fn set_shared_property(
 }
 
 pub(crate) fn next_tick(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let Some(callback) = args.first().copied() else {
         return invalid_callback(context, "undefined");
     };
@@ -3947,7 +3947,7 @@ pub(crate) fn next_tick(
 }
 
 fn invalid_callback(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     received: &str,
 ) -> Result<RootId, RootedError> {
     let error = context.type_error_rooted(&format!(
@@ -3959,7 +3959,7 @@ fn invalid_callback(
 }
 
 fn received_type(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     root: RootId,
 ) -> Result<String, RootedError> {
     let value = context
@@ -3991,7 +3991,7 @@ fn received_type(
 mod tests;
 
 fn signal_start_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     error: std::io::Error,
 ) -> Result<RootedError, RootedError> {
     let Some(errno) = error.raw_os_error() else {
@@ -4053,7 +4053,7 @@ fn poll_process_signals(
 /// Node's public kill overloads and mutable _kill delegation. PID validation
 /// follows the shared bitwise/abstract equality operations, including hooks.
 pub(crate) fn kill(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -4128,7 +4128,7 @@ pub(crate) fn kill(
 }
 
 pub(crate) fn getgroups(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -4178,14 +4178,14 @@ pub(crate) fn getgroups(
 }
 
 pub(crate) fn start_listening_signal(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     if let Some(name) = context.string_text(value)? {
         let result = context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .process_signals
@@ -4198,14 +4198,14 @@ pub(crate) fn start_listening_signal(
 }
 
 pub(crate) fn stop_listening_signal(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let event = args.first().copied().unwrap_or_else(|| context.undefined());
     if let Some(name) = context.string_text(event)? {
         let process = context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .process_module
@@ -4215,7 +4215,7 @@ pub(crate) fn stop_listening_signal(
         let zero = context.number(0.0);
         if context.strict_equal_rooted(count, zero)? {
             context
-                .host_mut()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow_mut()
                 .process_signals
@@ -4227,10 +4227,10 @@ pub(crate) fn stop_listening_signal(
 
 /// Native startup state and the configured SDK own the warning listener together.
 pub(crate) fn initialize_warning_policy(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
 ) -> Result<(), RootedError> {
     use super::event_constructor_shared_vm::get;
-    let state = context.host_mut().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let (process, options) = {
         let state = state.borrow();
         (
@@ -4325,8 +4325,8 @@ pub(crate) fn initialize_warning_policy(
 
 /// Whether the environment `process.env` starts from (`environment`) holds `name` with a
 /// non-empty value, without copying it.
-pub(crate) fn environment_names(context: &mut NativeContext<'_, NodeHost>, name: &str) -> bool {
-    let shared_state = context.host_mut().shared_state();
+pub(crate) fn environment_names(context: &mut NativeContext<'_>, name: &str) -> bool {
+    let shared_state = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared_state.borrow();
     match state.messaging.context.as_ref() {
         Some(worker) => worker.env.iter().any(|(key, value)| key == name && !value.is_empty()),
@@ -4335,16 +4335,16 @@ pub(crate) fn environment_names(context: &mut NativeContext<'_, NodeHost>, name:
 }
 
 /// The environment `process.env` starts from: a worker's own, else the OS environment.
-pub(crate) fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
-    let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
+pub(crate) fn environment(context: &mut NativeContext<'_>) -> Vec<(String, String)> {
+    let worker_env = context.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
     worker_env.unwrap_or_else(|| std::env::vars().collect())
 }
 
 /// `process.env`: the environment as Node's bootstrap reads it, less an IPC channel's own
 /// variables.
-pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn initialize_env(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     crate::host::startup_snapshot::refuse_process_state(context, "process.env")?;
-    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let process = context.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     let env = context.object_rooted()?;
     for (name, value) in environment(context) {
         // The parallel harness's private result channel is no variable of the guest's.
@@ -4352,7 +4352,7 @@ pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootI
             continue;
         }
         if context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .process_ipc
@@ -4397,8 +4397,8 @@ pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootI
 
 
 /// Defines `process.emitWarning` (`process_warning_shared_vm`).
-pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let process = context.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     let emit_warning = crate::modules::process_warning_shared_vm::emit_warning(context)?;
     let key = context.string_rooted("emitWarning");
     context.define_data_property_rooted(process, key, emit_warning, true, true, true)?;
@@ -4410,9 +4410,9 @@ const WARNING_EVENT: &str = "warning";
 
 /// Installs the default `warning` listener, Node's `onWarning` (`process_warning_shared_vm`),
 /// as the `process._events` entry `initialize_warning_policy` deferred.
-pub(crate) fn initialize_warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn initialize_warning_listener(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     use super::event_constructor_shared_vm::get;
-    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let process = context.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     let listener = crate::modules::process_warning_shared_vm::on_warning(context)?;
     let events = get(context, process, "_events")?;
     let key = context.string_rooted(WARNING_EVENT);
@@ -4420,7 +4420,7 @@ pub(crate) fn initialize_warning_listener(context: &mut NativeContext<'_, NodeHo
     Ok(context.undefined())
 }
 
-fn env_argument(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], index: usize) -> RootId {
+fn env_argument(context: &mut NativeContext<'_>, args: &[RootId], index: usize) -> RootId {
     match args.get(index) {
         Some(value) => *value,
         None => context.undefined(),
@@ -4428,7 +4428,7 @@ fn env_argument(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], inde
 }
 
 /// The `TypeError` converting a Symbol to a string throws.
-fn symbol_conversion_error(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedError, RootedError> {
+fn symbol_conversion_error(context: &mut NativeContext<'_>) -> Result<RootedError, RootedError> {
     let error = context.type_error_rooted("Cannot convert a Symbol value to a string")?;
     Ok(context.throw(error))
 }
@@ -4436,7 +4436,7 @@ fn symbol_conversion_error(context: &mut NativeContext<'_, NodeHost>) -> Result<
 /// Stores `text` under `key` on the env target as Node's environment stores every key (a
 /// data property, so no inherited setter such as `__proto__`'s runs), and in the process
 /// environment.
-fn env_store(context: &mut NativeContext<'_, NodeHost>, target: RootId, key: RootId, text: &str) -> Result<RootId, RootedError> {
+fn env_store(context: &mut NativeContext<'_>, target: RootId, key: RootId, text: &str) -> Result<RootId, RootedError> {
     let value = context.string_rooted(text);
     let stored = context.define_data_property_rooted(target, key, value, true, true, true)?;
     if stored {
@@ -4449,7 +4449,7 @@ fn env_store(context: &mut NativeContext<'_, NodeHost>, target: RootId, key: Roo
 }
 
 /// `process.env`'s `set` trap.
-pub(crate) fn env_set(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn env_set(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (target, key, value) = (env_argument(context, args, 0), env_argument(context, args, 1), env_argument(context, args, 2));
     if context.is_symbol_rooted(key)? || context.is_symbol_rooted(value)? {
         return Err(symbol_conversion_error(context)?);
@@ -4459,9 +4459,9 @@ pub(crate) fn env_set(context: &mut NativeContext<'_, NodeHost>, _: RootId, args
     }
     let primitive = context.string_text(value)?.is_some()
         || context.rooted_value(value).is_some_and(|value| value.as_number().is_some() || value.as_bool().is_some());
-    let pending = context.host_mut().shared_state().borrow().exec_argv.iter().any(|flag| flag == "--pending-deprecation");
+    let pending = context.host_as::<crate::host::NodeHost>().shared_state().borrow().exec_argv.iter().any(|flag| flag == "--pending-deprecation");
     if !primitive && pending {
-        let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+        let process = context.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
         let emit_key = context.string_rooted("emitWarning");
         let emit = context.get_property_rooted(process, emit_key)?;
         let message = context.string_rooted("Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it.");
@@ -4476,14 +4476,14 @@ pub(crate) fn env_set(context: &mut NativeContext<'_, NodeHost>, _: RootId, args
     env_store(context, target, key, &text)
 }
 
-fn invalid_env_descriptor(context: &mut NativeContext<'_, NodeHost>, message: &str) -> Result<RootedError, RootedError> {
+fn invalid_env_descriptor(context: &mut NativeContext<'_>, message: &str) -> Result<RootedError, RootedError> {
     let error = context.type_error_rooted(message)?;
     Ok(throw_with_code(context, error, "ERR_INVALID_OBJECT_DEFINE_PROPERTY"))
 }
 
 /// `process.env`'s `defineProperty` trap: only configurable, writable, enumerable data
 /// descriptors, stored as strings.
-pub(crate) fn env_define_property(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn env_define_property(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (target, key, descriptor) = (env_argument(context, args, 0), env_argument(context, args, 1), env_argument(context, args, 2));
     if context.is_symbol_rooted(key)? {
         return Err(invalid_env_descriptor(context, "'process.env' does not accept symbol properties")?);
@@ -4514,7 +4514,7 @@ pub(crate) fn env_define_property(context: &mut NativeContext<'_, NodeHost>, _: 
 }
 
 /// `process.env`'s `deleteProperty` trap.
-pub(crate) fn env_delete_property(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn env_delete_property(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (target, key) = (env_argument(context, args, 0), env_argument(context, args, 1));
     let deleted = context.delete_property_rooted(target, key)?;
     let named = !context.is_symbol_rooted(key)? && !context.string_text(key)?.is_some_and(|key| key.is_empty());

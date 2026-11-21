@@ -34,12 +34,12 @@ macro_rules! builtin_prototypes {
     };
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The VM as a snapshot, which `restore_snapshot` makes again in a new VM. Refused while
     /// anything runs or waits: a frame, a job, a module load or an embedder's script.
     pub(crate) fn write_snapshot(
         &self,
-        write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
+        write_host: impl FnOnce(&dyn Host, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> SnapshotResult<Vec<u8>> {
         #[cfg(feature = "native-execution")]
         if self.native_program_resolver.is_some() {
@@ -59,6 +59,8 @@ impl<H: Host> Vm<H> {
             queue_chains: _,
             chainable_job: _,
             host,
+            host_statics: _,
+            runs_lane: _,
             specialized,
             heap,
             realm,
@@ -331,7 +333,7 @@ impl<H: Host> Vm<H> {
         let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag } = wasm_js;
         [*module, *instance, *memory, *table, *global, *tag, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
-        write_host(host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
+        write_host(&**host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
         Ok(writer.finish())
     }
 
@@ -377,7 +379,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         bytes: crate::KeptBytes,
         entry: &ResidualProgram,
-        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+        read_host: impl FnOnce(&mut dyn Host, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> SnapshotResult<ResidualProgram> {
         self.restore_snapshot_state(bytes, None, read_host)?;
         let main = self.rebased_entry(entry)?;
@@ -393,11 +395,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         bytes: crate::KeptBytes,
         native: Option<&ResidualProgram>,
-        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+        read_host: impl FnOnce(&mut dyn Host, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> SnapshotResult<()> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_restore_begin");
-        let mut reader = Reader::new((*bytes).as_ref(), Some(H::kept_bytes_read))?;
+        let mut reader = Reader::new((*bytes).as_ref(), Some(self.host_statics.kept_bytes_read))?;
         self.specialized = reader.bool()?;
         self.main_realm = reader.value()?;
         if native.is_some_and(|program| program.specialized != self.specialized) {
@@ -461,7 +463,7 @@ impl<H: Host> Vm<H> {
         self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
         let holder = reader.value()?;
         self.set_instanceof_has_instance_holder(holder);
-        read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
+        read_host(&mut *self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
             .map_err(SnapshotError)?;
         reader.finish()?;
         #[cfg(feature = "profile-memory")]
@@ -799,8 +801,8 @@ mod tests {
     }
 
     impl SnapshotHost {
-        fn finish_installation(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-            let callback = context.host_mut().resume_callback.take().expect("installed callback");
+        fn finish_installation(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
+            let callback = context.host_as::<Self>().resume_callback.take().expect("installed callback");
             let undefined = context.undefined();
             context.call_rooted(callback, undefined, &[])?;
             context.release_root(callback);
@@ -809,8 +811,8 @@ mod tests {
     }
 
     impl Host for SnapshotHost {
-        // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
-        const RUNS_LANE: bool = false;
+        // Its tests exercise no lane behaviour (`Host::runs_lane`).
+        fn runs_lane(&self) -> bool { false }
         fn write_line(&mut self, line: &str) {
             self.output.borrow_mut().push(line.into());
         }
@@ -819,17 +821,17 @@ mod tests {
             0.0
         }
 
-        fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
             let callback = context.evaluate_script_rooted(SETUP, "setup.js")?;
             let callback = context.retain(callback)?;
-            context.host_mut().resume_callback = Some(callback);
-            if context.host_mut().building {
+            context.host_as::<Self>().resume_callback = Some(callback);
+            if context.host_as::<Self>().building {
                 return Ok(());
             }
             Self::finish_installation(context)
         }
 
-        fn resume(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        fn resume(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
             Self::finish_installation(context)
         }
     }

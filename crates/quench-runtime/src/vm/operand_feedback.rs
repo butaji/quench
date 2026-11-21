@@ -154,7 +154,7 @@ unsafe fn feedback_cell<'a>(base: Ip, ip: Ip) -> &'a std::cell::Cell<u8> {
 /// `ip` is a record of the running view, an arithmetic or comparison record
 /// (`has_operand_feedback`).
 #[inline(always)]
-pub(super) unsafe fn note_operands<H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value) {
+pub(super) unsafe fn note_operands(cx: *mut LaneContext, ip: Ip, left: Value, right: Value) {
     // SAFETY: as the function's own.
     let (heap, cell) = unsafe { (&vm(cx).heap, feedback_cell((*cx).base, ip)) };
     let seen = OperandKinds(cell.get());
@@ -249,7 +249,7 @@ impl LaneView {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Notes that the element access at `pc` of frame `f` met `kind`, in the frame function's lane view.
     pub(crate) fn note_element_kind(&self, f: usize, pc: usize, kind: OperandKinds) {
         let function = self.frames[f].function as usize;

@@ -42,7 +42,7 @@ impl LaneRoot {
     }
 }
 
-impl<H: Host> LaneContext<H> {
+impl LaneContext {
     /// The VM frame the lane runs, for the code a frame's run reads; `NO_FRAME` where a job's
     /// activations run.
     #[inline(always)]
@@ -133,7 +133,7 @@ impl ParkedLane {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The receiver and environment of the innermost activation of the live lane, which its
     /// context holds: the context of the native call it runs beside (`lane_deferred`) or of the
     /// native whose callbacks it runs (`lane_native`). Both `undefined` where no native
@@ -142,7 +142,7 @@ impl<H: Host> Vm<H> {
         let cx = self.lane_deferred.map(|call| call.cx).or(self.lane_native.map(|call| call.cx));
         // SAFETY: a native call's lane runs, so its context lives.
         cx.map_or([Value::UNDEFINED; INNERMOST_STATE_LEN], |cx| unsafe {
-            let cx = cx.cast::<LaneContext<H>>();
+            let cx = cx.cast::<LaneContext>();
             [(*cx).registers.this(), (*cx).registers.env()]
         })
     }
@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
 
     /// The context of a lane run that starts as `start` says; its other state starts empty.
     #[inline(always)]
-    pub(super) fn context_for_start(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
+    pub(super) fn context_for_start(&mut self, start: LaneStart<'_>) -> LaneContext {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
         // and captures are the window's to write where it has its own (a frame's run has none).
@@ -187,7 +187,7 @@ impl<H: Host> Vm<H> {
         let (views, constants) = self.programs.lane_tables(program);
         let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
-            binding: LaneBinding { object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding::<H>, retire: retire_lane_binding::<H> },
+            binding: LaneBinding { object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding, retire: retire_lane_binding },
             vm: self,
             code,
             program,
@@ -236,16 +236,16 @@ impl<H: Host> Vm<H> {
     /// (`entered`, the floor it raised, was made by `enter_lane_floor`). The record it exited at.
     pub(super) fn drive_lane(
         &mut self,
-        context: &mut LaneContext<H>,
+        context: &mut LaneContext,
         entered: LaneFloor,
-        start: impl FnOnce(*mut LaneContext<H>) -> Ip,
+        start: impl FnOnce(*mut LaneContext) -> Ip,
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
         // The tier's diagnostics, which no proved call runs under (`Admission::DIAGNOSED`).
         self.lane_stack.set_diagnosed(self.programs.js_jit_diagnostics_enabled());
         let epoch = self.cache_epochs.gc;
-        let cx: *mut LaneContext<H> = context;
+        let cx: *mut LaneContext = context;
         // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);
         // the outer run's resumes after this one.
         let outer_script_calls = self.lane_stack.script_calls_allowed();
@@ -273,7 +273,7 @@ impl<H: Host> Vm<H> {
 
     /// The census detail of a lane exit at the record `ip` of the innermost activation.
     #[cfg(feature = "profile-lane-exits")]
-    fn record_lane_exit(&self, cx: *mut LaneContext<H>, ip: Ip) {
+    fn record_lane_exit(&self, cx: *mut LaneContext, ip: Ip) {
         let Some(activation) = self.lane_stack.top_frame() else {
             return;
         };
@@ -430,7 +430,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         code: &ResidualProgram,
         job: JobRoot,
-        context: &LaneContext<H>,
+        context: &LaneContext,
         ip: Ip,
         pending: &mut Vec<PendingGeneralCall>,
         executing: ExecutingProgram,
@@ -480,7 +480,7 @@ impl JobWindow {
     /// first, the frame's loops and scope chain resume as its own (`LaneStack::iterators`,
     /// `LaneStack::with_objects`), and the lane
     /// continues at the record of `pc`, where the frame resumes in its function's view.
-    fn enter<H: Host>(&self, cx: *mut LaneContext<H>) -> Ip {
+    fn enter(&self, cx: *mut LaneContext) -> Ip {
         // SAFETY: the lane stack's limit admits its first activation, which resumes over the
         // frame's registers, nothing else writing them.
         unsafe {
@@ -498,7 +498,7 @@ impl JobWindow {
     /// suspended at, the one before its resume point: a handler of its function covering that
     /// record catches the error, else the activation ends in its owner (`raised_exit_in_lane`).
     /// The record the lane exits at.
-    fn enter_raising<H: Host>(&self, cx: *mut LaneContext<H>, error: JsError) -> Ip {
+    fn enter_raising(&self, cx: *mut LaneContext, error: JsError) -> Ip {
         self.enter(cx);
         let suspended = self.pc.saturating_sub(1);
         // SAFETY: the running lane's context.

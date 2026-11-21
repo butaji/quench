@@ -64,7 +64,7 @@ fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
     assert_eq!(vm.primary_own_field_hit(&program, other, site), None);
     let object = if MISS { other } else { receiver };
     let hint = vm.field_cache_entry(site);
-    let store = |vm: &mut super::super::Vm<TestHost>, value| {
+    let store = |vm: &mut super::super::Vm, value| {
         if OP == HINTED_STORE {
             vm.hinted_primary_field_store_hit::<false>(
                 super::super::FieldCache::own(black_box(hint.receiver), black_box(hint.slot)),

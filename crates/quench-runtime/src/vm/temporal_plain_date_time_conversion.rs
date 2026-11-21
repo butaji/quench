@@ -17,8 +17,8 @@ use crate::vm::temporal_date_parse::ISO_YEAR_DIGITS;
 use crate::vm::temporal_date_parse::ISO_MONTH_DIGITS;
 const FRACTIONAL_SECOND_DIGITS: usize = 9;
 
-pub(super) fn convert<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn convert(
+    vm: &mut Vm,
     p: &ResidualProgram,
     this: Value,
     args: &[Value],
@@ -30,16 +30,16 @@ pub(super) fn convert<H: Host>(
     construct(vm, p, year, month, day, calendar, time)
 }
 
-pub(super) fn to_time<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn to_time(
+    vm: &mut Vm,
     p: &ResidualProgram,
     value: Value,
 ) -> Result<[i32; 6], JsError> {
     to_time_with_options(vm, p, value, Value::UNDEFINED)
 }
 
-pub(super) fn to_time_with_options<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn to_time_with_options(
+    vm: &mut Vm,
     p: &ResidualProgram,
     value: Value,
     options: Value,
@@ -83,8 +83,8 @@ pub(super) fn to_time_with_options<H: Host>(
     )
 }
 
-fn validate_overflow_options_type<H: Host>(
-    vm: &mut Vm<H>,
+fn validate_overflow_options_type(
+    vm: &mut Vm,
     p: &ResidualProgram,
     options: Value,
 ) -> Result<(), JsError> {
@@ -94,8 +94,8 @@ fn validate_overflow_options_type<H: Host>(
     Ok(())
 }
 
-pub(super) fn to_date_time<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn to_date_time(
+    vm: &mut Vm,
     p: &ResidualProgram,
     value: Value,
     options: Value,
@@ -117,8 +117,8 @@ pub(super) fn to_date_time<H: Host>(
     read_time_bag(vm, p, value, false, Some(options))
 }
 
-fn read_time_bag<H: Host>(
-    vm: &mut Vm<H>,
+fn read_time_bag(
+    vm: &mut Vm,
     p: &ResidualProgram,
     bag: Value,
     require_any: bool,
@@ -163,8 +163,8 @@ fn read_time_bag<H: Host>(
     }
 }
 
-pub(super) fn parse_time_string<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn parse_time_string(
+    vm: &mut Vm,
     p: &ResidualProgram,
     value: Value,
 ) -> Result<[i32; 6], JsError> {
@@ -336,8 +336,8 @@ fn normalize_disambiguated_time(text: &str) -> Option<&'static str> {
     }
 }
 
-pub(super) fn validate_annotations<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn validate_annotations(
+    vm: &mut Vm,
     p: &ResidualProgram,
     text: &str,
 ) -> Result<(), JsError> {
@@ -397,8 +397,8 @@ fn iso_annotations_are_valid(text: &str) -> bool {
     false
 }
 
-pub(super) fn validate_bounds<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn validate_bounds(
+    vm: &mut Vm,
     p: &ResidualProgram,
     year: i32,
     month: u32,
@@ -415,8 +415,8 @@ pub(super) fn is_within_bounds(date: (i32, u32, u32), time: [i32; 6]) -> bool {
     date != MIN_PLAIN_DATE_TIME_DATE || time.iter().any(|part| *part != 0)
 }
 
-fn construct<H: Host>(
-    vm: &mut Vm<H>,
+fn construct(
+    vm: &mut Vm,
     p: &ResidualProgram,
     year: i32,
     month: u32,

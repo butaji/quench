@@ -2,7 +2,7 @@
 //! or callee-argument site shares while it cannot escape.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(in crate::vm) fn regexp_literal(
         &mut self,
         p: &ResidualProgram,

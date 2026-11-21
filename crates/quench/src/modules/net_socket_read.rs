@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn method(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     name: &str,
     args: &[RootId],
@@ -13,7 +13,7 @@ fn method(
     context.call_rooted(function, receiver, args)
 }
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     name: &str,
     value: RootId,
@@ -23,7 +23,7 @@ fn set(
     Ok(())
 }
 fn read_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     status: RootId,
 ) -> Result<(), RootedError> {
@@ -40,7 +40,7 @@ fn read_error(
 }
 
 pub(crate) fn read(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -79,7 +79,7 @@ pub(crate) fn read(
     Ok(context.undefined())
 }
 pub(crate) fn read_after_connect(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -89,7 +89,7 @@ pub(crate) fn read_after_connect(
     method(context, socket, "_read", &[amount])
 }
 pub(crate) fn initialize(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -116,7 +116,7 @@ pub(crate) fn initialize(
 }
 
 pub(crate) fn connected(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<(), RootedError> {
     let ready = context.string_rooted("ready");
@@ -133,7 +133,7 @@ pub(crate) fn connected(
 }
 
 pub(crate) fn delivered(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     result: RootId,
 ) -> Result<(), RootedError> {
@@ -157,7 +157,7 @@ pub(crate) fn delivered(
 
 /// TLS owns one mutable reading view; its original TCP handle forwards to it.
 pub(crate) fn redirect_parent_reading(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     parent: RootId,
     handle: RootId,
 ) -> Result<(), RootedError> {
@@ -182,7 +182,7 @@ pub(crate) fn redirect_parent_reading(
     Ok(())
 }
 pub(crate) fn parent_reading_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -190,7 +190,7 @@ pub(crate) fn parent_reading_get(
     get(context, handle, "reading")
 }
 pub(crate) fn parent_reading_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

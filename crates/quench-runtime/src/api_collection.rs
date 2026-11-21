@@ -4,18 +4,22 @@ use crate::Host;
 
 /// A collection's host cleanup boundary. It can inspect and release private weak roots,
 /// but cannot allocate guest values, invoke JavaScript or initiate another collection.
-pub struct CollectionContext<'a, H: Host> {
-    host: &'a mut H,
+pub struct CollectionContext<'a> {
+    host: &'a mut dyn Host,
     heap: &'a mut crate::heap::Heap,
 }
 
-impl<'a, H: Host> CollectionContext<'a, H> {
-    pub(crate) fn new(host: &'a mut H, heap: &'a mut crate::heap::Heap) -> Self {
+impl<'a> CollectionContext<'a> {
+    pub(crate) fn new(host: &'a mut dyn Host, heap: &'a mut crate::heap::Heap) -> Self {
         Self { host, heap }
     }
 
-    pub fn host_mut(&mut self) -> &mut H {
-        self.host
+    pub fn host_mut(&mut self) -> &mut dyn Host {
+        &mut *self.host
+    }
+
+    pub fn host_as<T: Host>(&mut self) -> &mut T {
+        crate::host::host_as::<T>(&mut *self.host)
     }
 
     pub fn host_weak_root_is_live(&self, reference: HostWeakRoot) -> bool {

@@ -32,7 +32,7 @@ script_handler! {
 
 /// The pc of the record at `ip` in the running view.
 #[inline(always)]
-fn record_pc<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> usize {
+fn record_pc(cx: *mut LaneContext, ip: Ip) -> usize {
     // SAFETY: the record lies in the running view.
     unsafe { ip.offset_from((*cx).base) as usize }
 }
@@ -46,7 +46,7 @@ fn record_pc<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> usize {
 /// ends (`suspend_job_root`), unless an `await` continues in place (`settled_await_in_place`);
 /// a settling body hands its frame over (`suspend_settling`). `r` holds the record's registers.
 #[inline(always)]
-pub(super) fn lane_suspend_at<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, suspender: Suspender,
+pub(super) fn lane_suspend_at(cx: *mut LaneContext, r: Registers, ip: Ip, suspender: Suspender,
     suspending: Suspending<u64>) -> Resumed {
     let at = (record_pc(cx, ip) + usize::from(!suspending.again), suspending.destination);
     let (value, yielded) = (Value::from_bits(suspending.value), suspending.effect == SuspendEffect::Yield);
@@ -74,7 +74,7 @@ pub(super) fn lane_suspend_at<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip
 /// `Vm::settled_await` answers it, while the lane has fuel for the continuation; `None` where
 /// the activation suspends. A `yield` never continues in place.
 #[inline(always)]
-fn settled_await_in_place<H: Host>(cx: *mut LaneContext<H>, job: JobRoot, suspending: Suspending<u64>) -> Option<Value> {
+fn settled_await_in_place(cx: *mut LaneContext, job: JobRoot, suspending: Suspending<u64>) -> Option<Value> {
     if suspending.effect != SuspendEffect::Await {
         return None;
     }
@@ -87,7 +87,7 @@ fn settled_await_in_place<H: Host>(cx: *mut LaneContext<H>, job: JobRoot, suspen
 /// `destination`: its frame suspends into its owner as its kind does
 /// (`Vm::suspend_async_generator_yield` for an async generator's `yield`,
 /// `Vm::suspend_job_window` for the rest), the activation pops, and the run ends.
-fn suspend_job_root<H: Host>(cx: *mut LaneContext<H>, (pc, destination): (usize, crate::bytecode::Register), job: JobRoot,
+fn suspend_job_root(cx: *mut LaneContext, (pc, destination): (usize, crate::bytecode::Register), job: JobRoot,
     value: Value, yielded: bool) {
     let vm = unsafe { vm(cx) };
     if yielded && job.kind == SuspendKind::AsyncGenerator {
@@ -114,7 +114,7 @@ script_handler! {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// What an `await` of `source` (the row's `await_source`) by the activation of `job` evaluates
     /// to without suspending: its reaction would be the only queued job, so suspending, queueing
     /// it and resuming observes nothing more. Only an async function a microtask drain resumed
@@ -153,11 +153,11 @@ script_handler! {
 
 /// The handlers of a frame's suspensions: each runs its staged `Suspend` row on the lane's frame
 /// (`suspension_row_in_lane`), with the suspender its record's activation makes.
-pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
+pub(super) const fn suspend_handler(opcode: Op) -> Option<Handler> {
     match opcode.class() {
-        Class::Yield => Some(yield_row::<H>),
-        Class::YieldStar => Some(yield_star_row::<H>),
-        Class::Await => Some(await_row::<H>),
+        Class::Yield => Some(yield_row),
+        Class::YieldStar => Some(yield_star_row),
+        Class::Await => Some(await_row),
         _ => None,
     }
 }
@@ -171,7 +171,7 @@ pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// in-place async call leaves it (`StepResult::Suspend(Suspended::Await)`). `(pc, destination)`
 /// is where the continuation resumes, and `value` the converted awaited value.
 #[inline(never)]
-fn suspend_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, (pc, destination): (usize, crate::bytecode::Register),
+fn suspend_settling(cx: *mut LaneContext, r: Registers, (pc, destination): (usize, crate::bytecode::Register),
     value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
@@ -203,7 +203,7 @@ fn suspend_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, (pc, destina
 ///
 /// A settling activation is an async function's call, never a program's root, so no global
 /// lexical binding is published here (`Vm::persist_global_lexical_bindings`).
-fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &Activation, (r, pc): (Registers, usize)) -> Box<super::super::Frame> {
+fn settling_frame(vm: &mut Vm, code: &ResidualProgram, activation: &Activation, (r, pc): (Registers, usize)) -> Box<super::super::Frame> {
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
     let count = usize::from(code.function(activation.function as usize).registers);
     let argc = usize::from(script.argc);
@@ -229,7 +229,7 @@ fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &
 /// `count` registers and the `argc` values passed: the way any frameless activation becomes a
 /// frame (`Vm::push_script_frame_with_registers`), and an environment activation's then takes
 /// its environment and locals (`materialize_environment_frame`).
-fn pushed_settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &Activation, r: Registers,
+fn pushed_settling_frame(vm: &mut Vm, code: &ResidualProgram, activation: &Activation, r: Registers,
     (count, argc): (usize, usize)) -> Box<super::super::Frame> {
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
     // SAFETY: the activation's window holds its registers, which nothing writes until the frame takes them.
@@ -262,8 +262,8 @@ unsafe fn environment_passed<'a>(code: &ResidualProgram, activation: &'a Activat
 /// `ip` with registers `r`, passing `passed` with receiver `this`: its return settles the call's
 /// promise, whose root its side record keeps (`Completion::SettlesPromise`, `SidePayload::Settles`).
 /// An activation refused leaves the caller to release it, before any effect.
-pub(super) fn activate_settling_environment<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn activate_settling_environment(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     target: &ScriptCallTarget,

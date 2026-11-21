@@ -35,14 +35,14 @@ static TICK_OBJECT_FIELDS: [&str; 2] = ["callback", "args"];
 
 /// Retain a native-context callback into Node's canonical next-tick queue.
 pub(crate) fn queue_next_tick(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     callback: RootId,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<(), RootedError> {
     let values = if args.is_empty() { context.undefined() } else { context.array_rooted(args)? };
     let resource = context.record_rooted(false, &TICK_OBJECT_FIELDS, &[callback, values])?;
-    let id = super::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
+    let id = super::async_hooks_shared_vm::create_context(&context.host_as::<crate::host::NodeHost>().shared_state());
     super::async_hooks_shared_vm::emit_init(context, resource, "TickObject", id)?;
     let execution = Some(CallbackExecution {
         lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation,
@@ -54,7 +54,7 @@ pub(crate) fn queue_next_tick(
     // callable is only an invocation view, as for Timeout handles; it is never exposed to
     // guest code, so every tick without a receiver shares one.
     let receiverless = context.rooted_value(receiver).is_some_and(|value| value.is_undefined());
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let cached = receiverless.then(|| shared.borrow().tick_invocation).flatten();
     let invocation = match cached {
         Some(invocation) => invocation,
@@ -70,7 +70,7 @@ pub(crate) fn queue_next_tick(
     let receiver = context.retain(resource)?;
     let args = Vec::new();
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -86,7 +86,7 @@ pub(crate) fn queue_next_tick(
 /// Node's `processTicksAndRejections` step for one tick: read the TickObject's current
 /// `callback` and `args` slots, then call the callback with the arguments `args.length` and
 /// its elements give, as `callback(...args)` does for the array the tick queued.
-pub(crate) fn invoke_tick(context: &mut NativeContext<'_, NodeHost>, resource: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn invoke_tick(context: &mut NativeContext<'_>, resource: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let receiver = context.host_function_data()?;
     let callback = context.get_named_property_rooted(resource, "callback")?;
     let args = context.get_named_property_rooted(resource, "args")?;
@@ -477,7 +477,7 @@ impl SharedEventLoop {
 
 /// Resolve a native mutable callback slot without inventing a guest wrapper.
 pub(crate) fn optional_callback(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

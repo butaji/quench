@@ -8,8 +8,8 @@ use std::{cell::RefCell, rc::Rc};
 
 
 
-fn field_cache_entries<H: Host>(
-    vm: &Vm<H>,
+fn field_cache_entries(
+    vm: &Vm,
     program: &ResidualProgram,
     atom: Atom,
 ) -> Vec<FieldCache> {
@@ -1365,7 +1365,7 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
         output.borrow().as_slice(),
         ["1 outer inner evaluated undefined,false undefined,true"]
     );
-    let environment_bindings = |vm: &mut Vm<TestHost>, name: &str| {
+    let environment_bindings = |vm: &mut Vm, name: &str| {
         let atom = vm.intern_atom(name);
         let closure = vm.own_property(vm.realm.globals, atom).unwrap();
         let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
@@ -1396,12 +1396,12 @@ fn field_cache_invalidation_resets_every_written_site() {
     vm.inherited_field_indices = CacheSiteTable::with_empty(SITES);
     vm.accessor_field_indices = CacheSiteTable::with_empty(SITES);
     vm.field_cache_writes = Some(Vec::new());
-    let record = |vm: &mut Vm<TestHost>, site: usize| {
+    let record = |vm: &mut Vm, site: usize| {
         for receiver in 1..=3 {
             vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0, holder_id: NO_FIELD_HOLDER_LAYOUT });
         }
     };
-    let all_empty = |vm: &Vm<TestHost>| {
+    let all_empty = |vm: &Vm| {
         vm.field_caches.iter().all(|cache| cache.receiver == EMPTY_CACHE.receiver)
             && vm.megamorphic_field_indices.iter().all(|index| index == NO_MEGAMORPHIC_FIELD)
     };

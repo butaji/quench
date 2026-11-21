@@ -40,9 +40,9 @@ pub(in crate::vm) enum LocalsOf {
 /// finds its window past the context's own registers, as it always has.
 ///
 /// # Safety
-/// `cx` is null or a live `LaneContext<H>`; `registers` is the live register file of the run.
-pub(in crate::vm) unsafe fn body_locals<H: Host>(cx: *mut (), registers: *mut Value, caller: LocalsOf) -> BodyLocals {
-    let cx = cx.cast::<LaneContext<H>>();
+/// `cx` is null or a live `LaneContext`; `registers` is the live register file of the run.
+pub(in crate::vm) unsafe fn body_locals(cx: *mut (), registers: *mut Value, caller: LocalsOf) -> BodyLocals {
+    let cx = cx.cast::<LaneContext>();
     match caller {
         LocalsOf::Body => {
             // SAFETY: the caller's contract.
@@ -50,7 +50,7 @@ pub(in crate::vm) unsafe fn body_locals<H: Host>(cx: *mut (), registers: *mut Va
                 return window;
             }
             // SAFETY: as above; `frame_locals` takes the context as it is.
-            let (locals, count) = unsafe { frame_locals::<H>(cx.cast()) };
+            let (locals, count) = unsafe { frame_locals(cx.cast()) };
             BodyLocals { locals, count, environment: crate::heap::absent_environment_storage() }
         }
         // SAFETY: the caller's contract.
@@ -62,7 +62,7 @@ pub(in crate::vm) unsafe fn body_locals<H: Host>(cx: *mut (), registers: *mut Va
 ///
 /// # Safety
 /// As `body_locals`.
-unsafe fn osr_locals<H: Host>(cx: *mut LaneContext<H>, registers: *mut Value) -> BodyLocals {
+unsafe fn osr_locals(cx: *mut LaneContext, registers: *mut Value) -> BodyLocals {
     let absent = crate::heap::absent_environment_storage();
     let none = BodyLocals { locals: std::ptr::null_mut(), count: 0, environment: absent };
     if cx.is_null() {
@@ -104,7 +104,7 @@ unsafe fn osr_locals<H: Host>(cx: *mut LaneContext<H>, registers: *mut Value) ->
 ///
 /// # Safety
 /// As `body_locals`.
-unsafe fn activation_window<H: Host>(cx: *mut LaneContext<H>) -> Option<BodyLocals> {
+unsafe fn activation_window(cx: *mut LaneContext) -> Option<BodyLocals> {
     let cx = std::ptr::NonNull::new(cx)?.as_ptr();
     // SAFETY: the caller's contract; the program's views outlive the lane run.
     unsafe {

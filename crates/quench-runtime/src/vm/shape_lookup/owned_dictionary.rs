@@ -91,7 +91,7 @@ pub(in crate::vm) fn restore_owned_dictionaries(
     Ok(())
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `transition` applied to owned dictionary `shape`, or `None` when `shape` is not one or
     /// `transition` is metadata, which provenance reads from the chain. An add, which lengthens
     /// the storage its shape id records (`ValueArena::len`), makes the next shape, which takes

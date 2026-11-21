@@ -6,7 +6,7 @@ use super::crypto_secret_material::Material;
 use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::Arc;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 #[derive(Clone)]
 enum Value {
     Secret(Arc<Material>),
@@ -22,7 +22,7 @@ pub(crate) struct State {
     handles: Vec<Handle>,
 }
 fn lookup(c: &mut Context<'_>, handle: RootId) -> Result<Option<Value>, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     for entry in &shared.borrow().crypto_key_material.handles {
         if let Some(value) = c.resolve_host_weak_root(entry.identity) {
             if c.strict_equal_rooted(value, handle)? {
@@ -68,7 +68,7 @@ pub(crate) fn register_asymmetric(
 }
 fn register(c: &mut Context<'_>, handle: RootId, value: Value) -> Result<(), RootedError> {
     prune_context(c);
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut replace = None;
     for (index, entry) in shared
         .borrow()
@@ -97,7 +97,7 @@ fn register(c: &mut Context<'_>, handle: RootId, value: Value) -> Result<(), Roo
     Ok(())
 }
 pub(crate) fn prune_context(c: &mut Context<'_>) {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let dead = shared
         .borrow()
         .crypto_key_material

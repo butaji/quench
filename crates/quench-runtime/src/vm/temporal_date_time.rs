@@ -28,7 +28,7 @@ impl PlainDateTimeFromFields {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_temporal_plain_date_time(
         &mut self,
         p: &ResidualProgram,

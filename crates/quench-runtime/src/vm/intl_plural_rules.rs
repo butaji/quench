@@ -42,7 +42,7 @@ struct PluralRulesOptions {
     trailing_zero_display: String,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_plural_rules_for_realm(
         &mut self,
         intl: Value,

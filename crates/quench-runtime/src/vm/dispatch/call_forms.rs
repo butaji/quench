@@ -7,7 +7,7 @@
 use super::*;
 use crate::staged::invoke::CallForm;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The general form `form` of the call-family record `i`, run by frame `f` at resume PC `pc`. The form's
     /// completion is `Continue` once its result is written, `Return` where the call returns from the frame, or
     /// the activation or tail call it pushed.

@@ -15,7 +15,7 @@ const SET_TRAP_ARGUMENTS: usize = 4;
 /// with. The target's shape leaves the key unconstrained (`Vm::shape_leaves_atom_unconstrained`),
 /// so no invariant checks the trap's result. `None` for any other read: no proxy, a revoked
 /// one, a private name, no trap, or a target that may constrain the key.
-pub(super) fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom) -> Option<(Value, Value, [Value; GET_TRAP_ARGUMENTS])> {
+pub(super) fn get_trap_call(vm: &mut Vm, object: Value, atom: crate::bytecode::Atom) -> Option<(Value, Value, [Value; GET_TRAP_ARGUMENTS])> {
     let (target, handler) = vm.proxy_parts(object)?;
     if handler.is_null() || vm.is_private_name(atom) {
         return None;
@@ -33,7 +33,7 @@ pub(super) fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate:
 /// The atom of a computed key a proxy's trap receives as a string: a string's own, or the
 /// canonical decimal text of an array index. `None` for any other key (a symbol, a negative
 /// or fractional number, an object whose ToPropertyKey runs guest code).
-pub(super) fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<crate::bytecode::Atom> {
+pub(super) fn keyed_trap_atom(vm: &mut Vm, key: Value) -> Option<crate::bytecode::Atom> {
     if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) {
         return Some(vm.index_key_atom(index));
     }
@@ -42,7 +42,7 @@ pub(super) fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<cra
 
 /// Records that the trap activation `activate_keeping_in_lane` just pushed completes as
 /// `completion` says and owes `target` its invariants for `atom` (`TrapCheck`).
-pub(super) fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value, atom: crate::bytecode::Atom, access: TrapAccess) {
+pub(super) fn owe_invariants(vm: &mut Vm, completion: Completion, target: Value, atom: crate::bytecode::Atom, access: TrapAccess) {
     // An array's `length` and elements are answered by its element facts too, which its
     // layout does not name; any other name by its shape, which its layout does.
     let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(crate::vm::object::AtomClass::ARRAY_INDEX));
@@ -58,7 +58,7 @@ pub(super) fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, ta
 /// store's trap returns a falsish value, which is the store's `TypeError`. It returns from
 /// its frame, so that its pending call checks it (`CallCompletion::Trapped`).
 #[inline(always)]
-pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, payload: SidePayload, value: Value) -> bool {
+pub(super) fn trap_result_needs_general_path(vm: &Vm, payload: SidePayload, value: Value) -> bool {
     // A trap's activation carries its check in its side record (one-frame-one-call.md F4 (3)).
     let SidePayload::Trapped(check) = payload else {
         return false;
@@ -74,7 +74,7 @@ pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, payload: SideP
 
 /// The `set` trap's call for a store of `value` to the name `atom` of the proxy `object`, as
 /// `get_trap_call` finds a read's: the trap, the handler it is called on and its values.
-pub(super) fn set_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, value: Value) -> Option<(Value, Value, [Value; SET_TRAP_ARGUMENTS])> {
+pub(super) fn set_trap_call(vm: &mut Vm, object: Value, atom: crate::bytecode::Atom, value: Value) -> Option<(Value, Value, [Value; SET_TRAP_ARGUMENTS])> {
     let (target, handler) = vm.proxy_parts(object)?;
     if handler.is_null() || vm.is_private_name(atom) {
         return None;
@@ -83,7 +83,7 @@ pub(super) fn set_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate:
     vm.shape_leaves_atom_unconstrained(target, atom).then_some((trap, handler, [target, vm.atom_string(atom), value, object]))
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The `TypeError` and its instruction of the access whose trap the lane activated and
     /// whose frame returned `value` to the pending call `pending` of `frame`
     /// (`CallCompletion::Trapped`): the trap's result broke an invariant of its target, which

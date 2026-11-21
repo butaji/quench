@@ -16,7 +16,7 @@ pub(super) fn next_native(kind: IteratorKind) -> Option<Native> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The item an iterator of `kind` over `source` yields from `position`, and the position
     /// after it: a string's next code point, or a collection's next live entry, whose
     /// deleted slots the position skips. `None` once nothing is left, or for another kind.

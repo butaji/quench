@@ -2,7 +2,7 @@
 use super::text_decoder_icu::Converter;
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 const FLUSH: u32 = 1;
 const FATAL: u32 = 2;
 const IGNORE_BOM: u32 = 4;
@@ -17,7 +17,7 @@ struct Entry {
 use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE: &str = "\0binding:icu";
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(CACHE).copied() {
         return Ok(value);
     }
@@ -77,7 +77,7 @@ pub(crate) fn get_converter(
     let Ok(converter) = Converter::new(&name, flags & FATAL != 0, flags & IGNORE_BOM != 0) else {
         return Ok(c.undefined());
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .icu_converters
@@ -114,7 +114,7 @@ pub(crate) fn decode(
         return Err(c.throw(e));
     };
     let flags = c.to_number(args[2])? as u32;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .icu_converters

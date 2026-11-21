@@ -4,7 +4,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 use crate::modules::util_shared_vm::named_get as get;
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -13,13 +13,13 @@ fn set(
     context.define_data_property_rooted(object, key, value, true, true, true)?;
     Ok(())
 }
-fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn nullish(context: &NativeContext<'_>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 fn invalid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     name: &str,
     expected: &str,
@@ -27,7 +27,7 @@ fn invalid(
     super::util_shared_vm::argument_type_error_with_expected(context, value, name, expected)
 }
 fn null_check(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -47,7 +47,7 @@ fn null_check(
     Ok(())
 }
 fn array(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     name: &str,
 ) -> Result<Vec<RootId>, RootedError> {
@@ -65,12 +65,12 @@ fn array(
 }
 
 pub(crate) fn plan(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let module_path = args.first().copied().unwrap_or_else(|| context.undefined());
-    let is_buffer = |context: &mut NativeContext<'_, NodeHost>| -> Result<bool, RootedError> {
+    let is_buffer = |context: &mut NativeContext<'_>| -> Result<bool, RootedError> {
         let is_buffer = context.host_function_data()?;
         let undefined = context.undefined();
         let result = context.call_rooted(is_buffer, undefined, &[module_path])?;
@@ -127,7 +127,7 @@ pub(crate) fn plan(
     let shell = context.boolean(false);
     set(context, options, "shell", shell)?;
     let process = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -208,7 +208,7 @@ pub(crate) fn plan(
     Ok(plan)
 }
 fn fork_stdio(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     mode: &str,
 ) -> Result<RootId, RootedError> {
     let mode = context.string_rooted(mode);

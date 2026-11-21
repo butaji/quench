@@ -13,8 +13,8 @@ use crate::vm::accessor_cache::GetterEntryRead;
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(never)]
-pub(super) unsafe fn lane_getter_read<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) unsafe fn lane_getter_read(
+    cx: *mut LaneContext,
     object: Value,
     atom: crate::bytecode::Atom,
     site: u16,
@@ -39,7 +39,7 @@ pub(super) unsafe fn lane_getter_read<H: Host>(
 /// whose call on `object` a read just answered, returns for receivers of its layout
 /// (`Vm::memoize_getter_answer`, `getter_forward`).
 #[inline(never)]
-pub(super) fn lane_memoize_getter<H: Host>(cx: *mut LaneContext<H>, getter: Value, object: Value, site: usize) {
+pub(super) fn lane_memoize_getter(cx: *mut LaneContext, getter: Value, object: Value, site: usize) {
     let vm = unsafe { vm(cx) };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let Some(target) = vm.script_call_entry(getter).map(|entry| unsafe { *entry }) else {
@@ -66,8 +66,8 @@ pub(super) fn lane_memoize_getter<H: Host>(cx: *mut LaneContext<H>, getter: Valu
 ///
 /// # Safety
 /// `target` is a cached target of the running program.
-unsafe fn getter_forward<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: Value) -> Option<AccessorForward> {
-    if let Some(value) = unsafe { constant_body_value::<H>(target) } {
+unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> Option<AccessorForward> {
+    if let Some(value) = unsafe { constant_body_value(target) } {
         return (!value.is_heap()).then_some(AccessorForward::Constant(value));
     }
     if direct_call_this_in_lane(vm, target, object) != Some(object) {
@@ -76,7 +76,7 @@ unsafe fn getter_forward<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object:
     match target.entry {
         CallEntry::ReadsThis => Some(AccessorForward::Receiver),
         // SAFETY: a `Reads` target of the running program holds its returning record first.
-        CallEntry::Reads => match unsafe { LeafRead::of::<H>(target) }? {
+        CallEntry::Reads => match unsafe { LeafRead::of(target) }? {
             LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache } if base == crate::bytecode::FieldBase::THIS.0 => {
                 Some(AccessorForward::Field(vm.field_cache_entry(cache)))
             }
@@ -98,7 +98,7 @@ unsafe fn getter_forward<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object:
 /// # Safety
 /// `target` is a cached target of the running program.
 #[inline(always)]
-unsafe fn constant_body_value<H: Host>(target: &ScriptCallTarget) -> Option<Value> {
+unsafe fn constant_body_value(target: &ScriptCallTarget) -> Option<Value> {
     if !target.entry.activates() {
         return None;
     }
@@ -116,7 +116,7 @@ unsafe fn constant_body_value<H: Host>(target: &ScriptCallTarget) -> Option<Valu
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(never)]
-unsafe fn lane_getter_answer<H: Host>(cx: *mut LaneContext<H>, getter: Value, object: Value) -> Option<Value> {
+unsafe fn lane_getter_answer(cx: *mut LaneContext, getter: Value, object: Value) -> Option<Value> {
     if let Some(value) = (unsafe { vm(cx) }).pure_native_getter_value(getter, object) {
         return Some(value);
     }
@@ -130,16 +130,16 @@ unsafe fn lane_getter_answer<H: Host>(cx: *mut LaneContext<H>, getter: Value, ob
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(always)]
-unsafe fn lane_script_getter_answer<H: Host>(cx: *mut LaneContext<H>, target: &ScriptCallTarget, object: Value) -> Option<Value> {
+unsafe fn lane_script_getter_answer(cx: *mut LaneContext, target: &ScriptCallTarget, object: Value) -> Option<Value> {
     if target.entry == CallEntry::Reads {
         // A getter only the general path has called has not run its read in the lane yet: it
         // takes the kind its first run would.
         // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
         let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-        if unsafe { (*entry).handler } == row_returning_field_first::<H, NOT_LEAF> as *const () {
-            requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
+        if unsafe { (*entry).handler } == row_returning_field_first::<NOT_LEAF> as *const () {
+            requicken(entry, returning_field_first_kind::<NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
         }
-    } else if let Some(value) = unsafe { constant_body_value::<H>(target) } {
+    } else if let Some(value) = unsafe { constant_body_value(target) } {
         // `return k`: no receiver to bind, nothing to read.
         return Some(value);
     } else if !target.entry.answered_by_read() {
@@ -157,8 +157,8 @@ unsafe fn lane_script_getter_answer<H: Host>(cx: *mut LaneContext<H>, target: &S
 /// (`call_native_in_lane`); `Err` after such a call that raised leaves the error in
 /// `Vm::lane_raised`. The answer's read may have made the activations frames, so the
 /// registers are the context's again.
-pub(super) fn lane_read_getter<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn lane_read_getter(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
@@ -216,7 +216,7 @@ pub(super) enum GetterStep {
 /// does), or the getter, which a lane allowed script calls reads or calls as
 /// `getter_activation_in_lane` would. A nested read, and any base no entry proves, is `Miss`.
 #[inline(always)]
-pub(super) fn lane_getter_step<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> GetterStep {
+pub(super) fn lane_getter_step(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> GetterStep {
     if i.b == crate::bytecode::FieldBase::NESTED {
         return GetterStep::Miss;
     }
@@ -248,8 +248,8 @@ pub(super) fn lane_getter_step<H: Host>(cx: *mut LaneContext<H>, r: Registers, i
 /// by the plain compare; `activate_kept_in_lane` takes those. A leaf getter that binds its
 /// receiver runs as a leaf instead, with no header (`lane_run_leaf_getter`).
 #[inline(always)]
-pub(super) fn lane_push_getter<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn lane_push_getter(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     target: &ScriptCallTarget,
@@ -312,8 +312,8 @@ pub(super) fn lane_push_getter<H: Host>(
 /// `lane_push_getter`'s plain tests (running program, no `with` scope, room by `plain_room`);
 /// `this` is its binding of the read's base (`call_this_in_lane`).
 #[inline(always)]
-unsafe fn lane_run_leaf_getter<H: Host>(
-    cx: *mut LaneContext<H>,
+unsafe fn lane_run_leaf_getter(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     target: &ScriptCallTarget,
@@ -353,8 +353,8 @@ unsafe fn lane_run_leaf_getter<H: Host>(
 /// Out of line, so script getters' activations keep their code.
 #[cold]
 #[inline(never)]
-fn lane_native_getter<H: Host>(
-    cx: *mut LaneContext<H>,
+fn lane_native_getter(
+    cx: *mut LaneContext,
     ip: Ip,
     i: &LaneInstruction,
     native: Native,
@@ -375,8 +375,8 @@ script_handler! {
     pub(super) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
         let base = unsafe { field_base_in_lane(cx, r, crate::bytecode::FieldBase(i.b)) };
         let Some(value) = base.and_then(|base| unsafe { AccessorCall::of(cx).hold_getter_hint(ip, i, base) }) else {
-            requicken::<H>(ip, protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
-            sibling!(get_field_getter_miss::<H>, r, ip, Carried::script(cx))
+            requicken(ip, protocol_handler::<{ crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
+            sibling!(get_field_getter_miss, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -389,7 +389,7 @@ const GETTER_HINT: u32 = super::super::NO_FIELD_RECEIVER - 3;
 
 /// Makes the own field `slot` of `base`, which the record's getter returns, the hint of the
 /// `GetField` record at `ip`, in place of the one it holds; whether the record holds it.
-pub(super) fn set_getter_hint<H: Host>(vm: &mut Vm<H>, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
+pub(super) fn set_getter_hint(vm: &mut Vm, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
     if holds_loop_site(ip) {
         return false;
     }

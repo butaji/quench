@@ -34,11 +34,11 @@ impl NestedField {
 /// Whether the capture a nested construction's chain starts from still holds the object the
 /// plan read the constructor through: a binding any assignment can change, so each use reads it.
 #[inline(always)]
-pub(in super::super) fn nested_root_holds<H: Host>(vm: &mut Vm<H>, nested: &NestedField) -> bool {
+pub(in super::super) fn nested_root_holds(vm: &mut Vm, nested: &NestedField) -> bool {
     capture_value(vm, nested.env, nested.capture) == Some(nested.root)
 }
 
-fn capture_value<H: Host>(vm: &mut Vm<H>, env: Value, capture: u32) -> Option<Value> {
+fn capture_value(vm: &mut Vm, env: Value, capture: u32) -> Option<Value> {
     let (slots, root) = vm.walked_capture_slots(env, false, ImmediateLayout::capture_depth(capture))?;
     // SAFETY: as `Vm::walked_capture_slots`; nothing below collects.
     vm.plain_capture(unsafe { &*slots }, root, ImmediateLayout::capture_slot(capture))
@@ -46,7 +46,7 @@ fn capture_value<H: Host>(vm: &mut Vm<H>, env: Value, capture: u32) -> Option<Va
 
 /// A fresh object of `constructor` as its own plans build it from `arguments`, which run no
 /// guest code: `None` where it has no holding plan.
-pub(in super::super) fn nested_construction<H: Host>(vm: &mut Vm<H>, constructor: Value, arguments: &[Value; NESTED_ARGUMENTS]) -> Option<Value> {
+pub(in super::super) fn nested_construction(vm: &mut Vm, constructor: Value, arguments: &[Value; NESTED_ARGUMENTS]) -> Option<Value> {
     let argument = |parameter: u16| arguments.get(usize::from(parameter)).copied().unwrap_or(Value::UNDEFINED);
     planned_construction(vm, constructor, argument).or_else(|| super::super::forwarded_fields_in_lane(vm, constructor, argument))
 }
@@ -54,7 +54,7 @@ pub(in super::super) fn nested_construction<H: Host>(vm: &mut Vm<H>, constructor
 /// The value `construct` gives its field, built from the constructor its capture and chain
 /// name, read through data properties, with the field the plan then holds for it. `env` is the
 /// initializer's closure environment.
-pub(in super::super) fn nested_construct_in_lane<H: Host>(vm: &mut Vm<H>, env: Value, construct: &NestedConstruct) -> Option<(Value, NestedField)> {
+pub(in super::super) fn nested_construct_in_lane(vm: &mut Vm, env: Value, construct: &NestedConstruct) -> Option<(Value, NestedField)> {
     let root = capture_value(vm, env, construct.capture)?;
     let mut held = [Value::UNDEFINED; NESTED_CHAIN];
     let mut constructor = root;
@@ -78,8 +78,8 @@ pub(in super::super) fn nested_construct_in_lane<H: Host>(vm: &mut Vm<H>, env: V
 /// The forwarded initializer's adds on `this`, which a construction completes in the lane when
 /// none runs guest code: the plan of the fields they gave it (`None` where it cannot hold one),
 /// nested constructions included, or the outer `None` where an add cannot be applied (the construction then activates).
-pub(in super::super) fn finish_forwarded_in_lane<H: Host>(
-    vm: &mut Vm<H>,
+pub(in super::super) fn finish_forwarded_in_lane(
+    vm: &mut Vm,
     code: &ResidualProgram,
     env: Value,
     this: Value,

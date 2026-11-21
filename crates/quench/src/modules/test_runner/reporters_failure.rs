@@ -8,7 +8,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 use crate::host::NodeHost;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// A failing test's error, as Node's reporters show it: the error wrapper's `failureType`,
 /// the cause's message and stack, and the wrapper's `util.inspect`.

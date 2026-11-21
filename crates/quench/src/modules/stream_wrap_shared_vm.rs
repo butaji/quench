@@ -6,7 +6,7 @@ use crate::modules::host_members::{captured, constructor, current, function, lea
 use crate::modules::stream_shared_vm::{get, inherit, is_undefined};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 /// Node's DEP0125 warning message and code.
@@ -182,7 +182,7 @@ fn settle(c: &mut Context<'_>, callback: RootId, args: &[RootId]) -> Outcome {
 
 fn warn_deprecated(c: &mut Context<'_>) -> Result<(), RootedError> {
     let process = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module

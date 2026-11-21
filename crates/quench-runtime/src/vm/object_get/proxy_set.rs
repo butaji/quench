@@ -4,7 +4,7 @@
 use super::super::*;
 use super::PropertyKey;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `[[Set]]` of the target, for a handler without a `set` trap: a proxy target runs its
     /// own, any other the ordinary set with `receiver`, whose rejection a strict store raises.
     pub(in crate::vm) fn proxy_set_target(

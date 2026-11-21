@@ -93,7 +93,7 @@ fn ascii_match_ranges(
     Some(())
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The new RegExp object of regular expression literal site `site_index` of `program`
     /// when the site's record is cached for this realm: made from it alone, with no pattern
     /// or flags constant read again. `None` leaves the site to `regexp_literal_of`.
@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The match of `matcher` over `input` from `q` for the split loop (`regexp_split_builtin`):
     /// a flat ASCII input is searched in place, any other makes its prepared subject once,
     /// kept in `subject`.

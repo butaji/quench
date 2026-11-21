@@ -53,7 +53,7 @@ struct NumberFormatOptions {
     trailing_zero_display: String,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn intl_format_primitive(
         &mut self,
         p: &ResidualProgram,

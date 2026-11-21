@@ -8,8 +8,8 @@ use super::*;
 /// copies before anything runs, as `function_call_activation_in_lane` activates a call's. `None`
 /// for any other call, which the native makes.
 #[inline(never)]
-pub(super) fn apply_activation_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn apply_activation_in_lane(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
@@ -48,8 +48,8 @@ pub(super) fn apply_activation_in_lane<H: Host>(
 /// argument array the call's spread evaluation built; `None` for any other list.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(super) fn list_activation_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn list_activation_in_lane(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
@@ -114,8 +114,8 @@ pub(super) fn list_activation_in_lane<H: Host>(
 /// so one whose result is unused (`ImmediateLayout::call_result_used_in_lane`) is made too: the
 /// value goes to its dead register. `None` for any other callee.
 #[inline(never)]
-pub(super) fn spread_native_call_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn spread_native_call_in_lane(
+    cx: *mut LaneContext,
     ip: Ip,
     i: &LaneInstruction,
     callee: Value,
@@ -134,7 +134,7 @@ pub(super) fn spread_native_call_in_lane<H: Host>(
 
 /// The native `spread_native_call_in_lane` calls in place: any but a forwarding one or `eval`.
 #[inline(always)]
-fn spread_native_in_lane<H: Host>(vm: &Vm<H>, callee: Value) -> Option<Native> {
+fn spread_native_in_lane(vm: &Vm, callee: Value) -> Option<Native> {
     let FunctionKind::Native(native) = vm.heap.function(callee)?.kind else {
         return None;
     };
@@ -146,8 +146,8 @@ fn spread_native_in_lane<H: Host>(vm: &Vm<H>, callee: Value) -> Option<Native> {
 /// `push`: its live values, which iterating it yields and no step's code can change, copied
 /// out first. `None` for any other spread or callee, which the general path makes.
 #[inline(never)]
-pub(super) fn spread_set_native_call_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn spread_set_native_call_in_lane(
+    cx: *mut LaneContext,
     ip: Ip,
     i: &LaneInstruction,
     callee: Value,

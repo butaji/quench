@@ -10,7 +10,7 @@ const NOT_FOUND: i32 = -1;
 /// Inline capacity of the staging buffer a copied element list is built in.
 const INLINE_VALUES: usize = 16;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Array.prototype.at(index)` on a dense array with an int32 `index`. A negative index counts
     /// from the end. A present element is returned; a hole, or an index past either end, is `None`
     /// except past the end of an array of `Array.prototype` whose chain holds no index, which reads

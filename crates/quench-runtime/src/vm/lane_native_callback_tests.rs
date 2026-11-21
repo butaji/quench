@@ -67,7 +67,7 @@ const ITERATION_SOURCE: &str = r#"
     print(result);
 "#;
 
-fn run_source(mode: crate::ExecutionMode, source: &str) -> (Vec<String>, Vm<TestHost>) {
+fn run_source(mode: crate::ExecutionMode, source: &str) -> (Vec<String>, Vm) {
     let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-native-callbacks.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));

@@ -17,7 +17,6 @@ use crate::vm::compiled::{CodeMemory, LaneHelper};
 use quench_bjit::call_record::CallRecord;
 use std::cell::UnsafeCell;
 use crate::vm::jit_backend::relocatable_code::RelocatableCode;
-use crate::Host;
 
 /// Every body starts at this alignment in the block.
 const CODE_ALIGNMENT: usize = 16;
@@ -61,7 +60,7 @@ struct Places<'a> {
 }
 
 /// Links `image` into `vm`: its code placed, every symbol resolved.
-pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveImage, String> {
+pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String> {
     let layout = layout(image);
     let invalidation = Invalidation::default();
     let operands: Box<[[u64; 2]]> = image.operands.iter().map(|record| record.words).collect();
@@ -139,7 +138,7 @@ pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage,
 /// which its publication keeps alive (`PublishedCode::hold_roots`): a collected object's id is
 /// reused, and the code would take the next object for it. `None` where the function has no lane
 /// body or a symbol does not link.
-pub(crate) fn link_lane<H: Host>(image: &AotImage, vm: &mut Vm<H>, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
+pub(crate) fn link_lane(image: &AotImage, vm: &mut Vm, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
     let lane = image.functions.get(function as usize)?.lane.as_ref()?;
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
     let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: live.calls.records() };
@@ -170,7 +169,7 @@ fn layout(image: &AotImage) -> Layout {
 /// image fixes at load, so one that does not link fails the image; a lane body may name what the
 /// program makes as it runs (`HeapValueRecipe::PrototypeOf`, a callee's entry cell), which
 /// resolves when it is published (`link_lane`), so one that does not link yet is left unplaced.
-fn place<H: Host>(image: &AotImage, vm: &mut Vm<H>, layout: &Layout, (start, places): (usize, &Places<'_>),
+fn place(image: &AotImage, vm: &mut Vm, layout: &Layout, (start, places): (usize, &Places<'_>),
     (out, linked): (&mut [u8], &mut [bool])) -> Result<(), String> {
     let mut address = |namespace: u32, key: u32| resolve(image, vm, places, namespace, key);
     for (function, body) in image.functions.iter().enumerate() {
@@ -190,11 +189,11 @@ fn link_into(out: &mut [u8], start: usize, at: usize, code: &RelocatableCode, re
 }
 
 /// The address of symbol `(namespace, key)` in this process, or `None` where it resolves to none yet.
-fn resolve<H: Host>(image: &AotImage, vm: &mut Vm<H>, places: &Places<'_>, namespace: u32, key: u32) -> Option<u64> {
+fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, key: u32) -> Option<u64> {
     let symbol = SymbolTable::decode(image, namespace, key)?;
     match symbol {
-        Symbol::Helper(helper) => LaneHelper::addresses::<H>().get(helper as usize).map(|address| *address as usize as u64),
-        Symbol::SemanticEntry(op) => semantic_entry::<H>(op),
+        Symbol::Helper(helper) => LaneHelper::addresses().get(helper as usize).map(|address| *address as usize as u64),
+        Symbol::SemanticEntry(op) => semantic_entry(op),
         Symbol::Operands { .. } => places.operands.get(key as usize).map(|record| record.as_ptr().addr() as u64),
         Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),
         Symbol::Atom(atom) => Some(u64::from(vm.intern_atom(image.atoms.get(atom as usize)?))),
@@ -209,12 +208,12 @@ fn resolve<H: Host>(image: &AotImage, vm: &mut Vm<H>, places: &Places<'_>, names
 
 /// The address of opcode `op`'s monomorphized semantic entry.
 #[cfg(feature = "native-execution")]
-fn semantic_entry<H: Host>(op: u16) -> Option<u64> {
-    crate::vm::compiled::native_js_operation_entry_for::<H>(op as usize).map(|entry| entry as usize as u64)
+fn semantic_entry(op: u16) -> Option<u64> {
+    crate::vm::compiled::native_js_operation_entry_for(op as usize).map(|entry| entry as usize as u64)
 }
 
 #[cfg(not(feature = "native-execution"))]
-fn semantic_entry<H: Host>(_op: u16) -> Option<u64> {
+fn semantic_entry(_op: u16) -> Option<u64> {
     None
 }
 

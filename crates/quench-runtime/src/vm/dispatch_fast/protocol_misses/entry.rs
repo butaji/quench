@@ -19,16 +19,16 @@ pub(in crate::vm::dispatch_fast) const TIER_PROLOGUE: u8 = 2;
 pub(in crate::vm::dispatch_fast) const BODY_ENTRY: u8 = 3;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::ENTRY | parameters }>`).
-pub(in crate::vm::dispatch_fast) const fn entry_miss_of<H: Host>(parameters: u8) -> Handler {
+/// (`protocol_row::<OP, ACC, { protocol_family::ENTRY | parameters }>`).
+pub(in crate::vm::dispatch_fast) const fn entry_miss_of(parameters: u8) -> Handler {
     match parameters {
-        SCRIPT_CALL_KEEPING => super::super::script_call_keeping_miss::<H> as Handler,
-        FORWARD_CALL => super::super::forward_call_miss::<H> as Handler,
-        CALL_MATH => super::super::call_math_miss::<H> as Handler,
-        CALL_ARRAY_CALLBACK_DISCARDING => super::super::call_array_callback_miss::<H, true> as Handler,
-        CALL_ARRAY_CALLBACK => super::super::call_array_callback_miss::<H, false> as Handler,
-        TIER_PROLOGUE => super::super::tier_prologue_in_lane::<H> as Handler,
-        BODY_ENTRY => super::super::body_entry_in_lane::<H> as Handler,
-        _ => general_step_in_lane::<H>,
+        SCRIPT_CALL_KEEPING => super::super::script_call_keeping_miss as Handler,
+        FORWARD_CALL => super::super::forward_call_miss as Handler,
+        CALL_MATH => super::super::call_math_miss as Handler,
+        CALL_ARRAY_CALLBACK_DISCARDING => super::super::call_array_callback_miss::<true> as Handler,
+        CALL_ARRAY_CALLBACK => super::super::call_array_callback_miss::<false> as Handler,
+        TIER_PROLOGUE => super::super::tier_prologue_in_lane as Handler,
+        BODY_ENTRY => super::super::body_entry_in_lane as Handler,
+        _ => general_step_in_lane,
     }
 }

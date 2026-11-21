@@ -36,7 +36,7 @@ fn eager_publication_reports_lane_bodies() {
     assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(999_000.0));
 }
 
-fn compile_frozen(source: &str) -> (ResidualProgram, crate::NativeJsProgram<TestHost>) {
+fn compile_frozen(source: &str) -> (ResidualProgram, crate::NativeJsProgram) {
     let program = Engine::specialize(source, "frozen.js").unwrap();
     let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
     (program, native)
@@ -192,7 +192,7 @@ fn functions_past_the_set_width_keep_a_windowed_map() {
     let masks = program.register_root_masks(wide as u32).expect("a body past the set width keeps a map");
     assert!(masks.is_windowed(), "the mask holds one set per register window");
     assert!(masks.live_at(0, 512).is_some(), "the second window has a per-pc entry");
-    let native = crate::NativeJsProgram::<TestHost>::compile_eager(program).unwrap();
+    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
     assert_eq!(native.publication_counts().wide_frame_functions, 0,
         "a windowed body has a precise map: {:?}", native.publication_counts());
 }
@@ -203,7 +203,7 @@ fn a_function_past_the_old_width_still_has_a_stack_map() {
     let parameters = (0..300).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
     let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
     let program = Engine::specialize(&source, "wide-frame-half.js").unwrap();
-    let native = crate::NativeJsProgram::<TestHost>::compile_eager(program).unwrap();
+    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
     assert_eq!(native.publication_counts().wide_frame_functions, 0,
         "{:?}", native.publication_counts());
 }

@@ -2,7 +2,7 @@
 //! gives host code its canonical `Buffer`, `FastBuffer` and prototype.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 const FAST_BUFFER_CACHE: &str = "\0builtin:buffer/FastBuffer";
 /// The cache key of `FastBuffer` itself, which shares `Buffer.prototype` and constructs
@@ -12,7 +12,7 @@ pub(crate) const FAST_BUFFER_CONSTRUCTOR: &str = "\0builtin:buffer/FastBufferCon
 /// `FastBuffer`: the class Node's own code constructs Buffers with.
 pub(crate) fn fast_buffer_constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     fast_buffer_class(c)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let constructor = shared.borrow().builtin_cache.get(FAST_BUFFER_CONSTRUCTOR).copied();
     constructor.ok_or_else(|| RootedError::host("FastBuffer is not initialized"))
 }
@@ -125,7 +125,7 @@ pub(crate) fn global_set(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Res
 /// observation loads `buffer.js`; when `buffer.js` is the loader, its first write to the
 /// prototype materializes them.
 fn fast_buffer_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(buffer) = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied() {
         return Ok(buffer);
     }
@@ -148,13 +148,13 @@ pub(crate) fn is_pooled(size: usize) -> bool {
 /// `Buffer.allocUnsafe(size)` before `buffer.js` has loaded: Node's `allocate(size)` over a pool
 /// the host holds for the library to adopt. `None` once the library owns the pool.
 pub(crate) fn allocate_before_library(c: &mut Context<'_>, size: usize) -> Result<Option<RootId>, RootedError> {
-    if matches!(c.host_mut().shared_state().borrow().buffer_pool, PoolOwner::Library) {
+    if matches!(c.host_as::<crate::host::NodeHost>().shared_state().borrow().buffer_pool, PoolOwner::Library) {
         return Ok(None);
     }
     let fast = fast_buffer_constructor(c)?;
     c.with_startup_intrinsics(|c| {
         if is_pooled(size) {
-            let state = match c.host_mut().shared_state().borrow().buffer_pool {
+            let state = match c.host_as::<crate::host::NodeHost>().shared_state().borrow().buffer_pool {
                 PoolOwner::Host(state) => Some(state),
                 _ => None,
             };
@@ -211,7 +211,7 @@ fn create_pool(c: &mut Context<'_>, fast: RootId) -> Result<RootId, RootedError>
     slots[PoolSlot::Buffer as usize] = buffer;
     let state = c.array_rooted(&slots)?;
     let retained = c.retain(state)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let previous = std::mem::replace(&mut shared.borrow_mut().buffer_pool, PoolOwner::Host(retained));
     if let PoolOwner::Host(previous) = previous {
         c.release_root(previous);

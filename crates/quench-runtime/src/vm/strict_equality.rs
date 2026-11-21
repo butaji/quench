@@ -2,7 +2,7 @@
 //! heap value only to itself.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `strict_equal` of two values that are no Numbers and not identical: equal strings or
     /// BigInts, of equal contents.
     #[inline(always)]

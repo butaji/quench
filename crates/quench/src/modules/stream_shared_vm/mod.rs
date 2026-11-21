@@ -23,7 +23,7 @@ pub(crate) mod writable;
 use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-pub(crate) type Context<'a> = NativeContext<'a, NodeHost>;
+pub(crate) type Context<'a> = NativeContext<'a>;
 pub(crate) type Outcome = Result<RootId, RootedError>;
 
 /// The symbols the stream classes key their private and protocol slots with.
@@ -272,7 +272,7 @@ const _: () = {
 
 /// What `pick` reads of the intrinsics, without copying the rest.
 pub(crate) fn intrinsic<T>(c: &mut Context<'_>, pick: impl FnOnce(&Intrinsics) -> T) -> Result<T, RootedError> {
-    let picked = c.host_mut().shared_state().borrow().stream_intrinsics.as_ref().map(pick);
+    let picked = c.host_as::<crate::host::NodeHost>().shared_state().borrow().stream_intrinsics.as_ref().map(pick);
     picked.ok_or_else(|| RootedError::host("stream module is not initialized"))
 }
 
@@ -533,14 +533,14 @@ fn make_symbol(c: &mut Context<'_>, source: SymbolSource) -> Outcome {
 /// The symbols and scheduled operations are published first: the classes' members are keyed
 /// by them.
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
-    if let Some(intrinsics) = c.host_mut().shared_state().borrow().stream_intrinsics {
+    if let Some(intrinsics) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().stream_intrinsics {
         if !is_undefined(c, intrinsics.module) {
             return Ok(intrinsics.module);
         }
     }
     let built = build(c);
     if built.is_err() {
-        c.host_mut().shared_state().borrow_mut().stream_intrinsics = None;
+        c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stream_intrinsics = None;
     }
     built
 }
@@ -567,7 +567,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let promise_then = c.retain(promise_then)?;
     let promise = c.retain(promise)?;
     let mut intrinsics = Intrinsics { slots, classes: [undefined; Class::COUNT], ticks, nop, promise, promise_then, module: undefined };
-    c.host_mut().shared_state().borrow_mut().stream_intrinsics = Some(intrinsics);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stream_intrinsics = Some(intrinsics);
     let emitter = get(c, global, "__nodeEventEmitter")?;
     let buffer = super::buffer_shared_vm::fast_buffer_constructor(c)?;
     let stream = legacy::build(c, emitter)?;
@@ -595,10 +595,10 @@ fn build(c: &mut Context<'_>) -> Outcome {
     ] {
         intrinsics.classes[class as usize] = c.retain(value)?;
     }
-    c.host_mut().shared_state().borrow_mut().stream_intrinsics = Some(intrinsics);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stream_intrinsics = Some(intrinsics);
     exports(c, stream, readable, writable, duplex, transform, pass_through)?;
     intrinsics.module = c.retain(stream)?;
-    c.host_mut().shared_state().borrow_mut().stream_intrinsics = Some(intrinsics);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stream_intrinsics = Some(intrinsics);
     Ok(stream)
 }
 
@@ -732,7 +732,7 @@ pub(crate) fn internal_streams_module(c: &mut Context<'_>, name: &str) -> Outcom
 /// An internal module's export object, made once and kept in the builtin cache.
 fn internal_module(c: &mut Context<'_>, relative: &str) -> Outcome {
     let key = format!("\0stream:{relative}");
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(module) = shared.borrow().builtin_cache.get(&key).copied() {
         return Ok(module);
     }

@@ -208,7 +208,7 @@ const ZONED_DATE_TIME_METHODS: &[(&str, Native)] = &[
     ("valueOf", Native::TemporalZonedDateTimeValueOf),
 ];
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn temporal_instant_to_zoned_date_time_iso(
         &mut self,
         p: &ResidualProgram,

@@ -5,7 +5,7 @@ use super::console_format_shared_vm::{self as format, Options};
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 const TABLE_INDEX: &str = "(index)";
 const TABLE_ITERATION_INDEX: &str = "(iteration index)";

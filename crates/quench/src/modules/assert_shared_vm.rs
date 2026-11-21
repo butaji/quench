@@ -10,7 +10,7 @@ use super::util_comparisons_shared_vm::{self as comparisons, Mode};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 const MODULE_KEY: &str = "\0builtin:assert/module";
 const ERROR_CLASS_KEY: &str = "\0builtin:assert/AssertionError";
@@ -224,12 +224,12 @@ fn is_object_like(c: &Context<'_>, value: RootId) -> bool {
 }
 
 fn cached(c: &mut Context<'_>, key: &str) -> Option<RootId> {
-    c.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(key).copied()
 }
 
 fn cache(c: &mut Context<'_>, key: &str, value: RootId) -> Result<(), RootedError> {
     let retained = c.retain(value)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(key.into(), retained);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(key.into(), retained);
     Ok(())
 }
 

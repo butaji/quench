@@ -6,7 +6,7 @@ use super::{
 };
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 fn coded(c: &mut Context<'_>, code: &str, text: &str) -> RootedError {
     match c.error_rooted(text) {
         Ok(error) => {

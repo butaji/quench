@@ -1,8 +1,8 @@
 //! Stores into dense arrays no guest code reaches yet: the arrays builtins build.
 
-use super::{Host, Value, Vm};
+use super::{Value, Vm};
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Append an own data element to an unexposed dense array. No guest code runs.
     pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
         let Some(length) = self.heap.grow_array_elements(array, |elements| {

@@ -239,7 +239,7 @@ pub(crate) fn has_colors(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Out
 // ---------------------------------------------------------------------------------------
 
 /// `isatty(fd)`.
-pub(crate) fn isatty(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Outcome {
+pub(crate) fn isatty(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let terminal = args
         .first()
         .and_then(|root| context.rooted_value(*root))
@@ -577,7 +577,7 @@ fn class(c: &mut Context<'_>, name: &str, operation: &str, parent: RootId) -> Ou
 }
 
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(module) = shared.borrow().builtin_cache.get(MODULE_CACHE).copied() {
         return Ok(module);
     }

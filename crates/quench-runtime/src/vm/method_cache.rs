@@ -11,7 +11,7 @@ pub(super) const METHOD_CACHE_WAYS: usize = 2;
 /// recorded entry, the empty entry included.
 const NON_OBJECT_RECEIVER_SHAPE: u32 = u32::MAX - 1;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn invalidate_method_caches(&mut self) {
         self.clear_method_caches(1);
     }
@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The holder a method guard recorded, for a lookup of `atom` on `receiver` whose entry
     /// already matched the receiver's shape and prototype. The receiver's own kind is tested
     /// by its shape (`shape_property_lookup`), a depth-0 guard names the receiver itself, and
@@ -408,7 +408,7 @@ fn method_cache_live(heap: &crate::heap::Heap, entry: MethodCache) -> bool {
         && env.is_none_or(|value| !value.is_heap() || heap.is_live(value))
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn call_method_site_safe(
         &mut self,
         p: &ResidualProgram,
@@ -471,7 +471,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The shape and prototype method caches key a lookup on `this` by: an object's own, else
     /// the key no entry serves (`NON_OBJECT_RECEIVER_SHAPE`).
     fn method_receiver_key(&self, this: Value) -> (u32, Value) {

@@ -6,7 +6,7 @@ use super::ascii::ascii_search;
 use super::steady::{ExecStart, exec_finish, exec_start_int};
 use crate::code_dependencies::IntactFuse;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `steady_regexp_call` of a flat ASCII subject searched in place, decided in one look at
     /// the regexp, its realm's RegExp record and the subject (`steady_ascii_plan`): a `test`
     /// asks the recorded exec proof there, and where it does not answer yet the full proof

@@ -198,7 +198,7 @@ impl Input {
 }
 
 pub(crate) fn write_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     errno: i32,
 ) -> Result<RootId, RootedError> {
     let code = super::util_system_error_shared_vm::system_error_name(-f64::from(errno));
@@ -215,7 +215,7 @@ pub(crate) fn write_error(
 }
 
 pub(crate) fn complete(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

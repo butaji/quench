@@ -45,7 +45,7 @@ const HOT_METHODS: [(&str, &str); 4] = [
     ("invalidate", "hmrHotInvalidate"),
 ];
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// Whether `exec_argv` opts into HMR.
 pub(crate) fn requested(exec_argv: &[String]) -> bool {
@@ -650,7 +650,7 @@ pub(crate) fn apply_operation(context: &mut Context<'_>, _: RootId, args: &[Root
 
 /// The ES module at `path` evaluated again under its compiled name.
 fn replace_es_module(context: &mut Context<'_>, path: &Path) -> Result<bool, RootedError> {
-    let shared_state = context.host_mut().shared_state();
+    let shared_state = context.host_as::<crate::host::NodeHost>().shared_state();
     let (name, hot, importers) = {
         let state = shared_state.borrow();
         let Some(state) = state.hmr.as_ref() else { return Ok(false) };
@@ -664,7 +664,7 @@ fn replace_es_module(context: &mut Context<'_>, path: &Path) -> Result<bool, Roo
     };
     let Some(plan) = accept_plan(context, ModuleSystem::Module, hot, &importers)? else { return Ok(false) };
     let bytes = std::fs::read(path).map_err(|error| RootedError::host(format!("{}: {error}", path.display())))?;
-    let module = context.host_mut().module_source(path, name, bytes).map_err(|error| RootedError::host(error.message))?;
+    let module = context.host_as::<crate::host::NodeHost>().module_source(path, name, bytes).map_err(|error| RootedError::host(error.message))?;
     if let Some(hot) = hot {
         let data = dispose(context, hot)?;
         if rejected(context, hot)? {
@@ -718,7 +718,7 @@ fn replace_es_module(context: &mut Context<'_>, path: &Path) -> Result<bool, Roo
 /// `import.meta.hot` for an application module (`Host::initialize_import_meta`).
 pub(crate) fn initialize_import_meta(context: &mut Context<'_>, source_name: &str, import_meta: RootId) -> Result<(), RootedError> {
     let (_, path) = crate::host::shared_vm::referrer_location(source_name).map_err(|error| RootedError::host(error.message))?;
-    let path = context.host_mut().real_path(path);
+    let path = context.host_as::<crate::host::NodeHost>().real_path(path);
     if !HmrState::watches(&path) {
         return Ok(());
     }
@@ -741,7 +741,7 @@ pub(crate) fn initialize_import_meta(context: &mut Context<'_>, source_name: &st
 
 /// Run `operate` on the HMR state of a host that has one; callers are HMR operations.
 pub(crate) fn with_state<R>(context: &mut Context<'_>, operate: impl FnOnce(&mut HmrState) -> R) -> R {
-    let shared_state = context.host_mut().shared_state();
+    let shared_state = context.host_as::<crate::host::NodeHost>().shared_state();
     let mut shared_state = shared_state.borrow_mut();
     operate(shared_state.hmr.as_mut().expect("HMR operations run only with HMR enabled"))
 }

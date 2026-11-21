@@ -23,7 +23,7 @@ enum PlainCopyWrite {
     Slot(usize),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn is_host_private_symbol(&self, key: Value) -> bool {
         matches!(self.heap.symbol_data(key), Some(data)
             if data.kind == crate::heap::SymbolKind::HostPrivate)

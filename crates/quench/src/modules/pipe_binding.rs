@@ -12,7 +12,7 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
 };
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 #[derive(Default)]
 pub(crate) struct State {
     identities: Vec<(HostWeakRoot, u64)>,
@@ -40,7 +40,7 @@ fn err(c: &mut Context<'_>, message: &str) -> Result<RootedError, RootedError> {
 }
 fn identity(c: &mut Context<'_>, r: RootId) -> Result<Option<u64>, RootedError> {
     let ids = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_pipe
@@ -62,7 +62,7 @@ pub(crate) fn resource_view(c: &mut Context<'_>, r: RootId) -> Result<View, Root
     let Some(id) = identity(c, r)? else {
         return Ok(View::NotNative);
     };
-    Ok(c.host_mut()
+    Ok(c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_pipe
@@ -137,7 +137,7 @@ pub(crate) fn construct(
     if !matches!(kind, Some(0.0 | 1.0 | 2.0)) {
         return Err(err(c, "Invalid pipe type")?);
     }
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     let owner = c.retain(receiver)?;
     let weak = c.host_weak_root(receiver)?;
@@ -174,7 +174,7 @@ pub(crate) fn adopt(
 ) -> Result<(), RootedError> {
     let id = id(c, receiver)?;
     let mut pipe = Pipe::new(socket).map_err(|e| RootedError::host(e.to_string()))?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut state = shared.borrow_mut();
     let entry = state
         .native_pipe
@@ -194,7 +194,7 @@ pub(crate) fn open(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let endpoint = id(c, receiver)?;
-    if c.host_mut()
+    if c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_pipe
@@ -236,7 +236,7 @@ pub(crate) fn bind(
         let _ = std::fs::remove_file(&path);
         return Ok(c.number(-error.raw_os_error().unwrap_or(libc::EIO) as f64));
     }
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut state = shared.borrow_mut();
     let Some(entry) = state.native_pipe.entries.get_mut(&endpoint) else {
         drop(listener);
@@ -254,7 +254,7 @@ pub(crate) fn bind(
 }
 fn change_read(c: &mut Context<'_>, receiver: RootId, start: bool) -> Result<RootId, RootedError> {
     let id = id(c, receiver)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = {
         let mut state = shared.borrow_mut();
         state
@@ -299,7 +299,7 @@ pub(crate) fn read_stop(
 fn reference(c: &mut Context<'_>, r: RootId, value: bool) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
     if let Some(e) = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .native_pipe
@@ -330,7 +330,7 @@ pub(crate) fn unref_handle(
 pub(crate) fn has_ref(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
     let yes = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_pipe
@@ -342,7 +342,7 @@ pub(crate) fn has_ref(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<Ro
 pub(crate) fn fd(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
     let fd = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_pipe
@@ -361,7 +361,7 @@ pub(crate) fn fd(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId,
 pub(crate) fn queue(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
     let n = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_pipe
@@ -406,7 +406,7 @@ fn write(
         }),
         None => None,
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if descriptor.is_none() {
         let tried = {
             let state = shared.borrow();
@@ -496,7 +496,7 @@ pub(crate) fn close(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let entry = {
         let mut state = shared.borrow_mut();
         let Some(entry) = state.native_pipe.entries.get_mut(&id) else {
@@ -590,7 +590,7 @@ fn queue_write_context(
         receiver: c.retain(handle)?,
         args: vec![request.root, c.retain(status)?],
     };
-    c.host_mut()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -830,7 +830,7 @@ pub(crate) fn prepare_read(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let token = args.first().copied().unwrap_or_else(|| c.undefined());
     let descriptor = if let Some(token) = c.rooted_value(token).and_then(Value::as_number) {
         shared
@@ -871,7 +871,7 @@ pub(crate) fn read_complete(
 ) -> Result<RootId, RootedError> {
     let token = args[0];
     let id = id(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let read = if let Some(token) = c.rooted_value(token).and_then(Value::as_number) {
         shared
             .borrow_mut()

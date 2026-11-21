@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The values `read` answers for registers `base..base + count`, or `failed()` when no
     /// room is left for them: they become the new aggregate's storage.
     pub(in crate::vm) fn wasm_window_values(

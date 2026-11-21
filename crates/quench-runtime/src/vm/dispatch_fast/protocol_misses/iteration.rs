@@ -14,13 +14,13 @@ pub(in crate::vm::dispatch_fast) const READS_THREADED: u8 = 2;
 pub(in crate::vm::dispatch_fast) const BINDING: u8 = 3;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::ITERATION | parameters }>`).
-pub(in crate::vm::dispatch_fast) const fn iteration_miss_of<H: Host>(parameters: u8) -> Handler {
+/// (`protocol_row::<OP, ACC, { protocol_family::ITERATION | parameters }>`).
+pub(in crate::vm::dispatch_fast) const fn iteration_miss_of(parameters: u8) -> Handler {
     match parameters {
-        STEP => iterator_step_miss::<H> as Handler,
-        READS_EMITTED => iterator_step_reads_miss::<H, false> as Handler,
-        READS_THREADED => iterator_step_reads_miss::<H, true> as Handler,
-        BINDING => iterator_step_binding_miss::<H> as Handler,
-        _ => general_step_in_lane::<H>,
+        STEP => iterator_step_miss as Handler,
+        READS_EMITTED => iterator_step_reads_miss::<false> as Handler,
+        READS_THREADED => iterator_step_reads_miss::<true> as Handler,
+        BINDING => iterator_step_binding_miss as Handler,
+        _ => general_step_in_lane,
     }
 }

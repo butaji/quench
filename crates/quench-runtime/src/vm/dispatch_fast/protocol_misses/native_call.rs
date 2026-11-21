@@ -10,12 +10,12 @@ pub(in crate::vm::dispatch_fast) const CALL_ARRAY: u8 = 1;
 pub(in crate::vm::dispatch_fast) const CALL_SPREAD: u8 = 2;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::NATIVE_CALL | parameters }>`).
-pub(in crate::vm::dispatch_fast) const fn native_call_miss_of<H: Host>(parameters: u8) -> Handler {
+/// (`protocol_row::<OP, ACC, { protocol_family::NATIVE_CALL | parameters }>`).
+pub(in crate::vm::dispatch_fast) const fn native_call_miss_of(parameters: u8) -> Handler {
     match parameters {
-        NATIVE => native_call_miss::<H> as Handler,
-        CALL_ARRAY => call_array_miss::<H> as Handler,
-        CALL_SPREAD => call_spread_miss::<H> as Handler,
-        _ => general_step_in_lane::<H>,
+        NATIVE => native_call_miss as Handler,
+        CALL_ARRAY => call_array_miss as Handler,
+        CALL_SPREAD => call_spread_miss as Handler,
+        _ => general_step_in_lane,
     }
 }

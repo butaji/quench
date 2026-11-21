@@ -36,14 +36,14 @@ enum Position {
     Other,
 }
 
-pub(crate) fn generate(c: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn generate(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let root = c.parse_json_rooted(include_str!("schema.json"))?;
     normalize(c, root, Position::Root)?;
     Ok(root)
 }
 
 fn normalize(
-    c: &mut NativeContext<'_, NodeHost>,
+    c: &mut NativeContext<'_>,
     value: RootId,
     position: Position,
 ) -> Result<(), RootedError> {

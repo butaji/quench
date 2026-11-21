@@ -22,7 +22,7 @@ pub(in crate::vm) enum ThenCapability {
     Resolving,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(in crate::vm) fn promise_then(
         &mut self,
         p: &ResidualProgram,

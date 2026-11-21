@@ -1,6 +1,6 @@
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn mapped_argument_load(
         &self,
         p: &ResidualProgram,

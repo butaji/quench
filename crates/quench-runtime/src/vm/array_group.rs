@@ -1,6 +1,6 @@
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn array_group_native(
         &mut self,
         p: &ResidualProgram,

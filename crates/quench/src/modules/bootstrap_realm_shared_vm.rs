@@ -4,7 +4,7 @@ use crate::host::shared_vm::operation;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 const SCHEME: &str = "node:";
 

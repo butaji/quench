@@ -28,8 +28,8 @@ const DEFAULT_ROUNDING_MODE: &str = "trunc";
 const DEFAULT_SMALLEST_UNIT: &str = "nanosecond";
 const DEFAULT_LARGEST_UNIT: &str = "second";
 
-pub(super) fn difference<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn difference(
+    vm: &mut Vm,
     p: &ResidualProgram,
     native: Native,
     this: Value,
@@ -65,8 +65,8 @@ struct DifferenceOptions {
     smallest_unit: Option<String>,
 }
 
-fn read_options<H: Host>(
-    vm: &mut Vm<H>,
+fn read_options(
+    vm: &mut Vm,
     p: &ResidualProgram,
     options: Option<Value>,
 ) -> Result<DifferenceOptions, JsError> {
@@ -89,8 +89,8 @@ fn read_options<H: Host>(
 }
 
 /// GetOption of a String: `options[name]` converted by ToString, `None` where undefined.
-pub(super) fn read_string_option<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn read_string_option(
+    vm: &mut Vm,
     p: &ResidualProgram,
     options: Value,
     name: &str,
@@ -103,8 +103,8 @@ pub(super) fn read_string_option<H: Host>(
     }
 }
 
-fn read_number_option<H: Host>(
-    vm: &mut Vm<H>,
+fn read_number_option(
+    vm: &mut Vm,
     p: &ResidualProgram,
     options: Value,
     name: &str,
@@ -118,8 +118,8 @@ fn read_number_option<H: Host>(
 }
 
 /// `options[name]`.
-pub(super) fn read_option<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn read_option(
+    vm: &mut Vm,
     p: &ResidualProgram,
     options: Value,
     name: &str,
@@ -151,8 +151,8 @@ fn normalize_options(mut options: DifferenceOptions) -> (String, String, f64, St
     )
 }
 
-fn unit<H: Host>(
-    vm: &mut Vm<H>,
+fn unit(
+    vm: &mut Vm,
     p: &ResidualProgram,
     value: &str,
 ) -> Result<(&'static str, i128, usize), JsError> {
@@ -163,8 +163,8 @@ fn unit<H: Host>(
         .ok_or_else(|| vm.range_error(p, "Invalid time unit".into()))
 }
 
-fn validate_units<H: Host>(
-    vm: &mut Vm<H>,
+fn validate_units(
+    vm: &mut Vm,
     p: &ResidualProgram,
     smallest: (&str, i128, usize),
     largest: (&str, i128, usize),

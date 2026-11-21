@@ -16,7 +16,7 @@ struct Made {
 
 /// The operand values of the value step `instruction`, read from the registers `r` and the program's constants; `None`
 /// for an operand of another kind (a local, which only a frame holds).
-fn operand_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, step: ValueStep, instruction: WideInstruction) -> Option<[Value; OPERANDS]> {
+fn operand_values(cx: *mut LaneContext, r: Registers, step: ValueStep, instruction: WideInstruction) -> Option<[Value; OPERANDS]> {
     match step {
         ValueStep::Unary => Some([r.get(instruction.register_b()); OPERANDS]),
         ValueStep::Binary | ValueStep::CompareJump => {
@@ -26,7 +26,7 @@ fn operand_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, step: ValueSte
 }
 
 /// The step `instruction` of its operand values `[left, right]`.
-fn make<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, (step, instruction): (ValueStep, WideInstruction), [left, right]: [Value; 2]) -> Result<Made, JsError> {
+fn make(vm: &mut Vm, code: &ResidualProgram, (step, instruction): (ValueStep, WideInstruction), [left, right]: [Value; 2]) -> Result<Made, JsError> {
     Ok(match step {
         ValueStep::Binary => Made { value: Some(vm.binary(code, instruction.binary_operator(), left, right)?), jumps: false },
         ValueStep::Unary => Made { value: Some(vm.unary(code, instruction.unary_operator(), left)?), jumps: false },
@@ -43,7 +43,7 @@ fn make<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, (step, instruction): (V
 ///
 /// # Safety
 /// As `body_general_step`; `record` is the record at `call_pc`.
-pub(super) unsafe fn activation_value_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> Option<u64> {
+pub(super) unsafe fn activation_value_step(cx: *mut LaneContext, call_pc: u64, record: WideInstruction) -> Option<u64> {
     let instruction = record.without_return();
     if let Some(status) = unsafe { activation_field_read(cx, call_pc, instruction) } { return Some(status); }
     if let Some(status) = unsafe { activation_field_write(cx, call_pc, instruction) } { return Some(status); }
@@ -69,7 +69,7 @@ pub(super) unsafe fn activation_value_step<H: Host>(cx: *mut LaneContext<H>, cal
 ///
 /// # Safety
 /// As `activation_value_step`.
-unsafe fn activation_field_read<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
+unsafe fn activation_field_read(cx: *mut LaneContext, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
     if !matches!(instruction.op().class(), crate::bytecode::Class::GetField) || instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
     let Some(crate::bytecode::FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() else { return None };
     let r = unsafe { (*cx).registers };
@@ -92,7 +92,7 @@ unsafe fn activation_field_read<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, 
 ///
 /// # Safety
 /// As `activation_value_step`.
-unsafe fn activation_field_write<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
+unsafe fn activation_field_write(cx: *mut LaneContext, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
     if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };

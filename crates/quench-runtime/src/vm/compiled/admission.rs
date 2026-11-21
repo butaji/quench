@@ -9,7 +9,7 @@ use crate::bytecode::{Function, ResidualProgram};
 use crate::vm::dispatch_fast::lane_body_stats::{miss, Miss};
 use crate::vm::dispatch_fast::LaneView;
 use crate::vm::jit_backend::CompileLevel;
-use crate::vm::{Host, Vm};
+use crate::vm::Vm;
 
 /// Why a compile or a callee's admission is refused. Each variant is one refusal site, counted
 /// by `record` and named in `refusal_report`. The OSR region reasons (`RegionRejection`) share
@@ -119,7 +119,7 @@ pub(in crate::vm) fn record(refusal: Refusal) {
 
 /// Counts `refusal` and, where the lane diagnostics name it as a plan miss, counts that too
 /// (`lane_body_stats::miss`, which also names the decline reason).
-pub(in crate::vm) fn refuse<H: Host>(vm: &Vm<H>, refusal: Refusal) {
+pub(in crate::vm) fn refuse(vm: &Vm, refusal: Refusal) {
     record(refusal);
     if let Some(reason) = refusal.miss() { miss(vm, reason); }
 }

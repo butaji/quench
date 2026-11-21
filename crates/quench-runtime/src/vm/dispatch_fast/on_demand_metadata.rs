@@ -2,7 +2,7 @@
 //! interpreter reads, not what a tier it never runs would.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `LaneStack::note_site_callee` while a lane body may read the history: only the
     /// JavaScript tiers inline a site's callees (`site_targets_in_lane`), so interpreted
     /// execution keeps no history, as V8's jitless mode allocates no feedback for an
@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
 /// 14 MB; babylonjs's module scope: 124K records, each iteration). Where a return already
 /// `retired`, only a caller that loops takes its view here; any other frame returns at its
 /// call record on the general path (`frame_return`).
-pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
+pub(super) fn lane_completes_return(cx: *mut LaneContext, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame
         && frame + 1 == vm.frames.len()
@@ -35,7 +35,7 @@ pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &Pen
 /// in another program (`PendingGeneralCall::caller_program`) is read in that program's table:
 /// mandreel's `global_init` calls its emitters across programs, and returning into it derived a
 /// view of all its 614K records for one run (peak RSS 110.9 -> 84.4 MB, no-jit).
-fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> bool {
+fn caller_runs_general(cx: *mut LaneContext, call: &PendingGeneralCall) -> bool {
     let vm = unsafe { vm(cx) };
     let function = vm.frames[call.caller].function as usize;
     let views = match &call.caller_program {
@@ -50,7 +50,7 @@ fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCa
 }
 
 /// Whether `call`'s caller loops, so its view repays itself where its loop runs on.
-fn caller_loops<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> bool {
+fn caller_loops(cx: *mut LaneContext, call: &PendingGeneralCall) -> bool {
     let vm = unsafe { vm(cx) };
     let program = call.caller_program.as_ref().map_or(unsafe { (*cx).program }, |saved| saved.id);
     vm.programs.function_loops(program, vm.frames[call.caller].function)
@@ -63,7 +63,7 @@ fn caller_loops<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> 
 /// A site whose caller counted past the threshold without specializing again
 /// (`LaneContext::late_settled`) counts nothing more in this run: only a count reaching the
 /// threshold acts.
-pub(super) fn record_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
+pub(super) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCallTarget, argc: u16) {
     if unsafe { (*cx).late_settled } == ip { return; }
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.

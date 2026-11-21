@@ -16,7 +16,7 @@ fn global_lexical_declaration(p: &ResidualProgram, declaration: u32) -> (Atom, &
     p.function(0).global_lexical_declaration(declaration).expect("validated global lexical index")
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The step `i` (an `Op::owned_step` op) of the activation `owner` names, whose instruction
     /// resumes at `pc`, which a name lookup takes for its binding site.
     pub(super) fn owner_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {

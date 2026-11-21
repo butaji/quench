@@ -2,14 +2,14 @@
 //! finish and cold paths): each
 //! leaves for a due collection first, and the dispatch then reads the moved arena bases again.
 
-use super::{Host, JsStepDispatch, ResidualProgram, Value, Vm};
+use super::{JsStepDispatch, ResidualProgram, Value, Vm};
 
 /// A lane body's empty object literal, as the lane's own (the `MakeObject` row, `Allocation::Empty`);
 /// `DELETED` where a collection is due, which the body leaves for. The allocation may move
 /// the property arena, whose base and length the dispatch reads again.
-pub(super) unsafe extern "C" fn compiled_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
+pub(super) unsafe extern "C" fn compiled_new_object(vm: u64, _residual: u64, payload: u64) -> u64 {
     // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let object = vm.object();
     super::dispatch_fast::note_allocation(vm);
@@ -21,10 +21,10 @@ pub(super) unsafe extern "C" fn compiled_new_object<H: Host>(vm: u64, _residual:
 
 /// A two-property object literal of literal `site`'s shape holding `first` and `second`, as
 /// the lane makes it (`dispatch_fast::object_pair_in_lane`); `DELETED` where a collection is due.
-pub(super) unsafe extern "C" fn new_object_pair_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, site: u64,
+pub(super) unsafe extern "C" fn new_object_pair_in_lane(vm: u64, residual: u64, payload: u64, site: u64,
     first: u64, second: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
-    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let object = vm.object_pair(residual, site as usize, Value::from_bits(first), Value::from_bits(second));
     super::dispatch_fast::note_allocation(vm);
@@ -35,9 +35,9 @@ pub(super) unsafe extern "C" fn new_object_pair_in_lane<H: Host>(vm: u64, residu
 /// A binary operator one operand of which is a string or BigInt, by the interpreter's own
 /// definition (`Vm::binary`); `DELETED` where an operand is an object (its coercion may run
 /// guest code), the operator throws, or a collection is due: the interpreter runs it then.
-pub(super) unsafe extern "C" fn binary_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, operator: u64, left: u64, right: u64) -> u64 {
+pub(super) unsafe extern "C" fn binary_in_lane(vm: u64, residual: u64, payload: u64, operator: u64, left: u64, right: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
-    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     let (left, right) = (Value::from_bits(left), Value::from_bits(right));
     if vm.heap.should_collect() || vm.is_object_like(left) || vm.is_object_like(right) { return Value::DELETED.to_bits(); }
     let Ok(value) = vm.binary(residual, operator as u32, left, right) else { return Value::DELETED.to_bits() };
@@ -50,10 +50,10 @@ pub(super) unsafe extern "C" fn binary_in_lane<H: Host>(vm: u64, residual: u64, 
 /// `argc` (one or two) arguments `first` and `second`; `DELETED` where that case leaves (an object argument, an error, a due
 /// collection), which the call's own step takes. Nothing is changed before a value is answered: the native runs no guest
 /// code and changes no array.
-pub(super) unsafe extern "C" fn scalar_native_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64, argc: u64,
+pub(super) unsafe extern "C" fn scalar_native_in_lane(vm: u64, residual: u64, payload: u64, callee: u64, argc: u64,
     receiver: u64, first: u64, second: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
-    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     let callee = Value::from_bits(callee);
     let Some(crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
         return Value::DELETED.to_bits();
@@ -74,9 +74,9 @@ pub(super) unsafe extern "C" fn scalar_native_in_lane<H: Host>(vm: u64, residual
 /// A lane body's array literal of the `count` program constants from `constant`, as the lane's
 /// own (the `MakeConstArray` row, `Allocation::ConstArray`); `DELETED` where a collection is due or the
 /// range is outside the constants.
-pub(super) unsafe extern "C" fn new_const_array_in_lane<H: Host>(vm: u64, _residual: u64, payload: u64, constant: u64, count: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_const_array_in_lane(vm: u64, _residual: u64, payload: u64, constant: u64, count: u64) -> u64 {
     // SAFETY: as `compiled_new_object`.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let Some(array) = vm.const_array_value(dispatch.program_id, constant as usize, count as usize) else { return Value::DELETED.to_bits() };
     super::dispatch_fast::note_allocation(vm);
@@ -87,9 +87,9 @@ pub(super) unsafe extern "C" fn new_const_array_in_lane<H: Host>(vm: u64, _resid
 /// A lane body's array literal of `length` holes, or of the `elements` its definitions
 /// write, as the lane's own (the `MakeArray` row and its `DefineElement` rows);
 /// `DELETED` where a collection is due, as `compiled_new_object`.
-pub(super) unsafe extern "C" fn new_array_in_lane<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_array_in_lane(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; nonzero `elements` addresses `length` values the code wrote.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
     super::dispatch_fast::note_allocation(vm);
@@ -106,9 +106,9 @@ pub(super) unsafe extern "C" fn new_array_in_lane<H: Host>(vm: u64, _residual: u
 /// has a key (`regexp_argument_key`) the site answers as the interpreter's does
 /// (`Vm::regexp_literal_argument_of`), its one shared object while the callee is the realm's
 /// String method and the object unobservable.
-pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, callee: u64) -> u64 {
+pub(super) unsafe extern "C" fn lane_new_regexp(vm: u64, residual: u64, payload: u64, site: u64, callee: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program.
-    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let callee = Value::from_bits(callee);
     let made = match regexp_argument_key(dispatch).filter(|_| !callee.is_deleted()) {
@@ -142,10 +142,10 @@ fn regexp_argument_key(dispatch: &JsStepDispatch) -> Option<usize> {
 /// A lane body's object literal of literal `site`'s shape over the `count` values at `parts`,
 /// as the lane makes it (the `MakeObjectLiteral` row, `Allocation::ObjectLiteral`); `DELETED` where a
 /// collection is due.
-pub(super) unsafe extern "C" fn new_object_literal_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, parts: u64, count: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_object_literal_in_lane(vm: u64, residual: u64, payload: u64, site: u64, parts: u64, count: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program, and `parts` addresses
     // `count` values the code wrote.
-    let (vm, residual, dispatch, properties) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+    let (vm, residual, dispatch, properties) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram),
         &mut *(payload as *mut JsStepDispatch), std::slice::from_raw_parts(parts as *const Value, count as usize)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let shape = vm.object_site_shape(residual, site as usize);
@@ -161,9 +161,9 @@ pub(super) unsafe extern "C" fn new_object_literal_in_lane<H: Host>(vm: u64, res
 /// inside a lane activation, or with a collection due, which the exact step makes.
 /// Promotion moves the frame's captured locals into its environment, so the dispatch takes its
 /// views again.
-pub(super) unsafe extern "C" fn new_closure_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, id: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_closure_in_lane(vm: u64, residual: u64, payload: u64, id: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
-    let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+    let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram),
         &mut *(payload as *mut JsStepDispatch)) };
     // A lane activation has no frame of the payload's to read.
     if dispatch.lane_context != 0 || vm.heap.should_collect() {
@@ -192,9 +192,9 @@ pub(super) unsafe extern "C" fn new_closure_in_lane<H: Host>(vm: u64, residual: 
 /// A lane body's literal template `template` in its frame, as the interpreter builds it
 /// (`Vm::literal_template`); `DELETED` inside a lane activation, whose frame is
 /// not the payload's, where the template fails, or where a collection is due.
-pub(super) unsafe extern "C" fn new_template_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, template: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_template_in_lane(vm: u64, residual: u64, payload: u64, template: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
-    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() || dispatch.lane_context != 0 { return Value::DELETED.to_bits(); }
     let Ok(value) = vm.literal_template(residual, dispatch.frame, template as usize) else { return Value::DELETED.to_bits() };
     super::dispatch_fast::note_allocation(vm);
@@ -205,13 +205,13 @@ pub(super) unsafe extern "C" fn new_template_in_lane<H: Host>(vm: u64, residual:
 /// A lane body's string concatenation of the `count` parts at `parts`, where each converts to a
 /// string without guest code (`Vm::pure_string_concat`, the lane's `StringConcat` row);
 /// `DELETED` for any other part, a result past the string limit, or a due collection.
-pub(super) unsafe extern "C" fn new_concat_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, parts: u64, count: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_concat_in_lane(vm: u64, residual: u64, payload: u64, parts: u64, count: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program, and `parts` addresses
     // `count` values the code wrote.
-    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     // SAFETY: as above.
-    let part = |_: &Vm<H>, index: usize| Value::from_bits(unsafe { *(parts as *const u64).add(index) });
+    let part = |_: &Vm, index: usize| Value::from_bits(unsafe { *(parts as *const u64).add(index) });
     let Some(value) = vm.pure_string_concat(residual, count as usize, part) else { return Value::DELETED.to_bits() };
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
@@ -223,9 +223,9 @@ pub(super) unsafe extern "C" fn new_concat_in_lane<H: Host>(vm: u64, residual: u
 /// loop's entry proves. `DELETED` where the value is no string, its text has no record form a row
 /// reads (a wide rope's units are held beside its record), or a collection is due; nothing has
 /// changed then, so the loop's entry leaves.
-pub(super) unsafe extern "C" fn flatten_string_in_lane<H: Host>(vm: u64, _residual: u64, payload: u64, string: u64) -> u64 {
+pub(super) unsafe extern "C" fn flatten_string_in_lane(vm: u64, _residual: u64, payload: u64, string: u64) -> u64 {
     // SAFETY: as `concat_pair_in_lane`; the flattening allocates a record and runs no guest code.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let Some(flat) = vm.heap.string(Value::from_bits(string)).map(|text| text.unkept_flat()).filter(|flat| flat.holds_record_form())
         else { return Value::DELETED.to_bits() };
@@ -240,9 +240,9 @@ pub(super) unsafe extern "C" fn flatten_string_in_lane<H: Host>(vm: u64, _residu
 /// appends in place where the left operand is the accumulator its buffer ends at. `DELETED` where
 /// the pair is another, a result is past the string limit, or a collection is due; nothing has
 /// changed then, so the interpreter takes the operator.
-pub(super) unsafe extern "C" fn concat_pair_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, left: u64, right: u64) -> u64 {
+pub(super) unsafe extern "C" fn concat_pair_in_lane(vm: u64, residual: u64, payload: u64, left: u64, right: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
-    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let Some(value) = vm.primitive_concatenation(residual, Value::from_bits(left), Value::from_bits(right)) else { return Value::DELETED.to_bits() };
     super::dispatch_fast::note_allocation(vm);

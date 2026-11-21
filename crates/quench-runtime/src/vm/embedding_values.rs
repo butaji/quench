@@ -10,7 +10,7 @@ pub enum Detach {
     Detached,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A BigInt's sign (true when negative) and magnitude as little-endian 64-bit words.
     pub(crate) fn bigint_words_embedding(&self, value: Value) -> Option<(bool, Vec<u64>)> {
         let Some(Cell::BigInt(integer)) = self.heap.get(value) else { return None };

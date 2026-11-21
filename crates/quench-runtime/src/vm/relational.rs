@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use crate::heap::ProtoLink;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn compare_relational(
         &mut self,
         p: &ResidualProgram,

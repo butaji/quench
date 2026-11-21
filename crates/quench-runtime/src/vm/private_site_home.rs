@@ -21,7 +21,7 @@
 //! it proves the brand, and no environment is found. A class evaluated again, or a name eval
 //! code can see, disables only the sites of its own names.
 
-use super::{Atom, Host, ProgramId, ResidualProgram, Value, Vm};
+use super::{Atom, ProgramId, ResidualProgram, Value, Vm};
 use rustc_hash::FxHashMap;
 use crate::heap::PrivateBrand;
 
@@ -369,7 +369,7 @@ impl PrivateClasses {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Records a closure `constructor` of class constructor `function` of the active program,
     /// whose prototype object is `prototype`: a class evaluation, which makes the homes of the
     /// private names the class declares (`PrivateClasses`). A constructor of another program

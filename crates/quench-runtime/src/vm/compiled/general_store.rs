@@ -4,7 +4,7 @@
 //! representations only widen (`ValueArena::note_slot_value`), and rewriting or invalidating
 //! the entry clears the class, so the proof holds until then. Any other store takes the
 //! helper (`field_set_in_lane`), which records the proof.
-use super::{emit_js_payload_word, Host, JsStepDispatch, Vm};
+use super::{emit_js_payload_word, JsStepDispatch, Vm};
 use crate::bytecode::Atom;
 use crate::typed_ir::SlotType;
 use crate::vm::compiled::regions;
@@ -32,7 +32,7 @@ fn store_class(value: Value) -> Option<SlotType> {
 /// Records on `site`'s entry the class of `value`, which a native-preserving helper store just
 /// wrote through it without widening its slot's representation, where the class proves
 /// every later store of it (`store_class`).
-pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Value) {
+pub(super) fn record_store_class(vm: &mut Vm, site: u16, value: Value) {
     let Some(class) = store_class(value) else { return };
     // A native store writes the value's tagged word, which a slot of raw doubles does not hold.
     let entry = vm.field_cache_entry(site);

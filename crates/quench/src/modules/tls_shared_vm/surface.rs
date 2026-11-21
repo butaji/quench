@@ -7,7 +7,7 @@ use crate::host::NodeHost;
 use crate::modules::host_members::{accessors, constructor, current, function, members, methods};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Surface, "tlsSurface", [
@@ -449,7 +449,7 @@ fn ca_certificates(c: &mut Context<'_>, kind: RootId) -> Outcome {
         return Ok(value);
     }
     let use_system = {
-        let shared = c.host_mut().shared_state();
+        let shared = c.host_as::<crate::host::NodeHost>().shared_state();
         let state = shared.borrow();
         let options = &state.cli_options;
         !options.enabled("--no-use-system-ca")

@@ -2,11 +2,11 @@
 use super::string_decoder_codec::{DecoderState, Layout, StringTooLong, ENCODINGS};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0binding:string_decoder";
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(value);
     }
@@ -125,7 +125,7 @@ const STATE_SYMBOL_KEY: &str = "\0node/string_decoder/kNativeDecoder";
 
 /// `kNativeDecoder`: the private-by-convention key of a decoder's native state buffer.
 fn state_symbol(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(symbol) = shared.borrow().builtin_cache.get(STATE_SYMBOL_KEY).copied() {
         return Ok(symbol);
     }

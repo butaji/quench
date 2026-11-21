@@ -3,7 +3,7 @@ use crate::host::NodeHost;
 use openssl::x509::{X509NameRef, X509Ref};
 use quench_runtime::{NativeContext, RootId, RootedError};
 fn name_object(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     name: &X509NameRef,
 ) -> Result<RootId, RootedError> {
     let mut fields: Vec<(String, Vec<String>)> = Vec::new();
@@ -259,7 +259,7 @@ unsafe extern "C" {
     ) -> std::ffi::c_int;
 }
 pub(crate) fn legacy(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     cert: &X509Ref,
 ) -> Result<RootId, RootedError> {
     use foreign_types::ForeignTypeRef;

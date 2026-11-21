@@ -309,7 +309,7 @@ fn rebuild_shape(
     parent
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(crate) fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
         self.heap.set_memory_policy(policy);
     }
@@ -1042,7 +1042,7 @@ impl<H: Host> Vm<H> {
             self.host.release_promise_contexts(&abandoned.promises);
         }
         self.prune_dead_promise_and_string_tables();
-        H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
+        (self.host_statics.after_collection)(&mut crate::CollectionContext::new(&mut *self.host, &mut self.heap));
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.collection_boundary(full);

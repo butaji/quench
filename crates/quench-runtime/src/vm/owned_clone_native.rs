@@ -12,7 +12,7 @@ struct ViewSpan {
     tracking: bool,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(crate) fn embedding_clone_metadata(
         &mut self,
         root: RootId,

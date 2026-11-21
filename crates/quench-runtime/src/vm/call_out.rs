@@ -45,7 +45,7 @@ pub(super) struct CallSite {
     pub(super) resume: usize,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The VM's operation `operation` at `site` of its operand values (`CallOut::operands`): the
     /// value it defines, if any. A for-in step defines `Value::DELETED` once no key is left.
     pub(super) fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
@@ -393,8 +393,8 @@ impl<H: Host> Vm<H> {
 
 /// The interpreter's frame for staged rows: the running frame's live registers, and the VM that
 /// answers a row's call-out in place. Its suspension hooks are `suspension`'s.
-pub(super) struct HostFrame<'a, H: Host> {
-    pub(super) vm: &'a mut Vm<H>,
+pub(super) struct HostFrame<'a> {
+    pub(super) vm: &'a mut Vm,
     pub(super) program: &'a ResidualProgram,
     pub(super) site: CallSite,
     /// What the VM raised, for the step's caller to throw.
@@ -408,7 +408,7 @@ pub(super) enum HostControl {
     Suspend(crate::staged::Suspending<u64>),
 }
 
-impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
+impl Frame<Concrete> for HostFrame<'_> {
     type Fact = ();
     type Control = HostControl;
 
@@ -505,17 +505,17 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     }
 }
 
-impl<H: Host> GlobalFrame<Concrete> for HostFrame<'_, H> {}
+impl GlobalFrame<Concrete> for HostFrame<'_> {}
 
-impl<H: Host> PropertyFrame<Concrete> for HostFrame<'_, H> {
+impl PropertyFrame<Concrete> for HostFrame<'_> {
     type Plans = NoPlans;
 
     fn plans(&self) -> NoPlans { NoPlans }
 }
 
-impl<H: Host> crate::staged::ElementFrame<Concrete> for HostFrame<'_, H> {}
+impl crate::staged::ElementFrame<Concrete> for HostFrame<'_> {}
 
-impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
+impl NumericFrame<Concrete> for HostFrame<'_> {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> {
         unreachable!("a call-out row has no numeric operand")
     }

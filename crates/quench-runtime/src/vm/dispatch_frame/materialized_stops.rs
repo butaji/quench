@@ -5,7 +5,7 @@
 use super::*;
 use super::super::generator::MaterializedStop;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `step` of `frame` at `pc`, made a return of the stopped value to the call `pending`
     /// where it is such a stop, with how it stopped; any other step as it is.
     #[inline(always)]

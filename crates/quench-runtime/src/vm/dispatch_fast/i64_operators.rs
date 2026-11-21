@@ -41,43 +41,43 @@ lane_handler! {
     }
 }
 
-struct I64Operators<H>(std::marker::PhantomData<H>);
+struct I64Operators;
 
 macro_rules! i64_operator_handlers {
-    ($handler:ident, $host:ty, $raw:literal; $($selector:literal)+) => {
+    ($handler:ident, $raw:literal; $($selector:literal)+) => {
         [$([
-            $handler::<$host, $selector, $raw, ACC_NONE> as Handler,
-            $handler::<$host, $selector, $raw, ACC_A> as Handler,
-            $handler::<$host, $selector, $raw, ACC_B> as Handler,
-            $handler::<$host, $selector, $raw, ACC_C> as Handler,
-            $handler::<$host, $selector, $raw, ACC_PAIR> as Handler,
+            $handler::<$selector, $raw, ACC_NONE> as Handler,
+            $handler::<$selector, $raw, ACC_A> as Handler,
+            $handler::<$selector, $raw, ACC_B> as Handler,
+            $handler::<$selector, $raw, ACC_C> as Handler,
+            $handler::<$selector, $raw, ACC_PAIR> as Handler,
         ],)+]
     };
 }
 
-impl<H: Host> I64Operators<H> {
+impl I64Operators {
     /// By selector and accumulator field; the list names every selector of the family.
-    const HANDLERS: [[Handler; ACC_POSITIONS]; I64BinaryOperator::ALL.len()] = i64_operator_handlers!(lane_i64_operator, H, false;
+    const HANDLERS: [[Handler; ACC_POSITIONS]; I64BinaryOperator::ALL.len()] = i64_operator_handlers!(lane_i64_operator, false;
         0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
     /// The same of a constant right operand.
-    const IMMEDIATE: [[Handler; ACC_POSITIONS]; I64BinaryOperator::ALL.len()] = i64_operator_handlers!(lane_i64_operator_immediate, H, false;
+    const IMMEDIATE: [[Handler; ACC_POSITIONS]; I64BinaryOperator::ALL.len()] = i64_operator_handlers!(lane_i64_operator_immediate, false;
         0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
     /// The raw forms of both (`WasmOperation::is_raw`): no tag checks.
-    const RAW: [[Handler; ACC_POSITIONS]; I64BinaryOperator::ALL.len()] = i64_operator_handlers!(lane_i64_operator, H, true;
+    const RAW: [[Handler; ACC_POSITIONS]; I64BinaryOperator::ALL.len()] = i64_operator_handlers!(lane_i64_operator, true;
         0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
-    const RAW_IMMEDIATE: [[Handler; ACC_POSITIONS]; I64BinaryOperator::ALL.len()] = i64_operator_handlers!(lane_i64_operator_immediate, H, true;
+    const RAW_IMMEDIATE: [[Handler; ACC_POSITIONS]; I64BinaryOperator::ALL.len()] = i64_operator_handlers!(lane_i64_operator_immediate, true;
         0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
 }
 
 /// The handler of the i64 binary record `op` with operator `selector` and accumulator field `acc`.
-pub(super) fn i64_operator_handler<H: Host>(op: Op, selector: u32, acc: u8) -> Option<Handler> {
+pub(super) fn i64_operator_handler(op: Op, selector: u32, acc: u8) -> Option<Handler> {
     let raw = WasmOperation::is_raw(op);
     let table = match Step::of(op, selector) {
         Some(Step::Numeric(WasmOperation::Binary { width: Width::I64, form: Form::Register, .. })) => {
-            if raw { &I64Operators::<H>::RAW } else { &I64Operators::<H>::HANDLERS }
+            if raw { &I64Operators::RAW } else { &I64Operators::HANDLERS }
         }
         Some(Step::Numeric(WasmOperation::Binary { width: Width::I64, form: Form::Short, .. })) => {
-            if raw { &I64Operators::<H>::RAW_IMMEDIATE } else { &I64Operators::<H>::IMMEDIATE }
+            if raw { &I64Operators::RAW_IMMEDIATE } else { &I64Operators::IMMEDIATE }
         }
         _ => return None,
     };

@@ -181,7 +181,7 @@ fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
         .find(|method| method.native == native)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn string_build_result(
         &mut self,
         p: &ResidualProgram,
@@ -907,7 +907,7 @@ fn string_unit_index(index: Value) -> Option<i64> {
     Some(if number.is_nan() { 0 } else { number.trunc() as i64 })
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The one body of `String.prototype.charCodeAt`: the unit of the string `receiver` at
     /// `index`, NaN outside the string, surrogates raw. `None` where the receiver is no string
     /// or the index is no Number. Interpreter fast paths and the native both call this.

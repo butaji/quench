@@ -21,7 +21,7 @@ pub(in crate::vm) enum InPlaceStep {
     Call,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The step calling `method` of `iterator`, made where it runs no guest code
     /// (`InPlaceStep`). An array values step is decided and made from one read of the
     /// record; the other kinds are decided as `iteration_step` decides them.

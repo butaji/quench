@@ -21,7 +21,7 @@ const INSTANT_DURATION_UNIT_SCALES: [i128; 7] = [
     1,
 ];
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_temporal_instant(
         &mut self,
         p: &ResidualProgram,

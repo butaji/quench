@@ -64,7 +64,7 @@ impl LaneStack {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A `with` statement entered, in a frame or a lane activation: names resolve through object
     /// environments from now on (`Vm::with_scope_entered`). Calls activate in the lane after it
     /// as before: no lane target's function inherits a `with` scope (`CallPlan`), and a function
@@ -87,7 +87,7 @@ impl<H: Host> Vm<H> {
 /// in the innermost lane activation, which owns the scope: the object joins, or leaves, its
 /// chain. `None`, before any effect, leaves the call to the native, which a frame's run needs
 /// (its scope is the VM's stack) and which boxes a primitive or throws for a nullish operand.
-pub(super) fn native_with_scope<H: Host>(cx: *mut LaneContext<H>, native: Native, args: &[Value]) -> Option<Value> {
+pub(super) fn native_with_scope(cx: *mut LaneContext, native: Native, args: &[Value]) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     if vm.lane_deferred.is_some() || vm.lane_stack.native_boundary.is_some() {
         return None;

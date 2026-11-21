@@ -151,7 +151,7 @@ fn recursive_state(c: &mut Context<'_>, this: RootId) -> Outcome {
 
 fn state_key(c: &mut Context<'_>) -> Outcome {
     const KEY: &str = "\0fs:recursiveWatcherState";
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(symbol) = shared.borrow().builtin_cache.get(KEY).copied() {
         return Ok(symbol);
     }

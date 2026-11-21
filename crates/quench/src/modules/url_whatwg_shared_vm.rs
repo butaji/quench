@@ -7,7 +7,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 use super::private_slots as slots;
 use url::Url;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The private slots (`private_slots`) and the cached classes.
 const HREF_SLOT: &str = "\0node/url/href";
@@ -79,12 +79,12 @@ const PARAMS_METHODS: &[(&str, &str, usize)] = &[
 type Pairs = Vec<(String, String)>;
 
 fn cached(c: &mut Context<'_>, key: &str) -> Option<RootId> {
-    c.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(key).copied()
 }
 
 fn cache(c: &mut Context<'_>, key: &str, value: RootId) -> Result<RootId, RootedError> {
     let value = c.retain(value)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), value);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), value);
     Ok(value)
 }
 

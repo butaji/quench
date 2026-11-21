@@ -85,7 +85,7 @@ impl FieldStubs {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `polymorphic_field_entry_hit` of a read of `atom` at `site` behind the stub cache: an
     /// entry recorded for the receiver's exact shape and `atom` answers first, with one probe
     /// (`field_stub_hit`); any other read takes the site's entries, inline or hashed, whose own

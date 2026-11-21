@@ -130,23 +130,23 @@ const BINDING_MEMBERS: usize = 5;
 /// once per feature).
 const WARNED: &str = "\0binding:esm-wasm-warned";
 
-fn get(context: &mut NativeContext<'_, NodeHost>, object: RootId, key: &str) -> Result<RootId, RootedError> {
+fn get(context: &mut NativeContext<'_>, object: RootId, key: &str) -> Result<RootId, RootedError> {
     let key = context.string_rooted(key);
     context.get_property_rooted(object, key)
 }
 
-fn set(context: &mut NativeContext<'_, NodeHost>, object: RootId, key: &str, value: RootId) -> Result<(), RootedError> {
+fn set(context: &mut NativeContext<'_>, object: RootId, key: &str, value: RootId) -> Result<(), RootedError> {
     let key = context.string_rooted(key);
     context.set_property_rooted(object, key, value, object).map(drop)
 }
 
-fn cached(context: &mut NativeContext<'_, NodeHost>, key: &str) -> Option<RootId> {
-    context.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+fn cached(context: &mut NativeContext<'_>, key: &str) -> Option<RootId> {
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(key).copied()
 }
 
 /// The entries of the facade's array argument `array` (`[[module, name], ...]` or
 /// `[[name, isGlobal], ...]`).
-fn pairs(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Result<Vec<(RootId, RootId)>, RootedError> {
+fn pairs(context: &mut NativeContext<'_>, array: RootId) -> Result<Vec<(RootId, RootId)>, RootedError> {
     let length = get(context, array, "length")?;
     let length = context.to_number(length)? as usize;
     let mut pairs = Vec::with_capacity(length);
@@ -164,7 +164,7 @@ fn pairs(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Result<Vec
 /// instantiates; records the instance; and returns the exports' values, a global's as its
 /// value (`undefined` for one without, `v128`).
 pub(crate) fn instantiate(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_>, _: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let argument = |index: usize| args.get(index).copied().unwrap_or(undefined);
@@ -214,7 +214,7 @@ pub(crate) fn instantiate(
         let warned = context.boolean(true);
         commonjs::cached_native_binding(context, WARNED, |_| Ok(warned))?;
         let process = context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .process_module

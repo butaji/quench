@@ -79,7 +79,7 @@ impl Test262AgentState {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_atomics(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let atomics = self.object();
         for (name, native) in [
@@ -620,7 +620,7 @@ fn waits_or_notifies(native: Native) -> bool {
     waits(native) || native == Native::AtomicsNotify
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Simulated Test262 agents can never be woken through the shared backing's waiter list
     /// or run while this thread blocks, so their scheduler serves every wait and notify. Once
     /// agents are started it also serves every access: they make progress only when an access
@@ -820,7 +820,7 @@ pub(super) struct SharedAsyncWaiter {
     pub(super) promise: Value,
     token: crate::shared_backing::AsyncWait,
 }
-impl<H: Host> Vm<H> {
+impl Vm {
     fn shared_wait_async(
         &mut self,
         p: &ResidualProgram,
