@@ -611,11 +611,6 @@ pub(crate) struct Heap {
     /// Bytes of the reclaimable programs that stayed at the last full collection, which the
     /// next one's program growth is measured against.
     reclaimable_program_bytes_after_full: usize,
-    /// Per program (by raw id), the realm its closures were made in, `UNDEFINED` before its
-    /// first: a closure of a program stores no realm of its own unless it was made in another
-    /// (`Vm::in_realm_record`). Not a root: marking a closure marks its program's realm
-    /// (`function_children`), as a stored realm override is marked with its object.
-    pub(crate) program_realms: Vec<Value>,
     young: YoungSlots,
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
@@ -968,7 +963,6 @@ impl Heap {
             carried_owners: Vec::new(),
             reclaimable_program_bytes_since_full: 0,
             reclaimable_program_bytes_after_full: 0,
-            program_realms: Vec::new(),
             young: YoungSlots::default(),
             weak_cells: Vec::new(),
             free_by_slab: Vec::with_capacity(12),
@@ -2339,7 +2333,6 @@ impl Heap {
         self.allocated_at_full = 0;
         self.reclaimable_program_bytes_since_full = 0;
         self.reclaimable_program_bytes_after_full = 0;
-        self.program_realms.clear();
         self.live_after_full = 0;
         self.live_at_environment_trim = None;
         self.full_due = false;
@@ -3915,7 +3908,6 @@ impl Heap {
             Self::function_children(
                 value,
                 function,
-                &self.program_realms,
                 &self.properties,
                 ctx.work,
                 ctx.object_roots,
@@ -5229,7 +5221,6 @@ impl Heap {
     fn function_children(
         owner: Value,
         function: &FunctionRecord,
-        program_realms: &[Value],
         properties: &ValueArena,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
@@ -5246,14 +5237,7 @@ impl Heap {
             last_proto,
         );
         // The environment edge is the caller's (`EnvironmentTrace::closure`). The realm edge is
-        // the object's extras (`visit_extras_roots`) when overridden, else its program's realm
-        // (`program_realms`), and the main realm is a root.
-        if let FunctionKind::User(program, _) = function.kind
-            && let Some(realm) = program_realms.get(program.raw() as usize)
-            && realm.is_heap()
-        {
-            work.push(*realm);
-        }
+        // the object's extras (`visit_extras_roots`) when overridden, and the main realm is a root.
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {

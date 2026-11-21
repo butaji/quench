@@ -61,8 +61,6 @@ macro_rules! parallel_mark_view {
         struct ParallelMarkView<'heap> {
             slots: &'heap SlotArena,
             properties: &'heap ValueArena,
-            /// `Heap::program_realms`, which a closure's mark reaches (`function_children`).
-            program_realms: &'heap [Value],
             sparse_arrays: Option<&'heap FxHashMap<Value, SparseElements>>,
             marks: &'heap [AtomicU64],
             $($view: ParallelRecordMarks<'heap, $elem>,)*
@@ -84,7 +82,6 @@ macro_rules! parallel_mark_view {
                 Self {
                     slots: &heap.slots,
                     properties: &heap.properties,
-                    program_realms: &heap.program_realms,
                     sparse_arrays: heap.sparse_arrays.as_deref(),
                     marks: &heap.marks,
                     $($view: heap.$field.parallel_marks(),)*
@@ -324,7 +321,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let function = unsafe { self.functions.get(id) };
-                Heap::function_children(value, function, self.program_realms, properties, work, &mut object_roots, trace_kind, last_proto);
+                Heap::function_children(value, function, properties, work, &mut object_roots, trace_kind, last_proto);
                 if self.reads_closures {
                     batch.closures.push(id);
                 } else {
