@@ -166,7 +166,7 @@ fn keeps_frame_state(body: &Function) -> bool {
 /// backward jump, so no safepoint runs in it. That is a register move or constant, a number
 /// or string operation of registers and constants, a capture's load or store, `this`, a
 /// field read or store of no private name through a register or `this`, a global name's
-/// load, a forward jump and the return, of a register, a constant or an operator's value. A
+/// load, a forward jump, a construction and the return, of a register, a constant or an operator's value. A
 /// body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is none.
 /// `private` says whether an atom is a private name, whose access the running function
 /// decides (`LaneFrame::cached_miss`, `lane_private_atom`).
@@ -220,6 +220,9 @@ fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProg
     // Records the decode leaves to the opcode: the other threads' opcodes (a number operation
     // with a binary form, a unary, a name, a call) and a record the decode rejects.
     Some(match instruction.op() {
+        // A construction the lane plans completes in place, or materializes the leaf first
+        // (`script_construct_miss`), so its record runs in a leaf.
+        op if crate::staged::construction_family(op) => PLAIN_LEAF,
         op if crate::staged::leaf_value_or_jump(op) => PLAIN_LEAF,
         op if crate::staged::leaf_binary_operation(op) => return binary_leaf(instruction),
         op if op.traits().has(Traits::THIS_LEAF) => CONTEXT_LEAF,

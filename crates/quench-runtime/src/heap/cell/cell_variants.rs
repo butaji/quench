@@ -78,8 +78,6 @@ pub(crate) enum Cell {
     },
     /// A tag retains its original declaration; identity is independent of type equality.
     WasmTag { object: Box<Object>, declarations: crate::WasmTypes, ty: u32 },
-    /// GC object identity owns its original declaration and traced field values.
-    WasmGc { declarations: crate::WasmTypes, ty: u32, fields: WasmGcFields },
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
         target: WasmHostTarget,
@@ -216,7 +214,6 @@ impl Cell {
             Self::AccessorPair { .. } => "accessor_pair",
             Self::WasmException { .. } => "wasm_exception",
             Self::WasmTag { .. } => "wasm_tag",
-            Self::WasmGc { .. } => "wasm_gc",
             Self::WasmHostFunction { .. } => "wasm_host_function",
             Self::WasmElements(_) => "wasm_elements",
             Self::WasmGlobal { .. } => "wasm_global",

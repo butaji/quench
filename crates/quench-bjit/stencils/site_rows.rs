@@ -12,7 +12,7 @@ use crate::layout::words::TAG_SHIFT;
 use crate::places::{DEST, Places, settle, site_object, tagged_place};
 use crate::places_property::{Callout, HeldRead, PlannedPlaces, planned_frame, receiver_read};
 use crate::stage::StencilStage;
-use crate::staged::{Constant, Operation, Step, step, step_property};
+use crate::staged::{Constant, Operation, Step, op_kind, step_of, step_property_of};
 use crate::typed_ir::Type;
 
 /// A field read of the loop entry's record (`FIELD_ROW`): the entry record's word, its byte offset
@@ -20,8 +20,8 @@ use crate::typed_ir::Type;
 #[inline(always)]
 fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
-    let mut places = Places::<D, MEM, MEM>::new(s);
-    let step = step_property(&mut stage, &mut planned_frame(&mut places, [], Callout::LoopEntry), receiver_read());
+    let mut places = Places::new::<D, MEM, MEM>(s);
+    let step = step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::LoopEntry), receiver_read());
     let word = match step {
         Step::Value(word) => Some(word),
         _ => None,
@@ -36,9 +36,9 @@ fn field_row<const D: u8>(s: S, payload: usize) -> Out {
 fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -> Out {
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
-    let mut places = Places::<D, MEM, MEM>::new(s);
+    let mut places = Places::new::<D, MEM, MEM>(s);
     let read = Operation::FieldGetHost { object, atom: 0, site: 0 };
-    let step = step_property(&mut stage, &mut planned_frame(&mut places, [], Callout::SiteRead { chained: CHAIN }), read);
+    let step = step_property_of::<{ op_kind::FIELD_GET_HOST }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::SiteRead { chained: CHAIN }), read);
     let word = match step {
         Step::Value(word) => Some(word),
         _ => None,
@@ -62,9 +62,9 @@ fn site_store_row<const A: u8, const GATED: bool>(s: S, payload: usize, base: Op
     }
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
-    let mut places = Places::<MEM, A, MEM>::new(s);
+    let mut places = Places::new::<MEM, A, MEM>(s);
     let store = Operation::StoreField { base, value, fact: Type::ANY, atom: 0, site: 0 };
-    let step = step_property(&mut stage, &mut planned_frame(&mut places, [], Callout::SiteStore { gated: GATED }), store);
+    let step = step_property_of::<{ op_kind::STORE_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::SiteStore { gated: GATED }), store);
     let stored = match step {
         Step::Value(word) => Some(word),
         _ => None,
@@ -83,10 +83,10 @@ fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
     let link = (receiver >> HELD_LINK_AT) as u32;
     let held = HeldRead { object, shape: receiver as u32, link, constant: [(link, hole64::<HOLE_B>())] };
     let mut stage = StencilStage::from_hole(HOLE_B);
-    let mut places = Places::<D, MEM, MEM>::new(s);
+    let mut places = Places::new::<D, MEM, MEM>(s);
     let mut frame = PlannedPlaces { places: &mut places, ops: [], callout: Callout::Plan, lexical: None, held: Some(held) };
     let read = Operation::GetField { base: FieldBase::THIS, lookup: FieldLookup::Site(0), destination: DEST };
-    let word = match step_property(&mut stage, &mut frame, read) {
+    let word = match step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut frame, read) {
         Step::Value(word) => Some(word),
         _ => None,
     };
@@ -97,8 +97,8 @@ fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
 /// (`guard::live`, whose frame reads the word at the address in hole 1).
 #[inline(always)]
 fn live_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let held = matches!(step(&mut StencilStage::from_hole(0), &mut frame, Operation::GuardLive), Step::Value(_));
+    let mut frame = Places::new::<MEM, MEM, MEM>(s);
+    let held = matches!(step_of::<{ op_kind::GUARD_LIVE }, _, _>(&mut StencilStage::from_hole(0), &mut frame, Operation::GuardLive), Step::Value(_));
     if held { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
@@ -107,9 +107,9 @@ fn live_row(s: S) -> Out {
 /// successor, the entry's failure.
 #[inline(always)]
 fn realm_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut frame = Places::new::<MEM, MEM, MEM>(s);
     let guard = Operation::GuardRealm { expected: hole64::<HOLE_B>() };
-    let held = matches!(step(&mut StencilStage::from_hole(0), &mut frame, guard), Step::Value(_));
+    let held = matches!(step_of::<{ op_kind::GUARD_REALM }, _, _>(&mut StencilStage::from_hole(0), &mut frame, guard), Step::Value(_));
     if held { Out::Next(frame.s) } else { Out::Taken(frame.s) }
 }
 
@@ -117,9 +117,9 @@ fn realm_row(s: S) -> Out {
 #[inline(always)]
 fn constant_row<const D: u8>(s: S) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
-    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let mut frame = Places::new::<D, MEM, MEM>(s);
     let constant = Constant::untyped(crate::Value::from_bits(hole64::<HOLE_A>()));
-    let stepped = step(&mut stage, &mut frame, Operation::LoadConst { destination: DEST, constant });
+    let stepped = step_of::<{ op_kind::LOAD_CONST }, _, _>(&mut stage, &mut frame, Operation::LoadConst { destination: DEST, constant });
     settle(frame, stepped, Out::Next)
 }
 

@@ -36,7 +36,7 @@ fn global_layout(stage: &mut Concrete, payload: usize, id: u64) -> Option<Layout
     object::arena_extras_layout(stage, record, inline, GLOBAL_SLOT_COUNT, ())
 }
 
-impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
+impl Places {
     /// `Frame::capture_slot`: the depth-0 dense run's slot, from the window's capture word (its values and
     /// length); a root read and deeper scopes are the interpreter's.
     #[inline(always)]
@@ -81,7 +81,7 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     }
 }
 
-impl<const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for Places<D, A, B> {
+impl GlobalFrame<Concrete> for Places {
     /// The global object's slot (the id is hole 1, the byte offset the stage's next site) read into
     /// `destination`, as the lane's global read.
     #[inline(always)]

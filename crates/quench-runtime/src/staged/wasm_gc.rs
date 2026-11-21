@@ -35,6 +35,9 @@ impl Aggregate {
 /// zero-extended word and a flag 0 or 1. The rules hold every check, its order and its trap; a
 /// stage answers the primitives only. A primitive a rule names has been checked by the rule first.
 pub(crate) trait WasmGc: MachineStage {
+    /// Whether `struct_slot` answers every struct read, validation having proved each field present, so
+    /// the rule skips the missing-field test of a struct read. Stages keep the test by default.
+    const PROVEN_STRUCT_READS: bool = false;
     /// The flag that `reference` is null.
     fn is_null(&mut self, reference: Self::Word) -> Self::Word;
     /// The flag that `reference` is a GC object: a cell with fields, neither null nor an i31.
@@ -43,6 +46,16 @@ pub(crate) trait WasmGc: MachineStage {
     /// has no field `index`: one lookup that both checks the field and locates it, as a compiled
     /// access computes the address it bounds-checks. Valid until the next allocation.
     fn field_slot(&mut self, reference: Self::Word, index: Self::Word) -> Self::Word;
+    /// `field_slot` for a struct field read, at the field's static payload `offset` where the lowering
+    /// carried it. A stage computes the address inline from `offset` when it can; the default is `field_slot`.
+    fn struct_slot(&mut self, reference: Self::Word, index: Self::Word, _offset: Option<u32>) -> Self::Word {
+        self.field_slot(reference, index)
+    }
+    /// `field_slot` for an array element read, which a stage may compute inline at the element's stride.
+    fn element_slot(&mut self, reference: Self::Word, index: Self::Word, _field: GcField) -> Self::Word { self.field_slot(reference, index) }
+    /// `field_slot` for a store into the field: the same address, past the write barrier a store
+    /// into the object requires. Reads never take it, so a read of a field is barrier-free.
+    fn field_slot_for_write(&mut self, reference: Self::Word, index: Self::Word) -> Self::Word;
     /// The number of fields of the object `reference`.
     fn field_count(&mut self, reference: Self::Word) -> Self::Word;
     /// The Wasm bits stored at the field address `slot` (`field_slot`, checked nonzero), typed by
@@ -85,12 +98,27 @@ fn negated<S: MachineStage>(stage: &mut S, flag: S::Word) -> S::Word {
 
 /// The checks of a reference to an aggregate before its field `index` is read or written: a null
 /// reference traps as its aggregate's null trap, then a struct's missing field is rejected or an
-/// array's element past the end traps. The field's address, which the access then uses.
+/// array's element past the end traps. A struct read a stage proves (`PROVEN_STRUCT_READS`) has no
+/// missing-field test. The field's address, which the access then uses.
 #[inline(always)]
-fn locate<S: WasmGc>(stage: &mut S, aggregate: Aggregate, reference: S::Word, index: S::Word) -> Result<S::Word, S::Exit> {
+fn locate<S: WasmGc>(
+    stage: &mut S,
+    aggregate: Aggregate,
+    reference: S::Word,
+    index: S::Word,
+    field: GcField,
+    offset: Option<u32>,
+    write: bool,
+) -> Result<S::Word, S::Exit> {
     let null = stage.is_null(reference);
     stage.trap_when(null, aggregate.null_trap())?;
-    let slot = stage.field_slot(reference, index);
+    let slot = if write { stage.field_slot_for_write(reference, index) }
+        else if aggregate == Aggregate::Array { stage.element_slot(reference, index, field) }
+        else { stage.struct_slot(reference, index, offset) };
+    if aggregate == Aggregate::Struct && !write && S::PROVEN_STRUCT_READS {
+        // Validation proved the field present, and the stage's address needs no test.
+        return Ok(slot);
+    }
     let missing = stage.operate_unary(Unary::EqualZero, Width::I64, slot);
     match aggregate {
         Aggregate::Struct => stage.reject_when(missing, "invalid Wasm aggregate reference")?,
@@ -101,7 +129,7 @@ fn locate<S: WasmGc>(stage: &mut S, aggregate: Aggregate, reference: S::Word, in
 
 /// The field `index` of `reference` as a `struct.get` or `array.get` reads it: a signed packed read
 /// sign-extends the packed bits (shifted to the top and back down arithmetically); the others return
-/// the stored word.
+/// the stored word. `offset` is a struct field's static payload offset where the lowering carried it.
 #[inline(always)]
 pub(crate) fn field_read<S: WasmGc>(
     stage: &mut S,
@@ -110,8 +138,9 @@ pub(crate) fn field_read<S: WasmGc>(
     index: S::Word,
     field: GcField,
     access: GcFieldAccess,
+    offset: Option<u32>,
 ) -> Result<S::Word, S::Exit> {
-    let slot = locate(stage, aggregate, reference, index)?;
+    let slot = locate(stage, aggregate, reference, index, field, offset, false)?;
     let stored = stage.read_slot(slot, field);
     let bits = match (access, field.packed_bits()) {
         (GcFieldAccess::ReadSigned, Some(bits)) => bits,
@@ -122,7 +151,7 @@ pub(crate) fn field_read<S: WasmGc>(
     Ok(stage.operate(Binary::ShiftRightSigned, Width::I64, high, shift))
 }
 
-/// The field `index` of `reference` as a `struct.set` or `array.set` writes it.
+/// The field `index` of `reference` as a `struct.set` or `array.set` writes it (`offset` as `field_read`).
 #[inline(always)]
 pub(crate) fn field_write<S: WasmGc>(
     stage: &mut S,
@@ -131,8 +160,9 @@ pub(crate) fn field_write<S: WasmGc>(
     index: S::Word,
     field: GcField,
     value: S::Word,
+    offset: Option<u32>,
 ) -> Result<(), S::Exit> {
-    let slot = locate(stage, aggregate, reference, index)?;
+    let slot = locate(stage, aggregate, reference, index, field, offset, true)?;
     stage.write_slot(slot, field, value);
     Ok(())
 }
@@ -319,6 +349,10 @@ macro_rules! wasm_gc_table {
             WasmArrayGetS => Some(GcStep::ArrayGet { signed: Some(true) }),
             WasmArrayGetU => Some(GcStep::ArrayGet { signed: Some(false) }),
             WasmArraySet => Some(GcStep::ArraySet),
+            WasmStructGetRaw => Some(GcStep::StructGet { signed: None }),
+            WasmStructSetRaw => Some(GcStep::StructSet),
+            WasmArrayGetRaw => Some(GcStep::ArrayGet { signed: None }),
+            WasmArraySetRaw => Some(GcStep::ArraySet),
             WasmArrayLen => Some(GcStep::ArrayLen),
             WasmRefIsNull => Some(GcStep::IsNull),
             WasmRefAsNonNull => Some(GcStep::AsNonNull),

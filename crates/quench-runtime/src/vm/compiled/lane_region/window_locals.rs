@@ -6,7 +6,6 @@
 //! another environment shares leaves at the instruction, where the interpreter raises its `ReferenceError` or resolves
 //! the slot, and only then. A store has no barrier of its own: the activation's environment lives within a lane run,
 //! which collects nothing. The slots are those the b-jit makes rows of (`base_region::env_owned`).
-use crate::bytecode::Class;
 use super::*;
 use super::super::lane_unit::Origin;
 use crate::bytecode::InstructionField;
@@ -87,7 +86,7 @@ impl Lowering<'_, '_> {
             Access::Write { source, .. } => Some(self.tagged(state, source)),
             Access::Read(_) | Access::Open => None,
         };
-        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None };
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None , payload: None};
         let read = match (access, written) {
             (Access::Read(_), _) => environment_slot(&mut stage, storage, slot, miss),
             (Access::Write { define: false, .. }, Some(value)) => environment_slot_store(&mut stage, storage, slot, value, miss).map(|()| value),

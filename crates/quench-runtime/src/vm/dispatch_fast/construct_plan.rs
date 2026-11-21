@@ -409,8 +409,15 @@ fn defaulted_construction_in_lane<H: Host>(vm: &mut Vm<H>, index: usize, argumen
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
-    let values = plan.values(vm, argument)?;
-    Some(plan.allocate_values(&mut vm.heap, &values))
+    let mut values = plan.values(vm, argument)?;
+    // A nested field holds while its root does; a fresh object's allocation never collects.
+    if let Some(nested) = plan.nested {
+        if !nested_root_holds(vm, &nested) { return None; }
+        if nested.constructs {
+            values[usize::from(nested.field)] = nested_construction(vm, nested.constructor, &nested.arguments)?;
+        }
+    }
+    Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
 }
 
 /// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined
@@ -455,7 +462,7 @@ pub(in crate::vm) fn scalar_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -
         })),
         _ => None,
     }).collect::<Option<_>>()?;
-    Some(ScalarConstructPlan { callee, shape: plan.shape, fields })
+    Some(ScalarConstructPlan { callee: super::super::compiled::PlanCallee::Live(callee), shape: plan.shape, fields })
 }
 
 /// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it
@@ -513,12 +520,15 @@ pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew:
 }
 
 /// `initialize_fields_in_lane` of the stores `adds` makes to the receiver it is given, each passed
-/// to its `each` as a cached add runs: the receiver, and whether every store was a cached add.
+/// to its `each` as a cached add runs, a nested construction's value (`InitializerValue::Construct`)
+/// made by its `nested` from the callee's closure environment `env`: the receiver, and whether
+/// every store was a cached add.
 pub(super) fn initialize_stores_in_lane<H: Host>(
     vm: &mut Vm<H>,
     callee: Value,
     constructor: Value,
-    adds: impl FnOnce(&mut Vm<H>, Value, &mut dyn FnMut(&crate::bytecode::InitializerStore, Value)) -> bool,
+    env: Value,
+    adds: impl FnOnce(&mut Vm<H>, Value, &mut dyn FnMut(&mut Vm<H>, &crate::bytecode::NestedConstruct) -> Option<Value>, &mut dyn FnMut(&crate::bytecode::InitializerStore, Value)) -> bool,
 ) -> Option<(Value, bool)> {
     let plan_index = construct_plan_index(callee);
     let template = vm.inline_construct_template_by(callee, constructor)?;
@@ -531,9 +541,19 @@ pub(super) fn initialize_stores_in_lane<H: Host>(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
-    let added = adds(vm, this, &mut |store, value| {
-        planned = planned.and_then(|plan| plan.with_field(store, value));
-    });
+    let nested = std::cell::Cell::new(None);
+    let added = adds(vm, this,
+        &mut |vm, construct| {
+            let (value, field) = nested::nested_construct_in_lane(vm, env, construct)?;
+            nested.set(Some(field));
+            Some(value)
+        },
+        &mut |store, value| {
+            planned = planned.and_then(|plan| match store.value {
+                crate::bytecode::InitializerValue::Construct(_) => plan.with_nested(nested.take()?),
+                _ => plan.with_field(store, value),
+            });
+        });
     if !added {
         return Some((this, false));
     }
@@ -543,8 +563,15 @@ pub(super) fn initialize_stores_in_lane<H: Host>(
     {
         plan.callee_layout = layout;
         plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
+        // A nested field's root is read at each construction (`defaulted_construction_in_lane`).
+        if plan.nested.is_some() {
+            plan.kind = ConstructPlanKind::Defaulted;
+        }
         vm.lane_stack.construct_plans[index] = plan.finish();
         watch_construct_plan(vm, index, true, &[callee, plan.prototype]);
+        if let Some(nested) = plan.nested {
+            watch_construct_plan(vm, index, false, nested.held());
+        }
     }
     Some((this, true))
 }
@@ -554,6 +581,19 @@ pub(super) fn initialize_stores_in_lane<H: Host>(
 /// the frame's own return of it (`frame_return`).
 #[inline(always)]
 pub(super) fn return_constructed_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
+    // A running leaf's construction is its call's completion, as its return is
+    // (`complete_leaf_in_lane`).
+    if !unsafe { (*cx).leaf.call }.is_null() {
+        let form = unsafe { (*cx).leaf.form };
+        if let Some((registers, next)) = complete_leaf_in_lane::<H>(cx, this, form) {
+            let view = Carried {
+                memory: MemoryView::script(cx),
+                integers: crate::value::IntegerEncoding::TAG,
+                acc: Slot::of(Value::UNDEFINED),
+            };
+            return Resumed::At(registers, next, view);
+        }
+    }
     // The common return first, as a `Return` record takes it (`complete_plain_activation_in_lane`),
     // where no leaf call runs.
     if unsafe { (*cx).leaf.call }.is_null()

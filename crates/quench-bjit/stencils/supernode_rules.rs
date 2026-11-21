@@ -36,6 +36,7 @@ use std::collections::BTreeSet;
 
 /// The runtime's Number operator tables (`vm/operations/number_rows.rs`): each relation, arithmetic and bitwise row names
 /// the operator symbols that denote it, which `operator_kinds` reads, so the symbols and the kinds have one definition.
+#[allow(unused_imports, dead_code)] // The build reads the operator tables alone.
 #[path = "../../quench-runtime/src/vm/operations/number_rows.rs"]
 mod number_rows;
 use number_rows::{number_arithmetic_rows, number_bitwise_rows, number_relation_rows, NumberArithmetic, NumberBitwise, NumberRelation};

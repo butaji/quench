@@ -5,7 +5,6 @@
 //! the `throw` to find the handler. One no handler of the function covers leaves the body as
 //! `LANE_BODY_THREW`, the exception in `Vm::lane_raised`, which native callers unwind through
 //! the same way and the lane raises where it resumes: no frame is made for the exception.
-use crate::bytecode::Class;
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::{Region, Stage};

@@ -1,6 +1,7 @@
 //! Converting a run of typed-array elements to another Number kind on their bytes.
 
-use super::{TypedArrayElement, TypedArrayKind, Vm};
+use super::{TypedArrayKind, Vm};
+use crate::staged::typed_elements::{element_number, element_word, NATIVE_LITTLE_ENDIAN};
 use crate::Host;
 
 impl<H: Host> Vm<H> {
@@ -20,11 +21,8 @@ impl<H: Host> Vm<H> {
             return convert_integers(source, source_width, signed, target, target_width);
         }
         for (from, to) in source.chunks_exact(source_width).zip(target.chunks_exact_mut(target_width)) {
-            let mut element = [0; size_of::<u64>()];
-            element[..source_width].copy_from_slice(from);
-            let number = Self::typed_array_number_of(source_kind, &element);
-            let encoded = Self::typed_array_element_bytes(target_kind, &TypedArrayElement::Number(number));
-            to.copy_from_slice(&encoded[..target_width]);
+            let number = element_number(source_kind, from, NATIVE_LITTLE_ENDIAN);
+            to.copy_from_slice(&element_word(target_kind, number)[..target_width]);
         }
     }
 }

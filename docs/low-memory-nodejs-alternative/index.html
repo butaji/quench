@@ -62,12 +62,12 @@
 <h2 id="try">Try it</h2>
 <pre><code>git clone https://github.com/butaji/quench
 cd quench
-cargo build --release -p quench-node                  # interpreter + JIT tiers
-cargo build --release -p quench-node --features aot   # adds the AOT compiler
-./target/release/quench-node app.ts</code></pre><h2 id="questions">Questions</h2><h3>What is a Node.js alternative with low memory use?</h3><p>Quench is a JavaScript, TypeScript and WebAssembly runtime with Node-compatible APIs, written in Rust. With JIT off, its geometric-mean peak memory on JetStream 3 is 28.5 MB, against 110.1 MB for Node --jitless and 47.7 MB for Bun (17 November 2026).</p><h3>How much memory does Quench use for a small program?</h3><p>On V8-v7 with JIT off, richards peaks at 6.4 MB, deltablue at 6.9 MB and raytrace at 7.1 MB, where Node --jitless needs 43.5 to 50.1 MB (14 November 2026).</p><h3>Can Quench replace Node.js today?</h3><p>Not for production yet. Quench has no packaged releases and its Node API compatibility is still being built out, so expect gaps.</p>
+cargo build --release -p quench                  # interpreter + JIT tiers
+cargo build --release -p quench --features aot   # adds the AOT compiler
+./target/release/quench app.ts</code></pre><h2 id="questions">Questions</h2><h3>What is a Node.js alternative with low memory use?</h3><p>Quench is a JavaScript, TypeScript and WebAssembly runtime with Node-compatible APIs, written in Rust. With JIT off, its geometric-mean peak memory on JetStream 3 is 28.5 MB, against 110.1 MB for Node --jitless and 47.7 MB for Bun (17 November 2026).</p><h3>How much memory does Quench use for a small program?</h3><p>On V8-v7 with JIT off, richards peaks at 6.4 MB, deltablue at 6.9 MB and raytrace at 7.1 MB, where Node --jitless needs 43.5 to 50.1 MB (14 November 2026).</p><h3>Can Quench replace Node.js today?</h3><p>Not for production yet. Quench has no packaged releases and its Node API compatibility is still being built out, so expect gaps.</p>
 <h2 id="about">About Quench</h2>
 <p>Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: <a href="https://github.com/butaji/quench">github.com/butaji/quench</a>. Machine-readable summary: <a href="/llms.txt">llms.txt</a>.</p>
-<p class="small">Related: <a href="/benchmarks/">benchmarks</a> · <a href="/fastest-javascript-runtime-in-rust/">JavaScript runtime in Rust</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node.js alternative</a> · <a href="/compile-javascript-to-native-executable/">compile JavaScript to a native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262 conformance</a></p>
+<p class="small">Related: <a href="/benchmarks/">benchmarks</a> · <a href="/fastest-javascript-runtime-in-rust/">JavaScript runtime in Rust</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node.js alternative</a> · <a href="/compile-javascript-to-native-executable/">compile JavaScript to a native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262 conformance</a> · <a href="/javascript-engine-for-ai-agents/">JavaScript for AI agents</a></p>
 </div></div>
 </article>
 </main>

@@ -54,13 +54,14 @@
 
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
+use super::callees::name_records;
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::{Op, Traits};
+use crate::bytecode::Traits;
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
 mod lowering;
-pub(super) use lowering::{calls_in_place, decode_step, lowering, STEP_WRITES};
+pub(super) use lowering::{calls_in_place, decode_step, lowering, unplaced, STEP_WRITES};
 
 /// How the b-jit runs an instruction no row takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +94,9 @@ pub(super) enum Step {
     Catch,
     /// A `WasmBranchTable`: a compare tree on the selector over the table's `Jump` rows (`function::switch`).
     Switch,
+    /// The semantic row of an instruction no row takes under `LaneHelpers::Ahead`: its opcode's semantic
+    /// entry runs it in the body (`generic::generic_row`), where a stop leaves.
+    Generic,
 }
 
 impl Step {
@@ -100,7 +104,7 @@ impl Step {
     /// as the raising step, or the VM step helper's call-out): it may allocate or run guest code, which
     /// no heap snapshot a region took sees.
     pub(super) fn runs_helper(self) -> bool {
-        matches!(self, Self::Helper | Self::CallOut | Self::Allocate | Self::Fast(_) | Self::Throw)
+        matches!(self, Self::Helper | Self::CallOut | Self::Allocate | Self::Fast(_) | Self::Throw | Self::Generic)
     }
 
     /// Whether the run reads the dispatch payload: a helper step calls through it, and a guarded
@@ -133,7 +137,7 @@ impl Planned {
     /// The row of a chain part, its exits and no rows of its own; a part's successor is a part of
     /// the chain it belongs to.
     fn of_part(part: CallPart) -> Self {
-        Self { branch: part.taken.map(Branch::Part), exits: part.exits, ..Self::single(part.stencil, part.holes, None, None) }
+        Self { branch: part.taken.map(Branch::Part), exits: part.exits, symbolic: part.symbols, ..Self::single(part.stencil, part.holes, None, None) }
     }
 }
 
@@ -159,9 +163,10 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Allocate => plan_helper(layout, pc, decoded, (LaneHelper::AllocateStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
+        Step::Generic => generic_row(layout, decoded, pc, Semantic::of(layout, pc)?),
         Step::Switch => Err("switch: planned as a compare tree (plan_row)".into()),
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
-        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
+        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, ahead_miss(decoded, layout, pc, helpers)?, helpers),
         Step::Return => {
             let register = match decoded.a {
                 Some(Source::Register(register)) => register,
@@ -195,7 +200,7 @@ pub(super) fn leave(pc: u32) -> Result<Planned, String> {
 /// completed, branched or missed (nothing ran: the leave at the record), or left, where the step ran in frames it made
 /// of the lane's activations (a frame-needing step of a native callee) and the body leaves past it: the row's
 /// (status, word) exit.
-fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers), packed: Option<[u64; 2]>) -> Result<Planned, String> {
+pub(super) fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers), packed: Option<[u64; 2]>) -> Result<Planned, String> {
     // A step the planner decoded runs the packed helper (`LaneHelper::StepPacked`), which takes its instruction as is.
     let packed = packed.filter(|_| helper == LaneHelper::Step).and_then(|words| call_plan::helper_address(helpers, LaneHelper::StepPacked).map(|address| (address, words)));
     let (address, packed) = match packed {
@@ -265,11 +270,12 @@ fn plan_catch(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers)
 /// The word a `typeof` fast arm answers for any Number, which an operand held in a pinned register or an
 /// int slot always is: the fact is the operand's representation, proved once where it was defined.
 fn number_typeof(fast: Heap, names: u64) -> Option<u64> {
+    let index = crate::staged::value::language_typeof_index(crate::staged::value::language::NUMBER)?;
     match fast {
         // SAFETY: the table is the compiling VM's (`Known::typeof_names`), whose strings the VM roots.
-        Heap::TypeofString => Some(unsafe { (names as *const u64).add(crate::staged::value::TYPEOF_NUMBER as usize).read() }),
-        Heap::TypeofIndex => Some(Value::integer(crate::staged::value::TYPEOF_NUMBER as i32).to_bits()),
-        Heap::TypeofIs { index, negated } => Some(Value::boolean((u64::from(index) == crate::staged::value::TYPEOF_NUMBER) != negated).to_bits()),
+        Heap::TypeofString => Some(unsafe { (names as *const u64).add(index as usize).read() }),
+        Heap::TypeofIndex => Some(Value::integer(index as i32).to_bits()),
+        Heap::TypeofIs { index: tested, negated } => Some(Value::boolean((u64::from(tested) == index) != negated).to_bits()),
         _ => None,
     }
 }
@@ -340,18 +346,24 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     // The holders the chain's reads answer through: the body subscribes to them, so a change of their values retires it.
     layout.holders.borrow_mut().extend(chain.iter().map(|read| read.holder));
     let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read, chain, builtin: layout.builtin(shape.call_pc) };
-    let CallChain { parts, records: record, choice } = call_plan::plan_call(&plan)?;
+    let CallChain { mut parts, records: record, choice } = call_plan::plan_call(&plan)?;
+    // An image's direct rows name the site's record (`name_records`).
+    if helpers == LaneHelpers::Ahead { name_records(&mut parts, &record, crate::vm::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc }); }
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
-    if choice == Choice::Direct {
-        super::note_fast(shape.op);
-    }
+    if choice == Choice::Direct { super::note_fast(shape.op); }
     chained(parts, spills.len(), record)
 }
 
+#[path = "steps/misses.rs"]
+mod misses;
+pub(super) use misses::stepped_misses;
 #[path = "steps/branches.rs"]
 mod branches;
 use branches::{branching, jump_to};
+#[path = "steps/generic.rs"]
+mod generic;
+pub(super) use generic::{Semantic, ahead_miss, generic_row};
 
 #[cfg(test)]
 mod tests;

@@ -246,7 +246,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("quench-node-inventory-{unique}"));
+        let root = std::env::temp_dir().join(format!("quench-inventory-{unique}"));
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("case.js"), "inert case input").unwrap();
         fs::write(root.join("case-two.js"), "second inert case input").unwrap();

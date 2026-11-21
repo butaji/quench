@@ -11,7 +11,7 @@
 //! calls the body exactly as `call()` does (`wasm_rows.rs`). Every other case (null or
 //! uninitialized element, a related signature, another instance, a body that is not compiled) is
 //! deferred by the rule to the VM's callout, which resolves the element again, checks it and runs
-//! it, as the u-jit's `call_through_vm` does. The slow path is a cold out-of-line function.
+//! it, as the u-jit's `call_through_vm` does. The slow path is the row's cold part.
 //!
 //! Holes (all read with `hole64`, so each packs several values; `wasm_stitch_indirect.rs` packs):
 //! - H0: low 32 bits, the result's frame slot; high 32 bits, the call window's frame slot.
@@ -69,7 +69,7 @@ pub(crate) unsafe fn call_indirect(mut s: S) -> Out {
         let words = *array.add(table);
         let mut stage = TableStage { base: (*words).base, length: (*words).length };
         let row = match indirect_target_word(&mut stage, index, expected, u64::from(NULL_SIGNATURE)) {
-            Ok(row) => row as usize,
+            Ok((_, row)) => row as usize,
             Err(Leave::Trap(error)) => return trap(s, error),
             // A related or uninitialized element, or a target the rule defers: the VM's callout.
             Err(_) => return slow(s, (table, index), (high(h2), low(h3)), (window, destination)),
@@ -90,8 +90,9 @@ pub(crate) unsafe fn call_indirect(mut s: S) -> Out {
 
 /// Every case but the fast one: the VM resolves the element, checks it (null, uninitialized, a
 /// related signature or a mismatch trap there) and calls it, then the staged protocol
-/// (`call_reference`). Out of line: the cold path of the row.
-#[inline(never)]
+/// (`call_reference`). The cold path of the row: inlined, since a stencil may name no symbol but
+/// its holes, and laid out after the hot part by the build's layout pass.
+#[inline(always)]
 unsafe fn slow(mut s: S, (table, index): (usize, u64), (signature, site): (u32, u32), (window, destination): (usize, usize)) -> Out {
     unsafe {
         let callout = *((s.ctx + CONTEXT_CALL_REFERENCE_AT) as *const usize);

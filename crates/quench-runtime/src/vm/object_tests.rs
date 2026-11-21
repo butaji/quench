@@ -203,7 +203,7 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     assert_eq!(vm.profile.field_primitives.count(Path::HintedStore), 1);
     assert!(vm.cached_field_store_hit(&program, receiver, atom, Value::integer(4), site));
     assert_eq!(vm.profile.field_primitives.count(Path::CachedStore), 1);
-    assert!(vm.set_field_cache_hit(&program, receiver, atom, Value::integer(5), site));
+    assert!(vm.set_field_cache_hit(&program, receiver, atom, Value::integer(5), site, true));
     assert_eq!(vm.profile.field_primitives.count(Path::GeneralStore), 1);
     assert_eq!(vm.own_property(receiver, atom), Some(Value::integer(5)));
     assert_eq!(vm.own_property(other, atom), Some(Value::integer(0)));

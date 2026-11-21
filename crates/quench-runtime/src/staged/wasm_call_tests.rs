@@ -70,6 +70,12 @@ impl WasmTable for Probe {
         self.note("element")
     }
 
+    type Row = usize;
+
+    fn element_row(&mut self, _: usize) -> usize {
+        self.note("row")
+    }
+
     fn signature_accepts(&mut self, _: usize, _: usize, _: usize) -> usize {
         self.note("accepts")
     }
@@ -122,6 +128,7 @@ fn an_indirect_target_checks_the_index_then_an_unequal_signature_for_null_then_r
             "accepts".to_owned(),
             "EqualZero I32".to_owned(),
             "trap IndirectCallTypeMismatch".to_owned(),
+            "row".to_owned(),
         ]
     );
 }
@@ -148,7 +155,8 @@ fn the_interpreters_stage_traps_in_the_rules_order() {
         (u64::MAX, Err(WasmTrap::UndefinedElement)),
     ];
     for (index, verdict) in verdicts {
-        assert_eq!(indirect_target(&mut stage, index, expected), verdict, "{index}");
+        let result = indirect_target(&mut stage, index, expected).map(|(reference, _)| reference);
+        assert_eq!(result, verdict, "{index}");
     }
     let one = stage.constant(Width::I64, 1);
     assert_eq!(stage.table_range_exceeds(3, one), 0);

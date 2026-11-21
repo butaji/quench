@@ -100,6 +100,7 @@ macro_rules! for_each_space_mut {
         { let $space = &mut $heap.string_records; let $handle: fn(RecordId) -> Value = Value::direct_string; $body }
         { let $space = &mut $heap.small_strings; let $handle: fn(RecordId) -> Value = small_strings::small_string_value; $body }
         { let $space = &mut $heap.v128_records; let $handle: fn(RecordId) -> Value = Value::direct_v128; $body }
+        { let $space = &mut $heap.wasm_gc_records; let $handle: fn(RecordId) -> Value = Value::direct_wasm_gc; $body }
     }};
 }
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Trains the dynamic x86_64 link order (crates/quench-node/link/x86_64-linux.order) the
+# Trains the dynamic x86_64 link order (crates/quench/link/x86_64-linux.order) the
 # experiment build links with: every function the layout corpus executes under --no-jit,
 # ordered by how many corpus programs execute it, then by exactly which, then first
 # appearance (symbol-order --sets). Each program is profiled twice, with an empty compile
 # cache (the parser, analysis, code generation and Wasm validation run) and warm (the cache
 # decodes), so a run that compiles as it goes and one that decodes both find their code packed.
 #
-# usage: tools/link-order.sh [BINARY]   (default: target/experiment/quench-node)
+# usage: tools/link-order.sh [BINARY]   (default: target/experiment/quench)
 #
 # Corpus: the interpreter curriculum, the numbered micros, Node library modules compiled
 # without running, tools/layout-corpus/rt-*.js and npm-*.js (packages from its package-lock.json,
@@ -16,7 +16,7 @@
 set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
-binary="$(realpath "${1:-target/experiment/quench-node}")"
+binary="$(realpath "${1:-target/experiment/quench}")"
 work="${CARGO_TARGET_DIR:-$root_dir/target}/link-order"
 corpus="$work/corpus"
 profiles="$work/profiles"
@@ -24,7 +24,7 @@ packages="$work/packages"
 rm -rf "$corpus" "$profiles" "$work/homes"
 mkdir -p "$corpus" "$profiles" "$packages"
 
-cargo build --profile experiment -p quench-wasm-test --bin symbol-order >/dev/null
+cargo build --profile experiment -p quench-symbols --bin symbol-order >/dev/null
 
 printf '{"type": "commonjs"}\n' >"$corpus/package.json"
 printf 'console.log(1)\n' >"$corpus/000-print.cjs"
@@ -59,5 +59,5 @@ profile_one() {
 export -f profile_one
 { (cd "$corpus" && ls -- *.js *.cjs); echo wasm-kernels; } | xargs -P "$(nproc)" -I{} bash -c 'profile_one {}'
 
-target/experiment/symbol-order "$binary" crates/quench-node/link/x86_64-linux.order --sets "$profiles"/*.out
-tools/check-link-order.sh "$binary" crates/quench-node/link/x86_64-linux.order 0
+target/experiment/symbol-order "$binary" crates/quench/link/x86_64-linux.order --sets "$profiles"/*.out
+tools/check-link-order.sh "$binary" crates/quench/link/x86_64-linux.order 0

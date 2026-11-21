@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_host::TestHost;
+use std::{cell::RefCell, rc::Rc};
 
 const LEAF_ENTRY_SOURCE: &str = r#"
       function plain(x) { return (x + 1) | 0; }
@@ -11,6 +12,8 @@ const LEAF_ENTRY_SOURCE: &str = r#"
       function readsGlobal(x) { return x + G0; }
       function picks(o, f) { return f ? o.a : o.b; }
       function calls(x) { return plain(x); }
+      function Pt(x) { this.x = x; }
+      function make(C, x) { return new C(x); }
       function loops(x) { var s = 0; for (var i = 0; i < x; i++) s += i; return s; }
       function args(x) { return arguments.length; }
       class P { #v = 1; read() { return this.#v; } }
@@ -20,8 +23,8 @@ const LEAF_ENTRY_SOURCE: &str = r#"
 
 #[test]
 fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
-    // A body of register, capture, `this`, field read and store, global name and returning
-    // read records with forward jumps is a leaf (`leaf_body`), whose records read the
+    // A body of register, capture, `this`, field read and store, global name, construction and
+    // returning read records with forward jumps is a leaf (`leaf_body`), whose records read the
     // context or not; a call, a loop, `arguments` or a private read keeps the activation.
     let program = crate::Engine::specialize(LEAF_ENTRY_SOURCE, "leaf-entries.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
@@ -35,6 +38,7 @@ fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
         ("setter", Some(CallEntry::ThisLeaf)),
         ("readsGlobal", Some(CallEntry::Leaf)),
         ("picks", Some(CallEntry::Leaf)),
+        ("make", Some(CallEntry::Leaf)),
         ("calls", None),
         ("loops", None),
         ("args", None),
@@ -48,4 +52,25 @@ fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
             None => assert!(!entry.is_some_and(leaf), "{name} is no leaf"),
         }
     }
+}
+
+#[test]
+fn a_leaf_returning_construction_completes() {
+    // `return new V(...)` in a function the lane runs as a leaf, warm, through a forwarding
+    // constructor: the construction completes the leaf's activation, as a frame would.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var V = Class.create();
+      V.prototype = { initialize: function (x, y) { this.x = x; this.y = y; } };
+      function make(i) { return new V(i, 2); }
+      function run(n) { var s = 0; for (var i = 0; i < n; i++) { var v = make(i); s += v.x + v.y; } return s; }
+      function warm() { for (var k = 0; k < 40; k++) { run(300); } }
+      warm();
+      print(run(10));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = crate::Engine::specialize(source, "leaf-returning-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["65"]);
 }

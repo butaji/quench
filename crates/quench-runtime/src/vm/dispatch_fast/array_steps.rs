@@ -322,7 +322,7 @@ pub(super) fn body_array_iteration_in_lane<H: Host>(
 /// The return of an array callback method's callback `activation` with `mapped`, its
 /// caller restored (`restore_caller_in_lane`): the step of the innermost lane iteration, then
 /// the rest of its loop (`finish_array_step_in_lane`).
-pub(super) fn step_array_iteration_in_lane<H: Host>(cx: *mut LaneContext<H>, frame: &Frame, mapped: Value) -> Resumed {
+pub(super) fn step_array_iteration_in_lane<H: Host>(cx: *mut LaneContext<H>, frame: &ActivationView, mapped: Value) -> Resumed {
     let applied = apply_array_step_in_lane(cx, mapped);
     finish_array_step_in_lane(cx, frame.call(), applied)
 }

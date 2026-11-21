@@ -494,9 +494,9 @@ in_place_rows!(
 /// sites (`MATH_CALL_SITE`, `MATH_CALL2_SITE`, `MATH_CALL2_CONST_SITE`). `FieldHit` reads a record
 /// of these as an own-field read.
 pub(super) fn math_field_call_handlers<H: Host>() -> [*const (); 3] {
-    [generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE> as *const (),
-        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE> as *const (),
-        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE> as *const ()]
+    [generated_row!(H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE) as *const (),
+        generated_row!(H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE) as *const (),
+        generated_row!(H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE) as *const ()]
 }
 
 script_handler! {
@@ -577,11 +577,11 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
     let (call, copy, field) = unsafe { (&*call_ip, &*copy_ip, &*field_ip) };
     let one_argument = ImmediateLayout::argument_count(call.imm()) == 1
         && ImmediateLayout::call_window_base(call.imm()) == copy.a;
-    let copies = copy.handler == generated_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let copies = copy.handler == generated_row!(H, opc::Move, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
     let reads_callee = field.a == call.b
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if one_argument && copies && reads_callee && copy.a != field.a {
-        requicken::<H>(field_ip, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE> as Handler);
+        requicken::<H>(field_ip, generated_row!(H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE) as Handler);
     }
 }
 
@@ -592,15 +592,15 @@ fn install_math_field_call2<H: Host>(call_ip: Ip) {
     let (second_ip, first_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2), call_ip.sub(3)) };
     let (call, second, first, field) = unsafe { (&*call_ip, &*second_ip, &*first_ip, &*field_ip) };
     let window = ImmediateLayout::call_window_base(call.imm());
-    let copy = generated_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let constant_second = second.handler == generated_row::<H, { opc::LoadConst }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let copy = generated_row!(H, opc::Move, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
+    let constant_second = second.handler == generated_row!(H, opc::LoadConst, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
     let shaped = first.handler == copy && (second.handler == copy || constant_second)
         && first.a == window && second.a == window + 1;
     let reads_callee = field.a == call.b && field.a != window && field.a != window + 1
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if shaped && reads_callee {
-        let row = if constant_second { generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE> as Handler }
-            else { generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE> as Handler };
+        let row = if constant_second { generated_row!(H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE) as Handler }
+            else { generated_row!(H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE) as Handler };
         requicken::<H>(field_ip, row);
     }
 }
@@ -708,8 +708,8 @@ pub(super) fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram
             vm.fast_declined(native, joined)
         }
         Native::ArrayIndexOf | Native::ArrayIncludes => {
-            let found = vm.dense_search_call(native, receiver, args);
-            vm.fast_declined(native, found)
+            let found = vm.dense_search_resume(native, receiver, args);
+            vm.fast_search_declined(native, found)
         }
         Native::ArrayJoin => vm.plain_array_join(receiver, args),
         Native::ArrayAt => vm.plain_array_at(receiver, args),
@@ -778,14 +778,17 @@ script_handler! {
 /// `native_call_miss`, the handler of every other native. A call returning its result
 /// completes its caller, which only `native_call_miss` makes. An array callback method's site
 /// whose result nothing reads (`result_dead`, asked only there) takes the form that may
-/// discard it (`call_array_callback_miss`'s `DISCARDS`).
-pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
+/// discard it (`call_array_callback_miss`'s `DISCARDS`). A `String.prototype.replace` whose
+/// result only the `GetField "length"` after it reads (`length_only`, asked only there) takes
+/// the replacement's length without building it (`regexp_calls::replace_length_handler`).
+pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool, length_only: impl FnOnce() -> bool) -> Handler {
     if concrete_returns_callee_completion(i.a) {
         return call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>();
     }
     match native {
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
         native if let Some(handler) = math_handler::<H>(native) => handler,
+        Native::StringReplace if length_only() => super::regexp_calls::replace_length_handler::<H>(),
         native if let Some(handler) = in_place_handler::<H>(native) => handler,
         native if super::number::math_numbers_inline(native) => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_MATH as u16 }>(),
         native if native.is_array_callback() && result_dead() => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK_DISCARDING as u16 }>(),
@@ -802,16 +805,18 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
 pub(super) fn body_native_call_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> u64 {
     use super::super::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
-    // A returning call's completion is its activation's, which the lane makes.
-    if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning); }
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
     let native = *native;
     // SAFETY: the context's program outlives the lane run; the values are registers of the
     // running function, which the native reads before anything can move them.
     let (code, args) = unsafe { (&*(*cx).code, call.values()) };
     let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args) else {
+        // A returning call the native makes out of line is the lane's to complete.
+        if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning); }
         return body_native_out_in_lane(cx, call, native, (callee, receiver), &args);
     };
+    // A returning call's value completes the body: it reads the call's register, as it does a
+    // returning script call's (`Lowering::return_register`, `steps::completing`).
     note_allocation(vm);
     concrete_write_call_result(call.registers.0.expose_provenance() as u64, call.site.result, value);
     LANE_CALL_COMPLETED

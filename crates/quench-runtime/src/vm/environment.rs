@@ -1505,10 +1505,14 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             if remaining == 0 {
-                return Some((
-                    slots,
-                    (*function == super::ROOT_FUNCTION_ID).then(|| scope.program()),
-                ));
+                // A root whose every slot is the binding (an import-free module's, a strict
+                // eval's) is read as any function environment: its dense slots, no projection.
+                let root = (*function == super::ROOT_FUNCTION_ID)
+                    .then(|| scope.program())
+                    .filter(|program| {
+                        !self.programs.root_slots_are_bindings(program.map_or(self.active_program, super::ProgramId::from_raw))
+                    });
+                return Some((slots, root));
             }
             remaining -= 1;
             cell = self.heap.environment(*parent)?;

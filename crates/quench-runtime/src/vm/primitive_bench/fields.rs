@@ -86,6 +86,7 @@ fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
                 black_box(atom),
                 black_box(value),
                 black_box(site),
+                true,
             )
         }
     };

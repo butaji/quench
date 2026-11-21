@@ -57,10 +57,10 @@ impl NativeSupport {
                     let features = artifact["features"]
                         .as_array()
                         .ok_or("Cargo artifact has no feature list")?;
-                    if matches!(
-                        name,
-                        "cranelift_object" | "cranelift_module"
-                    ) || (name == "cranelift_native" && !support.allows_dynamic_source()) {
+                    // The object writer (`cranelift_object`, `cranelift_module`) is in every runtime build
+                    // since AOT code is unconditional; a static image's link drops it, which the symbol
+                    // audit checks (`audit`, `BACKEND_COMPILER_SYMBOLS`).
+                    if name == "cranelift_native" && !support.allows_dynamic_source() {
                         return Err(format!(
                             "native support includes compiler dependency {name}"
                         ));
@@ -84,12 +84,14 @@ impl NativeSupport {
                     {
                         return Err("native support includes an architecture code generator".into());
                     }
+                    // A dynamic-source image links the standard build's artifacts (default features:
+                    // `bundled-sources`, `jit`); a static image's support excludes both, and its link's
+                    // symbol audit checks that the compiler is dropped.
                     if name == host_crate || name == "quench_runtime" {
                         if !features.iter().any(|feature| feature == "native-execution")
-                            || features.iter().any(|feature| {
-                                matches!(feature.as_str(), Some("aot" | "bundled-sources"))
-                                    || (!support.allows_dynamic_source() && feature == "jit")
-                            })
+                            || (!support.allows_dynamic_source() && features.iter().any(|feature| {
+                                matches!(feature.as_str(), Some("aot" | "bundled-sources" | "jit"))
+                            }))
                         {
                             return Err(format!("{name} is not valid {support:?} native support"));
                         }
@@ -159,6 +161,23 @@ impl NativeSupport {
             native_paths,
             optimization: optimization.ok_or("Cargo report has no support optimization level")?, executable_link_args: &[],
         })
+    }
+
+    /// Fails unless the runtime library is the build this compiler is (`AHEAD_BUILD_ID_MARK`):
+    /// an image this compiler lowers runs only on the runtime it was lowered for, so a library
+    /// rebuilt from a changed tree would link an executable that refuses its own images.
+    pub fn check_build(&self) -> Result<(), String> {
+        let bytes = std::fs::read(&self.runtime).map_err(|error| format!("{}: {error}", self.runtime.display()))?;
+        let prefix = crate::vm::AHEAD_BUILD_ID_PREFIX;
+        let id = bytes.windows(32).find(|window| window.starts_with(prefix) && window[16..].iter().all(u8::is_ascii_hexdigit))
+            .map(|window| String::from_utf8_lossy(&window[16..]).into_owned())
+            .ok_or_else(|| format!("{} names no quench build", self.runtime.display()))?;
+        let own = format!("{:016x}", crate::vm::AHEAD_BUILD_ID);
+        if id != own {
+            return Err(format!("the runtime library {} is build {id}, but this compiler is build {own}: the tree changed \
+                after this compiler was built; rebuild it (cargo build -p quench) and compile again", self.runtime.display()));
+        }
+        Ok(())
     }
 
     /// Link images as the host binary links: no dynamic relocations dirtying pages at startup,
@@ -525,7 +544,7 @@ mod tests {
             "quench_runtime::compile::liveness::register_roots",
             "quench_runtime::compile::regexp::validate_pattern_text",
             "quench_runtime::compile::program_profile::ProgramFootprint",
-            "quench_node::specialize_host_script",
+            "quench::specialize_host_script",
             "<core::ptr::drop_glue<alloc::vec::Vec<u64>>>",
             "_RAND_bytes",
         ] {
@@ -536,30 +555,26 @@ mod tests {
     #[test]
     fn support_reports_reject_dynamic_backends_and_the_full_sdk_bundle() {
         for (name, features) in [
-            ("quench_node", vec!["native-execution", "bundled-sources"]),
+            ("quench", vec!["native-execution", "bundled-sources"]),
             ("quench_runtime", vec!["native-execution", "jit"]),
-            ("quench_node", vec!["native-execution", "aot"]),
+            ("quench", vec!["native-execution", "aot"]),
             ("cranelift_codegen", vec!["std", "arm64"]),
             ("cranelift_native", vec![]),
         ] {
             let report = serde_json::json!({"reason": "compiler-artifact", "target": {"name": name}, "features": features}).to_string();
-            let error = NativeSupport::from_cargo_report(&report, "quench_node", NativeImageSupport::Static).err().expect("unsupported SDK accepted");
+            let error = NativeSupport::from_cargo_report(&report, "quench", NativeImageSupport::Static).err().expect("unsupported SDK accepted");
             assert!(error.contains("native support") || error.contains("compiler dependency") || error.contains("architecture code generator"), "{error}");
         }
     }
 
     #[test]
-    fn dynamic_source_support_requires_jit_and_excludes_build_time_compilers() {
+    fn dynamic_source_support_requires_jit() {
         for (name, features, reason) in [
-            ("quench_node", vec!["native-execution"], "no JIT"),
+            ("quench", vec!["native-execution"], "no JIT"),
             ("quench_runtime", vec!["native-execution"], "no JIT"),
-            ("quench_node", vec!["native-execution", "jit", "bundled-sources"], "native support"),
-            ("quench_runtime", vec!["native-execution", "jit", "aot"], "native support"),
-            ("cranelift_object", vec![], "compiler dependency"),
-            ("cranelift_module", vec![], "compiler dependency"),
         ] {
             let report = serde_json::json!({"reason":"compiler-artifact","target":{"name":name},"features":features}).to_string();
-            let error = NativeSupport::from_cargo_report(&report, "quench_node", NativeImageSupport::DynamicSource)
+            let error = NativeSupport::from_cargo_report(&report, "quench", NativeImageSupport::DynamicSource)
                 .err().expect("incompatible hybrid SDK accepted");
             assert!(error.contains(reason), "{name}: {error}");
         }
@@ -567,8 +582,8 @@ mod tests {
 
     #[test]
     fn unsuccessful_and_incomplete_support_build_reports_are_rejected() {
-        assert!(NativeSupport::from_cargo_report("{\"reason\":\"build-finished\",\"success\":false}", "quench_node", NativeImageSupport::Static).err().unwrap().contains("successfully"));
-        assert!(NativeSupport::from_cargo_report("", "quench_node", NativeImageSupport::Static).err().unwrap().contains("incomplete"));
+        assert!(NativeSupport::from_cargo_report("{\"reason\":\"build-finished\",\"success\":false}", "quench", NativeImageSupport::Static).err().unwrap().contains("successfully"));
+        assert!(NativeSupport::from_cargo_report("", "quench", NativeImageSupport::Static).err().unwrap().contains("incomplete"));
     }
 
     #[test]

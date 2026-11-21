@@ -12,19 +12,19 @@ doctest = false
 name = "quench_runtime"
 
 [[bin]]
-name = "quench"
-path = "src/bin/quench.rs"
+name = "quench-runtime"
+path = "src/bin/quench-runtime.rs"
 
 [[bench]]
 name = "number_primitives"
 required-features = ["bench-primitives"]
 
 [features]
-default = ["jit"]
-jit = ["dep:cranelift-native", "cranelift-codegen/host-arch"]
+default = ["jit", "native-execution"]
+jit = []
 native-execution = []
-# Build-time native object publication; not needed by the execution-only host.
-aot = ["native-execution", "dep:cranelift-native", "cranelift-codegen/host-arch", "dep:cranelift-object", "dep:cranelift-module", "dep:object", "dep:serde_json"]
+# Compatibility alias: AOT code is always compiled, so this feature is a no-op.
+aot = []
 profile-aggregate = []
 # Successful field helper counts without changing lane admission or array proofs.
 profile-field-primitives = []
@@ -49,8 +49,8 @@ tier-stress = []
 
 [dependencies]
 quench-alloc = { path = "../quench-alloc" }
-object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"], optional = true }
-serde_json = { version = "1", optional = true }
+object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
+serde_json = "1"
 quench-macros = { path = "../quench-macros" }
 quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -70,7 +70,7 @@ memchr = "2"
 ryu = "1"
 itoa = "1"
 # The shape transition index keeps only child ids (`vm::shape_transitions`).
-# Default features and `raw-entry` match what quench-node enables (feature pins below).
+# Default features and `raw-entry` match what quench enables (feature pins below).
 hashbrown = { version = "0.16", features = ["raw-entry"] }
 rayon = "1.12.0"
 smallvec = "1.15.2"
@@ -83,19 +83,21 @@ quench-temporal = { path = "../quench-temporal" }
 wasmparser = "0.247"
 # The compiled execution mode: Cranelift is the code generator the generating
 # extension emits into; libc maps the resulting code executable.
-cranelift-codegen = { version = "=0.137.1", default-features = false, features = ["std"] }
+cranelift-codegen = { version = "=0.137.1", default-features = false, features = ["std", "host-arch", "x86", "arm64"] }
 cranelift-frontend = { version = "=0.137.1", default-features = false, features = ["std"] }
-cranelift-native = { version = "=0.137.1", default-features = false, optional = true }
-cranelift-object = { version = "=0.137.1", default-features = false, optional = true }
-cranelift-module = { version = "=0.137.1", default-features = false, features = ["std"], optional = true }
+cranelift-native = { version = "=0.137.1", default-features = false }
+cranelift-object = { version = "=0.137.1", default-features = false }
+cranelift-module = { version = "=0.137.1", default-features = false, features = ["std"] }
+# Target triples of AOT images: the object format (ELF, Mach-O, COFF) follows the triple.
+target-lexicon = "0.13.5"
 libc = "0.2"
 # fdlibm atan is part of the shared binary64 Math rounding policy.
 libm = "=0.2.16"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
-# Feature pins, not used here. quench-node's dependencies (oxc_resolver, openssl, tracing)
+# Feature pins, not used here. quench's dependencies (oxc_resolver, openssl, tracing)
 # enable more features on crates this one shares. Cargo resolves features per selected
-# package, so without these `-p quench-runtime` and `-p quench-node` built oxc, cranelift and
+# package, so without these `-p quench-runtime` and `-p quench` built oxc, cranelift and
 # this crate twice under different hashes. `cargo tree -e features` on both selections must
 # list the same features for this crate's dependencies.
 serde = { version = "1", features = ["derive"] }
@@ -105,10 +107,10 @@ foldhash = "0.2"
 utf8_iter = "1"
 
 [build-dependencies]
-# Feature pin, not used by build.rs: quench-node's proc-macros enable syn "visit-mut", and
+# Feature pin, not used by build.rs: quench's proc-macros enable syn "visit-mut", and
 # syn is shared with oxc's proc-macros (see the feature pins above).
 syn = { version = "2", features = ["full", "visit-mut"] }
-# Feature pin, not used by build.rs: quench-node's syntax-check proc-macro builds oxc for the
+# Feature pin, not used by build.rs: quench's syntax-check proc-macro builds oxc for the
 # host with phf "macros", which oxc's own proc-macros share.
 phf = { version = "0.14", features = ["macros"] }
 
@@ -120,7 +122,7 @@ libc = "0.2"
 
 [[example]]
 name = "native_publication"
-required-features = ["aot", "jit"]
+required-features = ["jit"]
 
 [lints]
 workspace = true

@@ -93,7 +93,7 @@ pub(crate) fn write_entries<S: Stage>(stage: &mut S, entries: S::Word, environme
 /// first `bound` past the first `in_registers` as its parameter's local, and every one after the
 /// `locals`, as the value a frame keeps for legacy reflection. A parameter below `in_registers`
 /// lives in its register (`EnvironmentPassed::in_registers`), and its local stays `undefined`, as
-/// a frame clears a promoted parameter's slot (`Frame::initialize_promoted_registers`). Reads the
+/// a frame clears a promoted parameter's slot (`Frame::place_parameters`). Reads the
 /// `count` values; writes `count + min(count, bound) - min(count, in_registers)` words. (The
 /// interpreter's copy of the passed values, on `Concrete`.)
 #[inline(always)]

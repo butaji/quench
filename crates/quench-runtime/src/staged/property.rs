@@ -48,17 +48,6 @@ pub(crate) struct Arm<'a> {
     pub(crate) holds: Option<u32>,
 }
 
-/// What holds an inherited read's receiver to the prototype its constants fold against.
-#[derive(Clone, Copy)]
-pub(crate) enum PrototypeProof {
-    /// The holder is subscribed (`PropertyFrame::hold_prototype`): a change of its values retires the
-    /// constant, and the read checks the link only through `IcOp::PrototypeConstants`.
-    Watched { holder: u32 },
-    /// The receiver's prototype link is `expected_link`, checked on each read (`entry::held_constant`)
-    /// for a Stable fact a code's live check holds rather than a holder subscription.
-    Linked { expected_link: u32 },
-}
-
 /// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the
 /// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
 /// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
@@ -72,6 +61,17 @@ pub(crate) enum EntryKind {
     Holder,
     /// The site's inherited entry, walked past the immediate prototype.
     Inherited,
+}
+
+/// What holds an inherited read's receiver to the prototype its constants fold against.
+#[derive(Clone, Copy)]
+pub(crate) enum PrototypeProof {
+    /// The holder is subscribed (`PropertyFrame::hold_prototype`): a change of its values retires the
+    /// constant, and the read checks the link only through `IcOp::PrototypeConstants`.
+    Watched { holder: u32 },
+    /// The receiver's prototype link is `expected_link`, checked on each read (`entry::held_constant`)
+    /// for a Stable fact a code's live check holds rather than a holder subscription.
+    Linked { expected_link: u32 },
 }
 
 /// How a `GetField` site reads, as the proof its tier holds of the site.
@@ -492,7 +492,10 @@ pub(super) fn base_word<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 }
 
 /// The value `plan` reads from `owner`'s `object`, or a leave at `miss`; `readable` where the
-/// plan admits a function's record as the receiver.
+/// plan admits a function's record as the receiver. Inlined, so a tier whose plan is static data
+/// (a stencil row's) folds the match to its one arm; the recursive plans re-enter through
+/// `read_nested`, so this function never calls itself and stays inlinable.
+#[inline(always)]
 pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool),
     object: S::Word, plan: FieldPlan<'_>, miss: S::Miss) -> Option<S::Word> {
     match plan {
@@ -512,23 +515,11 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
             let shape = ic::shape_word(stage, &at);
             arms(stage, list, Reached { shape: Some(shape), ..at }, records, miss)
         }
-        FieldPlan::Inherited { shape, constants, proof } => {
-            let at = frame.receiver_record(stage, owner, object, readable, miss)?;
-            match proof {
-                PrototypeProof::Watched { holder } => {
-                    guard_receiver_shape(stage, frame, (owner, !readable), &at, shape, miss)?;
-                    frame.hold_prototype(stage, holder, miss)?;
-                    ic::run(stage, &[IcOp::PrototypeConstants(constants)], Reached::bare(at.record), None, miss)
-                }
-                PrototypeProof::Linked { expected_link } => {
-                    let &[(_, value)] = constants else { return None };
-                    super::entry::held_constant(stage, at.record, (shape, expected_link), value, miss)
-                }
-            }
-        }
+        FieldPlan::Inherited { shape, constants, proof } =>
+            inherited(stage, frame, (owner, readable), object, (shape, constants, proof), miss),
         FieldPlan::Readable(inner) => read_with(stage, frame, (owner, true), object, *inner, miss),
         FieldPlan::Probed { fast, atom, site } => frame.probed(stage, owner, object, (atom, site), miss,
-            #[inline(always)] |stage, frame, miss| read_with(stage, frame, (owner, readable), object, *fast, miss)),
+            #[inline(always)] |stage, frame, miss| read_nested(stage, frame, (owner, readable), object, *fast, miss)),
         FieldPlan::Known => frame.known_value(stage, owner),
         FieldPlan::Chain(links) => chain(stage, frame, (owner, readable), object, links, miss),
         FieldPlan::Host { atom, site } => frame.field_probe(stage, owner, object, atom, site, miss),
@@ -544,8 +535,35 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     }
 }
 
+/// A prototype-held read (`FieldPlan::Inherited`) of `owner`'s `object`: the receiver's exact shape and the
+/// holder its proof names, then the constant the holder held.
+#[inline(always)]
+fn inherited<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool), object: S::Word,
+    (shape, constants, proof): (u32, &[(u32, u64)], PrototypeProof), miss: S::Miss) -> Option<S::Word> {
+    let at = frame.receiver_record(stage, owner, object, readable, miss)?;
+    match proof {
+        PrototypeProof::Watched { holder } => {
+            guard_receiver_shape(stage, frame, (owner, !readable), &at, shape, miss)?;
+            frame.hold_prototype(stage, holder, miss)?;
+            ic::run(stage, &[IcOp::PrototypeConstants(constants)], Reached::bare(at.record), None, miss)
+        }
+        PrototypeProof::Linked { expected_link } => {
+            let &[(_, value)] = constants else { return None };
+            super::entry::held_constant(stage, at.record, (shape, expected_link), value, miss)
+        }
+    }
+}
+
+/// `read_with` of a plan nested in another (`Readable`, `Probed`, a `Chain` link): the one
+/// out-of-line entry of the recursion.
+fn read_nested<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owner: (Owner, bool),
+    object: S::Word, plan: FieldPlan<'_>, miss: S::Miss) -> Option<S::Word> {
+    read_with(stage, frame, owner, object, plan, miss)
+}
+
 /// Continues where `owner`'s object has exact shape `shape`: a proof the frame holds emits
 /// nothing, else the guard is made and recorded. `direct` where the receiver is a direct object.
+#[inline(always)]
 pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
     at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
     if frame.proven_shape(stage, owner) == Some(shape) { return Some(()); }
@@ -572,12 +590,13 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
     match rest {
         [IcOp::LoadSlot { slot, form, storage_len, rep }] =>
             kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
-        _ => ic::run(stage, rest, at, records, miss),
+        _ => ic::run_unrolled(stage, rest, at, records, miss),
     }
 }
 
 /// The first of `plans` whose shape set holds the record's shape reads it; the last is
 /// the guard of the whole.
+#[inline(always)]
 fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
     let (arm, rest) = plans.split_first()?;
@@ -593,12 +612,13 @@ fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Word, S::Cond
 
 /// A nested lookup: each link reads from the previous link's value, the first from `owner`'s
 /// object and the rest from objects no register names.
+#[inline(always)]
 fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Owner, bool), base: S::Word,
     links: &[FieldPlan<'_>], miss: S::Miss) -> Option<S::Word> {
     let mut object = base;
     let mut from = first;
     for link in links {
-        object = read_with(stage, frame, from, object, *link, miss)?;
+        object = read_nested(stage, frame, from, object, *link, miss)?;
         from = (Owner::Temporary, true);
     }
     Some(object)
@@ -644,24 +664,28 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         let records = frame.object_records(stage);
         return run_owned(stage, frame, (owner, true), ops, (at, records), miss);
     }
+    // A prototype-held read, the other plan a row's holes name, inline too: only nested plans recurse.
+    if let FieldPlan::Inherited { shape, constants, proof } = plan {
+        return inherited(stage, frame, (owner, false), object, (shape, constants, proof), miss);
+    }
     read_with(stage, frame, (owner, false), object, plan, miss)
 }
 
 /// The property operations of `step`: the word each produces, or `Unresolved` where the
 /// frame holds no plan or callout for it.
 #[inline(always)]
-pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn property_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let word = match operation {
         // A read its plan leaves is the VM's named read, where the frame takes it (`CallOut::LoadField`).
-        Operation::GetField { base, lookup, destination } => match get_field(stage, frame, base, lookup, miss) {
+        Operation::GetField { base, lookup, destination } => if const { super::op_kind::admits(KIND, &[super::op_kind::GET_FIELD]) } { match get_field(stage, frame, base, lookup, miss) {
             Some(word) => Some(word),
             None => return super::callout::loading(stage, frame, super::CallOut::LoadField { lookup }, destination),
-        },
+        } } else { unreachable!() },
         // A store its plan leaves is the VM's named store, where the frame takes it (`CallOut::StoreField`). A store
         // to `this` has no base register: the VM takes `this` where the frame holds it (`Frame::this_value`).
-        Operation::SetField { value, base, atom, site, strict } => match super::property_write::set_field(stage, frame, (value, base), (atom, site), miss) {
+        Operation::SetField { value, base, atom, site, strict } => if const { super::op_kind::admits(KIND, &[super::op_kind::SET_FIELD]) } { match super::property_write::set_field(stage, frame, (value, base), (atom, site), miss) {
             Some(word) => Some(word),
             None => match base {
                 Some(object) => super::callout::storing(stage, frame,
@@ -669,13 +693,20 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
                 None => frame.this_value(stage).and_then(|_| super::callout::storing(stage, frame,
                     super::CallOut::StoreField { object: None, value, atom, site, strict })),
             },
-        },
+        } } else { unreachable!() },
         Operation::StoreField { base, value, fact, atom, site } =>
-            super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss),
-        Operation::FieldGetHost { object, atom, site } => frame.field_probe(stage, Owner::Temporary, object, atom, site, miss),
-        Operation::FieldAdd { object, atom, site, value } => frame.field_add(stage, object, atom, site, value, miss).map(|()| value),
-        Operation::IndexGetHost { base, key } => frame.index_get_host(stage, base, key, miss),
-        _ => None,
+            if const { super::op_kind::admits(KIND, &[super::op_kind::STORE_FIELD]) } { super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss) } else { unreachable!() },
+        Operation::FieldGetHost { object, atom, site } => if const { super::op_kind::admits(KIND, &[super::op_kind::FIELD_GET_HOST]) } { frame.field_probe(stage, Owner::Temporary, object, atom, site, miss) } else { unreachable!() },
+        Operation::FieldAdd { object, atom, site, value } => if const { super::op_kind::admits(KIND, &[super::op_kind::FIELD_ADD]) } { frame.field_add(stage, object, atom, site, value, miss).map(|()| value) } else { unreachable!() },
+        Operation::IndexGetHost { base, key } => if const { super::op_kind::admits(KIND, &[super::op_kind::INDEX_GET_HOST]) } { frame.index_get_host(stage, base, key, miss) } else { unreachable!() },
+        _ => if const { super::op_kind::outside(KIND, &[super::op_kind::GET_FIELD, super::op_kind::SET_FIELD, super::op_kind::STORE_FIELD, super::op_kind::FIELD_GET_HOST, super::op_kind::FIELD_ADD, super::op_kind::INDEX_GET_HOST]) } { None } else { unreachable!() },
     };
     word.map_or(Step::Unresolved, Step::Value)
+}
+
+/// `property_step_of` for any operation.
+#[inline(always)]
+pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    property_step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }

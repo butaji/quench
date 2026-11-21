@@ -7,18 +7,24 @@
 //! sorted static table (`OUT_DIR/rustc_stencils.rs`).
 //!
 //! Extension point: a new row family adds its `*_row!` macro to `rows.rs` and a generator line
-//! to `instances`; a new source file is found by its `#[path]` (`sources::watched`). Sharding, per-shard checks and
+//! to `instances`; a new source file is found by rustc's dep-info of `rows.rs` (`stencil_sources`). Sharding, per-shard checks and
 //! the merge apply to both without further edits. A row that contains a `call` or a `ret` is a
 //! build error: rows chain by `become` only, and only the `leave_*` rows return. Other targets
 //! get an empty table.
 #[path = "build/bytes.rs"]
 mod bytes;
+#[path = "build/cache.rs"]
+mod cache;
 #[path = "build/call_rows.rs"]
 mod call_rows;
 #[path = "build/checks.rs"]
 mod checks;
+// The build reads the relocation classes; the stub lengths are the library's (`stub`).
+#[allow(dead_code)]
 #[path = "src/class.rs"]
 mod class;
+#[path = "build/edits.rs"]
+mod edits;
 #[path = "build/elf.rs"]
 mod elf;
 #[path = "build/layout.rs"]
@@ -39,6 +45,10 @@ mod row_names;
 use library::TYPED_KINDS;
 #[path = "build/macho.rs"]
 mod macho;
+#[path = "build/reach.rs"]
+mod reach;
+#[path = "build/snapshot.rs"]
+mod snapshot;
 #[path = "build/sources.rs"]
 mod sources;
 #[path = "stencils/shards.rs"]
@@ -78,9 +88,44 @@ const INSTANCES_VAR: &str = "QUENCH_STENCIL_INSTANCES";
 /// Environment variable of each rustc process naming the file of `call_rows`' invocations (`build/call_rows.rs`),
 /// which `stencils/call_rows.rs` includes; only the fixed-rows shard compiles that module.
 const CALL_ROWS_VAR: &str = "QUENCH_STENCIL_CALL_ROWS";
-/// The shard that also defines the fixed rows of the target's `stencils/entry*.rs` (cfg
-/// `fixed_rows`), so no name is defined twice.
+/// The shard that defines the fixed rows of the target's `stencils/entry*.rs` (cfg `fixed_rows`) and no generated
+/// row, so no name is defined twice.
 const FIXED_ROWS_SHARD: usize = 0;
+
+/// The row families a shard compiles one of (`--cfg stencil_family`), so a shard's key holds only the sources its
+/// family's rows read: the Wasm rows need the staged Wasm rules and the machine layer but none of the JS staged
+/// dispatch, so an edit to a JS staged file leaves the Wasm shards cached and one to a Wasm rule the JS shards.
+/// The number, heap and supernode rows stay one family: every one of them runs the staged `step` over the whole
+/// `Operation`, whose variants name every JS staged module, so their source sets are the same.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Family {
+    /// The fixed rows (`FIXED_ROWS_SHARD`): every module, no family cfg.
+    Fixed,
+    Js,
+    Wasm,
+}
+
+impl Family {
+    const ALL: [Family; 3] = [Family::Fixed, Family::Js, Family::Wasm];
+
+    /// The cfgs that select the family's modules in `rows.rs` and `stencils/staged.rs`.
+    fn args(self) -> Vec<String> {
+        let cfg = match self {
+            Family::Fixed => "fixed_rows",
+            Family::Js => "stencil_family=\"js\"",
+            Family::Wasm => "stencil_family=\"wasm\"",
+        };
+        vec!["--cfg".to_string(), cfg.to_string()]
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Family::Fixed => "fixed",
+            Family::Js => "js",
+            Family::Wasm => "wasm",
+        }
+    }
+}
 /// Environment variable of the library (`stencils/supernodes.rs`) naming the generated list: `build/supernodes.rs`
 /// writes `FAMILIES` and `SUPERNODES` from `supernodes.txt` to `OUT_DIR/supernodes.rs`.
 const SUPERNODES_VAR: &str = "QUENCH_SUPERNODES";
@@ -91,6 +136,8 @@ const EXIT_PREFIX: usize = "EXIT".len();
 const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("V3", Some("x86-64-v3"))];
 /// The flags every stencil object is built with beyond the target (`stencil-rustc-flags.txt`, next to `Cargo.toml`).
 const RUSTC_FLAGS_FILE: &str = "stencil-rustc-flags.txt";
+/// The files beyond the stencil sources (`stencil_sources`) whose change reruns the build script, relative to the crate.
+const EXTRA_WATCHED: [&str; 3] = ["supernodes.txt", RUSTC_FLAGS_FILE, "../quench-runtime/src/bytecode.rs"];
 
 /// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
 fn rustc_flags() -> Vec<String> {
@@ -113,13 +160,11 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
 
 fn main() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for source in sources::watched(manifest) {
-        println!("cargo::rerun-if-changed={}", source.display());
-    }
-    println!("cargo::rerun-if-changed=supernodes.txt");
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
-    println!("cargo::rerun-if-changed={RUSTC_FLAGS_FILE}");
-    println!("cargo::rerun-if-changed=../quench-runtime/src/bytecode.rs");
+    println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\"))");
+    for extra in EXTRA_WATCHED {
+        println!("cargo::rerun-if-changed={extra}");
+    }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let listed = supernodes::load(manifest);
     let generated = out.join("supernodes.rs");
@@ -127,17 +172,57 @@ fn main() {
     println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
+        watch(&sources::watched(manifest));
         fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
     let instances = instances(&listed, arch);
-    let parts = shards::split_weighted(&instances, |row| if row.starts_with("heap_row!") { shards::HEAP_ROW_WEIGHT } else { 1 });
-    for (shard, part) in parts.iter().enumerate() {
-        fs::write(instance_file(&out, shard), part.concat()).unwrap();
+    // The fixed rows' shard first, then each family's rows split on their own, so no shard mixes two families.
+    let mut parts: Vec<(Family, &[(String, usize, Family)])> = vec![(Family::Fixed, &[][..])];
+    for family in [Family::Js, Family::Wasm] {
+        let start = instances.iter().position(|row| row.2 == family);
+        let Some(start) = start else { continue };
+        let end = instances.iter().rposition(|row| row.2 == family).unwrap() + 1;
+        assert!(instances[start..end].iter().all(|row| row.2 == family), "the {family:?} rows are contiguous");
+        parts.extend(shards::split(&instances[start..end], |(_, weight, _)| *weight).into_iter().map(|part| (family, part)));
+    }
+    for (shard, (_, part)) in parts.iter().enumerate() {
+        fs::write(instance_file(&out, shard), part.iter().map(|(row, _, _)| row.as_str()).collect::<String>()).unwrap();
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
-    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
-    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu))).collect();
+    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 && builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] };
+    // Each family's sources as rustc reads them, from the first instance file of the family; the fixed shard's (every
+    // module) are the rerun triggers. `EXTRA_WATCHED` reruns the script but is not in a key: the supernode list and
+    // the opcode table reach a shard only through its instance file, and the flags file through its arguments.
+    let first = |family: Family| parts.iter().position(|(of, _)| *of == family);
+    // Beside each family's key, the key it had under the sources of the last finished build (`snapshot`) and the
+    // functions an edit since then changed (`edits`): a shard object built from those sources whose rows reach none
+    // of them is still the object these sources make (`compile`).
+    let snapshot = snapshot::Snapshot::load(&out);
+    let mut keys = Vec::new();
+    let mut all_watched = std::collections::BTreeSet::new();
+    for family in Family::ALL {
+        let Some(shard) = first(family) else { continue };
+        let watched = stencil_sources(&out, family, shard).unwrap_or_else(|| sources::watched(manifest));
+        if family == Family::Fixed {
+            watch(&watched);
+        }
+        let now = cache::sources_key(&rustc(), manifest, &watched, &[]);
+        let since = snapshot.covers(&watched).then(|| {
+            let was = cache::sources_key_of(&rustc(), manifest, &watched, &[], |file| snapshot.get(file).expect("a covered file").to_vec());
+            (was, snapshot.changed_functions(&watched).map(std::sync::Arc::new))
+        });
+        keys.push((family, now, since));
+        all_watched.extend(watched);
+    }
+    let key_of = |family: Family| keys.iter().find(|(of, ..)| *of == family).map(|(_, key, since)| (*key, since.clone())).expect("a family key");
+    let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| parts.iter().enumerate().map(|(shard, (family, _))| shard_job(&out, shard, *family, *cpu, key_of(*family))).collect::<Vec<_>>()).collect();
+    for family in Family::ALL {
+        if jobs.iter().any(|job| job.family == family && !job.cached() && !job.unchanged_by_edit()) {
+            type_check(&out, family, first(family).expect("a shard of the family"));
+        }
+    }
+    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&jobs, (arch, read), *cpu))).collect();
     // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
     if env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() != "apple" {
         for (name, (rows, _)) in &built {
@@ -152,22 +237,35 @@ fn main() {
         tables += &library_source(name, *counts, rows);
     }
     fs::write(&table, tables).unwrap();
+    snapshot::Snapshot::save(&out, &all_watched);
 }
 
-/// One macro invocation per generated row, the unit `shards::split` distributes.
+/// One macro invocation per generated row, the unit `shards::split` distributes, with its
+/// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
 /// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
 /// and its base tier falls back as a `--b-jit` without one does.
-fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<String> {
-    let base: Vec<String> = if arch == Arch::X86_64 {
-        let numbers = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4));
-        let heaps = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4));
-        let supers = supernodes::instances(listed).into_iter().map(|nodes| format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)));
+fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize, Family)> {
+    let base: Vec<(String, usize)> = if arch == Arch::X86_64 {
+        let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
+        let heap_weight = |kind: u8| match kind {
+            library::INDEX_ROW | library::STORE_ROW => shards::INDEX_WEIGHT,
+            library::TYPED_INDEX_ROW..=library::TYPED_INDEX_LAST
+            | library::TYPED_STORE_ROW..=library::TYPED_STORE_LAST => shards::ELEMENT_WEIGHT,
+            _ => shards::HEAP_WEIGHT,
+        };
+        let heaps = library::heap_library().into_iter().map(|c| (format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4), heap_weight(c.0)));
+        // A supernode inlines each of its rows, so it weighs what they weigh together.
+        let node_weight = |node: &supernode_rules::Node| match node {
+            supernode_rules::Node::Number(_) => shards::NUMBER_WEIGHT,
+            supernode_rules::Node::Heap(code) => heap_weight(code.0),
+        };
+        let supers = supernodes::instances(listed).into_iter().map(|nodes| (format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)), nodes.iter().map(node_weight).sum()));
         numbers.chain(heaps).chain(supers).collect()
     } else {
         Vec::new()
     };
-    let wasm = wasm_library::wasm_library().into_iter().map(|c| format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3));
-    base.into_iter().chain(wasm).collect()
+    let wasm = wasm_library::wasm_library().into_iter().map(|c| (format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3), shards::NUMBER_WEIGHT, Family::Wasm));
+    base.into_iter().map(|(row, weight)| (row, weight, Family::Js)).chain(wasm).collect()
 }
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {
@@ -188,48 +286,312 @@ struct Counts {
 
 type Rows = Vec<(String, String)>;
 
-/// Compiles every shard for `cpu` (at most `shards::workers` rustc processes at once), reads each
-/// object's rows, and merges them into the sorted library with its counts.
-fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
+/// The rustc that builds the stencil objects: cargo's, else the one on the path.
+fn rustc() -> PathBuf {
+    env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from)
+}
+
+/// One shard compile for one cpu: its rustc command, its object, and the key of everything the object is made from
+/// (`cache`), kept beside the object so a rerun whose inputs are unchanged skips rustc.
+struct Shard {
+    cpu: Option<&'static str>,
+    family: Family,
+    args: Vec<std::ffi::OsString>,
+    envs: [(&'static str, PathBuf); 2],
+    object: PathBuf,
+    key_file: PathBuf,
+    key: String,
+    /// The key this shard had under the last finished build's sources, and the functions edited since then (`None`:
+    /// a structural edit), where that build's sources are known.
+    since: Option<(String, Option<std::sync::Arc<std::collections::BTreeSet<String>>>)>,
+}
+
+impl Shard {
+    /// Whether the object on disk was built from exactly these inputs.
+    fn cached(&self) -> bool {
+        self.object.is_file() && fs::read_to_string(&self.key_file).is_ok_and(|key| key == self.key)
+    }
+
+    /// The identifiers its rows reach (`reach`), one a line, kept beside the object.
+    fn reach_file(&self) -> PathBuf {
+        self.object.with_extension("reach")
+    }
+
+    /// Whether the object on disk is still the one these inputs make although its key is not: it was built from
+    /// the last finished build's sources with these arguments and instances, every edit since then is inside
+    /// function bodies (`edits`), and no row of the shard reaches an edited function (`reach`). A row is made of the
+    /// bodies it reaches and nothing else (it has no call), so its code is the same.
+    fn unchanged_by_edit(&self) -> bool {
+        let Some((was, Some(edited))) = &self.since else { return false };
+        if !self.object.is_file() || !fs::read_to_string(&self.key_file).is_ok_and(|key| key == *was) {
+            return false;
+        }
+        let Ok(reach) = fs::read_to_string(self.reach_file()) else { return false };
+        let reach: std::collections::HashSet<&str> = reach.lines().collect();
+        // A `module::function` name needs a reach that lists such pairs; an older reach is asked for the bare name.
+        let pairs = reach.contains(reach::PAIRS);
+        edited.iter().all(|name| {
+            let name = if pairs { name.as_str() } else { name.rsplit("::").next().unwrap_or(name) };
+            !reach.contains(name)
+        })
+    }
+
+    /// Writes the identifiers the shard's rows reach: its unoptimized LLVM IR (the shard's own arguments, no
+    /// optimization and no LLVM pass, so every function a row runs is a definition of its own), walked from the rows.
+    fn write_reach(&self) {
+        let ll = self.object.with_extension("ll");
+        let mut args = Vec::new();
+        let mut at = 0;
+        while at < self.args.len() {
+            let arg = self.args[at].to_string_lossy();
+            let value = self.args.get(at + 1).map(|v| v.to_string_lossy().into_owned()).unwrap_or_default();
+            if (arg == "-C" && (value.starts_with("opt-level=") || value.starts_with("passes="))) || arg == "-o" {
+                at += 2;
+            } else if arg.starts_with("--emit") {
+                at += 1;
+            } else {
+                args.push(self.args[at].clone());
+                at += 1;
+            }
+        }
+        let status = {
+            let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            Command::new(rustc()).args(&args).args(["--emit=llvm-ir", "-C", "opt-level=0", "-C", "no-prepopulate-passes", "-o"]).arg(&ll)
+                .envs(self.envs.iter().map(|(name, path)| (*name, path))).stderr(std::process::Stdio::null()).status().expect("run rustc")
+        };
+        let _ = fs::remove_file(self.reach_file());
+        if status.success() && let Ok(text) = fs::read_to_string(&ll) {
+            let ids = reach::reached(&text, bytes::is_row_name);
+            fs::write(self.reach_file(), ids.into_iter().map(|id| id + "\n").collect::<String>()).unwrap();
+        }
+        let _ = fs::remove_file(&ll);
+    }
+}
+
+/// The arguments of every shard compile beyond its instances and output: the target, the flags file's flags, and
+/// the stencil cfgs.
+fn base_args() -> Vec<String> {
+    let mut args = vec!["--target".to_string(), env::var("TARGET").expect("cargo sets TARGET")];
+    args.extend(rustc_flags());
+    args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--check-cfg", "cfg(stencil_family, values(\"js\", \"wasm\"))", "--cfg", "stencil_build"].map(String::from));
+    args
+}
+
+type Since = Option<(u128, Option<std::sync::Arc<std::collections::BTreeSet<String>>>)>;
+
+fn shard_job(out: &Path, shard: usize, family: Family, cpu: Option<&'static str>, (sources, since): (u128, Since)) -> Shard {
+    let name = cpu.unwrap_or("native");
+    let object = out.join(format!("rows_{name}_{shard}.o"));
+    let mut args = base_args();
+    if let Some(cpu) = cpu {
+        args.extend(["-C".to_string(), format!("target-cpu={cpu}")]);
+    }
+    debug_assert_eq!(shard == FIXED_ROWS_SHARD, family == Family::Fixed);
+    args.extend(family.args());
+    let instances = instance_file(out, shard);
+    let key = cache::shard_key(sources, &args, &[&instances, &call_rows_file(out)]);
+    let since = since.map(|(was, edited)| (cache::shard_key(was, &args, &[&instances, &call_rows_file(out)]), edited));
+    // Not `-C incremental`: rustc's incremental mode partitions and inlines differently (with one codegen unit
+    // or 16, and with `-Z inline-mir=yes`), so 116 of 303 sampled rows came out changed and 61 kept relocations
+    // that are not holes. A shard is reused whole, by its key, or compiled whole.
+    let mut args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
+    let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
+    Shard { cpu, family, args, envs, key_file: object.with_extension("key"), object, key, since }
+}
+
+/// Environment variable that builds the V3 library in a profile other than `release` (any non-empty value).
+const V3_VAR: &str = "QUENCH_STENCILS_V3";
+
+/// Whether this build compiles the x86-64-v3 library as well as the baseline. Only the `release` profile (the
+/// shipping artifact) does, or a build with `V3_VAR` set: the V3 shards are half of a stencil rebuild, and the
+/// dev-loop profile (`experiment`) keeps the baseline rows in both tables, which the runtime's choice of table
+/// (`runs_v3`) then runs on every CPU. The profile is the directory cargo builds in: `OUT_DIR` is
+/// `<target>/[<triple>/]<profile>/build/<package>/out`.
+fn builds_v3(out: &Path) -> bool {
+    println!("cargo::rerun-if-env-changed={V3_VAR}");
+    let profile = out.ancestors().nth(3).and_then(Path::file_name).and_then(|name| name.to_str()).unwrap_or_default();
+    profile == "release" || !env::var(V3_VAR).unwrap_or_default().is_empty()
+}
+
+/// Prints the rerun triggers: `watched` and `EXTRA_WATCHED`.
+fn watch(watched: &std::collections::BTreeSet<PathBuf>) {
+    for source in watched {
+        println!("cargo::rerun-if-changed={}", source.display());
+    }
+}
+
+/// The source files `family`'s shards are made of, as rustc reads them (`--emit=dep-info` under the family's cfgs
+/// and the instances of its shard `shard`, about a second: parse and expansion only), less the generated files under
+/// `out` (in each shard's key by content): the files whose contents are in the family's keys. The fixed family's
+/// set (every module) is the build script's rerun triggers. `None` where rustc cannot read the source, which falls
+/// back to the `#[path]` graph.
+fn stencil_sources(out: &Path, family: Family, shard: usize) -> Option<std::collections::BTreeSet<PathBuf>> {
+    let deps = out.join(format!("rows_{}.d", family.name()));
+    let mut command = Command::new(rustc());
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
+    command.args(["--emit=dep-info", "-o"]).arg(&deps).arg(SOURCE);
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).status().ok()?;
+    if !status.success() {
+        return None;
+    }
+    let text = fs::read_to_string(&deps).ok()?;
+    // The first rule names the output and then every input, separated by spaces (a space in a path is `\ `).
+    let (_, inputs) = text.lines().next()?.split_once(": ")?;
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let files = inputs.replace("\\ ", "\0").split_whitespace().map(|path| manifest.join(path.replace('\0', " "))).filter(|path| !path.starts_with(out)).collect();
+    Some(files)
+}
+
+/// Type-checks the stencil source under `family`'s cfgs once (`--emit=metadata`, the instances of its shard
+/// `shard`) before any shard's codegen, so a source error, or a module a family leaves out that its rows need,
+/// fails the build in about a minute rather than after the first shard objects.
+fn type_check(out: &Path, family: Family, shard: usize) {
+    let mut command = Command::new(rustc());
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
+    command.args(["--emit=metadata", "-o"]).arg(out.join(format!("rows_check_{}.rmeta", family.name())));
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).arg(SOURCE).status().expect("run rustc");
+    assert!(status.success(), "rustc failed to type-check {SOURCE} for the {family:?} rows");
+}
+
+/// Compiles every shard of `jobs` for `cpu` whose object is not cached (at most `shards::workers` rustc processes at
+/// once), reads each object's rows, and merges them into the sorted library with its counts.
+fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
+    let jobs: Vec<&Shard> = jobs.iter().filter(|job| job.cpu == cpu).collect();
     // `QUENCH_STENCIL_WORKERS` caps the rustc processes on a box whose memory, not its cores, bounds them.
+    // Unset, one worker per core that the box's available memory holds a shard's rustc for (`SHARD_MEMORY`).
     let parallelism = env::var("QUENCH_STENCIL_WORKERS").ok().and_then(|jobs| jobs.parse().ok())
-        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get));
+        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get).min(memory_workers()));
     let next = AtomicUsize::new(0);
     let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
-        let workers: Vec<_> = (0..shards::workers(count, parallelism))
+        let workers: Vec<_> = (0..shards::workers(jobs.len(), parallelism))
             .map(|_| {
                 scope.spawn(|| {
                     let mut done = Vec::new();
                     loop {
                         let shard = next.fetch_add(1, Ordering::Relaxed);
-                        if shard >= count {
-                            return done;
-                        }
-                        done.push(stencil_rows(arch, read(&fs::read(compile(out, shard, cpu)).unwrap())));
+                        let Some(job) = jobs.get(shard) else { return done };
+                        compile(job, shard);
+                        done.push(stencil_rows(arch, read(&fs::read(&job.object).unwrap())));
                     }
                 })
             })
             .collect();
         workers.into_iter().flat_map(|worker| worker.join().expect("a shard worker")).collect()
     });
+    // Every shard is checked before the build fails, so one run names every row that breaks a check.
+    let failed = FAILED_ROWS.lock().unwrap();
+    assert!(failed.is_empty(), "{} stencil rows fail their checks:\n{}", failed.len(), failed.join("\n"));
+    drop(failed);
     let counts = built.iter().fold(Counts::default(), |sum, (_, c)| Counts { framed: sum.framed + c.framed, unchained: sum.unchained + c.unchained });
     (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
 }
 
-fn compile(out: &Path, shard: usize, cpu: Option<&str>) -> PathBuf {
-    let object = out.join(format!("rows_{}_{shard}.o", cpu.unwrap_or("native")));
-    let mut command = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
-    command.args(["--target", &env::var("TARGET").expect("cargo sets TARGET")]).args(rustc_flags());
-    if let Some(cpu) = cpu {
-        command.arg("-C").arg(format!("target-cpu={cpu}"));
+/// Builds one shard's object unless its key says the object on disk is already this one, or the shared cache
+/// (`shared_cache`) holds an object built from the same key. The key is written only after rustc succeeds; the rows'
+/// checks run on every read, cached or not.
+///
+/// Every compile holds `MEMORY` for reading. A rustc the kernel killed (out of memory beside the other shards) is
+/// run once more holding it for writing, alone, once the shards in flight are done.
+fn compile(job: &Shard, shard: usize) {
+    let shared = shared_cache().map(|dir| dir.join(format!("{}.o", job.key.trim())));
+    if job.cached() {
+        if let Some(shared) = shared.as_ref().filter(|path| !path.is_file()) {
+            publish(&job.object, shared);
+        }
+        if !job.reach_file().is_file() {
+            job.write_reach();
+        }
+        return;
     }
-    command.args(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--cfg", "stencil_build"]);
-    if shard == FIXED_ROWS_SHARD {
-        command.args(["--cfg", "fixed_rows"]);
+    if job.unchanged_by_edit() {
+        fs::write(&job.key_file, &job.key).unwrap();
+        return;
     }
-    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).arg("-o").arg(&object).arg(SOURCE).status().expect("run rustc");
-    assert!(status.success(), "rustc failed on {SOURCE} (shard {shard})");
-    object
+    let _ = fs::remove_file(&job.key_file);
+    if let Some(shared) = shared.as_ref().filter(|path| path.is_file())
+        && fs::copy(shared, &job.object).is_ok()
+    {
+        if fs::copy(shared.with_extension("reach"), job.reach_file()).is_err() {
+            job.write_reach();
+        }
+        fs::write(&job.key_file, &job.key).unwrap();
+        return;
+    }
+    // The same rustc lists the shard's mono items (`-Z print-mono-items`, on stdout), which name every function a
+    // row can reach: the reach file comes from this compile rather than a second, unoptimized one (`write_reach`).
+    // The flag is outside `job.args`, so it is in no key.
+    let run = || Command::new(rustc()).args(&job.args).args(["-Z", "print-mono-items=yes"])
+        .envs(job.envs.iter().map(|(name, path)| (*name, path))).stderr(std::process::Stdio::inherit()).output().expect("run rustc");
+    let mut output = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
+    if killed(&output.status) {
+        println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again alone");
+        let _alone = MEMORY.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        output = run();
+    }
+    assert!(output.status.success(), "rustc failed on {SOURCE} (shard {shard}): {}", output.status);
+    let ids = reach::mono_items(&String::from_utf8_lossy(&output.stdout));
+    fs::write(job.reach_file(), ids.into_iter().map(|id| id + "\n").collect::<String>()).unwrap();
+    if let Some(shared) = &shared {
+        publish(&job.object, shared);
+        if job.reach_file().is_file() {
+            publish(&job.reach_file(), &shared.with_extension("reach"));
+        }
+    }
+    fs::write(&job.key_file, &job.key).unwrap();
+}
+
+/// Copies a built object into the shared cache: beside its final name, then renamed, so a reader in another build
+/// never sees half an object. A failure leaves the cache without it.
+fn publish(object: &Path, shared: &Path) {
+    let partial = shared.with_extension(format!("{}.part", std::process::id()));
+    if fs::copy(object, &partial).is_ok() {
+        let _ = fs::rename(&partial, shared);
+    }
+    let _ = fs::remove_file(&partial);
+}
+
+/// Held for reading by every shard compile, and for writing by the rerun of one the kernel killed.
+static MEMORY: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// Whether rustc ended by a signal (the kernel's out-of-memory kill is SIGKILL).
+fn killed(status: &std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal().is_some()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        false
+    }
+}
+
+/// Environment variable naming a directory of shard objects shared between builds (other target dirs, other
+/// machines on a shared mount), each under its shard key; empty turns the shared cache off.
+const SHARED_CACHE_VAR: &str = "QUENCH_STENCIL_CACHE";
+/// The shared cache where `SHARED_CACHE_VAR` is unset: the project's shared mount, where it exists.
+const SHARED_CACHE_DEFAULT: &str = "/mnt/project-files/research/stencil-cache";
+
+/// The shared object cache, if any. An object there was built from exactly the inputs its key names (the key covers
+/// the toolchain, the target, every argument and the content of every source), so any build with the same key may
+/// take it in place of running rustc.
+fn shared_cache() -> Option<&'static Path> {
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(shared_cache_dir).as_deref()
+}
+
+fn shared_cache_dir() -> Option<PathBuf> {
+    println!("cargo::rerun-if-env-changed={SHARED_CACHE_VAR}");
+    let dir = match env::var_os(SHARED_CACHE_VAR) {
+        Some(dir) if dir.is_empty() => return None,
+        Some(dir) => PathBuf::from(dir),
+        None if Path::new(SHARED_CACHE_DEFAULT).parent().is_some_and(Path::is_dir) => PathBuf::from(SHARED_CACHE_DEFAULT),
+        None => return None,
+    };
+    fs::create_dir_all(&dir).ok()?;
+    Some(dir)
 }
 
 /// The rows of one shard's object as (name, table entry), each checked, laid out hot part first where the
@@ -238,19 +600,46 @@ fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
     let mut counts = Counts::default();
     let rows = rows
         .iter()
-        .map(|row| {
-            check_no_return(arch, &row.name, &row.code);
-            check_call(arch, &row.name, &row.code);
-            let relocs = relocations(arch, row);
-            let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
-            let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
-            let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
-            counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
-            counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
-            (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
+        .filter_map(|row| {
+            // A row that fails a check is recorded (`FAILED_ROWS`) and the shard goes on with the next.
+            let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| checked_row(arch, row, &mut counts)));
+            checked.map_err(|failure| {
+                let message = failure.downcast_ref::<String>().cloned()
+                    .or_else(|| failure.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_else(|| format!("stencil {}: a check failed", row.name));
+                FAILED_ROWS.lock().unwrap().push(message);
+            }).ok()
         })
         .collect();
     (rows, counts)
+}
+
+/// The rows that failed a check, across every shard (`stencil_rows`).
+static FAILED_ROWS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// What one shard's rustc may reach, in bytes: the workers the box's memory holds (`memory_workers`).
+/// Measured: no shard of the per-row step dispatch (`staged::step_of`) peaked past 2.6 GB on the 15 GB, 4-core box
+/// (2026-11-20), so a worker per core fits; a shard killed for memory is compiled again alone (`compile`).
+const SHARD_MEMORY: u64 = 3 << 30;
+
+/// How many shard rustc processes the box's available memory holds, at least one.
+fn memory_workers() -> usize {
+    let available = fs::read_to_string("/proc/meminfo").ok().and_then(|info| info.lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()));
+    available.map_or(usize::MAX, |kib| usize::try_from((kib << 10) / SHARD_MEMORY).unwrap_or(usize::MAX).max(1))
+}
+
+/// One row as (name, table entry), checked; adds to `counts` what `checks` counted.
+fn checked_row(arch: Arch, row: &ObjectRow, counts: &mut Counts) -> (String, String) {
+    check_no_return(arch, &row.name, &row.code);
+    check_call(arch, &row.name, &row.code);
+    let relocs = relocations(arch, row);
+    let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
+    let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
+    let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
+    counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
+    counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
+    (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
 }
 
 /// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.

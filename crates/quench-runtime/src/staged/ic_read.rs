@@ -5,7 +5,7 @@
 use super::Stage;
 use super::ic::Reached;
 use super::region::Region;
-use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, formed_own_layout, has_extras, inline_storage, own_layout, proto_link, read_slot, read_slot_value};
+use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, own_layout, proto_link, read_slot_value};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::typed_ir::Representation;
 
@@ -120,7 +120,7 @@ pub(super) fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond
 /// `IcOp::GuardLayout`: continues where the reached record's layout id is `id`.
 #[inline(always)]
 pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<()> {
-    let loaded = at.word.unwrap_or_else(|| layout_id(stage, at.record));
+    let loaded = at.word.unwrap_or_else(#[inline(always)] || layout_id(stage, at.record));
     let same = { let id = stage.site(u64::from(id)); stage.eq_imm(loaded, id) };
     stage.guard(same, miss)
 }
@@ -180,14 +180,14 @@ pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond
     if let Some(layout) = at.formed.and_then(|bits| super::object::proved_own_layout(stage, at.record, bits, storage_len)) {
         return Some(layout);
     }
-    let inline = at.inline.unwrap_or_else(|| inline_storage(stage, at.record));
+    let inline = at.inline.unwrap_or_else(#[inline(always)] || inline_storage(stage, at.record));
     own_layout(stage, at.record, inline, form, storage_len, PackedAccess::Reload, miss)
 }
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
 #[inline(always)]
 pub(super) fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
-    at.shape.unwrap_or_else(|| super::object::exact_shape(stage, at.record))
+    at.shape.unwrap_or_else(#[inline(always)] || super::object::exact_shape(stage, at.record))
 }
 
 /// `IcOp::PrototypeConstants`: the value `values` pair with the link of `record`'s prototype.

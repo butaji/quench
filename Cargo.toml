@@ -10,7 +10,7 @@ members = [
     "crates/quench-js-check",
     "crates/quench-lint",
     "crates/quench-macros",
-    "crates/quench-node",
+    "crates/quench",
     "crates/quench-node-test",
     "crates/quench-runtime",
     "crates/quench-stack",
@@ -23,6 +23,7 @@ members = [
     "crates/quench-test262",
     "crates/quench-wasm",
     "crates/quench-wasm-test",
+    "crates/quench-symbols",
 ]
 
 # Function arity and type size are not review caps here; every other clippy lint stays at
@@ -70,7 +71,7 @@ codegen-units = 256
 # (JetStream 3, 2 interleaved rounds, 2026-11-07: thin -3.7% no-JIT, -1.0% JIT, RSS +1-2%),
 # and target-cpu=x86-64-v3 measured within noise (-0.4% no-JIT, +1.8% JIT), so the binary
 # stays baseline x86-64 (Linear TOD-1467). The symbol table stays: a trained link order
-# names symbols (crates/quench-node/build.rs), and tools/check-lane-tail-calls.sh reads
+# names symbols (crates/quench/build.rs), and tools/check-lane-tail-calls.sh reads
 # them. It is not loaded at run time.
 [profile.release]
 opt-level = 3
@@ -82,7 +83,7 @@ panic = "abort"
 # Fast optimized execution for iterative conformance work, without whole-
 # program LTO invalidating the incremental build graph after each runtime edit.
 # The release profile remains the performance authority. This is the edit/measure
-# loop: on the M4 host a quench-node edit rebuilds in ~2 s, while `release` stays
+# loop: on the M4 host a quench edit rebuilds in ~2 s, while `release` stays
 # non-incremental because it is the qualified artifact.
 [profile.iteration]
 inherits = "release"
@@ -95,9 +96,9 @@ codegen-units = 256
 incremental = true
 
 # THE dev-loop profile: always build and measure here (`cargo build --profile experiment -p
-# quench-node`, persistent target dir, never `cargo clean`). Release code generation without
+# quench`, persistent target dir, never `cargo clean`). Release code generation without
 # LTO and with 256 incremental codegen units, so a one-line edit in any crate rebuilds
-# quench-node in ~13 s (cgu 16 took ~137 s: each edit recompiled 1/16 of the crate in one
+# quench in ~13 s (cgu 16 took ~137 s: each edit recompiled 1/16 of the crate in one
 # LLVM unit). Judge deltas under ~10% by callgrind fixed-work instruction counts, since
 # layout alone swings scores; `release` stays the final shipping artifact.
 [profile.experiment]
@@ -115,6 +116,14 @@ strip = "none"
 [profile.test-cycle]
 inherits = "experiment"
 opt-level = 1
+lto = "off"
+
+# Correctness smoke and fold checks: `experiment` without crate-local ThinLTO. With ThinLTO an edit
+# anywhere in quench-runtime regenerated all 256 units of the `quench` crate, where Vm<NodeHost> is
+# monomorphized (17 min at -j1, 800 s of it `quench` codegen); without it incremental reuses the
+# units the edit does not reach. Measurements stay on `experiment` and the stencil build.
+[profile.smoke]
+inherits = "experiment"
 lto = "off"
 
 # Native SDK consumers link optimized machine-code archive members directly.

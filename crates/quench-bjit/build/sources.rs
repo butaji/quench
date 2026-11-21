@@ -1,6 +1,8 @@
 //! The files whose change must recompile the stencils, read from the include graph: every file
 //! the build script or the stencil sources name in a `#[path = "..."]` attribute, transitively,
-//! with the directory a module file owns (`numeric.rs` beside `numeric/`) and the stencil directory itself.
+//! with the directory a module file owns (`numeric.rs` beside `numeric/`) and the files of the stencil directory.
+//! Test files are left out: cargo reruns the build on a change to a watched directory's files, so
+//! directories are expanded to their files rather than watched whole.
 
 use std::{
     collections::BTreeSet,
@@ -13,20 +15,28 @@ const PATH_ATTRIBUTE: &str = "#[path = \"";
 /// The files the graph starts from, relative to the crate: the build script and the stencil directory.
 const ROOTS: [&str; 2] = ["build.rs", "stencils"];
 
-/// The files and directories to watch, relative to `crate_dir`.
+/// The files to watch, relative to `crate_dir`.
 pub fn watched(crate_dir: &Path) -> BTreeSet<PathBuf> {
-    let mut watched = BTreeSet::new();
+    let mut seen = BTreeSet::new();
     let mut pending: Vec<PathBuf> = ROOTS.iter().map(|root| crate_dir.join(root)).collect();
     while let Some(path) = pending.pop() {
-        if !watched.insert(path.clone()) {
+        if is_test(crate_dir, &path) || !seen.insert(path.clone()) {
             continue;
         }
         pending.extend(members(&path));
-        if let Some(owned) = owned_directory(&path) {
-            pending.push(owned);
-        }
+        pending.extend(owned_directory(&path));
     }
-    watched
+    seen.into_iter().filter(|path| !path.is_dir()).collect()
+}
+
+/// Whether a path is a test: a `tests.rs` or `*_tests.rs` file, or anything under a `tests/`
+/// or `*_tests/` directory below `crate_dir`.
+fn is_test(crate_dir: &Path, path: &Path) -> bool {
+    path.strip_prefix(crate_dir).unwrap_or(path).components().any(|part| {
+        let part = part.as_os_str().to_string_lossy();
+        let stem = part.strip_suffix(".rs").unwrap_or(&part);
+        stem == "tests" || stem.ends_with("_tests")
+    })
 }
 
 /// The directory a module file owns: the one named as the file without its extension.

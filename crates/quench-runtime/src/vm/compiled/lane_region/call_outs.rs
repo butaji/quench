@@ -1,7 +1,6 @@
 //! The staged rows whose slow case is the VM's own operation (`staged::CallOut`), lowered: the
 //! row's words decide the common case inline, and the rest is one call of the lane's helper
 //! (`dispatch_fast::vm_operation_step`) that continues in place, so no such record leaves its body.
-use crate::bytecode::Class;
 use super::*;
 use super::super::lane_unit::Origin;
 use crate::vm::global_facts::GlobalSlot;
@@ -49,7 +48,14 @@ impl Lowering<'_, '_> {
         let site = self.call_out_site(pc, record, cell);
         if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::ForInNext { .. })) {
             let returns = returned_call(instruction, &row);
-            self.step_with(state, frame::Edges::ValueGuarded { miss }, row, StepWith { sites: sites(&site), ..StepWith::default() });
+            let step = self.step_with(state, frame::Edges::ValueGuarded { miss }, row, StepWith { sites: sites(&site), ..StepWith::default() });
+            // A row that answers its value without writing its register (`row_writes_result`: a keyed for-in read's
+            // hit) leaves the write to the tier. Unwritten, the register kept its last definition: `Object.extend`'s
+            // `d[p] = s[p]` stored the previous iteration's value (raytrace's "Scene rendered incorrectly").
+            if let crate::staged::Step::Value(value) = step
+                && !crate::staged::row_writes_result(instruction.op()) {
+                self.set_tagged(state, instruction.result_register(), value);
+            }
             state.call_effect();
             // A returned call's result is the activation's: the body completes with the register it defined.
             return if returns { self.complete(state, pc, instruction.result_register()) } else { true };

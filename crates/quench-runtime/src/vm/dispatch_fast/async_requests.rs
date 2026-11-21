@@ -77,7 +77,7 @@ fn resume_request_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
 }
 
 /// The promise of the in-place request `frame`, unrooted as its activation stops.
-fn take_request_promise<H: Host>(vm: &mut Vm<H>, frame: &Frame) -> Value {
+fn take_request_promise<H: Host>(vm: &mut Vm<H>, frame: &ActivationView) -> Value {
     vm.settling_promise(frame.payload().settles())
 }
 
@@ -106,7 +106,7 @@ pub(super) fn suspend_request_in_lane<H: Host>(cx: *mut LaneContext<H>, (pc, des
 
 /// The return of the in-place request's `activation`, popped with its caller restored
 /// (`memory`), with `value`: the generator completes and the caller goes on with the promise.
-pub(super) fn request_returned_in_lane<H: Host>(cx: *mut LaneContext<H>, activation: &Frame, memory: MemoryView, value: Value) -> Resumed {
+pub(super) fn request_returned_in_lane<H: Host>(cx: *mut LaneContext<H>, activation: &ActivationView, memory: MemoryView, value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
     let script = activation.script().expect("a request runs as a script activation");
     vm.finish_request_window(script.callee);
@@ -118,7 +118,7 @@ pub(super) fn request_returned_in_lane<H: Host>(cx: *mut LaneContext<H>, activat
 
 /// The caller of the request `activation` goes on after its call with `promise`, or raises at
 /// the call the error its settlement threw.
-fn request_settled<H: Host>(vm: &mut Vm<H>, activation: &Frame, memory: MemoryView, promise: Value, settled: Result<(), JsError>) -> Resumed {
+fn request_settled<H: Host>(vm: &mut Vm<H>, activation: &ActivationView, memory: MemoryView, promise: Value, settled: Result<(), JsError>) -> Resumed {
     match settled {
         Ok(()) => resume_after_call_in_lane(activation, memory, promise),
         Err(error) => {

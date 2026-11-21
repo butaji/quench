@@ -51,7 +51,7 @@ pub(crate) struct SimdKernel {
 impl SimdKernel {
     /// The kernel and lane immediate a selector names: none for an unknown operator or a
     /// lane past its count.
-    #[inline]
+    #[inline(always)]
     pub(crate) const fn of(selector: u32) -> Option<(&'static Self, u8)> {
         let index = (selector >> SELECTOR_LANE_BITS) as usize;
         if index >= SimdOperator::KERNELS.len() {
@@ -65,11 +65,6 @@ impl SimdKernel {
     /// The type of the operator's result, from its table entry.
     pub(crate) fn result_type(&self, _lane: u8) -> WasmType {
         self.result
-    }
-
-    /// The type of the result of the operator `selector` names.
-    pub(crate) fn result_of(selector: u32) -> WasmType {
-        SimdOperator::KERNELS[(selector >> SELECTOR_LANE_BITS) as usize].result
     }
 
     /// The operator applied to operands given as bits, its result as bits: a vector whole, a
@@ -345,7 +340,12 @@ pub(crate) fn native_bits(native: Native, left: u128, right: u128) -> u128 {
 /// where its result is one.
 #[inline(always)]
 pub(crate) fn kernel_bits(selector: u32, left: u128, right: Option<u128>) -> u128 {
-    let (kernel, lane) = SimdKernel::of(selector).expect("an admitted selector");
+    // Validation admitted the selector, so its operator names a table entry and its lane is in
+    // range; a lane immediate that reaches here as a row hole is taken as given, so no check
+    // (and no panic path) is left in a stencil.
+    let kernel = &SimdOperator::KERNELS[(selector >> SELECTOR_LANE_BITS) as usize];
+    let lane = (selector & SELECTOR_LANE_MASK) as u8;
+    debug_assert!(SimdKernel::of(selector).is_some(), "an admitted selector");
     kernel.apply_bits(left, right.unwrap_or(0), lane)
 }
 

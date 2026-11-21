@@ -211,22 +211,12 @@ impl Lowering<'_> {
                 from_ref_type,
                 to_ref_type,
             } => {
-                self.reference_target(from_ref_type)?;
-                let target = self.reference_target(to_ref_type)?;
+                self.reference_target(from_ref_type, false)?;
                 let described = matches!(
                     operator,
                     Operator::BrOnCastDescEq { .. } | Operator::BrOnCastDescEqFail { .. }
                 );
-                if described
-                    && target
-                        .descriptor_type(&self.signatures.declarations)
-                        .is_none()
-                {
-                    return Err(Diagnostic::unsupported(
-                        self.name,
-                        "Wasm cast target has no descriptor",
-                    ));
-                }
+                let target = self.reference_target(to_ref_type, described)?;
                 if self.path == Reachability::Live {
                     let descriptor = if described { Some(self.pop()?) } else { None };
                     let reference = self.pop()?;
@@ -267,17 +257,7 @@ impl Lowering<'_> {
         let error =
             || Diagnostic::unsupported(self.name, "unsupported Wasm reference test/cast target");
         let ty = RefType::new(nullable, heap).ok_or_else(error)?;
-        let target = self.reference_target(ty)?;
-        if described
-            && target
-                .descriptor_type(&self.signatures.declarations)
-                .is_none()
-        {
-            return Err(Diagnostic::unsupported(
-                self.name,
-                "Wasm cast target has no descriptor",
-            ));
-        }
+        let target = self.reference_target(ty, described)?;
         if self.path == Reachability::Live {
             let descriptor = if described { Some(self.pop()?) } else { None };
             let input = self.pop()?;
@@ -291,13 +271,18 @@ impl Lowering<'_> {
         }
         Ok(true)
     }
-    fn reference_target(&self, ty: RefType) -> Result<ReferenceTarget, Diagnostic> {
+    /// The target of a reference type `ty`; `described` targets must also have a descriptor.
+    fn reference_target(&self, ty: RefType, described: bool) -> Result<ReferenceTarget, Diagnostic> {
         let error = || Diagnostic::unsupported(self.name, "unsupported Wasm reference target");
         self.signatures
             .declarations
             .callable_value_type(wasmparser::ValType::Ref(ty))
             .ok_or_else(error)?;
-        ReferenceTarget::from_type(ty).ok_or_else(error)
+        let target = ReferenceTarget::from_type(ty).ok_or_else(error)?;
+        if described && target.descriptor_type(&self.signatures.declarations).is_none() {
+            return Err(Diagnostic::unsupported(self.name, "Wasm cast target has no descriptor"));
+        }
+        Ok(target)
     }
 }
 

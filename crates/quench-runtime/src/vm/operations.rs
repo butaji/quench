@@ -230,21 +230,25 @@ pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
     numeric_integer_result(numeric_binary_operator(op)?, left, right)
 }
 
-/// A comparison operator on two Numbers, comparing integers as integers; `None` for any
-/// other operator or value.
+/// A comparison operator on two Numbers, comparing integers as integers, with the value path
+/// that decided it; `None` for any other operator or value.
 #[inline(always)]
-pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+pub(super) fn number_relation(
+    op: u32,
+    left: Value,
+    right: Value,
+) -> Option<(bool, crate::profile::BinaryValuePath)> {
     if op > LAST_COMPARISON_OPERATOR {
         return None;
     }
     let pair = Value::numeric_pair(left, right);
     if let NumericPair::Ints(a, b) = pair {
-        return Some(number_comparison(op, a, b));
+        return Some((number_comparison(op, a, b), crate::profile::BinaryValuePath::IntegerFastPath));
     }
     // Equality, strict equality and the relational operators agree with IEEE 754
     // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
     let (a, b) = pair.as_doubles()?;
-    Some(number_comparison(op, a, b))
+    Some((number_comparison(op, a, b), crate::profile::BinaryValuePath::NumberFastPath))
 }
 
 #[cfg(test)]
@@ -504,10 +508,8 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
 #[inline(always)]
 fn number_arithmetic_values(
     operation: NumberArithmetic,
-    left: Value,
-    right: Value,
+    pair: NumericPair,
 ) -> Option<(Value, crate::profile::BinaryValuePath)> {
-    let pair = Value::numeric_pair(left, right);
     if operation != NumberArithmetic::Divide
         && let NumericPair::Ints(left, right) = pair
     {
@@ -603,22 +605,6 @@ impl<H: Host> Vm<H> {
         );
         #[cfg(not(feature = "profile-aggregate"))]
         let _ = (operator, left, right, path);
-    }
-
-    #[inline(always)]
-    pub(super) fn numeric_integer_binary(
-        &self,
-        operator: u32,
-        left: i32,
-        right: i32,
-    ) -> Option<Value> {
-        // The common operators match the immediate directly; the rest go through the table.
-        match operator {
-            ADDITION => Some(numeric_integer_arithmetic_result(NumberArithmetic::Add, left, right)),
-            SUBTRACTION => Some(numeric_integer_arithmetic_result(NumberArithmetic::Subtract, left, right)),
-            MULTIPLICATION => Some(numeric_integer_arithmetic_result(NumberArithmetic::Multiply, left, right)),
-            _ => numeric_integer_result(numeric_binary_operator(operator)?, left, right),
-        }
     }
 
     /// `native` called with `this` and `args`, rooting both for the native's run: the entry
@@ -1623,25 +1609,45 @@ impl<H: Host> Vm<H> {
     /// when both are integers, otherwise the IEEE 754 result. Any other operand pair, and
     /// every other operator, is left to `binary`. The four arithmetic operators match the
     /// shared arithmetic stage; the rest go through the numeric operator table.
+    /// The operands are classified only for an operator that takes Numbers; a caller that has
+    /// classified its operands already calls `number_binary_classified` instead.
     #[inline(always)]
     pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+        if NumberArithmetic::from_operator(op).is_none() && !is_numeric_binary_operator(op) {
+            return None;
+        }
+        self.number_binary_classified(op, left, right, Value::numeric_pair(left, right))
+    }
+
+    /// `number_binary` of operands whose classification `pair` is `Value::numeric_pair(left,
+    /// right)`, which the caller made once and reuses here rather than classifying them again.
+    /// Its result is `number_binary`'s for the same operands.
+    #[inline(always)]
+    pub(super) fn number_binary_classified(
+        &mut self,
+        op: u32,
+        left: Value,
+        right: Value,
+        pair: NumericPair,
+    ) -> Option<Value> {
         let Some(operation) = NumberArithmetic::from_operator(op) else {
-            return self.tabled_number_binary(op, left, right);
+            return self.tabled_number_binary(op, left, right, pair);
         };
-        let (value, path) = number_arithmetic_values(operation, left, right)?;
+        let (value, path) = number_arithmetic_values(operation, pair)?;
         self.record_binary_value_path(op, left, right, path);
         Some(value)
     }
 
-    /// `number_binary` for the operators past the four arithmetic ones.
+    /// `number_binary_classified` for the operators past the four arithmetic ones.
     #[inline(always)]
-    fn tabled_number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+    fn tabled_number_binary(&mut self, op: u32, left: Value, right: Value, pair: NumericPair) -> Option<Value> {
         if !is_numeric_binary_operator(op) {
             return None;
         }
-        let pair = Value::numeric_pair(left, right);
+        let operator = numeric_binary_operator(op)
+            .expect("numeric operator range is represented in the operator table");
         if let NumericPair::Ints(a, b) = pair
-            && let Some(value) = self.numeric_integer_binary(op, a, b)
+            && let Some(value) = numeric_integer_result(operator, a, b)
         {
             self.record_binary_value_path(
                 op,
@@ -1652,8 +1658,6 @@ impl<H: Host> Vm<H> {
             return Some(value);
         }
         let (left_number, right_number) = pair.as_doubles()?;
-        let operator = numeric_binary_operator(op)
-            .expect("numeric operator range is represented in the operator table");
         self.record_binary_value_path(
             op,
             left,
@@ -1883,6 +1887,11 @@ impl<H: Host> Vm<H> {
         else {
             return None;
         };
+        if let Some(operator) = numeric_binary_operator(op)
+            && let Some(value) = crate::staged::bigint_small::small_operation(operator, left, right)
+        {
+            return Some(Ok(value));
+        }
         Some(match op {
             ADDITION => Ok(left.add(right)),
             SUBTRACTION => Ok(left.sub(right)),
@@ -1926,12 +1935,10 @@ impl<H: Host> Vm<H> {
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
     pub(super) fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
-        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
-            (self.heap.get(left), self.heap.get(right))
-        else {
+        if !(self.is_bigint(left) && self.is_bigint(right)) {
             return None;
-        };
-        let ordering = left.cmp(right);
+        }
+        let ordering = super::finalization::compare_bigint_values(&self.heap, left, right)??;
         NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 
@@ -2025,7 +2032,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `binary_truthy` for a comparison of two numbers, which runs no guest code; `None` for
-    /// any other operator or operand.
+    /// any other operator or operand. The result is `number_relation`'s, profiled.
     #[inline(always)]
     pub(super) fn number_comparison_truthy(
         &mut self,
@@ -2033,29 +2040,9 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Option<bool> {
-        if op > LAST_COMPARISON_OPERATOR {
-            return None;
-        }
-        let pair = Value::numeric_pair(left, right);
-        if let NumericPair::Ints(a, b) = pair {
-            self.record_binary_value_path(
-                op,
-                left,
-                right,
-                crate::profile::BinaryValuePath::IntegerFastPath,
-            );
-            return Some(number_comparison(op, a, b));
-        }
-        // Equality, strict equality and the relational operators agree with IEEE 754
-        // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
-        let (a, b) = pair.as_doubles()?;
-        self.record_binary_value_path(
-            op,
-            left,
-            right,
-            crate::profile::BinaryValuePath::NumberFastPath,
-        );
-        Some(number_comparison(op, a, b))
+        let (holds, path) = number_relation(op, left, right)?;
+        self.record_binary_value_path(op, left, right, path);
+        Some(holds)
     }
 
     /// BigInt::add or BigInt::subtract of one to a BigInt `input`, which runs no guest code

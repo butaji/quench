@@ -8,7 +8,7 @@
 
 use super::super::*;
 use super::plan::{arithmetic_of, Nest};
-use super::{Decision, Hoist};
+use super::{Bound, Decision, Hoist};
 use super::super::super::facts::Point;
 use super::super::super::operations::NumberArithmetic;
 
@@ -50,6 +50,18 @@ impl Lowering<'_, '_> {
                 let [Some(left), Some(right)] = sources else { return None };
                 Some(Decision { pc, header: span.0, sources: [left, right] })
             })).collect()
+    }
+
+    /// The registers `candidates` order against an int32 counter, each with the innermost loop around
+    /// its PC whose body writes it nowhere (`Bound`), once per loop and register.
+    pub(in super::super) fn plan_bounds(&self, nest: Nest<'_>, candidates: &[(usize, Register)]) -> Vec<Bound> {
+        let mut bounds: Vec<Bound> = candidates.iter().filter_map(|&(pc, register)| nest.around(pc).into_iter().rev()
+            .filter(|&span| !self.generic.contains(&span.0))
+            .find(|&span| nest.unwritten(span, &[register]))
+            .map(|(header, _)| Bound { header, register })).collect();
+        bounds.sort_unstable_by_key(|bound| (bound.header, bound.register));
+        bounds.dedup_by_key(|bound| (bound.header, bound.register));
+        bounds
     }
 
     /// The register `register` holds at `pc` the same value of on each iteration of the loop `span`:
@@ -105,6 +117,20 @@ impl Lowering<'_, '_> {
             self.builder.def_var(value, word);
             self.hoisted.insert(pc, LoopRead { value, ty: Type::language(crate::ValueType::Boolean),
                 representation: Representation::Tagged, receiver: None, header: None, step: None });
+        }
+    }
+
+    /// The registers the loop at `header` orders against its int32 counters (`plan_bounds`), each
+    /// proved int32 on its entering edge from `state`: a register that is no int32 leaves at the
+    /// header, before the loop ran (the interpreter runs it, and a later compile of it keeps its
+    /// relations on the Number path, since the header is then generic). The loop's relations then
+    /// read the int32 view, which no instruction of the loop writes.
+    pub(super) fn hoist_bounds(&mut self, state: &mut State, header: usize) {
+        let registers: Vec<Register> = self.ranges.bounds().iter().filter(|bound| bound.header == header).map(|bound| bound.register).collect();
+        if registers.is_empty() { return; }
+        let exit = self.guard_exit(state, header as u32);
+        for register in registers {
+            self.int(state, register, exit);
         }
     }
 }

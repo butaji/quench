@@ -581,7 +581,7 @@ impl Heap {
             HeapReference::CollectionRecord(record_id) => {
                 &mut unsafe { collection_records.get_live_mut(record_id, properties) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) => {
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) | HeapReference::WasmGcRecord(_) => {
                 return None;
             }
             HeapReference::LegacySlot(index) => {
@@ -622,10 +622,15 @@ impl Heap {
     }
 
     /// The object part of an array, function or ordinary builtin, whose own layout a held
-    /// read guards (`IcOp::Held`): an array's inline, the rest out of line.
+    /// read guards (`IcOp::Held`): an array's and a Map's or Set's inline (the receivers of
+    /// their methods' reads), the rest out of line.
     #[inline(always)]
     pub(crate) fn held_other_receiver(&self, value: Value) -> Option<&Object> {
         if let Some(array) = self.record_array(value) { return Some(array); }
+        if let Some(record_id) = value.direct_collection_index() {
+            // SAFETY: a direct-collection Value names an initialized collection record.
+            return Some(&unsafe { self.collection_records.get_live(record_id) }.object);
+        }
         self.held_cell_receiver(value)
     }
 
@@ -861,6 +866,7 @@ impl Heap {
             | HeapReference::V128Record(_)
             | HeapReference::EnvironmentRecord(_)
             | HeapReference::SymbolRecord(_)
+            | HeapReference::WasmGcRecord(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }

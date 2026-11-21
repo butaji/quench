@@ -10,7 +10,7 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::places::{DEST, LEFT, Places, settle, tagged_place};
 use crate::places_property::run_lexical;
 use crate::stage::StencilStage;
-use crate::staged::{Operation, StagedRecordSpace, Stage, environment, step_names};
+use crate::staged::{Operation, Stage, StagedRecordSpace, environment, op_kind, step_names_of};
 use crate::words::{hole, hole64};
 use crate::codes::{CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
 
@@ -19,8 +19,8 @@ use crate::codes::{CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, EN
 #[inline(always)]
 fn capture_row<const D: u8>(s: S) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
-    let mut frame = Places::<D, 0, 0>::new(s);
-    let step = step_names(&mut stage, &mut frame, Operation::LoadCapture { destination: DEST, depth: 0, slot: 0, root: false });
+    let mut frame = Places::new::<D, 0, 0>(s);
+    let step = step_names_of::<{ op_kind::LOAD_CAPTURE }, _, _>(&mut stage, &mut frame, Operation::LoadCapture { destination: DEST, depth: 0, slot: 0, root: false });
     hop(settle(frame, step, Out::Next))
 }
 
@@ -30,8 +30,8 @@ fn capture_row<const D: u8>(s: S) -> Out {
 #[inline(always)]
 fn capture_set_row<const A: u8>(s: S) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
-    let mut frame = Places::<A, A, 0>::new(s);
-    let step = step_names(&mut stage, &mut frame, Operation::StoreCapture { source: DEST, depth: 0, slot: 0 });
+    let mut frame = Places::new::<A, A, 0>(s);
+    let step = step_names_of::<{ op_kind::STORE_CAPTURE }, _, _>(&mut stage, &mut frame, Operation::StoreCapture { source: DEST, depth: 0, slot: 0 });
     settle(frame, step, Out::Taken)
 }
 
@@ -41,8 +41,8 @@ fn capture_set_row<const A: u8>(s: S) -> Out {
 #[inline(always)]
 fn env_row<const D: u8>(s: S) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
-    let mut frame = Places::<D, 0, 0>::new(s);
-    let step = step_names(&mut stage, &mut frame, Operation::LoadEnvLocal { destination: DEST, slot: 0 });
+    let mut frame = Places::new::<D, 0, 0>(s);
+    let step = step_names_of::<{ op_kind::LOAD_ENV_LOCAL }, _, _>(&mut stage, &mut frame, Operation::LoadEnvLocal { destination: DEST, slot: 0 });
     hop(settle(frame, step, Out::Next))
 }
 
@@ -51,8 +51,8 @@ fn env_row<const D: u8>(s: S) -> Out {
 #[inline(always)]
 fn env_set_row<const A: u8>(s: S) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
-    let mut frame = Places::<A, A, 0>::new(s);
-    let step = step_names(&mut stage, &mut frame, Operation::StoreEnvLocal { source: DEST, slot: 0, result: None, initialize: false });
+    let mut frame = Places::new::<A, A, 0>(s);
+    let step = step_names_of::<{ op_kind::STORE_ENV_LOCAL }, _, _>(&mut stage, &mut frame, Operation::StoreEnvLocal { source: DEST, slot: 0, result: None, initialize: false });
     settle(frame, step, Out::Taken)
 }
 
@@ -61,8 +61,8 @@ fn env_set_row<const A: u8>(s: S) -> Out {
 #[inline(always)]
 fn env_define_row<const A: u8>(s: S) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
-    let mut frame = Places::<A, A, 0>::new(s);
-    let step = step_names(&mut stage, &mut frame, Operation::StoreEnvLocal { source: DEST, slot: 0, result: None, initialize: true });
+    let mut frame = Places::new::<A, A, 0>(s);
+    let step = step_names_of::<{ op_kind::STORE_ENV_LOCAL }, _, _>(&mut stage, &mut frame, Operation::StoreEnvLocal { source: DEST, slot: 0, result: None, initialize: true });
     settle(frame, step, Out::Taken)
 }
 
@@ -72,8 +72,8 @@ fn env_define_row<const A: u8>(s: S) -> Out {
 fn global_read_row<const D: u8>(s: S, payload: usize) -> Out {
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
-    let mut frame = Places::<D, 0, 0>::new(s);
-    let step = step_names(&mut stage, &mut frame, Operation::LoadName { destination: DEST, atom: 0, site: 0, receiver: None, proof: () });
+    let mut frame = Places::new::<D, 0, 0>(s);
+    let step = step_names_of::<{ op_kind::LOAD_NAME }, _, _>(&mut stage, &mut frame, Operation::LoadName { destination: DEST, atom: 0, site: 0, receiver: None, proof: () });
     settle(frame, step, Out::Next)
 }
 
@@ -93,8 +93,8 @@ fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out
         let open = stage.immediate_store_open();
         need!(s, stage.guard(open, ()));
     }
-    let mut frame = Places::<0, A, 0>::new(s);
-    let step = step_names(&mut stage, &mut frame, Operation::GlobalWrite { source: LEFT, atom: 0, site: 0, initialize: false });
+    let mut frame = Places::new::<0, A, 0>(s);
+    let step = step_names_of::<{ op_kind::GLOBAL_WRITE }, _, _>(&mut stage, &mut frame, Operation::GlobalWrite { source: LEFT, atom: 0, site: 0, initialize: false });
     settle(frame, step, Out::Next)
 }
 
@@ -104,8 +104,8 @@ fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out
 #[inline(always)]
 fn lexical_read_row<const D: u8>(s: S) -> Out {
     let mut stage = StencilStage::from_hole(0);
-    let mut frame = Places::<D, 0, 0>::new(s);
-    let step = run_lexical(&mut stage, &mut frame, hole64::<HOLE_A>(), Operation::LoadName { destination: DEST, atom: 0, site: 0, receiver: None, proof: () });
+    let mut frame = Places::new::<D, 0, 0>(s);
+    let step = run_lexical::<{ op_kind::LOAD_NAME }>(&mut stage, &mut frame, hole64::<HOLE_A>(), Operation::LoadName { destination: DEST, atom: 0, site: 0, receiver: None, proof: () });
     settle(frame, step, Out::Next)
 }
 
@@ -122,8 +122,8 @@ fn callee_capture_row<const D: u8>(s: S) -> Out {
 #[inline(always)]
 fn lexical_write_row<const A: u8>(s: S) -> Out {
     let mut stage = StencilStage::from_hole(0);
-    let mut frame = Places::<0, A, 0>::new(s);
-    let step = run_lexical(&mut stage, &mut frame, hole64::<HOLE_B>(), Operation::GlobalWrite { source: LEFT, atom: 0, site: 0, initialize: false });
+    let mut frame = Places::new::<0, A, 0>(s);
+    let step = run_lexical::<{ op_kind::GLOBAL_WRITE }>(&mut stage, &mut frame, hole64::<HOLE_B>(), Operation::GlobalWrite { source: LEFT, atom: 0, site: 0, initialize: false });
     settle(frame, step, Out::Next)
 }
 

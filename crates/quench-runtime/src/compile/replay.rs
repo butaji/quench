@@ -541,9 +541,9 @@ impl ProgramReplay {
     /// it replays no function (its records are encoded); its chunks share the load's
     /// name-shared sites, `name_shared` as (store, atom, site), and give out new ones from
     /// `next_site` on.
-    pub(crate) fn for_chunks(specialized: bool, direct_stubs: bool, next_site: u16, name_shared: &[(bool, u32, u16)]) -> Self {
+    pub(crate) fn for_chunks(specialized: bool, direct_stubs: bool, next_site: u16, name_shared: &[(bool, u32, u16)], typescript: bool) -> Self {
         Self {
-            source_type: oxc_span::SourceType::script(),
+            source_type: oxc_span::SourceType::script().with_typescript(typescript),
             root_strict: false,
             module_goal: false,
             lazy_bodies: Box::default(),

@@ -77,6 +77,16 @@ impl Stage for Trace {
     }
     fn assumption(&mut self, watch: Imm) -> u32 { self.word(format!("assumption {}", Self::operand(watch))) }
     fn ult(&mut self, a: u32, b: u32) -> u32 { self.word(format!("ult w{a} w{b}")) }
+    fn eq(&mut self, a: u32, b: u32) -> u32 { self.word(format!("eq w{a} w{b}")) }
+    /// The body is recorded once, over fresh carried words, and its exits are fresh words too.
+    fn loop_words<const N: usize>(&mut self, init: [u32; N], mut body: impl FnMut(&mut Self, [u32; N]) -> (u32, [u32; N]))
+        -> [u32; N] {
+        let carried = init.map(|word| self.word(format!("loop_carried w{word}")));
+        self.ops.push(format!("loop {carried:?}"));
+        let (go_on, next) = body(self, carried);
+        self.ops.push(format!("loop_back w{go_on} {next:?}"));
+        std::array::from_fn(|index| self.word(format!("loop_exit {index} of {carried:?}")))
+    }
     fn uextend32(&mut self, a: u32) -> u32 { self.word(format!("uextend32 w{a}")) }
     fn sub(&mut self, a: u32, b: u32) -> u32 { self.word(format!("sub w{a} w{b}")) }
     fn select(&mut self, cond: u32, then: u32, otherwise: u32) -> u32 { self.word(format!("select w{cond} w{then} w{otherwise}")) }

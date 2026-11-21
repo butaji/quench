@@ -75,12 +75,17 @@ impl NumericStage for super::super::Concrete {
         value ^ mask
     }
     #[inline(always)]
+    fn float_eq(&mut self, left: u64, right: u64) -> bool {
+        f64::from_bits(left) == f64::from_bits(right)
+    }
+    #[inline(always)]
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: u64, right: u64) -> (u64, bool) {
         let (left, right) = (int32(left), int32(right));
         let checked = operation.apply(&mut CheckedInt32Stage, left, right);
         let overflowed = checked.is_none();
-        let result = checked.unwrap_or_else(|| operation.apply(&mut WrappingInt32Stage, left, right));
+        // A match rather than `unwrap_or_else`, whose closure instance stays out of line across crates.
+        let result = match checked { Some(result) => result, None => operation.apply(&mut WrappingInt32Stage, left, right) };
         (u64::from(result as u32), overflowed)
     }
     #[inline(always)]
@@ -104,6 +109,10 @@ impl NumericStage for super::super::Concrete {
     #[inline(always)]
     fn float_unary(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
         super::super::math::float_unary(operation, f64::from_bits(value)).to_bits()
+    }
+    #[inline(always)]
+    fn float_primitive(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
+        super::super::math::float_primitive(operation, f64::from_bits(value)).to_bits()
     }
     #[inline(always)]
     fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {

@@ -102,7 +102,6 @@ pub const EXECUTION_MODE_VARIABLE: &str = "QUENCH_EXECUTION_MODE";
 /// (`b-jit`, `u-jit`, `q-jit`), `jit` (every tier) or `aot`; the tier choice becomes the process's.
 pub fn mode_named(name: &str) -> Option<quench_runtime::ExecutionMode> {
     use quench_runtime::JitMode;
-    #[cfg(feature = "aot")]
     if name == "aot" {
         return Some(quench_runtime::ExecutionMode::NativeOnly);
     }

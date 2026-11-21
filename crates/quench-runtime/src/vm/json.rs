@@ -1,6 +1,7 @@
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::atom_keys::AtomText;
 use super::wtf16::{JsString, Units};
+use super::number_parse::{decimal_value, exact_integer, scan_decimal};
 use super::*;
 use crate::{number_to_string::AppendBytes as _, unicode};
 use std::hash::BuildHasher as _;
@@ -19,7 +20,7 @@ use std::arch::x86_64::{
     _mm_or_si128, _mm_packs_epi16, _mm_set1_epi16, _mm_set1_epi8, _mm_setzero_si128,
 };
 use error_message::json_syntax_message;
-use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder};
+use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder, JsonRevivalBuilder, JsonSnapshot};
 use parse_stacks::{JsonFrame, JsonStacks};
 pub(super) use heap_builder::JsonParseCache;
 
@@ -218,19 +219,6 @@ fn word_run_length(units: &[u8]) -> Option<usize> {
     (position < tail.len()).then_some(words.len() * WORD_BYTES + position)
 }
 
-enum JsonValue {
-    Null,
-    Bool(bool),
-    Number(f64),
-    String(JsString),
-    Source(Box<JsonValue>, JsString),
-    Array(Vec<JsonValue>),
-    Object(Vec<(JsString, JsonValue)>),
-}
-
-/// The plans `JsonWriter::recent_plans` holds.
-const JSON_RECENT_PLANS: usize = 8;
-
 /// The containers being written, inline up to this nesting.
 const JSON_PLAIN_INLINE_ANCESTORS: usize = 16;
 
@@ -282,12 +270,10 @@ struct JsonWriter {
     /// That the array (shape, prototype) lacks `toJSON`, and the chain cell of its prototype
     /// it was proved over.
     array_lacks_to_json: Option<((u32, Value), crate::heap::ChainCell)>,
-    /// The member plan of each ordinary object's (shape, prototype), or the refusal that
-    /// makes objects of it take the specification's steps.
-    object_plans: rustc_hash::FxHashMap<(u32, Value), JsonPlanProof>,
-    /// Recently used plans by (shape, prototype), one per shape's low bits: a payload's few
-    /// kinds of object recur, nested inside one another, which this answers without hashing.
-    recent_plans: [Option<((u32, Value), JsonPlanProof)>; JSON_RECENT_PLANS],
+    /// The member plan of each ordinary object's shape, indexed by the shape id (a dense index
+    /// into the shape table), with the prototype the plan was proved for: an object of the
+    /// shape under another prototype is planned afresh, and replaces the entry.
+    plans: Vec<Option<(Value, JsonPlanProof)>>,
     /// The `,"key":` text of every planned member: an object's keys recur across the objects
     /// of a payload, so each shape's are quoted once. Only a new run clears it, so the plans a
     /// run is writing keep their text when the proofs are dropped.
@@ -335,7 +321,7 @@ pub(crate) struct JsonPlainCache {
 }
 
 /// A member plan (or its refusal, `None`) proved for one (shape, prototype) pair, held while
-/// the chain cell of the prototype it read holds (`JsonWriter::object_plans`).
+/// the chain cell of the prototype it read holds (`JsonWriter::plans`).
 #[derive(Clone)]
 struct JsonPlanProof {
     cell: crate::heap::ChainCell,
@@ -353,8 +339,7 @@ impl JsonWriter {
             epoch,
             steps: 0,
             array_lacks_to_json: None,
-            object_plans: Default::default(),
-            recent_plans: Default::default(),
+            plans: Default::default(),
             key_text: JsonText::new(),
         }
     }
@@ -362,8 +347,7 @@ impl JsonWriter {
     /// Forgets every proof, keeping the plans being written their key text.
     fn forget_proofs(&mut self) {
         self.array_lacks_to_json = None;
-        self.object_plans.clear();
-        self.recent_plans = Default::default();
+        self.plans.clear();
     }
 
     /// Forgets every plan and its key text, between runs.
@@ -465,9 +449,31 @@ fn json_text_str(text: &[u8]) -> &str {
 fn write_json_string(value: &JsString, output: &mut JsonText) {
     match value.units() {
         Units::Ascii(bytes) => write_json_utf8(bytes, output),
-        Units::Latin1(bytes) => write_json_units(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), output),
+        Units::Latin1(bytes) => write_json_latin1(bytes, output),
         Units::Wide(units) => write_json_units(units, output),
     }
+}
+
+/// QuoteJSONString of Latin-1 `bytes`, one unit per byte, without widening them. An ASCII
+/// run is `write_json_utf8`'s text; a byte past ASCII is the character it is, written as
+/// its UTF-8 bytes. Every byte is escaped by the one rule of `json_escape_needed` and
+/// `write_json_scalar`, as in `write_json_utf8`.
+fn write_json_latin1(bytes: &[u8], output: &mut JsonText) {
+    if bytes.is_ascii() {
+        write_json_utf8(bytes, output);
+        return;
+    }
+    output.push(b'"');
+    let mut run = 0;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte >= 0x80 || json_escape_needed(byte) {
+            output.append_bytes(&bytes[run..index]);
+            write_json_scalar(char::from(byte), output);
+            run = index + 1;
+        }
+    }
+    output.append_bytes(&bytes[run..]);
+    output.push(b'"');
 }
 
 /// QuoteJSONString of UTF-16 `units`, each lone surrogate escaped as `\uXXXX`.
@@ -667,30 +673,10 @@ impl JsonSyntax {
 /// (`MessageTemplate::kInvalidRawJsonValue`).
 const JSON_INVALID_RAW_TEXT: &str = "Invalid value for JSON.rawJSON";
 
-use crate::units::{CARRIAGE_RETURN, LINE_FEED};
+use crate::units::{CARRIAGE_RETURN, DECIMAL_RADIX, LINE_FEED};
 
 /// Number literals at most this long parse from a stack buffer.
 const JSON_INLINE_NUMBER_LENGTH: usize = 64;
-
-/// Integer literals of at most this many digits are below 2^53, so accumulating their
-/// digits gives the exact value the decimal conversion would.
-const JSON_EXACT_INTEGER_DIGITS: usize = 15;
-/// Decimal digits a `u64` accumulates without overflow.
-const JSON_MANTISSA_DIGITS: usize = 19;
-/// The base of the decimal digits a number's mantissa and exponent accumulate in.
-const JSON_DECIMAL_BASE: u64 = 10;
-/// The integers up to this are all exact doubles.
-const EXACT_DOUBLE_INTEGER: u64 = 1 << f64::MANTISSA_DIGITS;
-/// The powers of ten that are exact doubles: 10^22 is the last, as 5^22 < 2^53 < 5^23.
-const EXACT_POWERS_OF_TEN: [f64; 23] = {
-    let mut powers = [1.0; 23];
-    let mut index = 1;
-    while index < powers.len() {
-        powers[index] = powers[index - 1] * 10.0;
-        index += 1;
-    }
-    powers
-};
 
 /// A number literal's value: an `i32` when it is one, which needs no float conversion.
 enum JsonNumber {
@@ -749,6 +735,12 @@ trait JsonUnit: Copy {
     fn starts_key(units: &[Self], key: &[u8]) -> bool {
         units.get(key.len()).is_some_and(|unit| unit.unit() == JSON_QUOTE) && Self::starts_with_ascii(units, key)
     }
+    /// `units` as ASCII bytes borrowed in place, when the form already holds one byte per unit;
+    /// `None` where a unit is wider than a byte and the caller narrows it.
+    #[inline(always)]
+    fn ascii_bytes(_units: &[Self]) -> Option<&[u8]> {
+        None
+    }
     /// `units` as a run of string units.
     fn run(units: &[Self]) -> JsonStringUnits<'_>;
     /// Appends the string units of `units`, a run no escape, quote or control unit ends.
@@ -758,6 +750,10 @@ trait JsonUnit: Copy {
 impl JsonUnit for u8 {
     #[inline(always)] fn unit(self) -> u16 {
         u16::from(self)
+    }
+    #[inline(always)]
+    fn ascii_bytes(units: &[Self]) -> Option<&[u8]> {
+        Some(units)
     }
     #[inline(always)]
     fn ends_string_run(self) -> bool {
@@ -912,6 +908,69 @@ impl JsonUnit for Utf8Byte {
     }
 }
 
+/// A byte of Latin-1 text, whose value is its UTF-16 unit (`Units::Latin1`), so a Latin-1
+/// source is parsed in place rather than widened. Its bytes past ASCII are units, not
+/// UTF-8, so the scans that `Utf8Byte` shares with `u8` apply to them unchanged: a
+/// terminator or whitespace unit is the same byte value in both.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct Latin1(u8);
+
+impl Latin1 {
+    /// The units of `bytes`, which are a Latin-1 source's.
+    fn of(bytes: &[u8]) -> &[Self] {
+        // SAFETY: `Latin1` is a transparent `u8`.
+        unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<Self>(), bytes.len()) }
+    }
+
+    /// The bytes of `units`.
+    #[inline(always)]
+    fn bytes(units: &[Self]) -> &[u8] {
+        // SAFETY: `Latin1` is a transparent `u8`.
+        unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) }
+    }
+}
+
+impl JsonUnit for Latin1 {
+    #[inline(always)] fn unit(self) -> u16 {
+        u16::from(self.0)
+    }
+    #[inline(always)]
+    fn ends_string_run(self) -> bool {
+        STRING_RUN_ENDS[usize::from(self.0)]
+    }
+    #[inline(always)]
+    fn string_run_length(units: &[Self]) -> Option<usize> {
+        u8::string_run_length(Self::bytes(units))
+    }
+    #[inline(always)]
+    fn whitespace_run_length(units: &[Self]) -> usize {
+        u8::whitespace_run_length(Self::bytes(units))
+    }
+    #[inline(always)]
+    fn starts_with_ascii(units: &[Self], text: &[u8]) -> bool {
+        u8::starts_with_ascii(Self::bytes(units), text)
+    }
+    #[inline(always)]
+    fn starts_key(units: &[Self], key: &[u8]) -> bool {
+        u8::starts_key(Self::bytes(units), key)
+    }
+    /// The bytes themselves when they are ASCII, which a number literal reads as digits;
+    /// `None` past ASCII, where the caller narrows each unit.
+    #[inline(always)]
+    fn ascii_bytes(units: &[Self]) -> Option<&[u8]> {
+        let bytes = Self::bytes(units);
+        bytes.is_ascii().then_some(bytes)
+    }
+    #[inline(always)]
+    fn run(units: &[Self]) -> JsonStringUnits<'_> {
+        JsonStringUnits::Run(Units::Latin1(Self::bytes(units)))
+    }
+    fn extend_units(units: &[Self], output: &mut Vec<u16>) {
+        output.extend(units.iter().map(|unit| unit.unit()));
+    }
+}
+
 /// A JSON string's units: a run of the text when it has no escapes and needs no decoding,
 /// else the units its escapes or its UTF-8 make.
 enum JsonStringUnits<'a> {
@@ -928,9 +987,9 @@ impl JsonStringUnits<'_> {
     }
 }
 
-/// Parses `text` with `builder`, in the form the string holds: an ASCII string's bytes need
-/// no widening, and decoded text whose units are not made parses from its UTF-8, whose
-/// error positions are then counted in UTF-16 units.
+/// Parses `text` with `builder`, in the form the string holds: an ASCII or Latin-1 string's
+/// bytes need no widening, and decoded text whose units are not made parses from its UTF-8,
+/// whose error positions are then counted in UTF-16 units.
 fn parse_json_text<B: JsonBuilder>(text: &JsString, builder: &mut B) -> Result<B::Value, JsonParseError> {
     if let Some(host) = text.unflattened_host() {
         return JsonParser::new(Utf8Byte::of(host), builder).parse().map_err(|error| JsonParseError {
@@ -940,7 +999,7 @@ fn parse_json_text<B: JsonBuilder>(text: &JsString, builder: &mut B) -> Result<B
     }
     match text.units() {
         Units::Ascii(bytes) => JsonParser::new(bytes, builder).parse(),
-        Units::Latin1(bytes) => JsonParser::new(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), builder).parse(),
+        Units::Latin1(bytes) => JsonParser::new(Latin1::of(bytes), builder).parse(),
         Units::Wide(units) => JsonParser::new(units, builder).parse(),
     }
 }
@@ -957,8 +1016,8 @@ enum JsonCompleted<V> {
     Member,
 }
 
-/// What a parse makes of each JSON value: the source-bearing `JsonValue` tree a reviver
-/// walks, or heap values directly when nothing reads the source afterwards.
+/// What a parse makes of each JSON value: heap values, and, when a reviver walks the parse, the
+/// snapshot of it (`JsonRevivalBuilder`).
 trait JsonBuilder {
     type Value;
     type Key;
@@ -986,8 +1045,9 @@ trait JsonBuilder {
         keys: std::vec::Drain<'_, Self::Key>,
         values: std::vec::Drain<'_, Self::Value>,
     ) -> Self::Value;
-    /// A primitive parsed from `source`, the text a reviver's context exposes.
-    fn primitive(&mut self, value: Self::Value, source: Units<'_>) -> Self::Value;
+    /// A primitive whose token spans `source` of the text parsed, which a reviver's context
+    /// exposes; called only when `KEEPS_SOURCE`.
+    fn primitive(&mut self, value: Self::Value, source: Range<usize>) -> Self::Value;
     /// The empty stacks a parse gathers members on: a builder that parses again lends its own.
     fn stacks(&mut self) -> JsonStacks<Self::Value, Self::Key, Self::Layout> {
         JsonStacks::with_room()
@@ -1003,60 +1063,13 @@ enum JsonLiteral {
     False,
 }
 
-/// Builds the `JsonValue` tree, each primitive with its source text.
-struct JsonTreeBuilder;
-
-impl JsonBuilder for JsonTreeBuilder {
-    type Value = JsonValue;
-    type Key = JsString;
-    type Layout = ();
-    const KEEPS_SOURCE: bool = true;
-    fn literal(&mut self, value: JsonLiteral) -> JsonValue {
-        match value {
-            JsonLiteral::Null => JsonValue::Null,
-            JsonLiteral::True => JsonValue::Bool(true),
-            JsonLiteral::False => JsonValue::Bool(false),
-        }
-    }
-    fn number(&mut self, value: f64) -> JsonValue {
-        JsonValue::Number(value)
-    }
-    fn integer(&mut self, value: i32) -> JsonValue {
-        JsonValue::Number(f64::from(value))
-    }
-    fn string(&mut self, units: JsonStringUnits<'_>) -> JsonValue {
-        JsonValue::String(JsString::from_unit_run(units.units()))
-    }
-    fn layout(&mut self, _parent: Option<&()>) {}
-    fn expected_key(&mut self, _layout: &mut (), _matches: impl Fn(&[u8]) -> bool) -> Option<(JsString, usize)> {
-        None
-    }
-    fn key(&mut self, _layout: &mut (), units: Units<'_>) -> JsString {
-        JsString::from_unit_run(units)
-    }
-    fn array(&mut self, values: std::vec::Drain<'_, JsonValue>) -> JsonValue {
-        JsonValue::Array(values.collect())
-    }
-    fn object(
-        &mut self,
-        _layout: (),
-        keys: std::vec::Drain<'_, JsString>,
-        values: std::vec::Drain<'_, JsonValue>,
-    ) -> JsonValue {
-        JsonValue::Object(keys.zip(values).collect())
-    }
-    fn primitive(&mut self, value: JsonValue, source: Units<'_>) -> JsonValue {
-        JsonValue::Source(Box::new(value), JsString::from_unit_run(source))
-    }
-}
-
 /// The key an object literal takes as its prototype rather than as a property
 /// (`__proto__: value`), which JSON.parse takes as a property.
 const PROTO_KEY: &str = "__proto__";
 
 /// Checks the JSON text of a data script's literal (`compile::data_literal`), keeping no
 /// values: the text is an array or object literal with the value JSON.parse gives it unless
-/// a key is `PROTO_KEY`.
+/// a key is `PROTO_KEY`. It also checks a `JSON.rawJSON` text's syntax.
 struct JsonLiteralCheck {
     proto_key: bool,
 }
@@ -1079,7 +1092,7 @@ impl JsonBuilder for JsonLiteralCheck {
     }
     fn array(&mut self, _values: std::vec::Drain<'_, ()>) {}
     fn object(&mut self, _layout: (), _keys: std::vec::Drain<'_, ()>, _values: std::vec::Drain<'_, ()>) {}
-    fn primitive(&mut self, _value: (), _source: Units<'_>) {}
+    fn primitive(&mut self, _value: (), _source: Range<usize>) {}
 }
 
 /// The bytes of the JSON array or object text `text` starts with, when the array or object
@@ -1186,12 +1199,12 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         Ok(JsonOpened::Value(self.with_source(value, start)))
     }
 
-    /// `value` of the primitive that starts at unit `start`, with its source text when the
+    /// `value` of the primitive that starts at unit `start`, with its source range when the
     /// builder keeps source text.
     #[inline(always)]
     fn with_source(&mut self, value: B::Value, start: usize) -> B::Value {
         if B::KEEPS_SOURCE {
-            self.builder.primitive(value, T::run(&self.units[start..self.index]).units())
+            self.builder.primitive(value, start..self.index)
         } else {
             value
         }
@@ -1429,109 +1442,65 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         Ok(value)
     }
 
-    /// A number, whose first unit, a digit or a minus sign, the caller matched. Its digits
-    /// accumulate as they are scanned: an integer short enough to be exact is that integer,
-    /// and a decimal whose digits and power of ten are exact doubles is their one correctly
-    /// rounded product or quotient (Clinger's fast path); any other literal converts in full.
+    /// A number, whose first unit, a digit or a minus sign, the caller matched. JSON's grammar
+    /// admits the literal (no leading zeros, digits after a point and after an exponent mark),
+    /// and `number_value` reads its value.
     fn number(&mut self) -> Result<JsonNumber, JsonParseError> {
         let start = self.index;
-        let negative = self.take_if(b'-');
-        let (mantissa, digits) = self.integer_part()?;
-        if let Some(integer) = self.exact_integer(mantissa, digits, negative) {
-            return Ok(integer);
+        self.take_if(b'-');
+        self.integer_part()?;
+        if self.take_if(b'.') {
+            if self.digit_value().is_none() {
+                return Err(self.error(JsonSyntax::UnterminatedFraction));
+            }
+            self.skip_digits();
         }
-        let (mantissa, digits, scale) = self.decimal_part(mantissa, digits)?;
-        let power = EXACT_POWERS_OF_TEN.get(scale.unsigned_abs() as usize);
-        if digits <= JSON_MANTISSA_DIGITS
-            && mantissa <= EXACT_DOUBLE_INTEGER
-            && let Some(&power) = power
-        {
-            let magnitude = if scale < 0 { mantissa as f64 / power } else { mantissa as f64 * power };
-            return Ok(JsonNumber::Float(if negative { -magnitude } else { magnitude }));
+        if exponent_mark(self.peek()) {
+            self.index += 1;
+            self.exponent()?;
         }
-        Ok(JsonNumber::Float(self.convert_literal(start)))
+        Ok(self.number_value(start))
     }
 
-    /// The integer part of a number from the current unit: its digits' value, and how many
-    /// digits it has. A leading zero ends the part, so a digit after it is an error.
+    /// The integer part of a number from the current unit, which the parse moves past. A
+    /// leading zero ends the part, so a digit after it is an error.
     #[inline(always)]
-    fn integer_part(&mut self) -> Result<(u64, usize), JsonParseError> {
-        let integer_start = self.index;
-        let mantissa = match self.peek() {
+    fn integer_part(&mut self) -> Result<(), JsonParseError> {
+        match self.peek() {
             Some(JSON_DIGIT_START) => {
                 self.index += 1;
                 if self.digit_value().is_some() {
                     return Err(self.error(JsonSyntax::Unexpected));
                 }
-                0
             }
-            Some(JSON_DIGIT_START..=JSON_DIGIT_END) => self.accumulate_digits(0),
+            Some(JSON_DIGIT_START..=JSON_DIGIT_END) => self.skip_digits(),
             _ => return Err(self.error(JsonSyntax::NoNumberAfterMinus)),
-        };
-        Ok((mantissa, self.index - integer_start))
+        }
+        Ok(())
     }
 
-    /// The integer of `digits` digits and value `mantissa`, when no fraction or exponent
-    /// continues it and it is short enough to be exact: an `i32` when it fits, else a double.
-    #[inline(always)]
-    fn exact_integer(&self, mantissa: u64, digits: usize, negative: bool) -> Option<JsonNumber> {
-        let next = self.peek();
-        let continued = next == Some(u16::from(b'.')) || exponent_mark(next);
-        if continued || digits > JSON_EXACT_INTEGER_DIGITS {
-            return None;
-        }
-        Some(match i32::try_from(mantissa) {
-            Ok(magnitude) if !negative => JsonNumber::Integer(magnitude),
-            Ok(magnitude) if magnitude != 0 => JsonNumber::Integer(-magnitude),
-            _ => JsonNumber::Float(if negative { -(mantissa as f64) } else { mantissa as f64 }),
-        })
-    }
-
-    /// The fraction and exponent after an integer part of `mantissa` and `digits`: the
-    /// mantissa with the fraction's digits, the digits in all, and the power of ten the
-    /// mantissa is scaled by.
-    fn decimal_part(&mut self, mut mantissa: u64, mut digits: usize) -> Result<(u64, usize, i32), JsonParseError> {
-        let mut scale = 0_i32;
-        if self.take_if(b'.') {
-            if self.digit_value().is_none() {
-                return Err(self.error(JsonSyntax::UnterminatedFraction));
-            }
-            let fraction_start = self.index;
-            mantissa = self.accumulate_digits(mantissa);
-            let fraction_digits = self.index - fraction_start;
-            digits += fraction_digits;
-            scale -= fraction_digits as i32;
-        }
-        if exponent_mark(self.peek()) {
-            self.index += 1;
-            scale = scale.saturating_add(self.exponent()?);
-        }
-        Ok((mantissa, digits, scale))
-    }
-
-    /// The signed exponent after an exponent mark, which the parse moves past.
-    fn exponent(&mut self) -> Result<i32, JsonParseError> {
-        let negative = self.take_if(b'-');
-        if !negative {
+    /// The signed exponent's digits after an exponent mark, which the parse moves past.
+    fn exponent(&mut self) -> Result<(), JsonParseError> {
+        if !self.take_if(b'-') {
             self.take_if(b'+');
         }
         if self.digit_value().is_none() {
             return Err(self.error(JsonSyntax::ExponentMissingNumber));
         }
-        let mut exponent = 0_i32;
-        while let Some(digit) = self.digit_value() {
-            exponent = exponent.saturating_mul(JSON_DECIMAL_BASE as i32).saturating_add(digit as i32);
-            self.index += 1;
-        }
-        Ok(if negative { -exponent } else { exponent })
+        self.skip_digits();
+        Ok(())
     }
 
-    /// The literal from unit `start` to the current one, converted to a double in full.
-    fn convert_literal(&self, start: usize) -> f64 {
+    /// The value of the admitted number literal from unit `start` to the current one, read as
+    /// ASCII by `number_parse`: an `i32` when it is an integer that fits one, else a double.
+    /// `-0` is a double, since an integer's negative zero is not one.
+    fn number_value(&self, start: usize) -> JsonNumber {
         let literal = &self.units[start..self.index];
         let mut inline = [0_u8; JSON_INLINE_NUMBER_LENGTH];
         let long;
-        let bytes: &[u8] = if literal.len() <= JSON_INLINE_NUMBER_LENGTH {
+        let bytes: &[u8] = if let Some(bytes) = T::ascii_bytes(literal) {
+            bytes
+        } else if literal.len() <= JSON_INLINE_NUMBER_LENGTH {
             for (byte, unit) in inline.iter_mut().zip(literal) {
                 *byte = unit.unit() as u8;
             }
@@ -1540,23 +1509,27 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             long = literal.iter().map(|unit| unit.unit() as u8).collect::<Vec<_>>();
             &long
         };
-        // SAFETY: the literal is ASCII by construction.
-        let text = unsafe { std::str::from_utf8_unchecked(bytes) };
-        text.parse::<f64>().expect("the grammar admits only decimal literals")
+        // The grammar admitted at least one digit, which `scan_decimal` reads.
+        let decimal = scan_decimal(bytes).expect("the grammar admits only decimal literals");
+        if decimal.unsigned.len() == decimal.integer.len()
+            && let Some(magnitude) = exact_integer(decimal.integer, DECIMAL_RADIX)
+            && let Ok(magnitude) = i32::try_from(magnitude)
+            && !(decimal.negative && magnitude == 0)
+        {
+            return JsonNumber::Integer(if decimal.negative { -magnitude } else { magnitude });
+        }
+        JsonNumber::Float(decimal_value(&decimal))
     }
 
-    /// `mantissa` followed by the decimal digits from the current unit, which the parse moves
-    /// past; it wraps past `JSON_MANTISSA_DIGITS`, where its callers no longer read it.
+    /// The decimal digits from the current unit, which the parse moves past.
     #[inline(always)]
-    fn accumulate_digits(&mut self, mut mantissa: u64) -> u64 {
+    fn skip_digits(&mut self) {
         let units = self.units;
         let mut at = self.index;
-        while let Some(digit) = units.get(at).and_then(|unit| decimal_digit(unit.unit())) {
-            mantissa = mantissa.wrapping_mul(JSON_DECIMAL_BASE).wrapping_add(digit);
+        while units.get(at).is_some_and(|unit| decimal_digit(unit.unit()).is_some()) {
             at += 1;
         }
         self.index = at;
-        mantissa
     }
 
     /// The value of the current unit when it is a decimal digit.
@@ -1641,7 +1614,7 @@ impl<H: Host> Vm<H> {
             JSON_QUOTE | JSON_MINUS | JSON_DIGIT_START..=JSON_DIGIT_END | JSON_NULL_INITIAL | JSON_TRUE_INITIAL | JSON_FALSE_INITIAL
         );
         let checked = if primitive {
-            JsonParser::new(units, &mut JsonTreeBuilder).parse_prefix().map(|(_, length)| length)
+            JsonParser::new(units, &mut JsonLiteralCheck { proto_key: false }).parse_prefix().map(|(_, length)| length)
         } else {
             Err(JsonParseError {
                 syntax: JsonSyntax::Unexpected,
@@ -1701,20 +1674,25 @@ impl<H: Host> Vm<H> {
                 Err(JsonBuildError::Runtime(error)) => Err(error),
             };
         }
-        let parsed = match parse_json_text(&text, &mut JsonTreeBuilder) {
-            Ok(parsed) => parsed,
-            Err(error) => return self.json_syntax_error(p, &text, error),
+        // One parse builds the heap values and the snapshot the reviver walks.
+        let mut builder = JsonRevivalBuilder::new(self);
+        let parsed = parse_json_text(&text, &mut builder);
+        let (value, mut snapshot) = match builder.finish(parsed, text.clone()) {
+            Ok(built) => built,
+            Err(JsonBuildError::Parse(error)) => return self.json_syntax_error(p, &text, error),
+            Err(JsonBuildError::Runtime(error)) => return Err(error),
         };
-        let value = self.parse_json_value(&parsed)?;
         let reviver_root = self.heap.root(reviver);
         let holder = self.json_object();
         let empty = self.intern_atom("");
         let result = self.with_call_roots([holder], |vm| {
             vm.set_property(holder, empty, value)?;
-            let key = JsString::from_str("");
-            vm.json_internalize(p, holder, &key, Some(&parsed), reviver_root)
+            vm.json_internalize(p, holder, empty, Some(snapshot.root), &snapshot, reviver_root)
         });
         self.heap.release_root(reviver_root);
+        for root in snapshot.roots.drain(..) {
+            self.heap.release_root(root);
+        }
         result
     }
 
@@ -1735,35 +1713,23 @@ impl<H: Host> Vm<H> {
         self.syntax_error_result(p, &json_syntax_message(&units, error.syntax, error.position))
     }
 
-    /// Materializes a parsed tree with the same builder a reviver-free parse uses.
-    fn parse_json_value(&mut self, value: &JsonValue) -> Result<Value, JsError> {
-        let mut builder = JsonHeapBuilder::new(self);
-        let value = builder.materialize(value)?;
-        builder.error.take().map_or(Ok(value), Err)
+    /// The source text of the primitive at snapshot `node`, when the holder's `current` value is
+    /// still SameValue to the primitive's parse-time value.
+    fn json_source_text(&self, snapshot: &JsonSnapshot, node: u32, current: Value) -> Option<JsString> {
+        let (value, source) = snapshot.primitive(node)?;
+        self.same_value(current, value).then(|| snapshot.source_text(source))
     }
 
-    fn json_source_text(&self, source: &JsonValue, current: Value) -> Option<JsString> {
-        let JsonValue::Source(value, text) = source else {
-            return None;
-        };
-        let unchanged = match value.as_ref() {
-            JsonValue::Null => current.is_null(),
-            JsonValue::Bool(expected) => current.as_bool() == Some(*expected),
-            JsonValue::Number(expected) => self.same_value(current, Value::number(*expected)),
-            JsonValue::String(expected) => {
-                self.heap.string(current).is_some_and(|actual| actual == expected)
-            }
-            _ => false,
-        };
-        unchanged.then(|| text.clone())
-    }
-
+    /// InternalizeJSONProperty of `holder[key]`, walking the parse-time `snapshot` from `source`,
+    /// the node of the value the parse made there (`None` once the walk leaves the parse). The
+    /// key is an atom, as the walk's callers hold it: an index's is `index_key_atom`'s.
     fn json_internalize(
         &mut self,
         p: &ResidualProgram,
         holder: Value,
-        key: &JsString,
-        source: Option<&JsonValue>,
+        key_atom: Atom,
+        source: Option<u32>,
+        snapshot: &JsonSnapshot,
         reviver_root: crate::heap::RootId,
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
@@ -1772,54 +1738,32 @@ impl<H: Host> Vm<H> {
         let mut key_root = None;
         let mut context_root = None;
         let result = (|| {
-            let key_atom = self.intern_js_atom(key);
             let holder = self.heap.root_value(holder_root).unwrap();
             let value = self.get_property(p, holder, key_atom)?;
             let value_handle = self.heap.root(value);
             value_root = Some(value_handle);
-            let source_value = source.map(|source| match source {
-                JsonValue::Source(value, _) => value.as_ref(),
-                value => value,
-            });
-            let source_text = source.and_then(|source| self.json_source_text(source, value));
+            let source_text = source.and_then(|node| self.json_source_text(snapshot, node, value));
             if self.is_array(p, value)? {
                 let array = self.heap.root_value(value_handle).unwrap();
                 let length = self.array_like_length(p, array)?;
-                let source_items = match source_value {
-                    Some(JsonValue::Array(values)) => Some(values.as_slice()),
-                    _ => None,
-                };
                 for index in 0..length {
                     let array = self.heap.root_value(value_handle).unwrap();
-                    let child_key = JsString::from(index.to_string());
-                    let child_source = source_items.and_then(|values| values.get(index));
-                    let child =
-                        self.json_internalize(p, array, &child_key, child_source, reviver_root)?;
-                    self.json_update_property(p, value_handle, &child_key, child)?;
+                    let child_key = self.index_key_atom(index);
+                    let child_source = source.and_then(|node| snapshot.array_child(node, index));
+                    let child = self.json_internalize(p, array, child_key, child_source, snapshot, reviver_root)?;
+                    self.json_update_property(p, value_handle, child_key, child)?;
                 }
             } else if self.is_object_like(value) {
                 let object = self.heap.root_value(value_handle).unwrap();
                 let keys = self.json_enumerable_keys(p, object)?;
-                let source_properties = match source_value {
-                    Some(JsonValue::Object(properties)) => Some(properties.as_slice()),
-                    _ => None,
-                };
-                for child_key in keys {
-                    let child_key = self.atom_value(child_key);
+                for key_atom in keys {
                     let object = self.heap.root_value(value_handle).unwrap();
-                    let child_source = source_properties.and_then(|properties| {
-                        properties
-                            .iter()
-                            .rev()
-                            .find(|(name, _)| name == &child_key)
-                            .map(|(_, value)| value)
-                    });
-                    let child =
-                        self.json_internalize(p, object, &child_key, child_source, reviver_root)?;
-                    self.json_update_property(p, value_handle, &child_key, child)?;
+                    let child_source = source.and_then(|node| snapshot.object_child(node, key_atom));
+                    let child = self.json_internalize(p, object, key_atom, child_source, snapshot, reviver_root)?;
+                    self.json_update_property(p, value_handle, key_atom, child)?;
                 }
             }
-            let key_value = self.heap.alloc_string(key.clone());
+            let key_value = self.atom_string(key_atom);
             let key_handle = self.heap.root(key_value);
             key_root = Some(key_handle);
             let context = self.json_object();
@@ -1862,11 +1806,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         holder: RootId,
-        key: &JsString,
+        key: Atom,
         value: Value,
     ) -> Result<(), JsError> {
         self.with_call_roots([value], |vm| {
-            let key = vm.heap.alloc_string(key.clone());
+            let key = vm.atom_string(key);
             vm.with_call_roots([key], |vm| {
                 let holder = vm.heap.root_value(holder).unwrap();
                 if value.is_undefined() {
@@ -1958,8 +1902,8 @@ impl<H: Host> Vm<H> {
         let value = if number_box {
             Value::number(self.to_number(p, value)?)
         } else if string_box {
-            let text = self.to_string(p, value)?;
-            self.heap.alloc_string(text.into())
+            let text = self.coerce_js_string(p, value)?;
+            self.heap.alloc_string(text)
         } else {
             value
         };
@@ -2052,12 +1996,16 @@ impl<H: Host> Vm<H> {
     /// an object the serializer reads as it is, along a chain of arrays (such as
     /// `Array.prototype`) whose own shapes lack the key and of ordinary objects
     /// (`plain_property_lookup`). A boxed primitive, whose serialization coerces it, and any
-    /// other object answer `false`.
+    /// other object answer `false`. A caller that has not decided the boxed fact of `value`
+    /// reads it here; one that has (`json_plain_plan`) calls `json_chain_lacks_to_json`.
     fn json_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
+        self.boxed_primitive_data(value).is_none() && self.json_chain_lacks_to_json(value, to_json)
+    }
+
+    /// `json_lacks_to_json` for an object already known not to be a boxed primitive: the chain
+    /// walk alone.
+    fn json_chain_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
         let key = PropertyKey::string(to_json);
-        if self.boxed_primitive_data(value).is_some() {
-            return false;
-        }
         let mut current = value;
         loop {
             let Some(array) = self.heap.array(current) else {
@@ -2076,13 +2024,24 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// A key's string value, allocated last before the call that receives it.
+    /// A key's string value, allocated last before the call that receives it. An index's is
+    /// its atom's string, as ToPropertyKey's index keys are (`to_property_key`).
     fn json_key_value(&mut self, key: JsonKey) -> Value {
-        let text = match key {
-            JsonKey::Index(index) => JsString::from(index.to_string()),
-            JsonKey::Name(atom) => self.atom_value(atom),
-        };
-        self.heap.alloc_string(text)
+        match key {
+            // A pre-built index atom keeps its string; a larger index stays a transient
+            // string, so stringifying a long array does not grow the atom table.
+            JsonKey::Index(index) => match u32::try_from(index).ok().and_then(|small| self.array_index_atoms.get(&small).copied()) {
+                Some(atom) => self.atom_string(atom),
+                None => {
+                    let mut buffer = itoa::Buffer::new();
+                    self.heap.alloc_string(JsString::from_str(buffer.format(index)))
+                }
+            },
+            JsonKey::Name(atom) => {
+                let text = self.atom_value(atom);
+                self.heap.alloc_string(text)
+            }
+        }
     }
 
     /// SerializeJSONValue of `value`, after `toJSON` and the replacer: plain data as it is
@@ -2148,8 +2107,8 @@ impl<H: Host> Vm<H> {
         use crate::BuiltinBrand as B;
         match self.boxed_primitive_data(value) {
             Some((B::StringObject, _)) => {
-                let text = self.to_string(p, value)?;
-                Ok(self.heap.alloc_string(text.into()))
+                let text = self.coerce_js_string(p, value)?;
+                Ok(self.heap.alloc_string(text))
             }
             Some((B::NumberObject, _)) => Ok(Value::number(self.to_number(p, value)?)),
             Some((B::BooleanObject | B::BigIntObject, payload)) => Ok(payload),
@@ -2262,7 +2221,7 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
         | Some(
             C::ArrayFromAsyncState(_) | C::AwaitState(_)
             | C::PromiseResolvingState { .. } | C::WasmElements(_) | C::WasmBits64(_) | C::WasmInstance(_)
-            | C::WasmGc { .. } | C::WasmExtern(_) | C::AccessorPair { .. } | C::WasmTag { .. }
+            | C::WasmExtern(_) | C::AccessorPair { .. } | C::WasmTag { .. }
             | C::WasmException { .. } | C::WasmV128(_) | C::BindingReference { .. }
             | C::WasmHostFunction { .. },
         ) => JsonForm::Omitted,
@@ -2271,7 +2230,47 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
 
 #[cfg(test)]
 mod tests {
-    use super::{JsString, JsonParser, JsonTreeBuilder, JsonUnit, JsonValue, WORD_BYTES, write_json_string};
+    use super::{
+        JsString, JsonBuilder, JsonLiteral, JsonParser, JsonStringUnits, JsonUnit, Range, Units, WORD_BYTES,
+        write_json_string,
+    };
+
+    /// Keeps each string's value and the source range of the primitive the parse reports.
+    struct PrimitiveSpans(Option<Range<usize>>);
+
+    impl JsonBuilder for PrimitiveSpans {
+        type Value = JsString;
+        type Key = ();
+        type Layout = ();
+        const KEEPS_SOURCE: bool = true;
+        fn literal(&mut self, _value: JsonLiteral) -> JsString {
+            JsString::from_str("")
+        }
+        fn number(&mut self, _value: f64) -> JsString {
+            JsString::from_str("")
+        }
+        fn integer(&mut self, _value: i32) -> JsString {
+            JsString::from_str("")
+        }
+        fn string(&mut self, units: JsonStringUnits<'_>) -> JsString {
+            JsString::from_unit_run(units.units())
+        }
+        fn layout(&mut self, _parent: Option<&()>) {}
+        fn expected_key(&mut self, _layout: &mut (), _matches: impl Fn(&[u8]) -> bool) -> Option<((), usize)> {
+            None
+        }
+        fn key(&mut self, _layout: &mut (), _units: Units<'_>) {}
+        fn array(&mut self, _values: std::vec::Drain<'_, JsString>) -> JsString {
+            JsString::from_str("")
+        }
+        fn object(&mut self, _layout: (), _keys: std::vec::Drain<'_, ()>, _values: std::vec::Drain<'_, JsString>) -> JsString {
+            JsString::from_str("")
+        }
+        fn primitive(&mut self, value: JsString, source: Range<usize>) -> JsString {
+            self.0 = Some(source);
+            value
+        }
+    }
 
     #[test]
     fn byte_string_runs_end_where_each_byte_scan_ends() {
@@ -2344,15 +2343,10 @@ mod tests {
     fn json_parser_keeps_escaped_surrogate_units() {
         let source = r#""\ud800a\udc00""#;
         let units = source.encode_utf16().collect::<Vec<_>>();
-        let JsonValue::Source(value, text) =
-            JsonParser::new(&units, &mut JsonTreeBuilder).parse().unwrap()
-        else {
-            panic!("expected source-bearing primitive");
-        };
-        assert_eq!(text.units(), units);
-        let JsonValue::String(value) = *value else {
-            panic!("expected string");
-        };
+        let mut spans = PrimitiveSpans(None);
+        let value = JsonParser::new(&units, &mut spans).parse().unwrap();
+        let source = spans.0.expect("the primitive's source range");
+        assert_eq!(Units::Wide(&units[..]).slice(source), units);
         assert_eq!(value.units(), &[0xD800, b'a' as u16, 0xDC00]);
     }
 }

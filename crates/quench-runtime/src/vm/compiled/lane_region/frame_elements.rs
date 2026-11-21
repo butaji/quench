@@ -134,6 +134,9 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let (absent, join) = (stage.builder.create_block(), stage.builder.create_block());
         stage.builder.set_cold_block(absent);
         let value = stage.builder.append_block_param(join, types::I64);
+        // What holds before the read: the fast path's facts (a tagged view it boxed, a view it proved) hold
+        // only in the blocks it dominates, so the VM's read, and past the join everything, start from these.
+        let before = (!self.hole_leaves).then(|| self.state.clone());
         match fast(stage, self, absent) {
             Some(read) => { stage.jump(join, &[read]); }
             None => { stage.jump(absent, &[]); }
@@ -144,10 +147,10 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             stage.builder.switch_to_block(join);
             return Some(value);
         }
-        let mut dominating = self.state.clone();
-        std::mem::swap(&mut *self.state, &mut dominating);
+        let before = before.expect("a read whose hole does not leave keeps the state before it");
+        *self.state = before.clone();
         let hosted = host(stage, self, miss);
-        std::mem::swap(&mut *self.state, &mut dominating);
+        *self.state = before;
         stage.jump(join, &[hosted?]);
         stage.builder.switch_to_block(join);
         Some(value)

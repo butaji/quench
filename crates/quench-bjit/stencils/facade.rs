@@ -57,20 +57,11 @@ impl Value {
         }
     }
     /// The runtime's `Value::number`: an integral value within int32 (but not -0) as an
-    /// int32, NaN as the canonical NaN, any other double as its bits.
+    /// int32, NaN as the canonical NaN, any other double as its bits. The one copy is
+    /// `words::canonical`, which the stencil rows also call.
+    #[inline(always)]
     pub(crate) fn number(value: f64) -> Self {
-        let integer = value as i32;
-        let back = integer as f64;
-        if back < value || back > value {
-            return Self(value.to_bits());
-        }
-        if value != value {
-            return Self::NAN;
-        }
-        if integer != 0 || value.to_bits() == 0 {
-            return Self::integer(integer);
-        }
-        Self(value.to_bits())
+        Self(crate::words::canonical(value))
     }
 }
 
@@ -100,13 +91,19 @@ mod int_range;
 mod int_type;
 #[path = "../../quench-runtime/src/typed_ir/representation.rs"]
 mod representation;
+#[path = "../../quench-runtime/src/typed_ir/binding.rs"]
+mod binding;
+// The binary64 fields the runtime's Number conversions read (`float_layout.rs`), included unchanged.
+#[path = "../../quench-runtime/src/float_layout.rs"]
+pub(crate) mod float_layout;
 
 /// The stencil's view of the runtime's `typed_ir`: the same `Type`, `TypeKind`, `IntRange` and
 /// `Representation` the interpreter and the u-jit use, so a row folds the same facts.
 pub(crate) mod typed_ir {
     pub(crate) use super::int_range::IntRange;
-    pub(crate) use super::lattice::{Type, TypeKind};
+    pub(crate) use super::lattice::{Type, TypeKind, language_bit};
     pub(crate) use super::representation::Representation;
+    pub(crate) use super::binding::{BindingTime, Division, Proof};
 }
 
 /// The runtime's Number conversions (ToInt32 and its kin), which a row folds into a constant operand.
@@ -116,7 +113,7 @@ mod number_conversion;
 
 pub(crate) mod value {
     pub(crate) use super::operations::WORD32_SHIFT_MASK;
-    pub(crate) use super::number_conversion::{exact_uint32, number_to_u32};
+    pub(crate) use super::number_conversion::{exact_uint32, number_to_u32, EXACT_I64_TRUNCATION_LIMIT};
     pub(crate) use crate::layout::value_encoding::{
         HEAP_FAMILY_BITS, HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_HEAP_FAMILIES, NarrowLayout, TAG_BOOL, TAG_DELETED, TAG_NULL,
         TAG_UNDEFINED, ValueLayout,

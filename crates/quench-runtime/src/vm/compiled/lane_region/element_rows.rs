@@ -45,6 +45,10 @@ impl Lowering<'_, '_> {
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand)) -> bool {
         let exit = self.guard_exit(state, pc as u32);
         let array = self.loop_array(pc, Some(base));
+        if let Some(pending) = self.unit_compare(state, pc, (destination, base, key), exit) {
+            self.pending_unit = Some(pending);
+            return true;
+        }
         if let Some(array) = array.filter(|array| self.int32_read(*array, pc))
             && self.int32_element_read(state, (destination, key), array, exit) { return true; }
         if let Some(array) = array.filter(|array| self.reads_int32(*array))
@@ -85,6 +89,47 @@ impl Lowering<'_, '_> {
         true
     }
 
+    /// The unit compare of the string element read at `pc` into `destination` (`PendingUnit`): a read of
+    /// a string's unit whose next instruction is a strict `===` or `!==` of the read's register with a
+    /// one-unit string constant, and whose register no path reads after the comparison. The one-character
+    /// string such a read makes is then never made: the comparison decides on the unit
+    /// (`Lowering::unit_compare_jump`). The read leaves at `exit` for a base that is no string, and
+    /// for an index outside it, as the row does.
+    fn unit_compare(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand),
+        exit: ir::Block) -> Option<PendingUnit> {
+        let index = key.register_index()?;
+        let next = pc + 1;
+        let instruction = *self.unit.instructions.get(next)?;
+        let Some(crate::staged::Operation::CompareJump { comparison: crate::staged::Comparison::Equality { strict: true, negated }, left, right, .. })
+            = crate::vm::compiled::performed(instruction) else { return None };
+        let constant = match (left.register_index(), right.register_index()) {
+            (Some(register), None) if register == destination => self.one_unit_constant(right)?,
+            (None, Some(register)) if register == destination => self.one_unit_constant(left)?,
+            _ => return None,
+        };
+        let target = instruction.jump_target() as usize;
+        let string_base = self.loop_array(pc, Some(base)).is_none_or(|array| self.string_base(&array));
+        let unread = !self.is_live(pc + 2, destination) && !self.is_live(target, destination);
+        if !string_base || !unread || self.hoisted.contains_key(&next) || self.unit_leaders().contains(next) { return None; }
+        let within = self.ranges.string_in_bounds(pc);
+        let bits = self.tagged(state, base);
+        let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
+        emit_js_guard(&mut self.builder, is_string, exit);
+        let key_word = self.tagged(state, index);
+        let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
+        let unit = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");
+            let row = if within {
+                crate::staged::strings::string_unit_at_within(&mut stage, units, key_word, exit)
+            } else {
+                crate::staged::strings::string_unit_at(&mut stage, units, key_word, exit)
+            };
+            row.expect("the emit stage continues past its guards")
+        };
+        Some(PendingUnit { pc: next, register: destination, unit, constant, negated })
+    }
+
     /// `base[index]` where `base` holds a string: its one-unit string from the ASCII unit table
     /// (`strings::string_char_at`), joined with the element row otherwise. A string the row does
     /// not read (a rope, a wide unit, a unit with no string yet, an index outside the string)
@@ -93,12 +138,14 @@ impl Lowering<'_, '_> {
         within: bool, exit: ir::Block) -> ir::Value {
         let bits = self.tagged(state, base);
         let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
+        // The key's tagged word is made before the paths split: the row's host read takes it too,
+        // so a word the string path made would not dominate its use.
+        let key_word = self.tagged(state, index);
         let (string, row, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         self.branch_if(is_string, (string, &[]), (row, &[]));
         self.builder.switch_to_block(string);
-        let key_word = self.tagged(state, index);
         let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
-        let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, ascii_unit_strings));
+        let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.ascii_unit_strings));
         let character = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");
@@ -285,7 +332,11 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         }
-        let exit = self.guard_exit(state, pc as u32);
+        // An image body makes a store its row misses by the interpreter's step, and continues (`fill_stepped_miss`).
+        let stepped = self.stepped_record(pc);
+        if stepped.is_some() { self.canonicalize(state, pc); self.home_written(state, pc); }
+        let entering = stepped.map(|_| state.clone());
+        let exit = if stepped.is_none() { self.guard_exit(state, pc as u32) } else { cold_block(&mut self.builder) };
         let number = state.values[usize::from(value)].value.ty.is_subtype(Type::NUMBER);
         // A reference is stored through a hoisted dense view too, past its barrier gate (`store_gate`);
         // a typed view takes a Number alone.
@@ -302,6 +353,18 @@ impl Lowering<'_, '_> {
                 // call the VM's store, which may move any backing.
                 if held.is_none() { self.reload_dense_arrays(pc); }
             }
+        }
+        if let (Some(record), Some(entering)) = (stepped, entering) {
+            let join = self.builder.create_block();
+            self.goto(join, &[]);
+            self.fill_stepped_miss(&entering, pc, record, exit, join);
+            self.builder.switch_to_block(join);
+            // Both paths hold what held before the store; a view the row derived holds on its path alone.
+            *state = entering;
+            // The step may have run a setter, moved a backing or reshaped any object.
+            self.reshaped(state);
+            self.reload_receiver();
+            self.reload_dense_arrays(pc);
         }
         state.proofs.arrays.clear();
         state.proofs.fields.clear();

@@ -10,7 +10,7 @@
 
 use crate::staged::machine::MachineStage;
 use crate::staged::wasm_concrete::ConcreteWasm;
-use crate::staged::wasm_float::{Float, float_binary};
+use crate::staged::wasm_float::{Float, float_binary, opaque};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 
@@ -62,10 +62,11 @@ fn lane_as(bits: u64, width: u32, sign: bool) -> i64 {
     if sign { signed(bits, width) } else { bits as i64 }
 }
 
-/// All ones in a `width`-bit lane where `holds`, zero where not.
+/// All ones in a `width`-bit lane where `holds`, zero where not. Opaque in the stencil build, where
+/// the backend would otherwise gather sixteen byte masks through constant-pool shuffles.
 #[inline(always)]
 fn when(holds: bool, width: u32) -> u64 {
-    if holds { mask64(width) } else { 0 }
+    opaque(if holds { mask64(width) } else { 0 })
 }
 
 /// `value` clamped to the `width`-bit lane's range (signed or unsigned), as the lane's bits.
@@ -115,25 +116,25 @@ fn zip(left: u128, right: u128, width: u32, operation: impl Fn(u64, u64) -> u64)
 /// Each lane pair where `holds` is all ones, the rest zero.
 #[inline(always)]
 fn compare(left: u128, right: u128, width: u32, holds: impl Fn(u64, u64) -> bool) -> u128 {
-    zip(left, right, width, |x, y| when(holds(x, y), width))
+    zip(left, right, width, #[inline(always)] |x, y| when(holds(x, y), width))
 }
 
 /// Every lane set to `value`'s low `width` bits.
 #[inline(always)]
 fn splat(value: u64, width: u32) -> u128 {
-    each(0, width, |_| value)
+    each(0, width, #[inline(always)] |_| value)
 }
 
 /// Each lane negated (wrapping).
 #[inline(always)]
 fn negate(bits: u128, width: u32) -> u128 {
-    each(bits, width, |x| 0u64.wrapping_sub(x))
+    each(bits, width, #[inline(always)] |x| 0u64.wrapping_sub(x))
 }
 
 /// Each lane's magnitude (wrapping at the minimum).
 #[inline(always)]
 fn absolute(bits: u128, width: u32) -> u128 {
-    each(bits, width, |x| if signed(x, width) < 0 { 0u64.wrapping_sub(x) } else { x })
+    each(bits, width, #[inline(always)] |x| if signed(x, width) < 0 { 0u64.wrapping_sub(x) } else { x })
 }
 
 /// 1 where every lane is nonzero.
@@ -163,43 +164,44 @@ fn bitmask(bits: u128, width: u32) -> u128 {
 /// Each byte's population count.
 #[inline(always)]
 fn population_count(bits: u128) -> u128 {
-    each(bits, 8, |x| u64::from(x.count_ones()))
+    each(bits, 8, #[inline(always)] |x| u64::from(x.count_ones()))
 }
 
 /// Each lane shifted left by `count` modulo the lane width.
 #[inline(always)]
 fn shift_left(bits: u128, count: u128, width: u32) -> u128 {
     let amount = (count as u32) & (width - 1);
-    each(bits, width, |x| x << amount)
+    each(bits, width, #[inline(always)] |x| x << amount)
 }
 
 /// Each lane shifted right, zero-filled, by `count` modulo the lane width.
 #[inline(always)]
 fn shift_right_unsigned(bits: u128, count: u128, width: u32) -> u128 {
     let amount = (count as u32) & (width - 1);
-    each(bits, width, |x| x >> amount)
+    each(bits, width, #[inline(always)] |x| x >> amount)
 }
 
 /// Each lane shifted right, sign-filled, by `count` modulo the lane width.
 #[inline(always)]
 fn shift_right_signed(bits: u128, count: u128, width: u32) -> u128 {
     let amount = (count as u32) & (width - 1);
-    each(bits, width, |x| (signed(x, width) >> amount) as u64)
+    each(bits, width, #[inline(always)] |x| (signed(x, width) >> amount) as u64)
 }
 
 /// Each lane's minimum (`greater` false) or maximum (`greater` true) of the pair.
 #[inline(always)]
 fn extrema(left: u128, right: u128, width: u32, sign: bool, greater: bool) -> u128 {
-    zip(left, right, width, |x, y| {
+    zip(left, right, width, #[inline(always)] |x, y| {
         let (a, b) = (lane_as(x, width, sign), lane_as(y, width, sign));
-        if (if greater { a > b } else { a < b }) { x } else { y }
+        let keeps = if greater { a > b } else { a < b };
+        if keeps { x } else { y }
     })
 }
 
 /// Each lane's saturating sum or difference of the pair.
 #[inline(always)]
 fn saturating(left: u128, right: u128, width: u32, sign: bool, subtract: bool) -> u128 {
-    zip(left, right, width, |x, y| {
+    zip(left, right, width, #[inline(always)] |x, y| {
         let (a, b) = (lane_as(x, width, sign), lane_as(y, width, sign));
         saturate(if subtract { a - b } else { a + b }, width, sign)
     })
@@ -208,13 +210,13 @@ fn saturating(left: u128, right: u128, width: u32, sign: bool, subtract: bool) -
 /// Each lane's unsigned rounding average of the pair.
 #[inline(always)]
 fn average(left: u128, right: u128, width: u32) -> u128 {
-    zip(left, right, width, |x, y| (x + y + 1) >> 1)
+    zip(left, right, width, #[inline(always)] |x, y| (x + y + 1) >> 1)
 }
 
 /// Q15 fixed-point multiply with rounding and saturation, per i16 lane.
 #[inline(always)]
 fn q15(left: u128, right: u128) -> u128 {
-    zip(left, right, 16, |x, y| {
+    zip(left, right, 16, #[inline(always)] |x, y| {
         let product = signed(x, 16) * signed(y, 16);
         saturate((product + Q15_ROUNDING) >> 15, 16, true)
     })
@@ -359,21 +361,21 @@ const fn float_width(float: Float) -> u32 {
 /// Each lane's float operator (`float_binary`: the canonical NaN for an extremum with a NaN operand).
 #[inline(always)]
 fn float_lanes(left: u128, right: u128, float: Float, operator: FloatBinary) -> u128 {
-    zip(left, right, float_width(float), |x, y| float_binary(&mut ConcreteWasm, operator, float, x, y))
+    zip(left, right, float_width(float), #[inline(always)] |x, y| float_binary(&mut ConcreteWasm, operator, float, x, y))
 }
 
 /// Each lane's comparison, all ones where it holds.
 #[inline(always)]
 fn float_compare(left: u128, right: u128, float: Float, operator: FloatBinary) -> u128 {
     let width = float_width(float);
-    zip(left, right, width, |x, y| when(float_binary(&mut ConcreteWasm, operator, float, x, y) != 0, width))
+    zip(left, right, width, #[inline(always)] |x, y| when(float_binary(&mut ConcreteWasm, operator, float, x, y) != 0, width))
 }
 
 /// Each lane's pseudo-min or -max: the right lane where `comparison` holds, else the left; the bits
 /// are the operands', not the comparison's.
 #[inline(always)]
 fn float_pseudo(left: u128, right: u128, float: Float, comparison: FloatBinary) -> u128 {
-    zip(left, right, float_width(float), |x, y| {
+    zip(left, right, float_width(float), #[inline(always)] |x, y| {
         if float_binary(&mut ConcreteWasm, comparison, float, x, y) != 0 { y } else { x }
     })
 }
@@ -381,7 +383,7 @@ fn float_pseudo(left: u128, right: u128, float: Float, comparison: FloatBinary) 
 /// Each lane's unary float operator.
 #[inline(always)]
 fn float_unary(bits: u128, float: Float, operator: FloatUnary) -> u128 {
-    each(bits, float_width(float), |x| ConcreteWasm.operate_float_unary(operator, float, x))
+    each(bits, float_width(float), #[inline(always)] |x| ConcreteWasm.operate_float_unary(operator, float, x))
 }
 
 /// Each source lane (`source` bits wide) converted by the scalar rule into a `result`-bit lane; the

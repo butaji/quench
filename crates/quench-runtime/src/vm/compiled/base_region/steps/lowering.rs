@@ -140,13 +140,13 @@ fn allocates_object(instruction: WideInstruction) -> bool {
 /// fast arm of its own, whose miss is the helper step where the instruction has one and the leave where
 /// it has none (`Step::Guard`); a name store or `typeof` is a call-out where the table has the VM step
 /// helper's address; a fixed-shape object is the allocation step (`allocates_object`); every other instruction, and
-/// every one without the address, leaves.
+/// every one without the address, leaves (`unplaced`).
 pub(in crate::vm::compiled::base_region) fn lowering(instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Step {
     let addressed = |helper| call_plan::helper_address(helpers, helper).is_some();
     if addressed(LaneHelper::AllocateStep) && allocates_object(instruction) {
         return Step::Allocate;
     }
-    let called_out = || if addressed(LaneHelper::VmStep) && calls_out(instruction) { Step::CallOut } else { Step::Leave };
+    let called_out = || if addressed(LaneHelper::VmStep) && calls_out(instruction) { Step::CallOut } else { unplaced(helpers) };
     let in_place = addressed(LaneHelper::Step) && steps_in_place(instruction);
     let fast = fast_arm(instruction, known).or_else(|| adds::of(known, instruction).map(adds::Add::heap));
     match fast {
@@ -156,6 +156,12 @@ pub(in crate::vm::compiled::base_region) fn lowering(instruction: WideInstructio
         Some(fast) => Step::Fast(fast),
         None => Step::Helper,
     }
+}
+
+/// The step of an instruction no row takes: the leave to the interpreter, or where an image body runs generic
+/// rows (`LaneHelpers::generic_rows`) the generic semantic row, which never leaves.
+pub(in crate::vm::compiled::base_region) fn unplaced(helpers: LaneHelpers) -> Step {
+    if helpers.generic_rows() { Step::Generic } else { Step::Leave }
 }
 
 /// Whether `instruction` at `pc` may jump backward, which only a row that polls the interrupt flag

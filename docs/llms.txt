@@ -10,10 +10,18 @@ Key measured facts (interpreter only in every engine: quench --no-jit, node --ji
 - Test262: 53,353 passing, 0 failing, 53 waived (Node-identical failures, still counted as failures). WebAssembly spec: 67,124 of 67,124.
 - Weak spots: cold code loading, async/promises, proxies; JIT tiers not yet competitive; no AOT speed numbers published; Deno not measured.
 
+## Built for agent Code Mode
+Quench targets agent harnesses that run model-written code in-process (Code Mode), often hundreds of agents per machine:
+- The QuickJS slot, with more speed: small, embedded, interpreter only. With the JIT off, V8-v7 scores 1.49x to 2.57x the best of node --jitless and Bun; five of eight benchmarks peak at 6.4 to 8.2 MB RSS (Node 43 to 50 MB, Bun 16 to 26 MB). Not yet benchmarked against QuickJS; that is a positioning goal, not a result.
+- Embeddable and Rust-native: quench-runtime is a Rust library (Runtime with a Host, host functions for tools, execution interrupt to stop runaway code). Not on crates.io yet; API unstable.
+- No JIT required: --no-jit (the library default) runs the interpreter only, WebAssembly included; no machine code is generated at run time, removing JIT-compiler bugs from the attack surface. Not a sandbox by itself; isolation comes from the host.
+- Full JavaScript and TypeScript: Test262 53,353 passing, 0 failing; TypeScript runs without a build step; node: APIs.
+- Page: https://quench.run/javascript-engine-for-ai-agents/
+
 ## Docs
 - [Home](https://quench.run/): overview, install, FAQ
 - [Benchmarks](https://quench.run/benchmarks/): dated V8-v7 and JetStream 3 tables with method and weak spots
-- [Install and build](https://github.com/butaji/quench#quick-start): git clone, cargo build --release -p quench-node (add --features aot for AOT)
+- [Install and build](https://github.com/butaji/quench#quick-start): git clone, cargo build --release -p quench (add --features aot for AOT)
 - [README](https://github.com/butaji/quench/blob/v2-merged/README.md)
 
 ## Answers
@@ -21,6 +29,7 @@ Key measured facts (interpreter only in every engine: quench --no-jit, node --ji
 - [Node.js alternative with low memory](https://quench.run/low-memory-nodejs-alternative/)
 - [Compile JavaScript/TypeScript to a native executable](https://quench.run/compile-javascript-to-native-executable/)
 - [Test262 compliant JavaScript engine](https://quench.run/test262-compliant-javascript-engine/)
+- [JavaScript engine for AI agents (Code Mode, embedded, no JIT)](https://quench.run/javascript-engine-for-ai-agents/)
 
 ## Blog
 - [Where Quench stands: JetStream 3 with the JIT off](https://quench.run/blog/where-quench-stands/)

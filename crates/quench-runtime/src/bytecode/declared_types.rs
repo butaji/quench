@@ -132,6 +132,21 @@ pub(crate) struct DeclaredMember {
     pub(crate) languages: u16,
 }
 
+/// A property a local binding's object annotation declares: `const p: Point = …` with `interface
+/// Point { x: number }` declares `x` of local `p`. Keyed like `DeclaredLocal` (the function's start and
+/// the local's name).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeclaredLocalMember {
+    /// The innermost enclosing function's start (`u32::MAX` at the top level, as `DeclaredLocal::function`).
+    pub(crate) function: u32,
+    /// The local binding's name.
+    pub(crate) local: Box<str>,
+    /// The property's name: a non-computed identifier key.
+    pub(crate) member: Box<str>,
+    /// Language bits the property's annotation admits.
+    pub(crate) languages: u16,
+}
+
 /// A parameter whose annotation names a class declared at the top level of the program: the
 /// parameter is an instance of that class, whose declared fields (`DeclaredField`) describe it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +172,26 @@ pub(crate) struct DeclaredParameter {
     pub(crate) languages: u16,
 }
 
+/// A type-level name the program declares at its top level, resolved when the program loads, owned
+/// so a body compiled later resolves its annotations against it (`TypeNames::resolved`). Entries are
+/// sorted by name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SavedTypeName {
+    pub(crate) name: Box<str>,
+    /// The language bits the name denotes; `DECLARED_ANY` where it names no closed set.
+    pub(crate) languages: u16,
+    /// An alias: with type arguments, its expansion is open.
+    pub(crate) alias: bool,
+    /// The class's source span start, for a class.
+    pub(crate) class: Option<u32>,
+    /// The property members an interface or object alias resolves to (`TypeNames::members_of`), so a
+    /// body compiled later keeps the member facts the eager path gives.
+    pub(crate) members: Option<Box<[(Box<str>, u16)]>>,
+}
+
+/// The `DeclaredLocal::function` of top-level code.
+const TOP_LEVEL: u32 = u32::MAX;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct DeclaredTypes {
     pub(crate) declared: Vec<Declared>,
@@ -170,12 +205,17 @@ pub(crate) struct DeclaredTypes {
     pub(crate) locals: Vec<DeclaredLocal>,
     /// The declared properties of parameters' type literals, in source order.
     pub(crate) members: Vec<DeclaredMember>,
+    /// The declared properties of locals whose object annotation names them, in source order.
+    pub(crate) local_members: Vec<DeclaredLocalMember>,
     /// The parameters whose annotation names a top-level class, in source order.
     pub(crate) parameter_classes: Vec<DeclaredParameterClass>,
     /// The parameters whose named-resolved language sets differ from their name-free ones, in source order.
     pub(crate) parameters: Vec<DeclaredParameter>,
     /// The receiver layouts of base classes (`DeclaredLayout`), in source order.
     pub(crate) layouts: Vec<DeclaredLayout>,
+    /// The program's top-level type names (sorted), which a lazily parsed body's annotations resolve
+    /// against; `None` where the program declares none saved (a JavaScript program, or a chunk's own).
+    pub(crate) type_names: Option<std::rc::Rc<[SavedTypeName]>>,
 }
 
 impl DeclaredTypes {
@@ -199,6 +239,10 @@ impl DeclaredTypes {
         self.members.push(DeclaredMember { function, parameter, name: Box::from(name), languages });
     }
 
+    pub(crate) fn declare_local_member(&mut self, function: u32, local: &str, member: &str, languages: u16) {
+        self.local_members.push(DeclaredLocalMember { function, local: Box::from(local), member: Box::from(member), languages });
+    }
+
     pub(crate) fn declare_parameter_class(&mut self, function: u32, parameter: u16, class: u32) {
         self.parameter_classes.push(DeclaredParameterClass { function, parameter, class });
     }
@@ -211,10 +255,85 @@ impl DeclaredTypes {
         self.layouts.push(DeclaredLayout { class_start, names: names.into_boxed_slice() });
     }
 
+    /// Moves `other`'s declarations after these, each kind in its own order.
+    pub(crate) fn append(&mut self, other: DeclaredTypes) {
+        self.declared.extend(other.declared);
+        self.enum_constants.extend(other.enum_constants);
+        self.fields.extend(other.fields);
+        self.signatures.extend(other.signatures);
+        self.locals.extend(other.locals);
+        self.members.extend(other.members);
+        self.parameter_classes.extend(other.parameter_classes);
+        self.parameters.extend(other.parameters);
+        self.layouts.extend(other.layouts);
+    }
+
+    /// The declarations keyed inside `start..end` (a function's source range, its nested functions and
+    /// classes included), with their positions unchanged: what a first-call chunk of that function
+    /// compiles against, as the chunk's positions are the program's. Enum constants are not positional
+    /// and are left out.
+    pub(crate) fn within(&self, start: u32, end: u32) -> DeclaredTypes {
+        let inside = |position: u32| (start..end).contains(&position);
+        DeclaredTypes {
+            type_names: None,
+            declared: self.declared.iter().filter(|entry| inside(entry.start)).cloned().collect(),
+            enum_constants: Vec::new(),
+            fields: self.fields.iter().filter(|field| inside(field.class_start)).cloned().collect(),
+            signatures: self.signatures.iter().filter(|signature| inside(signature.start)).cloned().collect(),
+            locals: self.locals.iter().filter(|local| inside(local.function)).cloned().collect(),
+            local_members: self.local_members.iter().filter(|member| inside(member.function)).cloned().collect(),
+            members: self.members.iter().filter(|member| inside(member.function)).cloned().collect(),
+            parameter_classes: self.parameter_classes.iter().filter(|entry| inside(entry.function)).copied().collect(),
+            parameters: self.parameters.iter().filter(|entry| inside(entry.function)).copied().collect(),
+            layouts: self.layouts.iter().filter(|layout| inside(layout.class_start)).cloned().collect(),
+        }
+    }
+
+    /// Whether any declaration is recorded (the saved names aside).
+    pub(crate) fn has_declarations(&self) -> bool {
+        !self.declared.is_empty() || !self.enum_constants.is_empty() || !self.fields.is_empty()
+            || !self.signatures.is_empty() || !self.locals.is_empty() || !self.members.is_empty() || !self.local_members.is_empty()
+            || !self.parameter_classes.is_empty() || !self.parameters.is_empty() || !self.layouts.is_empty()
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
-        self.declared.is_empty() && self.enum_constants.is_empty() && self.fields.is_empty()
-            && self.signatures.is_empty() && self.locals.is_empty() && self.members.is_empty()
-            && self.parameter_classes.is_empty() && self.parameters.is_empty() && self.layouts.is_empty()
+        !self.has_declarations() && self.type_names.is_none()
+    }
+
+    /// Moves every position of these declarations by `delta`: a body parsed alone, whose positions
+    /// are its text's, takes the program's (`ShiftSpans`). The saved names have none.
+    pub(crate) fn shift(&mut self, delta: u32) {
+        let at = |position: &mut u32| *position = position.wrapping_add(delta);
+        let at_function = |function: &mut u32| if *function != TOP_LEVEL { *function = function.wrapping_add(delta) };
+        for entry in &mut self.declared {
+            at(&mut entry.start);
+            at(&mut entry.end);
+        }
+        for signature in &mut self.signatures {
+            at(&mut signature.start);
+        }
+        for field in &mut self.fields {
+            at(&mut field.class_start);
+        }
+        for layout in &mut self.layouts {
+            at(&mut layout.class_start);
+        }
+        for local in &mut self.locals {
+            at_function(&mut local.function);
+        }
+        for member in &mut self.members {
+            at(&mut member.function);
+        }
+        for entry in &mut self.parameter_classes {
+            at(&mut entry.function);
+            at(&mut entry.class);
+        }
+        for entry in &mut self.parameters {
+            at(&mut entry.function);
+        }
+        for member in &mut self.local_members {
+            at_function(&mut member.function);
+        }
     }
 
     /// Narrows the declared parameter sets of the functions in `functions` with the named-resolved
@@ -316,6 +435,16 @@ impl DeclaredTypes {
         self.parameter_classes.iter().rev()
             .find(|entry| entry.function == function && entry.parameter == parameter)
             .map(|entry| entry.class)
+    }
+
+    /// The declared language types of property `member` of local `local` of the function starting at
+    /// `function` (`u32::MAX` for the top level), from its object annotation, when the program declares
+    /// one (the last declaration wins).
+    #[cfg_attr(not(test), allow(dead_code, reason = "the object model seeds local member reads next"))]
+    pub(crate) fn declared_local_member(&self, function: u32, local: &str, member: &str) -> Option<u16> {
+        self.local_members.iter().rev()
+            .find(|entry| entry.function == function && &*entry.local == local && &*entry.member == member)
+            .map(|entry| entry.languages)
     }
 
     /// The named-resolved language types of parameter `parameter` of the function starting at

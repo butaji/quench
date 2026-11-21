@@ -113,7 +113,18 @@ pub(super) struct Planned {
     pub(super) owned: Vec<Box<quench_bjit::call_record::CallRecord>>,
     /// Reached only through a fast row's miss (`steps::behind`): laid out after the hot rows.
     pub(super) cold: bool,
+    /// The holes that name a symbol the loader resolves, each with its symbol (`CallPart::symbols`).
+    pub(super) symbolic: Symbolic,
 }
+
+/// The most holes of one row that name symbols: the generic row's semantic entry and operand record.
+pub(super) const SYMBOLIC_HOLES: usize = 2;
+
+/// The holes of a row whose run-time address is a symbol the loader resolves, each with its symbol.
+pub(super) type Symbolic = [Option<(u8, crate::vm::aot_image::Symbol)>; SYMBOLIC_HOLES];
+
+/// A row that names no symbol.
+pub(super) const NO_SYMBOLS: Symbolic = [None; SYMBOLIC_HOLES];
 
 impl Planned {
     /// The run with the rows `before` laid out ahead of it at the same PC: the parts the run names by
@@ -133,7 +144,7 @@ impl Planned {
     }
 
     pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false }
+        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: NO_SYMBOLS }
     }
 }
 
@@ -344,6 +355,12 @@ pub(super) fn method_read(receiver: Register, cache: u16, scratch: Register) -> 
 /// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of
 /// its feedback `variant`; a backward jump takes the poll row the layout's ending names.
 pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
+    // An image body makes a miss by the step helper and continues (`steps::stepped_misses`).
+    steps::stepped_misses(planned_row(decoded, layout, pc, (general, variant), helpers)?, decoded, layout, pc, helpers)
+}
+
+/// `plan` before an image body's misses are taken to the step helper.
+fn planned_row(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
     if decoded.step.is_some() {
         return plan_step(decoded, layout, pc, helpers);
     }

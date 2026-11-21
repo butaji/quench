@@ -442,6 +442,24 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
     nullish_constant.then_some(IdentityBranch { register })
 }
 
+/// The register and constant index of a strict (in)equality jump of a register and a constant that is
+/// no Number (`=== "o"`): the value a string the region compares holds by its identity or its units,
+/// which its tagged word carries (`admit`, `tagged_registers_with_failure`).
+fn strict_constant_test(instruction: WideInstruction, constants: &[Value]) -> Option<(Register, usize)> {
+    if !comparison_jump(instruction)
+        || !super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
+    {
+        return None;
+    }
+    let (register, index) = match (instruction.operand_b().kind()?, instruction.operand_c().kind()?) {
+        (OperandKind::Register, OperandKind::Constant) => (instruction.operand_b().payload(), instruction.operand_c().payload()),
+        (OperandKind::Constant, OperandKind::Register) => (instruction.operand_c().payload(), instruction.operand_b().payload()),
+        _ => return None,
+    };
+    let index = usize::from(index);
+    constants.get(index)?.as_number().is_none().then_some((register, index))
+}
+
 /// Whether `register` has definitions in `instructions` and every one is a `load`, which may
 /// give an object, or a move of a register only such loads define (`const p = a[i]; p.x`: the
 /// element read's register reaches the receiver through a `Move`) or of an entry value.
@@ -524,6 +542,8 @@ fn tagged_registers_with_failure(
         .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
             .filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| call_window_tagged(instructions, &numeric_uses, offset, instruction)))
+        // The register a strict test against a non-Number constant compares is tagged: its value may be a string.
+        .chain(instructions.iter().filter_map(|instruction| strict_constant_test(*instruction, constants).map(|(register, _)| register)))
         .chain(instructions.iter().filter_map(|instruction| {
             if !crate::staged::loads_constant(instruction.op()) {
                 return None;
@@ -780,6 +800,14 @@ pub(crate) struct Inlining {
     pub(crate) latch: u32,
 }
 
+impl Inlining {
+    /// The registers past the caller's that the inlined frames occupy: the scratch window a leave
+    /// inside one writes and reads (`LoopEntry::scratch_address`, `LoopEntry::scratch_value`).
+    pub(crate) fn window(&self) -> usize {
+        super::frames_window(self.frames.iter().map(|frame| (frame.base, frame.registers)), self.caller_registers)
+    }
+}
+
 /// The capture slot bit an inlined callee's capture read carries (`Inlining::callee_captures`):
 /// no function's own depth-0 slot reaches it, which `inline_region` checks.
 pub(crate) const CALLEE_CAPTURE: u16 = 1 << 15;
@@ -827,6 +855,13 @@ pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
         && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
         && instruction.defined_register().is_some()
 }
+
+/// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
+/// none that names its function's own state (captures, frame, calls).
+fn inlinable(op: Op) -> bool {
+    op.traits().has(crate::bytecode::Traits::INLINABLE)
+}
+
 
 /// `instruction` with each register `register` renames, a `this` field base made the
 /// `this` register, and a jump target `target` renames; `None` for a field it cannot
@@ -1316,13 +1351,12 @@ impl LoopEntry {
     }
 
     /// The first `count` capture values, as pushed.
-    pub(crate) fn captures(&self, count: usize) -> Vec<Value> {
+    pub(crate) fn captures(&self, count: usize) -> impl Iterator<Item = Value> + '_ {
         debug_assert!(ENTRY_CAPTURES + count <= self.length);
         self.words[ENTRY_CAPTURES..ENTRY_CAPTURES + count]
             .iter()
             // SAFETY: the first `count` words after the leading ones are the pushed captures.
             .map(|word| Value::from_bits(unsafe { word.assume_init() }))
-            .collect()
     }
 
     /// Arrays follow the fields, in the region's order. An array longer than
@@ -1373,11 +1407,12 @@ impl LoopEntry {
     /// The scratch window an inlining region's leave inside an inlined callee writes the
     /// callee's live registers to, at each register's offset past the caller's
     /// (`JsStepDispatch::inlined`).
-    /// Every word starts `undefined`, so a register the leave did not write reads as a value
-    /// even if the callee's and the unit's liveness ever disagreed; only inlining regions
-    /// ask for the window.
-    pub(super) fn scratch_address(&mut self) -> usize {
-        self.scratch.fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
+    /// The window's first `width` words start `undefined`, so a register the leave did not write
+    /// reads as a value even if the callee's and the unit's liveness ever disagreed; only inlining
+    /// regions ask for the window, and `scratch_value` reads no word past `Inlining::window`.
+    pub(super) fn scratch_address(&mut self, width: usize) -> usize {
+        let filled = width.min(self.scratch.len());
+        self.scratch[..filled].fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
         self.scratch.as_mut_ptr().addr()
     }
 
@@ -1855,12 +1890,14 @@ fn admit_register_roles(
             } else {
                 // The slot pointer is captured at entry, of a receiver the region never
                 // rewrites. A read of the name through that receiver reads the current slot
-                // (`stored_fixed`); any other read of it could alias and keep a stale value.
+                // (`stored_fixed`), as does one through another receiver the region stores the
+                // name on, which may be the same object; any other read of it could alias and
+                // keep a stale value.
                 if instructions.iter().any(|candidate| {
                     crate::staged::reads_named_field(candidate.op())
                         && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
-                        && !field_path(*candidate, sites, &rooted)
-                            .is_some_and(|path| path.steps.len() == 1 && path.root == receiver)
+                        && !field_path(*candidate, sites, &rooted).is_some_and(|path| path.steps.len() == 1
+                            && (path.root == receiver || stored_fixed.contains(&(atom, path.root))))
                 }) {
                     return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
                 }
@@ -1930,7 +1967,9 @@ fn admit_register_roles(
     // require a reference barrier. Nested/tagged paths retain snapshot semantics.
     for (offset, index) in &field_stores {
         let store = &field_store_sites[*index];
-        let reads = admission.fields.iter().filter(|field| field.atom == store.atom);
+        // A read through another receiver the name is stored on is that store's to check.
+        let reads = admission.fields.iter().filter(|field| field.atom == store.atom
+            && (field.receiver == store.receiver || !stored_fixed.contains(&(field.atom, field.receiver))));
         for field in reads {
             if !store.matches(field) || field.tagged
                 || admission.roles.get(&instructions[*offset as usize].register_a()) != Some(&Role::Scalar(Representation::Float64))
@@ -2153,13 +2192,10 @@ fn admit(
         opcode if crate::staged::reads_named_field(opcode) => {
             admit_loaded(admission, instruction, tagged)?;
         }
-        // A tagged value is stored as the lane's element store takes it.
+        // A tagged value is stored as the lane's element store takes it. A value the loop does not define is an
+        // unchanged entry value, which may be any tagged value (`admit_stored`), as a field store's is.
         opcode if crate::staged::writes_element(opcode) => {
-            if tagged.contains(&instruction.register_a()) {
-                admission.tagged(instruction.register_a())?;
-            } else {
-                admission.number(instruction.register_a())?;
-            }
+            admit_stored(admission, instruction.register_a(), tagged, defined_registers)?;
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), true)?;
             }
@@ -2234,6 +2270,9 @@ fn admit(
             {
                 admission.tagged(register)?;
                 admission.constant(constant)?;
+            } else if let Some((register, constant)) = strict_constant_test(instruction, constants) {
+                admission.tagged(register)?;
+                admission.any_constant(constant)?;
             } else if let (Some(left), Some(right)) =
                 (instruction.operand_b().register_index(), instruction.operand_c().register_index())
                 && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some()
@@ -2288,6 +2327,9 @@ pub(crate) struct Observation<'a> {
     /// The type each register held where the compile began, by register (`Type::INT32` for an int32,
     /// `Type::NUMBER` for another Number, `Type::ANY` otherwise); a register past the slice is `Type::ANY`.
     pub(crate) entry_types: &'a [Type],
+    /// The registers holding strings where the compile began: a loop's element read through one
+    /// takes the string row, with no hoisted view (`RegionSpecializer::string_entries`).
+    pub(crate) string_entries: &'a [Register],
     /// What each instruction of the region, from its header, met where its int32 handler
     /// declined (`Vm::region_operand_kinds`): the feedback the representations start from,
     /// which the sample of the live registers above completes.
@@ -2396,8 +2438,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
     let pc = region.header + offset as u32;
     let strict_number_test = crate::staged::compare_jump(instruction.op())
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
-        && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
-            operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
+        && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand| operand.kind() == Some(OperandKind::Constant));
     let expected = if is_move_row(instruction) || is_truthiness_row(instruction)
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY

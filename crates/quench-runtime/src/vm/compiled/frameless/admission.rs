@@ -1,16 +1,15 @@
 //! Admission of callees for frameless calls: a callee's function is admitted once per
 //! collection epoch, and each closure of it takes the function's admission with its own
 //! captures.
-use super::{CallEntry, CACHE_ENTRIES, MATERIALIZATION_LIMIT, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
+use super::{CallEntry, CACHE_ENTRIES, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
 use super::super::{Host, JsStepDispatch, ResidualProgram, Vm};
-use super::super::admission::{admit_callee, CalleeUse};
+use super::super::admission::{admit_callee, refuse, CalleeUse, Refusal};
 use crate::Value;
 
 /// Admits `callee` for frameless calls from the payload's program and caches it: its
-/// entry's address, or 0 where its calls keep frames. Admitted are plain user functions of
+/// entry's address, or 0 where it is declined. Admitted are plain user functions of
 /// the running program (`CallPlan::in_loop`) whose whole state is their registers
-/// (`CallPlan::registers_only`), whose body has a linked native entry, and whose
-/// activations have not kept leaving.
+/// (`CallPlan::registers_only`), whose body has a linked native entry.
 ///
 /// # Safety
 /// As `general_user_call`.
@@ -49,26 +48,20 @@ fn admitted_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
 fn captures<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, owner: crate::vm::ProgramId, env: Value, entry: CallEntry) -> CallEntry {
     let capture = vm.target_capture(program, owner, env);
     // SAFETY: a live environment's dense slots stay in place through this collection epoch.
-    let (values, len) = (!capture.is_null()).then(|| unsafe {
-        crate::heap::EnvironmentSlots::native_storage_view(super::super::dispatch_fast::capture_reads(capture)) }).flatten()
-        .unwrap_or((std::ptr::null(), 0));
-    CallEntry { capture_values: values as u64, capture_len: len as u64,
-        capture_stores: u64::from(super::super::dispatch_fast::capture_stores(capture).is_some()), ..entry }
+    let (view, stores) = unsafe { super::super::dispatch_fast::capture_view(capture) };
+    let (values, len) = view.unwrap_or((std::ptr::null(), 0));
+    CallEntry { capture_values: values as u64, capture_len: len as u64, capture_stores: u64::from(stores), ..entry }
 }
 
 /// Admits `callee`'s function for frameless calls (`general_frameless_admit`) and records it
 /// for its later closures.
 fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch, callee: Value) -> Option<CallEntry> {
     let (owner, function, env) = vm.in_loop_call_target(program, callee)?;
-    if owner != dispatch.program_id { return None; }
+    if owner != dispatch.program_id { refuse(vm, Refusal::CalleeNotEligible); return None; }
     let body = program.function_get(function as usize)?;
     admit_callee(program, body, CalleeUse::Frameless).ok()?;
     let epoch = vm.cache_epochs.gc;
-    if vm.frameless.materializations.get(&(owner.raw(), function))
-        .is_some_and(|&(leaves, counted)| leaves >= MATERIALIZATION_LIMIT && counted == epoch) {
-        return None;
-    }
-    let code = native_entry(vm, owner, function)?;
+    let Some(code) = native_entry(vm, owner, function) else { refuse(vm, Refusal::CalleeNotEligible); return None; };
     let this = if body.is_arrow { THIS_NONE } else if body.strict { THIS_RECEIVER } else { vm.realm.globals.to_bits() };
     let entry = captures(vm, program, owner, env, CallEntry {
         epoch,
@@ -85,13 +78,8 @@ fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: 
     Some(entry)
 }
 
-/// The native entry of `function` in `owner`'s linked code, which only native builds have.
-#[cfg(feature = "native-execution")]
-fn native_entry<H: Host>(vm: &Vm<H>, owner: crate::vm::ProgramId, function: u32) -> Option<usize> {
-    vm.programs.native_js_code(owner)?.entries().get(function as usize).map(|code| *code as usize)
-}
-
-#[cfg(not(feature = "native-execution"))]
+/// No program has a native entry of the native-graph ABI: an image's functions run their bodies on
+/// the lane runner (`Vm::install_ahead_body`).
 fn native_entry<H: Host>(_: &Vm<H>, _: crate::vm::ProgramId, _: u32) -> Option<usize> {
     None
 }

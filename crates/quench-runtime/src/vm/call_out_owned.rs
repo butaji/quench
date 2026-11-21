@@ -31,10 +31,6 @@ impl<H: Host> Vm<H> {
                 let f = self.own_frame();
                 self.read_arguments_binding(p, f, binding, Some(key)).map(Some)
             }
-            OwnedVarStep::ThrowValue => {
-                let value = first.unwrap_or(Value::UNDEFINED);
-                Err(JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value))))
-            }
         }
     }
 

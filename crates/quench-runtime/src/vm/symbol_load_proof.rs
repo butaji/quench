@@ -314,16 +314,11 @@ impl<H: Host> Vm<H> {
         self.proved_getter(object, PropertyKey::symbol(key))
     }
 
-    /// The getter a read of `key` on `object` calls, where a proof records it.
+    /// The getter a read of `key` on `object` calls, where a proof records it: the accessor
+    /// fact decoder (`Vm::fact_accessor`) answers it for the receiver's layout.
     pub(super) fn proved_getter(&self, object: Value, key: PropertyKey) -> Option<Value> {
         let data = self.heap.ordinary_object(object)?;
-        match self.symbol_load_proofs.answer(data.layout_id(), key)? {
-            SymbolLoadAnswer::Getter { hops, slot } if !data.has_side_descriptors() => {
-                let holder = self.proof_holder(data, hops)?;
-                self.slot_attributes(holder, slot as usize)?.getter
-            }
-            _ => None,
-        }
+        self.fact_accessor(data, key, false).flatten()
     }
 
     /// The holder of an inherited proof answer: the object `hops` prototype links up from the

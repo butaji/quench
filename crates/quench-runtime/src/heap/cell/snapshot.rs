@@ -763,7 +763,6 @@ impl Cell {
             Self::WasmBits64(_) | Self::WasmInstance(_) | Self::WasmV128(_) | Self::WasmExtern(_)
             | Self::WasmException { .. }
             | Self::WasmTag { .. }
-            | Self::WasmGc { .. }
             | Self::WasmHostFunction { .. }
             | Self::WasmElements(_)
             | Self::WasmObject { .. }

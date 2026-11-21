@@ -14,8 +14,15 @@ pub(super) enum Value {
 
 pub(super) enum Member {
     Constant(Value),
-    /// A runtime initializer, as source text with member names already qualified.
-    Computed(String),
+    /// A value only the run time knows.
+    Computed(Computed),
+}
+
+pub(super) enum Computed {
+    /// The enum's runtime initializer at this index of its initializer list.
+    Initializer(usize),
+    /// The previous member's value plus one, when that member's value is not constant.
+    Successor(String),
 }
 
 pub(super) fn member_name(name: &TSEnumMemberName<'_>) -> Option<String> {
@@ -70,7 +77,7 @@ fn unary_fold(unary: &UnaryExpression<'_>, enum_name: &str, known: &FxHashMap<St
     Some(Value::Number(match unary.operator {
         UnaryOperator::UnaryPlus => value,
         UnaryOperator::UnaryNegation => -value,
-        UnaryOperator::BitwiseNot => f64::from(!to_int32(value)),
+        UnaryOperator::BitwiseNot => f64::from(!crate::value::number_to_i32(value)),
         _ => return None,
     }))
 }
@@ -84,7 +91,7 @@ fn binary_fold(binary: &BinaryExpression<'_>, enum_name: &str, known: &FxHashMap
         return Some(Value::String(format!("{}{}", display(&left)?, display(&right)?)));
     }
     let (Value::Number(a), Value::Number(b)) = (left, right) else { return None };
-    let (ia, ib) = (to_int32(a), to_int32(b));
+    let (ia, ib) = (crate::value::number_to_i32(a), crate::value::number_to_i32(b));
     let shift = (b as i64 & 31) as u32;
     Some(Value::Number(match binary.operator {
         BinaryOperator::Addition => a + b,
@@ -103,11 +110,6 @@ fn binary_fold(binary: &BinaryExpression<'_>, enum_name: &str, known: &FxHashMap
     }))
 }
 
-fn to_int32(value: f64) -> i32 {
-    if !value.is_finite() { return 0; }
-    (value.trunc().rem_euclid(4_294_967_296.0) as u32) as i32
-}
-
 /// The JavaScript text of a folded value, when it is exact without runtime help
 /// (safe integers; other numbers keep TypeScript's runtime emit).
 pub(super) fn display(value: &Value) -> Option<String> {
@@ -116,13 +118,6 @@ pub(super) fn display(value: &Value) -> Option<String> {
             && !(*number == 0.0 && number.is_sign_negative()) => Some(format!("{}", *number as i64)),
         Value::Number(_) => None,
         Value::String(text) => Some(text.clone()),
-    }
-}
-
-pub(super) fn literal(value: &Value) -> Option<String> {
-    match value {
-        Value::Number(_) => display(value),
-        Value::String(text) => Some(quote(text)),
     }
 }
 

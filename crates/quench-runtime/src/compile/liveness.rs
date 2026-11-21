@@ -1,6 +1,6 @@
 use crate::bytecode::{
     FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
+    ImmediateRole, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
 };
 
 /// A set of registers, one bit each: the uses, definitions and live registers liveness
@@ -62,9 +62,9 @@ impl MethodArguments for crate::bytecode::ResidualProgram {
     }
 }
 
-/// Records which functions liveness covers and each covered one's entry bound; the collector
-/// derives a covered function's per-pc root masks when it first finds one on the stack
-/// (`ResidualProgram::register_root_mask`).
+/// Records which functions liveness covers and each covered one's entry bound, each solved once
+/// from its own code (a test helper: a lowered function records its roots where it is lowered).
+#[cfg(test)]
 pub(crate) fn mark_register_roots<'a>(
     functions: impl IntoIterator<Item = &'a mut Function>,
     methods: &(impl MethodArguments + ?Sized),
@@ -72,21 +72,9 @@ pub(crate) fn mark_register_roots<'a>(
     superinstructions: &[Superinstruction],
 ) {
     for function in functions {
-        function.register_roots = register_roots(function, methods, fields, superinstructions);
+        let solved = analyze(function, methods, fields, superinstructions);
+        function.register_roots = register_roots_from(function, methods, fields, superinstructions, solved);
     }
-}
-
-/// `function`'s liveness coverage and entry bound, derived now from the tables it is given. Used
-/// where those tables are local and final (Wasm functions, which have no field or method sites).
-pub(crate) fn register_roots(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> crate::bytecode::RegisterRoots {
-    crate::bytecode::RegisterRoots::with_entry_live(true, derive_entry_live(function, methods, fields, superinstructions))
-}
-
-/// `function`'s entry bound, derived from its masks as a collection derives them;
-/// `ALL_LIVE_AT_ENTRY` where they bound no register.
-pub(crate) fn derive_entry_live(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> u16 {
-    RegisterMasks::of(function, methods, fields, superinstructions)
-        .map_or(crate::bytecode::RegisterRoots::ALL_LIVE_AT_ENTRY, |live| entry_live(function, &live))
 }
 
 /// `function`'s register roots, given the live sets `solved` that the lowering solved for `function`
@@ -107,9 +95,9 @@ pub(crate) fn register_roots_from(function: &Function, methods: &(impl MethodArg
     crate::bytecode::RegisterRoots::with_solved(entry, (!RegisterMasks::too_large_to_keep(function)).then_some(masks))
 }
 
-/// `derive_entry_live` for a function whose entry bound is derived on its first activation: the
-/// masks it solves are kept for the first mask ask where a collection would keep them, so that
-/// ask does not solve the function again.
+/// The entry bound of a function whose bound is derived on its first activation: the masks it
+/// solves are kept for the first mask ask where a collection would keep them, so that ask does
+/// not solve the function again.
 pub(crate) fn derive_entry_live_keeping(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> u16 {
     let Some(masks) = RegisterMasks::of(function, methods, fields, superinstructions) else {
         return crate::bytecode::RegisterRoots::ALL_LIVE_AT_ENTRY;

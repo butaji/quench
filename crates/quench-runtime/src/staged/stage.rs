@@ -122,6 +122,8 @@ pub(crate) trait Stage {
     fn ugt_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
     /// Whether `a` is below `b`, both unsigned and of one width.
     fn ult(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
+    /// Whether the words `a` and `b` are equal, bit for bit.
+    fn eq(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
     /// A 32-bit word zero-extended to the full word (the full word unchanged).
     fn uextend32(&mut self, a: Self::Word) -> Self::Word;
     fn sub(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
@@ -190,6 +192,7 @@ pub(crate) trait Stage {
     /// `then` where `cond` holds, else `otherwise`.
     fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
     /// Whether both `a` and `b` hold.
+    #[inline(always)]
     fn all(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond {
         let (neither_a, neither_b) = (self.not(a), self.not(b));
         let either = self.any(neither_a, neither_b);
@@ -205,6 +208,11 @@ pub(crate) trait Stage {
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
+    /// A do-while over `N` loop-carried words, from `init`: `body` runs on the state and returns whether the loop
+    /// goes on and the next state; the loop returns the state it last computed. The body is emitted once: a
+    /// specializer's loop is a block whose parameters are the state, the interpreter's a Rust loop.
+    fn loop_words<const N: usize>(&mut self, init: [Self::Word; N],
+        body: impl FnMut(&mut Self, [Self::Word; N]) -> (Self::Cond, [Self::Word; N])) -> [Self::Word; N];
     /// `choose` whose arms may leave: each runs only on its own path, and a `None` from the taken
     /// arm (a guard inside it that failed) leaves the whole. The interpreter takes one arm as a
     /// plain `if`; a specializer's guard inside an arm is a branch to its miss block, so the arm's
@@ -213,8 +221,8 @@ pub(crate) trait Stage {
     fn choose_leaving(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Option<Self::Word>,
         otherwise: impl FnOnce(&mut Self) -> Option<Self::Word>) -> Option<Self::Word> {
         let left = std::cell::Cell::new(false);
-        let word = self.choose(cond, #[inline(always)] |stage| then(stage).unwrap_or_else(|| { left.set(true); stage.constant(0) }),
-            #[inline(always)] |stage| otherwise(stage).unwrap_or_else(|| { left.set(true); stage.constant(0) }));
+        let word = self.choose(cond, #[inline(always)] |stage| then(stage).unwrap_or_else(#[inline(always)] || { left.set(true); stage.constant(0) }),
+            #[inline(always)] |stage| otherwise(stage).unwrap_or_else(#[inline(always)] || { left.set(true); stage.constant(0) }));
         (!left.get()).then_some(word)
     }
     /// Continues where `cond` holds; `None` where it does not, so nothing runs past it.

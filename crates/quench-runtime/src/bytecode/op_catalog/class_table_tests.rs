@@ -72,10 +72,22 @@ fn role_traits_select_exactly_the_ops_they_replaced() {
     expect(Traits::F64_BINARY_FAMILY, &[Op::WasmF64Binary, Op::WasmF64BinaryRaw]);
     expect(Traits::F64_UNARY_FAMILY, &[Op::WasmF64Unary, Op::WasmF64UnaryRaw]);
     expect(Traits::RETURN_FAMILY, &[Op::Return, Op::WasmReturn64]);
+    expect(Traits::STRUCT_GET_FAMILY, &[Op::WasmStructGet, Op::WasmStructGetRaw]);
+    expect(Traits::STRUCT_SET_FAMILY, &[Op::WasmStructSet, Op::WasmStructSetRaw]);
+    expect(Traits::ARRAY_GET_FAMILY, &[Op::WasmArrayGet, Op::WasmArrayGetRaw]);
+    expect(Traits::ARRAY_SET_FAMILY, &[Op::WasmArraySet, Op::WasmArraySetRaw]);
     expect(
         Traits::RAW_FORM,
-        &[Op::WasmI64BinaryRaw, Op::WasmI64BinaryImmediateRaw, Op::WasmI64UnaryRaw, Op::WasmF64BinaryRaw, Op::WasmF64UnaryRaw, Op::WasmReturn64],
+        &[
+            Op::WasmI64BinaryRaw, Op::WasmI64BinaryImmediateRaw, Op::WasmI64UnaryRaw, Op::WasmF64BinaryRaw, Op::WasmF64UnaryRaw, Op::WasmReturn64,
+            Op::WasmStructGetRaw, Op::WasmStructSetRaw, Op::WasmArrayGetRaw, Op::WasmArraySetRaw,
+        ],
     );
+    assert_eq!(raw_form(Op::WasmStructGet), Some(Op::WasmStructGetRaw));
+    assert_eq!(raw_form(Op::WasmStructSet), Some(Op::WasmStructSetRaw));
+    assert_eq!(raw_form(Op::WasmArrayGet), Some(Op::WasmArrayGetRaw));
+    assert_eq!(raw_form(Op::WasmArraySet), Some(Op::WasmArraySetRaw));
+    assert_eq!(raw_form(Op::WasmStructGetS), None);
     assert_eq!(raw_form(Op::WasmI64Binary), Some(Op::WasmI64BinaryRaw));
     assert_eq!(raw_form(Op::WasmI64BinaryImmediate), Some(Op::WasmI64BinaryImmediateRaw));
     assert_eq!(raw_form(Op::WasmI64Unary), Some(Op::WasmI64UnaryRaw));

@@ -1,5 +1,5 @@
 // Smallest possible Next.js-style server built only on the `node:` surface
-// `quench-node` exposes. Next.js dev/build pipelines are out of v1 scope
+// `quench` exposes. Next.js dev/build pipelines are out of v1 scope
 // (ADR 0002), so this example demonstrates the Next.js handler/routing shape
 // — a `NextServer` with `prepare()` + per-request `handler(req)` returning
 // a fetch-style Response — built on `node:http` and verified over a real

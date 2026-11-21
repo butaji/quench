@@ -1,5 +1,5 @@
 use super::*;
-use quench_bjit::Reloc;
+use quench_bjit::{EXIT_STUB_LEN, Reloc};
 
 /// The machine code of a bare return on the host architecture.
 #[cfg(target_arch = "x86_64")]
@@ -48,11 +48,11 @@ fn jump_target(code: &[u8], at: usize) -> usize {
 #[test]
 fn exits_land_in_the_cold_area_behind_the_hot_rows() {
     let (hot, leave) = (exiting(), leave_row(ret()));
-    let hole = |_: u32| 0u64;
+    let hole = [0u64; HOLES];
     let rows = [Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &leave, hole: &hole, taken: None, cold: false }];
     let exits = [vec![Target::Stub { pc: 7, routine: 0 }], vec![Target::Row(2)], Vec::new()];
     let routines = [ret()];
-    let (code, ..) = place_rows(Ending::Body, &rows, (&exits, &routines), &[], 0).expect("a layout");
+    let (code, ..) = place_rows(Ending::Body, &rows, (&exits, &routines), &[], 0, &[]).expect("a layout");
     let head = thunk(Ending::Body, 0, 0).expect("a thunk").len();
     let (second, leave_at) = (head + hot.code.len(), head + 2 * hot.code.len());
     let stub = leave_at + leave.code.len() + routines[0].len();

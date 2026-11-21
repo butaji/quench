@@ -48,18 +48,9 @@ pub(crate) fn to_int32(value: f64) -> i32 {
     (if negative { whole.wrapping_neg() } else { whole }) as i32
 }
 
-/// ToUint8Clamp of a binary64's bits: NaN and whatever is below a half give 0, 256 and above give 255, and the
-/// rest rounds to the nearest integer, ties to even.
+/// ToUint8Clamp of a binary64's bits: the staged body `math::clamp_u8`, which this build mounts.
+#[cfg(not(stencil_family = "wasm"))]
 #[inline(always)]
 pub(crate) fn clamp_u8(bits: u64) -> u64 {
-    let Unpacked { negative, exponent, significand, infinite_or_nan } = unpack(bits);
-    if negative || (infinite_or_nan && significand != IMPLICIT_BIT) || exponent < -1 {
-        return 0;
-    }
-    if exponent >= u8::BITS as i32 {
-        return u64::from(u8::MAX);
-    }
-    let shift = (FRACTION_BITS as i32 - exponent) as u32;
-    let (whole, rest, half) = (significand >> shift, significand & ((1 << shift) - 1), 1u64 << (shift - 1));
-    (whole + u64::from(rest > half || (rest == half && whole & 1 == 1))).min(u64::from(u8::MAX))
+    u64::from(crate::staged::math::clamp_u8(f64::from_bits(bits)))
 }

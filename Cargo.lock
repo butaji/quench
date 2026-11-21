@@ -2106,6 +2106,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "quench"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "brotli",
+ "chrono",
+ "crc32fast",
+ "encoding_rs",
+ "foldhash",
+ "foreign-types",
+ "hex",
+ "idna",
+ "libc",
+ "libz-rs-sys",
+ "memchr",
+ "openssl",
+ "openssl-sys",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_parser",
+ "oxc_resolver",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_syntax",
+ "pkg-config",
+ "quench-alloc",
+ "quench-js-check",
+ "quench-runtime",
+ "quench-stack",
+ "quench-wasm",
+ "regex",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "sha1",
+ "socket2",
+ "sysinfo",
+ "turso_core",
+ "turso_parser",
+ "unicode-normalization",
+ "url",
+ "zstd",
+]
+
+[[package]]
 name = "quench-alloc"
 version = "0.1.0"
 dependencies = [
@@ -2183,58 +2229,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "quench-node"
-version = "0.1.0"
-dependencies = [
- "base64",
- "brotli",
- "chrono",
- "crc32fast",
- "encoding_rs",
- "foldhash",
- "foreign-types",
- "hex",
- "idna",
- "libc",
- "libz-rs-sys",
- "memchr",
- "openssl",
- "openssl-sys",
- "oxc_allocator",
- "oxc_ast",
- "oxc_ast_visit",
- "oxc_parser",
- "oxc_resolver",
- "oxc_semantic",
- "oxc_span",
- "oxc_syntax",
- "pkg-config",
- "quench-alloc",
- "quench-js-check",
- "quench-runtime",
- "quench-stack",
- "quench-wasm",
- "regex",
- "rustc-hash",
- "serde",
- "serde_json",
- "sha1",
- "socket2",
- "sysinfo",
- "turso_core",
- "turso_parser",
- "unicode-normalization",
- "url",
- "zstd",
-]
-
-[[package]]
 name = "quench-node-test"
 version = "0.1.0"
 dependencies = [
  "libc",
  "openssl",
- "quench-node",
+ "quench",
  "quench-stack",
  "serde",
  "serde_json",
@@ -2302,6 +2302,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "syn 2.0.119",
+ "target-lexicon",
  "unicode-normalization",
  "unicode-segmentation",
  "utf8_iter",
@@ -2310,6 +2311,10 @@ dependencies = [
 
 [[package]]
 name = "quench-stack"
+version = "0.1.0"
+
+[[package]]
+name = "quench-symbols"
 version = "0.1.0"
 
 [[package]]

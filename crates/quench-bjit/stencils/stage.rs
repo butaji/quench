@@ -16,11 +16,23 @@ use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
 use crate::staged::region::{Access, Region};
 
+// Statics, not functions: an operation with no stencil form reads one, so its relocation fails the
+// build as a call's would, but the path holds no call, which would keep LLVM from unrolling a loop
+// over static data (an IC's ops) whose unrolled form never reaches it.
 unsafe extern "C" {
-    fn UNSUPPORTED_assumption(a: u64) -> u64;
-    fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
-    fn UNSUPPORTED_shape_in(a: u64) -> u64;
-    fn UNSUPPORTED_site(a: u64) -> u64;
+    static UNSUPPORTED_assumption: u8;
+    static UNSUPPORTED_number_operator: u8;
+    static UNSUPPORTED_shape_in: u8;
+    static UNSUPPORTED_site: u8;
+}
+
+/// The word an unsupported operation answers: a volatile read of its `UNSUPPORTED_*` static, which
+/// no optimization folds away, so the relocation stays and fails the build.
+macro_rules! unsupported {
+    ($symbol:ident) => {
+        // SAFETY: never run; the relocation against the static fails the build.
+        u64::from(unsafe { core::ptr::read_volatile(&raw const $symbol) })
+    };
 }
 
 /// The stencil stage; `sites` is the number of the next value hole a `site` call names,
@@ -117,7 +129,7 @@ impl Stage for StencilStage {
                 HOLE_THIRD => hole::<HOLE_THIRD>() as u64,
                 HOLE_FOURTH => hole::<HOLE_FOURTH>() as u64,
                 LAST_HOLE => hole::<LAST_HOLE>() as u64,
-                _ => UNSUPPORTED_site(n as u64),
+                _ => unsupported!(UNSUPPORTED_site),
             }
         }
     }
@@ -128,8 +140,8 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn shape_in_site(&mut self, shape: u64, _shapes: &[u32]) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_shape_in(shape) != 0 }
+        let _ = shape;
+        unsupported!(UNSUPPORTED_shape_in) != 0
     }
     #[inline(always)]
     fn constant(&mut self, bits: u64) -> u64 { bits }
@@ -155,12 +167,7 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
-    #[inline(always)]
-    fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
-    #[inline(always)]
-    fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
-    #[inline(always)]
-    fn and(&mut self, a: u64, b: u64) -> u64 { a & b }
+    crate::staged::word_ops::word_stage_ops!();
     #[inline(always)]
     fn shr(&mut self, a: u64, b: u64) -> u64 { a.wrapping_shr(b as u32) }
     #[inline(always)]
@@ -173,10 +180,6 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn or_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a | imm.into() }
     #[inline(always)]
-    fn shr_imm(&mut self, a: u64, shift: impl Into<u64>) -> u64 { a >> shift.into() }
-    #[inline(always)]
-    #[inline(always)]
-    fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
     #[inline(always)]
     fn eq_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a == imm.into() }
     #[inline(always)]
@@ -184,7 +187,21 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn ugt_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a > imm.into() }
     #[inline(always)]
-    fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
+    fn eq(&mut self, a: u64, b: u64) -> bool { a == b }
+    /// A plain Rust loop: a stencil holds no call, and the body runs on the state until it says the loop ends.
+    #[inline(always)]
+    fn loop_words<const N: usize>(&mut self, init: [u64; N], mut body: impl FnMut(&mut Self, [u64; N]) -> (bool, [u64; N]))
+        -> [u64; N] {
+        let mut state = init;
+        loop {
+            let (go_on, next) = body(self, state);
+            state = next;
+            if !go_on {
+                break;
+            }
+        }
+        state
+    }
     #[inline(always)]
     fn uextend32(&mut self, a: u64) -> u64 {
         // SAFETY: the operation's contract is a 32-bit word (a width-checked index or length), which
@@ -192,10 +209,6 @@ impl Stage for StencilStage {
         unsafe { core::hint::assert_unchecked(a <= u64::from(u32::MAX)) };
         a
     }
-    #[inline(always)]
-    fn sub(&mut self, a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
-    #[inline(always)]
-    fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
     #[inline(always)]
     fn store_u32(&mut self, _at: Access, base: u64, offset: i32, value: u64) {
         // SAFETY: a staged operation stores only into a live record or backing at a layout offset.
@@ -218,17 +231,9 @@ impl Stage for StencilStage {
     fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
     #[inline(always)]
     fn box_number(&mut self, number: u64) -> u64 {
-        // `Value::number`: an integral double in int32 range (not `-0`) is an int32, NaN the
-        // canonical NaN, any other double its own bits.
-        let double = f64::from_bits(number);
-        let integer = crate::words::truncate32(double);
-        if f64::from(integer) == double && (integer != 0 || number >> 63 == 0) {
-            crate::layout::words::INT_TAG | u64::from(integer as u32)
-        } else if double.is_nan() {
-            crate::layout::words::CANONICAL_NAN
-        } else {
-            number
-        }
+        // `Value::number` (`words::canonical`): its truncation is the target's own instruction, where
+        // a saturating `as` cast would load its bounds from a constant pool a stencil may not use.
+        crate::words::canonical(f64::from_bits(number))
     }
     #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
@@ -277,28 +282,18 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_assumption(watch) != 0 }
+        let _ = watch;
+        unsupported!(UNSUPPORTED_assumption) != 0
     }
     #[inline(always)]
     fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
-        // SAFETY: never run; the symbol fails the build.
-        (unsafe { UNSUPPORTED_number_operator(operator, passed, constant) }, false)
-    }
-    #[inline(always)]
-    fn not(&mut self, cond: bool) -> bool { !cond }
-    #[inline(always)]
-    fn any(&mut self, a: bool, b: bool) -> bool { a | b }
-    #[inline(always)]
-    fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
-    #[inline(always)]
-    fn number_truthy(&mut self, bits: u64) -> bool {
-        crate::vm::operations::number_truthiness(&mut crate::vm::operations::NumberF64Stage, f64::from_bits(bits))
+        let _ = (operator, passed, constant);
+        (unsupported!(UNSUPPORTED_number_operator), false)
     }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, _shapes: &[u32]) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_shape_in(shape) != 0 }
+        let _ = shape;
+        unsupported!(UNSUPPORTED_shape_in) != 0
     }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {

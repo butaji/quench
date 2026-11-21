@@ -47,6 +47,8 @@ pub(super) type EnvironmentRecordSpace = RecordSpace<super::EnvironmentRecord, {
 pub(super) type SymbolRecordSpace = RecordSpace<super::SymbolData, { super::MAX_HEAP_CELLS }>;
 /// Wasm vectors: immutable leaves, so a record's bytes are its whole state.
 pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES], V128_RECORD_CAPACITY>;
+/// Wasm GC objects: a record holds its head (`WasmGcHead`) and its payload, read in place by compiled code.
+pub(super) type WasmGcRecordSpace = RecordSpace<super::WasmGcRecord, WASM_GC_RECORD_CAPACITY>;
 /// Strings have no legacy-slot fallback, so their space holds as many records as the legacy
 /// slots do (`MAX_HEAP_CELLS`).
 /// The ids `[STRING_RECORD_HOLE, 2 * STRING_RECORD_HOLE)` are never this space's: they name the
@@ -166,6 +168,7 @@ const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
 pub(super) use crate::staged::object_encoding::{
     ARRAY_RECORD_CAPACITY, AWAIT_RECORD_CAPACITY, COLLECTION_RECORD_CAPACITY, FUNCTION_RECORD_CAPACITY,
     ITERATOR_RECORD_CAPACITY, OBJECT_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY, V128_RECORD_CAPACITY,
+    WASM_GC_RECORD_CAPACITY,
 };
 
 #[cfg(test)]
@@ -176,6 +179,7 @@ const _: () = assert!(FUNCTION_RECORD_CAPACITY.is_power_of_two() && PROMISE_RECO
 const _: () = assert!(ITERATOR_RECORD_CAPACITY.is_power_of_two() && COLLECTION_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(OBJECT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && ARRAY_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(AWAIT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && V128_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
+const _: () = assert!(WASM_GC_RECORD_CAPACITY.is_power_of_two() && WASM_GC_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 // Ids are `u32`, and the id after a space's last one must still fit.
 const _: () = assert!(OBJECT_RECORD_CAPACITY < u32::MAX as usize && FUNCTION_RECORD_CAPACITY < u32::MAX as usize);
 
@@ -934,10 +938,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     where
         T: TraceRecord,
     {
-        let (block_index, record_index) = Self::split_id(id);
-        // SAFETY: a live id belongs to an initialized block.
-        let block = unsafe { self.blocks.get_unchecked(block_index) };
-        if block.marked[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0 {
+        if self.barrier_marked(id) {
             self.rc_note(id, properties);
         }
     }
@@ -948,7 +949,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     where
         T: TraceRecord,
     {
-        self.remember(id);
+        // The mark is set: `rc_barrier` tested it.
+        self.unmark_and_log(id);
         self.rc_logged.push(id);
         // SAFETY: a barrier runs only for a live record of this family.
         let record = unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() };
@@ -981,6 +983,12 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         if stored.heap_index().is_none() && !self.rc {
             return false;
         }
+        self.barrier_marked(id)
+    }
+
+    /// Whether record `id` is marked (left marked by the last collection and not yet logged).
+    #[inline(always)]
+    fn barrier_marked(&self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         // SAFETY: a live id belongs to an initialized block.
         let block = unsafe { self.blocks.get_unchecked(block_index) };
@@ -989,15 +997,19 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
     #[inline(always)]
     pub(super) fn remember(&mut self, id: RecordId) {
+        if self.barrier_marked(id) {
+            self.unmark_and_log(id);
+        }
+    }
+
+    /// Clears the mark of record `id` (set by the caller's `barrier_marked` test) and logs it.
+    #[inline(always)]
+    fn unmark_and_log(&mut self, id: RecordId) {
         let (block_index, record_index) = Self::split_id(id);
         // SAFETY: a live id belongs to an initialized block.
         let block = unsafe { self.blocks.get_unchecked_mut(block_index) };
-        let word = &mut block.marked[record_index / OCCUPANCY_WORD_BITS];
-        let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
-        if *word & mask != 0 {
-            *word &= !mask;
-            self.log_remembered(id);
-        }
+        block.marked[record_index / OCCUPANCY_WORD_BITS] &= !(1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+        self.log_remembered(id);
     }
 
     /// Logs a record the barrier just unmarked, out of line: the log grows only once per
@@ -1457,6 +1469,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         id < self.next_id && self.is_occupied(id)
     }
 
+    #[inline(always)]
     fn split_id(id: RecordId) -> (usize, usize) {
         let id = id as usize;
         (id / RECORDS_PER_BLOCK, id % RECORDS_PER_BLOCK)

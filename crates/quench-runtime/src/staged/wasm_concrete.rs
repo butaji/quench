@@ -106,6 +106,8 @@ macro_rules! float_math {
 /// word; a comparison's word is its flag. The extrema are the machine's.
 macro_rules! float_width {
     ($binary:ident, $unary:ident, $float:ident, $bits:ty) => {
+        // Inlined: a stencil row's operator is a constant, so its one arm stays and nothing is called.
+        #[inline(always)]
         fn $binary(operator: FloatBinary, left: $float, right: $float) -> u64 {
             let value: Result<$float, bool> = match operator {
                 FloatBinary::Add => Ok(left + right),
@@ -134,12 +136,13 @@ macro_rules! float_width {
             }
         }
 
+        #[inline(always)]
         fn $unary(operator: FloatUnary, value: $float) -> u64 {
             const SIGN: $bits = sign_mask(<$bits>::BITS) as $bits;
             const INFINITY: $bits = <$float>::INFINITY.to_bits();
             const QUIET_NAN_BIT: $bits =
                 canonical_nan_bits(<$float>::MANTISSA_DIGITS, INFINITY as u64) as $bits ^ INFINITY;
-            let quieted = |value: $float| {
+            let quieted = #[inline(always)] |value: $float| {
                 if value.is_nan() {
                     value.to_bits() | QUIET_NAN_BIT
                 } else {

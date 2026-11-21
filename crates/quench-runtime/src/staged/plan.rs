@@ -35,6 +35,7 @@ pub(crate) enum CalleeKind {
 impl CalleeKind {
     /// Whether the call allocates the callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
+    #[inline(always)]
     pub(crate) const fn allocates_receiver(self) -> bool {
         matches!(self, Self::Class)
     }
@@ -53,6 +54,7 @@ pub(crate) enum Identity {
 
 impl Identity {
     /// The callee's identity word.
+    #[inline(always)]
     pub(crate) const fn word(self) -> u64 {
         match self {
             Self::Guarded(word) | Self::Folded(word) => word,

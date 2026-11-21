@@ -11,12 +11,13 @@
 //! The b-jit leave stubs (`base_region::link`) emit `LaneExit::Entry.word()` and so share the
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
-use super::{lane_unit, LaneExit, LoopRegion, RETURN_STATUS_BASE};
+use super::{lane_unit, LaneExit, LoopRegion};
 use crate::value::Value;
-use quench_bjit::call_record::LaneStatus;
+use quench_bjit::call_record::{return_status_pc, LaneStatus};
+use std::collections::HashMap;
 
 /// What a leave is, which a leave word holds in its top two bits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u64)]
 pub(super) enum ExitKind {
     /// At a caller PC.
@@ -79,7 +80,17 @@ impl LaneExit {
     }
 
     /// How a native run that returned `status` and wrote `word` ended: the one reader of the
-    /// result. `returned_pc` names the record that completes the activation, read only then.
+    /// status word. `returned_pc` names the record that completes the activation, read only then.
+    ///
+    /// The AOT completion path: the ahead trampoline (`ahead_entry`) returns a completion as
+    /// `return_status(pc)`, which is read here as `At(pc)`, and its value is in the entry's result
+    /// slot, the `word` the caller passes. `At` carries no value, so the value is read from that
+    /// slot by the caller that holds it: `run_js_native_entry`'s linked step (`compiled.rs`).
+    ///
+    /// Readers of the status word, the ones that decode it: this function (lane bodies, OSR
+    /// regions and bare stencils, through `entry_protocol::exit`); the linked step in `compiled.rs`
+    /// (`return_status_pc`, the AOT completion's PC); `lane_body_run.rs` and `lane_region/call_frames.rs`
+    /// and `stencils/call_rows.rs`, which test a call's `LaneStatus` without decoding a leave.
     pub(super) fn read(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
         match LaneStatus::of(status) {
             Some(LaneStatus::Terminated) => Self::Terminated,
@@ -87,9 +98,8 @@ impl LaneExit {
             Some(LaneStatus::Threw) => Self::Threw { pc: returned_pc() },
             Some(LaneStatus::NativeJsStopped) => Self::decode(word),
             Some(LaneStatus::NotEntered) => Self::Stub,
-            None if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
-            None => Self::At(0),
+            None => Self::At(return_status_pc(status).map_or(0, |pc| pc as usize)),
         }
     }
 
@@ -146,23 +156,24 @@ impl LoopRegion {
 }
 
 /// Where a live value is when its leave happens.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Source {
     /// An inlined callee's register, which the leave stores to this slot of the entry's
     /// scratch window (`BodyRunContext::scratch`).
     Scratch(u16),
 }
 
-/// A value live across a leave: its unit register and where the leave stores it. Every live
+/// A value a leave stores: its unit register and where the leave stores it. Every stored
 /// value is stored tagged, so no representation is recorded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct LiveValue {
     pub(super) slot: u16,
     pub(super) source: Source,
 }
 
-/// What a leave is and the values it stores that its caller's registers do not already hold.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What a leave is and the values it stores (`Lowering::inlined_stores`, the emitter's own
+/// query, which a leave inside an inlined frame stores and no other).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct ExitSig {
     pub(super) kind: ExitKind,
     pub(super) live: Box<[LiveValue]>,
@@ -189,18 +200,19 @@ pub(in crate::vm) struct ExitTable {
 }
 
 impl ExitTable {
-    /// The table of the places `unit`'s PCs leave at.
-    pub(super) fn of_unit(unit: &lane_unit::Unit) -> Self {
+    /// The table of the places `unit`'s PCs leave at. `stored` is the emitter's store set of a
+    /// leave at an inlined PC (`unit_pc`, its `frame`), so the table records what the leave writes.
+    pub(super) fn of_unit(unit: &lane_unit::Unit, stored: impl Fn(usize, usize) -> Vec<LiveValue>) -> Self {
         let mut table = Self::default();
-        let mut frame_sigs: Vec<Option<usize>> = vec![None; unit.frames.len()];
+        let mut known: HashMap<ExitSig, usize> = HashMap::new();
         for (unit_pc, origin) in unit.origins.iter().enumerate() {
             let (exit, sig) = match *origin {
-                lane_unit::Origin::Caller(pc) => (LaneExit::At(pc as usize), table.intern(ExitSig { kind: ExitKind::At, live: Box::default() })),
+                lane_unit::Origin::Caller(pc) => (LaneExit::At(pc as usize), ExitSig { kind: ExitKind::At, live: Box::default() }),
                 lane_unit::Origin::Inlined { frame, pc } => {
-                    let sig = *frame_sigs[frame].get_or_insert_with(|| table.intern(Self::inlined_sig(unit, frame)));
-                    (LaneExit::Inlined { frame, pc }, sig)
+                    (LaneExit::Inlined { frame, pc }, ExitSig { kind: ExitKind::Inlined, live: stored(unit_pc, frame).into_boxed_slice() })
                 }
             };
+            let sig = table.intern(&mut known, sig);
             table.add(exit, sig, unit_pc);
         }
         table.sigs.shrink_to_fit();
@@ -208,20 +220,11 @@ impl ExitTable {
         table
     }
 
-    /// The sig of a leave inside `frame`: every register of its chain's frames, stored tagged.
-    fn inlined_sig(unit: &lane_unit::Unit, frame: usize) -> ExitSig {
-        let live = unit.chain(frame).into_iter().flat_map(|index| {
-            let inlined = unit.frames[index];
-            inlined.base..inlined.base + inlined.registers
-        }).map(|register| LiveValue { slot: register, source: Source::Scratch(register - unit.caller_registers) });
-        ExitSig { kind: ExitKind::Inlined, live: live.collect() }
-    }
-
-    fn intern(&mut self, sig: ExitSig) -> usize {
-        self.sigs.iter().position(|known| *known == sig).unwrap_or_else(|| {
-            self.sigs.push(sig);
-            self.sigs.len() - 1
-        })
+    fn intern(&mut self, known: &mut HashMap<ExitSig, usize>, sig: ExitSig) -> usize {
+        if let Some(&index) = known.get(&sig) { return index; }
+        self.sigs.push(sig.clone());
+        known.insert(sig, self.sigs.len() - 1);
+        self.sigs.len() - 1
     }
 
     /// Adds the leave `exit` unless an earlier unit PC already leaves there.
@@ -256,6 +259,7 @@ impl ExitTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quench_bjit::call_record::return_status;
 
     const EXITS: [LaneExit; 7] = [
         LaneExit::At(0), LaneExit::At(u32::MAX as usize), LaneExit::Inlined { frame: 0, pc: 0 },
@@ -293,10 +297,20 @@ mod tests {
     fn each_named_status_round_trips_and_no_return_status_is_named() {
         for status in LaneStatus::ALL {
             assert_eq!(LaneStatus::of(status as u32), Some(status));
-            assert!((status as u32) < RETURN_STATUS_BASE, "a named status is below every return status");
+            assert!((status as u32) < return_status(0), "a named status is below every return status");
         }
-        assert_eq!(LaneStatus::of(RETURN_STATUS_BASE), None);
+        assert_eq!(LaneStatus::of(return_status(0)), None);
         assert_eq!(LaneStatus::of(0), None);
+    }
+
+    /// The AOT completion's status decodes to the record it names, and only return statuses name one.
+    #[test]
+    fn an_aot_completion_reads_as_the_leave_at_its_record() {
+        for pc in [0, 1, 2047] {
+            assert_eq!(return_status_pc(return_status(pc)), Some(pc));
+            assert_eq!(LaneExit::read(return_status(pc), Value::UNDEFINED.to_bits(), || unreachable!()), LaneExit::At(pc as usize));
+        }
+        assert_eq!(return_status_pc(LaneStatus::Threw as u32), None);
     }
 
     /// Every producer of a leave word stops with `NATIVE_JS_STOPPED` (the stencil entry thunks

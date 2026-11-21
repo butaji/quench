@@ -12,7 +12,7 @@
 
 use crate::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
 use crate::bytecode::Function;
-use crate::staged::{emit, plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
+use crate::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
 use crate::typed_ir::BindingTime;
 use crate::value::Value;
 #[path = "lane_unit/admission.rs"] mod admission;
@@ -20,8 +20,8 @@ pub(super) use admission::{inlinable, InlineScope};
 use admission::{restartable, returns_or_keeps};
 use super::admission::{admit_callee, CalleeUse};
 #[path = "lane_unit/weights.rs"] mod weights;
-#[cfg(all(test, feature = "aot"))] #[path = "lane_unit/static_hints.rs"] mod static_hints;
-#[cfg(all(test, feature = "aot"))] pub(crate) use static_hints::static_call_targets;
+#[cfg(test)] #[path = "lane_unit/static_hints.rs"] mod static_hints;
+#[cfg(test)] pub(crate) use static_hints::static_call_targets;
 
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function
@@ -67,7 +67,7 @@ pub(crate) enum Origin {
 /// An inlined call. Its registers are the unit's: the caller's are its first, and each
 /// callee's start at its `base`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Frame {
+pub(crate) struct InlinedCall {
     pub(crate) recovery: CallRecovery,
     /// The frame whose function makes the call; `None` for the caller's.
     pub(crate) parent: Option<usize>,
@@ -100,7 +100,7 @@ pub(crate) struct Frame {
     pub(crate) function_call: Option<(Register, Value)>,
 }
 
-impl Frame {
+impl InlinedCall {
     /// The physical parameter homes initialized by the passed arguments.
     pub(crate) fn passed_registers(self, callee: &Function) -> impl Iterator<Item = (Register, Register)> + '_ {
         (0..self.arguments.min(callee.params)).filter_map(move |argument|
@@ -110,7 +110,7 @@ impl Frame {
     }
 
     /// The parent's register 0: the caller's, or the enclosing callee's.
-    pub(crate) fn parent_base(&self, frames: &[Frame]) -> Register {
+    pub(crate) fn parent_base(&self, frames: &[InlinedCall]) -> Register {
         self.parent.map_or(0, |parent| frames[parent].base)
     }
 }
@@ -119,7 +119,7 @@ impl Frame {
 pub(crate) struct Unit {
     pub(crate) instructions: Vec<WideInstruction>,
     pub(crate) origins: Vec<Origin>,
-    pub(crate) frames: Vec<Frame>,
+    pub(crate) frames: Vec<InlinedCall>,
     /// The unit PC of each frame's call marker, where the call's guards and bindings run.
     pub(crate) markers: Vec<usize>,
     pub(crate) caller_registers: u16,
@@ -206,15 +206,8 @@ impl Unit {
             if let Some(frame) = self.markers.iter().position(|marker| *marker == pc) {
                 successors.extend(self.frames[frame].alternative);
             }
-            match instruction.op().control_flow_layout() {
-                crate::bytecode::ControlFlowLayout::Terminal => {},
-                crate::bytecode::ControlFlowLayout::Jump => successors.push(instruction.jump_target() as usize),
-                crate::bytecode::ControlFlowLayout::ConditionalJump => {
-                    successors.push(instruction.jump_target() as usize);
-                    successors.push(pc + 1);
-                }
-                _ => successors.push(pc + 1),
-            }
+            // The one successor table: a branch table continues at every one of its entries.
+            crate::bytecode::for_each_instruction_successor(pc, *instruction, |successor| successors.push(successor));
         }
         starts.push(successors.len());
         let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, &[], |pc| masks[pc]);
@@ -238,11 +231,9 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
         matches!(Operation::<u64, ()>::of(code[*pc]), Some(Operation::Return { .. })) && code[*pc].result_flags() == 0)
 }
 
-/// Whether the staged decode makes `instruction` a throw of its first operand (`Throw`, the owned
-/// variable step `ThrowValue`).
+/// Whether the staged decode makes `instruction` a throw of its first operand (`Throw`).
 fn throws(instruction: WideInstruction) -> bool {
-    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Protocol {
-        step: crate::staged::Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::ThrowValue), .. }))
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Throw { .. }))
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers
@@ -449,7 +440,7 @@ impl Planner<'_, '_> {
             || admit_callee(self.program, callee, CalleeUse::Inlined(target.callee)).is_err() {
             return None;
         }
-        let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, &code)
+        let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, code.iter().copied())
             || (target.callee == CalleeBinding::Function && restartable(self.program, callee, &code)) {
             CallRecovery::RestartCall
         } else { CallRecovery::Materialize };
@@ -532,7 +523,7 @@ impl Emitter {
                     self.unit.markers.push(marker);
                     let callee_base = Register::try_from(call.base).ok()?;
                     let next = (alternative + 1 < calls.len() + usize::from(keeps)).then(|| marker + 1 + call.plan.length(false) as usize);
-                    let frame_record = Frame {
+                    let frame_record = InlinedCall {
                         recovery: call.recovery,
                         parent: frame,
                         call: pc as u32,

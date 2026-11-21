@@ -6,10 +6,10 @@
 //! specializer emits it once where a loop enters. A proof that fails leaves at `miss`, where the
 //! VM publishes the view again (`Vm::publish_typed_view`) or declines it.
 
-use super::typed_elements::{typed_read, NativeKind, TypedView, ViewKind};
+use super::typed_elements::{element_number, field_bits, store_element_number, store_field_bits, typed_read, NativeKind, TypedView, ViewKind};
 use super::region::Region;
 use super::{value, Concrete, Stage};
-use crate::heap::NATIVE_TYPED_ARRAY_LAYOUT as VIEW;
+use crate::heap::{TypedArrayKind, NATIVE_TYPED_ARRAY_LAYOUT as VIEW};
 
 /// Where a proof reads the typed arrays' records and the buffer-relocation count, which a
 /// stage holds as words: the directory of the pages of record addresses by legacy slot, its page
@@ -35,7 +35,7 @@ impl ViewAccess {
 
 /// The record of the typed array `base`: `None` (leaving at `miss`) for any other value.
 #[inline(always)]
-fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub(crate) fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, miss: S::Miss) -> Option<S::Word> {
     let legacy = value::is_legacy_slot(stage, base);
     stage.guard(legacy, miss)?;
     let slot = stage.and_imm(base, u64::from(u32::MAX));
@@ -112,4 +112,41 @@ pub(crate) fn concrete_typed_access((directory, pages): (*const usize, usize), b
 #[inline(always)]
 pub(crate) fn concrete_typed_read(view: TypedView<u64>, index: usize) -> Option<u64> {
     typed_read(&mut Concrete::new(std::ptr::null()), view, index as u64, ())
+}
+
+/// The Number of the DataView element `kind` at byte `index` of `bytes` (a view's bytes), in
+/// `little_endian` order: the bounds check and the element's read (`element_number`). The fast
+/// path and the native DataView get are this one body. `None` past the bytes.
+#[inline(always)]
+pub(crate) fn data_view_get(bytes: &[u8], index: usize, kind: TypedArrayKind, little_endian: bool) -> Option<f64> {
+    let field = bytes.get(index..index.checked_add(kind.width())?)?;
+    Some(element_number(kind, field, little_endian))
+}
+
+/// `data_view_get`'s set: the Number `number` written as the element `kind` at byte `index` of
+/// `bytes` (`store_element_number`). `None` past the bytes, writing nothing.
+#[inline(always)]
+pub(crate) fn data_view_set(bytes: &mut [u8], index: usize, kind: TypedArrayKind, number: f64,
+    little_endian: bool) -> Option<()> {
+    let field = bytes.get_mut(index..index.checked_add(kind.width())?)?;
+    store_element_number(kind, number, field, little_endian);
+    Some(())
+}
+
+/// The unsigned `width`-byte field at byte `index` of `bytes`, in `little_endian` order: a DataView
+/// BigInt element's bits (`field_bits`). `None` past the bytes.
+#[inline(always)]
+pub(crate) fn data_view_bits(bytes: &[u8], index: usize, width: usize, little_endian: bool) -> Option<u64> {
+    let field = bytes.get(index..index.checked_add(width)?)?;
+    Some(field_bits(field, little_endian))
+}
+
+/// `data_view_bits`' set: the low `width` bytes of `bits` at byte `index` of `bytes`
+/// (`store_field_bits`). `None` past the bytes, writing nothing.
+#[inline(always)]
+pub(crate) fn data_view_store_bits(bytes: &mut [u8], index: usize, width: usize, bits: u64,
+    little_endian: bool) -> Option<()> {
+    let field = bytes.get_mut(index..index.checked_add(width)?)?;
+    store_field_bits(field, bits, little_endian);
+    Some(())
 }

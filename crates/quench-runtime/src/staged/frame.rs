@@ -164,3 +164,31 @@ pub(crate) const ACTIVATION_BYTES: usize = 128;
 pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
 /// The tag of a native direct call's frame (`quench_bjit::shared_words::KIND_NATIVE`, asserted equal by the runtime).
 pub(crate) const KIND_NATIVE: u8 = 0;
+
+/// The Wasm stitched frame's header words, before its registers. The entry writes them and the
+/// rows read them: the result word is the pointer the call's result goes to, and the linear
+/// memory's base and length are what the memory rows read (the call row reloads the pins from
+/// them). `quench-bjit`'s stencil crate and lib mount this file, so both read these constants.
+#[repr(C)]
+#[allow(dead_code)]
+pub(crate) struct WasmFrameHeader {
+    /// The result pointer, the first header word.
+    result: usize,
+    /// The linear memory's base address.
+    base: usize,
+    /// The linear memory's length.
+    length: usize,
+}
+
+/// The result pointer's word index in the Wasm frame header.
+pub(crate) const WASM_RESULT_WORD: usize = offset_of!(WasmFrameHeader, result) / WORD_BYTES;
+/// The linear memory base's word index in the Wasm frame header.
+pub(crate) const WASM_BASE_WORD: usize = offset_of!(WasmFrameHeader, base) / WORD_BYTES;
+/// The linear memory length's word index in the Wasm frame header.
+pub(crate) const WASM_LENGTH_WORD: usize = offset_of!(WasmFrameHeader, length) / WORD_BYTES;
+/// The Wasm frame header's size in words: the first register's word index, one past the header.
+pub(crate) const WASM_HEADER_WORDS: usize = size_of::<WasmFrameHeader>() / WORD_BYTES;
+const _: () = assert!(WASM_RESULT_WORD == 0);
+const _: () = assert!(WASM_BASE_WORD == 1);
+const _: () = assert!(WASM_LENGTH_WORD == 2);
+const _: () = assert!(WASM_HEADER_WORDS == 3);

@@ -11,7 +11,7 @@ fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     let unit = lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = crate::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Ahead, &[], &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
         Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
@@ -41,7 +41,7 @@ fn run_pick(linked: &[u8], registers: usize) {
             crate::vm::dispatch_fast::set_frame_word(window, crate::staged::frame::CONTEXT_BODY, 0);
         }
         words[crate::vm::register_file::FRAME_CONTEXT] = Value::number(input);
-        let super::super::BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
+        let super::super::BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, Value::UNDEFINED.to_bits(), 0, window.cast()) };
         assert_eq!(status, super::super::LANE_BODY_RETURNED, "{input}");
         assert_eq!(Value::from_bits(word), Value::number(expected), "{input}");
     }
@@ -143,7 +143,7 @@ fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
         let unit = lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = crate::vm::jit_backend::target_isa().unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &[], &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
             Coverage::Full, Completion::Body, ElementViews::Dense, true).expect(source);
         let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
             RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)

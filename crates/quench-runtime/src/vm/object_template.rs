@@ -23,7 +23,7 @@
 //! (`remap_object_template_shapes`).
 use super::property_key::PropertyKey;
 use super::{Host, Vm};
-use crate::heap::{Cell, RootId};
+use crate::heap::RootId;
 use crate::value::Value;
 use smallvec::SmallVec;
 

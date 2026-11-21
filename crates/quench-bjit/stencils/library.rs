@@ -250,6 +250,7 @@ pub fn heap_name((heap, entry, dst, a, b): HeapCode) -> String {
 }
 
 /// The code of every heap row the catalog lists (`row_catalog.rs`), including the typed kinds the library builds no row for.
+#[allow(dead_code)] // Read by the runtime catalog test (`base_rows.rs`), not the build.
 pub fn heap_row_codes() -> Vec<u8> {
     HEAP_TABLES.iter().flat_map(|table| table.iter()).flat_map(|&(first, count, _)| first..first + count).collect()
 }

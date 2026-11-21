@@ -40,13 +40,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_values(&self, this: Value) -> Result<Vec<Value>, JsError> {
+        Ok(self.array_value_list(this)?.collect())
+    }
+
+    /// The values of array `this` in index order, read as the caller consumes them, so a list
+    /// can be filled without an intermediate `Vec` (`array_values` collects it).
+    pub(super) fn array_value_list(&self, this: Value) -> Result<impl Iterator<Item = Value> + '_, JsError> {
         let Some(elements) = self.heap.array_elements(this) else {
             return Err(JsError("modern array method receiver is not array".into()));
         };
         let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-        Ok((0..length)
-            .map(|index| self.array_value_at(this, index))
-            .collect())
+        Ok((0..length).map(move |index| self.array_value_at(this, index)))
     }
 
     pub(super) fn new_array(&mut self, values: Vec<Value>) -> Value {
@@ -117,10 +121,11 @@ impl<H: Host> Vm<H> {
             args.first().copied().unwrap_or(Value::UNDEFINED),
             args.get(1).copied().unwrap_or(Value::UNDEFINED),
         ];
-        let mut result = String::new();
+        let separator = JsString::from_str(",");
+        let mut result = super::wtf16::JsStringBuilder::default();
         for index in 0..length {
             if index != 0 {
-                result.push(',');
+                result.append(&separator);
             }
             let value = self.get_index(p, object, Value::number(index as f64))?;
             if value.is_null() || value.is_undefined() {
@@ -131,9 +136,11 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "toLocaleString is not callable".into()));
             }
             let element = self.call_value(p, method, value, &invoke_arguments)?;
-            result.push_str(&self.to_string(p, element)?);
+            // The element's units are appended as they are, so a lone surrogate survives.
+            result.append(&self.coerce_js_string(p, element)?);
         }
-        Ok(self.heap.alloc_string(result.into()))
+        let output = self.string_build_result(p, result.finish())?;
+        Ok(self.heap.alloc_string(output))
     }
 
     fn array_of_native(

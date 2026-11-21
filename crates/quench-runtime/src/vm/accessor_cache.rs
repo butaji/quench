@@ -1,5 +1,6 @@
 //! The accessor a site's recorded entry answers (`Vm::record_accessor_field_cache`).
 use super::object::OWN_ACCESSOR;
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -12,11 +13,27 @@ impl<H: Host> Vm<H> {
         // The fact table first: one probe for the receiver's layout, whatever entries the
         // site rotates through.
         if let Some(receiver) = self.heap.object_record(object)
-            && let Some(getter) = self.fact_accessor(receiver, atom, false)
+            && let Some(getter) = self.fact_accessor(receiver, PropertyKey::string(atom), false)
         {
             return getter;
         }
         self.cached_field_accessor(object, atom, site)?.0
+    }
+
+    /// The getter a read of `atom` calls on `object` once `getter_entry_read` missed at cache
+    /// index `site`. For an object record that walk already took the site's entries, which
+    /// name no getter, so only the fact table is probed: `cached_field_getter` would walk the
+    /// same entries again. Any other receiver has no entry walk yet, so `cached_field_getter`
+    /// makes it.
+    #[inline(always)]
+    pub(super) fn cached_getter_after_miss(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+        let Some(receiver) = self.heap.object_record(object) else {
+            return self.cached_field_getter(object, atom, site);
+        };
+        if self.accessor_field_indices.get(site) == NO_ACCESSOR_FIELD {
+            return None;
+        }
+        self.fact_accessor(receiver, PropertyKey::string(atom), false).flatten()
     }
 
     /// Whether the accessor the site's recorded entry answers for `object` lives on its
@@ -90,7 +107,7 @@ impl<H: Host> Vm<H> {
     /// over holds, names the getter its holder holds now. Where that is the getter the
     /// entry's forward was recognized from (`AccessorForward`), the forward is the call's
     /// value; else the getter is the one to call, found without the fact table's probe or a
-    /// second walk (`cached_field_getter`). `Miss` leaves the read to `cached_field_getter`.
+    /// second walk (`cached_getter_after_miss`). `Miss` leaves the read to `cached_getter_after_miss`.
     #[inline(always)]
     pub(super) fn getter_entry_read(&self, object: Value, site: usize) -> GetterEntryRead {
         let mut index = self.accessor_field_indices.get(site);

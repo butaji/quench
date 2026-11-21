@@ -1,3 +1,7 @@
+// jetstream-row: splay
+// jetstream-files: Octane/splay.js
+// iterations: 120
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream's Octane/splay.js: the same top-down splay tree of heap nodes
  * keyed by doubles from JetStream's deterministic Math.random (reset before every
  * iteration, so most fresh keys collide with live ones and are redrawn), the same
@@ -7,7 +11,9 @@
  * SplayTearDown does (8000 keys, strictly sorted) and against what node computes for
  * the random draws made and the final key sum. Deliberate differences: the splay dummy
  * node lives on the stack where the JS allocates one per splay, and String(key) is
- * printed with %.17g rather than JS's shortest round-trip digits. */
+ * printed with %.17g rather than JS's shortest round-trip digits. Payload objects come from
+ * fixed-size pools with free lists (the C counterpart of the engine's bump allocation and GC
+ * reclamation), and the leaf string is built with one allocation and memcpy. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,16 +46,49 @@ static double math_random(void) {
 typedef struct { int array[LEAF_ARRAY]; char *string; } Leaf;
 typedef struct { void *left, *right; } Interior; /* children are Interior above depth 1, Leaf at it */
 
+/* Fixed-size pools with free lists: what a C program uses for many same-sized objects that
+ * die in any order (a JS engine bump-allocates them and its GC reclaims them). */
+typedef struct PoolSlot { struct PoolSlot *next; } PoolSlot;
+typedef struct { PoolSlot *free; size_t size; } Pool;
+enum { POOL_CHUNK = 4096 };
+static void *pool_alloc(Pool *p) {
+  if (!p->free) {
+    char *chunk = malloc(p->size * POOL_CHUNK);
+    if (!chunk) { fprintf(stderr, "splay: out of memory\n"); exit(1); }
+    for (int i = POOL_CHUNK - 1; i >= 0; i--) {
+      PoolSlot *slot = (PoolSlot *)(chunk + (size_t)i * p->size);
+      slot->next = p->free;
+      p->free = slot;
+    }
+  }
+  PoolSlot *slot = p->free;
+  p->free = slot->next;
+  return slot;
+}
+static void pool_free(Pool *p, void *ptr) {
+  PoolSlot *slot = ptr;
+  slot->next = p->free;
+  p->free = slot;
+}
+enum { LEAF_STRING_MAX = 64 }; /* "String for key " + at most 24 key characters + " in leaf node" */
+static Pool leaf_pool = {NULL, sizeof(Leaf)}, interior_pool = {NULL, sizeof(Interior)},
+            string_pool = {NULL, LEAF_STRING_MAX};
+
 static void *generate_payload_tree(int depth, const char *tag) {
   if (depth == 0) {
-    Leaf *leaf = malloc(sizeof *leaf);
+    Leaf *leaf = pool_alloc(&leaf_pool);
     for (int i = 0; i < LEAF_ARRAY; i++) leaf->array[i] = i;
-    int length = snprintf(NULL, 0, "String for key %s in leaf node", tag);
-    leaf->string = malloc(length + 1);
-    snprintf(leaf->string, length + 1, "String for key %s in leaf node", tag);
+    /* 'String for key ' + tag + ' in leaf node': one allocation holding the concatenation. */
+    static const char prefix[] = "String for key ", suffix[] = " in leaf node";
+    size_t tag_n = strlen(tag), pre_n = sizeof prefix - 1, suf_n = sizeof suffix - 1;
+    char *str = pool_alloc(&string_pool); /* pre_n + tag_n + suf_n + 1 <= LEAF_STRING_MAX */
+    memcpy(str, prefix, pre_n);
+    memcpy(str + pre_n, tag, tag_n);
+    memcpy(str + pre_n + tag_n, suffix, suf_n + 1);
+    leaf->string = str;
     return leaf;
   }
-  Interior *node = malloc(sizeof *node);
+  Interior *node = pool_alloc(&interior_pool);
   node->left = generate_payload_tree(depth - 1, tag);
   node->right = generate_payload_tree(depth - 1, tag);
   return node;
@@ -57,12 +96,13 @@ static void *generate_payload_tree(int depth, const char *tag) {
 
 static void free_payload_tree(void *payload, int depth) {
   if (depth == 0) {
-    free(((Leaf *)payload)->string);
+    pool_free(&string_pool, ((Leaf *)payload)->string);
+    pool_free(&leaf_pool, payload);
   } else {
     free_payload_tree(((Interior *)payload)->left, depth - 1);
     free_payload_tree(((Interior *)payload)->right, depth - 1);
+    pool_free(&interior_pool, payload);
   }
-  free(payload);
 }
 
 typedef struct Node { double key; void *value; struct Node *left, *right; } Node;

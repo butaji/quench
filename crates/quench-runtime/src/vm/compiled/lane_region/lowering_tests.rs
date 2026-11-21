@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Class;
 
 #[test]
 fn unavailable_fault_page_declines_before_changing_canonical_registers() {
@@ -10,7 +11,7 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-    let region = lower(&program, 1, &unit, helpers, &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
+    let region = lower(&program, 1, &unit, helpers, &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     assert!(region.fault_poll);
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
@@ -24,7 +25,7 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
     let mut registers = before.clone();
     // No resumable page is lent, so this entry must leave before touching a
     // poll or executing any guest operation. The canonical inputs stay exact.
-    let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
+    let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, Value::UNDEFINED.to_bits(), 0, registers.as_mut_ptr().cast()) };
     assert_eq!(status, NATIVE_JS_STOPPED);
     assert_eq!(word, 0);
     assert_eq!(registers, before);
@@ -46,7 +47,7 @@ fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
     for ty in [Type::INT32, Type::ANY] {
         fields.iter_mut().flatten().next().unwrap()[0].ty = ty;
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
+            &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
         let native = region.function;
         let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -86,7 +87,7 @@ fn a_loop_of_leaving_stores_reads_the_invalidation_word_once_on_its_entering_edg
         instanceofs: &|_| None, shape_stable: &|_| false, names: None, own_constant: &|_| None, root_constant: &|_| None }), ..VmFacts::STATIC };
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let native = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
+        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
         Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Dense, true).unwrap().function;
     let address = word.address() as i64;
     let reads = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -112,7 +113,7 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
     let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
         .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -136,7 +137,7 @@ fn barrier_tests(source: &str, slot: Type) -> usize {
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
+        &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
         Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
     // The dispatch table is a loaded pointer; a mark word at the same offset inside a block
@@ -170,7 +171,7 @@ fn shape_tests(source: &str, names: &[&str]) -> usize {
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
     native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
         .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::IntCompare { cond: IntCC::Equal, args, .. }
@@ -204,7 +205,7 @@ fn own_field_reads_take_no_arena_bound() {
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
     let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
         .filter(|&instruction| {
@@ -230,7 +231,7 @@ fn number_loops_keep_f64_values_and_proofs_across_the_backedge() {
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).expect("typed Number residual");
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).expect("typed Number residual");
     assert!(region.native > 0);
     let native = region.function;
     let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
@@ -287,7 +288,7 @@ fn loop_coverage_lowers_only_the_loop() {
         helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
         fields: &[], global_reads: &Default::default(), facts: VmFacts::STATIC,
         generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
         plan: RegionPlan { entry_bounds: true, coverage: Coverage::Loop { header, backedge, poll: true },
             completion: Completion::Body, views: ElementViews::Dense } }
         .specialize(&program).expect("the loop lowers");

@@ -34,7 +34,7 @@ pub(in crate::vm) fn enter(builder: &mut FunctionBuilder<'_>) -> (ir::Block, Vec
 
 /// Builds `function` with `body`, which receives the builder entered at its first block and the
 /// parameters; the builder is sealed and finalized after it, and the context kept for the next.
-#[cfg(all(feature = "aot", feature = "jit"))]
+#[cfg(feature = "jit")]
 pub(in crate::vm) fn build<R>(function: &mut ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa, body: impl FnOnce(&mut FunctionBuilder<'_>, &[ir::Value]) -> R) -> R {
     let mut context = take_context();
     let mut builder = FunctionBuilder::new(function, &mut context);

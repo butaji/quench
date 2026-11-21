@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tsrs_api::{Handler, Response, Session, SessionOptions};
 use tsrs_checker::TypeFlags as F;
 
-#[path = "../../../crates/quench-node/src/host/ts_checker/protocol.rs"]
+#[path = "../../../crates/quench/src/host/ts_checker/protocol.rs"]
 #[allow(dead_code)]
 mod protocol;
 use protocol::*;

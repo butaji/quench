@@ -18,7 +18,7 @@ pub(super) fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction:
     let shape = CallShape { returning, ..CallShape::of(pc, plain, CallForm::Plain) };
     let first = match math_call(region, sites, &shape).or_else(|| native_call(region, sites, &shape)) {
         Some(rows) => rows.into_iter().map(What::Row).collect(),
-        None => match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
+        None => match sites.callees.inlined_call(sites.targets, region, &mut sites.context, &shape) {
             Some(site) => vec![What::Site(site)],
             None => vec![What::Row(Decoded::step(Step::Call(shape), Some(shape.result)))],
         },

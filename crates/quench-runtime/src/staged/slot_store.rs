@@ -156,7 +156,7 @@ pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::W
         Form::Either => {}
     }
     // A packed slot needs the value's narrow form; a flat one takes any value.
-    let narrow = if form == Form::Arena { stage.constant(0) } else { packed_form(stage, inline, value, miss)? };
+    let narrow = if form == Form::Arena { stage.constant(0) } else { packed_form(stage, inline, value, Type::ANY, miss)? };
     stage.choose_leaving(inline, #[inline(always)] |stage| {
         let half = stage.mul_imm(slot, HALF_BYTES);
         let address = stage.add(record, half);

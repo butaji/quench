@@ -21,6 +21,7 @@ use crate::bytecode::{FieldBase, FieldLookup, Operand};
 use crate::typed_ir::Type;
 
 mod concrete;
+mod word_ops;
 pub(crate) mod numeric;
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
 pub(crate) mod layout_offsets;
@@ -69,6 +70,7 @@ mod admission;
 mod delete;
 mod operation;
 pub(crate) use operation::Operation;
+pub(crate) use operation::kind as op_kind;
 mod binary_class;
 pub(crate) use binary_class::BinaryClass;
 mod edge;
@@ -97,6 +99,7 @@ pub(crate) mod double_view;
 pub(crate) mod element_rows;
 pub(crate) mod typed_elements;
 pub(crate) mod typed_view;
+pub(crate) mod data_view;
 mod element_frame;
 pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
@@ -105,13 +108,29 @@ pub(crate) mod ic;
 pub(crate) mod ic_flat;
 pub(crate) mod ic_read;
 pub(crate) mod object;
-mod narrow;
+pub(crate) mod narrow;
 pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
 pub(crate) mod string_length;
 pub(crate) mod code_units;
 pub(crate) mod parse_int;
+/// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
+pub(crate) mod string_text;
+/// String search builtins (indexOf, lastIndexOf, includes, startsWith, endsWith) and cuts (slice, substring, substr).
+pub(crate) mod string_search;
+/// String.prototype.split with a string separator: the cut offsets, once.
+pub(crate) mod string_split;
+/// String.prototype.replace/replaceAll with a string pattern: the plan and the write, once.
+pub(crate) mod string_replace;
+/// Map/Set/WeakMap/WeakSet hash and probe: one lookup body.
+pub(crate) mod collections;
+/// Array indexOf/includes/lastIndexOf over dense elements: one search body.
+pub(crate) mod array_search;
+/// BigInt small-magnitude arithmetic and comparison: one body.
+pub(crate) mod bigint_small;
+/// The calendar fields of a Date's time value, derived once for the getters, setters and `toISOString` (`vm::date`).
+pub(crate) mod date_fields;
 pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod array_iteration;
@@ -155,7 +174,7 @@ mod guard;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+pub(crate) use steps::{step, step_of, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub(crate) mod region;
@@ -165,7 +184,7 @@ pub(crate) mod wasm_access;
 pub(crate) mod wasm_int;
 pub(crate) mod wasm_jump;
 pub(crate) mod wasm_state;
-pub(crate) use wasm_jump::{BranchTable, WasmJump};
+pub(crate) use wasm_jump::BranchTable;
 pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
 pub(crate) mod wasm_exception;
@@ -202,7 +221,7 @@ mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
 /// capture access whose scopes the frame does not hold, the walk over the scopes from the
@@ -265,7 +284,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below: a table mode that
 /// `fuse_rows` realizes as the record's settings bits (`MODE_DEAD_FIRST`, `raw_bit(0)`), not as an instance.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 90] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -358,8 +377,9 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
     (Op::WasmI32Load16U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
     // A local or capture read then a register comparison jump (`JumpBinaryFalse`). Subsumes
     // `specialize_load_branch_pairs` (`load_relation_jump_handler`), both directions of the jump.
-    (Op::LoadLocalPlain as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
-    (Op::LoadCapture as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
+    // A comparison jump is not a member: its own row fixes its operator and operand form at its first
+    // run (`compare_jump_row`), which a pair's jump decodes at run time, and a pair's jump builds the
+    // capture read's whole frame (`row_frame`).
     // A direct load then the direct store of its value, of the same width.
     (Op::WasmI32Load as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
     (Op::WasmI32Load8U as u16, Op::WasmI32Store8 as u16, FUSED_PLAIN),
@@ -531,6 +551,7 @@ pub(crate) const MODE_BACKWARD: u64 = 1 << 1;
 /// `CHAIN_RAW_OUT`. A raw result is read by the next link (or the next record) as a Number operand.
 pub(crate) const RAW_SHIFT: u32 = 8;
 /// The raw-mask bit `link` of a record's `mode`.
+#[inline(always)]
 pub(crate) const fn raw_bit(link: u8) -> u64 { 1 << (RAW_SHIFT + link as u32) }
 /// The raw-mask bit of a chain's last link (a pair's `B`): its double result stays raw into the record
 /// after the chain, or past the plain records between that name neither its register (`raw_out_link`),
@@ -907,10 +928,16 @@ pub(crate) const fn checked_local(op: Op) -> bool {
 /// store has no result register, and answers the source word it stored; a store's result is its
 /// `b` register and an InitializeTdz has none.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
-    // A Wasm row writes its result register only where its record has one: a store, a global
-    // store and a fill define none.
+    // A Wasm row writes the result register its record names, if any. A store, a global store and
+    // a fill name none: the lane must not write the answered word into their record's `a`, which
+    // a fill leaves at register 0 (`wasm_emit`'s fill emission).
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
-        return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
+        return true;
+    }
+    // An opcode whose A field is no result register defines none, so there is nothing for the lane
+    // to write: its row's value (a cleanup pop's 0, a store's source) must not land in register A.
+    if !matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) {
+        return true;
     }
     // A keyed read's answer is written by the lane (its record's result register, as every
     // producer writes it beside the carried value).

@@ -131,8 +131,31 @@ impl EntryCell {
     pub(in crate::vm) fn scalar_stub() -> usize { scalar_entry_stub as ScalarEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
-        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: Default::default(),
-            proven_entry: Default::default(), proven_body: Default::default() }
+        let cell = Self { entry: Default::default(), recovery: Default::default(), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: Default::default(), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: Default::default(),
+            proven_entry: Default::default(), proven_body: Default::default() };
+        cell.unpublish();
+        cell
+    }
+
+    /// Writes the unpublished state: the stub entry and scalar entry, no rows or proofs, and no
+    /// recovery space or body. A new cell and a withdrawn one are both in this state.
+    fn unpublish(&self) {
+        // The body the cell held no longer types its callers' calls (`LaneMethod::summary`).
+        if self.body.get() != 0 {
+            // SAFETY: a published cell's `body` is `Rc::as_ptr` of a body its view pins (`publish`), and the word is
+            // zeroed when that body retires (`PublishedCode::retire`), so a nonzero word names a live body.
+            unsafe { (*(self.body.get() as *const LaneMethod)).withdraw() }
+        }
+        self.entry.set(Self::stub());
+        self.rows.set(0);
+        self.proven.set(0);
+        self.proven_entry.set(0);
+        self.proven_body.set(0);
+        self.scalar.set(Self::scalar_stub());
+        self.proven_entry.set(0);
+        self.proven_body.set(0);
+        self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
+        self.body.set(0);
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires: the
@@ -202,14 +225,7 @@ impl EntryCell {
     }
 
     pub(in crate::vm) fn withdraw(&self) {
-        self.entry.set(Self::stub());
-        self.rows.set(0);
-        self.proven.set(0);
-        self.scalar.set(Self::scalar_stub());
-        self.proven_entry.set(0);
-        self.proven_body.set(0);
-        self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
-        self.body.set(0);
+        self.unpublish();
     }
 }
 

@@ -53,14 +53,17 @@ enum Source<W> {
     Register(Register, W),
 }
 
+#[inline(always)]
 fn value_source<W>(word: W) -> Source<W> { Source::Word(word) }
 
 impl<W: Copy> Source<W> {
     /// The word the store answers: the tagged word, or the stored binary64 word.
+    #[inline(always)]
     fn answer(self) -> W {
         match self { Self::Word(word) | Self::Register(_, word) => word }
     }
 
+    #[inline(always)]
     fn tagged<S: Stage<Word = W>, F: PropertyFrame<S>>(self, stage: &mut S, frame: &mut F) -> W {
         match self { Self::Word(word) => word, Self::Register(register, _) => frame.tagged(stage, register) }
     }
@@ -76,7 +79,7 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
         StorePlan::Entry => {
             // A raw-double slot takes the binary64 word; a frame with no view of it leaves.
             if frame.entry_slot_raw() {
-                let number = number.or_else(|| { let zero = stage.constant(0); let never = stage.ne_imm(zero, 0u32); stage.guard(never, miss).map(|()| zero) })?;
+                let number = number.or_else(#[inline(always)] || { let zero = stage.constant(0); let never = stage.ne_imm(zero, 0u32); stage.guard(never, miss).map(|()| zero) })?;
                 return frame.entry_slot_store(stage, site, number, miss).map(|()| number);
             }
             let value = source.tagged(stage, frame);
@@ -117,7 +120,7 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
     };
     let base = base.map_or(FieldBase::THIS, FieldBase::register);
     let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
-    let slow = move |stage: &mut S, frame: &mut F, miss: S::Miss| {
+    let slow = #[inline(always)] move |stage: &mut S, frame: &mut F, miss: S::Miss| {
         let value = source.tagged(stage, frame);
         vm_store(stage, frame, join, at, (atom, site), (value, fact), miss)
     };
@@ -233,6 +236,7 @@ fn raw_through_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut 
 
 /// The first of `arms` whose shape the record `at` has stores; the last arm's shape is the
 /// guard of the whole.
+#[inline(always)]
 fn arm_switch<S: Stage>(stage: &mut S, (at, object): (&Reached<S::Word, S::Cond>, S::Word), arms: &[StoreArm],
     value: Stored<S::Word>, miss: S::Miss) -> Option<()> {
     let (arm, rest) = arms.split_first()?;

@@ -11,6 +11,7 @@ fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
 
 use super::*;
 use crate::value::EXACT_I64_TRUNCATION_LIMIT;
+use cranelift_codegen::ir::condcodes::FloatCC;
 
 #[test]
 fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
@@ -45,7 +46,6 @@ fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
 }
 
 #[test]
-#[cfg(feature = "aot")]
 fn inlined_capture_reads_require_an_admitted_invariant_callee() {
     let source = "let held=4,suspended=2;let prototype={};prototype.test=function(){return (this.state&held)!==0||this.state===suspended;};function other(){return this.state===held;}function run(task,count){const owner=task;let n=count|0,result=0;while(n>0){n=(n-1)|0;owner.state=(owner.state+1)|0;if(owner.test())result=(result+1)|0;}return result;}";
     let program = crate::Engine::specialize(source, "capture-entry.js").unwrap();
@@ -71,7 +71,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
             instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
         let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()], &Default::default());
-        let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false);
+        let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false, &Default::default());
         let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
             unit.instructions[pc].op().is_load_capture()
                 && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
@@ -80,7 +80,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
         let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-            &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true).expect("capture loop region");
+            &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true).expect("capture loop region");
         let function = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
         let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -194,7 +194,6 @@ fn relation_capture_entry_preserves_noninteger_values_and_effects() {
 }
 
 #[test]
-#[cfg(feature = "aot")]
 fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
     let source = r#"
         let held=4;const prototype={};prototype.test=function(){return held|0;};
@@ -217,7 +216,7 @@ fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
         assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
         let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()], &Default::default());
         assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
-        let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false);
+        let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false, &Default::default());
         assert!(!reads.values().flatten().any(|read|
             unit.instructions[read.pc].op().is_load_capture()
                 && matches!(unit.origins[read.pc], super::super::lane_unit::Origin::Inlined { .. })),
@@ -255,7 +254,6 @@ fn capture_entry_preserves_distinct_environments_and_mutations() {
     for typescript in [false, true] {
         let program = if typescript { crate::Engine::specialize_typescript(&source, "capture-entry.cts") }
             else { crate::Engine::specialize(&source, "capture-entry.cjs") }.unwrap();
-        #[cfg(feature = "aot")]
         {
             // Exercise the linked unit/inliner path too: execution through
             // the dynamic VM alone need not select the same region entries.
@@ -287,7 +285,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
@@ -312,7 +310,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
         let mut registers = framed(usize::from(unit.caller_registers));
         registers[FRAME] = Value::number(input);
         let window = unsafe { registers.as_mut_ptr().add(FRAME) };
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, Value::UNDEFINED.to_bits(), 0, window.cast()) };
         assert_eq!(status, LANE_BODY_RETURNED, "comparison result must continue natively: {input}, stopped at {word}");
         assert_eq!(Value::from_bits(word), Value::number(if input == -1.0 || input == 1.0 { 7.0 } else { 9.0 }));
     }
@@ -323,7 +321,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
         registers[FRAME] = Value::number(input);
         let before = registers.clone();
         let window = unsafe { registers.as_mut_ptr().add(FRAME) };
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, Value::UNDEFINED.to_bits(), 0, window.cast()) };
         // The entry's proof failed: the leave names it (`LaneExit::Entry`, which resumes
         // at the first record), not a PC the code would continue at.
         assert_eq!((status, word), (NATIVE_JS_STOPPED, super::super::LaneExit::Entry.word()));
@@ -338,7 +336,7 @@ fn native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly() {
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense, true).unwrap();
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense, true).unwrap();
     assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
     for instruction in region.function.layout.blocks()
         .flat_map(|block| region.function.layout.block_insts(block)) {

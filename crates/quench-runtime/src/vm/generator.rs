@@ -207,8 +207,11 @@ impl<H: Host> Vm<H> {
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         frame.reserve_suspension_window(function);
+        // A generator's register file is filled whole, since its suspended registers are
+        // scanned whole (`prepare_registers_for`), so a promoted parameter's register is
+        // written by this fill and then by `place_parameters`, the one parameter pass here.
         frame.prepare_registers(function.registers, function.initial_register);
-        frame.initialize_promoted_registers(function, args);
+        frame.place_parameters(function, args);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
             let result = self.run_frame_general_until::<true>(

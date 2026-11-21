@@ -6,7 +6,7 @@
 use super::run::{Model, Point, TypedAccess};
 use crate::bytecode::{FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
 use super::super::meaning_compiled::is_numeric_binary;
-use crate::staged::{DecodeContext, NumberOperation, Operation};
+use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::{IntRange, Type};
 use crate::compile::liveness::RegisterSet;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
@@ -232,7 +232,7 @@ impl Relations {
 
     /// The relations after `instruction` at `pc`.
     pub(super) fn step(&mut self, model: &Model<'_>, pc: usize, instruction: WideInstruction,
-        written: &dyn Fn(WideInstruction) -> Vec<Register>, lookup: &dyn Fn(Operand) -> Option<IntRange>, numeric_store: bool) {
+        written: &dyn Fn(WideInstruction) -> super::Writes, lookup: &dyn Fn(Operand) -> Option<IntRange>, numeric_store: bool) {
         if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Move { .. })) && instruction.result_flags() == 0 {
             self.copy(instruction.result_register(), instruction.register_b());
         } else if let Some(register) = Self::decremented(instruction) {

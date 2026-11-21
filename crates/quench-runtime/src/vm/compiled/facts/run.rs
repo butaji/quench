@@ -75,7 +75,7 @@ pub(in crate::vm::compiled) struct Text<'a> {
     pub(in crate::vm::compiled) instructions: &'a [WideInstruction],
     pub(in crate::vm::compiled) leaders: &'a CompoundBitSet,
     pub(in crate::vm::compiled) constants: &'a [Constant],
-    pub(in crate::vm::compiled) written: &'a dyn Fn(WideInstruction) -> Vec<Register>,
+    pub(in crate::vm::compiled) written: &'a dyn Fn(WideInstruction) -> super::Writes,
     pub(in crate::vm::compiled) own_shape: &'a dyn Fn(usize) -> Option<(Register, u32)>,
     pub(in crate::vm::compiled) native_calls: bool,
     /// The exception edges native code takes (`lane_region::catches`), ascending by PC.
@@ -206,7 +206,7 @@ impl Facts {
 
 /// The fixpoint of `transfer` over the CFG, seeded by checked region-entry facts.
 pub(in crate::vm::compiled) fn analyze(entry: usize, initial: &[Type], instructions: &[WideInstruction],
-    leaders: &CompoundBitSet, constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    leaders: &CompoundBitSet, constants: &[Constant], written: &dyn Fn(WideInstruction) -> super::Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], seeds: Seeds<'_>) -> Facts {
     analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls, raises }, initial, seeds)
 }
@@ -287,11 +287,12 @@ impl FactFlow<'_, '_, '_> {
         let text = self.text;
         let instruction = text.instructions[pc];
         let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
+        let comparison = instruction.op().is_jump_binary_false();
         // Only a comparison refines its edges apart; any other conditional jump sends one state
         // both ways.
-        let refines = conditional && instruction.op().is_jump_binary_false();
+        let refines = conditional && comparison;
         let mut following = refines.then(|| point.clone());
-        if instruction.op().is_jump_binary_false() {
+        if comparison {
             point.refine(text.constants, instruction, false);
             if let Some(following) = following.as_mut() { following.refine(text.constants, instruction, true); }
         }
@@ -384,6 +385,9 @@ impl crate::dataflow::Dataflow for FactFlow<'_, '_, '_> {
             (_, Flow::Leaves) => {}
             (last, Flow::Next) => self.send(last + 1, point, false),
             (last, Flow::To(target)) => self.branch((last, target), point),
+            (last, Flow::Table) => for entry in crate::bytecode::branch_table_entries(last, text.instructions[last]) {
+                self.send(entry, point.clone(), entry <= last);
+            },
         }
         for (pc, target, caught) in raised.drain(..) {
             self.send(target, caught, target <= pc);

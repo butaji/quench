@@ -1,6 +1,6 @@
 use crate::bytecode::{
     Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
-    LexicalBindingKind, MethodSite, ReceiverPath, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, REGISTER_MOVE, RETURN_OP, Register,
     ResidualProgram, SET_THIS_REGISTER, Superinstruction, Traits, WideInstruction, the_op,
 };
@@ -51,13 +51,12 @@ fn plain_local_form(op: Op) -> Option<Op> {
         None
     }
 }
+pub(crate) mod aot_facts;
 mod annex_b_targets;
 mod arrow;
 mod ast;
 mod atoms;
-#[cfg(feature = "aot")]
 mod native_sources;
-#[cfg(feature = "aot")]
 pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
@@ -268,6 +267,13 @@ const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
 
 /// V8's report for a `return` at the top level of an eval.
 const RETURN_OUTSIDE_FUNCTION_IN_EVAL: &str = "SyntaxError: return outside function in eval";
+
+#[cfg(test)]
+thread_local! {
+    /// The lazily parsed bodies compiled from their text parsed again (`compile_parsed_again`), counted
+    /// by the tests that check a program was compiled lazily.
+    pub(crate) static REPARSED_BODIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 /// The rejection for a lazily parsed function body that fails when compiled alone.
 const LAZY_FUNCTION_BODY_NOT_ALONE: &str = "SyntaxError: a lazily parsed function body does not compile alone";
 
@@ -316,10 +322,8 @@ impl DynamicFunctionSource {
 }
 
 impl DynamicFunctionKind {
-    #[cfg(feature = "aot")]
     const ALL: [Self; 4] = [Self::Ordinary, Self::Async, Self::Generator, Self::AsyncGenerator];
 
-    #[cfg(feature = "aot")]
     pub(crate) fn from_source_prefix(prefix: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.source_prefix() == prefix)
     }
@@ -502,6 +506,12 @@ impl Engine {
     /// it several times (a module graph parsed each module three times, 12% of a Babel run).
     pub(crate) fn static_module_analysis(source: &str, module_name: &str) -> Rc<StaticModuleAnalysis> {
         Self::static_module_analysis_with(source, module_name, false, |analyze| analyze())
+    }
+
+    /// Whether `text`, a compiled module's kept text, is `source` as the compiler reads it: as
+    /// given, or with its hashbang blanked (`early::normalize_hashbang`).
+    pub(crate) fn compiled_module_text_is(text: &str, source: &str) -> bool {
+        text == source || text == &*early::normalize_hashbang(source)
     }
 
     /// `static_module_analysis`, whose memo misses `obtain`, which analyzes the text with the
@@ -1132,12 +1142,14 @@ impl Engine {
         };
         // Lazy function bodies apply to source a replay can parse again; a program that does
         // not compile with them compiles eagerly, which reports its own diagnostics.
-        // TypeScript admission currently validates runtime-changing syntax over the
-        // complete AST, including declarations inside functions, before execution.
+        // A TypeScript body is checked alone as it is released, and admitted again where it
+        // compiles (`lazy_bodies::parse`): a construct admission must reject is found by that
+        // check, which fails the lazy compilation so the eager one reports it at load
+        // (`BodyFacts::check`). Its declarations are collected where it compiles, against the
+        // program's type names (`compile_parsed_again`).
         // A streamed body's first run parses the body lazily, to compile one run of it.
         let first_run = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(window) if window.first_run());
         if (expected_shape.lazy_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len()) || first_run)
-            && !source_type.is_typescript()
             && let Ok(program) = compile(true)
         {
             return Ok(program);
@@ -1178,14 +1190,38 @@ impl Engine {
         let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len(), source_type.is_module());
         // A recognized body's check needs its call-only facts deferred, or none to find
         // (`BodyFacts::check`): only bodies with no function inside are recognized then.
-        let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
-        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing));
-        #[cfg(feature = "aot")]
+        // A module checks every body alone (`BodyFacts::checks_every_body`), so a body is never
+        // recognized without its tree: a check that declined one would parse it whole again.
+        let recognize = if module_goal {
+            annex_b_targets::Recognize::No
+        } else if stubbing.functions {
+            annex_b_targets::Recognize::All
+        } else {
+            annex_b_targets::Recognize::Flat
+        };
+        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing, module_goal));
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut declared_types = crate::bytecode::DeclaredTypes::default();
-        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        // A first-call chunk's annotations resolve against its program's top-level names.
+        let saved_names = match expected_shape {
+            ParsedProgramShape::FirstCallChunk(window) => window.saved_names(),
+            _ => None,
+        };
+        let mut declared_types = crate::bytecode::DeclaredTypes { type_names: saved_names, ..Default::default() };
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, atom_prefix.native_global_script_calls());
         lazy_bodies::release_parsed_free_pages(&allocator);
         let mut facts = facts.into_inner();
+        // A first-call chunk's declarations are its program's, for its function (`ChunkWindow::declared`),
+        // with the chunk's own admitted ones, in the chunk's positions, moved to the program's
+        // (`shift`). Its annotations resolve against the names its admission saved.
+        let chunk = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(_));
+        let chunk_names = declared_types.type_names.clone();
+        if let ParsedProgramShape::FirstCallChunk(window) = expected_shape {
+            let mut admitted = std::mem::take(&mut declared_types);
+            admitted.shift(window.start());
+            let mut declared = window.declared();
+            declared.append(admitted);
+            declared_types = declared;
+        }
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
                 && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),
@@ -1356,7 +1392,6 @@ impl Engine {
             .collect();
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
-        #[cfg(feature = "aot")]
         let native_requests = atom_prefix.native_source_requests().map(|pending| {
             (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
         });
@@ -1364,7 +1399,6 @@ impl Engine {
         drop(semantic);
         parsed.program.directives.drain(..usize::from(inherited_directive));
         typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut declared_types);
-        #[cfg(feature = "aot")]
         let mut native_requests = native_requests;
         if lazy {
             // The lazily parsed bodies, checked and analyzed one at a time as the parser
@@ -1373,7 +1407,6 @@ impl Engine {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             }
             let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
-            #[cfg(feature = "aot")]
             if let Some((_, requests)) = facts.native_source_requests
                 && let Some((_, pending)) = &mut native_requests { pending.extend(requests); }
             private_name_ids.extend(facts.private_name_ids.into_iter().map(|(span, id)| (span, first_private_id + id)));
@@ -1416,6 +1449,7 @@ impl Engine {
         compiler.data_literal = data_literal;
         compiler.provided_text = provided_text;
         compiler.declared_types = declared_types;
+        compiler.type_names = if chunk { chunk_names } else { None };
         compiler.prototype_unobservable = prototype_unobservable;
         #[cfg(feature = "verify-replay")]
         {
@@ -1468,7 +1502,6 @@ impl Engine {
         if !crate::DYNAMIC_EXECUTION_ENABLED {
             crate::vm::freeze_call_sites(&program);
         }
-        #[cfg(feature = "aot")]
         if let Some((pending, requests)) = native_requests { pending.borrow_mut().extend(requests); }
         #[cfg(feature = "verify-replay")]
         replay::verify(&program);
@@ -1909,6 +1942,11 @@ struct Compiler<'a> {
     source_comments: Vec<Span>,
     /// The TypeScript declared environment its parse admitted (`typescript::admit`).
     declared_types: crate::bytecode::DeclaredTypes,
+    /// The type names the annotations of the code being compiled resolve against, where that code is a
+    /// lazily parsed body or a first-call chunk: its program's saved names, shadowed by its own
+    /// declarations (`with_type_names`). `None` reads the names the way the program's own code does,
+    /// with its declared parameter facts applied at the end (`apply_parameters`).
+    type_names: Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>>,
     /// A TypeScript checker's parameter types for this text (`typescript::checked`).
     checked_parameters: Option<std::sync::Arc<typescript::CheckedParameters>>,
     mode: SpecializationMode,
@@ -2286,7 +2324,7 @@ pub(crate) fn lower_settled<'a>(
     // passes read one set of blocks.
     let flow = crate::bytecode::initialization::FlowCell::new();
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow, scratch);
+    frame_registers::promote(function, plain_slots.clone(), superinstructions, undefined_constant, &atom_name, &flow, scratch);
     if specialized {
         if coalescing_repays(function) {
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions, scratch);
@@ -2313,6 +2351,12 @@ pub(crate) fn lower_settled<'a>(
     // The one compaction of the lowering: the passes above leave the `Nop`s their in-place
     // rewrites made, and the live sets this returns are compacted with the same map.
     rewrite::remove_nops(function, &mut solved, scratch);
+    // The proof above is the final code's `plain_local_slots`: the passes after `promote` move no
+    // slot, and `numeric::apply_plain_local_stores` fuses a plain store into its producer, which
+    // the dataflow reads as the same initializing write (`initialization::accesses`). So the
+    // runtime's first read need not derive the set again (`Function::plain_locals`).
+    let words: crate::heap::ThinBoxSlice<u64> = plain_slots.words().to_vec().into();
+    function.plain_locals = std::cell::OnceCell::from(words);
     solved
 }
 
@@ -2461,6 +2505,7 @@ impl<'a> Compiler<'a> {
             text,
             source_comments: Vec::new(),
             declared_types: crate::bytecode::DeclaredTypes::default(),
+            type_names: None,
             checked_parameters: typescript::checked_parameters(text),
             mode,
             root_strict: false,
@@ -2835,6 +2880,7 @@ impl<'a> Compiler<'a> {
             function.span.start.wrapping_sub(offset),
             self.source_type,
             lazy_bodies::Nesting::Recorded(&FxHashSet::default()),
+            self.body_type_names(),
         )
         .ok()?;
         let again = reparsed.function_mut().filter(|again| again.span.start == function.span.start)?;
@@ -2859,6 +2905,7 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         context: replay::PlainFunctionContext,
     ) -> u32 {
+        let saved_names = self.body_type_names();
         let nesting = if self.replay_target.is_some() {
             lazy_bodies::Nesting::Recorded(&self.lazy_bodies)
         } else {
@@ -2871,6 +2918,7 @@ impl<'a> Compiler<'a> {
             function.span.start.wrapping_sub(offset),
             self.source_type,
             nesting,
+            saved_names,
         );
         let reparsed = match reparsed {
             Ok(reparsed) => Some(reparsed),
@@ -2880,12 +2928,39 @@ impl<'a> Compiler<'a> {
             }
             Err(lazy_bodies::ReparseFailure::Diagnostics) => None,
         };
-        let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
+        let Some(mut reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
             self.reject(function.span, LAZY_FUNCTION_BODY_NOT_ALONE);
             return self.compile_plain_function(function, context);
         };
+        // The body's declarations, admitted with the program's names, join the program's declared
+        // environment at its positions; its annotations resolve against the names they were admitted with.
+        let names = reparsed.declared.type_names.clone();
+        self.declared_types.append(std::mem::take(&mut reparsed.declared));
+        #[cfg(test)]
+        REPARSED_BODIES.with(|count| count.set(count.get() + 1));
         let again = reparsed.function().expect("checked above");
-        self.compile_plain_function(again, context)
+        self.with_type_names(names, |this| this.compile_plain_function(again, context))
+    }
+
+    /// Runs `compile` with `names` as the type names its annotations resolve against (`type_names`):
+    /// a lazily parsed body's or a first-call chunk's, whose program's names are in view only through
+    /// the names saved with it.
+    pub(super) fn with_type_names<T>(&mut self, names: Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>>, compile: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = std::mem::replace(&mut self.type_names, names);
+        let result = compile(self);
+        self.type_names = outer;
+        result
+    }
+
+    /// The type names a body parsed again here resolves against: the names in effect where it lies, else
+    /// the program's saved ones.
+    pub(super) fn body_type_names(&self) -> Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>> {
+        self.type_names.clone().or_else(|| self.declared_types.type_names.clone())
+    }
+
+    /// The names a function's formal annotations resolve against (`typescript::declared_parameters`).
+    pub(super) fn formal_type_names(&self) -> Option<typescript::TypeNames<'static>> {
+        self.type_names.as_ref().map(|saved| typescript::TypeNames::from_saved(Some(saved.clone())))
     }
 
     /// Checks, under `QUENCH_TRACE=lazy-facts`, that the free names of function `id` (starting
@@ -4202,8 +4277,9 @@ impl<'a> Compiler<'a> {
         );
         let binds_dynamically = direct_eval.binds_dynamically();
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
+        let names = self.formal_type_names();
         let declared_parameters = options.defaults
-            .map_or_else(Vec::new, |formals| typescript::declared_parameters(formals, self.checked_parameters.as_deref()));
+            .map_or_else(Vec::new, |formals| typescript::declared_parameters(formals, self.checked_parameters.as_deref(), names.as_ref()));
         let mut function = FunctionCompiler::new(
             self,
             locals,

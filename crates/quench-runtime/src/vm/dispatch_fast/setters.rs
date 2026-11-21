@@ -154,7 +154,7 @@ fn trivial_setter_store<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: 
 /// its returned object, otherwise the receiver it allocated; a setter's store
 /// (`Completion::Assigns`) the value stored, which the caller's register still holds.
 #[inline(always)]
-pub(super) fn completed_value<H: Host>(vm: &Vm<H>, frame: &Frame, completion: Completion, this: Value, value: Value) -> Value {
+pub(super) fn completed_value<H: Host>(vm: &Vm<H>, frame: &ActivationView, completion: Completion, this: Value, value: Value) -> Value {
     match completion {
         // The construct family's completion row (`staged::call_construct::construct_value`).
         completion if completion.constructs() =>

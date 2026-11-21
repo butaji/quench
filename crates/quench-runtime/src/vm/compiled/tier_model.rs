@@ -39,6 +39,39 @@ pub(super) fn outlay_ns(ir: usize, plan_ns_per_ir: u64, compile_ns_per_ir: u64, 
     ir as u64 * (plan_ns_per_ir + compile_ns_per_ir * wall_permille / PER_MILLE)
 }
 
+/// The interpreter's time in ns over `work` bytecodes that code taking `share` per mille of it
+/// per bytecode leaves to the interpreter: the work at `interpreter_ns`, less the share the code
+/// still takes. Loop regions (`loop_model`) and lane bodies both save this much per iteration or entry.
+pub(super) fn interpreted_ns(interpreter_ns: u64, work: u64, share: u64) -> u64 {
+    work * interpreter_ns * (PER_MILLE - share) / PER_MILLE
+}
+
+/// The future uses of a compile after `count` past ones (Lindy): `count / remaining_divisor`.
+pub(super) fn future_count(priors: &Priors, count: u64) -> u64 {
+    count / priors.remaining_divisor
+}
+
+/// The net gain in ns of a compile: `future` uses to come, each saving `saved` ns, less the
+/// `outlay` the compile and its entry cost the program. Exact: no product saturates.
+pub(super) fn net_gain_ns(future: u64, saved: u64, outlay: u64) -> i128 {
+    i128::from(future) * i128::from(saved) - i128::from(outlay)
+}
+
+/// What one entry of `observed` takes from the interpreter in code taking `share` per mille of
+/// its time per bytecode, and the region crossings it makes: the work it leaves to native code
+/// is saved, and each crossing is paid by the entry.
+fn entry_work_ns(priors: &Priors, share: u64, observed: &Observed) -> u64 {
+    let interpreted = interpreted_ns(priors.interpreter_ns, observed.length + observed.loop_work, share);
+    let crossings = observed.region_runs * priors.region_entry_ns / u64::from(observed.entries.max(1));
+    interpreted + crossings
+}
+
+/// What one entry of `observed` saves in ns in code taking `share` per mille of the interpreter's
+/// time per bytecode behind an `entry_ns` crossing: `entry_work_ns`, less its own entry.
+fn saved_per_entry(priors: &Priors, share: u64, entry_ns: u64, observed: &Observed) -> i64 {
+    entry_work_ns(priors, share, observed) as i64 - entry_ns as i64
+}
+
 /// The net gain in ns of compiling `observed` into code that takes `share` per mille of the
 /// interpreter's time per bytecode, compiled at `compile_ns_per_ir`: each future entry
 /// (Lindy, `entries / remaining_divisor`) saves the interpreter's work outside native regions
@@ -51,28 +84,17 @@ pub(super) fn net_ns(priors: &Priors, share: u64, compile_ns_per_ir: u64, wall_p
 
 /// `net_ns` where the body's plan is still to make, at `plan_ns_per_ir`, besides its compile.
 pub(super) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compile_ns_per_ir): (u64, u64), wall_permille: u64, observed: &Observed) -> i64 {
-    let interpreted = (observed.length + observed.loop_work) * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE;
-    let crossings = observed.region_runs * priors.region_entry_ns / u64::from(observed.entries.max(1));
-    let saved = (interpreted + crossings).saturating_sub(priors.body_entry_ns) as i64;
-    let future = (u64::from(observed.entries) / priors.remaining_divisor) as i64;
-    future * saved - outlay_ns(observed.ir, plan_ns_per_ir, compile_ns_per_ir, wall_permille) as i64
-}
-
-/// What one entry of `observed` saves in ns in code taking `share` per mille of the interpreter's
-/// time per bytecode behind an `entry_ns` crossing: the interpretation outside native regions,
-/// and the region crossings it makes, less its own entry.
-fn saved_per_entry(priors: &Priors, share: u64, entry_ns: u64, observed: &Observed) -> i64 {
-    let interpreted = (observed.length + observed.loop_work) * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE;
-    let crossings = observed.region_runs * priors.region_entry_ns / u64::from(observed.entries.max(1));
-    (interpreted + crossings) as i64 - entry_ns as i64
+    let saved = entry_work_ns(priors, share, observed).saturating_sub(priors.body_entry_ns);
+    let outlay = outlay_ns(observed.ir, plan_ns_per_ir, compile_ns_per_ir, wall_permille);
+    net_gain_ns(future_count(priors, u64::from(observed.entries)), saved, outlay) as i64
 }
 
 /// The net gain in ns of a b-jit body of `observed`: stencil code at `base_body_share` per
 /// bytecode behind the same `body_entry_ns` entry a u-jit body pays, stitched in microseconds on the program's thread,
 /// so neither a plan nor a compile is charged (`Tiers::amortizing_instructions`' `Tier::Base`).
 pub(super) fn base_net_ns(priors: &Priors, observed: &Observed) -> i64 {
-    let future = (u64::from(observed.entries) / priors.remaining_divisor) as i64;
-    future * saved_per_entry(priors, priors.base_body_share, priors.body_entry_ns, observed).max(0)
+    let saved = entry_work_ns(priors, priors.base_body_share, observed).saturating_sub(priors.body_entry_ns);
+    net_gain_ns(future_count(priors, u64::from(observed.entries)), saved, 0) as i64
 }
 
 /// The tier the model picks for a function.
@@ -145,8 +167,8 @@ pub(super) fn optimizes(tiers: &Tiers, observed: &Observed) -> bool {
 fn optimizes_under(priors: &Priors, observed: &Observed) -> bool {
     let work = (observed.length + observed.loop_work) * priors.interpreter_ns;
     let gain = work * priors.quick_body_share.saturating_sub(priors.body_share) / PER_MILLE;
-    let future = u64::from(observed.entries) / priors.remaining_divisor;
-    future.saturating_mul(gain) > outlay_ns(observed.ir, priors.plan_ns_per_ir, priors.compile_ns_per_ir, compile_wall_permille(priors))
+    let outlay = outlay_ns(observed.ir, priors.plan_ns_per_ir, priors.compile_ns_per_ir, compile_wall_permille(priors));
+    net_gain_ns(future_count(priors, u64::from(observed.entries)), gain, outlay) > 0
 }
 
 /// Whether the model admits the u-jit compile of `observed` (`decide` picks u-jit).

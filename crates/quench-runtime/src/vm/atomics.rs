@@ -1,6 +1,9 @@
 use super::agent::{AGENT_SLEEP_UNIT_MS, AGENT_SPIN_LIMIT, AGENT_YIELD_TIMEOUT_MS};
 use super::promise::PromiseState;
 use super::*;
+use crate::staged::typed_elements::{
+    element_number, element_word, field_bits, store_field_bits, NATIVE_LITTLE_ENDIAN,
+};
 use std::time::Instant;
 
 pub(super) struct Test262AgentState {
@@ -313,24 +316,26 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `value` as an element of the integer `kind` holds it (the element's store then load:
+    /// ToInt8..ToUint32 of `value`, modulo the width).
     fn atomic_number_value(&self, kind: TypedArrayKind, value: f64) -> f64 {
         match kind {
-            TypedArrayKind::Int8 => Self::uint8_from_value(value) as i8 as f64,
-            TypedArrayKind::Uint8 => Self::uint8_from_value(value) as f64,
-            TypedArrayKind::Int16 => Self::uint16_from_value(value) as i16 as f64,
-            TypedArrayKind::Uint16 => Self::uint16_from_value(value) as f64,
-            TypedArrayKind::Int32 => Self::uint32_from_value(value) as i32 as f64,
-            TypedArrayKind::Uint32 => Self::uint32_from_value(value) as f64,
+            TypedArrayKind::Int8
+            | TypedArrayKind::Uint8
+            | TypedArrayKind::Int16
+            | TypedArrayKind::Uint16
+            | TypedArrayKind::Int32
+            | TypedArrayKind::Uint32 => {
+                element_number(kind, &element_word(kind, value)[..kind.width()], NATIVE_LITTLE_ENDIAN)
+            }
             _ => value,
         }
     }
 
+    /// The bits of `value` as an element of the integer `kind`: the low `kind.width()` bytes of its
+    /// element word, read as an unsigned integer. The bitwise Atomics operations combine these.
     fn atomic_number_bits(kind: TypedArrayKind, value: f64) -> u32 {
-        if kind == TypedArrayKind::Uint32 {
-            value as u32
-        } else {
-            value as i32 as u32
-        }
+        field_bits(&element_word(kind, value)[..kind.width()], NATIVE_LITTLE_ENDIAN) as u32
     }
 
     fn atomic_bigint(
@@ -688,7 +693,7 @@ impl<H: Host> Vm<H> {
                     n.trunc()
                 };
                 store_result = Some(Value::number(integer));
-                Ok(u64::from(Self::uint32_from_value(n)))
+                Ok(field_bits(&element_word(kind, n)[..kind.width()], NATIVE_LITTLE_ENDIAN))
             }
         };
         let mut first = 0;
@@ -797,12 +802,18 @@ impl<H: Host> Vm<H> {
         Ok(match kind {
             TypedArrayKind::BigInt64 => self.heap.alloc(Cell::bigint((old as i64).into())),
             TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(old.into())),
-            TypedArrayKind::Int8 => Value::number(old as i8 as f64),
-            TypedArrayKind::Int16 => Value::number(old as i16 as f64),
-            TypedArrayKind::Int32 => Value::number(old as i32 as f64),
-            _ => Value::number(old as f64),
+            _ => Value::number(element_bits_number(kind, old)),
         })
     }
+}
+
+/// The Number of the integer element of `kind` whose bits are `bits` (its low `kind.width()`
+/// bytes, as `field_bits` reads them): the element's load (`element_number`) of those bytes in
+/// native order.
+fn element_bits_number(kind: TypedArrayKind, bits: u64) -> f64 {
+    let mut word = [0; 8];
+    store_field_bits(&mut word[..kind.width()], bits, NATIVE_LITTLE_ENDIAN);
+    element_number(kind, &word[..kind.width()], NATIVE_LITTLE_ENDIAN)
 }
 
 pub(super) struct SharedAsyncWaiter {

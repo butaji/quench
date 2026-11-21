@@ -44,7 +44,7 @@
 </header>
 <div class="frame"><div class="tile prose">
 <p>Ahead-of-time compilation for JavaScript is an old wish: hand the tool a program, get back one native executable that starts instantly and needs no runtime installed. Quench has a mode for it.</p>
-<pre><code>$ quench-node --build-aot app.ts -o app
+<pre><code>$ quench --build-aot app.ts -o app
 $ ./app</code></pre>
 <p>This post is about the design behind that command, and the version of it we discarded on 7 November 2026.</p>
 <h2 id="the-prototype-we-threw-away">The prototype we threw away</h2>

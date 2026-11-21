@@ -5,7 +5,7 @@
 //! says so.
 
 use super::machine::{Binary, Lane, MachineAccess, MachineScalar, Relation, Unary};
-use super::{Domain, NumericStage, Stage};
+use super::{Domain, NumericStage};
 use crate::vm::operations::{
     number_remainder, number_truthiness, NumberArithmetic, NumberBitwise, NumberRelation, NumberTruthinessStage,
     WORD32_SHIFT_MASK,

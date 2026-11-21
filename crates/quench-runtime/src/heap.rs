@@ -33,6 +33,7 @@ macro_rules! for_each_record_space {
             V128 = v128_records: V128RecordSpace [[u8; crate::wasm::V128_BYTES]] v128s => Value::direct_v128,
             Environment = environment_records: EnvironmentRecordSpace [EnvironmentRecord] environments => Value::direct_environment,
             Symbol = symbol_records: SymbolRecordSpace [SymbolData] symbols => Value::direct_symbol,
+            WasmGc = wasm_gc_records: WasmGcRecordSpace [WasmGcRecord] wasm_gcs => Value::direct_wasm_gc,
         }
     };
 }
@@ -53,6 +54,7 @@ macro_rules! record_reference_test {
             Some(HeapReference::V128Record(id)) => $s.v128_records.$method(id),
             Some(HeapReference::EnvironmentRecord(id)) => $s.environment_records.$method(id),
             Some(HeapReference::SymbolRecord(id)) => $s.symbol_records.$method(id),
+            Some(HeapReference::WasmGcRecord(id)) => $s.wasm_gc_records.$method(id),
             _ => $otherwise,
         }
     };
@@ -133,7 +135,7 @@ mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
 mod typed_view;
-pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NativeView};
+pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
 use typed_view::TypedViewTable;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 pub(crate) use array_elements::NARROW_LEN;
@@ -194,7 +196,7 @@ pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_addres
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
-    ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, CollectionRecordSpace, IteratorRecordSpace, SymbolRecordSpace, V128RecordSpace,
+    ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, CollectionRecordSpace, IteratorRecordSpace, SymbolRecordSpace, V128RecordSpace, WasmGcRecordSpace,
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
 pub use root::RootId;
@@ -586,6 +588,8 @@ pub(crate) struct Heap {
     environment_records: EnvironmentRecordSpace,
     /// Symbols (`alloc_symbol`): immutable leaves that hold no edges, never prototypes.
     symbol_records: SymbolRecordSpace,
+    /// Wasm GC objects (`alloc_wasm_gc`): records whose head holds the payload's address and length.
+    wasm_gc_records: WasmGcRecordSpace,
     /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
     #[cfg(feature = "profile-aggregate")]
     allocated_variants: std::collections::BTreeMap<&'static str, u64>,
@@ -1419,9 +1423,9 @@ impl Heap {
         self.alloc_slotted(cell, track_young)
     }
 
-    /// `cell` in a legacy slot; a typed array also joins the table native code reads its views from.
+    /// `cell` in a legacy slot; a typed array or a DataView also joins the table native code reads its views from.
     fn alloc_slotted(&mut self, cell: Cell, track_young: bool) -> Value {
-        let typed = matches!(cell, Cell::TypedArray { .. });
+        let typed = matches!(cell, Cell::TypedArray { .. } | Cell::DataView { .. });
         let value = self.alloc_in_slot(cell, track_young);
         if typed {
             self.register_typed_view(value);
@@ -1429,11 +1433,12 @@ impl Heap {
         value
     }
 
-    /// Names the record of the typed array just allocated at `value` in the table native code reads.
+    /// Names the record of the typed array or DataView just allocated at `value` in the table native code reads.
     fn register_typed_view(&mut self, value: Value) {
         let Some(index) = value.legacy_heap_index() else { return };
-        if let Some(Cell::TypedArray { object, .. }) = self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
-            self.typed_views.register(index, &mut object.native);
+        match self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
+            Some(Cell::TypedArray { object, .. } | Cell::DataView { object, .. }) => self.typed_views.register(index, &mut object.native),
+            _ => {}
         }
     }
 
@@ -3144,7 +3149,16 @@ impl Heap {
                 }
             });
             self.external_bytes = self.external_bytes.saturating_sub(dead_description_bytes);
-            live += symbol_live + environment_live
+            // A Wasm GC object's payload is external bytes: charged as its record is allocated, and
+            // uncharged when the record is swept.
+            let mut dead_wasm_gc_bytes = 0;
+            let (wasm_gc_live, wasm_gc_freed) = self.wasm_gc_records.sweep(full, age, false, |record| {
+                if let RecordSweep::Dead(_record_id, record) = record {
+                    dead_wasm_gc_bytes += record.allocated_bytes();
+                }
+            });
+            self.external_bytes = self.external_bytes.saturating_sub(dead_wasm_gc_bytes);
+            live += symbol_live + environment_live + wasm_gc_live
                 + object_live
                 + array_live
                 + function_live
@@ -3156,7 +3170,7 @@ impl Heap {
                 + string_live;
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.freed += (symbol_freed + environment_freed
+                self.gc_profile.freed += (symbol_freed + environment_freed + wasm_gc_freed
                     + object_freed
                     + array_freed
                     + function_freed
@@ -3171,6 +3185,7 @@ impl Heap {
             let _ = (
                 symbol_freed,
                 environment_freed,
+                wasm_gc_freed,
                 object_freed,
                 array_freed,
                 function_freed,
@@ -3461,6 +3476,7 @@ impl Heap {
             // BigInt arithmetic runs, owns nothing beyond its slot but spilled digits, which its
             // own drop releases: no payload or external bytes, no properties, no cell move.
             let mut release = |properties: &mut ValueArena, index: usize, slot: &mut Slot| -> bool {
+                let _ = index; // the memory profile's alone (`profile-memory`)
                 match &slot.cell {
                     None => return false,
                     Some(Cell::BigInt(_)) => {
@@ -3996,6 +4012,20 @@ impl Heap {
             }
             // SAFETY: as above.
             Self::environment_children(unsafe { self.environment_records.get_live(record_id) }, ctx.work, &mut ctx.last_proto);
+        } else if let Some(record_id) = value.direct_wasm_gc_index() {
+            // The payload holds the references the object keeps: marking it pushes them.
+            if self.wasm_gc_records.mark(record_id) {
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::WasmGc as usize] += 1;
+                }
+                // SAFETY: just marked, so occupied.
+                unsafe { self.wasm_gc_records.get_live(record_id) }.trace_children(ctx.work);
+                // A Wasm GC object may key a weak map (a JS cache of its wrapper): the value that
+                // waits on it is told that it is marked.
+                ephemeron_tail!(self, ctx, value, None);
+            }
         } else if let Some(record_id) = value.direct_symbol_index() {
             // A symbol holds no edges: marking it is the whole visit, and a weak key's ephemeron
             // is told that it is marked.
@@ -4149,6 +4179,7 @@ impl Heap {
             Some(HeapReference::CollectionRecord(record_id)) => {
                 self.collection_records.barrier(record_id, &self.properties)
             }
+            Some(HeapReference::WasmGcRecord(record_id)) => self.wasm_gc_records.barrier(record_id, &self.properties),
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             // Strings and vectors are immutable and hold no edges, so nothing is ever stored
             // into them.
@@ -4729,6 +4760,7 @@ impl Heap {
             iterator_records,
             symbol_records,
             collection_records,
+            wasm_gc_records,
             slots,
             properties,
             memory_profile,
@@ -4771,6 +4803,12 @@ impl Heap {
             // SAFETY: profile runs immediately after inserting this symbol.
             let symbol = unsafe { symbol_records.get_live(record_id) };
             memory_profile.allocated_symbol(identity, symbol);
+            return;
+        }
+        if let Some(record_id) = identity.direct_wasm_gc_index() {
+            // SAFETY: profile runs immediately after inserting this Wasm GC object.
+            let record = unsafe { wasm_gc_records.get_live(record_id) };
+            memory_profile.allocated_wasm_gc(identity, record);
             return;
         }
         if let Some(record_id) = identity.direct_collection_index() {
@@ -4970,11 +5008,6 @@ impl Heap {
             Cell::WasmTable { object: value, elements, .. } => {
                 object(value);
                 work.extend(elements.iter().copied());
-            }
-            Cell::WasmGc { declarations, ty, fields } => {
-                if let Some(layout) = declarations.layout(*ty) {
-                    fields.for_each_reference(layout, |value| work.push(value));
-                }
             }
             Cell::WasmExtern(value) => work.push(*value),
             Cell::AccessorPair { getter, setter } => {
@@ -5216,7 +5249,6 @@ impl Heap {
             Cell::AccessorPair { .. } => CellKind::Function,
             Cell::WasmTag { .. } => CellKind::WasmTag,
             Cell::WasmException { .. } => CellKind::WasmException,
-            Cell::WasmGc { .. } => CellKind::WasmGc,
             Cell::WasmHostFunction { .. } => CellKind::WasmHostFunction,
             Cell::Date { .. } => CellKind::Date,
             Cell::Error(_) => CellKind::Error,
@@ -5273,7 +5305,6 @@ impl Heap {
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
                 Cell::WasmTable { elements, .. } => elements.external_bytes(),
-                Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }
                 | Cell::TemporalPlainMonthDay { calendar, .. }

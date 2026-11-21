@@ -6,6 +6,8 @@
 //!
 //! The host asks a checker about the sites `parameter_sites` names and registers the answer
 //! for the exact text it compiles; every compile of that text (load, replay, reparse) finds it.
+//! Lookup is by text length, then a hash that only narrows the candidates, then an exact text
+//! comparison, so a hash collision between two texts never gives one text the other's types.
 
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
@@ -42,8 +44,16 @@ pub struct ParameterSite {
 }
 
 static ANY_REGISTERED: AtomicBool = AtomicBool::new(false);
-/// By text length, then text hash: a compile of a text of another length hashes nothing.
-static REGISTRY: LazyLock<RwLock<FxHashMap<usize, Vec<(u64, Arc<CheckedParameters>)>>>> = LazyLock::new(Default::default);
+/// One registered text: its hash (a pre-filter only), the text itself (what a match is decided
+/// by), and the checker's answer for it.
+struct Entry {
+    hash: u64,
+    text: Arc<str>,
+    checked: Arc<CheckedParameters>,
+}
+/// By text length, then by text hash, then by text itself: a compile of a text of another length
+/// hashes nothing, and a hash collision never hands one text's answer to another text.
+static REGISTRY: LazyLock<RwLock<FxHashMap<usize, Vec<Entry>>>> = LazyLock::new(Default::default);
 
 fn hash(text: &str) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
@@ -51,18 +61,23 @@ fn hash(text: &str) -> u64 {
     hasher.finish()
 }
 
-/// Register `checked` for `text`, the exact source a later compile receives.
+/// Register `checked` for `text`, the exact source a later compile receives. Replaces the answer
+/// for an equal text only; a different text that happens to share the hash keeps its own entry.
 pub fn register(text: &str, checked: CheckedParameters) {
     let text = super::super::early::normalize_hashbang(text);
     let hash = hash(&text);
     let mut registry = REGISTRY.write().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entries = registry.entry(text.len()).or_default();
-    entries.retain(|(registered, _)| *registered != hash);
-    entries.push((hash, Arc::new(checked)));
+    let checked = Arc::new(checked);
+    match entries.iter_mut().find(|entry| entry.hash == hash && *entry.text == *text) {
+        Some(entry) => entry.checked = checked,
+        None => entries.push(Entry { hash, text: Arc::from(&*text), checked }),
+    }
     ANY_REGISTERED.store(true, Ordering::Release);
 }
 
-/// The checked parameters registered for `text` (hashbang-normalized, as compiles see it).
+/// The checked parameters registered for `text` (hashbang-normalized, as compiles see it). The
+/// hash only narrows the bucket; the text must be equal for an entry to match.
 pub(in crate::compile) fn lookup(text: &str) -> Option<Arc<CheckedParameters>> {
     if !ANY_REGISTERED.load(Ordering::Acquire) {
         return None;
@@ -70,7 +85,42 @@ pub(in crate::compile) fn lookup(text: &str) -> Option<Arc<CheckedParameters>> {
     let registry = REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entries = registry.get(&text.len())?;
     let hash = hash(text);
-    entries.iter().find(|(registered, _)| *registered == hash).map(|(_, checked)| checked.clone())
+    entries
+        .iter()
+        .find(|entry| entry.hash == hash && &*entry.text == text)
+        .map(|entry| entry.checked.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn answer(language: u16) -> CheckedParameters {
+        let mut checked = CheckedParameters::default();
+        checked.insert(0, vec![language].into());
+        checked
+    }
+
+    #[test]
+    fn lookup_finds_the_registered_text_and_not_a_same_length_stranger() {
+        let text = "function checkedTextLookup(a) { return a; }";
+        let stranger = "function checkedTextLookup(b) { return b; }";
+        assert_eq!(text.len(), stranger.len());
+        register(text, answer(1));
+        assert_eq!(lookup(text).unwrap().get(0), Some(&[1u16][..]));
+        assert!(lookup(stranger).is_none());
+    }
+
+    #[test]
+    fn register_replaces_an_equal_text_and_keeps_a_different_one_of_the_same_length() {
+        let text = "function checkedTextReplace(a) { return a; }";
+        let other = "function checkedTextReplace(b) { return b; }";
+        register(text, answer(1));
+        register(other, answer(2));
+        register(text, answer(3));
+        assert_eq!(lookup(text).unwrap().get(0), Some(&[3u16][..]));
+        assert_eq!(lookup(other).unwrap().get(0), Some(&[2u16][..]));
+    }
 }
 
 /// Every function and arrow of `program` with at least one formal parameter.

@@ -2,6 +2,8 @@
 //! minimum around the matcher, decided in one look at the regexp, its realm's RegExp record
 //! and the subject, with `lastIndex` stored only where the store changes it.
 use super::*;
+use super::ascii::ascii_search;
+use super::steady::{ExecStart, exec_finish, exec_start_int};
 use crate::code_dependencies::IntactFuse;
 
 impl<H: Host> Vm<H> {
@@ -58,7 +60,7 @@ impl<H: Host> Vm<H> {
         if check_exec && !self.steady_exec_holds(intrinsics, object.proto(), shape) {
             return Some(Planned::Unproven);
         }
-        let (store, sticky, start) = self.steady_index_store(object, shape, meta.flags)?;
+        let (store, exec) = self.steady_index_store(object, shape, meta.flags)?;
         let regex = meta.matcher.0.get()?;
         if !store.stateful && !captures && regex.matches_at_every_start() {
             return None;
@@ -67,7 +69,7 @@ impl<H: Host> Vm<H> {
         let Some(crate::vm::wtf16::Units::Ascii(bytes)) = input.existing_units() else {
             return None;
         };
-        let search = AsciiSearch { meta: &**meta, regex, input, bytes, start, sticky };
+        let search = AsciiSearch { meta: &**meta, regex, input, bytes, exec };
         Some(Planned::Ready(steady_ascii_find(intrinsics, search, captures)?, store))
     }
 
@@ -91,23 +93,23 @@ impl<H: Host> Vm<H> {
     /// (`method_caches_may_name`); any other only reads it. `None` leaves the call to
     /// `regexp_steady_state`, which fills the layout cache.
     #[inline(always)]
-    fn steady_index_store(&self, object: &crate::heap::Object, shape: u32, flags: RegExpFlags) -> Option<(IndexStore, bool, usize)> {
+    fn steady_index_store(&self, object: &crate::heap::Object, shape: u32, flags: RegExpFlags) -> Option<(IndexStore, ExecStart)> {
         let slot = self.regexp_last_index_layouts.iter().find(|(cached, _)| *cached == shape)?.1 as usize;
         let last_index = if slot < crate::value_vec::INLINE_PROPERTY_COUNT { object.inline_property(slot) } else { None }?;
         let index = last_index.as_int()?;
-        let (stateful, sticky, start) = steady_start(flags, index);
-        if stateful && self.method_caches_may_name(self.runtime_atoms.last_index) {
+        let exec = exec_start_int(flags, index);
+        if exec.stateful && self.method_caches_may_name(self.runtime_atoms.last_index) {
             return None;
         }
-        let store = IndexStore { slot, stateful, held: usize::try_from(index).ok() };
-        Some((store, sticky, start))
+        let store = IndexStore { slot, stateful: exec.stateful, held: usize::try_from(index).ok() };
+        Some((store, exec))
     }
 
     /// A steady match ending at `end` that the legacy statics already hold: `true` (`undefined`
     /// for an exec whose result is unused), a stateful regexp's `lastIndex` stored.
     #[inline(always)]
     fn steady_ascii_held(&mut self, receiver: Value, end: usize, (exec, store): (bool, IndexStore)) -> Result<Value, JsError> {
-        self.steady_store_index(receiver, store, end);
+        self.steady_store_index(receiver, store, exec_finish(store.stateful, Some(end)));
         Ok(if exec { Value::UNDEFINED } else { Value::TRUE })
     }
 
@@ -115,15 +117,15 @@ impl<H: Host> Vm<H> {
     /// `lastIndex` reset through its slot.
     #[inline(always)]
     pub(super) fn steady_ascii_failed(&mut self, receiver: Value, (exec, store): (bool, IndexStore)) -> Result<Value, JsError> {
-        self.steady_store_index(receiver, store, 0);
+        self.steady_store_index(receiver, store, exec_finish(store.stateful, None));
         Ok(if exec { Value::NULL } else { Value::FALSE })
     }
 
-    /// Stores `value` in the RegExp `receiver`'s `lastIndex` slot where `store` says the
-    /// store changes it.
+    /// Stores `stored` (`exec_finish`'s value, `None` where nothing is stored) in the RegExp
+    /// `receiver`'s `lastIndex` slot where `store` says the store changes it.
     #[inline(always)]
-    fn steady_store_index(&mut self, receiver: Value, store: IndexStore, value: usize) {
-        if store.changes(value) {
+    fn steady_store_index(&mut self, receiver: Value, store: IndexStore, stored: Option<usize>) {
+        if let Some(value) = stored && store.changes(value) {
             self.heap.primitive_cell_property_set(receiver, store.slot, Value::number(value as f64));
         }
     }
@@ -141,7 +143,7 @@ impl<H: Host> Vm<H> {
         (exec, store): (bool, IndexStore),
         captures: bool,
     ) -> Result<Value, JsError> {
-        self.steady_store_index(receiver, store, matched.range.end);
+        self.steady_store_index(receiver, store, exec_finish(store.stateful, Some(matched.range.end)));
         if captures {
             return self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched));
         }
@@ -151,15 +153,6 @@ impl<H: Host> Vm<H> {
         self.record_regexp_legacy_pending(owner, input, regex, matched.range.start);
         Ok(if exec { Value::UNDEFINED } else { Value::TRUE })
     }
-}
-
-/// Whether a RegExp of `flags` is global or sticky, whether sticky, and where its search
-/// starts, from the integer `lastIndex` `index`.
-#[inline(always)]
-fn steady_start(flags: RegExpFlags, index: i32) -> (bool, bool, usize) {
-    let stateful = flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-    let start = if stateful { usize::try_from(index).unwrap_or(0) } else { 0 };
-    (stateful, flags.contains(RegExpFlags::STICKY), start)
 }
 
 /// What `steady_ascii_plan` read of a steady call: the search's outcome and its `lastIndex`
@@ -176,8 +169,7 @@ struct AsciiSearch<'a> {
     regex: &'a Rc<quench_regexp::Regex>,
     input: &'a JsString,
     bytes: &'a [u8],
-    start: usize,
-    sticky: bool,
+    exec: ExecStart,
 }
 
 /// What a steady search of flat ASCII bytes found.
@@ -189,24 +181,17 @@ enum AsciiFound {
     Matched(Rc<quench_regexp::Regex>, JsString, quench_regexp::Match),
 }
 
-/// The search of `steady_ascii_plan`, in place over the subject's bytes: where nothing reads
-/// the captures, the bounds alone (`Regex::find_range_ascii`), and whether the legacy statics
-/// of the realm's RegExp record `intrinsics` already hold that very match, which then needs
-/// no record. Only a match to record clones the program and the subject. `None` where the
-/// pattern has no matcher over bytes.
+/// The search of `steady_ascii_plan`, in place over the subject's bytes (`ascii_search`), and
+/// whether the legacy statics of the realm's RegExp record `intrinsics` already hold that very
+/// match, which then needs no record: only where nothing reads the captures. Only a match to
+/// record clones the program and the subject. `None` where the pattern has no matcher over bytes.
 #[inline(always)]
 fn steady_ascii_find(intrinsics: &RegExpIntrinsics, search: AsciiSearch<'_>, captures: bool) -> Option<AsciiFound> {
-    let AsciiSearch { meta, regex, input, bytes, start, sticky } = search;
-    if captures {
-        return Some(match regex.find_ascii(bytes, start, sticky, true)? {
-            None => AsciiFound::Failed,
-            Some(found) => AsciiFound::Matched(Rc::clone(regex), input.clone(), found),
-        });
-    }
-    Some(match regex.find_range_ascii(bytes, start, sticky)? {
+    let AsciiSearch { meta, regex, input, bytes, exec } = search;
+    Some(match ascii_search(regex, bytes, exec.start, exec.sticky, captures)? {
         None => AsciiFound::Failed,
-        Some(range) if intrinsics.legacy_pending_holds(meta, bytes, regex, range.start) => AsciiFound::Held(range.end),
-        Some(range) => AsciiFound::Matched(Rc::clone(regex), input.clone(), quench_regexp::Match::native(range)),
+        Some(found) if !captures && intrinsics.legacy_pending_holds(meta, bytes, regex, found.range.start) => AsciiFound::Held(found.range.end),
+        Some(found) => AsciiFound::Matched(Rc::clone(regex), input.clone(), found),
     })
 }
 
@@ -222,9 +207,9 @@ pub(super) struct IndexStore {
 }
 
 impl IndexStore {
-    /// Whether storing `value` changes the slot.
+    /// Whether storing `value` changes the slot (`exec_finish` decides that a store is made).
     #[inline(always)]
     fn changes(self, value: usize) -> bool {
-        self.stateful && self.held != Some(value)
+        self.held != Some(value)
     }
 }

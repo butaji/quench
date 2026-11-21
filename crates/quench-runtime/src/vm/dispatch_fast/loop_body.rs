@@ -156,7 +156,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }
     }));
     let work = match pending {
-        Some(pending) => LaneBodyWork::Poll(pending),
+        Some(pending) => LaneBodyWork::Poll(pending, own),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
     };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),

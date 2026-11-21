@@ -2,6 +2,7 @@
 //! (`exit_targets`), and the exit stubs and their routines written behind the rows (`exit_addresses`).
 
 use super::*;
+use quench_bjit::{EXIT_STUB_LEN, exit_stub};
 
 /// A leave row of the cold area, behind the body: what it returns and what it writes back first.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,7 +46,7 @@ impl Leaves {
         let stencil = match leave {
             Leave::Pc(pc) => leave_row(leave_chain(&layout.spills(pc), layout.copies(pc), ending.tails().0, ending.holes(layout.exit_word(pc)))?),
             Leave::Word(word) => leave_row(leave_chain(&[], &[], ending.tails().0, ending.holes(word))?),
-            Leave::Status => routine(call::LEAVE_STATUS)?,
+            Leave::Status => routine(call::LEAVE_STATUS)?.clone(),
             Leave::Return { pc, slot } => {
                 let status = u64::from(crate::vm::compiled::LANE_BODY_RETURNED);
                 leave_row(leave_chain(&layout.spills(pc), &[], "leave_returned", padded_holes([slot, status, u64::from(layout.record(pc))]))?)
@@ -65,11 +66,12 @@ pub(in crate::vm::compiled) enum Target {
 
 /// The index of the routine of the pinned registers live at `pc`, one per set of them.
 fn routine_index(layout: &Layout, routines: &mut Vec<(Vec<Pin>, Vec<Pin>, Vec<u8>)>, pc: u32) -> Result<usize, String> {
-    let (ints, floats) = (layout.live_pins(pc), layout.live_floats(pc));
+    let (ints, floats) = layout.live_pinned(pc);
     if let Some(found) = routines.iter().position(|(i, f, _)| *i == ints && *f == floats) {
         return Ok(found);
     }
-    routines.push((ints, floats, layout.routine(pc)?));
+    let code = layout.routine(&spill_list(&ints, &floats))?;
+    routines.push((ints, floats, code));
     Ok(routines.len() - 1)
 }
 

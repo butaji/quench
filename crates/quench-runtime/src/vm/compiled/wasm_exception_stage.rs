@@ -92,8 +92,8 @@ unsafe extern "C" fn exception_new_callout<H: Host>(
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let (env, count) = unsafe { ((*context).env, count as usize) };
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let (env, count) = unsafe { ((*context).head.env, count as usize) };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
     // SAFETY: the emitted code spilled `count` kinds and words after the `count` registers.
     let payload: Vec<Value> = (0..count)
         .map(|index| unsafe {
@@ -124,7 +124,7 @@ unsafe extern "C" fn exception_match_callout<H: Host>(
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
     match vm.wasm_exception_matches(Value::from_bits(exception), Value::from_bits(tag)) {
         Ok(matches) => {
             // SAFETY: the emitted code gives `out` a word of its own for this call.
@@ -170,7 +170,7 @@ unsafe extern "C" fn exception_payload_callout<H: Host>(
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
     match payload_word(vm, exception, index, code) {
         Ok(word) => {
             // SAFETY: the emitted code gives `out` a word of its own for this call.
@@ -186,7 +186,7 @@ unsafe extern "C" fn exception_payload_callout<H: Host>(
 /// raised one. It always returns that status.
 unsafe extern "C" fn exception_throw_callout<H: Host>(context: *mut CallContext, exception: u64) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
     let error = vm.wasm_throw_ref(Value::from_bits(exception));
     // SAFETY: compiled code passes the context of its call.
     finish_callout(unsafe { &mut *context }, Ok(Err(error)))

@@ -4,8 +4,8 @@ mod internal_bindings;
 mod module_records;
 mod declared_types;
 pub(crate) use declared_types::{
-    Declared, DeclaredKind, DeclaredLocal, DeclaredMember, DeclaredParameter, DeclaredParameterClass, DeclaredSignature,
-    DeclaredTypes, EnumConstant,
+    Declared, DeclaredKind, DeclaredLocal, DeclaredLocalMember, DeclaredMember, DeclaredParameter, DeclaredParameterClass, DeclaredSignature,
+    DeclaredTypes, EnumConstant, SavedTypeName,
 };
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
@@ -74,7 +74,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
     name.starts_with(HOME_BINDING_PREFIX)
         || (local_name_requires_environment(name) && declared_in_environment())
 }
-pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor, may_repeat, reachable_from};
+pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, for_each_instruction_successor, may_repeat, reachable_from};
 pub use instruction::Instr;
 pub(crate) use instruction::WideInstruction;
 pub(crate) use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
@@ -238,9 +238,11 @@ pub(crate) enum FieldLayout {
     SignedConstant,
     /// The payload type a Wasm exception field read carries (`staged::wasm_exception::PayloadType`).
     WasmPayloadType,
+    /// A struct read's field's static payload offset, a 16-bit byte offset carried in the operand
+    /// (`wasm::gc::static_offset`); not a register.
+    StaticOffset,
 }
 
-#[cfg(feature = "aot")]
 pub(crate) use crate::typed_ir::BindingTime;
 
 impl FieldLayout {
@@ -270,7 +272,6 @@ impl FieldLayout {
         matches!(self, Self::Operand | Self::NumericIndexOperand)
     }
 
-    #[cfg(feature = "aot")]
     /// An operand field is a location whose encoding may instead carry a
     /// constant; the constant is static, which the instruction decides.
     pub(crate) const fn binding_time(self) -> BindingTime {
@@ -297,12 +298,12 @@ impl FieldLayout {
             | Self::BooleanFlag
             | Self::BinaryOperator
             | Self::SignedConstant
-            | Self::WasmPayloadType => BindingTime::Static,
+            | Self::WasmPayloadType
+            | Self::StaticOffset => BindingTime::Static,
         }
     }
 }
 
-#[cfg(feature = "aot")]
 impl ImmediateRole {
     /// A layout-encoded immediate packs register windows or capture slots
     /// unless it is a plain scalar.
@@ -329,6 +330,8 @@ impl ImmediateRole {
             | Self::ClosureFunctionIndex
             | Self::ArrayLength
             | Self::AtomIndex
+            | Self::GlobalLexicalIndex
+            | Self::IntCaseMinimum
             | Self::FunctionNamePrefix
             | Self::PropertyDefinitionMode
             | Self::BooleanFlag
@@ -369,7 +372,6 @@ impl ImmediateRole {
     }
 }
 
-#[cfg(feature = "aot")]
 impl Op {
     /// The binding time of each input, in field order `a`, `b`, `c`, then the
     /// immediate: Ershov's division of this instruction.
@@ -528,6 +530,7 @@ struct OperandLayout {
 }
 
 impl OperandLayout {
+    #[inline(always)]
     const fn field(self, field: InstructionField) -> FieldLayout {
         match field {
             InstructionField::A => self.a,
@@ -538,6 +541,7 @@ impl OperandLayout {
 }
 
 impl ResultLayout {
+    #[inline(always)]
     pub(crate) const fn allowed_flags(self) -> Register {
         match self {
             Self::Register => NO_RESULT_FLAGS,
@@ -583,6 +587,7 @@ impl ImmediateLayout {
     const PAIR_SECOND_SHIFT: u32 = u16::BITS;
     const PAIR_FIELD_MASK: u32 = u16::MAX as u32;
 
+    #[inline(always)]
     pub(crate) const fn uses_packed_pair(self) -> bool {
         matches!(
             self,
@@ -631,10 +636,12 @@ impl ImmediateLayout {
         imm & Self::LANE_CALL_RESULT_AWAITED_FLAG != 0
     }
 
+    #[inline(always)]
     pub(crate) const fn direct_eval(imm: u32) -> bool {
         imm & Self::DIRECT_EVAL_FLAG != 0
     }
 
+    #[inline(always)]
     pub(crate) const fn parameter_eval(imm: u32) -> bool {
         imm & Self::PARAMETER_EVAL_FLAG != 0
     }
@@ -722,17 +729,17 @@ macro_rules! opcodes {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             const CLASSES: [Class; Self::COUNT] = [$(opcodes!(@class $($class)?)),+];
-            pub(crate) const fn class(self) -> Class { Self::CLASSES[self as usize] }
+            #[inline(always)] pub(crate) const fn class(self) -> Class { Self::CLASSES[self as usize] }
             const TRAITS: [Traits; Self::COUNT] = [$(opcodes!(@traits $($($trait)+)?)),+];
-            pub(crate) const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
+            #[inline(always)] pub(crate) const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
             const DECODERS: [Option<Decoder>; Self::COUNT] = [$(opcodes!(@staged $($decoder)?)),+];
-            pub(crate) const fn staged(self) -> Option<Decoder> { Self::DECODERS[self as usize] }
+            #[inline(always)] pub(crate) const fn staged(self) -> Option<Decoder> { Self::DECODERS[self as usize] }
             const GENERIC_STEPS: [Option<GenericStep>; Self::COUNT] = [$(opcodes!(@step $($step)?)),+];
-            pub(crate) const fn generic_step(self) -> Option<GenericStep> { Self::GENERIC_STEPS[self as usize] }
+            #[inline(always)] pub(crate) const fn generic_step(self) -> Option<GenericStep> { Self::GENERIC_STEPS[self as usize] }
             const OWNED_STEPS: [Option<OwnedStep>; Self::COUNT] = [$(opcodes!(@owned $($owned)?)),+];
-            pub(crate) const fn owned_step(self) -> Option<OwnedStep> { Self::OWNED_STEPS[self as usize] }
+            #[inline(always)] pub(crate) const fn owned_step(self) -> Option<OwnedStep> { Self::OWNED_STEPS[self as usize] }
             const VALUE_STEPS: [Option<ValueStep>; Self::COUNT] = [$(opcodes!(@value $($value)?)),+];
-            pub(crate) const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
+            #[inline(always)] pub(crate) const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
             #[cfg(feature = "native-execution")]
             pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
                 match self {
@@ -760,11 +767,11 @@ macro_rules! opcodes {
                 opcodes!(@js $($js_denotation)?)),+
             ];
 
-            pub(crate) const fn effect(self) -> Effect {
+            #[inline(always)] pub(crate) const fn effect(self) -> Effect {
                 Self::EFFECTS[self as usize]
             }
 
-            pub(crate) const fn immediate_layout(self) -> ImmediateLayout {
+            #[inline(always)] pub(crate) const fn immediate_layout(self) -> ImmediateLayout {
                 Self::IMMEDIATE_LAYOUTS[self as usize]
             }
 
@@ -773,19 +780,19 @@ macro_rules! opcodes {
                 Self::RESULT_LAYOUTS[self as usize]
             }
 
-            pub(crate) const fn control_flow_layout(self) -> ControlFlowLayout {
+            #[inline(always)] pub(crate) const fn control_flow_layout(self) -> ControlFlowLayout {
                 Self::CONTROL_FLOW_LAYOUTS[self as usize]
             }
 
-            pub(crate) const fn field_layout(self, field: InstructionField) -> FieldLayout {
+            #[inline(always)] pub(crate) const fn field_layout(self, field: InstructionField) -> FieldLayout {
                 Self::OPERAND_LAYOUTS[self as usize].field(field)
             }
 
-            pub(crate) const fn immediate_role(self) -> ImmediateRole {
+            #[inline(always)] pub(crate) const fn immediate_role(self) -> ImmediateRole {
                 Self::IMMEDIATE_ROLES[self as usize]
             }
 
-            pub(crate) const fn js_denotation(self) -> JsDenotation {
+            #[inline(always)] pub(crate) const fn js_denotation(self) -> JsDenotation {
                 Self::JS_DENOTATIONS[self as usize]
             }
 
@@ -883,8 +890,8 @@ opcodes!($;
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex; class CloneEnv; staged Names; step Body; traits NAME_OPERATION ENVIRONMENT_CLONE ENVIRONMENT_CAPTURE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex; traits NO_STEP, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
     LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst; class LoadConst; staged Flow; step Body; traits LEAF_VALUE INLINABLE PURE_SETUP ACTIVATION_FREE SCALAR_REGION LIFETIME_SAFE REMOVABLE_WHEN_DEAD CONSTANT_LOAD MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class LoadLocal; step Body; owned LoadLocal; traits ACTIVATION_FREE FRAME_LOCAL_LOAD RELOCATABLE_LOCAL LOCAL_BINDING_LOAD FRAME_SLOT_READ, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class StoreLocal; step Body; owned StoreLocal; traits ACTIVATION_FREE FRAME_LOCAL_STORE LOCAL_BINDING_STORE RELOCATABLE_LOCAL LOCAL_SLOT_STORE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class LoadLocal; staged Local; step Body; owned LoadLocal; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_LOAD RELOCATABLE_LOCAL LOCAL_BINDING_LOAD FRAME_SLOT_READ, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class StoreLocal; staged Local; step Body; owned StoreLocal; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_STORE LOCAL_BINDING_STORE RELOCATABLE_LOCAL LOCAL_SLOT_STORE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot; class StoreVarBinding; step Body; owned StoreVarBinding; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
     LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; class LoadEnvLocal; staged Names; step Body; owned LoadLocal; traits ENV_LOCAL_LOAD ENV_LOCAL_ACCESS ROW_HANDLER OWNER_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot; class StoreEnvLocal; staged Names; step Body; owned StoreEnvLocal; traits ENV_LOCAL_STORE ENV_LOCAL_ACCESS LOCAL_SLOT_STORE ROW_HANDLER OWNER_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
@@ -957,7 +964,7 @@ opcodes!($;
     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits INLINABLE THIS_FIELD_SINK SLOPPY_STORE THIS_FIELD_STORE ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag; class SetIndex; staged Element; step Body; traits INLINABLE ELEMENT_ACCESS LIFETIME_SAFE ELEMENT_STORE INDEXED_RECEIVER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex; class DefineArrayElement; staged Literal; step Lane; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Unused),
-    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits ARITHMETIC_BINARY BINARY_RESULT LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE CONST_ARRAY_OBJECT2_OPERAND MAY_ALLOCATE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits ARITHMETIC_BINARY BINARY_RESULT LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE CONST_ARRAY_OBJECT2_OPERAND DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag; class IncDec; staged Value; traits ROW_HANDLER LEAF_VALUE INLINABLE PURE_SETUP SCALAR_REGION LIFETIME_SAFE INCREMENT_UPDATE ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary; class Unary; staged Value; step Body; value Unary; traits LEAF_VALUE RETURNING_UNARY INLINABLE PURE_SETUP ACTIVATION_FREE FRAME_RETURNABLE LIFETIME_SAFE ROW_ONLY ROW_HANDLER MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Register, Unused),
     // `a` = ToString of each register of the window `b` of `c` registers, concatenated in
@@ -1145,20 +1152,24 @@ opcodes!($;
     WasmRefEq => Effect::PURE; layout Scalar; meaning Unused; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, Register),
     WasmStructNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Unused),
+    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, StaticOffset),
+    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, StaticOffset),
+    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, StaticOffset),
+    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE STRUCT_SET_FAMILY, @ Register, @ fields(Register, Register, Unused),
+    WasmStructGetRaw => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, StaticOffset),
+    WasmStructSetRaw => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM STRUCT_SET_FAMILY, @ Register, @ fields(Register, Register, Unused),
 
     WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNew; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewDefault; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayNewFixed => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewFixed; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmArrayLen => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
 
-    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE ARRAY_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
+    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE ARRAY_SET_FAMILY, @ Register, @ fields(Register, Register, Register),
+    WasmArrayGetRaw => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM ARRAY_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArraySetRaw => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM ARRAY_SET_FAMILY, @ Register, @ fields(Register, Register, Register),
     WasmExternalConversion => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmExternalConversion; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
     WasmArrayCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
@@ -1529,8 +1540,10 @@ pub struct Function {
     pub(crate) dispatch: DispatchClass,
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
-    /// Lazily derived `plain_local_slots`; never serialized. Read on every interpreter local operand,
-    /// so it stays inline rather than behind `caches`.
+    /// The `plain_local_slots` words of the final code: stored by `compile::lower_settled` from its
+    /// proof, else derived on the first read (`plain_local`). The binary codec writes them for a
+    /// lowered record. Read on every interpreter local operand, so it stays inline rather than
+    /// behind `caches`.
     pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
     /// The lazily derived booleans (`LazyFlag`), each a known bit and a value bit; never serialized.
     pub(crate) lazy_flags: std::cell::Cell<u16>,
@@ -2087,11 +2100,6 @@ impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
         let entry_live = if covered { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(Self::ALL_LIVE_AT_ENTRY) };
         Self { covered, entry_live, solved: std::cell::RefCell::new(None) }
-    }
-
-    /// Covered, every register live at entry below `entry_live`.
-    pub(crate) fn with_entry_live(covered: bool, entry_live: u16) -> Self {
-        Self { covered, entry_live: std::cell::OnceCell::from(entry_live), solved: std::cell::RefCell::new(None) }
     }
 
     /// Covered, every register live at entry below `entry_live`, with the masks `solved` that
@@ -4082,7 +4090,6 @@ pub(crate) struct ProgramSource {
 
 impl ProgramSource {
     /// Project admitted facts with a retained wrapper body, without reparsing it.
-    #[cfg(feature = "aot")]
     pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
         self.text = text;
         self.base = base;
@@ -4405,7 +4412,6 @@ impl ResidualProgram {
     }
 
     /// Resolve source-derived native error descriptions before publication.
-    #[cfg(feature = "aot")]
     pub fn freeze_native_diagnostics(&self) {
         crate::vm::freeze_call_sites(self);
     }
@@ -4783,6 +4789,7 @@ pub(crate) use binary::{decode_static_module_analysis, encode_static_module_anal
 mod disassemble;
 mod flow_view;
 pub use flow_view::{FlowFunction, FlowInstruction};
+pub(crate) use flow_view::used_registers;
 #[cfg(test)]
 mod tests;
 mod validate;

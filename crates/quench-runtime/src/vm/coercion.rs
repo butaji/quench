@@ -279,12 +279,10 @@ impl<H: Host> Vm<H> {
             }
             _ => {}
         }
-        if let Some(atom) = self.lookup_atom("valueOf") {
-            let function = self.get_property(program, value, atom)?;
-            if !function.is_undefined() {
-                let result = self.call_value(program, function, value, &[])?;
-                return self.to_number(program, result);
-            }
+        let function = self.get_property(program, value, self.runtime_atoms.value_of)?;
+        if !function.is_undefined() {
+            let result = self.call_value(program, function, value, &[])?;
+            return self.to_number(program, result);
         }
         Ok(f64::NAN)
     }
@@ -315,20 +313,16 @@ impl<H: Host> Vm<H> {
             Some(Cell::Date { milliseconds, .. }) => return Ok(milliseconds.to_string()),
             _ => {}
         }
-        if let Some(atom) = self.lookup_atom("toString") {
-            let function = self.get_property(program, value, atom)?;
-            if self.is_function(function) {
-                let result = self.call_value(program, function, value, &[])?;
-                return self.to_string(program, result);
-            }
+        let function = self.get_property(program, value, self.runtime_atoms.to_string)?;
+        if self.is_function(function) {
+            let result = self.call_value(program, function, value, &[])?;
+            return self.to_string(program, result);
         }
-        if let Some(atom) = self.lookup_atom("valueOf") {
-            let function = self.get_property(program, value, atom)?;
-            if self.is_function(function) {
-                let result = self.call_value(program, function, value, &[])?;
-                if !result.is_heap() || self.heap.is_string(result) {
-                    return self.to_string(program, result);
-                }
+        let function = self.get_property(program, value, self.runtime_atoms.value_of)?;
+        if self.is_function(function) {
+            let result = self.call_value(program, function, value, &[])?;
+            if !result.is_heap() || self.heap.is_string(result) {
+                return self.to_string(program, result);
             }
         }
         Ok("[object Object]".into())
@@ -406,14 +400,7 @@ impl<H: Host> Vm<H> {
     /// decides every falsy heap value, "", 0n and the IsHTMLDDA object.
     #[inline(never)]
     pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
-        // A string's length from its record in place (`string_length_value`), not its units.
-        if let Some(length) = self.string_length_value(v) {
-            return length != Value::integer(0);
-        }
-        match self.heap.get(v) {
-            Some(Cell::BigInt(value)) => !value.is_zero(),
-            _ => !self.is_html_dda(v),
-        }
+        heap_cell_truthy_in(&self.heap, v)
     }
 
     pub(super) fn is_html_dda(&self, value: Value) -> bool {
@@ -465,4 +452,21 @@ pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
 #[inline(always)]
 pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
     crate::staged::value::concrete_immediate_typeof_index(value)
+}
+
+/// `Vm::heap_cell_truthy` from the heap alone, so a lane frame (which names no host) decides a
+/// string's or another cell's ToBoolean in place: a string's length from its record, a BigInt's
+/// zero, the IsHTMLDDA object, and every other cell truthy.
+#[inline(never)]
+pub(crate) fn heap_cell_truthy_in(heap: &crate::heap::Heap, v: Value) -> bool {
+    if let Some(length) = heap.string_record_base().and_then(|records| crate::staged::string_length::concrete_string_length(records, v)) {
+        return length != Value::integer(0);
+    }
+    if let Some(text) = heap.string(v) {
+        return text.len() != 0;
+    }
+    match heap.get(v) {
+        Some(Cell::BigInt(value)) => !value.is_zero(),
+        _ => !matches!(heap.function(v), Some(FunctionRecord { kind: FunctionKind::Native(Native::IsHTMLDDA), .. })),
+    }
 }
