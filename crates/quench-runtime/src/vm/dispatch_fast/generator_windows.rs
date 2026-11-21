@@ -93,7 +93,7 @@ pub(super) fn resume_generator_step_in_lane<H: Host>(
     if !crate::staged::call_iteration::resumes_at_site(i.a) {
         return None;
     }
-    resume_generator_in_lane(cx, r, ip, generator, method, Value::UNDEFINED, completion)
+    resume_generator_in_lane(cx, r, ip, generator, method, Value::UNDEFINED, (completion, super::lane_frames::SidePayload::None))
 }
 
 /// A `Call` record `i` of `native`, the callee in `b` and the receiver in `c`, that is this realm's
@@ -122,7 +122,7 @@ pub(super) fn resume_called_generator<H: Host>(
     }
     // SAFETY: the call's window is registers of the running function.
     let sent = unsafe { call_window_in_lane(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
-    resume_generator_in_lane(cx, r, ip, generator, method, sent, Completion::Steps)
+    resume_generator_in_lane(cx, r, ip, generator, method, sent, (Completion::Steps, super::lane_frames::SidePayload::None))
 }
 
 /// `frame_call_in_lane` of a generator function of the running program whose parameters run no code
@@ -344,7 +344,7 @@ pub(super) fn resume_generator_in_lane<H: Host>(
     generator: Value,
     method: Value,
     sent: Value,
-    completion: Completion,
+    (completion, payload): (Completion, super::lane_frames::SidePayload),
 ) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
@@ -363,7 +363,7 @@ pub(super) fn resume_generator_in_lane<H: Host>(
     // window, laid out above, moves the registers no more.
     let (window, size) = unsafe { ((&mut (*frame).registers).as_mut_ptr(), (&(*frame).registers).len()) };
     let (this, pc, function, program) = unsafe { ((*frame).this(), (*frame).pc, (*frame).function, (*frame).program) };
-    push_generator_window(cx, vm, (r, ip, depth), GeneratorWindow { this: this.to_bits(), window: window.addr(), function, generator, completion, environment, record: frame });
+    push_generator_window(cx, vm, (r, ip, depth), GeneratorWindow { this: this.to_bits(), window: window.addr(), function, generator, completion, environment, record: frame }, payload);
     let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
     // SAFETY: the window holds the suspended registers, which nothing else writes while it runs,
     // and `pc` is where the frame resumes in its function's view.
@@ -418,13 +418,19 @@ struct GeneratorWindow {
 /// Pushes `window`'s activation as the lane's innermost, at `depth` below the call record at `ip` of
 /// the running function with registers `r`, and resumes the frame's loops and scope chain as its own.
 #[inline(always)]
-fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, ip, depth): (Registers, Ip, usize), window: GeneratorWindow) {
+fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, ip, depth): (Registers, Ip, usize), window: GeneratorWindow,
+    payload: super::lane_frames::SidePayload) {
     let (frame, environment) = (window.record, window.environment);
     let activation = generator_activation(cx, r, ip, window);
     // SAFETY: the caller's limit check leaves room for the activation, and the frame's loops and
     // scope chain resume as the new activation's (`LaneStack::iterators`, `LaneStack::with_objects`).
     unsafe {
         vm.lane_stack.push_generator_activation(activation);
+        // A sided completion's payload rides in its side record, which goes on with the push:
+        // a walk of the stack (`record_window_owner` below) reads a side for each sided record.
+        if !matches!(payload, super::lane_frames::SidePayload::None) {
+            vm.lane_stack.attach_payload(payload);
+        }
         vm.lane_stack.restore_iterators(depth, &mut (*frame).active_iterators);
         vm.lane_stack.restore_with_objects(depth, &mut *frame);
         // Only an environment window holds an `arguments` object that rides it.
@@ -538,6 +544,6 @@ pub(super) fn delegate_in_place_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Reg
     if !unsafe { vm(cx) }.steps_as_generator(delegate, method) {
         return None;
     }
-    let (registers, start) = resume_generator_in_lane(cx, r, ip, delegate, method, input, Completion::Delegates)?;
+    let (registers, start) = resume_generator_in_lane(cx, r, ip, delegate, method, input, (Completion::Delegates, super::lane_frames::SidePayload::None))?;
     Some(Resumed::At(registers, start, Carried::script(cx)))
 }
