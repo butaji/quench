@@ -305,6 +305,28 @@ fn in_innermost_body(cx: *mut LaneContext, helper: impl FnOnce() -> u64) -> u64 
     status
 }
 
+/// Where a run left inside a b-jit direct callee: the innermost activation is that callee's plain header
+/// (`BODY_FLAG`, `protocol::push_body_header`), above `r`, the activation the run was entered on. The direct
+/// row passes the callee's leave through as its caller's (`call_rows::finish`), so the leave's PC is one of the
+/// callee's records, not the caller's (TOD-2047: a loop region resumed its own records at the callee's PC and
+/// left the header behind). Makes the header the running activation, as `in_innermost_body` does for a helper,
+/// and returns its records' base; `None`, changing nothing, where the innermost activation is `r`'s own.
+pub(super) fn enter_left_body_header(cx: *mut LaneContext, r: Registers) -> Option<Ip> {
+    let vm = unsafe { vm(cx) };
+    let stack = &vm.lane_stack;
+    if stack.plain.depth.get() == 0 { return None; }
+    let window = Registers(stack.plain.registers.get());
+    let packed = header_packed(window);
+    if packed & crate::staged::frame::BODY_FLAG == 0 || packed & crate::staged::frame::NATIVE_FLAG != 0 || window.0 == r.0 { return None; }
+    // SAFETY: the running lane's context, which nothing else accesses.
+    let program = unsafe { (*cx).program };
+    let function = packed as u32 as usize;
+    let view = vm.programs.made_lane_views(program).and_then(|views| views.get(function)).and_then(super::super::program_store::derived_lane_view)?;
+    let base = view.records();
+    CallerState { registers: window, base, program }.install(cx);
+    Some(base)
+}
+
 /// The environment a running body's captures resolve in when it runs as a native callee: its
 /// closure's, which no lane activation holds; `None` in the activation's own.
 pub(super) fn innermost_callee_env(cx: *mut LaneContext) -> Option<Value> {
