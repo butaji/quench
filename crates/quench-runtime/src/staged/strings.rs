@@ -25,14 +25,13 @@ pub(crate) struct FlatString<W> {
 }
 
 /// The flat string `value` names among the string records at `record_base`: its units, length
-/// and width, read from its record (`string_length::flat_record`), or `None` (leaving at `miss`)
-/// where that leaves.
+/// and width, read from its record (`string_length::unit_record`: a flat form or an ASCII prefix),
+/// or `None` (leaving at `miss`) where that leaves.
 #[inline(always)]
 pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<FlatString<S::Word>> {
-    let (record, short, wide) = super::string_length::flat_record(stage, record_base, value, miss)?;
-    let units = record_units(stage, record, short);
-    let length = record_length(stage, record, short);
+    let (record, short, wide, prefix) = super::string_length::unit_record(stage, record_base, value, miss)?;
+    let (units, length) = super::string_length::unit_words(stage, record, short, prefix);
     let (one, zero) = (stage.constant(1), stage.constant(0));
     let wide = stage.select(wide, one, zero);
     Some(FlatString { units, length, wide })

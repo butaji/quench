@@ -52,6 +52,9 @@ pub mod string_tag {
     pub const TAG_ASCII_SLICE: u8 = TAG_ASCII + 1;
     /// `FlatUnits::Wide`: UTF-16 text in a shared allocation of its units.
     pub const TAG_WIDE: u8 = TAG_ASCII_SLICE + 1;
+    /// `FlatUnits::AsciiPrefix`: the first units of an ASCII append buffer, text built by appends
+    /// (`WideSlice` lies between it and `Wide`).
+    pub const TAG_ASCII_PREFIX: u8 = TAG_WIDE + 2;
     /// `FlatUnits::Latin1`: one byte per unit, units up to U+00FF, with some unit past ASCII. Not
     /// a form a native row reads: its tag leaves each row at its miss.
     /// The runtime reads it (`native_string`); the stencils never name it, so they allow it unused.
