@@ -1411,6 +1411,20 @@ impl JsString {
         }
     }
 
+    /// `capacity` without making any units: a rope not yet flat, and decoded text whose units
+    /// are not made, count only what they already hold. A census (`Heap::memory_composition`,
+    /// which `process.memoryUsage()` runs) must not flatten every live and dead rope it meets:
+    /// that made each `+=` step of a string built from 600-unit pieces keep a flat copy.
+    pub(crate) fn existing_capacity(&self) -> usize {
+        if let Some(host) = self.unflattened_host() {
+            return host.len();
+        }
+        if self.existing_flat().is_none() {
+            return 0;
+        }
+        self.capacity()
+    }
+
     pub(crate) fn capacity(&self) -> usize {
         if let Some(host) = self.unflattened_host() {
             return host.len();

@@ -256,12 +256,12 @@ impl Heap {
                     collection.object.allocated_extra_bytes() + collection.entries.payload_bytes()
                 })
             } else if let Some(string) = self.string(identity) {
-                string.capacity()
+                string.existing_capacity()
             } else {
                 cell.map_or(0, Self::cell_payload_bytes)
             };
             if let Some(value) = self.string(identity) {
-                other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
+                other_cell_payload_bytes += payload_bytes.saturating_sub(value.existing_capacity());
                 let (units, host) = value.memory_parts();
                 // Inline text (`Short`) owns no buffer of its own.
                 if units.1 > 0 && string_identities.insert(units.0) {
