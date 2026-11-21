@@ -3543,11 +3543,24 @@ impl Function {
     }
 
     pub(crate) fn local_slot_uses_environment(&self, slot: usize) -> bool {
-        self.selective_capture_slots
-            .as_ref()
-            .is_none_or(|captured| {
-                u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
-            })
+        match self.selective_capture_slots.as_ref() {
+            Some(captured) => u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()),
+            None => self.locals_use_environment(),
+        }
+    }
+
+    /// Whether a body without a selective layout keeps its locals in an environment: one its
+    /// code addresses (`rewrite_all_locals_to_environment`), captures or makes closures over,
+    /// a root's, or one a dynamic lookup or suspension reaches. A closure-free body keeps every
+    /// local in its frame (`capture_layout`'s early return), read by plain local ops.
+    pub(crate) fn locals_use_environment(&self) -> bool {
+        self.lazy_flag(LazyFlag::LocalsUseEnvironment, || {
+            self.parent.is_none()
+                || self.is_generator
+                || self.is_async
+                || self.has_dynamic_scope_access()
+                || self.instructions_of(|op| op.captures_environment() || op.addresses_env_local() || op.makes_closure()).next().is_some()
+        })
     }
 }
 

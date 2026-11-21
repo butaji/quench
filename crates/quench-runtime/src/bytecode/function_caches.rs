@@ -33,6 +33,7 @@ pub(crate) enum LazyFlag {
     EvalsInScope,
     JsTierCandidate,
     RestView,
+    LocalsUseEnvironment,
 }
 
 /// The bits a lazy flag's pair spans: its known bit, then its value bit.
