@@ -277,6 +277,7 @@ pub(crate) const NATIVE_LITTLE_ENDIAN: bool = cfg!(target_endian = "little");
 
 /// The Stage row of the element of `kind`; `None` for Float16 and the BigInt kinds, which have
 /// none (Float16 converts through `staged::math`'s binary16, the BigInt kinds take BigInts).
+#[inline(always)]
 fn element_of(kind: TypedArrayKind) -> Option<Element> {
     Some(match kind {
         TypedArrayKind::Int8 => Element::Integer(Integer::Signed8),
@@ -315,6 +316,13 @@ fn native_word(field: &[u8], little_endian: bool) -> [u8; 8] {
 /// are this body. Panics for the BigInt kinds, which are no Number.
 #[inline(always)]
 pub(crate) fn element_number(kind: TypedArrayKind, field: &[u8], little_endian: bool) -> f64 {
+    if little_endian == NATIVE_LITTLE_ENDIAN
+        && let Some(element) = element_of(kind)
+    {
+        // Native bytes need no word: the load reads the field's `kind.width()` bytes in place.
+        debug_assert_eq!(field.len(), kind.width());
+        return f64::from_bits(load_number(&mut Concrete::new(std::ptr::null()), element, field.as_ptr() as u64));
+    }
     let word = native_word(field, little_endian);
     match kind {
         TypedArrayKind::Float16 => half_to_f64(u16::from_ne_bytes([word[0], word[1]])),
@@ -333,8 +341,9 @@ pub(crate) fn element_integer(kind: TypedArrayKind, field: &[u8]) -> Option<i32>
     match element_of(kind)? {
         Element::Integer(Integer::Unsigned32) | Element::Float32 | Element::Float64 => None,
         Element::Integer(integer) => {
-            let word = native_word(field, NATIVE_LITTLE_ENDIAN);
-            Some(load_integer(&mut Concrete::new(std::ptr::null()), integer, word.as_ptr() as u64) as u32 as i32)
+            // Native bytes need no word: the load reads the field's `kind.width()` bytes in place.
+            debug_assert_eq!(field.len(), kind.width());
+            Some(load_integer(&mut Concrete::new(std::ptr::null()), integer, field.as_ptr() as u64) as u32 as i32)
         }
     }
 }
