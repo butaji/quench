@@ -59,6 +59,7 @@ impl Op {
         // A dense int switch is a case slot and the branch table that selects it: `lane_region`'s
         // `int_case_index`/`branch_table` lower both, so a loop that dispatches compiles.
         self.defines_loop_result() || self.is_truthiness_jump() || matches!(self, Op::StoreCapture
+            | Op::LoadThis
             | Op::RequireObjectCoercible | Op::SetIndex | Op::DefineArrayElement | Op::Return | Op::Jump
             | Op::IntCaseIndex | Op::WasmBranchTable)
     }
@@ -139,7 +140,7 @@ mod tests {
             JumpFalse, JumpTrue, IntCaseIndex, WasmBranchTable];
         let reading: &[Class] = &[Move, IncDec, Unary, ToNumeric, Binary, NumericAdd, NumericMultiply,
             JumpBinaryFalse, JumpFalse, JumpTrue, GetIndex, SetIndex];
-        let boxed: &[Class] = &[GetIndex, GetField, Move, LoadCapture, LoadEnvLocal, LoadName];
+        let boxed: &[Class] = &[GetIndex, GetField, Move, LoadCapture, LoadEnvLocal, LoadName, LoadThis];
         for index in 0..Op::COUNT {
             let op = Op::from_index(index).expect("every catalog index is an opcode");
             let class = op.class();
