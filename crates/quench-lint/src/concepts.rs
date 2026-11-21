@@ -9,6 +9,11 @@
 //!   (a liveness solve, a successor table, a back-edge scan). Each is a recomputation of a fact
 //!   that should be derived once per function and read everywhere else.
 //!
+//! - The projection layers (`call-row`, `inliner`, `specializer`, `hand-clif`, `hand-stencil`):
+//!   the interpreter defines WHAT, b-jit (rustc/LLVM) and u-jit (Cranelift) define HOW and share
+//!   every layer but the last, so a second call path, inliner or specializer, or semantics
+//!   lowered by hand for one backend, is a twin.
+//!
 //! A merge that removes a twin or a run shrinks the measure; a new one fails the lint.
 
 use std::{fs, path::PathBuf};
@@ -24,6 +29,8 @@ enum Mark {
     Function(&'static str),
     /// This token text (whitespace removed) in a production item.
     Spelled(&'static str),
+    /// A function item whose name contains one of these parts.
+    Named(&'static [&'static str]),
 }
 
 /// A concept, the files that may define it, and how its definitions are recognized.
@@ -78,6 +85,43 @@ const CONCEPTS: &[Concept] = &[
         name: "packed-instruction-decode",
         homes: &["quench-runtime/src/bytecode/control_flow.rs", "quench-runtime/src/bytecode.rs"],
         marks: &[Mark::Function("decoded_instruction"), Mark::Function("instruction_at"), Mark::Function("widened"), Mark::Spelled(".wide_index()]")],
+    },
+    // The projection design (Linear "Projection design: interpreter → b-jit (rustc/LLVM) → u-jit
+    // (Cranelift)"): the interpreter's staged rows define WHAT, the JITs define HOW, and both JITs
+    // share every layer but the last. Each concept below is a layer that must have one home; every
+    // other definition is a second copy, held shrink-only so none can be added.
+    Concept {
+        // One call row: `staged::invoke` and the protocol it composes. Every other function that
+        // makes an activation is a second call path.
+        name: "call-row",
+        homes: &["quench-runtime/src/staged/invoke.rs", "quench-runtime/src/staged/protocol.rs", "quench-runtime/src/staged/call_body.rs"],
+        marks: &[Mark::Named(&["activate", "push_frame", "push_plain", "push_activation", "push_callback", "push_body_header", "push_native", "construct_frame", "call_user"])],
+    },
+    Concept {
+        // One inliner, over staged `invoke` and `ret`, whose spliced unit both JITs consume.
+        name: "inliner",
+        homes: &["quench-runtime/src/staged/inline"],
+        marks: &[Mark::Named(&["inline_call", "inline_callee", "inline_body", "inlined_unit", "inline_unit", "splice_callee"])],
+    },
+    Concept {
+        // One specializer driver over staged operations, shared by both JITs.
+        name: "specializer",
+        homes: &["quench-runtime/src/vm/specializer.rs"],
+        marks: &[Mark::Named(&["specialize"])],
+    },
+    Concept {
+        // u-jit HOW is the Cranelift stage of the staged rows; CLIF built by hand elsewhere is
+        // semantics the rows do not define.
+        name: "hand-clif",
+        homes: &["quench-runtime/src/staged/"],
+        marks: &[Mark::Spelled(".ins().")],
+    },
+    Concept {
+        // b-jit HOW is rustc/LLVM compiling the staged rows; a stencil entry written by hand is
+        // semantics the rows do not define.
+        name: "hand-stencil",
+        homes: &["quench-bjit/stencils/staged.rs", "quench-bjit/stencils/staged_rows.rs", "quench-bjit/stencils/entry"],
+        marks: &[Mark::Spelled("extern\"rust-preserve-none\"fn")],
     },
 ];
 
@@ -148,6 +192,7 @@ impl Items {
         match mark {
             Mark::Function(name) => self.functions.iter().filter(|function| function == name).count(),
             Mark::Spelled(text) => self.text.matches(text).count(),
+            Mark::Named(parts) => self.functions.iter().filter(|function| parts.iter().any(|part| function.contains(part))).count(),
         }
     }
 
