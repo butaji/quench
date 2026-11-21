@@ -607,7 +607,11 @@ fn tag_definition(instruction: WideInstruction, offset: usize, (constants, heade
     let Some(result) = number_definition(instruction) else {
         return Ok(());
     };
-    if is_move_row(instruction) {
+    // `ToNumeric` proves its operand a Number and moves the register word as it is
+    // (`staged::numeric::to_numeric`), so it carries whatever representation the operand had.
+    if is_move_row(instruction) || instruction.op() == crate::bytecode::Op::ToNumeric
+        || instruction.op() == crate::bytecode::Op::IncDec
+    {
         let source = instruction.register_b();
         if tagged.contains(&result) || tagged.contains(&source) {
             tagged.insert(result);
@@ -2161,6 +2165,16 @@ fn admit(
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
                 admission.tagged(instruction.result_register())?;
+            } else if tagged.contains(&instruction.result_register()) {
+                // The row boxes a Number result in a tagged register (`number_result`), so its
+                // operands are boxed Numbers too.
+                admission.tagged(instruction.result_register())?;
+                for operand in [instruction.operand_b(), instruction.operand_c()] {
+                    if let Some(register) = operand.register_index() {
+                        admission.tagged(register)?;
+                    }
+                }
+                return Some(());
             } else {
                 arithmetic(instruction, instruction.binary_operator())?;
                 admission.result(instruction)?;
@@ -2169,13 +2183,23 @@ fn admit(
             admission.source(instruction.operand_c())?;
         }
         opcode if crate::staged::converts_numeric(opcode) => {
-            admission.result(instruction)?;
-            admission.number(instruction.register_b())?;
+            if instruction.op() == crate::bytecode::Op::ToNumeric && tagged.contains(&instruction.result_register()) {
+                admission.tagged(instruction.result_register())?;
+                admission.tagged(instruction.register_b())?;
+            } else {
+                admission.result(instruction)?;
+                admission.number(instruction.register_b())?;
+            }
         }
         opcode if crate::staged::increments(opcode) => {
             instruction.boolean_flag()?;
-            admission.result(instruction)?;
-            admission.number(instruction.register_b())?;
+            if tagged.contains(&instruction.result_register()) {
+                admission.tagged(instruction.result_register())?;
+                admission.tagged(instruction.register_b())?;
+            } else {
+                admission.result(instruction)?;
+                admission.number(instruction.register_b())?;
+            }
         }
         opcode if crate::staged::computes_unary(opcode) => {
             if reads_type(instruction) && tagged.contains(&instruction.result_register())
