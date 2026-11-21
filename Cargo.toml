@@ -126,6 +126,12 @@ lto = "off"
 inherits = "experiment"
 lto = "off"
 
+# Fold and smoke builds only (published numbers come from `experiment`): unmerged units, so a
+# one-file runtime edit recompiles the units that hold or inline it (v2-aot 761050dc7a measured
+# 410 of 1,431 units for a line shift in value.rs) instead of the whole crate.
+[profile.smoke.package.quench-runtime]
+codegen-units = 4096
+
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.
 [profile.native-support]
