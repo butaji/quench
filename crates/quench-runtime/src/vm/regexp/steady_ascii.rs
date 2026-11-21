@@ -80,7 +80,7 @@ impl<H: Host> Vm<H> {
     /// slot still holds the intrinsic. A `false` is no answer: the full proof decides.
     #[inline(always)]
     pub(super) fn steady_exec_holds(&self, intrinsics: &RegExpIntrinsics, proto: Value, shape: u32) -> bool {
-        let proven = intrinsics.exec_proof.get().is_some_and(|proof| proof.shape == shape && proof.cell.holds());
+        let proven = intrinsics.exec_proof.find(shape).is_some();
         proven
             && proto == intrinsics.prototype
             && self.heap.dependencies().fuses().intact(IntactFuse::RegExpExec, intrinsics.prototype) == Some(true)
