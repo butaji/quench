@@ -61,6 +61,15 @@ impl super::LoopSite {
     fn settle(&self, tier: &mut super::loop_tier::LoopTier) {
         let entries = tier.entries();
         if entries <= tier.settle_at { return; }
+        // A site whose runs complete only a handful of iterations each pays its entry and its
+        // exit more often than they save: the interpreter runs the loop, as it did before the
+        // site existed.
+        if entries >= u64::from(self.tiers.loops.trip_check_entries)
+            && tier.mean_trip().is_some_and(|trip| trip < u64::from(self.tiers.loops.min_trip_per_entry))
+        {
+            self.entering.set(false);
+            return;
+        }
         match loop_model::repaid_entries(self.tiers, self.span(), entries, tier.iterations()) {
             Some(spare) => tier.settle_at = entries.saturating_add(spare),
             None => self.entering.set(false),
