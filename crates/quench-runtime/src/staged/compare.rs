@@ -251,12 +251,12 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [
     let value = match [left.register_index(), right.register_index()] {
         [Some(left), Some(right)] => {
             let call = CallOut::Decide { left, right, operator: equality_binary_operator(strict, negated) };
-            stage.choose_leaving(decided, |_| Some(decision), |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
+            stage.choose_leaving(decided, |_| Some(decision), #[inline(always)] |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
         }
         // A constant operand the words do not decide: the VM's equality, which takes constants (`CallOut::Equality`).
         _ if frame.general_operators() => {
             let call = CallOut::Equality { left, right, strict, negated };
-            stage.choose_leaving(decided, |_| Some(decision), |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
+            stage.choose_leaving(decided, |_| Some(decision), #[inline(always)] |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
         }
         _ => {
             let miss = frame.miss();
@@ -324,7 +324,7 @@ fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let decision = stage.choose_leaving(decided, |stage| {
         let [yes, no] = [Value::TRUE, Value::FALSE].map(|each| stage.constant(each.to_bits()));
         Some(stage.select(holds, yes, no))
-    }, |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?;
+    }, #[inline(always)] |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?;
     Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
 }
 

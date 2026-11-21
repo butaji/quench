@@ -324,7 +324,7 @@ impl crate::staged::Frame<Concrete> for InterpreterFrame<'_> {
 
     /// The VM's operation for a name read, a global `typeof` or a store, a for-in step, an async
     /// iterator and a template object (`CallOut`), at the frame's site. A raise is stashed for the runner.
-    #[inline(never)]
+    #[inline(always)]
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, result: Option<Register>) -> Option<(u64, InterpreterFact)> {
         // A named read at the running frame: its getter may run in place, so the read is the VM's `load_field_step`.
         if let CallOut::LoadField { lookup } = operation {

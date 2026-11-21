@@ -1266,7 +1266,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         unsafe { (host.set_name)(host.cx, Value::from_bits(function), name, site) }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn vm_step(&mut self, stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, Boxing)> {
         // A receiver's constant fields test reads one cache entry and the receiver's shape in place.
         if let CallOut::Protocol { step: crate::staged::Protocol::ConstantFieldsHeld { site }, operands: [_, Some(receiver)] } = operation {

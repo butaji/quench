@@ -949,23 +949,6 @@ fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
     }
     let negative_zero = negative_zero(stage, operation, left_value, right_value, result)
         .filter(|_| zero == NegativeZero::Exit || overflow == Overflow::Widen);
-    if overflow == Overflow::Widen || negative_zero.is_some() {
-        return widened_or_negative_zero_result(stage, frame, destination, [left_value, right_value], operation,
-            (result, overflow, overflowed, negative_zero), miss);
-    }
-    let result = frame.int_result(stage, result);
-    let fact = frame.int_fact();
-    frame.write(stage, destination, result, fact);
-    Step::Value(result)
-}
-
-/// Writes an int32 result that widens to a binary64 or is guarded by a negative zero; the in-range int32 result stays in `int_arithmetic_result`.
-#[cfg_attr(not(stencil_build), cold, inline(never))]
-#[cfg_attr(stencil_build, inline(always))]
-fn widened_or_negative_zero_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: Register, [left_value, right_value]: [S::Word; 2], operation: NumberArithmetic,
-    (result, overflow, overflowed, negative_zero): (S::Word, Overflow, S::Cond, Option<S::Cond>),
-    miss: S::Miss) -> Step<S::Word, F::Control> {
     if overflow == Overflow::Widen {
         let widen = match negative_zero {
             Some(negative_zero) => stage.either(overflowed, negative_zero),

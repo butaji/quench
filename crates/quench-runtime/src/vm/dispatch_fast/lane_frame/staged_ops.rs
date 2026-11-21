@@ -33,7 +33,7 @@ pub(in crate::vm::dispatch_fast) fn staged_typeof_index(r: Registers, view: Carr
 pub(in crate::vm::dispatch_fast) fn staged_require_object_coercible(r: Registers, view: Carried, register: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step_out_of_line(&mut stage, &mut frame, Operation::RequireObjectCoercible { register }) {
+    match crate::staged::step(&mut stage, &mut frame, Operation::RequireObjectCoercible { register }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
         Step::Control(_) => unreachable!("a coercibility test transfers no control"),
@@ -46,7 +46,7 @@ pub(in crate::vm::dispatch_fast) fn staged_require_object_coercible(r: Registers
 pub(in crate::vm::dispatch_fast) fn staged_require_iterator_result(r: Registers, view: Carried, register: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(crate::staged::step_out_of_line(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
 }
 
 /// ToNumeric of a Number register `source` into `destination`, by the staged operation;
@@ -68,7 +68,7 @@ pub(in crate::vm::dispatch_fast) fn staged_to_numeric(r: Registers, view: Carrie
 pub(in crate::vm::dispatch_fast) fn staged_property_key(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(crate::staged::step_out_of_line(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
 }
 
 /// The activation's `this` into `destination` by the staged LoadThis; false, writing
