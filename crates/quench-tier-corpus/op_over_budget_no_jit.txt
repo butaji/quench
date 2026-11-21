@@ -1,6 +1,8 @@
 # Ops over their per-op budget (op_budgets.txt) under no-jit, net of `empty` (quench-gate step `ir-budget`).
 # A shrink-only debt list: an unlisted overrun fails the step, and an entry that no longer overruns
 # must be removed (`QUENCH_DEBT_WRITE=1` on a full run removes it). Never add an entry by hand.
+# Seeded with every budgeted op (TOD-2033: trunk runs far past the recorded ceilings); the first
+# QUENCH_DEBT_WRITE=1 run shrinks it to the true overruns.
 arr_length
 arr_load_dbl
 arr_load_int
