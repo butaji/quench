@@ -1056,10 +1056,21 @@ pub(super) fn inline_region<'a>(
         let argc = ImmediateLayout::argument_count(instruction.imm());
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let (function_register, mut receiver) = (instruction.register_b(), instruction.register_c());
-        if !defines(function_register) {
+        // The register the guard reads. A call window copies its callee in first (`s = f(s)` moves
+        // the closure into the window's register), so the register the call names is written by a
+        // `Move` inside the loop even when the closure is the one the loop never writes: that
+        // `Move` is setup, and the guard is the register it copies from (`InlineGuard::Register`
+        // of the source), which the VM checks at every native entry.
+        let copied = defines(function_register).then(|| {
+            let read = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
+            (caller[read].op() == Op::Move).then(|| caller[read].register_b())
+        }).flatten();
+        let copied_register = copied.filter(|source| *source < caller_registers && !defines(*source));
+        if !defines(function_register) || copied_register.is_some() {
             // A callee the loop never writes: the closure the register holds at entry, which the VM
             // checks at every native entry. Leaving in the call's setup, the straight run of pure
             // moves before it, resumes at the run's first instruction.
+            let function_register = copied_register.unwrap_or(function_register);
             (function_register < caller_registers
                 && crate::compile::liveness::register_in(mask(header)?, usize::from(function_register))).then_some(())?;
             let start = (0..offset).rev().take_while(|index| pure_setup(caller[*index].op())).last().unwrap_or(offset);
