@@ -643,6 +643,11 @@ fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<O
     if carries_boxed(instruction) {
         return Ok(None);
     }
+    // An arithmetic row boxes its Number result in a tagged register (`number_result`), as the
+    // comparison it may be already carries (`carries_boxed`).
+    if crate::staged::computes_arithmetic(op) && number_comparison(instruction).is_none() {
+        return Ok(None);
+    }
     // A type test reads its operand's tag, and the VM's cell of a heap value
     // (the type-name index exits for one instead).
     if crate::staged::computes_unary(op) && reads_type(instruction) {
