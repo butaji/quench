@@ -1,0 +1,12 @@
+# Ops over their per-op budget (op_budgets.txt) under u-jit, net of `empty` (quench-gate step `ir-budget`).
+# A shrink-only debt list: an unlisted overrun fails the step, and an entry that no longer overruns
+# must be removed (`QUENCH_DEBT_WRITE=1` on a full run removes it). Never add an entry by hand.
+arr_store_dbl
+arr_store_int
+call_closure
+call_method
+field_store
+int_mul
+truthy_obj
+truthy_str
+typeof_op
