@@ -156,7 +156,7 @@ impl<H: Host> Vm<H> {
             transitions: Default::default(),
             atom_text: AtomTable::default(),
             atoms: hashbrown::HashTable::new(),
-            array_index_atoms: FxHashMap::default(),
+            array_index_atoms: IndexAtoms::default(),
             startup_intrinsics: Default::default(),
             atom_sequence: Rc::new(crate::bytecode::AtomSequence::new(Default::default())),
             regexp_subjects: Default::default(),

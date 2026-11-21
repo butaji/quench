@@ -63,3 +63,49 @@ impl crate::snapshot::Snap for AtomSet {
         Ok(set)
     }
 }
+
+/// The atoms that spell canonical array indices, by index. Small indices sit in a dense table, so
+/// an index-keyed lookup (`Vm::lookup_array_index_atom`) is one bounds test and one load instead of
+/// a hash probe; larger indices keep a map.
+#[derive(Clone, Default)]
+pub(super) struct IndexAtoms {
+    dense: Vec<Atom>,
+    sparse: rustc_hash::FxHashMap<u32, Atom>,
+}
+
+impl IndexAtoms {
+    /// Indices below this bound live in the dense table.
+    const DENSE: u32 = 1 << 16;
+    /// A dense entry no atom fills.
+    const NONE: Atom = Atom::MAX;
+
+    /// The atom spelling `index`, if one was recorded.
+    #[inline(always)]
+    pub(super) fn get(&self, index: u32) -> Option<Atom> {
+        if index < Self::DENSE {
+            return self.dense.get(index as usize).copied().filter(|&atom| atom != Self::NONE);
+        }
+        self.sparse.get(&index).copied()
+    }
+
+    /// Records `atom` for `index` unless one is recorded already (the first atom with a text is
+    /// the one text lookup finds).
+    pub(super) fn insert_first(&mut self, index: u32, atom: Atom) {
+        if index < Self::DENSE {
+            let slot = index as usize;
+            if self.dense.len() <= slot {
+                self.dense.resize(slot + 1, Self::NONE);
+            }
+            if self.dense[slot] == Self::NONE {
+                self.dense[slot] = atom;
+            }
+        } else {
+            self.sparse.entry(index).or_insert(atom);
+        }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.dense.clear();
+        self.sparse.clear();
+    }
+}

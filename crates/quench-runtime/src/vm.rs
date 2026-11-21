@@ -124,7 +124,7 @@ mod agent;
 mod atom_set;
 mod pending_job;
 use pending_job::PendingJob;
-use atom_set::AtomSet;
+use atom_set::{AtomSet, IndexAtoms};
 mod arguments;
 mod array;
 pub(crate) mod array_buffer;
@@ -2327,7 +2327,7 @@ pub(crate) struct Vm<H> {
     atoms: hashbrown::HashTable<Atom>,
     /// The atoms that spell canonical array indices, by index: index-keyed lookups find
     /// them without formatting and hashing the decimal text.
-    array_index_atoms: FxHashMap<u32, Atom>,
+    array_index_atoms: IndexAtoms,
     /// Every atom name in id order (`atom_text`, then the names the VM appends), shared by
     /// the dynamic and module programs whose atoms are a prefix of the VM's.
     atom_sequence: Rc<crate::bytecode::AtomSequence>,
