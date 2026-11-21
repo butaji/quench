@@ -117,6 +117,11 @@ impl Machine {
         Some(Self { steps, scalars, finals })
     }
 
+    /// Whether a step is a bitwise operator.
+    pub(super) fn has_bitwise(&self) -> bool {
+        self.steps.iter().any(|step| matches!(step.code, Code::Bits { .. }))
+    }
+
     /// Columns past the nodes' this machine uses: the dump.
     pub(super) fn columns(&self) -> usize {
         1

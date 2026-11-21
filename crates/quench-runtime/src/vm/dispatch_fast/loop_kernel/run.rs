@@ -109,6 +109,14 @@ pub(super) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
 #[inline(always)]
 fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
     use crate::staged::NumericStage;
+    // Two int32s (almost every bitwise operand: an int32 constant, an induction, another bitwise
+    // result) are their own ToInt32: the operation runs on them as is.
+    let (left, right) = (a as i32, b as i32);
+    if f64::from(left) == a && f64::from(right) == b {
+        let word = crate::vm::operations::int32_bitwise_bits(operation, left, right);
+        // A zero-fill shift's Number is its unsigned bits.
+        return if operation == NumberBitwise::ShiftRightUnsigned { f64::from(word as u32) } else { f64::from(word) };
+    }
     let mut stage = crate::staged::Concrete::new(std::ptr::null());
     let left = NumericStage::to_int32(&mut stage, a.to_bits(), ()).expect("the interpreter stage converts every Number");
     let right = NumericStage::to_int32(&mut stage, b.to_bits(), ()).expect("the interpreter stage converts every Number");
@@ -192,6 +200,9 @@ fn fits(first: i64, step: i64, length: usize) -> u64 {
     }
 }
 
+/// `State::chunk` of an entry `enter` declined and counted itself (a short trip).
+const DECLINE_COUNTED: usize = usize::MAX;
+
 /// Work-clock units (typical-host nanoseconds) charged per kernel iteration.
 const WORK_PER_ITERATION: u64 = 4;
 
@@ -201,6 +212,11 @@ impl LoopKernel {
         // SAFETY: the kernel's state, used by one run at a time (the body calls nothing).
         let state: &mut State = unsafe { &mut **(*self.state.get()).get_or_insert_with(|| Box::new(State::EMPTY)) };
         let Some(()) = self.enter(cx, r, state) else {
+            // Every declined entry counts, whatever declined it: a loop whose kernel never enters
+            // stands down (`KERNEL_SHORT_DECLINES`) rather than trying again at each iteration's head.
+            if state.chunk != DECLINE_COUNTED {
+                self.declines.set(self.declines.get() + 1);
+            }
             if crate::trace::Channel::LoopKernel.on() {
                 eprintln!("loop-kernel: entry declined ({} declines)", self.declines.get());
             }
@@ -247,12 +263,19 @@ impl LoopKernel {
             state.firsts[slot] = i64::from(r.get(affine.register).as_int()?) + i64::from(affine.offset);
             state.steps[slot] = stride(affine.step, r)?;
         }
+        // Every induction steps an int32 by an int32 (`i += 1`, `i -= h`), including one no
+        // element access reads (`s += h` over a string is no induction, and declines here).
+        for &(register, step) in &shape.inductions {
+            r.get(register).as_int()?;
+            stride(step, r)?;
+        }
         let start = state.firsts[usize::from(shape.counter)];
         self.scalars(cx, state, r)?;
         let step = state.steps[usize::from(shape.counter)];
         state.trip = trip_count(start as f64, step as f64, shape.relation, state.scalars[usize::from(shape.bound)]);
         if state.trip < KERNEL_MIN_TRIP {
             self.declines.set(self.declines.get() + 1);
+            state.chunk = DECLINE_COUNTED;
             return None;
         }
         for (slot, &(register, _)) in shape.phis.iter().enumerate() {
@@ -282,13 +305,20 @@ impl LoopKernel {
                 Scalar::Length { register, atom } => {
                     // SAFETY: the running VM.
                     let vm = unsafe { vm(cx) };
-                    if atom != vm.length_atom {
-                        return None;
-                    }
                     let base = r.get(register);
-                    match super::super::own_length(vm, base) {
+                    // Another name is an own data field of a plain object, read once: the body calls
+                    // nothing and stores only elements, so the field holds for the whole run.
+                    let length = if atom == vm.length_atom {
+                        super::super::own_length(vm, base).or_else(|| vm.typed_array_geometry_read(base, atom))
+                    } else {
+                        None
+                    };
+                    match length {
                         Some(length) => length.as_number()?,
-                        None => vm.typed_array_geometry_read(base, atom)?.as_number()?,
+                        None => {
+                            let cache = vm.own_data_field_hint::<false>(base, atom)?;
+                            vm.record_field_entry_hit(cache, base)?.as_number()?
+                        }
                     }
                 }
                 Scalar::Computed { op, a, b } => apply(op, state.scalars[usize::from(a)], state.scalars[usize::from(b)]),
@@ -355,7 +385,8 @@ impl LoopKernel {
             return false;
         }
         let phis = self.shape.phis.len();
-        self.recurrence.run(&mut state.phis[..phis], &state.scalars, scratch, len);
+        let iotas = super::recur::Iotas { firsts: &state.firsts, steps: &state.steps, done };
+        self.recurrence.run(&mut state.phis[..phis], &state.scalars, scratch, len, iotas);
         for &id in self.recurrence.side() {
             self.operator_column(state, scratch, usize::from(id), len);
         }
@@ -393,6 +424,7 @@ impl LoopKernel {
                 NodeOp::Load { base, index } => {
                     numbers &= self.load(state, &mut scratch[id * CHUNK..][..len], base, index, done);
                 }
+                NodeOp::Iota { .. } if self.recurrence.unread_column(id) => {}
                 NodeOp::Iota { index } => scratch[id * CHUNK..][..len]
                     .iter_mut()
                     .enumerate()
