@@ -18,6 +18,7 @@ use crate::staged::wasm::Width;
 use crate::staged::wasm_gc::{ArrayConstruction, GcStep};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::gc::ArraySegmentInput;
+use crate::wasm::i31::I31Operator;
 use cranelift_codegen::ir::{self, MemFlagsData};
 use crate::staged::frame::WASM_HEADER_WORDS;
 
@@ -54,11 +55,14 @@ pub(super) fn allocating_reads(instruction: WideInstruction) -> Option<Vec<u16>>
     })
 }
 
-/// The kind of the word an allocating step returns; `None` for a step that returns none.
-pub(super) fn allocating_result(op: Op) -> Option<Kind> {
-    match GcStep::of(op) {
+/// The kind of the word an allocating step returns; `None` for a step that returns none. An i31
+/// step's operator (its immediate) decides: `ref.i31` gives a reference, `i31.get_s` and
+/// `i31.get_u` an i32 (`I31Operator::apply`).
+pub(super) fn allocating_result(instruction: WideInstruction) -> Option<Kind> {
+    match GcStep::of(instruction.op()) {
         Some(GcStep::ArrayFill | GcStep::ArrayCopy | GcStep::ArraySegment { init: true, .. }) => None,
         Some(GcStep::Test { cast: false, descriptor: true }) => Some(Kind::I32),
+        Some(GcStep::I31) if I31Operator::from_tag(instruction.imm()) != Some(I31Operator::New) => Some(Kind::I32),
         _ => Some(Kind::Reference),
     }
 }
@@ -127,8 +131,8 @@ unsafe extern "C" fn gc_allocate<H: Host>(
 }
 
 /// The interpreter's step of an allocating `instruction` over `operands` (each register's Value),
-/// as its Wasm bits: a reference's Value bits, a descriptor test's flag, or 0 where the step has no
-/// result. Both allocation callouts (the u-jit's `gc_allocate`, the b-jit's `allocate_frame`) run it.
+/// as the Wasm bits of its result's kind (`allocating_result`): a reference's Value bits, an i32
+/// (a descriptor test's flag, an i31 read) zero-extended, or 0 where the step has no result. Both allocation callouts (the u-jit's `gc_allocate`, the b-jit's `allocate_frame`) run it.
 pub(super) fn allocating_bits<H: Host>(
     vm: &mut Vm<H>,
     program: ProgramId,
@@ -139,10 +143,11 @@ pub(super) fn allocating_bits<H: Host>(
     let read = |_: &Vm<H>, register: u16| {
         operands.iter().find(|(index, _)| *index == register).map_or(Value::UNDEFINED, |(_, value)| *value)
     };
-    Ok(match vm.wasm_gc_value_step(program, env, instruction, read)? {
-        None => 0,
-        Some(value) if GcStep::of(instruction.op()) == Some(GcStep::Test { cast: false, descriptor: true }) => value.as_int().unwrap_or(0) as u32 as u64,
-        Some(value) => value.to_bits(),
+    let result = vm.wasm_gc_value_step(program, env, instruction, read)?;
+    Ok(match (result, allocating_result(instruction)) {
+        (Some(value), Some(Kind::I32)) => value.as_int().unwrap_or(0) as u32 as u64,
+        (Some(value), Some(_)) => value.to_bits(),
+        (_, _) => 0,
     })
 }
 
@@ -204,7 +209,7 @@ impl<H: Host> Analysis<'_, H> {
         for register in allocating_reads(instruction)? {
             value_kind(state.get(register, registers)?)?;
         }
-        match allocating_result(instruction.op()) {
+        match allocating_result(instruction) {
             Some(kind) => state.set(instruction.a(), registers, Slot::Value(kind)),
             None => Some(()),
         }
@@ -254,7 +259,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let target = gc_allocate::<H> as *const () as usize;
         let status = self.call_leaf(target, &[context, packed, imm, operands, count, out]);
         self.propagate(status);
-        if let Some(kind) = allocating_result(instruction.op()) {
+        if let Some(kind) = allocating_result(instruction) {
             let bits = self.load_word(Width::I64, MemFlagsData::trusted(), out, 0);
             let value = match kind {
                 Kind::I32 => self.convert(Conversion::WrapI64, bits),

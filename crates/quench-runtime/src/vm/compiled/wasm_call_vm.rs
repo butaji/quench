@@ -58,7 +58,7 @@ unsafe fn run_defined<H: Host>(
         Some(result) => result?,
         None => call_in_vm(vm, program, env, defined, &values)?,
     };
-    let bits = result_bits(vm, result, result_type)?;
+    let bits = result_bits(vm, program, result, result_type)?;
     // SAFETY: `out` is the destination word the row names.
     unsafe { *out = bits };
     Ok(())
@@ -133,13 +133,22 @@ fn absolute_index<H: Host>(vm: &Vm<H>, program: ProgramId, defined: u32) -> Resu
         .ok_or_else(|| JsError::validation("invalid Wasm function index".into()))
 }
 
-/// The result word of `result` as `result_type` (none for a void function, whose word is 0).
-fn result_bits<H: Host>(vm: &Vm<H>, result: Value, result_type: Option<crate::WasmType>) -> Result<u64, JsError> {
+/// The result word of `result` as `result_type` (none for a void function, whose word is 0): a
+/// reference's Value bits, checked against its type under `program`'s declarations (a declared
+/// type's identity is theirs), else the scalar's bits. Every callout that runs a Wasm call in the
+/// VM returns its result word so.
+pub(super) fn result_bits<H: Host>(
+    vm: &Vm<H>,
+    program: ProgramId,
+    result: Value,
+    result_type: Option<crate::WasmType>,
+) -> Result<u64, JsError> {
     let Some(ty) = result_type else {
         return Ok(0);
     };
     if Kind::of(ty) == Some(Kind::Reference) {
-        vm.decode_wasm_value(result, ty)?;
+        let declarations = vm.programs.wasm_signatures(program).map(|signatures| &signatures.declarations);
+        vm.decode_wasm_value_in(result, ty, declarations)?;
         return Ok(result.to_bits());
     }
     match vm
