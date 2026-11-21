@@ -1979,7 +1979,15 @@ impl ProgramStore {
     }
 
     pub(super) fn enable_js_lane_methods(&mut self) {
-        self.js_jit_lane_methods_enabled = true;
+        // AArch64's lane-body tier miscompiles a loop whose body calls a function that steps out
+        // (`typeof` in a callee runs extra iterations; `--u-jit`, `--no-jit` and memory-first are
+        // exact), so it stays out of every mode there while the loop regions (which the policy's
+        // `js_function_tiers` admits) compile and run. Debt (TOD-1202): the tier returns when that
+        // call continuation is fixed.
+        #[cfg(target_arch = "aarch64")]
+        return;
+        #[cfg(not(target_arch = "aarch64"))]
+        { self.js_jit_lane_methods_enabled = true; }
     }
 
     /// Set before loading a test program; general/OSR coverage then owns entry.
