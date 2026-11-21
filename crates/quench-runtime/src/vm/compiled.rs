@@ -8206,6 +8206,11 @@ impl<H: Host> Vm<H> {
         if !claims || program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
         }
+        // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size: its
+        // image body is compiled already, so there is no compile to amortize, and its callers' bodies are native.
+        if self.programs.js_jit_lane_methods_enabled() && self.programs.ahead_images(id, program).is_some() {
+            return true;
+        }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;
         };
