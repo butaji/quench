@@ -1469,6 +1469,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         id < self.next_id && self.is_occupied(id)
     }
 
+    #[inline(always)]
     fn split_id(id: RecordId) -> (usize, usize) {
         let id = id as usize;
         (id / RECORDS_PER_BLOCK, id % RECORDS_PER_BLOCK)

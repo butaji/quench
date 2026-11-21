@@ -15,7 +15,7 @@
 #![allow(dangerous_implicit_autorefs)]
 
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, ProgramId, Slot, Value, Vm, finish_callout};
+use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, ProgramId, Slot, Value, Vm, finish_callout, refresh_wasm_gc_records};
 use crate::bytecode::{Function, Op, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
@@ -116,7 +116,10 @@ unsafe extern "C" fn gc_allocate<H: Host>(
             (register as u16, operand_value(vm, kind, bits))
         })
         .collect();
-    match allocating_bits(vm, program, env, instruction, &values) {
+    let allocated = allocating_bits(vm, program, env, instruction, &values);
+    // SAFETY: as above; the allocation may have reserved the record range.
+    refresh_wasm_gc_records(unsafe { &mut *context }, vm);
+    match allocated {
         Ok(bits) => {
             // SAFETY: the emitted code gives `out` a word of its own for this call.
             unsafe { *out = bits };
@@ -178,7 +181,10 @@ pub(super) unsafe extern "C" fn allocate_frame<H: Host>(
             (register, operand_value(vm, entry >> 16, bits))
         })
         .collect();
-    match allocating_bits(vm, program, env, instruction, &operands) {
+    let allocated = allocating_bits(vm, program, env, instruction, &operands);
+    // SAFETY: as above; the allocation may have reserved the record range.
+    refresh_wasm_gc_records(unsafe { &mut *context }, vm);
+    match allocated {
         Ok(bits) => {
             // SAFETY: the row gives `out` a word of its own for this call.
             unsafe { *out = bits };

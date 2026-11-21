@@ -654,15 +654,23 @@ static BinaryTree *build_binary_root(void) {
 
 /* ---- predicates and mappers ---- */
 /* filter(x => !(n % x)) with n in ctx: a zero remainder, or NaN for x == 0, passes. */
+/* JS a % b. Engines take an integer remainder when both operands are int32 values (and the
+ * divisor is not 0), as a C program over integers does; anything else is fmod. */
+static inline double js_mod(double a, double b) {
+  int32_t ia = (int32_t)a, ib = (int32_t)b;
+  if ((double)ia == a && (double)ib == b && ib > 0 && ia >= 0) return (double)(ia % ib);
+  return fmod(a, b);
+}
+
 static int pred_divides(void *ctx, Value v, long index) {
   (void)index;
-  double r = fmod(*(double *)ctx, v.num);
+  double r = js_mod(*(double *)ctx, v.num);
   return r == 0.0 || isnan(r);
 }
 
 static int pred_mod_zero(void *ctx, Value v, long index) {
   (void)index;
-  return fmod(v.num, *(double *)ctx) == 0.0;
+  return js_mod(v.num, *(double *)ctx) == 0.0;
 }
 
 static int pred_less_than(void *ctx, Value v, long index) {
@@ -675,7 +683,7 @@ static int is_prime(double n) {
   Iter *r = range_new(2, n - 1, 1);
   Value x;
   while (r->next(r, &x)) {
-    if (!truthy(fmod(n, x.num))) return 0;
+    if (!truthy(js_mod(n, x.num))) return 0;
   }
   return 1;
 }
@@ -721,9 +729,9 @@ static Value map_fizzbuzz(void *ctx, Value v, long index) {
   (void)ctx;
   (void)index;
   double x = v.num;
-  if (fmod(x, 15.0) == 0.0) return vstr(fizzbuzz_strings[2]);
-  if (fmod(x, 5.0) == 0.0) return vstr(fizzbuzz_strings[1]);
-  if (fmod(x, 3.0) == 0.0) return vstr(fizzbuzz_strings[0]);
+  if (js_mod(x, 15.0) == 0.0) return vstr(fizzbuzz_strings[2]);
+  if (js_mod(x, 5.0) == 0.0) return vstr(fizzbuzz_strings[1]);
+  if (js_mod(x, 3.0) == 0.0) return vstr(fizzbuzz_strings[0]);
   return v;
 }
 

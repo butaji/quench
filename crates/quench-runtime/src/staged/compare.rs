@@ -97,7 +97,7 @@ impl Comparison {
     /// The comparison `operator` names (a `JumpBinaryFalse`'s operator field): the widest Number
     /// relation, an equality, a bitwise test, `instanceof`, else the operator itself. A tier with
     /// more facts than the operator narrows it (the observed Numbers, the proved domain).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn of_operator(operator: u32) -> Self {
         equality_operator(operator)
             .map(|(strict, negated)| Self::Equality { strict, negated })
@@ -129,7 +129,9 @@ impl Comparison {
 #[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
-    /// The `JumpBinaryFalse` row: it jumps where the comparison fails.
+    /// The `JumpBinaryFalse` row: it jumps where the comparison fails. Inlined into the row,
+    /// which decodes its record on every run.
+    #[inline(always)]
     pub(super) fn decode_compare(instruction: WideInstruction) -> Self {
         let comparison = Comparison::of_operator(instruction.binary_operator_field());
         Self::CompareJump { comparison, left: instruction.operand_b(), right: instruction.operand_c(), negate: true }
@@ -359,11 +361,11 @@ fn nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, te
 /// alone: the nullish types are, and objects, Numbers and Booleans are not.
 #[inline(always)]
 fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
-    let [null, undefined] = [ValueType::Null, ValueType::Undefined].map(Type::language);
-    if ty.is_subtype(null) {
-        Some(!strict || expected == ValueType::Null)
-    } else if ty.is_subtype(undefined) {
-        Some(!strict || expected == ValueType::Undefined)
+    // Language-set tests only (`within_languages`), so a stencil's constant type folds them.
+    if ty.within_languages(Type::language(ValueType::Null)) {
+        Some(!strict || matches!(expected, ValueType::Null))
+    } else if ty.within_languages(Type::language(ValueType::Undefined)) {
+        Some(!strict || matches!(expected, ValueType::Undefined))
     } else {
         // Number or Boolean, as `Type::NUMBER.join(Type::language(ValueType::Boolean))`, as a constant a
         // stencil row folds (the join is not inlined there).

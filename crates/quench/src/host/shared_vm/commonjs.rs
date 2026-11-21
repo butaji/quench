@@ -512,7 +512,12 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.profile_memory_checkpoint("node_console_global");
     crate::host::resident_pages::release_read_only_pages();
     if let Some(kind) = context.node().building_snapshot {
-        return crate::host::startup_snapshot::preload(context, kind);
+        crate::host::startup_snapshot::preload(context, kind)?;
+        let builtins = std::mem::take(&mut context.node().snapshot_builtins);
+        let names: Vec<&str> = builtins.iter().map(String::as_str).collect();
+        let loaded = crate::host::startup_snapshot::preload_named(context, &names);
+        context.node().snapshot_builtins = builtins;
+        return loaded;
     }
     finish_initialize(context)
 }

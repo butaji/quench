@@ -77,7 +77,7 @@ impl super::Heap {
     /// The object part of a builtin whose named properties are all ordinary: a collection,
     /// date, regexp, promise, iterator, DataView, buffer, weak ref or finalization registry.
     /// No proxy, exotic or integer-indexed object.
-    #[inline(never)]
+    #[inline(always)]
     pub(crate) fn ordinary_builtin_object(&self, value: crate::Value) -> Option<&Object> {
         // A record family reads its record at once, past `object`'s tests of the others.
         if let Some(record_id) = value.direct_iterator_index() {
@@ -92,6 +92,13 @@ impl super::Heap {
             // SAFETY: a direct-collection Value names an initialized collection record.
             return Some(&unsafe { self.collection_records.get_live(record_id) }.object);
         }
+        self.ordinary_builtin_cell_object(value)
+    }
+
+    /// `ordinary_builtin_object` of a value no record family names: a heap cell's object, out of
+    /// line so the record families' reads stay inline at every caller.
+    #[inline(never)]
+    fn ordinary_builtin_cell_object(&self, value: crate::Value) -> Option<&Object> {
         let cell = self.get(value)?;
         // A DataView's and a buffer's geometry is accessors of their prototypes, so their own
         // names are their shape's too. A typed array is not here: every canonical numeric

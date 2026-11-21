@@ -97,45 +97,81 @@ impl<W, C> Reached<W, C> {
 pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
     for op in ops {
-        match *op {
-            IcOp::GuardShape(shape) => guard_shape(stage, &at, shape, miss)?,
-            IcOp::GuardLayout(id) => {
-                guard_layout(stage, &at, id, miss)?;
-                at.formed = Some(layout_form(id));
-            }
-            IcOp::GuardFormed { id, form } => {
-                guard_layout(stage, &at, id, miss)?;
-                debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
-                at.formed = Some(form);
-            }
-            IcOp::Prototype => {
-                let link = proto_link(stage, at.record);
-                let id = proto_object_record_id(stage, link, miss)?;
-                // A read through a prototype has the record table; a plan without it leaves, with
-                // no panic path, so a stencil's loop over the ops stays call-free and unrolls.
-                debug_assert!(records.is_some(), "a read through a prototype has the record table");
-                let records = records?;
-                at = Reached::bare(object_record_at(stage, records, id));
-            }
-            IcOp::LoadSlot { slot, form, storage_len, rep } => return load_slot(stage, &at, (slot, rep), form, storage_len, miss),
-            IcOp::LoadPrototypeSlot(slot) => return prototype_slot(stage, at.record, slot, miss),
-            IcOp::PrototypeConstants(values) => return prototype_constants(stage, at.record, values, miss),
-            IcOp::Held { guard, watch, value } => return holder_read(stage, at.record, guard, watch, value, miss),
-            IcOp::OwnConstant { record, watch, value } => return own_constant_read(stage, at.record, record, watch, value, miss),
-            IcOp::ArrayLength { records } => {
-                let records = site_word(stage, records);
-                return super::elements::array_length(stage, records, at.record, miss);
-            }
-            IcOp::StringLength { records } => {
-                let records = site_word(stage, records);
-                return super::string_length::string_length(stage, records, at.record, miss);
-            }
-            IcOp::HeldString { watch, value } => return string_read(stage, at.record, watch, value, miss),
-            IcOp::HeldNumber { watch, value } => return number_read(stage, at.record, watch, value, miss),
-            IcOp::GetterOwn { guard, watch, slot } => return getter_own_read(stage, at.record, guard, watch, slot, miss),
-        }
+        if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
     }
     None
+}
+
+/// `run` with its first ops written out one by one, for the read after a receiver's shape guard
+/// (`property::run_owned`), whose list a stencil row holds as a constant of a few ops. Each step
+/// folds to its op's arm, so the row makes no call and counts its holes at specialization; a loop
+/// there kept every arm and counted holes at run time. Only that site unrolls: inlined at every
+/// `run`, the copies tripled the compile time of a heap shard.
+#[inline(always)]
+pub(crate) fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
+    miss: S::Miss) -> Option<S::Word> {
+    // The first ops one by one, then any rest in a loop: a stencil row's list is a constant of at most
+    // `UNROLLED` ops, so each step folds to its op's arm and the row makes no call (a loop over the list
+    // would keep every arm, and the holes each arm takes would be counted at run time).
+    const UNROLLED: usize = 4;
+    macro_rules! step {
+        ($index:expr) => {
+            if let Some(op) = ops.get($index) {
+                if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
+            } else {
+                return None;
+            }
+        };
+    }
+    step!(0); step!(1); step!(2); step!(3);
+    for op in ops.get(UNROLLED..).unwrap_or(&[]) {
+        if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
+    }
+    None
+}
+
+/// One op of `run` over the record `at` reached: `Continue` to the next op, or `Break` with the read
+/// (`None` where a guard left at `miss`).
+#[inline(always)]
+fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::Cond>, records: Option<S::Word>,
+    miss: S::Miss) -> core::ops::ControlFlow<Option<S::Word>> {
+    use core::ops::ControlFlow::{Break, Continue};
+    macro_rules! guarded { ($e:expr) => { if $e.is_none() { return Break(None); } }; }
+    match *op {
+        IcOp::GuardShape(shape) => guarded!(guard_shape(stage, at, shape, miss)),
+        IcOp::GuardLayout(id) => {
+            guarded!(guard_layout(stage, at, id, miss));
+            at.formed = Some(layout_form(id));
+        }
+        IcOp::GuardFormed { id, form } => {
+            guarded!(guard_layout(stage, at, id, miss));
+            debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
+            at.formed = Some(form);
+        }
+        IcOp::Prototype => {
+            let link = proto_link(stage, at.record);
+            let Some(id) = proto_object_record_id(stage, link, miss) else { return Break(None) };
+            let records = records.expect("a read through a prototype has the record table");
+            *at = Reached::bare(object_record_at(stage, records, id));
+        }
+        IcOp::LoadSlot { slot, form, storage_len, rep } => return Break(load_slot(stage, at, (slot, rep), form, storage_len, miss)),
+        IcOp::LoadPrototypeSlot(slot) => return Break(prototype_slot(stage, at.record, slot, miss)),
+        IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.record, values, miss)),
+        IcOp::Held { guard, watch, value } => return Break(holder_read(stage, at.record, guard, watch, value, miss)),
+        IcOp::OwnConstant { record, watch, value } => return Break(own_constant_read(stage, at.record, record, watch, value, miss)),
+        IcOp::ArrayLength { records } => {
+            let records = site_word(stage, records);
+            return Break(super::elements::array_length(stage, records, at.record, miss));
+        }
+        IcOp::StringLength { records } => {
+            let records = site_word(stage, records);
+            return Break(super::string_length::string_length(stage, records, at.record, miss));
+        }
+        IcOp::HeldString { watch, value } => return Break(string_read(stage, at.record, watch, value, miss)),
+        IcOp::HeldNumber { watch, value } => return Break(number_read(stage, at.record, watch, value, miss)),
+        IcOp::GetterOwn { guard, watch, slot } => return Break(getter_own_read(stage, at.record, guard, watch, slot, miss)),
+    }
+    Continue(())
 }
 
 /// The own field a site's hint proved: the value at `slot` of `object` where its exact shape

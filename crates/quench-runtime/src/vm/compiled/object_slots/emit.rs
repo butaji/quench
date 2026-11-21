@@ -136,7 +136,14 @@ impl Stage for Emit<'_, '_> {
         self.compare_imm(Relation::NotEqual, a, imm.into())
     }
     fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Sub, a, b) }
+    /// A choice between a double and a word of an integer lane reads the word as its bits, as the
+    /// interpreter's untyped words are (`int_case`: an int's double or the double a tagged word is).
     fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
+        let (then, otherwise) = match (self.raw_lane(then), self.raw_lane(otherwise)) {
+            (Lane::F64, Lane::I64) => (then, self.f64_from_bits(otherwise)),
+            (Lane::I64, Lane::F64) => (self.f64_from_bits(then), otherwise),
+            _ => (then, otherwise),
+        };
         self.raw_select(cond, then, otherwise)
     }
     fn store_u32(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {

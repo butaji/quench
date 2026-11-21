@@ -275,8 +275,8 @@ static void fnn_train(FNN *net, Mat X, const int *labels, int n) {
   fnn_build_network(net, X.cols, 1);
   for (int it = 0; it < net->iterations; it++) {
     Mat probs = fnn_propagate(net, X);
+    /* fnn_backprop takes ownership of probs (it becomes the first delta and is freed there). */
     fnn_backprop(net, X, labels, probs);
-    mat_free(&probs);
   }
 }
 
@@ -447,7 +447,7 @@ static void case_big(void) {
     fnn_predict(&net, q, pred);
     /* assert(result[0][0] < result[0][1]): the predicted label must be [0,1], id 1 */
     if (pred[0] != 1) {
-      fprintf(stderr, "ML: Big case assertion failed\n");
+      printf("validation FAILED: big case predicted label %d, expected 1\n", pred[0]);
       exit(1);
     }
     mix(pred[0]);
@@ -478,5 +478,6 @@ int main(int argc, char **argv) {
   double t1 = now_ms();
   printf("ML %d iterations %.3f ms\n", iterations, t1 - t0);
   printf("checksum %016llx\n", (unsigned long long)checksum);
+  printf("validation OK: big case predicts [0,1] on every iteration\n");
   return 0;
 }

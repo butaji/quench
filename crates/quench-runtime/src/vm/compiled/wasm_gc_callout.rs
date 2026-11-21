@@ -116,7 +116,7 @@ fn run<H: Host>(vm: &mut Vm<H>, program: ProgramId, call: GcCall, imm: u32, a: u
                 (Aggregate::Array, b)
             };
             let access = if signed { GcFieldAccess::ReadSigned } else { GcFieldAccess::Read };
-            let word = field_read(&mut HeapStage { vm: &mut *vm }, aggregate, a, index, field, access)?;
+            let word = field_read(&mut HeapStage { vm: &mut *vm }, aggregate, a, index, field, access, None)?;
             Ok(read_bits(field, word))
         }
         GcCall::StructSet | GcCall::ArraySet => {
@@ -126,7 +126,7 @@ fn run<H: Host>(vm: &mut Vm<H>, program: ProgramId, call: GcCall, imm: u32, a: u
             } else {
                 (Aggregate::Array, b)
             };
-            field_write(&mut HeapStage { vm: &mut *vm }, aggregate, a, index, field, c)?;
+            field_write(&mut HeapStage { vm: &mut *vm }, aggregate, a, index, field, c, None)?;
             Ok(0)
         }
     }

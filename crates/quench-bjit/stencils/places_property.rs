@@ -62,6 +62,7 @@ pub(crate) struct RowPlans<const N: usize> {
 }
 
 impl<const N: usize> PlanSource for RowPlans<N> {
+    #[inline(always)]
     fn field_plan(&self, _lookup: FieldLookup) -> Option<FieldPlan<'_>> {
         Some(match &self.held {
             Some(held) => FieldPlan::Inherited { shape: held.shape, constants: &held.constant[..],
@@ -72,6 +73,7 @@ impl<const N: usize> PlanSource for RowPlans<N> {
 
     /// Every store of a row is the VM's callout (`StorePlan::Host`): the row's own store is
     /// `Callout::FlatStore`, `SiteStore`, which the frame answers through `field_store_host`.
+    #[inline(always)]
     fn store_plan(&self, _site: u16) -> Option<StorePlan<'_>> {
         Some(StorePlan::Host)
     }

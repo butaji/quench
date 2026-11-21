@@ -1,6 +1,7 @@
 // jetstream-row: sync-fs
 // jetstream-files: generators/sync-file-system.js
 // iterations: 80
+// jetstream-driver: deterministic=true
 /*
  * C analogue of JetStream's sync-fs (generators/sync-file-system.js). Each iteration
  * builds the same in-memory tree (up to 5000 directories in breadth-first order, 1200

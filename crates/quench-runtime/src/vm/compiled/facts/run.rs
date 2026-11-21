@@ -385,6 +385,9 @@ impl crate::dataflow::Dataflow for FactFlow<'_, '_, '_> {
             (_, Flow::Leaves) => {}
             (last, Flow::Next) => self.send(last + 1, point, false),
             (last, Flow::To(target)) => self.branch((last, target), point),
+            (last, Flow::Table) => for entry in crate::bytecode::branch_table_entries(last, text.instructions[last]) {
+                self.send(entry, point.clone(), entry <= last);
+            },
         }
         for (pc, target, caught) in raised.drain(..) {
             self.send(target, caught, target <= pc);

@@ -60,7 +60,7 @@ pub enum LaneStatus {
     NativeJsStopped = 1,
     /// A terminated run (`TERMINATED_STATUS`), one past the runtime's raised status, which follows
     /// its Wasm trap codes (`vm::compiled::TRAPS`, asserted there).
-    Terminated = 11,
+    Terminated = 26,
     /// A lane body whose activation completes (`LANE_BODY_RETURNED`).
     Returned = GENERAL_RETURN_STATUS_BASE - 1,
     /// A callee entry cell that held the stub, so nothing ran (`LANE_BODY_NOT_ENTERED`).

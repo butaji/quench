@@ -17,7 +17,7 @@ use super::{Owner, PropertyFrame};
 pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
     at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
     // The word the receiver's header read, where it read one.
-    let word = at.auxiliary.unwrap_or_else(|| super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
+    let word = at.auxiliary.unwrap_or_else(#[inline(always)] || super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
         crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset));
     let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(word, shape) };
     stage.guard(same, miss)?;

@@ -203,7 +203,8 @@ impl LoopTier {
             return true;
         }
         use super::super::compiled::OsrCompile;
-        match pending.poll(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs) {
+        let program = vm.programs.get(vm.active_program);
+        match pending.poll(vm, program.as_deref()) {
             Err(pending) => {
                 self.wait = site.tiers.lane_body.compile_poll_interval;
                 self.pending = Some(pending);
@@ -310,6 +311,10 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (native_field_loads, store_loads) = (native_field_loads(machine, own.filter(|_| !base), region), native_store_loads(machine, region));
     let types = entry_types(region, r);
+    // A loop array's base is no entry register of the region: its string is sampled here too.
+    let strings: Vec<crate::bytecode::Register> = region.entry_registers()
+        .chain(region.arrays.iter().filter(|array| array.field.is_none()).map(|array| array.register))
+        .filter(|register| machine.heap.is_string(r.get(*register))).collect();
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
@@ -317,7 +322,7 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let construct_plans = |function: u32, pc: u32| super::unit_targets_in_lane(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        entry_types: &types, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
+        entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
@@ -328,7 +333,12 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, (policy, machine.programs.tiers()), program, function, helpers,
-        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base));
+        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base,
+        // A Cranelift region folds Stable facts under its code's dependencies, as a lane body does (`Division::Online`).
+        if base { None } else { Some(super::super::compiled::OsrOnline { atoms: unsafe { vm(cx) }.method_cache_atoms.bits().clone(),
+            constants: unsafe { vm(cx) }.programs.constants(unsafe { vm(cx) }.active_program).to_vec(),
+            // SAFETY: the lane run owns the VM, as for the global reads above.
+            tables: Box::new(move |unit, fields, reads| super::super::compiled::FactTables::of(unsafe { vm(cx) }, function, unit, fields, reads, &|_, _| None)) }) }));
     if let Some(pending) = &started {
         let (watch, callees) = pending.native_calls();
         machine.programs.note_pending_native_calls(&watch, callees);
@@ -400,7 +410,7 @@ fn native_store_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled:
 /// in place (`Vm::try_replace_record_element`), no prototype claiming an index of it; or every
 /// one a typed array a register holds whose elements the loop may address in place
 /// (`Vm::typed_array_elements_in_lane`), which its code views at the loop's header. A mix, or
-/// any other value, declines the entry.
+/// any other value, declines the entry; a string the loop only reads holds an empty slot.
 pub(super) fn loop_arrays_in_lane<H: Host>(vm: &mut Vm<H>, r: Registers, region: &LoopRegion, entry: &mut LoopEntry)
     -> Option<ElementViews> {
     let value_of = |(register, field): (crate::bytecode::Register, Option<usize>), entry: &LoopEntry| match field {
@@ -413,6 +423,12 @@ pub(super) fn loop_arrays_in_lane<H: Host>(vm: &mut Vm<H>, r: Registers, region:
     let mut views = None;
     for array in &region.arrays {
         let value = value_of((array.register, array.field), &*entry);
+        // A string the loop only reads is no array: its element reads take the string row
+        // (`Lowering::string_or_row`), and its slot holds no view, so the others keep their places.
+        if !array.written && vm.heap.is_string(value) {
+            entry.push_array(std::ptr::null_mut::<u64>(), 0, 0)?;
+            continue;
+        }
         let found = if vm.heap.record_array(value).is_some() && doubles {
             push_double_array(vm, value, array.written, entry)?;
             ElementViews::Double
@@ -492,9 +508,13 @@ pub(super) fn method_call_region_in_lane<H: Host>(cx: *mut LaneContext<H>, site:
     let (function_index, function, decoded, constants) = loop_function_in_lane(cx, code)?;
     // A native method the loop holds inline is run in place by the lane (`intrinsic_call`), so its call
     // is no exit of the region (`native_method_call`). The lane run owns the VM here.
+    // A member of a Stable global read by name (`Math.abs`) is one too (`Vm::native_callees`).
     let machine = unsafe { vm(cx) };
+    let members = machine.native_callees(code, function_index, &decoded);
     let natives: Vec<bool> = (0..decoded.len())
-        .map(|pc| super::super::compiled::native_method_call(machine, &decoded, pc)).collect();
+        .map(|pc| super::super::compiled::native_method_call(machine, &decoded, pc)
+            || members[pc].is_some_and(|(_, native, _)| super::super::compiled::inlines_in_loop_call(native,
+                crate::bytecode::ImmediateLayout::argument_count(decoded[pc].imm())))).collect();
     super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
         code.shared_register_root_masks(function_index), site.header, site.backedge,
         super::super::compiled::MethodCalls::Exit, &|pc| natives.get(pc).copied().unwrap_or(false)).ok()

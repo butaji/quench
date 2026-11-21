@@ -1,6 +1,7 @@
 // jetstream-row: doxbee-promise
 // jetstream-files: simple/doxbee-promise.js
 // iterations: 120
+// jetstream-driver: class=Async
 /*
  * C analogue of JetStream's doxbee-promise (simple/doxbee-promise.js). Each iteration
  * starts 10,000 doxbee(i, "foo") calls, keeps their promises in an array, then drains the
@@ -17,19 +18,22 @@
  * tasks per call. The reactions, their order and the objects each step allocates
  * (blob, transaction, query objects, version, file records) follow the JS.
  *
+ * Tasks and calls are recycled through free lists and a call's objects are bump-allocated
+ * inside it (the C counterpart of the engine's nursery allocation and GC).
  * Deliberate differences: the JS promise machinery itself (promise objects, the extra
  * ticks when a callback returns a promise, and V8's job queue) is not modeled; the
  * tasks are the reactions only. Object lifetimes are managed by the call, which is freed
  * when its Promise.all element runs (the JS GC does this). The JS has no validate step;
  * the program checks that all calls completed and that every task ran. */
 #define _POSIX_C_SOURCE 199309L
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-enum { CALLS_PER_ITERATION = 10000, TASKS_PER_CALL = 10, DEFAULT_ITERATIONS = 120, MAX_CALL_OBJECTS = 24 };
+enum { CALLS_PER_ITERATION = 10000, TASKS_PER_CALL = 10, DEFAULT_ITERATIONS = 120, MAX_CALL_OBJECTS = 24, CALL_ARENA_BYTES = 512 };
 
 static void fatal(const char *msg) {
   fprintf(stderr, "Error: %s\n", msg);
@@ -68,9 +72,16 @@ typedef struct Call {
   int64_t blob_id;
   Version *version;
   int64_t file_id;
-  void *objs[MAX_CALL_OBJECTS];   /* everything the call allocated, freed at ST_ELEMENT */
-  int nobjs;
+  int nobjs;                      /* objects the call allocated, all freed with it at ST_ELEMENT */
+  size_t arena_used;
+  _Alignas(16) unsigned char arena[CALL_ARENA_BYTES]; /* the call's objects, bump-allocated */
+  struct Call *next_free;
 } Call;
+
+/* Free lists: tasks and calls are recycled as the engine's GC recycles promise reactions and
+ * closures; a call's objects are bump-allocated inside it and die with it. */
+static Call *free_calls;
+static struct Task *free_tasks;
 
 typedef struct Task {
   int stage;
@@ -83,8 +94,9 @@ static Call **promise_slots;
 static long tasks_run, calls_completed;
 
 static void schedule(Call *c, int stage) {
-  Task *t = malloc(sizeof *t);
-  if (!t) fatal("out of memory");
+  Task *t = free_tasks;
+  if (t) free_tasks = t->next;
+  else if (!(t = malloc(sizeof *t))) fatal("out of memory");
   t->stage = stage;
   t->call = c;
   t->next = NULL;
@@ -103,9 +115,12 @@ static Task *dequeue(void) {
 
 static void *call_alloc(Call *c, size_t size) {
   if (c->nobjs == MAX_CALL_OBJECTS) fatal("too many objects for one call");
-  void *p = calloc(1, size);
-  if (!p) fatal("out of memory");
-  c->objs[c->nobjs++] = p;
+  size_t at = (c->arena_used + 15) & ~(size_t)15;
+  if (at + size > CALL_ARENA_BYTES) fatal("call arena full");
+  void *p = c->arena + at;
+  memset(p, 0, size);
+  c->arena_used = at + size;
+  c->nobjs++;
   return p;
 }
 
@@ -127,8 +142,10 @@ static const char *file_name_of(const char *path) {
 }
 
 static Call *doxbee_start(int index, const char *id_or_path, int64_t stream) {
-  Call *c = calloc(1, sizeof *c);
-  if (!c) fatal("out of memory");
+  Call *c = free_calls;
+  if (c) free_calls = c->next_free;
+  else if (!(c = malloc(sizeof *c))) fatal("out of memory");
+  memset(c, 0, offsetof(Call, arena));
   c->index = index;
   c->id_or_path = id_or_path;
   c->stream = stream;
@@ -202,8 +219,8 @@ static void run_task(Task *t) {
     break;
   case ST_ELEMENT:
     promise_slots[c->index] = NULL;
-    for (int i = 0; i < c->nobjs; i++) free(c->objs[i]);
-    free(c);
+    c->next_free = free_calls;                    /* the call and its objects die together */
+    free_calls = c;
     calls_completed++;
     break;
   default:
@@ -222,7 +239,8 @@ static void run_iteration(void) {
   while (queue_head) {
     Task *t = dequeue();
     run_task(t);
-    free(t);
+    t->next = free_tasks;
+    free_tasks = t;
   }
   free(promises);
 }

@@ -1,6 +1,7 @@
 // jetstream-row: UniPoker
 // jetstream-files: RexBench/UniPoker/poker.js RexBench/UniPoker/expected.js RexBench/UniPoker/benchmark.js
 // iterations: 120
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream's RexBench/UniPoker: four players are dealt 2000 five-card hands
  * per iteration from a deck shuffled with JetStream's deterministic Math.random (reset
  * before each iteration). Cards are Unicode playing-card code points; a hand is scored by
@@ -143,11 +144,15 @@ typedef struct { int index, length, alt; } Match;
 static int search(const Pattern *p, const uint16_t *s, int len, Match *m) {
   int width;
   for (int start = 0; start < len; start += width) {
+    /* A regex compiler tests the first character class of each alternative before it enters
+     * the alternative (irregexp's quick checks), so the code point is decoded once here. */
+    uint32_t cp = code_point_at(s, len, start, &width);
     for (int a = 0; a < p->count; a++) {
+      const Term *first = &p->alts[a].terms[0];
+      if (first->min > 0 && !in_class(first, cp)) continue;
       int end = match_terms(p->alts[a].terms, p->alts[a].count, s, len, start);
       if (end >= 0) { *m = (Match){start, end - start, a}; return 1; }
     }
-    code_point_at(s, len, start, &width);
   }
   return 0;
 }

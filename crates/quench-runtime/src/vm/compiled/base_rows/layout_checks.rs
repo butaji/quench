@@ -96,3 +96,10 @@ const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement =
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_complement == L::NATIVE_FIELD_CACHE_LAYOUT.holder_complement);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_complement == L::NATIVE_FIELD_CACHE_LAYOUT.slot_complement);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.own_holder == L::NATIVE_FIELD_CACHE_LAYOUT.own_holder);
+
+// NATIVE_WASM_GC_LAYOUT: the record's head is its first field, so its words are the record's, and the
+// payload words are the head's (`WasmGcRecord` is `repr(C)` with the head first).
+const _: () = assert!(L::NATIVE_WASM_GC_LAYOUT.record_capacity == crate::staged::object_encoding::WASM_GC_RECORD_CAPACITY);
+const _: () = assert!(L::NATIVE_WASM_GC_LAYOUT.payload_offset == offset_of!(crate::staged::record_heads::WasmGcHead, payload));
+const _: () = assert!(L::NATIVE_WASM_GC_LAYOUT.length_offset == offset_of!(crate::staged::record_heads::WasmGcHead, length));
+const _: () = assert!(L::NATIVE_WASM_GC_LAYOUT.type_offset == offset_of!(crate::staged::record_heads::WasmGcHead, ty));

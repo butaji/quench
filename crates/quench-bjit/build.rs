@@ -333,7 +333,12 @@ impl Shard {
         }
         let Ok(reach) = fs::read_to_string(self.reach_file()) else { return false };
         let reach: std::collections::HashSet<&str> = reach.lines().collect();
-        edited.iter().all(|name| !reach.contains(name.as_str()))
+        // A `module::function` name needs a reach that lists such pairs; an older reach is asked for the bare name.
+        let pairs = reach.contains(reach::PAIRS);
+        edited.iter().all(|name| {
+            let name = if pairs { name.as_str() } else { name.rsplit("::").next().unwrap_or(name) };
+            !reach.contains(name)
+        })
     }
 
     /// Writes the identifiers the shard's rows reach: its unoptimized LLVM IR (the shard's own arguments, no
@@ -465,8 +470,9 @@ fn type_check(out: &Path, family: Family, shard: usize) {
 fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
     let jobs: Vec<&Shard> = jobs.iter().filter(|job| job.cpu == cpu).collect();
     // `QUENCH_STENCIL_WORKERS` caps the rustc processes on a box whose memory, not its cores, bounds them.
+    // Unset, one worker per core that the box's available memory holds a shard's rustc for (`SHARD_MEMORY`).
     let parallelism = env::var("QUENCH_STENCIL_WORKERS").ok().and_then(|jobs| jobs.parse().ok())
-        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get));
+        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get).min(memory_workers()));
     let next = AtomicUsize::new(0);
     let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
         let workers: Vec<_> = (0..shards::workers(jobs.len(), parallelism))
@@ -484,6 +490,10 @@ fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRo
             .collect();
         workers.into_iter().flat_map(|worker| worker.join().expect("a shard worker")).collect()
     });
+    // Every shard is checked before the build fails, so one run names every row that breaks a check.
+    let failed = FAILED_ROWS.lock().unwrap();
+    assert!(failed.is_empty(), "{} stencil rows fail their checks:\n{}", failed.len(), failed.join("\n"));
+    drop(failed);
     let counts = built.iter().fold(Counts::default(), |sum, (_, c)| Counts { framed: sum.framed + c.framed, unchained: sum.unchained + c.unchained });
     (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
 }
@@ -519,15 +529,20 @@ fn compile(job: &Shard, shard: usize) {
         fs::write(&job.key_file, &job.key).unwrap();
         return;
     }
-    let run = || Command::new(rustc()).args(&job.args).envs(job.envs.iter().map(|(name, path)| (*name, path))).status().expect("run rustc");
-    let mut status = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
-    if killed(&status) {
+    // The same rustc lists the shard's mono items (`-Z print-mono-items`, on stdout), which name every function a
+    // row can reach: the reach file comes from this compile rather than a second, unoptimized one (`write_reach`).
+    // The flag is outside `job.args`, so it is in no key.
+    let run = || Command::new(rustc()).args(&job.args).args(["-Z", "print-mono-items=yes"])
+        .envs(job.envs.iter().map(|(name, path)| (*name, path))).stderr(std::process::Stdio::inherit()).output().expect("run rustc");
+    let mut output = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
+    if killed(&output.status) {
         println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again alone");
         let _alone = MEMORY.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        status = run();
+        output = run();
     }
-    assert!(status.success(), "rustc failed on {SOURCE} (shard {shard}): {status}");
-    job.write_reach();
+    assert!(output.status.success(), "rustc failed on {SOURCE} (shard {shard}): {}", output.status);
+    let ids = reach::mono_items(&String::from_utf8_lossy(&output.stdout));
+    fs::write(job.reach_file(), ids.into_iter().map(|id| id + "\n").collect::<String>()).unwrap();
     if let Some(shared) = &shared {
         publish(&job.object, shared);
         if job.reach_file().is_file() {
@@ -596,19 +611,46 @@ fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
     let mut counts = Counts::default();
     let rows = rows
         .iter()
-        .map(|row| {
-            check_no_return(arch, &row.name, &row.code);
-            check_call(arch, &row.name, &row.code);
-            let relocs = relocations(arch, row);
-            let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
-            let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
-            let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
-            counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
-            counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
-            (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
+        .filter_map(|row| {
+            // A row that fails a check is recorded (`FAILED_ROWS`) and the shard goes on with the next.
+            let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| checked_row(arch, row, &mut counts)));
+            checked.map_err(|failure| {
+                let message = failure.downcast_ref::<String>().cloned()
+                    .or_else(|| failure.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_else(|| format!("stencil {}: a check failed", row.name));
+                FAILED_ROWS.lock().unwrap().push(message);
+            }).ok()
         })
         .collect();
     (rows, counts)
+}
+
+/// The rows that failed a check, across every shard (`stencil_rows`).
+static FAILED_ROWS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// What one shard's rustc may reach, in bytes: the workers the box's memory holds (`memory_workers`).
+/// Measured: no shard of the per-row step dispatch (`staged::step_of`) peaked past 2.6 GB on the 15 GB, 4-core box
+/// (2026-11-20), so a worker per core fits; a shard killed for memory is compiled again alone (`compile`).
+const SHARD_MEMORY: u64 = 3 << 30;
+
+/// How many shard rustc processes the box's available memory holds, at least one.
+fn memory_workers() -> usize {
+    let available = fs::read_to_string("/proc/meminfo").ok().and_then(|info| info.lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()));
+    available.map_or(usize::MAX, |kib| usize::try_from((kib << 10) / SHARD_MEMORY).unwrap_or(usize::MAX).max(1))
+}
+
+/// One row as (name, table entry), checked; adds to `counts` what `checks` counted.
+fn checked_row(arch: Arch, row: &ObjectRow, counts: &mut Counts) -> (String, String) {
+    check_no_return(arch, &row.name, &row.code);
+    check_call(arch, &row.name, &row.code);
+    let relocs = relocations(arch, row);
+    let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
+    let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
+    let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
+    counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
+    counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
+    (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
 }
 
 /// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.

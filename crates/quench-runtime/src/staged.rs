@@ -21,6 +21,7 @@ use crate::bytecode::{FieldBase, FieldLookup, Operand};
 use crate::typed_ir::Type;
 
 mod concrete;
+mod word_ops;
 pub(crate) mod numeric;
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
 pub(crate) mod layout_offsets;
@@ -283,7 +284,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below: a table mode that
 /// `fuse_rows` realizes as the record's settings bits (`MODE_DEAD_FIRST`, `raw_bit(0)`), not as an instance.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 90] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -376,8 +377,9 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
     (Op::WasmI32Load16U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
     // A local or capture read then a register comparison jump (`JumpBinaryFalse`). Subsumes
     // `specialize_load_branch_pairs` (`load_relation_jump_handler`), both directions of the jump.
-    (Op::LoadLocalPlain as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
-    (Op::LoadCapture as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
+    // A comparison jump is not a member: its own row fixes its operator and operand form at its first
+    // run (`compare_jump_row`), which a pair's jump decodes at run time, and a pair's jump builds the
+    // capture read's whole frame (`row_frame`).
     // A direct load then the direct store of its value, of the same width.
     (Op::WasmI32Load as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
     (Op::WasmI32Load8U as u16, Op::WasmI32Store8 as u16, FUSED_PLAIN),
@@ -926,10 +928,11 @@ pub(crate) const fn checked_local(op: Op) -> bool {
 /// store has no result register, and answers the source word it stored; a store's result is its
 /// `b` register and an InitializeTdz has none.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
-    // A Wasm row writes its result register only where its record has one: a store, a global
-    // store and a fill define none.
+    // A Wasm row writes the result register its record names, if any. A store, a global store and
+    // a fill name none: the lane must not write the answered word into their record's `a`, which
+    // a fill leaves at register 0 (`wasm_emit`'s fill emission).
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
-        return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
+        return true;
     }
     // An opcode whose A field is no result register defines none, so there is nothing for the lane
     // to write: its row's value (a cleanup pop's 0, a store's source) must not land in register A.

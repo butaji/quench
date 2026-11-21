@@ -1,5 +1,6 @@
 //! The tests an online body's field reads make of slots whose type its dependencies hold.
 use super::*;
+use crate::bytecode::Class;
 
 /// The lowering of `source`'s `subject`, whose sites read `names` as own slots of one shape and
 /// type `ty`, under online facts (the invalidation word at `invalidation`) or the static ones.
@@ -23,7 +24,7 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true)
+        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true)
         .unwrap().function
 }
 

@@ -176,6 +176,10 @@ pub(super) fn target_isa_level(level: CompileLevel) -> Option<Arc<TargetIsa>> {
     target_isa_with(JS_JIT_OPT_LEVEL, CodePublication::ExecutableMemory, level)
 }
 
+/// Without the JIT no code is published to executable memory.
+#[cfg(not(feature = "jit"))]
+pub(super) fn target_isa_level(_level: CompileLevel) -> Option<Arc<TargetIsa>> { None }
+
 fn target_isa_with(
     opt_level: &'static str,
     publication: CodePublication,

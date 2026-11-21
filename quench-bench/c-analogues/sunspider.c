@@ -1,6 +1,8 @@
 // jetstream-row: Sunspider
 // jetstream-files: SunSpider/3d-cube.js SunSpider/3d-raytrace.js SunSpider/base64.js SunSpider/crypto-aes.js SunSpider/crypto-md5.js SunSpider/crypto-sha1.js SunSpider/date-format-tofte.js SunSpider/date-format-xparb.js SunSpider/n-body.js SunSpider/regex-dna.js SunSpider/string-unpack-code.js SunSpider/tagcloud.js
 // iterations: 120
+// jetstream-driver: group=file
+// c-sources: -lm -lpcre2-8
 /* C analogue of the JetStream "Sunspider" row: C ports of the twelve SunSpider
  * tests the driver runs, in the driver's order (3d-cube, 3d-raytrace, base64,
  * crypto-aes, crypto-md5, crypto-sha1, date-format-tofte, date-format-xparb,
@@ -12,20 +14,22 @@
  * strings per operation are plain C locals and one buffer per run, the way a C
  * programmer writes them. Date tests use the local time zone (localtime_r),
  * like Date. base64 uses a xorshift generator where the JS uses Math.random;
- * the round trip it checks is the same. main() runs every test for 120
+ * the round trip it checks is the same. regex-dna matches with PCRE2-JIT
+ * (8-bit library), compiled once before the timed loop. main() runs every test for 120
  * iterations (the DefaultBenchmark default), prints ms per test and exits 1 if
  * a validation fails.
  */
 #define _POSIX_C_SOURCE 200809L
+#define PCRE2_CODE_UNIT_WIDTH 8
 #include <ctype.h>
 #include <math.h>
+#include <pcre2.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-#pragma STDC FP_CONTRACT OFF
 
 #define JS_PI 3.141592653589793
 #define ITERATIONS 120
@@ -7913,7 +7917,13 @@ static size_t js_num_to_str(double x, char *buf) {
   if (x == 0) return (size_t)sprintf(buf, "0");
   if (isinf(x)) return (size_t)sprintf(buf, x < 0 ? "-Infinity" : "Infinity");
   if (x < 0) { buf[o++] = '-'; x = -x; }
-  for (p = 1; p <= 17; p++) {
+  if (x < 9007199254740992.0 && x == floor(x)) { /* integers below 2^53: exact digits */
+    o += (size_t)sprintf(buf + o, "%.0f", x);
+    return o;
+  }
+  /* Shortest precision that round-trips: 15 significant digits when they do (a
+   * decimal of up to 15 digits is recovered exactly from a double), else 16, else 17. */
+  for (p = 15; p <= 17; p++) {
     snprintf(tmp, sizeof tmp, "%.*e", p - 1, x);
     if (strtod(tmp, NULL) == x) break;
   }
@@ -7959,6 +7969,12 @@ static void sb_bytes(SB *s, const char *b, size_t n) {
   memcpy(s->p + s->len, b, n);
   s->len += n;
   s->p[s->len] = 0;
+}
+static void sb_reserve(SB *s, size_t cap) {
+  if (cap > s->cap) {
+    s->p = realloc(s->p, cap);
+    s->cap = cap;
+  }
 }
 static void sb_puts(SB *s, const char *str) { sb_bytes(s, str, strlen(str)); }
 static void sb_num(SB *s, double x) {
@@ -8971,6 +8987,10 @@ static void run_crypto_sha1(void) {
 }
 
 /* ---------------------------------------- date-format-tofte / date-format-xparb */
+/* Both formatters write the text straight into a fixed 64-byte buffer with digit
+ * writes (no sprintf, no growable string), as a C date formatter does. The format
+ * is read once per format string: xparb compiles it to a token list kept for the
+ * whole process (JS caches the compiled formatter per format, too). */
 
 static const char *DATE_DAYS_LONG[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 static const char *DATE_DAYS_SHORT[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
@@ -8978,10 +8998,15 @@ static const char *DATE_MONTHS_LONG[12] = {"January", "February", "March", "Apri
                                            "August", "September", "October", "November", "December"};
 static const char *DATE_MONTHS_SHORT[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-static const char *DATE_SUFFIX[31] = {"st", "nd", "rd", "th", "th", "th", "th", "th", "th", "th", "th",
-                                      "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "st",
-                                      "nd", "rd", "th", "th", "th", "th", "th", "th", "th", "st"};
+static const char *DATE_SUFFIX[31] = {
+    "st", "nd", "rd", "th", "th", "th", "th",   /* 1st - 7th */
+    "th", "th", "th", "th", "th", "th", "th",   /* 8th - 14th */
+    "th", "th", "th", "th", "th", "th", "st",   /* 15th - 21st */
+    "nd", "rd", "th", "th", "th", "th", "th",   /* 22nd - 28th */
+    "th", "th", "st"};                          /* 29th - 31st */
 static const int DATE_DAYS_IN_MONTH[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+#define DATE_BUF 64
 
 /* The benchmark's start: new Date("1/1/2007 1:11:11") in local time. */
 static int64_t date_start_ms(void) {
@@ -9004,42 +9029,59 @@ static void date_fields(int64_t ms, struct tm *t) {
 
 static int date_is_leap(int year) { return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0; }
 
-static uint32_t char_code(const SB *s, size_t n) { return n < s->len ? (unsigned char)s->p[n] : 0; }
+/* Writes v (not negative) in decimal, zero-padded to at least pad digits. */
+static size_t put_num(char *o, int v, int pad) {
+  char tmp[12];
+  int k = 0, n;
+  do {
+    tmp[k++] = (char)('0' + v % 10);
+    v /= 10;
+  } while (v > 0);
+  while (k < pad) tmp[k++] = '0';
+  for (n = 0; n < k; n++) o[n] = tmp[k - 1 - n];
+  return (size_t)k;
+}
+
+static size_t put_str(char *o, const char *s) {
+  size_t n = strlen(s);
+  memcpy(o, s, n);
+  return n;
+}
 
 /* date-format-tofte: formatDate() reads the format one character at a time.
  * Only the codes this benchmark's formats use (plus a few common ones) are
- * implemented here. */
-static void tofte_format(const struct tm *t, int64_t ms, const char *input, SB *out) {
-  char buf[64];
+ * implemented here. Writes the result to o and returns its length. */
+static size_t tofte_format(const struct tm *t, int64_t ms, const char *input, char *o) {
   int year = t->tm_year + 1900, hours = t->tm_hour;
+  size_t n = 0;
   for (const char *p = input; *p; p++) {
-    int n;
     switch (*p) {
-      case 'a': sb_puts(out, hours > 11 ? "pm" : "am"); break;
-      case 'A': sb_puts(out, hours > 11 ? "PM" : "AM"); break;
-      case 'd': n = sprintf(buf, "%02d", t->tm_mday); sb_bytes(out, buf, (size_t)n); break;
-      case 'D': sb_puts(out, DATE_DAYS_SHORT[t->tm_wday]); break;
-      case 'F': sb_puts(out, DATE_MONTHS_LONG[t->tm_mon]); break;
-      case 'g': n = sprintf(buf, "%d", hours > 12 ? hours - 12 : hours); sb_bytes(out, buf, (size_t)n); break;
-      case 'G': n = sprintf(buf, "%d", hours); sb_bytes(out, buf, (size_t)n); break;
-      case 'h': n = sprintf(buf, "%02d", hours > 12 ? hours - 12 : hours); sb_bytes(out, buf, (size_t)n); break;
-      case 'H': n = sprintf(buf, "%02d", hours); sb_bytes(out, buf, (size_t)n); break;
-      case 'i': n = sprintf(buf, "%02d", t->tm_min); sb_bytes(out, buf, (size_t)n); break;
-      case 'j': n = sprintf(buf, "%d", t->tm_mday); sb_bytes(out, buf, (size_t)n); break;
-      case 'l': sb_puts(out, DATE_DAYS_LONG[t->tm_wday]); break;
-      case 'L': sb_puts(out, date_is_leap(year) ? "1" : "0"); break;
-      case 'm': n = sprintf(buf, "%02d", t->tm_mon + 1); sb_bytes(out, buf, (size_t)n); break;
-      case 'M': sb_puts(out, DATE_MONTHS_SHORT[t->tm_mon]); break;
-      case 'n': n = sprintf(buf, "%d", t->tm_mon + 1); sb_bytes(out, buf, (size_t)n); break;
-      case 'S': sb_puts(out, DATE_SUFFIX[t->tm_mday - 1]); break;
-      case 's': n = sprintf(buf, "%02d", t->tm_sec); sb_bytes(out, buf, (size_t)n); break;
-      case 'U': n = sprintf(buf, "%lld", (long long)floor(ms / 1000.0 + 0.5)); sb_bytes(out, buf, (size_t)n); break;
-      case 'w': n = sprintf(buf, "%d", t->tm_wday); sb_bytes(out, buf, (size_t)n); break;
-      case 'Y': n = sprintf(buf, "%d", year); sb_bytes(out, buf, (size_t)n); break;
-      case 'y': n = sprintf(buf, "%02d", year % 100); sb_bytes(out, buf, (size_t)n); break;
-      default: sb_bytes(out, p, 1); break;
+      case 'a': n += put_str(o + n, hours > 11 ? "pm" : "am"); break;
+      case 'A': n += put_str(o + n, hours > 11 ? "PM" : "AM"); break;
+      case 'd': n += put_num(o + n, t->tm_mday, 2); break;
+      case 'D': n += put_str(o + n, DATE_DAYS_SHORT[t->tm_wday]); break;
+      case 'F': n += put_str(o + n, DATE_MONTHS_LONG[t->tm_mon]); break;
+      case 'g': n += put_num(o + n, hours > 12 ? hours - 12 : hours, 0); break;
+      case 'G': n += put_num(o + n, hours, 0); break;
+      case 'h': n += put_num(o + n, hours > 12 ? hours - 12 : hours, 2); break;
+      case 'H': n += put_num(o + n, hours, 2); break;
+      case 'i': n += put_num(o + n, t->tm_min, 2); break;
+      case 'j': n += put_num(o + n, t->tm_mday, 0); break;
+      case 'l': n += put_str(o + n, DATE_DAYS_LONG[t->tm_wday]); break;
+      case 'L': n += put_str(o + n, date_is_leap(year) ? "1" : "0"); break;
+      case 'm': n += put_num(o + n, t->tm_mon + 1, 2); break;
+      case 'M': n += put_str(o + n, DATE_MONTHS_SHORT[t->tm_mon]); break;
+      case 'n': n += put_num(o + n, t->tm_mon + 1, 0); break;
+      case 'S': n += put_str(o + n, DATE_SUFFIX[t->tm_mday - 1]); break;
+      case 's': n += put_num(o + n, t->tm_sec, 2); break;
+      case 'U': n += put_num(o + n, (int)floor(ms / 1000.0 + 0.5), 0); break;
+      case 'w': n += put_num(o + n, t->tm_wday, 0); break;
+      case 'Y': n += put_num(o + n, year, 0); break;
+      case 'y': n += put_num(o + n, year % 100, 2); break;
+      default: o[n++] = *p; break;
     }
   }
+  return n;
 }
 
 static uint32_t date_tofte_run(void) {
@@ -9047,104 +9089,94 @@ static uint32_t date_tofte_run(void) {
   uint32_t hash = 0x1a2b3c4d;
   for (int i = 0; i < 500; i++) {
     struct tm t;
-    SB shortf = {0, 0, 0}, longf = {0, 0, 0};
+    char shortf[DATE_BUF], longf[DATE_BUF];
+    size_t ns, nl;
     date_fields(ms, &t);
-    tofte_format(&t, ms, "Y-m-d", &shortf);
-    tofte_format(&t, ms, "l, F d, Y g:i:s A", &longf);
+    ns = tofte_format(&t, ms, "Y-m-d", shortf);
+    nl = tofte_format(&t, ms, "l, F d, Y g:i:s A", longf);
     ms += 84266956;
-    hash ^= char_code(&shortf, 6) | (char_code(&shortf, 8) << 8);
-    hash ^= (char_code(&longf, 10) << 16) | (char_code(&longf, 11) << 24);
-    sb_free(&shortf);
-    sb_free(&longf);
+    hash ^= (ns > 6 ? (uint32_t)(unsigned char)shortf[6] : 0) | ((ns > 8 ? (uint32_t)(unsigned char)shortf[8] : 0) << 8);
+    hash ^= ((nl > 10 ? (uint32_t)(unsigned char)longf[10] : 0) << 16) |
+            ((nl > 11 ? (uint32_t)(unsigned char)longf[11] : 0) << 24);
   }
   return hash;
 }
 
-/* date-format-xparb: dateFormat() compiles each format once (the JS eval()s it
- * into a function) and then runs the compiled pieces. */
+/* date-format-xparb: dateFormat() compiles each format once and then runs the
+ * compiled pieces. Literal characters are copied; each code writes its field. */
 typedef struct { char code; char lit; } FmtTok;
-typedef struct { char key[32]; FmtTok toks[32]; int ntoks; } CompiledFmt;
-static CompiledFmt fmt_cache[8];
-static int fmt_cache_n;
+typedef struct { FmtTok toks[32]; int ntoks; } CompiledFmt;
 
-static CompiledFmt *xp_compile(const char *format) {
-  CompiledFmt *f;
-  for (int i = 0; i < fmt_cache_n; i++)
-    if (strcmp(fmt_cache[i].key, format) == 0) return &fmt_cache[i];
-  f = &fmt_cache[fmt_cache_n++];
-  strncpy(f->key, format, sizeof f->key - 1);
-  f->key[sizeof f->key - 1] = 0;
+static CompiledFmt xp_fmt_short, xp_fmt_long;
+
+static void xp_compile(const char *format, CompiledFmt *f) {
   f->ntoks = 0;
   for (const char *p = format; *p; p++) {
     FmtTok tk;
-    tk.code = 0;
+    tk.code = strchr("dDjlSwFmMnYyaAgGhHisLt", *p) ? *p : 0;
     tk.lit = *p;
-    if (strchr("dDjlSwFmMnYyaAgGhHisLt", *p) && *p) tk.code = *p;
     f->toks[f->ntoks++] = tk;
   }
-  return f;
 }
 
-static void xp_format(const struct tm *t, const CompiledFmt *f, SB *out) {
-  char buf[32];
-  int year = t->tm_year + 1900, hours = t->tm_hour, n;
+static size_t xp_format(const struct tm *t, const CompiledFmt *f, char *o) {
+  int year = t->tm_year + 1900, hours = t->tm_hour;
+  size_t n = 0;
   for (int i = 0; i < f->ntoks; i++) {
     const FmtTok *tk = &f->toks[i];
     if (!tk->code) {
-      sb_bytes(out, &tk->lit, 1);
+      o[n++] = tk->lit;
       continue;
     }
     switch (tk->code) {
-      case 'd': n = sprintf(buf, "%02d", t->tm_mday); break;
-      case 'D': n = sprintf(buf, "%.3s", DATE_DAYS_LONG[t->tm_wday]); break;
-      case 'j': n = sprintf(buf, "%d", t->tm_mday); break;
-      case 'l': n = sprintf(buf, "%s", DATE_DAYS_LONG[t->tm_wday]); break;
-      case 'S': {
-        int d = t->tm_mday;
-        const char *suf = (d == 1 || d == 21 || d == 31) ? "st" : (d == 2 || d == 22) ? "nd"
-                        : (d == 3 || d == 23) ? "rd" : "th";
-        n = sprintf(buf, "%s", suf);
-        break;
-      }
-      case 'w': n = sprintf(buf, "%d", t->tm_wday); break;
-      case 'F': n = sprintf(buf, "%s", DATE_MONTHS_LONG[t->tm_mon]); break;
-      case 'm': n = sprintf(buf, "%02d", t->tm_mon + 1); break;
-      case 'M': n = sprintf(buf, "%.3s", DATE_MONTHS_LONG[t->tm_mon]); break;
-      case 'n': n = sprintf(buf, "%d", t->tm_mon + 1); break;
-      case 't': n = sprintf(buf, "%d", DATE_DAYS_IN_MONTH[t->tm_mon] + (t->tm_mon == 1 && date_is_leap(year))); break;
-      case 'L': n = sprintf(buf, "%d", date_is_leap(year) ? 1 : 0); break;
-      case 'Y': n = sprintf(buf, "%d", year); break;
-      case 'y': n = sprintf(buf, "%02d", year % 100); break;
-      case 'a': n = sprintf(buf, "%s", hours < 12 ? "am" : "pm"); break;
-      case 'A': n = sprintf(buf, "%s", hours < 12 ? "AM" : "PM"); break;
-      case 'g': n = sprintf(buf, "%d", (hours % 12) ? hours % 12 : 12); break;
-      case 'G': n = sprintf(buf, "%d", hours); break;
-      case 'h': n = sprintf(buf, "%02d", (hours % 12) ? hours % 12 : 12); break;
-      case 'H': n = sprintf(buf, "%02d", hours); break;
-      case 'i': n = sprintf(buf, "%02d", t->tm_min); break;
-      case 's': n = sprintf(buf, "%02d", t->tm_sec); break;
-      default: n = 0; break;
+      case 'd': n += put_num(o + n, t->tm_mday, 2); break;
+      case 'D': n += put_str(o + n, DATE_DAYS_SHORT[t->tm_wday]); break;
+      case 'j': n += put_num(o + n, t->tm_mday, 0); break;
+      case 'l': n += put_str(o + n, DATE_DAYS_LONG[t->tm_wday]); break;
+      case 'S': n += put_str(o + n, DATE_SUFFIX[t->tm_mday - 1]); break;
+      case 'w': n += put_num(o + n, t->tm_wday, 0); break;
+      case 'F': n += put_str(o + n, DATE_MONTHS_LONG[t->tm_mon]); break;
+      case 'm': n += put_num(o + n, t->tm_mon + 1, 2); break;
+      case 'M': n += put_str(o + n, DATE_MONTHS_SHORT[t->tm_mon]); break;
+      case 'n': n += put_num(o + n, t->tm_mon + 1, 0); break;
+      case 't': n += put_num(o + n, DATE_DAYS_IN_MONTH[t->tm_mon] + (t->tm_mon == 1 && date_is_leap(year)), 0); break;
+      case 'L': n += put_num(o + n, date_is_leap(year) ? 1 : 0, 0); break;
+      case 'Y': n += put_num(o + n, year, 0); break;
+      case 'y': n += put_num(o + n, year % 100, 2); break;
+      case 'a': n += put_str(o + n, hours < 12 ? "am" : "pm"); break;
+      case 'A': n += put_str(o + n, hours < 12 ? "AM" : "PM"); break;
+      case 'g': n += put_num(o + n, (hours % 12) ? hours % 12 : 12, 0); break;
+      case 'G': n += put_num(o + n, hours, 0); break;
+      case 'h': n += put_num(o + n, (hours % 12) ? hours % 12 : 12, 2); break;
+      case 'H': n += put_num(o + n, hours, 2); break;
+      case 'i': n += put_num(o + n, t->tm_min, 2); break;
+      case 's': n += put_num(o + n, t->tm_sec, 2); break;
+      default: break;
     }
-    sb_bytes(out, buf, (size_t)n);
   }
+  return n;
 }
 
 static uint32_t date_xparb_run(void) {
   int64_t ms = date_start_ms();
   uint32_t hash = 0x1a2b3c4d;
-  static const char fshort[] = "Y-m-d";
-  static const char flong[] = "l, F d, Y g:i:s A";
+  static int compiled;
+  if (!compiled) {
+    xp_compile("Y-m-d", &xp_fmt_short);
+    xp_compile("l, F d, Y g:i:s A", &xp_fmt_long);
+    compiled = 1;
+  }
   for (int i = 0; i < 4000; i++) {
     struct tm t;
-    SB shortf = {0, 0, 0}, longf = {0, 0, 0};
+    char shortf[DATE_BUF], longf[DATE_BUF];
+    size_t ns, nl;
     date_fields(ms, &t);
-    xp_format(&t, xp_compile(fshort), &shortf);
-    xp_format(&t, xp_compile(flong), &longf);
+    ns = xp_format(&t, &xp_fmt_short, shortf);
+    nl = xp_format(&t, &xp_fmt_long, longf);
     ms += 84266956;
-    hash ^= char_code(&shortf, 6) | (char_code(&shortf, 8) << 8);
-    hash ^= (char_code(&longf, 10) << 16) | (char_code(&longf, 11) << 24);
-    sb_free(&shortf);
-    sb_free(&longf);
+    hash ^= (ns > 6 ? (uint32_t)(unsigned char)shortf[6] : 0) | ((ns > 8 ? (uint32_t)(unsigned char)shortf[8] : 0) << 8);
+    hash ^= ((nl > 10 ? (uint32_t)(unsigned char)longf[10] : 0) << 16) |
+            ((nl > 11 ? (uint32_t)(unsigned char)longf[11] : 0) << 24);
   }
   return hash;
 }
@@ -9262,6 +9294,10 @@ static void run_n_body(void) {
 }
 
 /* ------------------------------------------------------------ regex-dna */
+/* The JS patterns are PCRE2 patterns as written (no escapes); they are compiled once,
+ * with PCRE2_CASELESS for the /i flag and PCRE2-JIT, before the timed loop, as V8 keeps
+ * the compiled code of a regex literal. Counting is JS match() with /g: successive
+ * non-overlapping matches. The header strip is replace(/>.*\n|\n/g, ""). */
 
 static const char *RD_PATTERNS[9] = {
     "agggtaaa|tttaccct",
@@ -9278,61 +9314,60 @@ static const char *RD_SUBST_LETTERS = "BDHKMNRSVWY";
 static const char *RD_SUBST[11] = {"(c|g|t)", "(a|g|t)", "(a|c|t)", "(g|t)", "(a|c)", "(a|c|g|t)",
                                    "(a|g)", "(c|t)", "(a|c|g)", "(a|t)", "(c|t)"};
 
-typedef struct { char set[9][4]; int n; } RdAlt;
-typedef struct { RdAlt alt[2]; } RdPat;
+static pcre2_code *rd_match_code[9];
+static pcre2_code *rd_strip_code;
+static pcre2_match_data *rd_md;
 
-static void rd_parse(const char *p, RdPat *out) {
-  RdAlt *cur = &out->alt[0];
-  cur->n = 0;
-  for (const char *s = p; *s;) {
-    if (*s == '|') {
-      cur = &out->alt[1];
-      cur->n = 0;
-      s++;
-    } else if (*s == '[') {
-      int k = 0;
-      s++;
-      while (*s != ']') cur->set[cur->n][k++] = *s++;
-      cur->set[cur->n][k] = 0;
-      cur->n++;
-      s++;
-    } else {
-      cur->set[cur->n][0] = *s;
-      cur->set[cur->n][1] = 0;
-      cur->n++;
-      s++;
+static void rd_compile(void) {
+  int err;
+  PCRE2_SIZE eoff;
+  for (int i = 0; i < 9; i++) {
+    rd_match_code[i] = pcre2_compile((PCRE2_SPTR)RD_PATTERNS[i], PCRE2_ZERO_TERMINATED,
+                                     PCRE2_CASELESS, &err, &eoff, NULL);
+    if (!rd_match_code[i] || pcre2_jit_compile(rd_match_code[i], PCRE2_JIT_COMPLETE) < 0) {
+      fprintf(stderr, "regex-dna: cannot compile %s\n", RD_PATTERNS[i]);
+      exit(1);
     }
   }
+  rd_strip_code = pcre2_compile((PCRE2_SPTR)">.*\\n|\\n", PCRE2_ZERO_TERMINATED, 0, &err, &eoff, NULL);
+  if (!rd_strip_code || pcre2_jit_compile(rd_strip_code, PCRE2_JIT_COMPLETE) < 0) {
+    fprintf(stderr, "regex-dna: cannot compile the header pattern\n");
+    exit(1);
+  }
+  rd_md = pcre2_match_data_create(4, NULL);
 }
 
-static int rd_in_set(const char *set, int c) {
-  for (const char *s = set; *s; s++)
-    if (*s == c) return 1;
-  return 0;
-}
-
-static int rd_match_alt(const RdAlt *a, const char *s, size_t n, size_t pos) {
-  if (pos + (size_t)a->n > n) return 0;
-  for (int k = 0; k < a->n; k++)
-    if (!rd_in_set(a->set[k], tolower((unsigned char)s[pos + k]))) return 0;
-  return 1;
-}
-
-/* Number of non-overlapping, case-insensitive matches (JS match with /ig). */
-static size_t rd_count(const RdPat *p, const char *s, size_t n) {
-  size_t count = 0, pos = 0;
+/* str.match(/re/ig).length: number of successive non-overlapping matches. */
+static size_t rd_count(pcre2_code *code, const char *s, size_t n) {
+  size_t count = 0;
+  PCRE2_SIZE pos = 0;
   while (pos < n) {
-    int hit = -1;
-    for (int a = 0; a < 2 && hit < 0; a++)
-      if (rd_match_alt(&p->alt[a], s, n, pos)) hit = a;
-    if (hit >= 0) {
-      count++;
-      pos += (size_t)p->alt[hit].n;
-    } else {
-      pos++;
-    }
+    int rc = pcre2_match(code, (PCRE2_SPTR)s, n, pos, 0, rd_md, NULL);
+    PCRE2_SIZE *ov;
+    if (rc < 0) break;
+    ov = pcre2_get_ovector_pointer(rd_md);
+    count++;
+    pos = ov[1] > ov[0] ? ov[1] : ov[0] + 1;
   }
   return count;
+}
+
+/* dnaInput.replace(/>.*\n|\n/g, ""): copies the kept text to out, returns its length. */
+static size_t rd_strip(const char *s, size_t n, char *out) {
+  size_t o = 0, kept = 0;
+  PCRE2_SIZE pos = 0;
+  while (pos < n) {
+    int rc = pcre2_match(rd_strip_code, (PCRE2_SPTR)s, n, pos, 0, rd_md, NULL);
+    PCRE2_SIZE *ov;
+    if (rc < 0) break;
+    ov = pcre2_get_ovector_pointer(rd_md);
+    memcpy(out + o, s + kept, ov[0] - kept);
+    o += ov[0] - kept;
+    kept = ov[1];
+    pos = ov[1];
+  }
+  memcpy(out + o, s + kept, n - kept);
+  return o + (n - kept);
 }
 
 /* String.replace(letter, text): first occurrence only, as in the JS. */
@@ -9354,30 +9389,16 @@ static void run_regex_dna(void) {
   size_t raw_len = RD_INPUT_LEN, tripled = raw_len * 3;
   char *raw = malloc(tripled + 1), *seq;
   size_t n = 0, cap;
-  RdPat pats[9];
   SB summary = {0, 0, 0};
   for (int k = 0; k < 3; k++) memcpy(raw + k * raw_len, RD_INPUT, raw_len);
-  /* dnaInput.replace(/>.*\n|\n/g, "") */
   seq = malloc(tripled + 1);
-  for (size_t i = 0; i < tripled;) {
-    if (raw[i] == '>') {
-      while (i < tripled && raw[i] != '\n') i++;
-      i++;
-    } else if (raw[i] == '\n') {
-      i++;
-    } else {
-      seq[n++] = raw[i++];
-    }
-  }
-  seq[n] = 0;
+  n = rd_strip(raw, tripled, seq);
   free(raw);
   cap = n + 1;
   seq = realloc(seq, cap);
   for (int i = 0; i < 9; i++) {
     char line[256];
-    int l;
-    rd_parse(RD_PATTERNS[i], &pats[i]);
-    l = snprintf(line, sizeof line, "%s %zu\n", RD_PATTERNS[i], rd_count(&pats[i], seq, n));
+    int l = snprintf(line, sizeof line, "%s %zu\n", RD_PATTERNS[i], rd_count(rd_match_code[i], seq, n));
     sb_bytes(&summary, line, (size_t)l);
   }
   for (int k = 0; k < 11; k++) rd_replace_first(&seq, &n, &cap, RD_SUBST_LETTERS[k], RD_SUBST[k]);
@@ -9395,26 +9416,50 @@ static void iter_regex_dna(void) {
 }
 
 /* ---------------------------------------------------------- string-unpack-code */
+/* The unpacker's dictionary maps each word that is the base-N encoding of an index c
+ * (c < count) to the keyword at index c (or to the word itself when the keyword list
+ * has no entry). A word is in the dictionary exactly when it decodes to such an index
+ * and re-encodes to itself, so the lookup decodes the word instead of building and
+ * searching a string table. */
 
-typedef struct { char *key; const char *val; size_t vlen; } DictEntry;
-
-static void unpack_encode(unsigned c, unsigned a, char *out) {
-  static const char digits36[] = "0123456789abcdefghijklmnopqrstuvwxyz";
-  char rev[32];
-  int nr = 0;
-  unsigned x = c;
-  for (;;) {
-    unsigned r = x % a;
-    rev[nr++] = (r > 35) ? (char)(r + 29) : digits36[r];
-    if (x < a) break;
-    x = x / a;
-  }
-  for (int i = 0; i < nr; i++) out[i] = rev[nr - 1 - i];
-  out[nr] = 0;
+static int is_word_char(unsigned char c) {
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
 
-static int dict_cmp(const void *a, const void *b) {
-  return strcmp(((const DictEntry *)a)->key, ((const DictEntry *)b)->key);
+/* Digit value of an encoding character: 0-9, a-z -> 0..35, A-Z -> 36..61. */
+static int unpack_digit(unsigned char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 36;
+  return -1;
+}
+
+/* Index c of the dictionary entry whose key is the word w, or -1 if w is not a key. */
+static long unpack_lookup(const char *w, size_t wl, unsigned base, unsigned count) {
+  unsigned long value = 0;
+  if (wl == 0 || (wl > 1 && w[0] == '0')) return -1; /* encodings have no leading zero */
+  for (size_t i = 0; i < wl; i++) {
+    int d = unpack_digit((unsigned char)w[i]);
+    if (d < 0 || (unsigned)d >= base) return -1;
+    value = value * base + (unsigned long)d;
+    if (value >= count) return -1;
+  }
+  return (long)value;
+}
+
+/* Splits the keyword list at '|' in place; kwv[c] is keyword c (may be empty). */
+static size_t unpack_keywords(char *kw, size_t klen, const char **kwv, size_t *kwlen) {
+  size_t nkw = 0, start = 0;
+  for (size_t i = 0; i <= klen; i++) {
+    if (i == klen || kw[i] == '|') {
+      kw[i] = 0;
+      kwv[nkw] = kw + start;
+      kwlen[nkw] = i - start;
+      nkw++;
+      start = i + 1;
+    }
+  }
+  return nkw;
 }
 
 /* p.replace(/\w+/g, d) in the packer's final pass: every word is looked up in
@@ -9422,60 +9467,56 @@ static int dict_cmp(const void *a, const void *b) {
  * a word that is not in d. Returns the length of the unpacked text. */
 static size_t unpack_run(const char *packed, size_t plen, unsigned base, unsigned count,
                          const char *keys, size_t klen) {
-  DictEntry *dict = malloc(sizeof *dict * count);
   char *kw = malloc(klen + 1);
   const char **kwv = malloc(sizeof *kwv * (klen + 1));
-  size_t nkw = 0, outlen = 0;
-  SB out = {0, 0, 0};
+  size_t *kwlen = malloc(sizeof *kwlen * (klen + 1));
+  size_t nkw, o = 0, cap = plen * 4 + 64, i = 0;
+  char *out = malloc(cap);
   memcpy(kw, keys, klen);
   kw[klen] = 0;
-  kwv[nkw++] = kw;
-  for (size_t i = 0; i < klen; i++)
-    if (kw[i] == '|') {
-      kw[i] = 0;
-      kwv[nkw++] = kw + i + 1;
-    }
-  for (unsigned c = 0; c < count; c++) {
-    char tmp[32];
-    unpack_encode(c, base, tmp);
-    dict[c].key = strdup(tmp);
-    if (c < nkw && kwv[c][0] != 0) {
-      dict[c].val = kwv[c];
-    } else {
-      dict[c].val = dict[c].key;
-    }
-    dict[c].vlen = strlen(dict[c].val);
-  }
-  qsort(dict, count, sizeof *dict, dict_cmp);
-  for (size_t i = 0; i < plen;) {
-    if (isalnum((unsigned char)packed[i]) || packed[i] == '_') {
-      size_t j = i;
-      while (j < plen && (isalnum((unsigned char)packed[j]) || packed[j] == '_')) j++;
-      size_t wl = j - i;
-      const DictEntry *hit = NULL;
-      if (wl < 16) {
-        char word[16];
-        DictEntry probe;
-        memcpy(word, packed + i, wl);
-        word[wl] = 0;
-        probe.key = word;
-        hit = bsearch(&probe, dict, count, sizeof *dict, dict_cmp);
+  nkw = unpack_keywords(kw, klen, kwv, kwlen);
+  while (i < plen) {
+    if (is_word_char((unsigned char)packed[i])) {
+      size_t j = i, wl;
+      long c;
+      while (j < plen && is_word_char((unsigned char)packed[j])) j++;
+      wl = j - i;
+      c = unpack_lookup(packed + i, wl, base, count);
+      if (c >= 0) {
+        const char *val = packed + i;
+        size_t vl = wl;
+        if ((size_t)c < nkw && kwlen[c] != 0) {
+          val = kwv[c];
+          vl = kwlen[c];
+        }
+        if (o + vl + 10 > cap) {
+          cap = (o + vl + 10) * 2;
+          out = realloc(out, cap);
+        }
+        memcpy(out + o, val, vl);
+        o += vl;
+      } else {
+        if (o + 10 > cap) {
+          cap = (o + 10) * 2;
+          out = realloc(out, cap);
+        }
+        memcpy(out + o, "undefined", 9);
+        o += 9;
       }
-      if (hit) sb_bytes(&out, hit->val, hit->vlen);
-      else sb_puts(&out, "undefined");
       i = j;
     } else {
-      sb_bytes(&out, packed + i, 1);
-      i++;
+      if (o + 2 > cap) {
+        cap = (o + 2) * 2;
+        out = realloc(out, cap);
+      }
+      out[o++] = packed[i++];
     }
   }
-  outlen = out.len;
-  sb_free(&out);
-  for (unsigned c = 0; c < count; c++) free(dict[c].key);
-  free(dict);
+  free(out);
   free(kw);
   free(kwv);
-  return outlen;
+  free(kwlen);
+  return o;
 }
 
 static void run_string_unpack_code(void) {
@@ -9491,6 +9532,10 @@ static void run_string_unpack_code(void) {
 }
 
 /* ------------------------------------------------------------------- tagcloud */
+/* The JSON text is parsed in one pass; every unescaped string is written into one
+ * arena per run (each tag is NUL-terminated inside it), and the cloud is written
+ * straight into one output buffer. The popularity values and the colour are
+ * formatted with js_num_to_str, which is JS Number::toString. */
 
 typedef struct { char *tag; size_t taglen; double popularity; } TagInfo;
 
@@ -9505,51 +9550,58 @@ static int json_hex(char c) {
   return 0;
 }
 
-/* Parses a JSON string at *pp into out (NUL-terminated). */
-static int json_string(const char **pp, SB *out) {
+/* Parses the JSON string at *pp, writing its value (NUL-terminated) to dst.
+ * Returns the value's length, or -1 if the string is not terminated. */
+static long json_string(const char **pp, char *dst) {
   const char *p = *pp;
-  if (*p != '"') return 0;
+  size_t n = 0;
+  if (*p != '"') return -1;
   p++;
   while (*p && *p != '"') {
     if (*p == '\\') {
       p++;
       switch (*p) {
-        case 'n': sb_bytes(out, "\n", 1); break;
-        case 't': sb_bytes(out, "\t", 1); break;
-        case 'r': sb_bytes(out, "\r", 1); break;
-        case 'b': sb_bytes(out, "\b", 1); break;
-        case 'f': sb_bytes(out, "\f", 1); break;
+        case 'n': dst[n++] = '\n'; break;
+        case 't': dst[n++] = '\t'; break;
+        case 'r': dst[n++] = '\r'; break;
+        case 'b': dst[n++] = '\b'; break;
+        case 'f': dst[n++] = '\f'; break;
         case 'u': {
           unsigned v = 0;
           for (int k = 1; k <= 4; k++) v = v * 16 + (unsigned)json_hex(p[k]);
-          {
-            char c = v < 128 ? (char)v : '?';
-            sb_bytes(out, &c, 1);
-          }
+          dst[n++] = v < 128 ? (char)v : '?';
           p += 4;
           break;
         }
-        default: sb_bytes(out, p, 1); break;
+        default: dst[n++] = *p; break;
       }
       p++;
     } else {
-      sb_bytes(out, p, 1);
-      p++;
+      /* copy the run of plain characters in one step */
+      const char *q = p;
+      while (*q && *q != '"' && *q != '\\') q++;
+      memcpy(dst + n, p, (size_t)(q - p));
+      n += (size_t)(q - p);
+      p = q;
     }
   }
-  if (*p != '"') return 0;
+  if (*p != '"') return -1;
+  dst[n] = '\0';
   *pp = p + 1;
-  if (!out->p) sb_bytes(out, "", 0);
-  return 1;
+  return (long)n;
 }
 
-/* JSON.parse with the benchmark's reviver: "popularity" becomes log2(value). */
-static size_t tag_parse(const char *json, TagInfo **out_arr) {
+/* JSON.parse with the benchmark's reviver: "popularity" becomes log2(value).
+ * The tag strings are written to *arena_out (one allocation for the whole run). */
+static size_t tag_parse(const char *json, TagInfo **out_arr, char **arena_out) {
   double log2v = log(2.0);
-  size_t cap = 1024, n = 0;
+  size_t cap = 1024, n = 0, used = 0;
   TagInfo *arr = malloc(cap * sizeof *arr);
+  char *arena = malloc(strlen(json) + 1);
+  char key[64];
   const char *p = json;
   json_ws(&p);
+  *arena_out = arena;
   if (*p != '[') {
     *out_arr = arr;
     return 0;
@@ -9563,32 +9615,33 @@ static size_t tag_parse(const char *json, TagInfo **out_arr) {
     p++;
     memset(&ti, 0, sizeof ti);
     for (;;) {
-      SB key = {0, 0, 0};
+      long klen;
       json_ws(&p);
       if (*p == '}') {
         p++;
         break;
       }
-      if (!json_string(&p, &key)) break;
+      klen = json_string(&p, key);
+      if (klen < 0) break;
       json_ws(&p);
       if (*p == ':') p++;
       json_ws(&p);
       if (*p == '"') {
-        SB val = {0, 0, 0};
-        json_string(&p, &val);
-        if (strcmp(key.p, "tag") == 0) {
-          ti.tag = val.p;
-          ti.taglen = val.len;
+        if (strcmp(key, "tag") == 0) {
+          long vlen = json_string(&p, arena + used);
+          ti.tag = arena + used;
+          ti.taglen = (size_t)vlen;
+          used += (size_t)vlen + 1;
         } else {
-          sb_free(&val);
+          /* other string values are not used: parse them into free arena space */
+          (void)json_string(&p, arena + used);
         }
       } else {
         char *end;
         double v = strtod(p, &end);
         p = end;
-        if (strcmp(key.p, "popularity") == 0) ti.popularity = log(v) / log2v;
+        if (strcmp(key, "popularity") == 0) ti.popularity = log(v) / log2v;
       }
-      sb_free(&key);
       json_ws(&p);
       if (*p == ',') p++;
     }
@@ -9626,12 +9679,10 @@ static void tag_cloud(TagInfo *arr, size_t n, SB *out) {
   sb_puts(out, "<div class=\"tagCloud\" style=\"width: 100%\">");
   for (size_t i = 0; i < n; i++) {
     const TagInfo *t = ptrs[i];
-    int validates = 1;
-    SB url = {0, 0, 0}, color = {0, 0, 0};
-    int removed = 0;
     char num[64];
-    size_t nl;
-    for (size_t k = 0; k < t->taglen; k++) {
+    size_t nl, k;
+    int removed = 0, validates = 1;
+    for (k = 0; k < t->taglen; k++) {
       unsigned char ch = (unsigned char)t->tag[k];
       if (ch < 0x20 || ch >= 0x7f) {
         validates = 0;
@@ -9639,46 +9690,41 @@ static void tag_cloud(TagInfo *arr, size_t n, SB *out) {
       }
     }
     if (!validates) continue;
-    sb_puts(&url, "http://example.com/tag/");
-    for (size_t k = 0; k < t->taglen; k++) {
+    /* url: the tag in lower case with its first space removed */
+    sb_puts(out, " <a href=\"http://example.com/tag/");
+    for (k = 0; k < t->taglen; k++) {
       char ch = t->tag[k];
       if (!removed && ch == ' ') {
         removed = 1;
         continue;
       }
       ch = (char)tolower((unsigned char)ch);
-      sb_bytes(&url, &ch, 1);
+      sb_bytes(out, &ch, 1);
     }
-    sb_puts(&color, "rgb(");
-    nl = js_num_to_str(floor(255 * (t->popularity - 12) / 20), num);
-    sb_bytes(&color, num, nl);
-    sb_puts(&color, ", 0, 255)");
-    sb_puts(out, " <a href=\"");
-    sb_bytes(out, url.p, url.len);
     sb_puts(out, "\" style=\"font-size: ");
     sb_num(out, t->popularity);
-    sb_puts(out, "px; color: ");
-    sb_bytes(out, color.p, color.len);
-    sb_puts(out, "\">");
+    sb_puts(out, "px; color: rgb(");
+    nl = js_num_to_str(floor(255 * (t->popularity - 12) / 20), num);
+    sb_bytes(out, num, nl);
+    sb_puts(out, ", 0, 255)\">");
     sb_bytes(out, t->tag, t->taglen);
     sb_puts(out, "</a> \n");
-    sb_free(&url);
-    sb_free(&color);
   }
   sb_puts(out, "</div>");
-  (void)strchr(out->p, ' ');  /* output.replace(" ", "&nbsp;") result is unused */
   free(ptrs);
   free(tmp);
 }
 
 static void run_tagcloud(void) {
   TagInfo *arr = NULL;
-  size_t n = tag_parse(TAGCLOUD_JSON, &arr);
+  char *arena = NULL;
+  size_t n = tag_parse(TAGCLOUD_JSON, &arr, &arena);
   SB cloud = {0, 0, 0};
+  sb_reserve(&cloud, 320 * 1024);
   tag_cloud(arr, n, &cloud);
   if (cloud.len < 315000) fail("tagcloud", "output shorter than expected");
   sink += (double)cloud.len;
-  for (size_t i = 0; i < n; i++) free(arr[i].tag);
+  free(arena);
   free(arr);
   sb_free(&cloud);
 }
@@ -9713,6 +9759,7 @@ int main(void) {
       {"string-unpack-code", iter_string_unpack},
       {"tagcloud", iter_tagcloud},
   };
+  rd_compile(); /* regex literals are compiled before the timed loop */
   double total = 0;
   for (size_t t = 0; t < sizeof tests / sizeof tests[0]; t++) {
     int before = failures;

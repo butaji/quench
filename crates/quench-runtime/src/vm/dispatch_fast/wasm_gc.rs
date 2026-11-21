@@ -5,7 +5,7 @@ use super::super::dispatch_wasm::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_r
 use super::super::wasm_gc::GcFieldIndex;
 use super::super::wasm_gc::stage::HeapStage;
 use crate::staged::wasm_gc::{Aggregate, GcStep, array_copy, array_fill, array_length, field_read, field_write, non_null};
-use crate::wasm::gc::{GcField, GcFieldAccess};
+use crate::wasm::gc::{GcField, GcFieldAccess, static_offset};
 use crate::staged::wasm_call::Call;
 
 /// The running program's signature pool, cached on the lane for the program it was found for
@@ -79,10 +79,10 @@ fn lane_gc_field<H: Host>(
     match operands.value {
         Some(value) => {
             let bits = if operands.raw { value.to_bits() } else { stage.vm.wasm_stored_bits(operands.field, value) };
-            field_write(&mut stage, aggregate, reference, index, operands.field, bits).ok().map(|()| None)
+            field_write(&mut stage, aggregate, reference, index, operands.field, bits, operands.offset).ok().map(|()| None)
         }
         None => {
-            let word = field_read(&mut stage, aggregate, reference, index, operands.field, operands.access).ok()?;
+            let word = field_read(&mut stage, aggregate, reference, index, operands.field, operands.access, operands.offset).ok()?;
             Some(Some(if operands.raw { Value::from_bits(word) } else { stage.vm.wasm_field_value(operands.field, operands.access, word) }))
         }
     }
@@ -205,7 +205,8 @@ lane_handler! {
         };
         let reference = r.get(i.b).to_bits();
         let mut stage = HeapStage { vm };
-        let Ok(word) = field_read(&mut stage, aggregate, reference, u64::from(index), field, GcFieldAccess::Read) else {
+        let offset = if ARRAY { None } else { static_offset(i.c) };
+        let Ok(word) = field_read(&mut stage, aggregate, reference, u64::from(index), field, GcFieldAccess::Read, offset) else {
             return exit(ip);
         };
         r.set(i.a, if RAW { Value::from_bits(word) } else { stage.vm.wasm_field_value(field, GcFieldAccess::Read, word) });

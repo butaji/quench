@@ -29,63 +29,82 @@ pub(crate) fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Wor
     stage.and_imm(bits, u64::from(u32::MAX))
 }
 
-/// The word operations a tag test is written in. A `Stage` answers them with its own word and
-/// condition (the blanket impl below), and a `MachineScalar` answers them through `MachineTags`
-/// with machine words for both, so each predicate has one body for every tier.
-pub(crate) trait TagWords {
+/// The immediate operations a tag test is written in. A `Stage` is one (its words and conditions);
+/// a `MachineScalar` is one through `MachineTags`, whose comparisons are 0-or-1 flag words. Each tag
+/// test is written once over this, so a layout change is one definition for every stage and machine.
+pub(crate) trait TagOps {
     type Word: Copy;
+    /// A comparison's result: a condition at a stage, a flag word at a machine.
     type Flag: Copy;
-    /// `a` masked by `mask`.
-    fn and_mask(&mut self, a: Self::Word, mask: u64) -> Self::Word;
-    /// `a` shifted right by `shift` bits, unsigned.
-    fn shift_field(&mut self, a: Self::Word, shift: u32) -> Self::Word;
-    /// `a` plus `imm`, wrapping.
-    fn add_const(&mut self, a: Self::Word, imm: u64) -> Self::Word;
-    /// Whether `a` is `imm`.
-    fn equals(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
-    /// Whether `a` exceeds `imm`, both unsigned.
-    fn exceeds(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
+    fn and_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
+    fn shr_imm(&mut self, a: Self::Word, shift: u64) -> Self::Word;
+    fn add_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
+    fn eq_imm(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
+    fn ugt_imm(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
 }
 
-impl<S: Stage> TagWords for S {
+/// Every stage is a `TagOps` through its own immediate operations: a `u64` operand converts to the
+/// stage's `Imm` (`From<u64>`), so the stage receives the same constant it received before.
+impl<S: Stage> TagOps for S {
     type Word = S::Word;
     type Flag = S::Cond;
     #[inline(always)]
-    fn and_mask(&mut self, a: S::Word, mask: u64) -> S::Word { self.and_imm(a, mask) }
+    fn and_imm(&mut self, a: S::Word, imm: u64) -> S::Word {
+        Stage::and_imm(self, a, imm)
+    }
     #[inline(always)]
-    fn shift_field(&mut self, a: S::Word, shift: u32) -> S::Word { self.shr_imm(a, shift) }
+    fn shr_imm(&mut self, a: S::Word, shift: u64) -> S::Word {
+        Stage::shr_imm(self, a, shift)
+    }
     #[inline(always)]
-    fn add_const(&mut self, a: S::Word, imm: u64) -> S::Word { self.add_imm(a, imm) }
+    fn add_imm(&mut self, a: S::Word, imm: u64) -> S::Word {
+        Stage::add_imm(self, a, imm)
+    }
     #[inline(always)]
-    fn equals(&mut self, a: S::Word, imm: u64) -> S::Cond { self.eq_imm(a, imm) }
+    fn eq_imm(&mut self, a: S::Word, imm: u64) -> S::Cond {
+        Stage::eq_imm(self, a, imm)
+    }
     #[inline(always)]
-    fn exceeds(&mut self, a: S::Word, imm: u64) -> S::Cond { self.ugt_imm(a, imm) }
+    fn ugt_imm(&mut self, a: S::Word, imm: u64) -> S::Cond {
+        Stage::ugt_imm(self, a, imm)
+    }
 }
 
-/// A `MachineScalar` read as `TagWords`: its own words, with flags as words.
-pub(crate) struct MachineTags<'a, M>(pub(crate) &'a mut M);
+/// A `MachineScalar` read as a `TagOps`: its words are its words, and a comparison is its flag word.
+/// The immediate is the `i64` with the same bits as the `u64` operand.
+struct MachineTags<'a, M>(&'a mut M);
 
-impl<M: MachineScalar> TagWords for MachineTags<'_, M> {
+impl<M: MachineScalar> TagOps for MachineTags<'_, M> {
     type Word = M::Word;
     type Flag = M::Word;
     #[inline(always)]
-    fn and_mask(&mut self, a: M::Word, mask: u64) -> M::Word { self.0.raw_binary_imm(Binary::And, a, mask as i64) }
+    fn and_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
+        self.0.raw_binary_imm(Binary::And, a, imm as i64)
+    }
     #[inline(always)]
-    fn shift_field(&mut self, a: M::Word, shift: u32) -> M::Word { self.0.raw_binary_imm(Binary::ShiftRightUnsigned, a, i64::from(shift)) }
+    fn shr_imm(&mut self, a: M::Word, shift: u64) -> M::Word {
+        self.0.raw_binary_imm(Binary::ShiftRightUnsigned, a, shift as i64)
+    }
     #[inline(always)]
-    fn add_const(&mut self, a: M::Word, imm: u64) -> M::Word { self.0.raw_binary_imm(Binary::Add, a, imm as i64) }
+    fn add_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
+        self.0.raw_binary_imm(Binary::Add, a, imm as i64)
+    }
     #[inline(always)]
-    fn equals(&mut self, a: M::Word, imm: u64) -> M::Word { self.0.raw_compare_imm(Relation::Equal, a, imm as i64) }
+    fn eq_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
+        self.0.raw_compare_imm(Relation::Equal, a, imm as i64)
+    }
     #[inline(always)]
-    fn exceeds(&mut self, a: M::Word, imm: u64) -> M::Word { self.0.raw_compare_imm(Relation::UnsignedGreater, a, imm as i64) }
+    fn ugt_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
+        self.0.raw_compare_imm(Relation::UnsignedGreater, a, imm as i64)
+    }
 }
 
 /// Whether `bits` is an int32 (`Value::as_int`); an int32 has one tagged form, so two
-/// distinct int-tagged words are two distinct values.
+/// distinct int-tagged words are two distinct values. At a machine it is a flag word.
 #[inline(always)]
-pub(crate) fn is_int<T: TagWords>(words: &mut T, bits: T::Word) -> T::Flag {
-    let tag = words.and_mask(bits, ValueLayout::TAG_MASK);
-    words.equals(tag, ValueLayout::INT_TAG)
+pub(crate) fn is_int<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
+    let tag = ops.and_imm(bits, ValueLayout::TAG_MASK);
+    ops.eq_imm(tag, ValueLayout::INT_TAG)
 }
 
 /// Whether `bits` is a heap reference (`Value::is_heap`).
@@ -113,8 +132,8 @@ pub(crate) mod language {
 /// The language bits (`language`) a word's tag alone sets: a Number (an int32 or a double), a Boolean,
 /// `null`, `undefined`, a direct object family record (`OBJECT`, and `OBJECT_PLAIN` for a plain one), a
 /// direct array (`ARRAY`, with the `OBJECT` bit, as the family test the object family makes), a direct
-/// function (`FUNCTION`), a direct string (`STRING`, every string's word: `Heap::is_string`). A heap value
-/// no tag decides (a symbol, a BigInt) sets none.
+/// function (`FUNCTION`), a direct string (`STRING`, the exact family test `is_direct_string` makes). A heap value
+/// no tag decides (a rope or heap string, a symbol, a BigInt) sets none.
 #[inline(always)]
 pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     let plain = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
@@ -132,8 +151,8 @@ pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     let number = stage.any(int, double);
     let unflagged = stage.and_imm(bits, !(crate::Value::TRUE.to_bits() ^ crate::Value::FALSE.to_bits()));
     let boolean = stage.eq_imm(unflagged, crate::Value::FALSE.to_bits());
-    let null = is_null(stage, bits);
-    let undefined = is_undefined(stage, bits);
+    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+    let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
     let classes = [(number, language::NUMBER), (boolean, language::BOOLEAN), (null, language::NULL), (undefined, language::UNDEFINED),
         (object, language::OBJECT), (plain, language::OBJECT_PLAIN), (array, language::ARRAY), (function, language::FUNCTION),
         (string, language::STRING)];
@@ -208,12 +227,13 @@ pub(crate) fn is_direct_function<S: Stage>(stage: &mut S, bits: S::Word) -> S::C
     family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG)
 }
 
-/// Whether `bits` is a binary64 Number: past the span of the tag fields the immediates use.
+/// Whether `bits` is a binary64 Number: past the span of the tag fields the immediates use. At a
+/// machine it is a flag word.
 #[inline(always)]
-pub(crate) fn is_double<T: TagWords>(words: &mut T, bits: T::Word) -> T::Flag {
-    let field = words.shift_field(bits, ValueLayout::TAG_SHIFT);
-    let offset = words.add_const(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
-    words.exceeds(offset, ValueLayout::TAG_FIELD_SPAN)
+pub(crate) fn is_double<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
+    let field = ops.shr_imm(bits, u64::from(ValueLayout::TAG_SHIFT));
+    let offset = ops.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
+    ops.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
 }
 
 /// The states `tagged_truthiness` sorts a word into: undecided by the word, falsy, or truthy.

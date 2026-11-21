@@ -1,6 +1,7 @@
 // jetstream-row: bigint-noble-ed25519
 // jetstream-files: bigint/web-crypto-sham.js bigint/noble-ed25519-bundle.js bigint/noble-benchmark.js
 // iterations: 30
+// jetstream-driver: class=Async deterministic=true
 /* C analogue of JetStream's bigint/noble-benchmark.js with noble-ed25519 v1 (bundle). One iteration
  * runs the same sequence of operations as runNobleBenchmark: precompute of the base-point window table
  * (rebuilt each iteration, as the JS _setWindowSize deletes the cache), 30 getPublicKey with the

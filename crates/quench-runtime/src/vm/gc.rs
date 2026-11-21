@@ -423,7 +423,7 @@ impl<H: Host> Vm<H> {
 
     /// A stop-the-world collection, full or minor.
     fn collect_inner(&mut self, _program: &ResidualProgram, full: bool) {
-        // Frameless activations' registers are no roots; their frames are.
+        // A deferred lane activation's registers are no roots; its frame is.
         self.materialize_deferred_lane();
         // The active for-in names words a collection may move or free.
         self.for_in_forget_active();

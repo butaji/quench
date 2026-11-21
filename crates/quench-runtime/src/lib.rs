@@ -173,9 +173,10 @@ pub use vm::{
 pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};
 
-/// Ordinary builds and producers support dynamic compilation and execution.
-/// Execution-only native support requires linked code and archived records.
-pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = true;
+/// Ordinary builds and producers (with the JIT) support dynamic compilation and execution.
+/// Execution-only native support (a static AOT image's, built without the JIT) requires
+/// linked code and archived records.
+pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(feature = "jit");
 
 /// Whether this build requires linked native code and archived program facts.
 pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;

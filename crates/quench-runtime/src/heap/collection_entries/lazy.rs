@@ -31,6 +31,7 @@ impl<T: CollectionEntry> Entries<T> {
 impl<T: SharedEmpty> Deref for Entries<T> {
     type Target = CollectionEntries<T>;
 
+    #[inline(always)]
     fn deref(&self) -> &CollectionEntries<T> {
         match &self.0 {
             Some(entries) => entries,

@@ -31,4 +31,4 @@ pub use shared_run::EntryGoal;
 static GLOBAL_ALLOCATOR: quench_alloc::QuenchAlloc = quench_alloc::QuenchAlloc::new();
 
 #[cfg(feature = "native-execution")]
-pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = false;
+pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY;

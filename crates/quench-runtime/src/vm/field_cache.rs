@@ -131,6 +131,12 @@ impl<H: Host> Vm<H> {
         if let Some(iterator) = self.heap.iterator(value) {
             return self.shape_answers(&iterator.object, class, ReceiverKind::Exotic);
         }
+        // A Map's or Set's entries are no named properties: its shape answers every name but its
+        // virtual `size`, as a cell's does (`shape_property_lookup_cell`). Without this arm a
+        // collection record's reads (`m.get`, `s.has`) were never cached.
+        if value.direct_collection_index().is_some() {
+            return self.shape_answers(self.heap.object(value)?, class, ReceiverKind::Exotic);
+        }
         // A promise's internal slots change no object operation, as for its cell form below.
         if let Some(promise) = self.heap.promise(value) {
             return self.shape_answers(&promise.object, class, ReceiverKind::Ordinary);

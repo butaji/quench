@@ -135,6 +135,9 @@ fusion_recipes! {
             if first.result_register() != second.register_a() { return None; }
             let sink = (second.atom_index(), second.cache_site_index());
             match first.field_lookup()? {
+                // A nested read sinks only where the lane's sinking row answers it; measured on richards, most
+                // sinks took the general read and store (`row_get_field_sink`), so the pair stays two rows.
+                crate::bytecode::FieldLookup::Site(_) if !SINK_NESTED_READS => return None,
                 crate::bytecode::FieldLookup::Site(index) => {
                     let site = fields.get_mut(index)?;
                     if site.sink.is_some() { return None; }
@@ -149,6 +152,9 @@ fusion_recipes! {
             Some(first)
         };
 }
+
+/// Whether `GetSetThis` fuses a nested read (`FieldLookup::Site`) with its store.
+const SINK_NESTED_READS: bool = false;
 
 pub(super) fn apply(
     function: &mut BcFunction,

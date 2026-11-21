@@ -167,12 +167,7 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
-    #[inline(always)]
-    fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
-    #[inline(always)]
-    fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
-    #[inline(always)]
-    fn and(&mut self, a: u64, b: u64) -> u64 { a & b }
+    crate::staged::word_ops::word_stage_ops!();
     #[inline(always)]
     fn shr(&mut self, a: u64, b: u64) -> u64 { a.wrapping_shr(b as u32) }
     #[inline(always)]
@@ -185,18 +180,12 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn or_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a | imm.into() }
     #[inline(always)]
-    fn shr_imm(&mut self, a: u64, shift: impl Into<u64>) -> u64 { a >> shift.into() }
-    #[inline(always)]
-    #[inline(always)]
-    fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
     #[inline(always)]
     fn eq_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a == imm.into() }
     #[inline(always)]
     fn ne_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a != imm.into() }
     #[inline(always)]
     fn ugt_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a > imm.into() }
-    #[inline(always)]
-    fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
     #[inline(always)]
     fn eq(&mut self, a: u64, b: u64) -> bool { a == b }
     /// A plain Rust loop: a stencil holds no call, and the body runs on the state until it says the loop ends.
@@ -220,10 +209,6 @@ impl Stage for StencilStage {
         unsafe { core::hint::assert_unchecked(a <= u64::from(u32::MAX)) };
         a
     }
-    #[inline(always)]
-    fn sub(&mut self, a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
-    #[inline(always)]
-    fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
     #[inline(always)]
     fn store_u32(&mut self, _at: Access, base: u64, offset: i32, value: u64) {
         // SAFETY: a staged operation stores only into a live record or backing at a layout offset.
@@ -304,16 +289,6 @@ impl Stage for StencilStage {
     fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
         let _ = (operator, passed, constant);
         (unsupported!(UNSUPPORTED_number_operator), false)
-    }
-    #[inline(always)]
-    fn not(&mut self, cond: bool) -> bool { !cond }
-    #[inline(always)]
-    fn any(&mut self, a: bool, b: bool) -> bool { a | b }
-    #[inline(always)]
-    fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
-    #[inline(always)]
-    fn number_truthy(&mut self, bits: u64) -> bool {
-        crate::vm::operations::number_truthiness(&mut crate::vm::operations::NumberF64Stage, f64::from_bits(bits))
     }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, _shapes: &[u32]) -> bool {

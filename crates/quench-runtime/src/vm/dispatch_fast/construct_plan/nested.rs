@@ -18,6 +18,10 @@ pub(in super::super) struct NestedField {
     pub(in super::super) root: Value,
     pub(in super::super) held: [Value; NESTED_CHAIN],
     pub(in super::super) depth: u8,
+    /// Whether the field takes a fresh object of `constructor`; else it takes `constructor`
+    /// itself, the value its chain read (`NestedConstruct::constructs`), which the plan keeps
+    /// as the field's constant.
+    pub(in super::super) constructs: bool,
 }
 
 impl NestedField {
@@ -50,20 +54,25 @@ pub(in super::super) fn nested_construction<H: Host>(vm: &mut Vm<H>, constructor
 /// The value `construct` gives its field, built from the constructor its capture and chain
 /// name, read through data properties, with the field the plan then holds for it. `env` is the
 /// initializer's closure environment.
-fn nested_construct_in_lane<H: Host>(vm: &mut Vm<H>, env: Value, construct: &NestedConstruct) -> Option<(Value, NestedField)> {
+pub(in super::super) fn nested_construct_in_lane<H: Host>(vm: &mut Vm<H>, env: Value, construct: &NestedConstruct) -> Option<(Value, NestedField)> {
     let root = capture_value(vm, env, construct.capture)?;
     let mut held = [Value::UNDEFINED; NESTED_CHAIN];
     let mut constructor = root;
     for (slot, atom) in held.iter_mut().zip(&construct.chain[..usize::from(construct.depth)]) {
         *slot = constructor;
-        constructor = vm.plain_named_get(constructor, *atom)?;
+        // A read the plan keeps is of own data properties, whose slots its watch holds.
+        constructor = if construct.constructs { vm.plain_named_get(constructor, *atom) } else { vm.plain_own_data(constructor, *atom) }?;
+    }
+    let field = NestedField { field: 0, constructor, arguments: [Value::UNDEFINED; NESTED_ARGUMENTS], env, capture: construct.capture, root, held, depth: construct.depth, constructs: construct.constructs };
+    if !construct.constructs {
+        return Some((constructor, field));
     }
     let mut arguments = [Value::UNDEFINED; NESTED_ARGUMENTS];
     for (argument, constant) in arguments.iter_mut().zip(&construct.arguments[..usize::from(construct.count)]) {
         *argument = constant.value(|index| vm.active_constant(index))?;
     }
     let built = nested_construction(vm, constructor, &arguments)?;
-    Some((built, NestedField { field: 0, constructor, arguments, env, capture: construct.capture, root, held, depth: construct.depth }))
+    Some((built, NestedField { arguments, ..field }))
 }
 
 /// The forwarded initializer's adds on `this`, which a construction completes in the lane when
@@ -95,10 +104,14 @@ pub(in super::super) fn finish_forwarded_in_lane<H: Host>(
 }
 
 impl ConstructPlan {
-    /// This plan extended by a field `nested` gives a fresh object, `None` once it names all
-    /// it can or already has such a field.
+    /// This plan extended by a field `nested` gives a fresh object, or the value its chain
+    /// read as a constant, `None` once it names all it can or already has such a field.
     pub(in super::super) fn with_nested(mut self, nested: NestedField) -> Option<Self> {
         (self.nested.is_none() && usize::from(self.fields) < CONSTRUCT_PLAN_FIELDS).then_some(())?;
+        if !nested.constructs {
+            self.constant |= 1 << self.fields;
+            self.fallbacks[usize::from(self.fields)] = nested.constructor;
+        }
         self.nested = Some(NestedField { field: self.fields, ..nested });
         self.fields += 1;
         Some(self)

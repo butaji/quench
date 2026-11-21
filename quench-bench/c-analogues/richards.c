@@ -1,6 +1,7 @@
 // jetstream-row: richards
 // jetstream-files: Octane/richards.js
 // iterations: 120
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream's Octane/richards.js: the same objects, links, dynamic dispatch
  * through task function pointers and heap allocation per run, so a JS engine's native
  * code is compared with what a C programmer writes for the same program. */

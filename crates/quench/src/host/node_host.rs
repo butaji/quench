@@ -60,6 +60,9 @@ pub struct NodeHost {
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
     /// The kind of startup snapshot this host builds, ending `initialize` at its point.
     pub(crate) building_snapshot: Option<crate::host::startup_snapshot::SnapshotKind>,
+    /// Builtins a snapshot under construction loads beyond its kind's: an AOT image's
+    /// snapshot keeps the builtins its program graph names, built at compile time.
+    pub(crate) snapshot_builtins: Vec<String>,
     /// Each referrer's resolved import specifiers (`NodeHost::import_location`).
     pub(crate) resolved_imports: rustc_hash::FxHashMap<
         Box<str>,
@@ -499,6 +502,7 @@ impl NodeHost {
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
             building_snapshot: None,
+            snapshot_builtins: Vec::new(),
         }
     }
 

@@ -1,5 +1,5 @@
 use super::*;
-use quench_bjit::Reloc;
+use quench_bjit::{EXIT_STUB_LEN, Reloc};
 
 /// The machine code of a bare return on the host architecture.
 #[cfg(target_arch = "x86_64")]
