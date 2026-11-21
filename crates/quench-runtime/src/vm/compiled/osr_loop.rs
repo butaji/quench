@@ -2258,6 +2258,11 @@ fn admit(
         _ if exits_before_effects(instruction) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
+        // A dense int switch's slot is an int32 the region computes (`jumps::int_case_index`): the
+        // register is defined in the loop, so it takes no entry role, and every read of it is the
+        // branch table's (also admitted here, as a jump).
+        opcode if crate::staged::selects_int_case(opcode) => {}
+        opcode if crate::staged::branch_table(opcode) => {}
         opcode if crate::staged::returns(opcode) || crate::staged::jumps(opcode) => {}
         _ if comparison_jump(instruction) => {
             if let Some(branch) = identity_branch(instruction, constants) {

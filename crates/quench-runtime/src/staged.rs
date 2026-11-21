@@ -1090,6 +1090,11 @@ pub(crate) const fn awaits(op: Op) -> bool { matches!(op, Op::Await) }
 pub(crate) const fn constructs(op: Op) -> bool { matches!(op, Op::Construct) }
 /// Selects a case by a string (`StringCaseIndex`).
 pub(crate) const fn selects_string_case(op: Op) -> bool { matches!(op, Op::StringCaseIndex) }
+/// Selects a case of a dense int switch (`IntCaseIndex`), whose slot the `WasmBranchTable` after it
+/// reads as an int32.
+pub(crate) const fn selects_int_case(op: Op) -> bool { matches!(op, Op::IntCaseIndex) }
+/// A branch table (`WasmBranchTable`): the jump a dense int switch or a Wasm `br_table` takes.
+pub(crate) const fn branch_table(op: Op) -> bool { matches!(op, Op::WasmBranchTable) }
 /// Stores an environment slot (`StoreEnvLocal`).
 pub(crate) const fn writes_environment_slot(op: Op) -> bool { matches!(op, Op::StoreEnvLocal) }
 /// Checks an iterator result object (`RequireIteratorResult`).

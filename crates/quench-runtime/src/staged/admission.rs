@@ -56,8 +56,11 @@ impl Op {
     /// A conditional jump on two values is further bounded by its operator
     /// (`osr_loop::lowered_natively`).
     pub(crate) const fn lowers_in_loop(self) -> bool {
+        // A dense int switch is a case slot and the branch table that selects it: `lane_region`'s
+        // `int_case_index`/`branch_table` lower both, so a loop that dispatches compiles.
         self.defines_loop_result() || self.is_truthiness_jump() || matches!(self, Op::StoreCapture
-            | Op::RequireObjectCoercible | Op::SetIndex | Op::DefineArrayElement | Op::Return | Op::Jump)
+            | Op::RequireObjectCoercible | Op::SetIndex | Op::DefineArrayElement | Op::Return | Op::Jump
+            | Op::IntCaseIndex | Op::WasmBranchTable)
     }
 
     /// An instruction whose result may hold any boxed value: an allocation, a copy, or a read of
@@ -133,7 +136,7 @@ mod tests {
         let defining: &[Class] = &[LoadConst, Move, LoadCapture, Binary, NumericAdd, NumericMultiply, IncDec, Unary,
             ToNumeric, GetIndex, GetField, LoadEnvLocal, LoadName];
         let lowered: &[Class] = &[StoreCapture, RequireObjectCoercible, SetIndex, DefineArrayElement, Return, Jump,
-            JumpFalse, JumpTrue];
+            JumpFalse, JumpTrue, IntCaseIndex, WasmBranchTable];
         let reading: &[Class] = &[Move, IncDec, Unary, ToNumeric, Binary, NumericAdd, NumericMultiply,
             JumpBinaryFalse, JumpFalse, JumpTrue, GetIndex, SetIndex];
         let boxed: &[Class] = &[GetIndex, GetField, Move, LoadCapture, LoadEnvLocal, LoadName];
