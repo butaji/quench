@@ -11524,8 +11524,10 @@ script_handler! {
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program() == vm.active_program {
                 // Under a pending construction no cached target admits a call
-                // (`LaneStack::set_refused`): the call leaves the lane, as it would.
-                if vm.lane_stack.refuses() {
+                // (`LaneStack::set_refused`): the call leaves the lane, as it would. Nor in a run that
+                // makes no script calls (`NO_SCRIPT_CALLS`), whose admission no target carries: the
+                // miss would resolve the target again forever (zlib-wasm, tsf-wasm under `--no-jit`).
+                if vm.lane_stack.refuses() || !vm.lane_stack.script_calls_allowed() {
                     return exit(ip);
                 }
                 sibling!(script_call_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
@@ -19054,6 +19056,9 @@ fn derive_lane_view<'live>(
     let mut fused = lane_frame::fuse_chains(&mut records, &decoded, live().map(|masks| &**masks), function.handlers.is_empty());
     fuse_target_backedges(&mut records, loop_tier);
     fused.extend(lane_frame::fuse_rows(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
+    if let Some(kinds) = int_kinds.as_ref() {
+        prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating);
+    }
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
@@ -19627,6 +19632,54 @@ fn pair_target_form<const A: u16, const B: u16, const PREFIX: u16, const TEST: u
 const fn inc_dec_test_row<const CMP: u8>() -> Handler {
     lane_frame::fused_rows::<{ crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, false, { crate::staged::FUSED_TARGET },
         { crate::bytecode::Op::JumpBinaryFalse as u16 }, { crate::staged::NO_LINK }, CMP> as Handler
+}
+
+/// The `(IncDec, Jump)` back edges whose step and test the registers' int32 kinds prove
+/// (`int_kinds`): `i++` in place of a register of an int32 kind, then a fixed register-register
+/// comparison whose left operand is that register. Each takes its `PROVEN_STEP` form, which reads
+/// the counter with no tag test and gives the test its new value as held; one over a speculative
+/// counter is listed in `speculating` with its checked form (`LaneView::retire_int_speculation`).
+fn prove_loop_steps(decoded: &[WideInstruction], records: &mut [LaneInstruction], kinds: &int_kinds::IntKinds,
+    speculating: &mut Vec<(u32, *const (), *const ())>) {
+    macro_rules! proven_row {
+        ($($code:literal),*) => {
+            |code: u8| -> Option<(Handler, Handler)> {
+                match code {
+                    $($code => Some((inc_dec_test_row::<$code>(), inc_dec_test_row::<{ $code | lane_frame::PROVEN_STEP }>())),)*
+                    _ => None,
+                }
+            }
+        };
+    }
+    // The register-register comparisons' codes (`target_comparison`: odd codes; even ones name a constant).
+    let row_of = proven_row!(1, 3, 5, 7, 9, 11);
+    let record = std::mem::size_of::<LaneInstruction>() as isize;
+    for head in 0..records.len().saturating_sub(1) {
+        let Some(code) = (1..=12u8).step_by(2).find(|&code| row_of(code).is_some_and(|(checked, _)| records[head].handler == checked as *const ())) else {
+            continue;
+        };
+        let Some((checked, proven)) = row_of(code) else { continue };
+        let step = decoded[head];
+        if step.op() != Op::IncDec || step.numeric_local_target().is_some() || step.boolean_flag() != Some(false)
+            || step.result_flags() != 0 || step.result_register() != step.register_b() {
+            continue;
+        }
+        let counter = step.register_b();
+        let kind = kinds.of(counter);
+        if kind == int_kinds::Kind::Tagged {
+            continue;
+        }
+        let jump = head + 1;
+        let Ok(target) = usize::try_from(jump as isize + records[jump].jump() / record) else { continue };
+        let Some(&test) = decoded.get(target) else { continue };
+        if test.op() != Op::JumpBinaryFalse || Operand(records[target].b).register_index() != Some(counter) {
+            continue;
+        }
+        if kind == int_kinds::Kind::Speculative {
+            speculating.push((head as u32, proven as *const (), checked as *const ()));
+        }
+        records[head].handler = proven as *const ();
+    }
 }
 
 /// `handler`, a back edge's `FUSED_TARGET` record, with its test's comparison fixed where it is the

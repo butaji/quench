@@ -2752,12 +2752,20 @@ macro_rules! target_prefix_row {
 /// edge. A miss takes the missing row's own miss at its record, as a fused record's miss does. Every path returns.
 /// `$cx`, `$r`, `$ip` and `$carried` are the handler's own names; `$prefix`, `$copy` and `$test` are its const params.
 macro_rules! target_run {
+    (@held none) => { None };
+    (@held $held:ident) => { Some($held) };
     ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => {
         target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, 0)
     };
     // `$cmp`, where not 0, is the test's comparison and operand form fixed at install
     // (`target_comparison`): the arm runs that test alone, with no switch on the record's operator.
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr) => {{
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr) => {
+        target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, $cmp, none)
+    };
+    // `$held`, where given, is the int32 the test's left register holds, which the run just wrote
+    // (`PROVEN_STEP`): the test reads it as its record's immediate, the left operand taken for a
+    // constant, with no load or tag test. Given only with a fixed register-register comparison.
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr, $held:tt) => {{
         // SAFETY: the view records the distance to a validated jump target.
         let target: crate::vm::dispatch_fast::Ip = unsafe { $ip.byte_offset((*$ip).jump()) };
         if script_fuel_out($cx) {
@@ -2785,14 +2793,20 @@ macro_rules! target_run {
                 }
             }
             let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
+            let held: Option<u64> = target_run!(@held $held);
             let decoded = match ($comparison, row_decode!($test, { FLAG_UNREAD }, fields)) {
-                (Some(comparison), Some(Operation::CompareJump { left, right, negate, .. })) =>
-                    Some(Operation::CompareJump { comparison, left, right, negate }),
+                (Some(comparison), Some(Operation::CompareJump { left, right, negate, .. })) => {
+                    let left = if held.is_some() { Operand::constant(0).unwrap_or(left) } else { left };
+                    Some(Operation::CompareJump { comparison, left, right, negate })
+                }
                 (_, decoded) => decoded,
             };
             let Some(operation) = decoded else { sibling!(general_step_in_lane, $r, at, carried) };
             let mut stage = Concrete::new(std::ptr::null());
             let mut frame = row_frame::<$test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
+            if let Some(word) = held {
+                frame.reads = frame.reads.with_immediate(Value::integer(word as u32 as i32));
+            }
             match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(LaneControl::Edge(Edge::Target)) => {
                     // SAFETY: as the read of `test_i` above.
@@ -2855,6 +2869,10 @@ const TARGET_COMPARISONS: [u32; 6] = {
 
 /// The operator and operand form (`true`: a register and a constant; `false`: two registers) of the
 /// fixed comparison code `code` (1 to 12, `target_comparison`).
+/// The bit of a target run's comparison code (`target_comparison`) that marks a proven loop step
+/// (`fused_rows`' `PROVEN_STEP`, `prove_loop_steps`).
+pub(in crate::vm::dispatch_fast) const PROVEN_STEP: u8 = 0x40;
+
 pub(in crate::vm::dispatch_fast) const fn target_comparison_of(code: u8) -> (u32, bool) {
     // Code 0 (no fixed comparison) is evaluated too where its arm is not taken: it reads the first.
     let index = code.saturating_sub(1) as usize;
