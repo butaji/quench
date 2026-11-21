@@ -155,7 +155,9 @@ impl LaneView {
         };
         let verdict = Verdict::of(median(BODY), median(INTERPRETER), self.tiers.lane_body.audit_margin_permille);
         self.tier().body_stats.audit.set(Some(verdict));
-        if !verdict.retire {
+        // A loop region that calls it would leave to run it in the lane, a crossing the interpreter's
+        // epochs do not time (`called_by_regions`): its body stays.
+        if !verdict.retire || self.called_by_regions() {
             return;
         }
         // SAFETY: as `lane_body`; the verdict runs between runs, at an entry's count.
@@ -181,7 +183,7 @@ impl LaneView {
 pub(in crate::vm) struct Verdict {
     body_nanos: u64,
     interpreter_nanos: u64,
-    retire: bool,
+    pub(in crate::vm) retire: bool,
 }
 
 impl Verdict {

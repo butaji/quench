@@ -1044,6 +1044,8 @@ impl Vm {
         duration: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // Runs without observing the global `Intl`, so its group may still be lazy.
+        self.ensure_intl_intrinsics(p)?;
         let constructor = self
             .realm
             .intrinsics

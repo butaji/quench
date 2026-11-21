@@ -25,6 +25,8 @@ pub(super) struct LaneBodyHistory {
     short: bool,
     /// Whether a caller's compile asked for its body (`LaneView::demand_body`).
     demanded: bool,
+    /// Whether a loop region called it while it had no body (`LaneView::note_native_caller`).
+    region_called: bool,
     /// The timed runs of its current body and of the interpreter (`audit`).
     audit: audit::Audit,
     /// The planned IR instructions of its body where that body compiled quick
@@ -271,6 +273,9 @@ impl LaneView {
         history.lifetimes <= self.tiers.lane_body.max_lifetimes
     }
 
+    /// Whether a loop region called it while it had no body (`note_native_caller`).
+    pub(in crate::vm) fn called_by_regions(&self) -> bool { self.tier().history.get().region_called }
+
     /// Whether a body compiled a call of this function (`note_caller`): native callers want its
     /// body whatever its length, which only the lane's own entries ask to amortize.
     pub(in crate::vm) fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
@@ -287,6 +292,38 @@ impl LaneView {
             self.reclaim_for_tier();
         }
         self.warming()
+    }
+
+    /// Its tier state and history, for `QUENCH_TRACE=body-leave`.
+    pub(in crate::vm) fn tier_note(&self) -> String {
+        let h = self.tier().history.get();
+        // SAFETY: as `lane_body`; read only.
+        let state = match unsafe { &*self.tier().tier_lane.get() } {
+            LaneBody::Unspecialized { entries, .. } => format!("unspecialized:{entries}"),
+            LaneBody::Compiling { .. } => "compiling".into(),
+            LaneBody::Specialized { .. } => "specialized".into(),
+            LaneBody::Declined => "declined".into(),
+            #[allow(unreachable_patterns)]
+            _ => "other".into(),
+        };
+        format!("{state} short={} unpaid={} demanded={} lifetimes={} declined={:?} audit={}", h.short, h.unpaid, h.demanded, h.lifetimes, self.tier().body_stats.declined.get(), self.tier().body_stats.audit.get().is_some_and(|verdict| verdict.retire))
+    }
+
+    /// Native code (a loop region or a body) called this function, which has no body to enter: the
+    /// call left that code to run it in the lane, a crossing per call that only its body removes.
+    /// Such a caller wants its body whatever its length or entries, as a compiled caller does
+    /// (`called_by_bodies`).
+    /// A body declined before such a call (unpaid or short) warms again, once: the flag bounds it.
+    pub(in crate::vm) fn note_native_caller(&self) {
+        let history = self.tier().history.get();
+        if history.region_called { return; }
+        self.tier().history.set(LaneBodyHistory { demanded: true, region_called: true, ..history });
+        // SAFETY: as `demand_body`; the lane runs no body of this view here (it has none).
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
+        if (history.short || history.unpaid) && matches!(body, LaneBody::Declined) {
+            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
+            self.reclaim_for_tier();
+        }
     }
 
     /// Records that `caller`'s body compiled a call of this function, by its entry or through

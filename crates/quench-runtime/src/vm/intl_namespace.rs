@@ -133,6 +133,19 @@ impl Vm {
         self.install_intl_intrinsics(program, global, object_prototype).map(|_| ())
     }
 
+    /// `ensure_intl_intrinsics` for `realm`'s group, run with `realm` as the active realm, so a
+    /// lazy group materializes in the realm that owns it.
+    pub(super) fn ensure_realm_intl_intrinsics(
+        &mut self,
+        program: &ResidualProgram,
+        realm: Value,
+    ) -> Result<(), JsError> {
+        let previous = self.switch_realm_global(realm);
+        let result = self.ensure_intl_intrinsics(program);
+        self.switch_realm_global(previous);
+        result
+    }
+
     pub(super) fn install_intl_namespace_for_realm(
         &mut self,
         _program: &ResidualProgram,
@@ -570,10 +583,15 @@ impl Vm {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
+        // The realm's Intl group may still be lazy, in which case its prototypes do not exist
+        // yet: build them in that realm before reading the table, since the table has no entry
+        // for it until then.
+        self.ensure_realm_intl_intrinsics(p, realm)?;
+        let fallback = self.realm_object_prototype(realm);
         let prototypes = self
             .intl_constructor_prototypes(constructor)
             .ok_or_else(|| JsError("invalid Intl constructor prototype request".into()))?;
-        Ok(prototypes.get(&realm).copied().unwrap_or(self.object_proto))
+        Ok(prototypes.get(&realm).copied().unwrap_or(fallback))
     }
 
     pub(super) fn intl_constructor_prototypes(
