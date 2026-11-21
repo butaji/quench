@@ -259,6 +259,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .regexp_intrinsics
             .insert(realm, RegExpIntrinsics::new(constructor, prototype));
+        self.realm.intrinsics.builtin_prototypes.insert((realm, Native::RegExp), prototype);
         self.set_builtin_function_name(constructor, "RegExp")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();

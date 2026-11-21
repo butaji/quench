@@ -783,8 +783,12 @@ struct ParkedRealm {
 /// (`Vm::realm_prototype_field`).
 /// One `typeof` name per `bytecode::TYPEOF_NAMES` entry, indexed as `typeof_name_index` classifies values.
 const TYPEOF_NAMES: usize = crate::bytecode::TYPEOF_NAMES.len();
-const REALM_FOLLOWING_PROTOTYPES: [Native; 5] =
-    [Native::Object, Native::Function, Native::Array, Native::String, Native::Promise];
+/// Map, Set and RegExp follow too: their in-place paths and fuses test a receiver's prototype
+/// against these fields, so a benchmark run in a fresh context realm missed every one.
+const REALM_FOLLOWING_PROTOTYPES: [Native; 8] = [
+    Native::Object, Native::Function, Native::Array, Native::String, Native::Promise,
+    Native::Map, Native::Set, Native::RegExp,
+];
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
@@ -2709,6 +2713,9 @@ impl<H: Host> Vm<H> {
             Native::Array => &mut self.array_proto,
             Native::String => &mut self.string_proto,
             Native::Promise => &mut self.promise_proto,
+            Native::Map => &mut self.map_proto,
+            Native::Set => &mut self.set_proto,
+            Native::RegExp => &mut self.regexp_proto,
             _ => unreachable!("only these prototypes follow the active realm"),
         }
     }
