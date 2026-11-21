@@ -77,10 +77,10 @@ pub(crate) fn unit_words<S: Stage>(stage: &mut S, record: S::Word, short: S::Con
     let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
     let shared_units = stage.add_imm(pointer, form::shared_units_offset());
     let buffer = stage.select(prefix, shared_units, record);
-    let prefix_units = stage.load_u64(Region::HeapMeta.mutable(), buffer, crate::staged::string_form::APPEND_UNITS_OFFSET);
+    let prefix_units = stage.load_u64(Region::HeapMeta.mutable(), buffer, form::APPEND_UNITS_OFFSET);
     let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
     let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
-    let prefix_length = stage.load_u32(Region::HeapMeta.mutable(), record, crate::staged::string_form::PREFIX_LENGTH_OFFSET);
+    let prefix_length = stage.load_u32(Region::HeapMeta.mutable(), record, form::PREFIX_LENGTH_OFFSET);
     let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
     let long_units = stage.select(prefix, prefix_units, shared_units);
     let long_length = stage.select(prefix, prefix_length, shared_length);
@@ -118,7 +118,7 @@ pub(crate) fn string_length<S: Stage>(stage: &mut S, record_base: S::Word, value
     // form selects.
     let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
     let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
-    let prefix_length = stage.load_u32(Region::HeapMeta.mutable(), record, crate::staged::string_form::PREFIX_LENGTH_OFFSET);
+    let prefix_length = stage.load_u32(Region::HeapMeta.mutable(), record, form::PREFIX_LENGTH_OFFSET);
     let long_length = stage.select(prefix, prefix_length, shared_length);
     let length = stage.select(short, short_length, long_length);
     length_value(stage, length, miss)
