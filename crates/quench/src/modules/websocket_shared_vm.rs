@@ -2,13 +2,14 @@
 //! upgrade, its frames, the close handshake and the `open`, `message`, `error` and `close`
 //! events.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use crate::modules::host_members::{captured, current, function, members};
 use crate::modules::message_event_shared_vm::{self as events, Event};
 use crate::modules::webstreams_shared_vm::{self as web, arg, get, is_nullish, is_undefined, literal, num, put, put_num, record};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Member, "webSocket", [
@@ -127,7 +128,7 @@ fn accessor(c: &mut Context<'_>, holder: RootId, name: &str, getter: RootId, set
 
 /// The class over `EventTarget`, built once.
 pub(crate) fn class(c: &mut Context<'_>) -> Outcome {
-    if let Some(class) = c.host_mut().shared_state().borrow().builtin_cache.get(CLASS).copied() {
+    if let Some(class) = c.node().shared_state().borrow().builtin_cache.get(CLASS).copied() {
         return Ok(class);
     }
     let class = c.with_startup_intrinsics(|c| {
@@ -174,7 +175,7 @@ pub(crate) fn class(c: &mut Context<'_>) -> Outcome {
         Ok(constructor)
     })?;
     let retained = c.retain(class)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(CLASS.to_owned(), retained);
+    c.node().shared_state().borrow_mut().builtin_cache.insert(CLASS.to_owned(), retained);
     Ok(class)
 }
 

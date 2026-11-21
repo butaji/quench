@@ -1,7 +1,8 @@
 //! Native async-hook subscriptions and snapshots across nested hook emission.
 
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 
 #[derive(Clone, Copy)]
@@ -77,9 +78,9 @@ impl Registry {
     }
 }
 
-pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn initialize(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     if let Some(api) = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .async_hooks
@@ -96,7 +97,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
     let fatal_error_key = context.string_rooted("fatalError");
     context.define_data_property_rooted(api, fatal_error_key, fatal_error, true, false, true)?;
     let operations = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .event_targets_api
@@ -125,7 +126,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
     context.assign_named_property_rooted(api, "defaultResource", resource)?;
     let retained = context.retain(api)?;
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .async_hooks
@@ -135,7 +136,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
 }
 
 fn key(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     api: RootId,
     kind: HookKind,
 ) -> Result<RootId, RootedError> {
@@ -144,7 +145,7 @@ fn key(
 }
 
 pub(crate) fn initialize_hook(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -202,21 +203,21 @@ pub(crate) fn initialize_hook(
 }
 
 pub(crate) fn enable(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     transition(context, args, true)
 }
 pub(crate) fn disable(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     transition(context, args, false)
 }
 fn transition(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     args: &[RootId],
     enable: bool,
 ) -> Result<RootId, RootedError> {
@@ -240,7 +241,7 @@ fn transition(
     let tracks_promises = !context.truthy_rooted(no_promise)?;
     let method = get(context, api, if enable { "add" } else { "delete" })?;
     context.call_rooted(method, hooks, &[hook])?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let mut state = state.borrow_mut();
     let registry = &mut state.async_hooks.registry;
     let previous_total = registry.total();
@@ -260,11 +261,11 @@ fn transition(
 }
 
 pub(super) fn runtime_has_hooks(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<ErasedHost>,
     kind: HookKind,
 ) -> bool {
     runtime
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .async_hooks
@@ -274,7 +275,7 @@ pub(super) fn runtime_has_hooks(
 }
 
 pub(super) fn emit_runtime(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<ErasedHost>,
     kind: HookKind,
     id: u64,
 ) -> Result<(), RootedError> {
@@ -294,7 +295,7 @@ pub(super) fn emit_runtime(
 }
 
 pub(crate) fn dispatch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -311,9 +312,9 @@ pub(crate) fn dispatch(
     Ok(context.undefined())
 }
 
-pub(super) fn has_hooks(context: &mut NativeContext<'_, NodeHost>, kind: HookKind) -> bool {
+pub(super) fn has_hooks(context: &mut NativeContext<'_, ErasedHost>, kind: HookKind) -> bool {
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .async_hooks
@@ -323,9 +324,9 @@ pub(super) fn has_hooks(context: &mut NativeContext<'_, NodeHost>, kind: HookKin
 }
 
 /// Node's `enabledHooksExist()`: whether any async hook is enabled.
-pub(crate) fn hooks_exist(context: &mut NativeContext<'_, NodeHost>) -> Result<bool, RootedError> {
+pub(crate) fn hooks_exist(context: &mut NativeContext<'_, ErasedHost>) -> Result<bool, RootedError> {
     let (api, snapshot) = {
-        let state = context.host_mut().shared_state();
+        let state = context.node().shared_state();
         let state = state.borrow();
         let registry = &state.async_hooks.registry;
         (registry.api, registry.snapshot)
@@ -348,7 +349,7 @@ pub(crate) fn hooks_exist(context: &mut NativeContext<'_, NodeHost>) -> Result<b
 }
 
 pub(crate) fn enabled(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -357,14 +358,14 @@ pub(crate) fn enabled(
 }
 
 pub(super) fn emit(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     kind: HookKind,
     args: &[RootId],
 ) -> Result<(), RootedError> {
     if !has_hooks(context, kind) {
         return Ok(());
     }
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let (api, snapshot, nested) = {
         let state = state.borrow();
         let registry = &state.async_hooks.registry;
@@ -458,7 +459,7 @@ impl Registry {
 /// A hook callback's error ends the process: its stack (or `Error: <value>`) goes to stderr
 /// through `process._rawDebug`, then `process.exit(1)`.
 pub(crate) fn fatal_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

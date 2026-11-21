@@ -1,6 +1,7 @@
 //! Direct idle-transport measurements; setup is outside timing. Linear TOD-123 owns
 //! commands, input/precondition contracts and interpretation.
 
+use crate::host::NodeAccess;
 extern crate test;
 
 use crate::host::NodeHost;
@@ -13,7 +14,7 @@ const BATCH_POLLS: usize = 64;
 #[bench]
 fn primitive_empty_transport_poll_batch(b: &mut Bencher) {
     let mut runtime = Runtime::new(NodeHost::new(Vec::new()));
-    let shared = runtime.host_mut().shared_state();
+    let shared = runtime.node().shared_state();
     let program = Engine::specialize("", "empty-transport-primitive").unwrap();
     b.iter(|| {
         for _ in 0..BATCH_POLLS {

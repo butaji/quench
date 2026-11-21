@@ -1,12 +1,13 @@
 //! Native UTF-8 operations used by Node's encoding algorithms.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 use crate::modules::util_shared_vm::named_get as get;
 use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0binding:encoding";
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(value);
     }

@@ -1,5 +1,6 @@
 //! Shared filesystem-event lifecycle over Linux inotify and Darwin transports.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{
     BuiltinBrand, HostWeakRoot, NativeContext, RootId, RootedError, Runtime, Value,
 };
@@ -85,7 +86,7 @@ impl Default for State {
 
 use crate::modules::util_shared_vm::named_get as get;
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -94,15 +95,15 @@ fn set(
     context.define_data_property_rooted(object, key, value, true, true, true)?;
     Ok(())
 }
-fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn nullish(context: &NativeContext<'_, ErasedHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 
 /// The watch API (`facade::watch_api`), built when `fs` first needs it.
-fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    if let Some(api) = context.host_mut().shared_state().borrow().fs_watch.api {
+fn api(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+    if let Some(api) = context.node().shared_state().borrow().fs_watch.api {
         return Ok(api);
     }
     let api = facade::watch_api(context)?;
@@ -115,7 +116,7 @@ fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError>
     let api = context.retain(api)?;
     let dispatch = context.host_function(crate::host::shared_vm::operation!("fsWatchDispatch"))?;
     let dispatch = context.retain(dispatch)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let mut state = state.borrow_mut();
     state.fs_watch.api = Some(api);
     state.fs_watch.dispatch = Some(dispatch);
@@ -123,13 +124,13 @@ fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError>
 }
 
 /// `fs.watch`.
-pub(crate) fn watch_function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn watch_function(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     let api = api(context)?;
     get(context, api, "watch")
 }
 
 /// `fs.promises.watch`.
-pub(crate) fn promise_watch_function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn promise_watch_function(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     api(context)?;
     let watch = context.host_function_named(crate::host::shared_vm::operation!("fsRecursivePromiseWatch"), "_watch")?;
     let key = context.string_rooted("length");
@@ -139,7 +140,7 @@ pub(crate) fn promise_watch_function(context: &mut NativeContext<'_, NodeHost>) 
 }
 
 fn clone_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<RootId, RootedError> {
     let options = context.object_rooted()?;
@@ -202,9 +203,9 @@ fn clone_options(
 }
 
 pub(crate) fn event_binding(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     let Some(api) = shared.borrow().fs_watch.api else {
         return Ok(context.undefined());
     };
@@ -214,7 +215,7 @@ pub(crate) fn event_binding(
     Ok(binding)
 }
 fn validate_encoding(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<String, RootedError> {
     if !context.truthy_rooted(value)? {
@@ -239,7 +240,7 @@ fn validate_encoding(
     Err(context.throw(error))
 }
 fn ignore_matcher(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<RootId, RootedError> {
     if nullish(context, value) {
@@ -285,7 +286,7 @@ fn ignore_matcher(
                 )?;
                 return Err(context.throw(error));
             }
-            let state = context.host_mut().shared_state();
+            let state = context.node().shared_state();
             let api = state
                 .borrow()
                 .fs_watch
@@ -335,7 +336,7 @@ fn ignore_matcher(
     Ok(native)
 }
 pub(crate) fn ignore(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -361,7 +362,7 @@ pub(crate) fn ignore(
     }
 }
 pub(crate) fn ignore_pattern(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -379,7 +380,7 @@ pub(crate) fn ignore_pattern(
         return Ok(context.boolean(false));
     }
     let regexp = get(context, data, "regexp")?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let api = state
         .borrow()
         .fs_watch
@@ -392,12 +393,12 @@ pub(crate) fn ignore_pattern(
 }
 
 pub(crate) fn ignore_regexp(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let regexp = context.host_function_data()?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let api = state
         .borrow()
         .fs_watch
@@ -410,13 +411,13 @@ pub(crate) fn ignore_regexp(
 }
 
 pub(super) fn path(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<(PathBuf, RootId), RootedError> {
     path_argument(context, value, "filename")
 }
 pub(super) fn path_argument(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<(PathBuf, RootId), RootedError> {
@@ -427,7 +428,7 @@ pub(super) fn path_argument(
     let pathname = if pathname.is_absolute() {
         pathname
     } else {
-        let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+        let cwd = context.node().shared_state().borrow().cwd.clone();
         cwd.current_path()
             .map_err(|error| RootedError::host(error.to_string()))?
             .join(pathname)
@@ -436,7 +437,7 @@ pub(super) fn path_argument(
 }
 
 fn watch_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: std::io::Error,
     filename: RootId,
 ) -> Result<RootedError, RootedError> {
@@ -461,7 +462,7 @@ fn watch_error(
 }
 
 pub(crate) fn watch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -508,7 +509,7 @@ pub(crate) fn watch(
     let (pathname, filename) = path(context, filename)?;
     let ignore = get(context, options, "ignore")?;
     let matcher = ignore_matcher(context, ignore)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let api = state
         .borrow()
         .fs_watch
@@ -542,7 +543,7 @@ pub(crate) fn watch(
 }
 
 fn register(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     handle: RootId,
     _pathname: PathBuf,
     filename: RootId,
@@ -551,7 +552,7 @@ fn register(
     encoding: String,
     options: Option<RootId>,
 ) -> Result<(), RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let weak = context.host_weak_root(handle)?;
     let id = {
         let mut state = state.borrow_mut();
@@ -625,14 +626,14 @@ fn register(
 }
 
 pub(super) fn raw_watch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     filename: RootId,
     referenced: bool,
     encoding: String,
     callback: RootId,
 ) -> Result<RootId, RootedError> {
     let (pathname, filename) = path_argument(context, filename, "path")?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let api = state
         .borrow()
         .fs_watch
@@ -655,7 +656,7 @@ pub(super) fn raw_watch(
 }
 
 fn attach_signal(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     watcher: RootId,
     signal: RootId,
 ) -> Result<(), RootedError> {
@@ -669,7 +670,7 @@ fn attach_signal(
         } else {
             let add = get(context, signal, "addEventListener")?;
             let event = context.string_rooted("abort");
-            let state = context.host_mut().shared_state();
+            let state = context.node().shared_state();
             let events = state
                 .borrow()
                 .event_targets_api
@@ -695,10 +696,10 @@ fn attach_signal(
 }
 
 fn handle_id(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     handle: RootId,
 ) -> Result<u64, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     for (id, entry) in &state.borrow().fs_watch.handles {
         if let Some(candidate) = context.resolve_host_weak_root(entry.weak) {
             if context.strict_equal_rooted(candidate, handle)? {
@@ -727,13 +728,13 @@ fn stop(state: &mut State, id: u64) -> Option<RootId> {
     Some(active.target.root())
 }
 pub(crate) fn handle_close(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let handle = args.first().copied().unwrap_or_else(|| context.undefined());
     let id = handle_id(context, handle)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let root = stop(&mut state.borrow_mut().fs_watch, id);
     if let Some(root) = root {
         context.release_root(root);
@@ -741,7 +742,7 @@ pub(crate) fn handle_close(
     Ok(context.undefined())
 }
 pub(crate) fn handle_ref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -754,7 +755,7 @@ pub(crate) fn handle_ref(
         .transpose()?
         .unwrap_or(false);
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .fs_watch
@@ -765,14 +766,14 @@ pub(crate) fn handle_ref(
     Ok(context.undefined())
 }
 pub(crate) fn handle_has_ref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let handle = args.first().copied().unwrap_or_else(|| context.undefined());
     let id = handle_id(context, handle)?;
     let referenced = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .fs_watch
@@ -783,7 +784,7 @@ pub(crate) fn handle_has_ref(
     Ok(context.boolean(referenced))
 }
 pub(crate) fn handle_initialized(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -791,7 +792,7 @@ pub(crate) fn handle_initialized(
     let id = handle_id(context, handle)?;
     let initialized = !matches!(
         context
-            .host_mut()
+            .node()
             .shared_state()
             .borrow()
             .fs_watch
@@ -804,7 +805,7 @@ pub(crate) fn handle_initialized(
     Ok(context.boolean(initialized))
 }
 pub(crate) fn close(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -817,7 +818,7 @@ pub(crate) fn close(
         return Ok(context.undefined());
     }
     let id = handle_id(context, handle)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     if matches!(
         state
             .borrow()
@@ -839,7 +840,7 @@ pub(crate) fn close(
     Ok(undefined)
 }
 pub(crate) fn reference(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -862,7 +863,7 @@ pub(crate) fn reference(
     Ok(watcher)
 }
 pub(crate) fn abort(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -871,7 +872,7 @@ pub(crate) fn abort(
     context.call_rooted(close, watcher, &[])
 }
 pub(crate) fn detach_abort(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -884,7 +885,7 @@ pub(crate) fn detach_abort(
     Ok(context.undefined())
 }
 pub(crate) fn close_event(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -895,11 +896,11 @@ pub(crate) fn close_event(
 }
 
 pub(crate) fn dispatch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let Some(delivery) = state.borrow_mut().fs_watch.deliveries.pop_front() else {
         return Ok(context.undefined());
     };
@@ -960,10 +961,10 @@ pub(crate) fn has_work(state: &State) -> bool {
         .any(|entry| entry.referenced && matches!(entry.phase, Phase::Watching(_)))
 }
 pub(crate) fn poll(
-    runtime: &mut Runtime<NodeHost>,
+    runtime: &mut Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
 ) -> Result<bool, String> {
-    let state = runtime.host_mut().shared_state();
+    let state = runtime.node().shared_state();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if state.borrow().fs_watch.deliveries.is_empty() {
         let event = state
@@ -1010,8 +1011,8 @@ pub(crate) fn poll(
         }
     }
 }
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let state = runtime.host_mut().shared_state();
+pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
+    let state = runtime.node().shared_state();
     let dead = state
         .borrow()
         .fs_watch
@@ -1029,8 +1030,8 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
         }
     }
 }
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let state = runtime.host_mut().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
+    let state = runtime.node().shared_state();
     let handles = std::mem::take(&mut state.borrow_mut().fs_watch.handles);
     for entry in handles.into_values() {
         if let Phase::Watching(active) = entry.phase {

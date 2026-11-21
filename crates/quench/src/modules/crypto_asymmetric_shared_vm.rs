@@ -1,13 +1,13 @@
 //! Canonical native PKey ownership. Weak JS handle identities never own JS roots;
 //! the actual EVP_PKEY survives through every independently held Arc request.
+use quench_runtime::ErasedHost;
 use super::{
     crypto_asymmetric::{Encoding, Format, KeyError, KeyKind, OwnedKey},
     crypto_secret_material::Material,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Arc;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 pub(crate) use super::crypto_key_material_shared_vm::{
     asymmetric as key, register_asymmetric as register,
 };

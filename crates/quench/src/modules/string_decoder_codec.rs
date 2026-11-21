@@ -23,7 +23,7 @@ pub(crate) const ENCODINGS: &[&str] = &[
 ];
 
 pub(crate) const MAX_STRING_BYTES: usize =
-    quench_runtime::NativeContext::<crate::host::NodeHost>::MAX_STRING_CODE_UNITS;
+    quench_runtime::NativeContext::<crate::host::ErasedHost>::MAX_STRING_CODE_UNITS;
 #[derive(Debug)]
 pub(crate) struct StringTooLong;
 fn make_string(bytes: &[u8], encoding: &str) -> Result<Vec<u16>, StringTooLong> {

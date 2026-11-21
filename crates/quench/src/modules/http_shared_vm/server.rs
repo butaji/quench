@@ -2,6 +2,7 @@
 //! request parser to each socket, answers each parsed request with a response, queues
 //! pipelined responses, and keeps the connection alive, upgrades it or closes it.
 
+use crate::host::NodeAccess;
 use super::outgoing::{self, has_token};
 use super::parser::{HeadOutcome, Kind};
 use super::parsing::{self, Executed};
@@ -1013,7 +1014,7 @@ const RESPONSE_FINISH_CHANNEL: &str = "http.server.response.finish";
 /// Publish an exchange's members (`request`, `response`, then `socket` and `server` where
 /// the channel carries them) on `channel` when it has subscribers.
 fn publish_exchange(c: &mut Context<'_>, channel: &str, members: &[(&str, RootId)]) -> Result<(), RootedError> {
-    if !crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(&c.host_mut().shared_state().borrow(), channel) {
+    if !crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(&c.node().shared_state().borrow(), channel) {
         return Ok(());
     }
     let message = c.object_rooted()?;

@@ -1,5 +1,7 @@
 //! Node IPC serialization (`json` and `advanced`) and duplex channel lifecycle.
-use crate::host::{NodeHost, SharedNodeState};
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
+use crate::host::SharedNodeState;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::collections::VecDeque;
 #[cfg(unix)]
@@ -405,7 +407,7 @@ fn channel(state: &mut SharedNodeState, owner: u64) -> Option<&mut IpcChannel> {
 }
 
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -415,7 +417,7 @@ fn set(
     Ok(())
 }
 
-pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn initialize(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let key = context.string_rooted("JSON");
     let json = context.get_property_rooted(global, key)?;
@@ -425,7 +427,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let key = context.string_rooted("stringify");
     let stringify = context.get_property_rooted(json, key)?;
     let stringify = context.retain(stringify)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let previous = {
         let mut state = state.borrow_mut();
         [
@@ -455,7 +457,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 /// malformed bootstrap variable must never take ownership of an unrelated descriptor.
 #[cfg(unix)]
 fn open_process_channel(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     fd: i32,
     serialization: Serialization,
 ) -> Result<(), RootedError> {
@@ -480,7 +482,7 @@ fn open_process_channel(
         .map_err(|error| RootedError::host(error.to_string()))?;
     let mut channel = IpcChannel::new(socket, serialization);
     channel.counted_references = CountedReferences::Process { count: 0.0 };
-    context.host_mut().shared_state().borrow_mut().process_ipc.channel = Some(channel);
+    context.node().shared_state().borrow_mut().process_ipc.channel = Some(channel);
     Ok(())
 }
 
@@ -488,7 +490,7 @@ fn open_process_channel(
 /// `process` sends and receives on.
 #[cfg(unix)]
 pub(crate) fn fork_child(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -508,8 +510,8 @@ pub(crate) fn fork_child(
 /// Give `target` (a ChildProcess, or `process` in a forked child) the channel's surface:
 /// `send`, `disconnect`, `connected`, and `channel`, an EventEmitter whose reference
 /// methods and `fd` project the host channel.
-pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner: u64, target: RootId) -> Result<(), RootedError> {
-    let state = context.host_mut().shared_state();
+pub(crate) fn install(context: &mut NativeContext<'_, ErasedHost>, owner: u64, target: RootId) -> Result<(), RootedError> {
+    let state = context.node().shared_state();
     if channel(&mut state.borrow_mut(), owner).is_none() {
         return Ok(());
     }
@@ -553,9 +555,9 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner: u64, tar
 
 /// A forked child's `process` channel: the surface, and listener counting that keeps the
 /// channel referenced while `message` or `disconnect` listeners exist.
-pub(crate) fn activate_process(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn activate_process(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
     let (process, open) = {
-        let shared = context.host_mut().shared_state();
+        let shared = context.node().shared_state();
         let state = shared.borrow();
         (state.process_module, state.process_ipc.channel.as_ref().is_some_and(|channel| !channel.closed()))
     };
@@ -574,10 +576,10 @@ pub(crate) fn activate_process(context: &mut NativeContext<'_, NodeHost>) -> Res
 }
 
 pub(crate) fn take_socket(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     fd: i32,
 ) -> Option<std::os::unix::net::UnixStream> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     let mut state = shared.borrow_mut();
     if let Some(channel) = state.process_ipc.channel.as_mut().filter(|c| c.fd() == fd) {
         return channel.take_socket();
@@ -591,19 +593,19 @@ pub(crate) fn take_socket(
 }
 
 pub(crate) fn descriptor(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (owner, _) = owner(context)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let fd = channel(&mut state.borrow_mut(), owner)
         .filter(|channel| !channel.closed())
         .map_or(-1, |channel| channel.fd());
     Ok(context.number(fd as f64))
 }
 
-fn owner(context: &mut NativeContext<'_, NodeHost>) -> Result<(u64, RootId), RootedError> {
+fn owner(context: &mut NativeContext<'_, ErasedHost>) -> Result<(u64, RootId), RootedError> {
     let data = context.host_function_data()?;
     let key = context.string_rooted("0");
     let id = context.get_property_rooted(data, key)?;
@@ -616,7 +618,7 @@ fn owner(context: &mut NativeContext<'_, NodeHost>) -> Result<(u64, RootId), Roo
 }
 
 fn coded_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     code: &str,
     message: &str,
 ) -> Result<RootId, RootedError> {
@@ -627,7 +629,7 @@ fn coded_error(
 }
 
 pub(crate) fn send(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -647,7 +649,7 @@ pub(crate) fn send(
         callback = Some(value);
     }
     let callback = callback.filter(|value| context.is_callable_rooted(*value).unwrap_or(false));
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     if !channel(&mut state.borrow_mut(), owner).is_some_and(|channel| channel.connected()) {
         let error = coded_error(context, "ERR_IPC_CHANNEL_CLOSED", "Channel closed")?;
         if let Some(callback) = callback {
@@ -826,12 +828,12 @@ pub(crate) fn send(
 }
 
 pub(crate) fn disconnect(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (owner, target) = owner(context)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let connected = channel(&mut state.borrow_mut(), owner).is_some_and(|channel| {
         match std::mem::replace(&mut channel.phase, Phase::Closed) {
             Phase::Open(transport) => {
@@ -862,7 +864,7 @@ pub(crate) fn disconnect(
 }
 
 pub(crate) fn reference(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -871,7 +873,7 @@ pub(crate) fn reference(
     let key = context.string_rooted("2");
     let refed = context.get_property_rooted(data, key)?;
     let refed = context.truthy_rooted(refed)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     if let Some(channel) = channel(&mut state.borrow_mut(), owner) {
         channel.reference = Some(refed);
     }
@@ -896,7 +898,7 @@ pub(crate) fn has_work(state: &SharedNodeState) -> bool {
 }
 
 pub(crate) fn reference_counted(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -905,7 +907,7 @@ pub(crate) fn reference_counted(
     let key = context.string_rooted("2");
     let add = context.get_property_rooted(data, key)?;
     let add = context.truthy_rooted(add)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     if let Some(channel) = channel(&mut state.borrow_mut(), owner) {
         channel.counted_references.change(add);
     }
@@ -913,10 +915,10 @@ pub(crate) fn reference_counted(
 }
 
 pub(crate) fn poll(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
 ) -> Result<bool, String> {
-    let state = runtime.host_mut().shared_state();
+    let state = runtime.node().shared_state();
     let owners = {
         let state = state.borrow();
         let mut owners = state
@@ -1040,7 +1042,7 @@ pub(crate) fn poll(
 }
 
 fn queue_event(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
     target: RootId,
     event: &str,
@@ -1057,7 +1059,7 @@ fn queue_event(
     let event = runtime.string_rooted(event);
     let args = vec![target, event];
     runtime
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -1071,7 +1073,7 @@ fn queue_event(
 }
 
 pub(crate) fn complete(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1097,7 +1099,7 @@ pub(crate) fn complete(
 /// alongside the public Socket form accepted by `ipc_socket_handle`.
 #[cfg(unix)]
 fn duplicate_native_handle(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     handle: RootId,
 ) -> Result<Option<OwnedFd>, RootedError> {
     use std::os::fd::FromRawFd;
@@ -1106,7 +1108,7 @@ fn duplicate_native_handle(
         return Ok(None);
     };
     let fd = {
-        let shared = context.host_mut().shared_state();
+        let shared = context.node().shared_state();
         let state = shared.borrow();
         super::net_shared_vm::native_tcp_fd(&state.tcp, id)
     };
@@ -1125,7 +1127,7 @@ fn duplicate_native_handle(
 
 #[cfg(unix)]
 fn close_transferred_socket_handle(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     handle: RootId,
 ) -> Result<(), RootedError> {
     // A public net.Socket owns the native handle and its destroy path also
@@ -1152,7 +1154,7 @@ fn close_transferred_socket_handle(
             return destroy_transferred_public_socket(context, owner, id);
         }
         let socket = context
-            .host_mut()
+            .node()
             .shared_state()
             .borrow()
             .net_sockets
@@ -1173,7 +1175,7 @@ fn close_transferred_socket_handle(
 
 #[cfg(unix)]
 pub(crate) fn destroy_transferred_public_socket(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
     id: u64,
 ) -> Result<(), RootedError> {
@@ -1207,7 +1209,7 @@ pub(crate) fn destroy_transferred_public_socket(
     // ownership explicit here; close_socket is idempotent if destroy already
     // queued the native close.
     {
-        let shared = context.host_mut().shared_state();
+        let shared = context.node().shared_state();
         super::net_shared_vm::close_socket(&mut shared.borrow_mut().tcp, id);
     }
     // Give the public Socket destroy hook a chance to decrement
@@ -1215,7 +1217,7 @@ pub(crate) fn destroy_transferred_public_socket(
     // earlier order made the still-owned check below false unconditionally,
     // so detached sockets could leave server.close() waiting forever.
     let still_owned = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .net_servers
@@ -1228,7 +1230,7 @@ pub(crate) fn destroy_transferred_public_socket(
     // transport's listener set is drained even if Socket._destroy had already
     // cleared its public _server link.
     {
-        let shared = context.host_mut().shared_state();
+        let shared = context.node().shared_state();
         for server in shared.borrow_mut().net_servers.values_mut() {
             server.connections.remove(&id);
         }
@@ -1237,7 +1239,7 @@ pub(crate) fn destroy_transferred_public_socket(
 }
 
 pub(crate) fn close_transferred_handle(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1255,7 +1257,7 @@ pub(crate) fn close_transferred_handle(
 }
 
 pub(crate) fn emit(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1269,7 +1271,7 @@ pub(crate) fn emit(
 }
 
 pub(crate) fn decode(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1277,7 +1279,7 @@ pub(crate) fn decode(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("IPC decode target missing"))?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let received = state
         .borrow_mut()
         .process_ipc
@@ -1341,7 +1343,7 @@ pub(crate) fn decode(
 }
 
 pub(crate) fn listener_reference(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

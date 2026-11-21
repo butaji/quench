@@ -1,10 +1,10 @@
 //! `internal/net`: the symbols net's public classes and their consumers (tls, http) share,
 //! and the receiver adapter that presents a socket operation as a method of its socket.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The private symbols `internal/net` exports, by their exported name and description.
 const SYMBOLS: [(&str, &str); 6] = [

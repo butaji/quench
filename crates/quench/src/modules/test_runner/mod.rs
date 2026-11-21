@@ -3,6 +3,8 @@
 //! Registration builds a tree of [`Node`]s; [`run`] drives each through Node's test
 //! lifecycle (hooks, body, subtests) as promise reactions settle; a finished top-level
 //! test becomes a [`report::TestReport`] the selected reporter renders.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 pub(crate) mod assertions;
 pub(crate) mod cli;
 mod failure;
@@ -12,11 +14,10 @@ pub(crate) mod reporters;
 pub(crate) mod run;
 pub(crate) mod wait_for;
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::time::Instant;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 pub(crate) type NodeId = usize;
 
 /// `test(name, options, body)`: the position of the body.
@@ -223,7 +224,7 @@ pub(crate) struct State {
 }
 
 fn with_state<T>(c: &mut Context<'_>, f: impl FnOnce(&mut State) -> T) -> T {
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let mut shared = shared.borrow_mut();
     f(&mut shared.node_test)
 }
@@ -315,7 +316,7 @@ fn bootstrap(c: &mut Context<'_>) -> Result<(), RootedError> {
     }
     let child = std::env::var(cli::CHILD_CONTEXT_VARIABLE).is_ok_and(|value| value == cli::CHILD_CONTEXT);
     let (requested, only_filter) = {
-        let shared = c.host_mut().shared_state();
+        let shared = c.node().shared_state();
         let shared = shared.borrow();
         let options = &shared.cli_options;
         (
@@ -362,7 +363,7 @@ fn current_directory() -> String {
 }
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_mut()
+    c.node()
         .shared_state()
         .borrow()
         .process_module

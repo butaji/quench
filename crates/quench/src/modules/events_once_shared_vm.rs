@@ -1,10 +1,10 @@
 //! `events.once` and `events.on`: an emitter's events as a promise and as an async iterator,
 //! over EventEmitters and EventTargets alike (`eventTargetAgnosticAddListener`).
+use quench_runtime::ErasedHost;
 use super::event_target_shared_vm::{api, argument, flag, get, is_nullish, is_undefined, put, put_flag};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 use crate::modules::keys::ERROR_EVENT;
 use crate::modules::keys::ABORT_EVENT;

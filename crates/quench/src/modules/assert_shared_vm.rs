@@ -5,12 +5,13 @@
 //! `AssertionError` whose generated message follows Node's: a short `actual !== expected`
 //! line or a line diff of the values inspected one entry per line, the falsy call's own
 //! source for `ok`, and the throws/rejects/match families' explanations.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::console_format_shared_vm::{self as format, Layout, Options};
 use super::util_comparisons_shared_vm::{self as comparisons, Mode};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 const MODULE_KEY: &str = "\0builtin:assert/module";
 const ERROR_CLASS_KEY: &str = "\0builtin:assert/AssertionError";
@@ -224,12 +225,12 @@ fn is_object_like(c: &Context<'_>, value: RootId) -> bool {
 }
 
 fn cached(c: &mut Context<'_>, key: &str) -> Option<RootId> {
-    c.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+    c.node().shared_state().borrow().builtin_cache.get(key).copied()
 }
 
 fn cache(c: &mut Context<'_>, key: &str, value: RootId) -> Result<(), RootedError> {
     let retained = c.retain(value)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(key.into(), retained);
+    c.node().shared_state().borrow_mut().builtin_cache.insert(key.into(), retained);
     Ok(())
 }
 

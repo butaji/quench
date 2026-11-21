@@ -1,12 +1,12 @@
 //! The WebIDL `DOMException` class (`lib/internal/per_context/domexception.js`).
+use quench_runtime::ErasedHost;
 use super::event_target_shared_vm::{
     api, argument, attach_slot, get, install_members, install_tag_and_inspect, invalid_this, put, require_new, slot,
     to_dom_string, Member,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 pub(super) const SLOT: &str = "domExceptionSlot";
 use crate::modules::keys::NAME;

@@ -1,12 +1,13 @@
 //! Native net option validation before any transport effect.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::net::IpAddr;
 
 /// The Server constructor accepts nullish defaults, objects, and a listener function.
 pub(crate) fn server_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -25,7 +26,7 @@ pub(crate) fn server_options(
 }
 
 pub(crate) fn socket_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -177,7 +178,7 @@ pub(crate) fn socket_options(
 /// Passing it through the shared transport path keeps the same binding
 /// behavior for net, tls, and https clients.
 pub(super) fn connect_source(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     options: RootId,
 ) -> Result<(Option<IpAddr>, u16), RootedError> {
     if !context.is_object_rooted(options)? {
@@ -201,7 +202,7 @@ pub(super) fn connect_source(
 }
 
 pub(crate) fn missing_endpoint(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootedError, RootedError> {
     let error = context
         .type_error_rooted("The \"options\" or \"port\" or \"path\" argument must be specified")?;
@@ -210,7 +211,7 @@ pub(crate) fn missing_endpoint(
 }
 
 pub(crate) fn validate_host(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     host: RootId,
 ) -> Result<RootId, RootedError> {
     if !context.truthy_rooted(host)? {
@@ -234,7 +235,7 @@ pub(crate) fn validate_host(
 }
 
 pub(crate) fn validate_lookup(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     options: RootId,
     host: RootId,
 ) -> Result<(), RootedError> {
@@ -266,7 +267,7 @@ pub(crate) fn validate_lookup(
 }
 
 pub(super) fn validator_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootedError,
     code: &'static str,
 ) -> Result<RootedError, RootedError> {
@@ -280,7 +281,7 @@ const MIN_VALID_ATTEMPT_TIMEOUT: i32 = 1;
 
 /// Node's positive signed-32-bit timeout validator, shared by the setter and connect.
 pub(super) fn attempt_timeout(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<u64, RootedError> {
@@ -312,7 +313,7 @@ pub(super) fn attempt_timeout(
 
 /// Read the invocation settings once, in Node's destructuring order, before lookup.
 pub(super) fn connect_family_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     options: RootId,
 ) -> Result<bool, RootedError> {
     let has_options = context.is_object_rooted(options)?;
@@ -331,7 +332,7 @@ pub(super) fn connect_family_options(
         .is_some_and(|value| value.is_null() || value.is_undefined())
     {
         context
-            .host_mut()
+            .node()
             .shared_state()
             .borrow()
             .net_auto_select_family
@@ -356,7 +357,7 @@ pub(super) fn connect_family_options(
 }
 
 fn invalid_property_value(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     name: &str,
     value: RootId,
     reason: &str,

@@ -1,4 +1,5 @@
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use crate::modules::shared_event_loop::SharedCallback;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 use std::time::Duration;
@@ -63,7 +64,7 @@ enum HandleRefState {
 }
 
 impl HandleRefState {
-    fn from_rooted(context: &NativeContext<'_, NodeHost>, value: RootId) -> Self {
+    fn from_rooted(context: &NativeContext<'_, ErasedHost>, value: RootId) -> Self {
         match context
             .rooted_value(value)
             .and_then(|value| value.as_bool())
@@ -84,7 +85,7 @@ impl HandleRefState {
 }
 
 pub(crate) fn queue_microtask(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -99,7 +100,7 @@ pub(crate) fn queue_microtask(
 }
 
 pub(crate) fn promises_module(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     for (name, operation) in [
@@ -115,7 +116,7 @@ pub(crate) fn promises_module(
     Ok(module)
 }
 
-fn scheduler_object(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn scheduler_object(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     let scheduler = context.object_rooted()?;
     for (name, operation) in [
         ("wait", "timersPromiseSchedulerWait"),
@@ -142,7 +143,7 @@ fn scheduler_object(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId,
 }
 
 pub(crate) fn timers_module(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     promises: RootId,
 ) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
@@ -162,7 +163,7 @@ pub(crate) fn timers_module(
 }
 
 pub(crate) fn promise_set_timeout(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -180,7 +181,7 @@ pub(crate) fn promise_set_timeout(
 }
 
 pub(crate) fn promise_set_immediate(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -190,7 +191,7 @@ pub(crate) fn promise_set_immediate(
 }
 
 pub(crate) fn scheduler_wait(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -212,7 +213,7 @@ pub(crate) fn scheduler_wait(
 }
 
 pub(crate) fn scheduler_yield(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -226,7 +227,7 @@ pub(crate) fn scheduler_yield(
 }
 
 pub(crate) fn scheduler_constructor(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -249,7 +250,7 @@ enum PromiseTimerSpec {
 }
 
 fn promise_timer(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     spec: PromiseTimerSpec,
 ) -> Result<RootId, RootedError> {
     let operation = context.object_rooted()?;
@@ -282,7 +283,7 @@ fn promise_timer(
 }
 
 fn argument_or_undefined(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     args: &[RootId],
     index: usize,
 ) -> RootId {
@@ -292,7 +293,7 @@ fn argument_or_undefined(
 }
 
 pub(crate) fn schedule_promise_timeout(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -419,7 +420,7 @@ pub(crate) fn schedule_promise_timeout(
 }
 
 fn schedule_promise_operation(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     operation: RootId,
 ) -> Result<RootId, RootedError> {
     let kind = property_text(context, operation, PROMISE_KIND)?;
@@ -449,7 +450,7 @@ fn schedule_promise_operation(
 }
 
 pub(crate) fn complete_promise_operation(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -457,7 +458,7 @@ pub(crate) fn complete_promise_operation(
 }
 
 pub(crate) fn abort_promise_operation(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -479,7 +480,7 @@ pub(crate) fn abort_promise_operation(
     Ok(context.undefined())
 }
 
-fn settle_operation(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn settle_operation(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     let operation = context.host_function_data()?;
     if operation_pending(context, operation)? {
         let signal = property(context, operation, PROMISE_SIGNAL)?;
@@ -496,7 +497,7 @@ fn settle_operation(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId,
 }
 
 fn reject_operation(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     operation: RootId,
     error: RootId,
 ) -> Result<RootId, RootedError> {
@@ -514,7 +515,7 @@ fn reject_operation(
 }
 
 fn remove_abort_listener(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     signal: RootId,
     listener: RootId,
 ) -> Result<(), RootedError> {
@@ -530,7 +531,7 @@ fn remove_abort_listener(
 }
 
 pub(super) fn abort_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     signal: RootId,
 ) -> Result<RootId, RootedError> {
     let error = context.error_rooted("The operation was aborted")?;
@@ -546,7 +547,7 @@ pub(super) fn abort_error(
 }
 
 fn type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     message: &str,
     code: &str,
 ) -> Result<RootId, RootedError> {
@@ -557,7 +558,7 @@ fn type_error(
 }
 
 fn invalid_scheduler_receiver(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     let error = type_error(
         context,
@@ -568,7 +569,7 @@ fn invalid_scheduler_receiver(
 }
 
 pub(crate) fn set_timeout(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -576,7 +577,7 @@ pub(crate) fn set_timeout(
 }
 
 pub(crate) fn set_interval(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -584,7 +585,7 @@ pub(crate) fn set_interval(
 }
 
 pub(super) fn schedule_timer(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     args: &[RootId],
     repeating: bool,
     initially_refed: bool,
@@ -597,7 +598,7 @@ pub(super) fn schedule_timer(
     }
     let delay = timer_delay(context, args.get(1).copied())?;
     let id = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -636,7 +637,7 @@ pub(super) fn schedule_timer(
     };
     install(context, handle, TIMER_REPEAT, repeat)?;
     let async_id =
-        crate::modules::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
+        crate::modules::async_hooks_shared_vm::create_context(&context.node().shared_state());
     let async_id_value = context.number(async_id as f64);
     context.define_data_property_rooted(
         handle,
@@ -664,7 +665,7 @@ pub(super) fn schedule_timer(
     };
     let interval = repeating.then_some(delay.duration);
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -672,7 +673,7 @@ pub(super) fn schedule_timer(
     let refed = context.get_property_rooted(handle, api.refed_key)?;
     let refed = context.truthy_rooted(refed)?;
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -716,7 +717,7 @@ struct TimerDelay {
 }
 
 fn timer_delay(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     delay: Option<RootId>,
 ) -> Result<TimerDelay, RootedError> {
     let one = context.number(DEFAULT_TIMER_DELAY_MS as f64);
@@ -741,7 +742,7 @@ fn timer_delay(
         });
     }
     let warning = {
-        let state = context.host_mut().shared_state();
+        let state = context.node().shared_state();
         let mut state = state.borrow_mut();
         let warnings = &mut state.timer_duration_warnings;
         if after > MAX_TIMER_DELAY_MS as f64 {
@@ -780,7 +781,7 @@ fn timer_delay(
 }
 
 pub(crate) fn timer_ref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -788,7 +789,7 @@ pub(crate) fn timer_ref(
 }
 
 pub(crate) fn timer_unref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -796,7 +797,7 @@ pub(crate) fn timer_unref(
 }
 
 pub(crate) fn immediate_ref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -804,7 +805,7 @@ pub(crate) fn immediate_ref(
 }
 
 pub(crate) fn immediate_unref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -818,7 +819,7 @@ enum TimerHandleKind {
 }
 
 fn set_timer_ref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     refed: bool,
     kind: TimerHandleKind,
@@ -839,7 +840,7 @@ fn set_timer_ref(
         let error = context.type_error_rooted("Cannot update timer handle reference state")?;
         return Err(context.throw(error));
     }
-    let shared_state = context.host_mut().shared_state();
+    let shared_state = context.node().shared_state();
     let mut state = shared_state.borrow_mut();
     match kind {
         TimerHandleKind::Timeout => {
@@ -856,7 +857,7 @@ fn set_timer_ref(
 
 /// `hasRef()` of a timer or an immediate handle.
 pub(crate) fn handle_has_ref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -867,16 +868,16 @@ pub(crate) fn handle_has_ref(
 }
 
 pub(crate) fn timer_handle_api(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<TimerHandleApi, RootedError> {
-    if let Some(api) = context.host_mut().shared_state().borrow().timer_handle_api {
+    if let Some(api) = context.node().shared_state().borrow().timer_handle_api {
         return Ok(api);
     }
     // Built on first timer use, with the startup intrinsics in place, so the captured
     // Reflect and String are the originals whatever a script has done to them.
     let api = context.with_startup_intrinsics(build_timer_handle_api)?;
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .timer_handle_api = Some(api);
@@ -884,7 +885,7 @@ pub(crate) fn timer_handle_api(
 }
 
 fn build_timer_handle_api(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<TimerHandleApi, RootedError> {
     let refed_key = context.symbol_rooted(Some(TIMER_REFED));
     let async_id_key = context.symbol_rooted(Some("asyncId"));
@@ -928,7 +929,7 @@ fn build_timer_handle_api(
 }
 
 fn timer_handle_prototype(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     owner: &str,
     has_ref_operation: &str,
 ) -> Result<RootId, RootedError> {
@@ -1011,7 +1012,7 @@ fn timer_handle_prototype(
 }
 
 fn timer_id(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     handle: RootId,
 ) -> Result<Option<u64>, RootedError> {
     let key = context.string_rooted(TIMER_ID);
@@ -1021,11 +1022,11 @@ fn timer_id(
 }
 
 fn queued_guest_immediate_id(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     handle: RootId,
 ) -> Result<Option<u64>, RootedError> {
     let candidates = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .scheduler
@@ -1039,7 +1040,7 @@ fn queued_guest_immediate_id(
 }
 
 pub(crate) fn set_immediate(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1064,7 +1065,7 @@ pub(crate) fn set_immediate(
     }
 
     let id = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -1084,7 +1085,7 @@ pub(crate) fn set_immediate(
         ));
     }
     let async_id =
-        crate::modules::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
+        crate::modules::async_hooks_shared_vm::create_context(&context.node().shared_state());
     let async_value = context.number(async_id as f64);
     context.define_data_property_rooted(handle, api.async_id_key, async_value, true, true, true)?;
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Immediate", async_id)?;
@@ -1096,7 +1097,7 @@ pub(crate) fn set_immediate(
         .map(|argument| context.retain(argument))
         .collect::<Result<Vec<_>, _>>()?;
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -1119,7 +1120,7 @@ pub(crate) fn set_immediate(
 }
 
 pub(crate) fn clear_immediate(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1134,7 +1135,7 @@ pub(crate) fn clear_immediate(
         let refed = context.get_property_rooted(handle, api.refed_key)?;
         let was_refed = context.truthy_rooted(refed)?;
         let immediate = context
-            .host_mut()
+            .node()
             .shared_state()
             .borrow_mut()
             .scheduler
@@ -1142,7 +1143,7 @@ pub(crate) fn clear_immediate(
         if let Some(immediate) = immediate {
             if was_refed {
                 context
-                    .host_mut()
+                    .node()
                     .shared_state()
                     .borrow_mut()
                     .scheduler
@@ -1160,7 +1161,7 @@ pub(crate) fn clear_immediate(
 }
 
 pub(crate) fn clear_timer(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1199,7 +1200,7 @@ pub(crate) fn clear_timer(
         let undefined = context.undefined();
         primitive_cleanup(context, undefined, &[handle])?;
         let callback = context
-            .host_mut()
+            .node()
             .shared_state()
             .borrow_mut()
             .scheduler
@@ -1214,7 +1215,7 @@ pub(crate) fn clear_timer(
 }
 
 fn invalid_callback(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     received: &str,
 ) -> Result<RootId, RootedError> {
     let error = context.type_error_rooted(&format!(
@@ -1229,7 +1230,7 @@ fn invalid_callback(
 }
 
 fn install(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -1243,7 +1244,7 @@ fn install(
 }
 
 fn property(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
@@ -1251,14 +1252,14 @@ fn property(
     context.get_property_rooted(object, key)
 }
 
-fn is_undefined(context: &NativeContext<'_, NodeHost>, root: RootId) -> bool {
+fn is_undefined(context: &NativeContext<'_, ErasedHost>, root: RootId) -> bool {
     context
         .rooted_value(root)
         .is_some_and(|value| value.is_undefined())
 }
 
 fn property_truthy(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
 ) -> Result<bool, RootedError> {
@@ -1267,7 +1268,7 @@ fn property_truthy(
 }
 
 fn property_text(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
 ) -> Result<String, RootedError> {
@@ -1278,14 +1279,14 @@ fn property_text(
 }
 
 fn operation_pending(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     operation: RootId,
 ) -> Result<bool, RootedError> {
     Ok(property_text(context, operation, PROMISE_STATE)? == PROMISE_PENDING)
 }
 
 fn release_callback(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     callback: SharedCallback,
 ) -> Result<(), RootedError> {
     let completed = if let Some(execution) = callback.execution {
@@ -1305,12 +1306,12 @@ fn release_callback(
 }
 
 pub(crate) fn active_resources(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (timers, immediates) = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .scheduler
@@ -1326,7 +1327,7 @@ pub(crate) fn active_resources(
 
 /// `Timeout.prototype[Symbol.dispose]`.
 pub(crate) fn timer_dispose(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1334,7 +1335,7 @@ pub(crate) fn timer_dispose(
 }
 /// `Immediate.prototype[Symbol.dispose]`.
 pub(crate) fn immediate_dispose(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1342,7 +1343,7 @@ pub(crate) fn immediate_dispose(
 }
 /// `Timeout.prototype.close`: clears the timer and returns it.
 pub(crate) fn timer_close(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1352,7 +1353,7 @@ pub(crate) fn timer_close(
 
 /// Public timer functions defer the promise export lookup, preserving its identity and hooks.
 pub(crate) fn install_promisify_globals(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let symbol = property(context, global, "Symbol")?;
@@ -1379,7 +1380,7 @@ pub(crate) fn install_promisify_globals(
 }
 
 pub(crate) fn promisify_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1390,7 +1391,7 @@ pub(crate) fn promisify_get(
 
 /// Node registers the original receiver only on its first primitive conversion.
 pub(crate) fn to_primitive(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     handle: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1412,7 +1413,7 @@ pub(crate) fn to_primitive(
 /// Remove the primitive alias at real cancellation/completion. A firing timer
 /// supplies the identity read before its callback, matching Node's snapshot.
 pub(crate) fn primitive_cleanup(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1436,7 +1437,7 @@ pub(crate) fn primitive_cleanup(
 
 /// Invoke the canonical mutable slots through Core's ordinary call/apply paths.
 pub(crate) fn invoke_timeout(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1449,7 +1450,7 @@ pub(crate) fn invoke_timeout(
     if context.truthy_rooted(repeat)? {
         if let Some(id) = timer_id(context, receiver)? {
             context
-                .host_mut()
+                .node()
                 .shared_state()
                 .borrow_mut()
                 .scheduler
@@ -1471,7 +1472,7 @@ pub(crate) fn invoke_timeout(
 }
 
 pub(crate) fn repeat_delay(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1497,7 +1498,7 @@ pub(crate) fn repeat_delay(
 }
 
 pub(crate) fn refresh(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1523,7 +1524,7 @@ pub(crate) fn refresh(
     let Some(id) = timer_id(context, receiver)? else {
         return Ok(receiver);
     };
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let existing = state.borrow_mut().scheduler.refresh_shared_timer(id, delay);
     let destroyed = property(context, receiver, TIMER_DESTROYED)?;
     let mut execution_id = None;
@@ -1575,7 +1576,7 @@ pub(crate) fn refresh(
 /// Native internal scheduling uses the same constructor policy and starts
 /// unreferenced before init hooks. Node ignores arguments after `after` here.
 pub(crate) fn set_unref_timeout(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1583,7 +1584,7 @@ pub(crate) fn set_unref_timeout(
 }
 
 pub(crate) fn internal_module(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     let method = context.host_function_named(
@@ -1599,12 +1600,12 @@ pub(crate) fn internal_module(
 /// The shared host's logical-process monotonic origin owns this clock;
 /// mutable public process.uptime and guest wall clocks do not replace it.
 pub(crate) fn libuv_now(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let milliseconds = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .process_control
@@ -1613,7 +1614,7 @@ pub(crate) fn libuv_now(
     Ok(context.number(milliseconds.floor()))
 }
 
-pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     Ok(timer_handle_api(context)?.binding)
 }
 

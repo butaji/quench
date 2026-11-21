@@ -1,7 +1,8 @@
 //! Node's coded error prototypes and shared private brand.
 
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 const INVALID_ARGUMENT_TYPE: &str = "ERR_INVALID_ARG_TYPE";
@@ -23,23 +24,23 @@ enum ErrorPresentation {
 type PrototypeKey = (&'static str, ErrorClass, ErrorPresentation);
 
 /// The prototype already made for `key`, if any.
-fn known_prototype(context: &mut NativeContext<'_, NodeHost>, key: PrototypeKey) -> Option<RootId> {
-    let state = context.host_mut().shared_state();
+fn known_prototype(context: &mut NativeContext<'_, ErasedHost>, key: PrototypeKey) -> Option<RootId> {
+    let state = context.node().shared_state();
     let state = state.borrow();
     state.node_error_api.as_ref().and_then(|api| api.prototypes.get(&key)).copied()
 }
 
 /// Retains `prototype` as the one made for `key`.
-fn record_prototype(context: &mut NativeContext<'_, NodeHost>, key: PrototypeKey, prototype: RootId) -> Result<RootId, RootedError> {
+fn record_prototype(context: &mut NativeContext<'_, ErasedHost>, key: PrototypeKey, prototype: RootId) -> Result<RootId, RootedError> {
     let prototype = context.retain(prototype)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     state.borrow_mut().node_error_api.as_mut().expect("initialized error API").prototypes.insert(key, prototype);
     Ok(prototype)
 }
 
 /// Node's private brand (`kIsNodeError`), made with the error API on first use.
-fn node_error_brand(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
+fn node_error_brand(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+    let state = context.node().shared_state();
     if let Some(api) = state.borrow().node_error_api.as_ref() {
         return Ok(api.brand);
     }
@@ -50,7 +51,7 @@ fn node_error_brand(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId,
 }
 
 /// Defines a non-enumerable, configurable accessor reading `getter`.
-fn define_getter(context: &mut NativeContext<'_, NodeHost>, object: RootId, key: RootId, getter: RootId) -> Result<(), RootedError> {
+fn define_getter(context: &mut NativeContext<'_, ErasedHost>, object: RootId, key: RootId, getter: RootId) -> Result<(), RootedError> {
     context.define_property_fields_rooted(object, key, DescriptorFields {
         get: Some(getter), enumerable: Some(false), configurable: Some(true), ..Default::default()
     })?;
@@ -58,7 +59,7 @@ fn define_getter(context: &mut NativeContext<'_, NodeHost>, object: RootId, key:
 }
 
 /// The `constructor` getter that reports `constructor`.
-fn constructor_getter(context: &mut NativeContext<'_, NodeHost>, prototype: RootId, constructor: RootId) -> Result<(), RootedError> {
+fn constructor_getter(context: &mut NativeContext<'_, ErasedHost>, prototype: RootId, constructor: RootId) -> Result<(), RootedError> {
     let getter = context.host_function_named_with_data(
         crate::host::shared_vm::operation!("nodeErrorConstructor"),
         "get constructor",
@@ -69,7 +70,7 @@ fn constructor_getter(context: &mut NativeContext<'_, NodeHost>, prototype: Root
 }
 
 fn coded_error_prototype(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     code: &'static str,
     class: ErrorClass,
 ) -> Result<RootId, RootedError> {
@@ -102,7 +103,7 @@ fn coded_error_prototype(
 
 /// Validators use a distinct subclass while inheriting the code and brand.
 pub(super) fn hide_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
@@ -110,7 +111,7 @@ pub(super) fn hide_type_error(
 }
 
 pub(super) fn hide_range_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
@@ -118,7 +119,7 @@ pub(super) fn hide_range_error(
 }
 
 fn hide_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     code: &'static str,
     class: ErrorClass,
@@ -140,14 +141,14 @@ fn hide_error(
 }
 
 pub(super) fn decorate_argument_type(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
 ) -> Result<(), RootedError> {
     decorate_type_error(context, error, INVALID_ARGUMENT_TYPE)
 }
 
 pub(crate) fn decorate_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
@@ -155,7 +156,7 @@ pub(crate) fn decorate_error(
 }
 
 pub(crate) fn decorate_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
@@ -163,7 +164,7 @@ pub(crate) fn decorate_type_error(
 }
 
 /// A thrown `Error` carrying Node's `code`.
-pub(crate) fn throw_coded_error(context: &mut NativeContext<'_, NodeHost>, code: &'static str, message: &str) -> RootedError {
+pub(crate) fn throw_coded_error(context: &mut NativeContext<'_, ErasedHost>, code: &'static str, message: &str) -> RootedError {
     match context.error_rooted(message) {
         Ok(error) => match decorate_error(context, error, code) {
             Ok(()) => context.throw(error),
@@ -175,7 +176,7 @@ pub(crate) fn throw_coded_error(context: &mut NativeContext<'_, NodeHost>, code:
 
 /// A thrown `TypeError` carrying Node's `code`.
 pub(crate) fn throw_coded_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     code: &'static str,
     message: &str,
 ) -> RootedError {
@@ -189,7 +190,7 @@ pub(crate) fn throw_coded_type_error(
 }
 
 pub(super) fn decorate_range_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
@@ -197,7 +198,7 @@ pub(super) fn decorate_range_error(
 }
 
 fn decorate_coded_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     code: &'static str,
     class: ErrorClass,
@@ -221,7 +222,7 @@ fn decorate_coded_error(
 }
 
 pub(crate) fn constructor(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -231,7 +232,7 @@ pub(crate) fn constructor(
 
 /// A coded error's `toString()`: `${name} [${code}]: ${message}`.
 pub(crate) fn to_string(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -246,7 +247,7 @@ pub(crate) fn to_string(
 
 /// Project compiler-owned error source metadata for the original Node SDK policy.
 pub(crate) fn source_positions(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -279,7 +280,7 @@ pub(crate) fn source_positions(
     Ok(result)
 }
 
-pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(
         context,
         "\0binding:errors",
@@ -287,7 +288,7 @@ pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     )
 }
 
-fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn build_binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     let function = context.host_function_named(
         crate::host::shared_vm::operation!("errorSourcePositions"),
@@ -359,7 +360,7 @@ impl crate::host::startup_snapshot::HostSnap for NodeErrorApi {
 /// is intentionally inert while the JavaScript stack formatter remains in
 /// control of stack presentation.
 pub(crate) fn set_source_maps_enabled(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -369,7 +370,7 @@ pub(crate) fn set_source_maps_enabled(
 /// Node's internal errors binding routes Promise callback failures through the
 /// same fatal-exception policy used by top-level unhandled Promise rejections.
 pub(crate) fn trigger_uncaught_exception(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     this: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -379,7 +380,7 @@ pub(crate) fn trigger_uncaught_exception(
 
 /// A coded error's brand getter (`kIsNodeError`): every coded error is one.
 pub(crate) fn brand(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {

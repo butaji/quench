@@ -2,13 +2,13 @@
 //! connections the HTTP connection listener serves; its `Agent` is an HTTP agent whose
 //! connections are `tls.connect` sockets, with a TLS session cache per origin.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use crate::modules::host_members::{captured, constructor, current, function, members, methods};
 use crate::modules::http_shared_vm::server;
 use crate::modules::stream_shared_vm::{call_method, get, is_nullish, is_undefined, on, once, put, put_number};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Https, "httpsMembers", [

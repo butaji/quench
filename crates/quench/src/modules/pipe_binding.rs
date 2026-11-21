@@ -1,10 +1,12 @@
 //! Genuine PipeWrap over the single owned Unix IPC transport.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::{
     event_constructor_shared_vm::get,
     ipc_pipe::Pipe,
     native_async_wrap::{Provider, Resource, View},
 };
-use crate::host::{NodeHost, SharedNodeState};
+use crate::host::SharedNodeState;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime, Value};
 use std::{
     collections::HashMap,
@@ -12,7 +14,7 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
 };
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 #[derive(Default)]
 pub(crate) struct State {
     identities: Vec<(HostWeakRoot, u64)>,
@@ -40,7 +42,7 @@ fn err(c: &mut Context<'_>, message: &str) -> Result<RootedError, RootedError> {
 }
 fn identity(c: &mut Context<'_>, r: RootId) -> Result<Option<u64>, RootedError> {
     let ids = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .native_pipe
@@ -62,7 +64,7 @@ pub(crate) fn resource_view(c: &mut Context<'_>, r: RootId) -> Result<View, Root
     let Some(id) = identity(c, r)? else {
         return Ok(View::NotNative);
     };
-    Ok(c.host_mut()
+    Ok(c.node()
         .shared_state()
         .borrow()
         .native_pipe
@@ -137,7 +139,7 @@ pub(crate) fn construct(
     if !matches!(kind, Some(0.0 | 1.0 | 2.0)) {
         return Err(err(c, "Invalid pipe type")?);
     }
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     let owner = c.retain(receiver)?;
     let weak = c.host_weak_root(receiver)?;
@@ -174,7 +176,7 @@ pub(crate) fn adopt(
 ) -> Result<(), RootedError> {
     let id = id(c, receiver)?;
     let mut pipe = Pipe::new(socket).map_err(|e| RootedError::host(e.to_string()))?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let mut state = shared.borrow_mut();
     let entry = state
         .native_pipe
@@ -194,7 +196,7 @@ pub(crate) fn open(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let endpoint = id(c, receiver)?;
-    if c.host_mut()
+    if c.node()
         .shared_state()
         .borrow()
         .native_pipe
@@ -236,7 +238,7 @@ pub(crate) fn bind(
         let _ = std::fs::remove_file(&path);
         return Ok(c.number(-error.raw_os_error().unwrap_or(libc::EIO) as f64));
     }
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let mut state = shared.borrow_mut();
     let Some(entry) = state.native_pipe.entries.get_mut(&endpoint) else {
         drop(listener);
@@ -254,7 +256,7 @@ pub(crate) fn bind(
 }
 fn change_read(c: &mut Context<'_>, receiver: RootId, start: bool) -> Result<RootId, RootedError> {
     let id = id(c, receiver)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = {
         let mut state = shared.borrow_mut();
         state
@@ -299,7 +301,7 @@ pub(crate) fn read_stop(
 fn reference(c: &mut Context<'_>, r: RootId, value: bool) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
     if let Some(e) = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .native_pipe
@@ -330,7 +332,7 @@ pub(crate) fn unref_handle(
 pub(crate) fn has_ref(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
     let yes = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .native_pipe
@@ -342,7 +344,7 @@ pub(crate) fn has_ref(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<Ro
 pub(crate) fn fd(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
     let fd = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .native_pipe
@@ -361,7 +363,7 @@ pub(crate) fn fd(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId,
 pub(crate) fn queue(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
     let n = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .native_pipe
@@ -406,7 +408,7 @@ fn write(
         }),
         None => None,
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     if descriptor.is_none() {
         let tried = {
             let state = shared.borrow();
@@ -496,7 +498,7 @@ pub(crate) fn close(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let entry = {
         let mut state = shared.borrow_mut();
         let Some(entry) = state.native_pipe.entries.get_mut(&id) else {
@@ -548,8 +550,8 @@ pub(crate) fn close(
     Ok(c.undefined())
 }
 /// The shared Operation tail owns native identity through callback and after hooks.
-pub(crate) fn detach(runtime: &mut Runtime<NodeHost>, id: u64) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn detach(runtime: &mut Runtime<ErasedHost>, id: u64) {
+    let shared = runtime.node().shared_state();
     let entry = {
         let mut state = shared.borrow_mut();
         if state
@@ -590,7 +592,7 @@ fn queue_write_context(
         receiver: c.retain(handle)?,
         args: vec![request.root, c.retain(status)?],
     };
-    c.host_mut()
+    c.node()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -623,10 +625,10 @@ pub(crate) fn is_closed(state: &SharedNodeState, id: u64) -> bool {
 }
 
 pub(crate) fn poll(
-    runtime: &mut Runtime<NodeHost>,
+    runtime: &mut Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
 ) -> Result<bool, String> {
-    let shared = runtime.host_mut().shared_state();
+    let shared = runtime.node().shared_state();
     let identities = std::mem::take(&mut shared.borrow_mut().native_pipe.identities);
     let mut live = Vec::with_capacity(identities.len());
     for (weak, id) in identities {
@@ -704,12 +706,12 @@ pub(crate) fn poll(
 /// Native read callbacks enter their real HandleWrap context. Each kernel read
 /// returns control before a subsequent recvmsg so guest readStop/close is authoritative.
 fn deliver_read_runtime(
-    runtime: &mut Runtime<NodeHost>,
+    runtime: &mut Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
     handle: RootId,
     token: RootId,
 ) -> Result<(), String> {
-    let shared = runtime.host_mut().shared_state();
+    let shared = runtime.node().shared_state();
     let resource = shared
         .borrow()
         .native_pipe
@@ -772,7 +774,7 @@ fn deliver_read_runtime(
     super::process_shared_vm::invoke_async_callback(runtime, program, invocation)
 }
 fn queue_runtime(
-    runtime: &mut Runtime<NodeHost>,
+    runtime: &mut Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
     op: &str,
     handle: RootId,
@@ -810,7 +812,7 @@ fn queue_runtime(
         },
     );
     runtime
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -830,7 +832,7 @@ pub(crate) fn prepare_read(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let token = args.first().copied().unwrap_or_else(|| c.undefined());
     let descriptor = if let Some(token) = c.rooted_value(token).and_then(Value::as_number) {
         shared
@@ -871,7 +873,7 @@ pub(crate) fn read_complete(
 ) -> Result<RootId, RootedError> {
     let token = args[0];
     let id = id(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let read = if let Some(token) = c.rooted_value(token).and_then(Value::as_number) {
         shared
             .borrow_mut()
@@ -908,8 +910,8 @@ pub(crate) fn read_complete(
 }
 
 /// Teardown abandons native work without invoking guest callbacks.
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
+    let shared = runtime.node().shared_state();
     let state = std::mem::take(&mut shared.borrow_mut().native_pipe);
     for (weak, _) in state.identities {
         runtime.release_host_weak_root(weak);

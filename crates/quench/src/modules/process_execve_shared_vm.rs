@@ -1,10 +1,10 @@
 //! `process.execve`'s system call. Node's `wrapProcessMethods` validates the path, the
 //! arguments and the environment and emits the experimental warning and the diagnostics
 //! channel message; this native then replaces the process image as Node's `Execve` does.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::ffi::CString;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The descriptors the new image inherits: stdin, stdout and stderr.
 const INHERITED_STDIO: [libc::c_int; 3] = [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO];

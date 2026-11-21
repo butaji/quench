@@ -125,7 +125,8 @@ struct Dump {
 fn short_name(full: &str) -> String {
     if full.starts_with("0x") { return "(jit code)".to_owned() }
     let full = full.split('\'').next().unwrap_or(full);
-    let full = full.replace("::<", "<").replace("<quench::host::node_host::NodeHost, ", "<").replace("<quench::host::node_host::NodeHost>", "");
+    let full = full.replace("::<", "<").replace("<quench::host::node_host::NodeHost, ", "<").replace("<quench::host::node_host::NodeHost>", "")
+        .replace("<quench_runtime::erased_host::ErasedHost, ", "<").replace("<quench_runtime::erased_host::ErasedHost>", "");
     // The path's segments at angle depth 0: the item is the last, its impl type (`<Vm>::f`) or its
     // function (`f::{{closure}}`) the one before.
     let (mut segments, mut depth, mut start) = (Vec::new(), 0usize, 0usize);

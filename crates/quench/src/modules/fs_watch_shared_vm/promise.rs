@@ -1,12 +1,13 @@
 //! Promise consumers own a private FIFO; the shared event handle owns kernel work.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::{get, nullish, set};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const DEFAULT_MAX_QUEUE: f64 = 2048.0;
 use crate::modules::util_shared_vm::MAX_SAFE_INTEGER;
-fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+fn api(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+    let shared = context.node().shared_state();
     let parent = shared
         .borrow()
         .fs_watch
@@ -15,7 +16,7 @@ fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError>
     get(context, parent, "promise")
 }
 fn call(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     name: &str,
     receiver: RootId,
     args: &[RootId],
@@ -25,7 +26,7 @@ fn call(
     context.call_rooted(function, receiver, args)
 }
 pub(super) fn abort_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     signal: RootId,
 ) -> Result<RootId, RootedError> {
     let error = context.error_rooted("The operation was aborted")?;
@@ -43,7 +44,7 @@ pub(super) fn abort_error(
     Ok(error)
 }
 fn option_boolean(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -62,7 +63,7 @@ fn option_boolean(
     }
     Ok(())
 }
-fn max_queue(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<(), RootedError> {
+fn max_queue(context: &mut NativeContext<'_, ErasedHost>, value: RootId) -> Result<(), RootedError> {
     let Some(number) = context
         .rooted_value(value)
         .and_then(|value| value.as_number())
@@ -104,7 +105,7 @@ fn max_queue(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result
     Ok(())
 }
 pub(super) fn create(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     filename: RootId,
     options: RootId,
 ) -> Result<RootId, RootedError> {
@@ -199,7 +200,7 @@ pub(super) fn create(
         set(context, data, "cancel", cancel)?;
         let add = get(context, signal, "addEventListener")?;
         let event = context.string_rooted("abort");
-        let shared = context.host_mut().shared_state();
+        let shared = context.node().shared_state();
         let events = shared
             .borrow()
             .event_targets_api
@@ -211,7 +212,7 @@ pub(super) fn create(
     call(context, "makeIterator", undefined, &[data])
 }
 fn queue_length(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     queue: RootId,
 ) -> Result<f64, RootedError> {
     let length = get(context, queue, "length")?;
@@ -221,7 +222,7 @@ fn queue_length(
         .ok_or_else(|| RootedError::host("watch queue has invalid length"))
 }
 fn clear_queue(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     queue: RootId,
 ) -> Result<(), RootedError> {
     let key = context.string_rooted("length");
@@ -230,7 +231,7 @@ fn clear_queue(
     Ok(())
 }
 fn result(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     item: Option<RootId>,
 ) -> Result<RootId, RootedError> {
     let result = context.null_object_rooted()?;
@@ -242,7 +243,7 @@ fn result(
     Ok(result)
 }
 fn take(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
 ) -> Result<Option<(bool, RootId)>, RootedError> {
     let queue = get(context, data, "queue")?;
@@ -258,15 +259,15 @@ fn take(
         Ok(Some((false, result(context, Some(value))?)))
     }
 }
-fn signal(context: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<RootId, RootedError> {
+fn signal(context: &mut NativeContext<'_, ErasedHost>, data: RootId) -> Result<RootId, RootedError> {
     let options = get(context, data, "options")?;
     get(context, options, "signal")
 }
-fn is_closed(context: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<bool, RootedError> {
+fn is_closed(context: &mut NativeContext<'_, ErasedHost>, data: RootId) -> Result<bool, RootedError> {
     let phase = get(context, data, "phase")?;
     Ok(context.string_text(phase)?.as_deref() == Some("closed"))
 }
-fn settle(context: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<(), RootedError> {
+fn settle(context: &mut NativeContext<'_, ErasedHost>, data: RootId) -> Result<(), RootedError> {
     let pending = get(context, data, "pending")?;
     if nullish(context, pending) {
         return Ok(());
@@ -306,7 +307,7 @@ fn settle(context: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<(),
     Ok(())
 }
 pub(crate) fn next(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -320,7 +321,7 @@ pub(crate) fn next(
     context.construct_rooted(promise, promise, &[executor])
 }
 pub(crate) fn executor(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -335,7 +336,7 @@ pub(crate) fn executor(
     Ok(context.undefined())
 }
 pub(crate) fn event(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -387,7 +388,7 @@ pub(crate) fn event(
     Ok(context.undefined())
 }
 pub(crate) fn cancel(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -398,7 +399,7 @@ pub(crate) fn cancel(
     Ok(context.undefined())
 }
 pub(crate) fn finish(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

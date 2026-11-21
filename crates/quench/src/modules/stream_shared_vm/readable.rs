@@ -1,5 +1,6 @@
 //! `Readable`: buffering, flowing and paused modes, piping, and the readable accessors.
 
+use crate::host::NodeAccess;
 use super::destroy::{self, error_or_destroy};
 use super::errors::{self, StreamError};
 use super::state::{self, bits, change, readable::*};
@@ -817,7 +818,7 @@ pub(crate) fn pipe(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
 
 /// `dest === process.stdout || dest === process.stderr`.
 fn is_standard_output(c: &mut Context<'_>, dest: RootId) -> Result<bool, RootedError> {
-    let process = c.host_mut().shared_state().borrow().process_module;
+    let process = c.node().shared_state().borrow().process_module;
     let Some(process) = process else { return Ok(false) };
     for name in ["stdout", "stderr"] {
         let output = get(c, process, name)?;

@@ -3,15 +3,16 @@
 //!
 //! The binding (`contextify_shared_vm`) owns compiled code and contexts; this layer validates
 //! Node's options and maps them onto the binding's positional arguments.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::contextify_shared_vm as contextify;
 use super::event_constructor_shared_vm::get;
 use super::util_shared_vm::{
     argument_type_error, argument_type_error_with_expected, argument_value_error, validate_boolean, validate_string,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 const DEFAULT_FILENAME: &str = "evalmachine.<anonymous>";
 const DEFAULT_FUNCTION_FILENAME: &str = "";
@@ -312,7 +313,7 @@ fn make_context(c: &mut Context<'_>, sandbox: RootId, options: ContextOptions) -
         Some(name) => name,
         None => {
             let index = {
-                let shared = c.host_mut().shared_state();
+                let shared = c.node().shared_state();
                 let mut shared = shared.borrow_mut();
                 let index = shared.vm_scripts.next_context_name;
                 shared.vm_scripts.next_context_name += 1;

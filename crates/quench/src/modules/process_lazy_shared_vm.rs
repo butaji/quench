@@ -1,12 +1,13 @@
 //! `process`'s members Node defines late in bootstrap (lib/internal/bootstrap/node.js,
 //! lib/internal/process/per_thread.js and lib/internal/process/finalization.js), defined
 //! together on the first read of any of them (`process_surface::LAZY_MEMBERS`).
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// `process.debugPort` without an inspector: Node's default inspector port.
 const DEFAULT_DEBUG_PORT: f64 = 9229.0;
@@ -48,7 +49,7 @@ const FINALIZATION_FUNCTIONS: [(&str, &str, &str); 3] = [
 const LISTENER_SUFFIX: &str = "Listener";
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))
+    c.node().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))
 }
 
 fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {

@@ -1,10 +1,10 @@
 //! Node's `util.inspect`, `util.format` and `util.formatWithOptions` (lib/internal/util/inspect.js)
 //! in Rust. One formatter serves the `util` module, the console and every coded error that
 //! inspects a received value.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{BuiltinBrand, BuiltinData, DescriptorFields, NativeContext, PromiseSnapshot, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// `kMinLineWidth`: strings at most this long are never split into lines.
 const MIN_LINE_WIDTH: usize = 16;

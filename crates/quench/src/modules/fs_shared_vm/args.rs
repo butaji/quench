@@ -1,6 +1,7 @@
 //! Node's fs argument policy (`internal/fs/utils.js`, `internal/validators.js`): each public
 //! argument is checked once and becomes the Rust value the operation consumes.
 
+use crate::host::NodeAccess;
 use crate::modules::stream_shared_vm::{get, is_nullish, is_undefined, Context};
 use crate::modules::util_shared_vm as util;
 use quench_runtime::{BuiltinBrand, RootId, RootedError};
@@ -25,7 +26,7 @@ pub(crate) struct FsPath {
 /// the host opens relative to the working directory.
 pub(crate) fn path(c: &mut Context<'_>, value: RootId, name: &str) -> Result<FsPath, RootedError> {
     let mut path = path_as_given(c, value, name)?;
-    path.io = c.host_mut().shared_state().borrow().cwd.resolve_io_path(&path.io);
+    path.io = c.node().shared_state().borrow().cwd.resolve_io_path(&path.io);
     Ok(path)
 }
 

@@ -1,10 +1,10 @@
 //! Net endpoint overloads select TCP ports or local paths before OS effects.
+use quench_runtime::ErasedHost;
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn normalize(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -177,7 +177,7 @@ pub(crate) fn normalize(
     Ok(plan)
 }
 fn port_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     connecting: bool,
 ) -> Result<RootedError, RootedError> {
@@ -193,7 +193,7 @@ fn port_error(
     Ok(context.throw(error))
 }
 fn invalid_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     options: RootId,
 ) -> Result<RootedError, RootedError> {
     let mut missing = false;

@@ -1,7 +1,8 @@
 //! Net lookup callbacks retain endpoint ownership before requesting OS connect.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
 use super::net_shared_vm;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 
@@ -13,7 +14,7 @@ fn is_ip_family(family: Option<f64>) -> bool {
 }
 
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -24,13 +25,13 @@ fn set(
 }
 
 pub(super) fn start(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
     host: RootId,
     port: RootId,
     options: RootId,
 ) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let id =
         net_shared_vm::reserve_lookup(&mut state.borrow_mut().tcp).map_err(RootedError::host)?;
     net_shared_vm::register_socket(context, socket, id)?;
@@ -120,11 +121,11 @@ pub(super) fn start(
 }
 
 fn active(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
     id: u64,
 ) -> Result<bool, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     if !net_shared_vm::is_looking_up(&state.borrow().tcp, id) {
         return Ok(false);
     }
@@ -132,7 +133,7 @@ fn active(
     context.truthy_rooted(connecting)
 }
 fn emit_lookup(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
     error: RootId,
     ip: RootId,
@@ -145,7 +146,7 @@ fn emit_lookup(
     Ok(())
 }
 fn fail(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
     error: RootId,
 ) -> Result<RootId, RootedError> {
@@ -154,7 +155,7 @@ fn fail(
     super::shared_event_loop::queue_next_tick(context, callback, undefined, &[socket, error])?;
     Ok(undefined)
 }
-fn detail(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<String, RootedError> {
+fn detail(context: &mut NativeContext<'_, ErasedHost>, value: RootId) -> Result<String, RootedError> {
     if context.is_symbol_rooted(value)? {
         let inspect = super::util_shared_vm::internal_inspect(context)?;
         let undefined = context.undefined();
@@ -165,7 +166,7 @@ fn detail(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<St
     }
 }
 fn invalid_ip(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     ip: RootId,
 ) -> Result<RootId, RootedError> {
     let ip = if context.is_object_rooted(ip)? && !context.is_callable_rooted(ip)? {
@@ -184,7 +185,7 @@ fn invalid_ip(
     Ok(error)
 }
 fn invalid_family(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     owner: RootId,
     family: RootId,
 ) -> Result<RootId, RootedError> {
@@ -214,7 +215,7 @@ fn invalid_family(
 }
 
 pub(crate) fn result(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -346,7 +347,7 @@ pub(crate) fn result(
     let options = get(context, owner, "options")?;
     let (local_address, local_port) =
         super::net_options_shared_vm::connect_source(context, options)?;
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     net_shared_vm::connect_resolved(
         &mut state.borrow_mut().tcp,
         id,
@@ -360,7 +361,7 @@ pub(crate) fn result(
 }
 
 pub(crate) fn error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -372,19 +373,19 @@ pub(crate) fn error(
 }
 
 pub(crate) fn get_default(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let enabled = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .net_auto_select_family;
     Ok(context.boolean(enabled))
 }
 pub(crate) fn set_default(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -401,7 +402,7 @@ pub(crate) fn set_default(
         )?);
     };
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .net_auto_select_family = enabled;

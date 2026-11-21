@@ -1,12 +1,13 @@
 //! `_stream_wrap`: Node's deprecated `JSStreamSocket`, a `net.Socket` over any Duplex stream.
 //! The class is a native constructor that extends `net.Socket` the way TLSSocket does; its
 //! methods and the stream listeners are host functions over the wrapped stream.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use crate::modules::host_members::{captured, constructor, current, function, leading, members, methods};
 use crate::modules::stream_shared_vm::{get, inherit, is_undefined};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 /// Node's DEP0125 warning message and code.
@@ -182,7 +183,7 @@ fn settle(c: &mut Context<'_>, callback: RootId, args: &[RootId]) -> Outcome {
 
 fn warn_deprecated(c: &mut Context<'_>) -> Result<(), RootedError> {
     let process = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .process_module

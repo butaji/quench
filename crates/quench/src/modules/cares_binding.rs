@@ -1,5 +1,6 @@
 //! Native getaddrinfo subset of cares_wrap. Deliberately no ChannelWrap facade.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::sync::mpsc;
 #[path = "dns_backend.rs"]
@@ -8,7 +9,7 @@ mod backend;
 mod service_backend;
 #[path = "dns_uv_error.rs"]
 mod uv_error;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 const DNS_ORDER_VERBATIM: i32 = 0;
 const DNS_ORDER_IPV4_FIRST: i32 = 1;
 const DNS_ORDER_IPV6_FIRST: i32 = 2;
@@ -33,7 +34,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let object = c.object_rooted()?;
     let factory = c.host_function(crate::host::shared_vm::operation!("dnsAddressArray"))?;
     let factory = c.retain(factory)?;
-    c.host_mut().shared_state().borrow_mut().dns.array_factory = Some(factory);
+    c.node().shared_state().borrow_mut().dns.array_factory = Some(factory);
     let request = c.host_constructor(crate::host::shared_vm::operation!("dnsRequestConstruct"))?;
     put(c, object, "GetAddrInfoReqWrap", request)?;
     let operation = c.host_function(crate::host::shared_vm::operation!("dnsGetAddrInfo"))?;
@@ -150,7 +151,7 @@ fn submit(
     resource_type: &str,
     work: impl FnOnce() -> Completion + Send + 'static,
 ) -> Result<RootId, RootedError> {
-    let state = c.host_mut().shared_state();
+    let state = c.node().shared_state();
     let async_id = super::async_hooks_shared_vm::create_context(&state);
     if let Err(error) =
         super::async_hooks_shared_vm::emit_init(c, request_object, resource_type, async_id)
@@ -188,10 +189,10 @@ fn submit(
 }
 /// Poll phase transfers retained roots to the canonical native callback dispatcher.
 pub(crate) fn poll(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
 ) -> Result<bool, String> {
-    let shared = runtime.host_mut().shared_state();
+    let shared = runtime.node().shared_state();
     let completed = {
         let mut state = shared.borrow_mut();
         let mut ready = None;
@@ -300,8 +301,8 @@ pub(crate) fn poll(
     }
     Ok(true)
 }
-pub(crate) fn cleanup(runtime: &mut quench_runtime::Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn cleanup(runtime: &mut quench_runtime::Runtime<ErasedHost>) {
+    let shared = runtime.node().shared_state();
     let (pending, factory) = {
         let mut state = shared.borrow_mut();
         (

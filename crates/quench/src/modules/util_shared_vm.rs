@@ -1,6 +1,7 @@
 //! Shared-VM utilities and native builtin-brand predicates.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use crate::modules::event_constructor_shared_vm::get;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
@@ -11,7 +12,7 @@ pub(crate) use quench_runtime::units::MAX_SAFE_INTEGER;
 
 /// Named property read on the object, as `get_named_property_rooted`.
 pub(crate) fn named_get(
-    c: &mut NativeContext<'_, NodeHost>,
+    c: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
@@ -20,7 +21,7 @@ pub(crate) fn named_get(
 
 /// Defines a writable, enumerable, configurable data property under `name`.
 pub(crate) fn named_put(
-    c: &mut NativeContext<'_, NodeHost>,
+    c: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -31,7 +32,7 @@ pub(crate) fn named_put(
 }
 
 /// The value's type tag, or `Undefined` when the root is no longer live.
-pub(crate) fn type_of_value(c: &NativeContext<'_, NodeHost>, value: RootId) -> ValueType {
+pub(crate) fn type_of_value(c: &NativeContext<'_, ErasedHost>, value: RootId) -> ValueType {
     c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
 }
 
@@ -45,10 +46,10 @@ pub(crate) struct UtilIntrinsics {
     pub(crate) primordials: RootId,
 }
 
-fn intrinsics(context: &mut NativeContext<'_, NodeHost>) -> Result<UtilIntrinsics, RootedError> {
+fn intrinsics(context: &mut NativeContext<'_, ErasedHost>) -> Result<UtilIntrinsics, RootedError> {
     module(context)?;
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .util_intrinsics
@@ -56,25 +57,25 @@ fn intrinsics(context: &mut NativeContext<'_, NodeHost>) -> Result<UtilIntrinsic
 }
 
 pub(crate) fn internal_formatters(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     intrinsics(context).map(|api| api.formatters)
 }
 
 pub(crate) fn internal_inspect(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     intrinsics(context).map(|api| api.inspect)
 }
 
 pub(crate) fn primordials(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     intrinsics(context).map(|api| api.primordials)
 }
 
-pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let cached = context.host_mut().shared_state().borrow().util_intrinsics;
+pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+    let cached = context.node().shared_state().borrow().util_intrinsics;
     if let Some(api) = cached {
         return Ok(api.module);
     }
@@ -85,7 +86,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let (module, formatters) = super::util_module_shared_vm::build(context, primordials)?;
     let module = context.retain(module)?;
     let formatters = context.retain(formatters)?;
-    context.host_mut().shared_state().borrow_mut().util_intrinsics = Some(UtilIntrinsics {
+    context.node().shared_state().borrow_mut().util_intrinsics = Some(UtilIntrinsics {
         module,
         inspect,
         formatters,
@@ -95,7 +96,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 }
 
 pub(crate) fn parse_env(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -115,7 +116,7 @@ pub(crate) fn parse_env(
 /// Node inspect string literals: pick a delimiter, escape controls and lone
 /// surrogates, and preserve valid UTF-16 pairs without host-text conversion.
 pub(crate) fn inspect_quote(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -130,7 +131,7 @@ pub(crate) fn inspect_quote(
 /// Shared Node AbortSignal shape validation. HasProperty observes Proxy traps
 /// and inherited aborted properties; functions and null are rejected.
 pub(crate) fn validate_abort_signal(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     signal: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -150,7 +151,7 @@ pub(crate) fn validate_abort_signal(
 
 /// Node's `validateString(value, name)`: the string's text, or `ERR_INVALID_ARG_TYPE`.
 pub(crate) fn validate_string(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<String, RootedError> {
@@ -162,7 +163,7 @@ pub(crate) fn validate_string(
 
 /// Node's `validateBoolean(value, name)`: the flag, or `ERR_INVALID_ARG_TYPE`.
 pub(crate) fn validate_boolean(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<bool, RootedError> {
@@ -174,7 +175,7 @@ pub(crate) fn validate_boolean(
 
 /// Node's `validateNumber(value, name)`: the number, or `ERR_INVALID_ARG_TYPE`.
 pub(crate) fn validate_number(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<f64, RootedError> {
@@ -186,7 +187,7 @@ pub(crate) fn validate_number(
 
 /// Node's `validateFunction(value, name)`: a callable, or `ERR_INVALID_ARG_TYPE`.
 pub(crate) fn validate_function(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -197,7 +198,7 @@ pub(crate) fn validate_function(
 }
 
 pub(crate) fn argument_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     root: RootId,
     name: &str,
     expected: &str,
@@ -211,7 +212,7 @@ pub(crate) fn argument_type_error(
 }
 
 pub(crate) fn argument_type_error_units(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     root: RootId,
     name: &[u16],
     expected: &str,
@@ -229,7 +230,7 @@ pub(crate) fn argument_type_error_units(
 
 /// Already formatted union of accepted Node argument types.
 pub(crate) fn argument_type_error_with_expected(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     root: RootId,
     name: &str,
     expected: &str,
@@ -243,7 +244,7 @@ pub(crate) fn argument_type_error_with_expected(
 }
 
 pub(crate) fn argument_type_error_with_expected_units(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     root: RootId,
     name: &[u16],
     expected: &str,
@@ -274,7 +275,7 @@ pub(crate) fn argument_type_error_with_expected_units(
 
 /// Node's value error inspects the original input and caps UTF-16 presentation.
 pub(crate) fn argument_value_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
     reason: &str,
@@ -288,7 +289,7 @@ pub(crate) fn argument_value_error(
 }
 
 pub(crate) fn argument_value_error_units(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &[u16],
     reason: &str,
@@ -301,7 +302,7 @@ pub(crate) fn argument_value_error_units(
 /// Finish a value error from an already inspected value. Callers with a proven primitive
 /// presentation share the same message, truncation and coded-error construction.
 pub(crate) fn argument_value_error_inspected_units(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     name: &[u16],
     reason: &str,
     inspected: RootId,
@@ -333,7 +334,7 @@ pub(crate) fn argument_value_error_inspected_units(
 
 /// Shared Node received-type description for coded argument and port errors.
 pub(crate) fn argument_type_description(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     root: RootId,
 ) -> Result<String, RootedError> {
     let value = context
@@ -388,7 +389,7 @@ pub(crate) fn argument_type_description(
 
 /// `ERR_OUT_OF_RANGE`: `The value of "name" is out of range. It must be range. Received value`.
 pub(crate) fn out_of_range_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     name: &str,
     range: &str,
     value: RootId,
@@ -403,7 +404,7 @@ pub(crate) fn out_of_range_error(
 
 /// ERR_OUT_OF_RANGE rendering shares Node inspection and integer separators.
 pub(crate) fn range_error_received(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<String, RootedError> {
     if let Some(number) = context
@@ -451,7 +452,7 @@ fn integer_separators(text: &str) -> String {
 
 /// Node integer validators reject coercion of the value, then compare original bounds.
 pub(crate) fn validate_integer(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
     minimum: f64,
@@ -490,7 +491,7 @@ const SKIP_SYMBOLS: u32 = 16;
 /// V8's internal utility returns string keys, excluding array indices, with
 /// the requested enumerable filter. The Core internal methods own key semantics.
 pub(crate) fn own_non_index_properties(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -575,7 +576,7 @@ pub(crate) fn own_non_index_properties(
 
 /// Inspect Core's promise slots without invoking guest properties or reactions.
 pub(crate) fn promise_details(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -597,7 +598,7 @@ pub(crate) fn promise_details(
 }
 
 pub(crate) fn mark_promise_handled(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -608,7 +609,7 @@ pub(crate) fn mark_promise_handled(
 
 /// Cache the genuine internal key binding in Core-owned private formatter data.
 pub(crate) fn key_binding(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(
         context,
@@ -683,7 +684,7 @@ const PRIVATE_SYMBOL_PROPERTIES: &[(&str, &str)] = &[
     ),
 ];
 
-fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn build_key_binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for (name, operation) in [
         ("guessHandleType", "utilGuessHandleType"),
@@ -741,7 +742,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 
 /// Messaging hooks use realm-owned unique symbols, never registry aliases.
 pub(crate) fn symbols_binding(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(
         context,
@@ -749,7 +750,7 @@ pub(crate) fn symbols_binding(
         build_symbols_binding,
     )
 }
-fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn build_symbols_binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     let owner = super::net_reference_shared_vm::owner_symbol(context)?;
     let key = context.string_rooted("owner_symbol");
@@ -771,7 +772,7 @@ fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
 }
 
 pub(crate) fn types_binding(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(
         context,
@@ -779,7 +780,7 @@ pub(crate) fn types_binding(
         build_types_binding,
     )
 }
-fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn build_types_binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     // node_types.cc's raw native slot predicates, in its export order.
     use quench_runtime::BuiltinBrand as B;
     const NATIVE_BRANDS: &[B] = &[
@@ -831,7 +832,7 @@ fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Root
 
 /// Node's optional full-details argument tests literal true, not truthiness.
 pub(crate) fn proxy_details(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -854,7 +855,7 @@ pub(crate) fn proxy_details(
 
 /// One argument returns entries alone; any second argument requests both fields.
 pub(crate) fn preview_entries(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -874,7 +875,7 @@ pub(crate) fn preview_entries(
 
 /// Core owns creation identity, safe prototype lookup and intrinsic class display.
 pub(crate) fn constructor_name(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -886,7 +887,7 @@ pub(crate) fn constructor_name(
 
 /// External wrappers expose the stored address, without touching native memory.
 pub(crate) fn external_value(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -902,7 +903,7 @@ pub(crate) fn external_value(
 
 /// The configured util.js validates the public API and owns source-map policy.
 pub(crate) fn get_call_sites(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -923,7 +924,7 @@ pub(crate) fn get_call_sites(
 
 /// The `count` innermost source frames past the `skip` innermost, as call-site records.
 pub(crate) fn call_sites(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     count: usize,
     skip: usize,
 ) -> Result<RootId, RootedError> {
@@ -954,7 +955,7 @@ pub(crate) fn call_sites(
 
 /// Node's native caller capture skips the immediate JavaScript activation.
 pub(crate) fn get_caller_location(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -981,7 +982,7 @@ const DEFAULT_NODE_MODULES_FRAMES: usize = 10;
 /// `isInsideNodeModules(frameLimit)`: whether the nearest frame outside Node's builtins
 /// runs from a node_modules path.
 pub(crate) fn is_inside_node_modules(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let limit = match args.first().and_then(|value| context.rooted_value(*value)).and_then(|value| value.as_number()) {
         Some(limit) if limit.fract() == 0.0 && limit >= f64::from(i32::MIN) && limit <= f64::from(i32::MAX) => limit.max(0.0) as usize,
@@ -997,7 +998,7 @@ pub(crate) fn is_inside_node_modules(
 }
 
 pub(crate) fn guess_handle_type(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

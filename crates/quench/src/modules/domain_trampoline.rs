@@ -2,9 +2,10 @@
 //! callbacks with the legacy AsyncWrap async_id zero run through the callback `node:domain`
 //! registers, once it is loaded. None scheduler carriers are never classified as legacy
 //! AsyncWrap callbacks.
-use crate::host::{shared_vm::commonjs, NodeHost};
+use quench_runtime::ErasedHost;
+use crate::host::shared_vm::commonjs;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 /// Node AsyncWrap legacy async_context{0,0}, not the startup resource ID.
 pub(crate) const LEGACY_CALLBACK_ASYNC_ID: u64 = 0;
 /// The registered trampoline's cell: element 0 once registered.

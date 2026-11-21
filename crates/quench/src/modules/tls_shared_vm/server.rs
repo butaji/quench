@@ -1,6 +1,6 @@
 //! TLS Server projects accepted TCP owners into actual SSL sessions.
+use quench_runtime::ErasedHost;
 use super::socket::{get, method, set};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// The handshake deadline a server gives each connection unless `handshakeTimeout` sets
@@ -8,14 +8,14 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 const DEFAULT_HANDSHAKE_TIMEOUT: f64 = 120_000.0;
 
 /// The private slot holding a server's effective handshake timeout (`kHandshakeTimeout`).
-fn handshake_timeout_slot(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn handshake_timeout_slot(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0tls:handshakeTimeout", |context| {
         Ok(context.private_symbol_rooted(Some("kHandshakeTimeout")))
     })
 }
 
 pub(crate) fn create(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -24,7 +24,7 @@ pub(crate) fn create(
     context.construct_rooted(constructor, constructor, args)
 }
 pub(crate) fn construct(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -129,7 +129,7 @@ pub(crate) fn construct(
     Ok(receiver)
 }
 pub(crate) fn set_context(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -141,7 +141,7 @@ pub(crate) fn set_context(
     Ok(context.undefined())
 }
 pub(crate) fn connection(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     server: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -187,7 +187,7 @@ pub(crate) fn connection(
     Ok(context.undefined())
 }
 pub(crate) fn socket_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

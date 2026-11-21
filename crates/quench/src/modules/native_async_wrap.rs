@@ -1,10 +1,12 @@
 //! Shared native AsyncWrap base. Views come from actual wrapper/IO owners;
 //! uninitialized request shells and detached wrappers own no async resource.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
-use crate::host::{NodeHost, SharedNodeState};
+use crate::host::SharedNodeState;
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 const UNINITIALIZED_ASYNC_ID: i64 = -1; // AsyncWrap::kInvalidAsyncId.
                                         // Node src/async_wrap.h NODE_ASYNC_PROVIDER_TYPES, before crypto providers.
 pub(crate) const PROVIDER_TYPES: &[&str] = &[
@@ -172,7 +174,7 @@ pub(crate) fn view(c: &mut Context<'_>, receiver: RootId) -> Result<View, Rooted
         other => return Ok(other),
     }
     if let Some(endpoint) = super::net_reference_shared_vm::optional_handle_id(c, receiver)? {
-        if let Some(resource) = tcp_resource(&c.host_mut().shared_state(), endpoint) {
+        if let Some(resource) = tcp_resource(&c.node().shared_state(), endpoint) {
             return Ok(View::Active(resource));
         }
         return Ok(View::Detached);
@@ -214,11 +216,11 @@ pub(crate) fn async_reset(
     let Some(endpoint) = super::net_reference_shared_vm::optional_handle_id(c, receiver)? else {
         return Ok(c.undefined());
     };
-    let Some(old) = tcp_resource(&c.host_mut().shared_state(), endpoint) else {
+    let Some(old) = tcp_resource(&c.node().shared_state(), endpoint) else {
         return Ok(c.undefined());
     };
     super::async_hooks_shared_vm::complete_callback_context(c, old.id)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     if let Some(handle) = shared.borrow_mut().native_async_wrap.tcp.get_mut(&endpoint) {
         handle.resource.id = id;
@@ -233,7 +235,7 @@ pub(crate) fn initialize_tcp(
     endpoint: u64,
     server: bool,
 ) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     let provider = if server {
         Provider::TcpServer
@@ -263,9 +265,9 @@ pub(crate) fn tcp_resource(
 }
 /// The callback lease is the last native request/close owner. Detach only after
 /// guest callback+after hooks, including all throwing paths.
-pub(crate) fn detach(runtime: &mut Runtime<NodeHost>, id: u64) {
+pub(crate) fn detach(runtime: &mut Runtime<ErasedHost>, id: u64) {
     super::pipe_binding::detach(runtime, id);
-    let shared = runtime.host_mut().shared_state();
+    let shared = runtime.node().shared_state();
     let endpoints = shared
         .borrow()
         .native_async_wrap
@@ -286,8 +288,8 @@ pub(crate) fn detach(runtime: &mut Runtime<NodeHost>, id: u64) {
     super::udp_binding::detach_resource(&shared, id);
     super::stream_binding::detach_resource(&shared, id);
 }
-pub(crate) fn collect_tcp(runtime: &mut Runtime<NodeHost>, endpoint: u64) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn collect_tcp(runtime: &mut Runtime<ErasedHost>, endpoint: u64) {
+    let shared = runtime.node().shared_state();
     let resource = shared.borrow_mut().native_async_wrap.tcp.remove(&endpoint);
     if let Some(handle) = resource {
         runtime.release_root(handle.owner);
@@ -296,8 +298,8 @@ pub(crate) fn collect_tcp(runtime: &mut Runtime<NodeHost>, endpoint: u64) {
 }
 
 /// Final environment cancellation releases native ownership without guest hooks.
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
+    let shared = runtime.node().shared_state();
     let handles = std::mem::take(&mut shared.borrow_mut().native_async_wrap.tcp);
     for (_, handle) in handles {
         runtime.release_root(handle.owner);

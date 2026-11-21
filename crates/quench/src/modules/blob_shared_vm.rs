@@ -4,7 +4,8 @@
 //! A Blob's slots are its binding handle (`internalBinding('blob')`), size and type; the
 //! handle's parts own the bytes, so slices share them.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use crate::modules::blob_binding_shared_vm as binding;
 use crate::modules::host_members::{captured, current, function, members};
 use crate::modules::webstreams_shared_vm::{
@@ -13,7 +14,7 @@ use crate::modules::webstreams_shared_vm::{
 };
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Member, "blobMembers", [
@@ -98,13 +99,13 @@ const FILE_MEMBERS: [ClassMember<Member>; 2] =
 
 /// `[Blob, File]`, built once.
 pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
-    let cached = c.host_mut().shared_state().borrow().builtin_cache.get(CLASSES).copied();
+    let cached = c.node().shared_state().borrow().builtin_cache.get(CLASSES).copied();
     let table = match cached {
         Some(table) => table,
         None => {
             let table = c.with_startup_intrinsics(build)?;
             let retained = c.retain(table)?;
-            c.host_mut().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
+            c.node().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
             table
         }
     };

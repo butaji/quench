@@ -2,10 +2,11 @@
 //! private state names its handle and its bind and connect phases. Sends and connects made
 //! before the socket is bound wait in its queue until it is listening.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 /// A socket's bind phase.
@@ -240,7 +241,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let binding = super::udp_binding::binding(c)?;
     put(c, holder, "binding", binding)?;
     let emitter_api = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .event_targets_api
@@ -534,7 +535,7 @@ fn enqueue(c: &mut Context<'_>, socket: RootId, entry: RootId) -> Result<(), Roo
         let queue = c.array_rooted(&[])?;
         put(c, state, "queue", queue)?;
         let emitter_api = c
-            .host_mut()
+            .node()
             .shared_state()
             .borrow()
             .event_targets_api

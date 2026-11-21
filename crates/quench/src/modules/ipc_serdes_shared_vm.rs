@@ -3,7 +3,7 @@
 //! buffer views are host objects tagged by type (Node Buffers keep their class) and other
 //! host objects travel as shallow copies.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{
     DeserializerDelegate, HostObjectRead, NativeContext, RootId, RootedError, SerializerDelegate,
     SharedWireInput, ValueDeserializer, ValueSerializer, WireInput, WireOutput,
@@ -11,7 +11,7 @@ use quench_runtime::{
 use std::cell::RefCell;
 use std::rc::Rc;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The frame's payload-length prefix.
 pub(crate) const FRAME_HEADER_BYTES: usize = 4;
@@ -37,7 +37,7 @@ use super::serdes_shared_vm::throw_error as plain_error;
 
 struct IpcSerializer;
 
-impl SerializerDelegate<NodeHost> for IpcSerializer {
+impl SerializerDelegate<ErasedHost> for IpcSerializer {
     fn write_host_object(&mut self, c: &mut Context<'_>, output: &WireOutput, object: RootId) -> Result<Option<RootId>, RootedError> {
         if super::serdes_shared_vm::view_bytes(c, object)?.is_none() {
             // A shallow copy of the object's own enumerable string-keyed properties.
@@ -72,7 +72,7 @@ struct IpcDeserializer {
     frame_offset: usize,
 }
 
-impl DeserializerDelegate<NodeHost> for IpcDeserializer {
+impl DeserializerDelegate<ErasedHost> for IpcDeserializer {
     fn read_host_object(&mut self, c: &mut Context<'_>, input: &SharedWireInput) -> Result<HostObjectRead<RootId>, RootedError> {
         let tag = input.borrow_mut().read_uint32();
         match tag {

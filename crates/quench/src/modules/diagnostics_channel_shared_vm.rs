@@ -7,12 +7,13 @@
 //! slot. Its prototype is its activity state, as in Node: `subscribe` and `bindStore` switch
 //! it to `ActiveChannel`, the last removal back to `Channel`; `_subscribers` projects the
 //! registry list and `_stores` holds its bound stores.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, put, queue_uncaught, require_new};
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError, ValueType};
 use std::collections::HashMap;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 #[derive(Default)]
@@ -154,7 +155,7 @@ fn operation(name: &str) -> quench_runtime::HostFunctionId {
 }
 
 fn shared_api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let api = c.host_mut().shared_state().borrow().diagnostics.api;
+    let api = c.node().shared_state().borrow().diagnostics.api;
     match api {
         Some(api) => Ok(api),
         None => {
@@ -165,7 +166,7 @@ fn shared_api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 }
 
 fn api_data(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_mut()
+    c.node()
         .shared_state()
         .borrow()
         .diagnostics
@@ -235,7 +236,7 @@ fn intrinsic(c: &mut Context<'_>, holder: RootId, name: &str) -> Outcome {
 /// The module's exports, in Node's order; the classes and intrinsics it uses are kept in
 /// the group's data.
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
-    if let Some(module) = c.host_mut().shared_state().borrow().diagnostics.module {
+    if let Some(module) = c.node().shared_state().borrow().diagnostics.module {
         return Ok(module);
     }
     let api = c.null_object_rooted()?;
@@ -288,12 +289,12 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     put(c, api, api::TRACING_CLASS, tracing_class)?;
 
     let retained = c.retain(api)?;
-    c.host_mut().shared_state().borrow_mut().diagnostics.api = Some(retained);
+    c.node().shared_state().borrow_mut().diagnostics.api = Some(retained);
     let module = c.object_rooted()?;
     define_functions(c, module)?;
     put(c, module, "Channel", channel_class)?;
     let retained = c.retain(module)?;
-    c.host_mut().shared_state().borrow_mut().diagnostics.module = Some(retained);
+    c.node().shared_state().borrow_mut().diagnostics.module = Some(retained);
     Ok(module)
 }
 
@@ -334,7 +335,7 @@ pub(crate) fn channel_constructor(c: &mut Context<'_>, receiver: RootId, args: &
     let key = if c.value_type_rooted(name) == Some(ValueType::String) {
         name
     } else {
-        let shared = c.host_mut().shared_state();
+        let shared = c.node().shared_state();
         let ordinal = {
             let mut state = shared.borrow_mut();
             let ordinal = state.diagnostics.next_ordinal;
@@ -430,7 +431,7 @@ fn store_entries(c: &mut Context<'_>, channel: RootId) -> Result<Vec<RootId>, Ro
 
 /// `maybeMarkInactive`: a channel with no subscriber and no store becomes inactive.
 fn deactivate_if_idle(c: &mut Context<'_>, channel: RootId, key: ChannelKey<'_>) -> Result<(), RootedError> {
-    let subscribed = !c.host_mut().shared_state().borrow().diagnostics.subscribers(key).is_empty();
+    let subscribed = !c.node().shared_state().borrow().diagnostics.subscribers(key).is_empty();
     if subscribed || !store_entries(c, channel)?.is_empty() {
         return Ok(());
     }
@@ -443,7 +444,7 @@ fn deactivate_if_idle(c: &mut Context<'_>, channel: RootId, key: ChannelKey<'_>)
 
 /// `_subscribers` after a change: a new array of the registry list, as Node copies on write.
 fn project_subscribers(c: &mut Context<'_>, channel: RootId, key: ChannelKey<'_>) -> Result<(), RootedError> {
-    let subscribers = c.host_mut().shared_state().borrow().diagnostics.subscribers(key).to_vec();
+    let subscribers = c.node().shared_state().borrow().diagnostics.subscribers(key).to_vec();
     let subscribers = c.array_rooted(&subscribers)?;
     put(c, channel, SUBSCRIBERS, subscribers)
 }
@@ -461,7 +462,7 @@ pub(crate) fn channel_subscribe(c: &mut Context<'_>, receiver: RootId, args: &[R
     }
     let retained = c.retain(subscription)?;
     let key = borrow_key(&key);
-    c.host_mut().shared_state().borrow_mut().diagnostics.subscribers_mut(key).push(retained);
+    c.node().shared_state().borrow_mut().diagnostics.subscribers_mut(key).push(retained);
     project_subscribers(c, receiver, key)?;
     Ok(c.undefined())
 }
@@ -473,7 +474,7 @@ pub(crate) fn channel_unsubscribe(c: &mut Context<'_>, receiver: RootId, args: &
         return Ok(c.boolean(false));
     };
     let key = borrow_key(&key);
-    let subscribers = c.host_mut().shared_state().borrow().diagnostics.subscribers(key).to_vec();
+    let subscribers = c.node().shared_state().borrow().diagnostics.subscribers(key).to_vec();
     let mut found = None;
     for (index, subscriber) in subscribers.into_iter().enumerate() {
         if c.strict_equal_rooted(subscriber, subscription)? {
@@ -485,7 +486,7 @@ pub(crate) fn channel_unsubscribe(c: &mut Context<'_>, receiver: RootId, args: &
         return Ok(c.boolean(false));
     };
     let removed = {
-        let shared = c.host_mut().shared_state();
+        let shared = c.node().shared_state();
         let mut state = shared.borrow_mut();
         let removed = state.diagnostics.subscribers_mut(key).remove(index);
         state.diagnostics.remove_if_empty(key);
@@ -540,7 +541,7 @@ pub(crate) fn channel_has_subscribers_getter(c: &mut Context<'_>, _: RootId, _: 
 /// publish began; a subscriber's throw reaches the uncaught-exception path on the next tick
 /// and the rest still run.
 fn deliver(c: &mut Context<'_>, key: ChannelKey<'_>, message: RootId, name: RootId) -> Result<(), RootedError> {
-    let retained = c.host_mut().shared_state().borrow().diagnostics.subscribers(key).to_vec();
+    let retained = c.node().shared_state().borrow().diagnostics.subscribers(key).to_vec();
     let subscribers = retained.into_iter().filter_map(|root| c.scope_root(root)).collect::<Vec<_>>();
     let undefined = c.undefined();
     for subscriber in subscribers {
@@ -683,7 +684,7 @@ pub(crate) fn channel_has_subscribers(state: &crate::host::SharedNodeState, name
 /// A host publish on channel `name`, as the channel's `publish` delivers it: HTTP, net and
 /// the module loader own their timing and payload shape.
 pub(crate) fn publish_named(c: &mut Context<'_>, name: &str, message: RootId) -> Result<(), RootedError> {
-    if !channel_has_subscribers(&c.host_mut().shared_state().borrow(), name) {
+    if !channel_has_subscribers(&c.node().shared_state().borrow(), name) {
         return Ok(());
     }
     let name_value = c.string_rooted(name);

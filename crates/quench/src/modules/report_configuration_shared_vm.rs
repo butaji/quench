@@ -3,9 +3,10 @@
 //!
 //! A report is one document of plain objects (`document`): `getReport` returns it, and the
 //! binding's `getReport` and `writeReport` serialize it.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// How a setting's value is stored and how its public setter validates it.
 #[derive(Clone, Copy)]
@@ -77,7 +78,7 @@ fn setting_position(property: &str) -> usize {
     SETTINGS.iter().position(|setting| setting.property == property).expect("declared report setting")
 }
 fn value(context: &mut Context<'_>, property: &str) -> SettingValue {
-    context.host_mut().shared_state().borrow().report_config.values[setting_position(property)].clone()
+    context.node().shared_state().borrow().report_config.values[setting_position(property)].clone()
 }
 fn flag(context: &mut Context<'_>, property: &str) -> bool {
     matches!(value(context, property), SettingValue::Boolean(true))
@@ -89,7 +90,7 @@ fn text(context: &mut Context<'_>, property: &str) -> String {
     }
 }
 fn store(context: &mut Context<'_>, index: usize, value: SettingValue) {
-    context.host_mut().shared_state().borrow_mut().report_config.values[index] = value;
+    context.node().shared_state().borrow_mut().report_config.values[index] = value;
 }
 
 const DIRECTORY: &str = "directory";
@@ -127,7 +128,7 @@ const REPORT: &str = "\0node/process/report";
 const SIGNAL_LISTENER: &str = "\0node/process/report/signal";
 
 fn cached(context: &mut Context<'_>, key: &str, build: fn(&mut Context<'_>) -> Result<RootId, RootedError>) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     if let Some(value) = state.borrow().builtin_cache.get(key).copied() {
         return Ok(value);
     }
@@ -199,7 +200,7 @@ fn argument(context: &mut Context<'_>, args: &[RootId], index: usize) -> RootId 
 
 pub(crate) fn get(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let index = setting_index(context)?;
-    Ok(match context.host_mut().shared_state().borrow().report_config.values[index].clone() {
+    Ok(match context.node().shared_state().borrow().report_config.values[index].clone() {
         SettingValue::Boolean(value) => context.boolean(value),
         SettingValue::String(value) => context.string_rooted(&value),
     })
@@ -271,7 +272,7 @@ fn validate_signal(context: &mut Context<'_>, name: &str) -> Result<(), RootedEr
 
 fn process(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .process_module
@@ -441,7 +442,7 @@ fn write(context: &mut Context<'_>, event: &str, trigger: Trigger, file: Option<
         STDERR => eprintln!("{json}"),
         _ => {
             let directory = std::path::PathBuf::from(text(context, DIRECTORY));
-            let path = context.host_mut().shared_state().borrow().cwd.resolve_io_path(&directory.join(&name));
+            let path = context.node().shared_state().borrow().cwd.resolve_io_path(&directory.join(&name));
             eprintln!("\nWriting Node.js report to file: {name}");
             if let Err(failure) = std::fs::write(&path, format!("{json}\n")) {
                 eprintln!("\nFailed to open Node.js report file: {name} directory: {} (errno: {})", directory.display(), failure.raw_os_error().unwrap_or_default());
@@ -456,7 +457,7 @@ fn write(context: &mut Context<'_>, event: &str, trigger: Trigger, file: Option<
 /// `report.YYYYMMDD.HHMMSS.<pid>.<thread>.<sequence>.json`.
 fn generated_name(context: &mut Context<'_>) -> String {
     let sequence = {
-        let state = context.host_mut().shared_state();
+        let state = context.node().shared_state();
         let mut state = state.borrow_mut();
         state.report_config.sequence += 1;
         state.report_config.sequence
@@ -471,7 +472,7 @@ fn generated_name(context: &mut Context<'_>) -> String {
 }
 
 fn thread_id(context: &mut Context<'_>) -> u64 {
-    context.host_mut().shared_state().borrow().messaging.context.as_ref().map_or(0, |worker| worker.thread_id)
+    context.node().shared_state().borrow().messaging.context.as_ref().map_or(0, |worker| worker.thread_id)
 }
 
 /// The wall clock as local time, with the epoch milliseconds it was read at.
@@ -568,7 +569,7 @@ fn header(context: &mut Context<'_>, event: &str, trigger: Trigger, filename: Op
     number(context, header, "processId", f64::from(std::process::id()))?;
     let thread = thread_id(context);
     number(context, header, "threadId", thread as f64)?;
-    let cwd = context.host_mut().shared_state().borrow().cwd.path();
+    let cwd = context.node().shared_state().borrow().cwd.path();
     string(context, header, "cwd", &cwd.to_string_lossy())?;
     let command_line: Vec<RootId> = std::env::args().map(|argument| context.string_rooted(&argument)).collect();
     let command_line = context.array_rooted(&command_line)?;
@@ -802,7 +803,7 @@ fn rusage(who: libc::c_int) -> Result<Usage, RootedError> {
 
 /// CPU seconds and their share of the process's uptime, with file system activity.
 fn cpu_usage(context: &mut Context<'_>, usage: &Usage) -> Result<RootId, RootedError> {
-    let uptime = context.host_mut().shared_state().borrow().process_control.uptime();
+    let uptime = context.node().shared_state().borrow().process_control.uptime();
     let share = |seconds: f64| if uptime > 0.0 { seconds / uptime * PERCENT } else { 0.0 };
     let record = context.object_rooted()?;
     for (name, value) in [

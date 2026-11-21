@@ -5,10 +5,10 @@
 //! (`console_shared_vm::inspect_flat`), and anything else is written structurally here:
 //! primitives, functions, errors (their stack), symbols, custom inspectors, dates, regular
 //! expressions, maps, sets, arrays and objects with their constructor's name, to a depth.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// `inspectDefaultOptions.depth`.
 pub(crate) const DEFAULT_DEPTH: f64 = 2.0;

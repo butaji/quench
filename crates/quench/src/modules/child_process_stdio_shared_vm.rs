@@ -1,5 +1,6 @@
 //! One normalized stdio specification for OS descriptors and guest projections.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::process::Stdio;
 
@@ -69,21 +70,21 @@ fn descriptor(_: i32) -> std::io::Result<Stdio> {
 }
 
 pub(crate) fn normalize(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     options: Option<RootId>,
 ) -> Result<Vec<Specification>, RootedError> {
     normalize_for(context, options, false)
 }
 
 pub(crate) fn normalize_sync(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     options: Option<RootId>,
 ) -> Result<Vec<Specification>, RootedError> {
     normalize_for(context, options, true)
 }
 
 fn normalize_for(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     options: Option<RootId>,
     synchronous: bool,
 ) -> Result<Vec<Specification>, RootedError> {
@@ -156,7 +157,7 @@ fn normalize_for(
 }
 
 fn channel(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<Specification, RootedError> {
     if context
@@ -213,10 +214,10 @@ fn channel(
 /// Public `fd` projection is handled first, matching Node's stdio validation.
 #[cfg(unix)]
 fn inherited_stream_descriptor(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<Option<Specification>, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     let streams = state
         .borrow()
         .child_processes
@@ -256,7 +257,7 @@ fn inherited_stream_descriptor(
 }
 
 pub(crate) fn activate_inherited_streams(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     specifications: &[Specification],
 ) -> Result<(), RootedError> {
     #[cfg(unix)]
@@ -264,7 +265,7 @@ pub(crate) fn activate_inherited_streams(
         let Specification::Stream { owner, channel, .. } = specification else {
             continue;
         };
-        let state = context.host_mut().shared_state();
+        let state = context.node().shared_state();
         let stream = {
             let mut state = state.borrow_mut();
             state
@@ -301,7 +302,7 @@ pub(crate) fn activate_inherited_streams(
 }
 
 fn numeric_descriptor(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<Specification, RootedError> {
     let zero = context.number(0.0);
@@ -314,7 +315,7 @@ fn numeric_descriptor(
 }
 
 fn invalid(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     input: bool,
 ) -> Result<RootedError, RootedError> {

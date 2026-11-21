@@ -1,7 +1,7 @@
 //! Child options are snapshotted once, validated in Node order, then projected
 //! into syscall-safe identity values. No guest access runs in pre-exec.
+use quench_runtime::ErasedHost;
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::process::Command;
 
@@ -23,7 +23,7 @@ const RULES: &[(&str, Rule)] = &[
 ];
 
 pub(crate) fn prepare(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -141,13 +141,13 @@ pub(crate) fn prepare(
     Ok(options)
 }
 
-fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn nullish(context: &NativeContext<'_, ErasedHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 fn coded(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: RootId,
     code: &str,
 ) -> Result<RootedError, RootedError> {
@@ -157,7 +157,7 @@ fn coded(
     Ok(context.throw(error))
 }
 pub(crate) fn null_check(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -190,7 +190,7 @@ pub(crate) struct Identity {
 }
 impl Identity {
     pub(crate) fn from_options(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_, ErasedHost>,
         options: Option<RootId>,
     ) -> Result<Self, RootedError> {
         let Some(options) = options else {
@@ -252,7 +252,7 @@ impl Identity {
 }
 
 fn own_option(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     options: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
@@ -268,7 +268,7 @@ fn own_option(
 }
 
 pub(crate) fn validate_file(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -278,7 +278,7 @@ pub(crate) fn validate_file(
     Ok(value)
 }
 pub(crate) fn file_text(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<String, RootedError> {
     let Some(text) = context.string_text(value)? else {
@@ -296,7 +296,7 @@ pub(crate) fn file_text(
 }
 
 fn snapshot(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     original: RootId,
 ) -> Result<RootId, RootedError> {
     let options = context.null_object_rooted()?;
@@ -319,7 +319,7 @@ fn snapshot(
 }
 
 pub(crate) fn sync_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -353,7 +353,7 @@ pub(crate) fn sync_options(
 }
 
 pub(super) fn validate_serialization(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     serialization: RootId,
 ) -> Result<(), RootedError> {
     if !context

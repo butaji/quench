@@ -1,6 +1,7 @@
 //! `fs.cp` and `fs.cpSync` (`internal/fs/cp/*`): a recursive copy whose checks the sync
 //! API reports as Node's binding does and the asynchronous APIs as its library does.
 
+use crate::host::NodeAccess;
 use super::api::{Call, Reply};
 use super::args::{self, FsPath};
 use super::failure::{self, Coded, Syscall};
@@ -276,7 +277,7 @@ impl Copy {
     fn link(&self, c: &mut Context<'_>, source: &FsPath, destination: &FsPath) -> Result<(), RootedError> {
         let target = std::fs::read_link(&source.io);
         let mut target = failure::check(c, target, Syscall::at("readlink", &source.shown))?;
-        let cwd = c.host_mut().shared_state().borrow().cwd.clone();
+        let cwd = c.node().shared_state().borrow().cwd.clone();
         let cwd = cwd.current_path().map_err(|error| RootedError::host(error.to_string()))?;
         let cwd = cwd.to_string_lossy();
         if !self.options.verbatim_symlinks && target.is_relative() {

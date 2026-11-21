@@ -3,6 +3,7 @@
 //! settings, pings, GOAWAY) and the sessions, streams, servers and compatibility classes
 //! project it as Node's JavaScript API over any `net` or `tls` socket.
 
+use crate::host::NodeAccess;
 pub(crate) mod compat;
 mod connection;
 mod constants;
@@ -265,7 +266,7 @@ impl State {
 
 /// Run `f` over the module's host state.
 fn with_state<T>(c: &mut Context<'_>, f: impl FnOnce(&mut State) -> T) -> T {
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let mut shared = shared.borrow_mut();
     f(&mut shared.http2)
 }

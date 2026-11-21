@@ -13,6 +13,8 @@ pub(crate) mod startup_snapshot;
 pub(crate) use crate::shared_run::EntryGoal;
 pub(crate) use node_host::SharedNodeState;
 pub use node_host::{NodeHost, NodeOutputSink};
+pub(crate) use node_host::NodeAccess;
+pub use quench_runtime::ErasedHost;
 #[cfg(feature = "native-execution")]
 pub use node_host::NativeProgramResolver;
 

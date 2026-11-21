@@ -2,6 +2,7 @@
 //! `IncomingMessage`, `ServerResponse`, `Server`, `ClientRequest` and `Agent` over any
 //! `net`/`tls` socket, with the HTTP/1 framing read by the Rust parser (`parser`).
 
+use crate::host::NodeAccess;
 pub(crate) mod agent;
 pub(crate) mod client;
 pub(crate) mod incoming;
@@ -165,7 +166,7 @@ const _: () = {
 };
 
 fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {
-    c.host_mut()
+    c.node()
         .shared_state()
         .borrow()
         .http
@@ -194,7 +195,7 @@ pub(crate) fn put_slot(c: &mut Context<'_>, object: RootId, which: Slot, value: 
 /// Replace a class root, as `http.globalAgent = agent` replaces the default agent.
 pub(crate) fn set_class(c: &mut Context<'_>, which: Class, value: RootId) -> Result<(), RootedError> {
     let retained = c.retain(value)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let previous = {
         let mut state = shared.borrow_mut();
         let intrinsics = state.http.intrinsics.as_mut().ok_or_else(|| RootedError::host("http module is not initialized"))?;
@@ -286,7 +287,7 @@ pub(crate) fn build_module(c: &mut Context<'_>) -> Outcome {
     for class in &mut classes {
         *class = c.retain(undefined)?;
     }
-    c.host_mut().shared_state().borrow_mut().http.intrinsics = Some(Intrinsics { slots, classes });
+    c.node().shared_state().borrow_mut().http.intrinsics = Some(Intrinsics { slots, classes });
     let net = crate::host::shared_vm::commonjs::net_module(c)?;
     set_class(c, Class::Net, net)?;
     let codes = crate::modules::http_status_shared_vm::codes(c)?;
@@ -447,7 +448,7 @@ pub(crate) fn module_member(c: &mut Context<'_>, this: RootId, args: &[RootId]) 
             Ok(c.undefined())
         }
         Module::IsLenient => {
-            let lenient = c.host_mut().shared_state().borrow().cli_options.enabled(parsing::INSECURE_PARSER_FLAG);
+            let lenient = c.node().shared_state().borrow().cli_options.enabled(parsing::INSECURE_PARSER_FLAG);
             Ok(c.boolean(lenient))
         }
         Module::PrepareError => {
@@ -525,7 +526,7 @@ pub(crate) fn internal_module(c: &mut Context<'_>, name: &str) -> Outcome {
 /// The default `maxHeaderSize`: `--max-http-header-size`, else 16 KiB.
 pub(crate) fn max_header_size(c: &mut Context<'_>) -> f64 {
     const DEFAULT_MAX_HEADER_SIZE: f64 = 16.0 * 1024.0;
-    c.host_mut()
+    c.node()
         .shared_state()
         .borrow()
         .cli_options

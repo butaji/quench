@@ -1,5 +1,6 @@
 //! Socket option requests and their cached Node-visible transitions.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 
 pub(crate) const MILLISECONDS_PER_SECOND: f64 = 1000.0;
@@ -14,7 +15,7 @@ const FIELDS: [(&str, &str); 5] = [
 
 use crate::modules::util_shared_vm::named_get as get;
 fn field(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     socket: RootId,
     name: &str,
@@ -23,7 +24,7 @@ fn field(
     context.get_property_rooted(socket, key)
 }
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     socket: RootId,
     name: &str,
@@ -34,7 +35,7 @@ fn set(
     Ok(())
 }
 fn seconds(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<RootId, RootedError> {
     let scale = context.number(MILLISECONDS_PER_SECOND);
@@ -45,7 +46,7 @@ fn seconds(
 }
 
 pub(crate) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     internal_net: RootId,
 ) -> Result<[RootId; 4], RootedError> {
     let data = context.object_rooted()?;
@@ -60,7 +61,7 @@ pub(crate) fn install(
     }
     let retained = context.retain(data)?;
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .net_socket_option_keys = Some(retained);
@@ -89,7 +90,7 @@ pub(crate) fn install(
 }
 
 pub(crate) fn initialize(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -133,7 +134,7 @@ pub(crate) fn initialize(
     let handle = get(context, socket, "_handle")?;
     if let Some(id) = super::net_reference_shared_vm::optional_handle_id(context, handle)? {
         let already_registered = context
-            .host_mut()
+            .node()
             .shared_state()
             .borrow()
             .net_sockets
@@ -146,7 +147,7 @@ pub(crate) fn initialize(
 }
 
 pub(crate) fn no_delay(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -182,7 +183,7 @@ pub(crate) fn no_delay(
 }
 
 pub(crate) fn keep_alive(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -270,7 +271,7 @@ pub(crate) fn keep_alive(
 }
 
 pub(crate) fn initialize_server(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -374,7 +375,7 @@ pub(crate) fn initialize_server(
 }
 
 pub(crate) fn accepted_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -394,13 +395,13 @@ pub(crate) fn accepted_options(
 }
 
 pub(crate) fn apply_accepted(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     server: RootId,
     socket: RootId,
     handle: RootId,
 ) -> Result<(), RootedError> {
     let data = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .net_socket_option_keys
@@ -429,11 +430,11 @@ pub(crate) fn apply_accepted(
 }
 
 pub(crate) fn apply_connected(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
 ) -> Result<(), RootedError> {
     let data = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .net_socket_option_keys

@@ -9,6 +9,8 @@
 //! (`thread`). The event loop delivers port messages, port closure and worker lifecycle
 //! events through `messagingDrain`, one event per call. The JavaScript classes are `api`'s.
 
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 mod api;
 mod ports;
 mod thread;
@@ -24,14 +26,13 @@ pub(crate) use api::{
     worker_constructor, worker_forward, worker_getter, worker_not_running, worker_post_message, worker_ref,
     worker_resolve_exit, worker_resource_has_ref, worker_terminate, worker_terminate_callback, worker_unref,
 };
-use crate::host::NodeHost;
 use ports::{Endpoint, Message};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, Weak};
 pub(crate) use thread::{capture_error, capture_fatal, WorkerContext};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// A port this VM holds: its endpoint and its JavaScript object, retained while open.
 struct LocalPort {
@@ -94,7 +95,7 @@ impl State {
 static BROADCAST_CHANNELS: Mutex<Option<HashMap<String, Vec<Weak<Endpoint>>>>> = Mutex::new(None);
 
 fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>> {
-    c.host_mut().shared_state()
+    c.node().shared_state()
 }
 
 /// The messaging API object, built on first use.
@@ -457,7 +458,7 @@ pub(crate) fn drain(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Root
             result?;
         }
         Delivery::Terminate => {
-            c.host_mut().shared_state().borrow().process_control.request_really_exit(thread::TERMINATED_EXIT_CODE);
+            c.node().shared_state().borrow().process_control.request_really_exit(thread::TERMINATED_EXIT_CODE);
             return Err(RootedError::host("process.exit"));
         }
     }
@@ -470,7 +471,7 @@ pub(crate) fn has_work(shared_state: &std::rc::Rc<std::cell::RefCell<crate::host
 
 /// Event-loop source: deliver pending messaging events; `true` when any ran.
 pub(crate) fn poll(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
     shared_state: &std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>>,
 ) -> Result<bool, String> {

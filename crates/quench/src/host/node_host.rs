@@ -1,5 +1,6 @@
 //! Shared-runtime Node host state and entry configuration.
 
+use quench_runtime::ErasedHost;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -32,7 +33,7 @@ impl InlineSource {
 }
 
 #[cfg(feature = "native-execution")]
-pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, quench_runtime::NativeSourceError>;
+pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<ErasedHost>>, quench_runtime::NativeSourceError>;
 
 pub struct NodeHost {
     #[cfg(feature = "native-execution")]
@@ -72,7 +73,7 @@ pub struct NodeHost {
 impl NodeHost {
     /// Resolve linked code by the loader's exact name, source and shaping inputs.
     #[cfg(feature = "native-execution")]
-    pub fn with_native_programs(mut self, resolver: impl FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> + 'static) -> Self {
+    pub fn with_native_programs(mut self, resolver: impl FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<quench_runtime::ErasedHost>>, quench_runtime::NativeSourceError> + 'static) -> Self {
         self.native_program_resolver = Some(Box::new(resolver));
         self
     }
@@ -582,5 +583,39 @@ impl NodeHost {
     /// Exit code recorded by `process.exit`, if any.
     pub fn exit_code(&self) -> Option<i32> {
         self.shared_state.borrow().process_control.exit_code()
+    }
+}
+
+/// The Node host behind the runtime's `ErasedHost`: the VM is compiled for that one concrete
+/// host in `quench-runtime`, and Node's native callbacks reach their own state through it.
+pub(crate) trait NodeAccess {
+    fn node(&mut self) -> &mut NodeHost;
+}
+
+impl NodeAccess for quench_runtime::ErasedHost {
+    #[inline(always)]
+    fn node(&mut self) -> &mut NodeHost {
+        self.get::<NodeHost>()
+    }
+}
+
+impl NodeAccess for quench_runtime::NativeContext<'_, quench_runtime::ErasedHost> {
+    #[inline(always)]
+    fn node(&mut self) -> &mut NodeHost {
+        self.host_mut().get::<NodeHost>()
+    }
+}
+
+impl NodeAccess for quench_runtime::Runtime<quench_runtime::ErasedHost> {
+    #[inline(always)]
+    fn node(&mut self) -> &mut NodeHost {
+        self.host_mut().get::<NodeHost>()
+    }
+}
+
+impl NodeAccess for quench_runtime::CollectionContext<'_, quench_runtime::ErasedHost> {
+    #[inline(always)]
+    fn node(&mut self) -> &mut NodeHost {
+        self.host_mut().get::<NodeHost>()
     }
 }

@@ -1,10 +1,10 @@
 //! `buffer.isUtf8`, `buffer.isAscii` and `buffer.isLatin1` (lib/buffer.js), with the public
 //! functions' argument checks: nothing else reaches the binding's.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The largest code unit Node's one-byte `latin1` encodes.
 const LATIN1_MAX: u16 = 0xff;

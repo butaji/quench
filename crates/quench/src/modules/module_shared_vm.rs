@@ -1,4 +1,5 @@
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
@@ -81,7 +82,7 @@ pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "node:test/reporters",
 ];
 
-pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     let global = context.global_root()?;
     let weak_map = get(context, global, "WeakMap")?;
     let parents = context.construct_rooted(weak_map, weak_map, &[])?;
@@ -205,19 +206,19 @@ const DEFAULT_EXTENSIONS: [&str; 3] = [".js", ".json", ".node"];
 /// The handler `findLongestRegisteredExtension` falls back to.
 const FALLBACK_EXTENSION: &str = ".js";
 
-fn cached(context: &mut NativeContext<'_, NodeHost>, key: &str) -> Option<RootId> {
-    context.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+fn cached(context: &mut NativeContext<'_, ErasedHost>, key: &str) -> Option<RootId> {
+    context.node().shared_state().borrow().builtin_cache.get(key).copied()
 }
 
-fn cache(context: &mut NativeContext<'_, NodeHost>, key: String, value: RootId) -> Result<(), RootedError> {
+fn cache(context: &mut NativeContext<'_, ErasedHost>, key: String, value: RootId) -> Result<(), RootedError> {
     let value = context.retain(value)?;
-    context.host_mut().shared_state().borrow_mut().builtin_cache.insert(key, value);
+    context.node().shared_state().borrow_mut().builtin_cache.insert(key, value);
     Ok(())
 }
 
 /// `Module._extensions` (also `require.extensions`): a null-prototype object of loaders by
 /// extension, holding Node's defaults until script replaces or adds one.
-pub(crate) fn extensions(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn extensions(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     if let Some(extensions) = cached(context, EXTENSIONS_KEY) {
         return Ok(extensions);
     }
@@ -233,7 +234,7 @@ pub(crate) fn extensions(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
 
 /// `findLongestRegisteredExtension(filename)`: the longest registered suffix of the base
 /// name starting at a dot other than its first character, else `.js`.
-fn registered_extension(context: &mut NativeContext<'_, NodeHost>, extensions: RootId, filename: &Path) -> Result<String, RootedError> {
+fn registered_extension(context: &mut NativeContext<'_, ErasedHost>, extensions: RootId, filename: &Path) -> Result<String, RootedError> {
     let name = filename.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
     for (index, _) in name.match_indices('.').filter(|&(index, _)| index > 0) {
         let handler = get(context, extensions, &name[index..])?;
@@ -247,7 +248,7 @@ fn registered_extension(context: &mut NativeContext<'_, NodeHost>, extensions: R
 /// `Module.prototype.load`'s dispatch: the handler script registered for `filename`'s
 /// extension, or `None` while it is still Node's own, which the loader runs in place.
 pub(crate) fn replaced_extension_handler(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     filename: &Path,
 ) -> Result<Option<RootId>, RootedError> {
     let extensions = extensions(context)?;
@@ -261,7 +262,7 @@ pub(crate) fn replaced_extension_handler(
 }
 
 /// Node's own `Module._extensions[ext](module, filename)`, called by script.
-pub(crate) fn extension_default(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn extension_default(context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let module = args.first().copied().unwrap_or(undefined);
     let filename = args.get(1).copied().unwrap_or(undefined);
@@ -271,7 +272,7 @@ pub(crate) fn extension_default(context: &mut NativeContext<'_, NodeHost>, _: Ro
 }
 
 fn name_function(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     function: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -285,7 +286,7 @@ fn name_function(
 }
 
 fn accessor(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     getter: RootId,
@@ -305,7 +306,7 @@ fn accessor(
 }
 
 pub(crate) fn construct(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -347,7 +348,7 @@ pub(crate) fn construct(
 }
 
 fn invoke(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     name: &str,
     args: &[RootId],
@@ -357,7 +358,7 @@ fn invoke(
 }
 
 pub(crate) fn constructor_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -365,7 +366,7 @@ pub(crate) fn constructor_get(
 }
 
 pub(crate) fn parent_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -374,7 +375,7 @@ pub(crate) fn parent_get(
 }
 
 pub(crate) fn parent_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -385,7 +386,7 @@ pub(crate) fn parent_set(
 }
 
 pub(crate) fn require(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -393,7 +394,7 @@ pub(crate) fn require(
 }
 
 pub(crate) fn compile(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -401,7 +402,7 @@ pub(crate) fn compile(
 }
 
 pub(crate) fn find_package_json(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -622,7 +623,7 @@ fn package_scope(path: &std::path::Path) -> Option<PathBuf> {
 }
 
 fn coded_module_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     type_error: bool,
     code: &str,
     message: &str,
@@ -637,12 +638,12 @@ fn coded_module_error(
     Ok(context.throw(error))
 }
 
-fn invalid_url(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedError, RootedError> {
+fn invalid_url(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootedError, RootedError> {
     coded_module_error(context, true, "ERR_INVALID_URL", "Invalid URL")
 }
 
 fn invalid_url_scheme(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
 ) -> Result<RootedError, RootedError> {
     coded_module_error(
         context,
@@ -653,7 +654,7 @@ fn invalid_url_scheme(
 }
 
 fn unsupported_resolve_request(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     specifier: &str,
 ) -> Result<RootedError, RootedError> {
     coded_module_error(
@@ -667,7 +668,7 @@ fn unsupported_resolve_request(
 }
 
 fn module_not_found(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     path: &std::path::Path,
     base: Option<&Path>,
 ) -> Result<RootedError, RootedError> {
@@ -686,7 +687,7 @@ fn module_not_found(
 }
 
 fn package_not_found(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     specifier: &str,
     base: &Path,
 ) -> Result<RootedError, RootedError> {
@@ -702,7 +703,7 @@ fn package_not_found(
 }
 
 pub(crate) fn create_require(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -784,7 +785,7 @@ pub(crate) fn global_paths() -> Vec<PathBuf> {
 }
 
 /// Bind the module facade to this process before guest code can observe it.
-pub(crate) fn install_global_paths(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Result<(), RootedError> {
+pub(crate) fn install_global_paths(context: &mut NativeContext<'_, ErasedHost>, module: RootId) -> Result<(), RootedError> {
     let paths = global_paths().iter()
         .map(|path| context.string_rooted(&path.to_string_lossy()))
         .collect::<Vec<_>>();
@@ -796,7 +797,7 @@ pub(crate) fn install_global_paths(context: &mut NativeContext<'_, NodeHost>, mo
 const EXECUTABLE_PREFIX_DEPTH: usize = 2;
 
 pub(crate) fn node_module_paths(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -812,7 +813,7 @@ pub(crate) fn node_module_paths(
 }
 
 pub(crate) fn is_builtin(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -827,7 +828,7 @@ pub(crate) fn is_builtin(
 }
 
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -847,7 +848,7 @@ const COMPILE_CACHE_STATUS: &[(&str, f64)] = &[("FAILED", 0.0), ("ENABLED", 1.0)
 const COMPILE_CACHE_FAILED: f64 = 0.0;
 const COMPILE_CACHE_DISABLED: f64 = 3.0;
 
-fn process_env(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<Option<String>, RootedError> {
+fn process_env(context: &mut NativeContext<'_, ErasedHost>, name: &str) -> Result<Option<String>, RootedError> {
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
     let env = get(context, process, "env")?;
@@ -860,10 +861,10 @@ fn process_env(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<
 
 /// `module.parent`'s deprecated accessors: DEP0144 once, under `--pending-deprecation` or
 /// `NODE_PENDING_DEPRECATION=1`, then the accessor itself.
-pub(crate) fn parent_deprecated(context: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn parent_deprecated(context: &mut NativeContext<'_, ErasedHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
     let warned = get(context, data, "warned")?;
-    let pending = context.host_mut().shared_state().borrow().exec_argv.iter().any(|flag| flag == "--pending-deprecation")
+    let pending = context.node().shared_state().borrow().exec_argv.iter().any(|flag| flag == "--pending-deprecation")
         || process_env(context, "NODE_PENDING_DEPRECATION")?.as_deref() == Some("1");
     if pending && !context.has_own_property_rooted(warned, "done")? {
         let yes = context.boolean(true);
@@ -883,7 +884,7 @@ pub(crate) fn parent_deprecated(context: &mut NativeContext<'_, NodeHost>, this:
     context.call_rooted(target, this, args)
 }
 
-fn compile_cache_result(context: &mut NativeContext<'_, NodeHost>, status: f64, message: Option<&str>) -> Result<RootId, RootedError> {
+fn compile_cache_result(context: &mut NativeContext<'_, ErasedHost>, status: f64, message: Option<&str>) -> Result<RootId, RootedError> {
     let result = context.object_rooted()?;
     let status = context.number(status);
     set(context, result, "status", status)?;
@@ -896,12 +897,12 @@ fn compile_cache_result(context: &mut NativeContext<'_, NodeHost>, status: f64, 
 
 /// `module.enableCompileCache([directory | options])`: quench has no compile cache, so a
 /// valid request reports `FAILED`, or `DISABLED` under `NODE_DISABLE_COMPILE_CACHE`.
-pub(crate) fn enable_compile_cache(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn enable_compile_cache(context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let options = match args.first() {
         Some(options) => *options,
         None => context.undefined(),
     };
-    let invalid = |context: &mut NativeContext<'_, NodeHost>| -> Result<RootedError, RootedError> {
+    let invalid = |context: &mut NativeContext<'_, ErasedHost>| -> Result<RootedError, RootedError> {
         let error = context.type_error_rooted("The \"directory\" argument must be of type string.")?;
         let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
         set(context, error, "code", code)?;
@@ -927,23 +928,23 @@ pub(crate) fn enable_compile_cache(context: &mut NativeContext<'_, NodeHost>, _:
 }
 
 /// `module.flushCompileCache()`: nothing to flush.
-pub(crate) fn flush_compile_cache(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn flush_compile_cache(context: &mut NativeContext<'_, ErasedHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     Ok(context.undefined())
 }
 
 /// `module.getCompileCacheDir()`: no cache directory is ever active.
-pub(crate) fn get_compile_cache_dir(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn get_compile_cache_dir(context: &mut NativeContext<'_, ErasedHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     Ok(context.undefined())
 }
 
-fn path_call(context: &mut NativeContext<'_, NodeHost>, name: &str, args: &[RootId]) -> Result<RootId, RootedError> {
+fn path_call(context: &mut NativeContext<'_, ErasedHost>, name: &str, args: &[RootId]) -> Result<RootId, RootedError> {
     let path = crate::modules::path_shared_vm::module(context)?;
     let function = get(context, path, name)?;
     context.call_rooted(function, path, args)
 }
 
 /// `Module._initPaths()`: `globalPaths` from `HOME`, `NODE_PATH` and the executable's prefix.
-pub(crate) fn init_paths(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn init_paths(context: &mut NativeContext<'_, ErasedHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let module = context.host_function_data()?;
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
@@ -968,7 +969,7 @@ pub(crate) fn init_paths(context: &mut NativeContext<'_, NodeHost>, _: RootId, _
     Ok(context.undefined())
 }
 
-fn builtin_named(context: &mut NativeContext<'_, NodeHost>, module: RootId, request: &str) -> Result<bool, RootedError> {
+fn builtin_named(context: &mut NativeContext<'_, ErasedHost>, module: RootId, request: &str) -> Result<bool, RootedError> {
     let names = get(context, module, "builtinModules")?;
     let names = context.array_like_values_rooted(names)?;
     let bare = request.strip_prefix("node:").unwrap_or(request);
@@ -982,7 +983,7 @@ fn builtin_named(context: &mut NativeContext<'_, NodeHost>, module: RootId, requ
 }
 
 /// `Module._resolveLookupPaths(request, parent)`.
-pub(crate) fn resolve_lookup_paths(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn resolve_lookup_paths(context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let module = context.host_function_data()?;
     let undefined = context.undefined();
     let request = args.first().copied().unwrap_or(undefined);
@@ -1027,7 +1028,7 @@ pub(crate) fn resolve_lookup_paths(context: &mut NativeContext<'_, NodeHost>, _:
 
 /// `Module._load(request, parent)`: through the parent's `require`, else a built-in or a
 /// require made for the working directory.
-pub(crate) fn load(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn load(context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let module = context.host_function_data()?;
     let undefined = context.undefined();
     let request = args.first().copied().unwrap_or(undefined);

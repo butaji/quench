@@ -1,10 +1,10 @@
 //! Public endpoint views follow original handle methods and Node's lazy caches.
+use quench_runtime::ErasedHost;
 use super::event_constructor_shared_vm::get;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -15,7 +15,7 @@ fn set(
 }
 
 pub(crate) fn peer(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -56,7 +56,7 @@ pub(crate) fn peer(
 }
 
 pub(crate) fn local(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -85,7 +85,7 @@ pub(crate) fn local(
 }
 
 pub(crate) fn view(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -99,7 +99,7 @@ pub(crate) fn view(
 }
 
 pub(crate) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     constructor: RootId,
 ) -> Result<(), RootedError> {
     let prototype = get(context, constructor, "prototype")?;

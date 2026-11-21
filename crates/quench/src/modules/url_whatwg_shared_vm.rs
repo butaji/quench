@@ -1,13 +1,14 @@
 //! The WHATWG `URL` and `URLSearchParams` classes (lib/internal/url.js) in Rust over the
 //! `url` crate. A URL keeps its serialization in a private slot; a search-params object
 //! keeps its name/value list (alternating strings) and the URL it belongs to.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 use super::private_slots as slots;
 use url::Url;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The private slots (`private_slots`) and the cached classes.
 const HREF_SLOT: &str = "\0node/url/href";
@@ -79,12 +80,12 @@ const PARAMS_METHODS: &[(&str, &str, usize)] = &[
 type Pairs = Vec<(String, String)>;
 
 fn cached(c: &mut Context<'_>, key: &str) -> Option<RootId> {
-    c.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+    c.node().shared_state().borrow().builtin_cache.get(key).copied()
 }
 
 fn cache(c: &mut Context<'_>, key: &str, value: RootId) -> Result<RootId, RootedError> {
     let value = c.retain(value)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), value);
+    c.node().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), value);
     Ok(value)
 }
 

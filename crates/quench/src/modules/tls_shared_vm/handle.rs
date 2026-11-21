@@ -1,8 +1,8 @@
 //! TLS handle methods resolve genuine session identity through a Core weak map.
+use quench_runtime::ErasedHost;
 use super::socket::{get, set};
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 pub(crate) fn registry(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let api = super::facade::install(c)?;
     let registry_key = c.string_rooted("handleOwners");

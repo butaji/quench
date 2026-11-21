@@ -1,9 +1,10 @@
 //! Target libuv protocol facts shared by Node utility and host I/O errors.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 include!("uv_errors.rs");
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 pub(crate) fn system_error_number(name: &str) -> Option<i32> {
     UV_ERRORS.iter().find(|row| row.1 == name).map(|row| row.0)
@@ -105,7 +106,7 @@ pub(crate) fn error_map(
 // The SDK uv.cc emits once per environment, before validating the error number.
 fn pending_errname_warning(c: &mut Context<'_>) -> Result<(), RootedError> {
     use super::event_constructor_shared_vm::get;
-    let state = c.host_mut().shared_state();
+    let state = c.node().shared_state();
     if !state.borrow().cli_options.enabled("--pending-deprecation") {
         return Ok(());
     }
@@ -205,7 +206,7 @@ pub(crate) fn coded_system_error(
 
 /// `SystemError.prototype`: an `Error` whose `toString` names the code.
 fn system_error_prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let state = c.host_mut().shared_state();
+    let state = c.node().shared_state();
     if let Some(prototype) = state.borrow().builtin_cache.get(SYSTEM_ERROR_CLASS).copied() {
         return Ok(prototype);
     }

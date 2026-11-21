@@ -1,6 +1,7 @@
 //! `fs.glob`, `fs.globSync` and `fs.promises.glob` (`internal/fs/glob.js`): the paths under
 //! `cwd` that match any of the patterns and none of the exclusions.
 
+use crate::host::NodeAccess;
 use super::api::{Call, Reply};
 use crate::modules::path_algorithms::posix;
 use crate::modules::stream_shared_vm::{get, is_undefined, Context, Outcome};
@@ -148,7 +149,7 @@ struct Entry {
 fn walk(c: &mut Context<'_>, cwd: &str, patterns: &[Pattern], exclude: &Exclude, with_types: bool) -> Outcome {
     let mut results = Vec::new();
     let mut reported = std::collections::HashSet::new();
-    let root = c.host_mut().shared_state().borrow().cwd.clone();
+    let root = c.node().shared_state().borrow().cwd.clone();
     for pattern in patterns {
         let base_shown = if pattern.base.is_empty() { String::new() } else { pattern.base.clone() };
         let base_io = root.resolve_io_path(std::path::Path::new(&posix::resolve_strings(&[cwd.to_owned(), base_shown.clone()], cwd)));
@@ -221,7 +222,7 @@ pub(crate) fn glob(c: &mut Context<'_>, call_args: &[RootId]) -> Call {
         return Err(crate::modules::util_shared_vm::argument_type_error(c, options, "options", "Object")?);
     }
     let field = |c: &mut Context<'_>, name: &str| if is_undefined(c, options) { Ok(c.undefined()) } else { get(c, options, name) };
-    let current = c.host_mut().shared_state().borrow().cwd.clone();
+    let current = c.node().shared_state().borrow().cwd.clone();
     let current = current.current_path().map_err(|error| RootedError::host(error.to_string()))?.to_string_lossy().into_owned();
     let cwd = field(c, "cwd")?;
     let cwd = if is_undefined(c, cwd) {
