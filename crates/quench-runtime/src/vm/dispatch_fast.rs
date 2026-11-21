@@ -19343,6 +19343,11 @@ fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &
             _ if int32_constant(left) || int32_constant(right) => OPERANDS_INT32,
             _ => OPERANDS_ANY,
         };
+        // The int32 form's constant, folded into the record (`operator_row` reads it from `mode`, which
+        // no fused record has here: fusion runs after this pass and assigns `mode` with its handler).
+        if form == OPERANDS_REGISTER_INT32 && let Some(constant) = constants.get(usize::from(right.payload())).and_then(|constant| constant.as_int()) {
+            records[pc].mode = u64::from(constant as u32);
+        }
         macro_rules! at_form {
             ($acc:expr, $op:expr) => {
                 match form {

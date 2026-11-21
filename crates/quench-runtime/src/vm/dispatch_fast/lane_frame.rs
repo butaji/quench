@@ -3602,6 +3602,12 @@ script_handler! {
         };
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<H, OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
+        // The int32 constant the view folded into the record's `mode` (`specialize_plain_operators`, which
+        // installs this form only with it): an int32 the row knows as one, so its constant's load, bounds
+        // test and tag test fold away.
+        if const { FORM == OPERANDS_REGISTER_INT32 } {
+            frame.reads = frame.reads.with_immediate(Value::integer(i.mode as u32 as i32));
+        }
         match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
             Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
             Step::Control(_) | Step::Unresolved => {
