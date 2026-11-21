@@ -29,7 +29,7 @@ type NameReader = unsafe fn(*mut (), NameRead, u32) -> Option<Value>;
 type NamesStep = unsafe fn(*mut (), CallOut, [Option<Value>; 2]) -> Option<Value>;
 
 /// The values a keeping activation kept (`kept_values`).
-type KeptValues = unsafe fn(*mut ()) -> Option<(u16, u16)>;
+type KeptValues = unsafe fn(*mut ()) -> Option<(u16, *const Value)>;
 
 /// The test of a receiver's constant fields through a cache site (`constant_fields_value`), which
 /// reads one entry and a shape.
@@ -1062,8 +1062,8 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn fact(&self, _register: Register) -> Self::Fact { Boxing::Value }
 
-    /// A rest view's read from the values the running keeping activation kept past its
-    /// registers (`kept_values`), read in place; a frame keeps none of its own.
+    /// A rest view's read from the values the running function kept (`kept_values`): a keeping
+    /// activation's past its registers, or a frame's `original_arguments`, read in place.
     #[inline(always)]
     fn rest_view(&mut self, _stage: &mut Concrete, get: bool, fixed: usize, key: Option<Register>) -> Option<(u64, Self::Fact)> {
         let host = self.host?;
@@ -1077,7 +1077,8 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         }
         // A negative index wraps past every length, so one unsigned compare bounds it.
         let index = self.registers.get(key?).as_int().map(|index| index as u32).filter(|index| *index < u32::from(length))?;
-        Some((self.registers.get(first + fixed + index as u16).to_bits(), Boxing::Value))
+        // SAFETY: `first` holds `argc` values, past `fixed + index`.
+        Some((unsafe { *first.add(usize::from(fixed) + index as usize) }.to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -3693,19 +3694,35 @@ unsafe fn define_element_in_lane<H: Host>(cx: *mut (), array: u64, index: u32, v
     vm.define_literal_element(Value::from_bits(array), index as usize, Value::from_bits(value))
 }
 
-/// The count of the values the running keeping activation kept and the register holding the
-/// first (`ScriptActivation::kept`); `None` in a frame or any other activation.
+/// The count of the values the running function kept and the first of them: a keeping
+/// activation's, after its registers (`ScriptActivation::kept`), or a frame's
+/// `original_arguments`, which a frame keeps whole; `None` in any other activation.
 ///
 /// # Safety
-/// `cx` is the running lane's context.
+/// `cx` is the running lane's context. The values stay put for the row's step.
 #[inline(always)]
-unsafe fn kept_values<H: Host>(cx: *mut ()) -> Option<(u16, u16)> {
+unsafe fn kept_values<H: Host>(cx: *mut ()) -> Option<(u16, *const Value)> {
     let cx = cx.cast::<LaneContext<H>>();
-    if unsafe { (*cx).registers }.env().is_deleted() {
+    // A running leaf's registers are neither its caller's frame's nor the innermost
+    // activation's, which is its caller's.
+    if !unsafe { (*cx).leaf.call }.is_null() {
         return None;
     }
-    let script = unsafe { vm(cx) }.lane_stack.top_frame()?.script().filter(|script| script.forwards)?;
-    Some((script.argc, script.kept))
+    let vm = unsafe { vm(cx) };
+    let registers = unsafe { (*cx).registers };
+    if registers.env().is_deleted() {
+        // Only the frame's own registers: a body entered beside it runs with none of its own.
+        let frame = &vm.frames[unsafe { (*cx).frame() }];
+        if !std::ptr::eq(frame.registers.as_ptr(), registers.0.cast_const()) {
+            return None;
+        }
+        let kept = &frame.original_arguments;
+        return Some((u16::try_from(kept.len()).ok()?, kept.as_ptr()));
+    }
+    let activation = vm.lane_stack.top_frame()?;
+    let script = activation.script().filter(|script| script.forwards)?;
+    // SAFETY: the activation's window holds its registers, then its kept values.
+    Some((script.argc, unsafe { activation.window_ptr().add(usize::from(script.kept)) }.cast_const()))
 }
 
 /// Whether `receiver` already holds its constructor's run of constant fields

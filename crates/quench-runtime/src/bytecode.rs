@@ -1546,7 +1546,7 @@ pub struct Function {
     /// behind `caches`.
     pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
     /// The lazily derived booleans (`LazyFlag`), each a known bit and a value bit; never serialized.
-    pub(crate) lazy_flags: std::cell::Cell<u16>,
+    pub(crate) lazy_flags: std::cell::Cell<u32>,
     /// The caches a call or a collection fills, boxed by the first fill (`caches`); never serialized.
     pub(crate) caches: std::cell::OnceCell<Box<FunctionCaches>>,
     /// Lazily derived `call_plan`; never serialized.
@@ -2337,8 +2337,12 @@ impl Function {
     /// Whether its rest parameter is read only by `RestGet`, `RestLength` and `CallRest`
     /// (`compile::rest_reads`): an entry that keeps the values passed leaves the rest
     /// register `undefined` and makes no array.
+    /// Derived once (`LazyFlag::RestView`): every frame entry of a rest function asks.
+    #[inline]
     pub(crate) fn rest_view(&self) -> bool {
-        self.rest && self.instructions_of(|op| matches!(op, Op::RestGet | Op::RestLength | Op::CallRest)).next().is_some()
+        self.rest && self.lazy_flag(LazyFlag::RestView, || {
+            self.instructions_of(|op| matches!(op, Op::RestGet | Op::RestLength | Op::CallRest)).next().is_some()
+        })
     }
 
     pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
