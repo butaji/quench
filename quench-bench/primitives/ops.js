@@ -271,4 +271,84 @@ ops.bi_f64_indexof = function (n) { const f64 = new Float64Array(16); for (let j
 ops.bi_regexp_test = function (n) { const re = /ab+c/; let a = 0; for (let i = 0; i < n; i++) { a = (a + re.test("xxabbbc")) | 0; } return a; };
 ops.bi_regexp_exec = function (n) { const re = /ab+c/; let a = 0; for (let i = 0; i < n; i++) { a = (a + re.exec("xxabbbc").index) | 0; } return a; };
 ops.bi_obj_keys2 = function (n) { const o = { a: 1, b: 2 }; let a = 0; for (let i = 0; i < n; i++) { a = (a + Object.keys(o).length) | 0; } return a; };
+// C-shaped constructs (inventory 2026-11-21): each has a C twin in ops.c; budget = C (ir_budget.txt).
+ops.c_while = function (n) { let s = 0, i = 0; while (i < n) { s = (s + i) | 0; i++; } return s; };
+ops.c_do_while = function (n) { let s = 0, i = 0; if (n > 0) { do { s = (s + i) | 0; i++; } while (i < n); } return s; };
+ops.c_for_down = function (n) { let s = 0; for (let i = n - 1; i >= 0; i--) { s = (s + i) | 0; } return s; };
+ops.c_loop_step2 = function (n) { let s = 0, j = 0; for (let i = 0; i < n; i++) { s = (s + j) | 0; j += 2; } return s; };
+// Outer runs n >> 4 times, inner runs 16 times: total inner work is ~n.
+ops.c_nested_loop = function (n) { let s = 0; const m = n >> 4; for (let i = 0; i < m; i++) { for (let j = 0; j < 16; j++) { s = (s + i * j) | 0; } } return s; };
+ops.c_loop_break = function (n) { const arr = new Array(16); for (let k = 0; k < 16; k++) arr[k] = (k * 5 + 3) & 15; let s = 0, k = 0; for (let i = 0; i < n; i++) { const v = i & 15; for (k = 0; k < 16; k++) { if (arr[k] === v) break; } s = (s + k) | 0; } return s; };
+ops.c_loop_continue = function (n) { let s = 0; for (let i = 0; i < n; i++) { if (i & 1) continue; s = (s + i) | 0; } return s; };
+ops.c_loop_if_else = function (n) { let s = 0; for (let i = 0; i < n; i++) { if ((i & 1) === 0) s = (s + i) | 0; else s = (s - 3) | 0; } return s; };
+ops.c_loop_if_chain = function (n) { let s = 0; for (let i = 0; i < n; i++) { const k = i & 3; if (k === 0) s = (s + i) | 0; else if (k === 1) s = (s ^ i) | 0; else s = (s * 3 + 1) | 0; } return s; };
+ops.c_ternary = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + ((i & 1) ? 7 : i)) | 0; } return s; };
+ops.c_select_minmax = function (n) { let m = 0, m2 = 1023; for (let i = 0; i < n; i++) { const v = (i * 7919) & 1023; if (v > m) m = v; if (v < m2) m2 = v; } return (m * 1024 + m2) | 0; };
+ops.c_switch_dense = function (n) { let s = 0; for (let i = 0; i < n; i++) { switch (i & 7) { case 0: s = (s + 1) | 0; break; case 1: s = (s + 3) | 0; break; case 2: s = (s ^ i) | 0; break; case 3: s = (s * 3) | 0; break; case 4: s = (s - i) | 0; break; case 5: s = (s << 1) | 0; break; case 6: s = (s >> 1) ^ i; break; case 7: s = (s + 7) | 0; break; } } return s; };
+ops.c_switch_sparse = function (n) { let s = 0; for (let i = 0; i < n; i++) { switch ((i & 7) * 100) { case 0: s = (s + 1) | 0; break; case 100: s = (s + 5) | 0; break; case 300: s = (s ^ i) | 0; break; case 700: s = (s * 3 + i) | 0; break; default: s = (s - 2) | 0; } } return s; };
+function c_early_return_helper(arr, v) { for (let k = 0; k < 16; k++) { if (arr[k] === v) return k; } return -1; }
+ops.c_early_return = function (n) { const arr = new Array(16); for (let k = 0; k < 16; k++) arr[k] = (k * 5 + 3) & 15; let s = 0; for (let i = 0; i < n; i++) { s = (s + c_early_return_helper(arr, i & 15)) | 0; } return s; };
+ops.c_bool_flag = function (n) { let c = 0; for (let i = 0; i < n; i++) { const f = (i & 3) === 0; if (f && i > 10) c++; } return c; };
+ops.c_logical_and_or = function (n) { let c = 0; for (let i = 0; i < n; i++) { if ((i & 1) && (i & 2) || i === 5) c++; } return c; };
+ops.c_locals_rotate = function (n) { let a = 0, b = 1, c = 2; for (let i = 0; i < n; i++) { const t = a; a = b; b = c; c = (t + i) | 0; } return (a + b + c) | 0; };
+ops.c_int_expr = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = ((s ^ (i * 3)) + (i >> 2) - (i & 5)) | 0; } return s; };
+ops.c_arr_sum_int = function (n) { const a = new Array(256); for (let k = 0; k < 256; k++) a[k] = k * 7 - 300; let s = 0; for (let i = 0; i < n; i++) { s = (s + a[i & 255]) | 0; } return s; };
+ops.c_arr_sum_dbl = function (n) { const a = new Array(256); for (let k = 0; k < 256; k++) a[k] = k + 0.5; let s = 0; for (let i = 0; i < n; i++) { s += a[i & 255]; } return s; };
+ops.c_arr_store_seq = function (n) { const a = new Array(256); for (let k = 0; k < 256; k++) a[k] = 0; for (let i = 0; i < n; i++) { a[i & 255] = i; } let s = 0; for (let k = 0; k < 256; k++) s = (s + a[k]) | 0; return s; };
+ops.c_arr_rmw = function (n) { const a = new Array(256); for (let k = 0; k < 256; k++) a[k] = k; for (let i = 0; i < n; i++) { a[i & 255] = (a[i & 255] + 1) | 0; } let s = 0; for (let k = 0; k < 256; k++) s = (s + a[k]) | 0; return s; };
+ops.c_arr_stencil = function (n) { const a = new Array(256); for (let k = 0; k < 256; k++) a[k] = k * 3 + 1; let s = 0; for (let i = 0; i < n; i++) { const j = 1 + (i & 253); s = (s + a[j - 1] + a[j] + a[j + 1]) | 0; } return s; };
+ops.c_arr_swap = function (n) { const a = new Array(256); for (let k = 0; k < 256; k++) a[k] = k; for (let i = 0; i < n; i++) { const p = i & 255, q = (i * 7) & 255; const t = a[p]; a[p] = a[q]; a[q] = t; } let s = 0; for (let k = 0; k < 256; k++) s = (s + a[k] * (k + 1)) | 0; return s; };
+ops.c_arr_indirect = function (n) { const a = new Array(256), b = new Array(256); for (let k = 0; k < 256; k++) { a[k] = k * 3 + 1; b[k] = (k * 37 + 11) & 255; } let s = 0; for (let i = 0; i < n; i++) { s = (s + a[b[i & 255]]) | 0; } return s; };
+ops.c_arr_histogram = function (n) { const a = new Array(256), h = new Array(16); for (let k = 0; k < 256; k++) a[k] = k * 5 + 3; for (let k = 0; k < 16; k++) h[k] = 0; for (let i = 0; i < n; i++) { h[a[i & 255] & 15]++; } let s = 0; for (let k = 0; k < 16; k++) s = (s + h[k] * (k + 1)) | 0; return s; };
+ops.c_arr_2d = function (n) { const m = new Array(16); for (let r = 0; r < 16; r++) { m[r] = new Array(16); for (let c = 0; c < 16; c++) m[r][c] = r * 16 + c; } let s = 0; for (let i = 0; i < n; i++) { s = (s + m[(i >> 4) & 15][i & 15]) | 0; } return s; };
+ops.c_arr_len_loop = function (n) { const a = new Array(256); for (let k = 0; k < 256; k++) a[k] = k * 9 - 50; let s = 0; /* outer n>>8, inner 256: total inner work (n>>8)*256 ~ n */ for (let o = 0; o < (n >> 8); o++) { for (let j = 0; j < a.length; j++) s = (s + a[j]) | 0; } return s; };
+ops.c_i32_sum = function (n) { const t = new Int32Array(256); for (let k = 0; k < 256; k++) t[k] = k * 3 - 100; let s = 0; for (let i = 0; i < n; i++) { s = (s + t[i & 255]) | 0; } return s; };
+ops.c_i32_store = function (n) { const t = new Int32Array(256); for (let i = 0; i < n; i++) { t[i & 255] = i; } let s = 0; for (let k = 0; k < 256; k++) s = (s + t[k]) | 0; return s; };
+ops.c_u8_rmw = function (n) { const u = new Uint8Array(256); for (let k = 0; k < 256; k++) u[k] = k; for (let i = 0; i < n; i++) { u[i & 255] = (u[i & 255] + 3) & 255; } let s = 0; for (let k = 0; k < 256; k++) s = (s + u[k]) | 0; return s; };
+ops.c_u16_load = function (n) { const u = new Uint16Array(256); for (let k = 0; k < 256; k++) u[k] = k * 257; let s = 0; for (let i = 0; i < n; i++) { s = (s + u[i & 255]) | 0; } return s; };
+ops.c_f32_mad = function (n) { const f = new Float32Array(256); for (let k = 0; k < 256; k++) f[k] = k * 0.25; for (let i = 0; i < n; i++) { const k = i & 255; f[k] = f[k] * 0.5 + 1; } let s = 0; for (let k = 0; k < 256; k++) s += f[k]; return s; };
+ops.c_f64_dot = function (n) { const x = new Float64Array(256), y = new Float64Array(256); for (let k = 0; k < 256; k++) { x[k] = k * 0.5; y[k] = k * 0.25 + 1; } let s = 0; for (let i = 0; i < n; i++) { const k = i & 255; s += x[k] * y[k]; } return s; };
+ops.c_i32_indirect = function (n) { const idx = new Int32Array(256), d = new Int32Array(256); for (let k = 0; k < 256; k++) { idx[k] = (k * 29 + 5) & 255; d[k] = k * k - 1000; } let s = 0; for (let i = 0; i < n; i++) { s = (s + d[idx[i & 255]]) | 0; } return s; };
+ops.c_struct_get2 = function (n) { const p = { x: 3, y: 4 }; let s = 0; for (let i = 0; i < n; i++) { s = (s + p.x + p.y) | 0; } return s; };
+ops.c_struct_set = function (n) { const p = { x: 0, y: 0 }; for (let i = 0; i < n; i++) { p.x = i; p.y = (p.y + p.x) | 0; } return p.y; };
+ops.c_struct_rmw = function (n) { const o = { count: 0, sum: 0 }; for (let i = 0; i < n; i++) { o.count = (o.count + 1) | 0; o.sum = (o.sum + i) | 0; } return (o.sum + o.count) | 0; };
+ops.c_struct_array = function (n) { const pts = new Array(64); for (let j = 0; j < 64; j++) pts[j] = { x: j, y: -j }; let s = 0; for (let i = 0; i < n; i++) { s = (s + pts[i & 63].x) | 0; } return s; };
+ops.c_struct_nested = function (n) { const a = { b: { c: { v: 7 } } }; let s = 0; for (let i = 0; i < n; i++) { s = (s + a.b.c.v) | 0; } return s; };
+ops.c_struct_dbl = function (n) { const v = { x: 0.5, y: 1.5 }; let s = 0; for (let i = 0; i < n; i++) { s += v.x * v.y; } return s; };
+ops.c_class_method = function (n) { class P { constructor(x) { this.x = x; } get() { return this.x; } } const p = new P(3); let s = 0; for (let i = 0; i < n; i++) { s = (s + p.get()) | 0; } return s; };
+ops.c_class_ctor_fields = function (n) { class Q { constructor(x, y) { this.x = x; this.y = y; } add(v) { this.x = (this.x + v) | 0; } } const p = new Q(0, 1); for (let i = 0; i < n; i++) { p.add(i); } return (p.x + p.y) | 0; };
+function c_call_leaf_f(a, b) { return (a + b) | 0; }
+ops.c_call_leaf = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = c_call_leaf_f(s, i); } return s; };
+function c_call_4args_f(a, b, c, d) { return (a + b + c + d) | 0; }
+ops.c_call_4args = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = c_call_4args_f(s, i, i & 7, i >> 3); } return s; };
+function c_call_2deep_g(x) { return (x + 1) | 0; }
+function c_call_2deep_f(x) { return c_call_2deep_g(x); }
+ops.c_call_2deep = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + c_call_2deep_f(i)) | 0; } return s; };
+function c_call_void_f(o) { o.v = (o.v + 1) | 0; }
+ops.c_call_void = function (n) { const o = { v: 0 }; for (let i = 0; i < n; i++) { c_call_void_f(o); } return o.v; };
+function c_call_recursive_depth4_r(k, x) { if (k === 0) return (x + k) | 0; const v = c_call_recursive_depth4_r(k - 1, (x + k) | 0); return v | 0; }
+ops.c_call_recursive_depth4 = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + c_call_recursive_depth4_r(4, i)) | 0; } return s; };
+function c_call_dbl_f(x) { return x * x; }
+ops.c_call_dbl = function (n) { let s = 0; for (let i = 0; i < n; i++) { s += c_call_dbl_f(i * 0.5); } return s; };
+ops.c_closure_read = function (n) { const k = 7; const f = (x) => (x + k) | 0; let s = 0; for (let i = 0; i < n; i++) { s = (s + f(i)) | 0; } return s; };
+ops.c_method_poly2 = function (n) { class A { v() { return 1; } } class B { v() { return 2; } } const objs = [new A(), new B()]; let s = 0; for (let i = 0; i < n; i++) { s = (s + objs[i & 1].v()) | 0; } return s; };
+function c_return_early_f(x) { if (x < 0) return -1; if (x > 0) return 1; return 0; }
+ops.c_return_early = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + c_return_early_f((i & 7) - 3)) | 0; } return s; };
+ops.c_dbl_expr = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = s * 0.999 + i * 0.5 - 1.25; } return s; };
+ops.c_dbl_cmp_branch = function (n) { let x = 0; for (let i = 0; i < n; i++) { x += 0.25; if (x > 100.0) x -= 100.0; } return x; };
+ops.c_dbl_to_int = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + ((i * 0.37) | 0)) | 0; } return s; };
+ops.c_int_to_dbl = function (n) { let d = 0; for (let i = 0; i < n; i++) { d = d + i; } return d; };
+ops.c_int_div_const = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + ((i / 4) | 0)) | 0; } return s; };
+ops.c_int_mod_pow2 = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + (i % 16)) | 0; } return s; };
+ops.c_popcount = function (n) { let c = 0; for (let i = 0; i < n; i++) { let x = i & 1023; while (x !== 0) { x = x & (x - 1); c = (c + 1) | 0; } } return c; };
+ops.c_bit_test = function (n) { let c = 0, mask = 0x55aa55aa; for (let i = 0; i < n; i++) { if (mask & (1 << (i & 31))) c++; } return c; };
+ops.c_rotate = function (n) { let x = 1; for (let i = 0; i < n; i++) { x = ((x << 5) | (x >>> 27)) ^ i; } return x >>> 0; };
+ops.c_hash_mix = function (n) { let h = 1; for (let i = 0; i < n; i++) { h = Math.imul(h ^ i, 0x9e3779b1) | 0; h ^= h >>> 15; } return h; };
+ops.c_abs_int = function (n) { let s = 0; for (let i = 0; i < n; i++) { const x = (i & 255) - 128; s = (s + (x < 0 ? -x : x)) | 0; } return s; };
+ops.c_clamp = function (n) { let s = 0; for (let i = 0; i < n; i++) { let v = (i * 7) & 1023; if (v < 100) v = 100; else if (v > 900) v = 900; s = (s + v) | 0; } return s; };
+ops.c_str_char_scan = function (n) { let c = 0; for (let i = 0; i < n; i++) { c = c + (S.charCodeAt(i % 54) === 32 ? 1 : 0); } return c; };
+ops.c_str_hash = function (n) { let h = 0; for (let i = 0; i < n; i++) { h = (Math.imul(h, 31) + S.charCodeAt(i % 54)) | 0; } return h; };
+ops.c_str_index_eq = function (n) { let c = 0; for (let i = 0; i < n; i++) { if (S[i % 54] === "o") c++; } return c; };
+ops.c_str_len_loop = function (n) { let c = 0; const outer = (n / 54) | 0; for (let i = 0; i < outer; i++) { for (let j = 0; j < S.length; j++) { if (S.charCodeAt(j) < 100) c = c + 1; } } return c; };
+ops.c_counter_dec = function (n) { let s = 0, k = n; while (k > 0) { k--; s = (s + k) | 0; } return s; };
 globalThis.PRIMITIVE_OPS = ops;

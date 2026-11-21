@@ -1659,6 +1659,707 @@ static double NOINL op_bi_obj_keys2(long n) {
   return (double)(int32_t)a;
 }
 
+/* ---------------- C-shaped constructs (inventory 2026-11-21) ---------------- */
+
+static double NOINL op_c_while(long n) {
+  int32_t N = (int32_t)n, s = 0, i = 0;
+  while (i < N) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)i); i++; }
+  return s;
+}
+
+static double NOINL op_c_do_while(long n) {
+  int32_t N = (int32_t)n, s = 0, i = 0;
+  if (N > 0) { do { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)i); i++; } while (i < N); }
+  return s;
+}
+
+static double NOINL op_c_for_down(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = N - 1; i >= 0; i--) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)i); }
+  return s;
+}
+
+static double NOINL op_c_loop_step2(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  double j = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)(uint64_t)j); j = j + 2.0; }
+  return s;
+}
+
+/* Outer runs n >> 4 times, inner runs 16 times: total inner work is ~n. */
+static double NOINL op_c_nested_loop(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t M = N >> 4;
+  for (int32_t i = 0; i < M; i++) {
+    for (int32_t j = 0; j < 16; j++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)i * (uint32_t)j); }
+  }
+  return s;
+}
+
+static double NOINL op_c_loop_break(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t arr[16];
+  for (int32_t k = 0; k < 16; k++) arr[k] = (k * 5 + 3) & 15;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t v = i & 15, k;
+    for (k = 0; k < 16; k++) { if (arr[k] == v) break; }
+    s = (int32_t)((uint32_t)s + (uint32_t)k);
+  }
+  return s;
+}
+
+static double NOINL op_c_loop_continue(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); if (i & 1) continue; s = (int32_t)((uint32_t)s + (uint32_t)i); }
+  return s;
+}
+
+static double NOINL op_c_loop_if_else(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    if ((i & 1) == 0) s = (int32_t)((uint32_t)s + (uint32_t)i);
+    else s = (int32_t)((uint32_t)s - 3u);
+  }
+  return s;
+}
+
+static double NOINL op_c_loop_if_chain(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t k = i & 3;
+    if (k == 0) s = (int32_t)((uint32_t)s + (uint32_t)i);
+    else if (k == 1) s = s ^ i;
+    else s = (int32_t)((uint32_t)s * 3u + 1u);
+  }
+  return s;
+}
+
+static double NOINL op_c_ternary(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)((i & 1) ? 7 : i)); }
+  return s;
+}
+
+static double NOINL op_c_select_minmax(long n) {
+  int32_t N = (int32_t)n, m = 0, m2 = 1023;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t v = (int32_t)(((uint32_t)i * 7919u) & 1023u);
+    if (v > m) m = v;
+    if (v < m2) m2 = v;
+  }
+  return (double)(m * 1024 + m2);
+}
+
+static double NOINL op_c_switch_dense(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    switch (i & 7) {
+      case 0: s = (int32_t)((uint32_t)s + 1u); break;
+      case 1: s = (int32_t)((uint32_t)s + 3u); break;
+      case 2: s = s ^ i; break;
+      case 3: s = (int32_t)((uint32_t)s * 3u); break;
+      case 4: s = (int32_t)((uint32_t)s - (uint32_t)i); break;
+      case 5: s = (int32_t)((uint32_t)s << 1); break;
+      case 6: s = (s >> 1) ^ i; break;
+      case 7: s = (int32_t)((uint32_t)s + 7u); break;
+    }
+  }
+  return s;
+}
+
+static double NOINL op_c_switch_sparse(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    switch ((i & 7) * 100) {
+      case 0: s = (int32_t)((uint32_t)s + 1u); break;
+      case 100: s = (int32_t)((uint32_t)s + 5u); break;
+      case 300: s = s ^ i; break;
+      case 700: s = (int32_t)((uint32_t)s * 3u + (uint32_t)i); break;
+      default: s = (int32_t)((uint32_t)s - 2u); break;
+    }
+  }
+  return s;
+}
+
+static int32_t NOINL c_early_return_helper(const int32_t *arr, int32_t v) {
+  for (int32_t k = 0; k < 16; k++) { if (arr[k] == v) return k; }
+  return -1;
+}
+
+static double NOINL op_c_early_return(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t arr[16];
+  for (int32_t k = 0; k < 16; k++) arr[k] = (k * 5 + 3) & 15;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    s = (int32_t)((uint32_t)s + (uint32_t)c_early_return_helper(arr, i & 15));
+  }
+  return s;
+}
+
+static double NOINL op_c_bool_flag(long n) {
+  int32_t N = (int32_t)n;
+  double c = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t f = (i & 3) == 0;
+    if (f && i > 10) c = c + 1.0;
+  }
+  return c;
+}
+
+static double NOINL op_c_logical_and_or(long n) {
+  int32_t N = (int32_t)n;
+  double c = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    if (((i & 1) && (i & 2)) || i == 5) c = c + 1.0;
+  }
+  return c;
+}
+
+static double NOINL op_c_locals_rotate(long n) {
+  int32_t N = (int32_t)n, a = 0, b = 1, c = 2;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t t = a;
+    a = b;
+    b = c;
+    c = (int32_t)((uint32_t)t + (uint32_t)i);
+  }
+  return (double)(int32_t)((uint32_t)a + (uint32_t)b + (uint32_t)c);
+}
+
+static double NOINL op_c_int_expr(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    s = (int32_t)(((uint32_t)s ^ ((uint32_t)i * 3u)) + ((uint32_t)i >> 2) - ((uint32_t)i & 5u));
+  }
+  return s;
+}
+
+/* ---------------- C-shaped constructs (group b) ---------------- */
+
+static double NOINL op_c_arr_sum_int(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t a[256];
+  for (int32_t k = 0; k < 256; k++) a[k] = k * 7 - 300;
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)a[i & 255]); }
+  return s;
+}
+
+static double NOINL op_c_arr_sum_dbl(long n) {
+  int32_t N = (int32_t)n;
+  double s = 0, a[256];
+  for (int32_t k = 0; k < 256; k++) a[k] = k + 0.5;
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s += a[i & 255]; }
+  return s;
+}
+
+static double NOINL op_c_arr_store_seq(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t a[256];
+  for (int32_t k = 0; k < 256; k++) a[k] = 0;
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a[i & 255] = i; }
+  for (int32_t k = 0; k < 256; k++) s = (int32_t)((uint32_t)s + (uint32_t)a[k]);
+  return s;
+}
+
+static double NOINL op_c_arr_rmw(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t a[256];
+  for (int32_t k = 0; k < 256; k++) a[k] = k;
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a[i & 255] = (int32_t)((uint32_t)a[i & 255] + 1u); }
+  for (int32_t k = 0; k < 256; k++) s = (int32_t)((uint32_t)s + (uint32_t)a[k]);
+  return s;
+}
+
+static double NOINL op_c_arr_stencil(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t a[256];
+  for (int32_t k = 0; k < 256; k++) a[k] = k * 3 + 1;
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t j = 1 + (i & 253);
+    s = (int32_t)((uint32_t)s + (uint32_t)a[j - 1] + (uint32_t)a[j] + (uint32_t)a[j + 1]);
+  }
+  return s;
+}
+
+static double NOINL op_c_arr_swap(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t a[256];
+  for (int32_t k = 0; k < 256; k++) a[k] = k;
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t p = i & 255, q = (i * 7) & 255;
+    int32_t t = a[p];
+    a[p] = a[q];
+    a[q] = t;
+  }
+  for (int32_t k = 0; k < 256; k++) s = (int32_t)((uint32_t)s + (uint32_t)a[k] * (uint32_t)(k + 1));
+  return s;
+}
+
+static double NOINL op_c_arr_indirect(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t a[256], b[256];
+  for (int32_t k = 0; k < 256; k++) { a[k] = k * 3 + 1; b[k] = (k * 37 + 11) & 255; }
+  ESCAPE(a); ESCAPE(b);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)a[b[i & 255]]); }
+  return s;
+}
+
+static double NOINL op_c_arr_histogram(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t a[256], h[16];
+  for (int32_t k = 0; k < 256; k++) a[k] = k * 5 + 3;
+  for (int32_t k = 0; k < 16; k++) h[k] = 0;
+  ESCAPE(a); ESCAPE(h);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); h[a[i & 255] & 15]++; }
+  for (int32_t k = 0; k < 16; k++) s = (int32_t)((uint32_t)s + (uint32_t)h[k] * (uint32_t)(k + 1));
+  return s;
+}
+
+static double NOINL op_c_arr_2d(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t m[16][16];
+  for (int32_t r = 0; r < 16; r++)
+    for (int32_t c = 0; c < 16; c++) m[r][c] = r * 16 + c;
+  ESCAPE(m);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)m[(i >> 4) & 15][i & 15]); }
+  return s;
+}
+
+static double NOINL op_c_arr_len_loop(long n) {
+  /* outer n>>8, inner 256: total inner work (n>>8)*256 ~ n */
+  int32_t N = (int32_t)n, s = 0, len = 256;
+  int32_t a[256];
+  for (int32_t k = 0; k < 256; k++) a[k] = k * 9 - 50;
+  ESCAPE(a); OPAQUE_I(len);
+  for (int32_t o = 0; o < (N >> 8); o++)
+    for (int32_t j = 0; j < len; j++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)a[j]); }
+  return s;
+}
+
+static double NOINL op_c_i32_sum(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t t[256];
+  for (int32_t k = 0; k < 256; k++) t[k] = k * 3 - 100;
+  ESCAPE(t);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)t[i & 255]); }
+  return s;
+}
+
+static double NOINL op_c_i32_store(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t t[256];
+  ESCAPE(t);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); t[i & 255] = i; }
+  for (int32_t k = 0; k < 256; k++) s = (int32_t)((uint32_t)s + (uint32_t)t[k]);
+  return s;
+}
+
+static double NOINL op_c_u8_rmw(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  uint8_t u[256];
+  for (int32_t k = 0; k < 256; k++) u[k] = (uint8_t)k;
+  ESCAPE(u);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); u[i & 255] = (uint8_t)((u[i & 255] + 3) & 255); }
+  for (int32_t k = 0; k < 256; k++) s = (int32_t)((uint32_t)s + (uint32_t)u[k]);
+  return s;
+}
+
+static double NOINL op_c_u16_load(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  uint16_t u[256];
+  for (int32_t k = 0; k < 256; k++) u[k] = (uint16_t)(k * 257);
+  ESCAPE(u);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)u[i & 255]); }
+  return s;
+}
+
+static double NOINL op_c_f32_mad(long n) {
+  int32_t N = (int32_t)n;
+  float f[256];
+  double s = 0;
+  for (int32_t k = 0; k < 256; k++) f[k] = (float)(k * 0.25);
+  ESCAPE(f);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t k = i & 255;
+    f[k] = f[k] * 0.5f + 1.0f;
+  }
+  for (int32_t k = 0; k < 256; k++) s += f[k];
+  return s;
+}
+
+static double NOINL op_c_f64_dot(long n) {
+  int32_t N = (int32_t)n;
+  double x[256], y[256], s = 0;
+  for (int32_t k = 0; k < 256; k++) { x[k] = k * 0.5; y[k] = k * 0.25 + 1; }
+  ESCAPE(x); ESCAPE(y);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); int32_t k = i & 255; s += x[k] * y[k]; }
+  return s;
+}
+
+static double NOINL op_c_i32_indirect(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  int32_t idx[256], d[256];
+  for (int32_t k = 0; k < 256; k++) { idx[k] = (k * 29 + 5) & 255; d[k] = k * k - 1000; }
+  ESCAPE(idx); ESCAPE(d);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)d[idx[i & 255]]); }
+  return s;
+}
+
+/* ---------------- c_ group: struct, call, closure and method shapes (twins of ops.js ops.c_*) ---------------- */
+struct cs_rmw { int32_t count, sum; };
+struct cs_nest_c { int32_t v; };
+struct cs_nest_b { struct cs_nest_c c; };
+struct cs_nest_a { struct cs_nest_b b; };
+struct cs_dpt { double x, y; };
+struct cs_p { int32_t x; };
+struct cs_q { int32_t x, y; };
+struct cs_cv { int32_t v; };
+struct cs_poly { int32_t (*v)(const struct cs_poly *self); };
+
+static int32_t NOINL cs_p_get(const struct cs_p *self) { return self->x; }
+static void NOINL cs_q_add(struct cs_q *self, int32_t v) { self->x = (int32_t)((uint32_t)self->x + (uint32_t)v); }
+static int32_t NOINL c_call_leaf_f(int32_t a, int32_t b) { return (int32_t)((uint32_t)a + (uint32_t)b); }
+static int32_t NOINL c_call_4args_f(int32_t a, int32_t b, int32_t c, int32_t d) { return (int32_t)((uint32_t)a + (uint32_t)b + (uint32_t)c + (uint32_t)d); }
+static int32_t NOINL c_call_2deep_g(int32_t x) { return (int32_t)((uint32_t)x + 1u); }
+static int32_t NOINL c_call_2deep_f(int32_t x) { return c_call_2deep_g(x); }
+static void NOINL c_call_void_f(struct cs_cv *o) { o->v = (int32_t)((uint32_t)o->v + 1u); }
+static int32_t NOINL c_call_recursive_depth4_r(int32_t k, int32_t x) {
+  if (k == 0) return (int32_t)((uint32_t)x + (uint32_t)k);
+  int32_t v = c_call_recursive_depth4_r(k - 1, (int32_t)((uint32_t)x + (uint32_t)k));
+  OPAQUE_I(v); /* keeps the recursive call a real call (no tail-call to loop rewrite) */
+  return v;
+}
+static double NOINL c_call_dbl_f(double x) { return x * x; }
+static int32_t NOINL c_closure_read_f(const struct env *e, int32_t x) { return (int32_t)((uint32_t)x + (uint32_t)e->k); }
+static int32_t NOINL c_return_early_f(int32_t x) { if (x < 0) return -1; if (x > 0) return 1; return 0; }
+static int32_t NOINL c_method_poly2_a_v(const struct cs_poly *self) { (void)self; return 1; }
+static int32_t NOINL c_method_poly2_b_v(const struct cs_poly *self) { (void)self; return 2; }
+
+static double NOINL op_c_struct_get2(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct pair p = {3, 4}, *q = &p;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); ESCAPE(q); s = (int32_t)((uint32_t)s + (uint32_t)q->x + (uint32_t)q->y); }
+  return s;
+}
+
+static double NOINL op_c_struct_set(long n) {
+  int32_t N = (int32_t)n;
+  struct pair p = {0, 0}, *q = &p;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); ESCAPE(q); q->x = i; q->y = (int32_t)((uint32_t)q->y + (uint32_t)q->x); }
+  return q->y;
+}
+
+static double NOINL op_c_struct_rmw(long n) {
+  int32_t N = (int32_t)n;
+  struct cs_rmw o = {0, 0}, *q = &o;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(q);
+    q->count = (int32_t)((uint32_t)q->count + 1u);
+    q->sum = (int32_t)((uint32_t)q->sum + (uint32_t)i);
+  }
+  return (int32_t)((uint32_t)q->sum + (uint32_t)q->count);
+}
+
+static double NOINL op_c_struct_array(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct pair *pts[64];
+  for (int32_t j = 0; j < 64; j++) { pts[j] = malloc(sizeof *pts[j]); pts[j]->x = j; pts[j]->y = -j; }
+  ESCAPE(pts);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); ESCAPE(pts); s = (int32_t)((uint32_t)s + (uint32_t)pts[i & 63]->x); }
+  for (int32_t j = 0; j < 64; j++) free(pts[j]);
+  return s;
+}
+
+static double NOINL op_c_struct_nested(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct cs_nest_a a = {{{7}}}, *q = &a;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); ESCAPE(q); s = (int32_t)((uint32_t)s + (uint32_t)q->b.c.v); }
+  return s;
+}
+
+static double NOINL op_c_struct_dbl(long n) {
+  int32_t N = (int32_t)n;
+  double s = 0;
+  struct cs_dpt v = {0.5, 1.5}, *q = &v;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); ESCAPE(q); s += q->x * q->y; }
+  return s;
+}
+
+static double NOINL op_c_class_method(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct cs_p p = {3}, *q = &p;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)cs_p_get(q)); }
+  return s;
+}
+
+static double NOINL op_c_class_ctor_fields(long n) {
+  int32_t N = (int32_t)n;
+  struct cs_q p = {0, 1}, *q = &p;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); cs_q_add(q, i); }
+  return (int32_t)((uint32_t)q->x + (uint32_t)q->y);
+}
+
+static double NOINL op_c_call_leaf(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = c_call_leaf_f(s, i); }
+  return s;
+}
+
+static double NOINL op_c_call_4args(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = c_call_4args_f(s, i, i & 7, i >> 3); }
+  return s;
+}
+
+static double NOINL op_c_call_2deep(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)c_call_2deep_f(i)); }
+  return s;
+}
+
+static double NOINL op_c_call_void(long n) {
+  int32_t N = (int32_t)n;
+  struct cs_cv o = {0}, *q = &o;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); c_call_void_f(q); }
+  return q->v;
+}
+
+static double NOINL op_c_call_recursive_depth4(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)c_call_recursive_depth4_r(4, i)); }
+  return s;
+}
+
+static double NOINL op_c_call_dbl(long n) {
+  int32_t N = (int32_t)n;
+  double s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s += c_call_dbl_f((double)i * 0.5); }
+  return s;
+}
+
+static double NOINL op_c_closure_read(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct env e = {7}, *p = &e;
+  OPAQUE_P(p);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)c_closure_read_f(p, i)); }
+  return s;
+}
+
+static double NOINL op_c_method_poly2(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct cs_poly objs[2] = { { c_method_poly2_a_v }, { c_method_poly2_b_v } }, *q = objs;
+  OPAQUE_P(q);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const struct cs_poly *o = &q[i & 1];
+    s = (int32_t)((uint32_t)s + (uint32_t)o->v(o));
+  }
+  return s;
+}
+
+static double NOINL op_c_return_early(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)c_return_early_f((i & 7) - 3)); }
+  return s;
+}
+
+/* ---------------- C-shaped constructs (group d) ---------------- */
+
+static double NOINL op_c_dbl_expr(long n) {
+  int32_t N = (int32_t)n;
+  double s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = s * 0.999 + (double)i * 0.5 - 1.25; }
+  return s;
+}
+
+static double NOINL op_c_dbl_cmp_branch(long n) {
+  int32_t N = (int32_t)n;
+  double x = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    x += 0.25;
+    if (x > 100.0) x -= 100.0;
+  }
+  return x;
+}
+
+static double NOINL op_c_dbl_to_int(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t t = (int32_t)((double)i * 0.37);
+    s = (int32_t)((uint32_t)s + (uint32_t)t);
+  }
+  return s;
+}
+
+static double NOINL op_c_int_to_dbl(long n) {
+  int32_t N = (int32_t)n;
+  double d = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); d = d + (double)i; }
+  return d;
+}
+
+static double NOINL op_c_int_div_const(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)(i / 4)); }
+  return s;
+}
+
+static double NOINL op_c_int_mod_pow2(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)(i % 16)); }
+  return s;
+}
+
+static double NOINL op_c_popcount(long n) {
+  int32_t N = (int32_t)n, c = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t x = i & 1023;
+    while (x != 0) { BODY_BARRIER(); x = x & (x - 1); c = (int32_t)((uint32_t)c + 1u); }
+  }
+  return c;
+}
+
+static double NOINL op_c_bit_test(long n) {
+  int32_t N = (int32_t)n, mask = 0x55aa55aa;
+  double c = 0;
+  OPAQUE_I(mask);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    if ((uint32_t)mask & (1u << (i & 31))) c = c + 1.0;
+  }
+  return c;
+}
+
+static double NOINL op_c_rotate(long n) {
+  int32_t N = (int32_t)n;
+  uint32_t x = 1;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); x = ((x << 5) | (x >> 27)) ^ (uint32_t)i; }
+  return (double)x;
+}
+
+static double NOINL op_c_hash_mix(long n) {
+  int32_t N = (int32_t)n, h = 1;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    h = (int32_t)((uint32_t)(h ^ i) * 0x9e3779b1u);
+    h = (int32_t)((uint32_t)h ^ ((uint32_t)h >> 15));
+  }
+  return h;
+}
+
+static double NOINL op_c_abs_int(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t x = (i & 255) - 128;
+    s = (int32_t)((uint32_t)s + (uint32_t)(x < 0 ? -x : x));
+  }
+  return s;
+}
+
+static double NOINL op_c_clamp(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t v = (int32_t)(((uint32_t)i * 7u) & 1023u);
+    if (v < 100) v = 100;
+    else if (v > 900) v = 900;
+    s = (int32_t)((uint32_t)s + (uint32_t)v);
+  }
+  return s;
+}
+
+static double NOINL op_c_str_char_scan(long n) {
+  int32_t N = (int32_t)n;
+  double c = 0;
+  const char *s = S;
+  OPAQUE_P(s);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    c = c + ((uint8_t)s[i % 54] == 32 ? 1.0 : 0.0);
+  }
+  return c;
+}
+
+static double NOINL op_c_str_hash(long n) {
+  int32_t N = (int32_t)n, h = 0;
+  const char *s = S;
+  OPAQUE_P(s);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    h = (int32_t)((uint32_t)h * 31u + (uint32_t)(uint8_t)s[i % 54]);
+  }
+  return h;
+}
+
+static double NOINL op_c_str_index_eq(long n) {
+  int32_t N = (int32_t)n;
+  double c = 0;
+  const char *s = S;
+  OPAQUE_P(s);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    if (s[i % 54] == 'o') c = c + 1.0;
+  }
+  return c;
+}
+
+static double NOINL op_c_str_len_loop(long n) {
+  int32_t N = (int32_t)n;
+  double c = 0;
+  const char *s = S;
+  int32_t l = (int32_t)strlen(s);
+  OPAQUE_P(s); OPAQUE_I(l);
+  int32_t outer = N / 54; /* outer ~n/54 iterations, inner 54 chars: total inner work ~n */
+  for (int32_t i = 0; i < outer; i++) {
+    BODY_BARRIER();
+    for (int32_t j = 0; j < l; j++) {
+      BODY_BARRIER();
+      if ((uint8_t)s[j] < 100) c = c + 1.0;
+    }
+  }
+  return c;
+}
+
+static double NOINL op_c_counter_dec(long n) {
+  int32_t k = (int32_t)n, s = 0;
+  while (k > 0) { BODY_BARRIER(); k--; s = (int32_t)((uint32_t)s + (uint32_t)k); }
+  return s;
+}
+
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {
   {"field_read", op_field_read}, {"field_name", op_field_read}, {"field_length", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
@@ -1716,6 +2417,64 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"k18_math", op_k18_math},
   {"k19_gcd", op_k19_gcd},
   {"k20_switch", op_k20_switch},
+  {"c_while", op_c_while},
+  {"c_do_while", op_c_do_while},
+  {"c_for_down", op_c_for_down},
+  {"c_loop_step2", op_c_loop_step2},
+  {"c_nested_loop", op_c_nested_loop},
+  {"c_loop_break", op_c_loop_break},
+  {"c_loop_continue", op_c_loop_continue},
+  {"c_loop_if_else", op_c_loop_if_else},
+  {"c_loop_if_chain", op_c_loop_if_chain},
+  {"c_ternary", op_c_ternary},
+  {"c_select_minmax", op_c_select_minmax},
+  {"c_switch_dense", op_c_switch_dense},
+  {"c_switch_sparse", op_c_switch_sparse},
+  {"c_early_return", op_c_early_return},
+  {"c_bool_flag", op_c_bool_flag},
+  {"c_logical_and_or", op_c_logical_and_or},
+  {"c_locals_rotate", op_c_locals_rotate},
+  {"c_int_expr", op_c_int_expr},
+  {"c_arr_sum_int", op_c_arr_sum_int}, {"c_arr_sum_dbl", op_c_arr_sum_dbl}, {"c_arr_store_seq", op_c_arr_store_seq},
+  {"c_arr_rmw", op_c_arr_rmw}, {"c_arr_stencil", op_c_arr_stencil}, {"c_arr_swap", op_c_arr_swap},
+  {"c_arr_indirect", op_c_arr_indirect}, {"c_arr_histogram", op_c_arr_histogram}, {"c_arr_2d", op_c_arr_2d},
+  {"c_arr_len_loop", op_c_arr_len_loop}, {"c_i32_sum", op_c_i32_sum}, {"c_i32_store", op_c_i32_store},
+  {"c_u8_rmw", op_c_u8_rmw}, {"c_u16_load", op_c_u16_load}, {"c_f32_mad", op_c_f32_mad},
+  {"c_f64_dot", op_c_f64_dot}, {"c_i32_indirect", op_c_i32_indirect},
+  {"c_struct_get2", op_c_struct_get2},
+  {"c_struct_set", op_c_struct_set},
+  {"c_struct_rmw", op_c_struct_rmw},
+  {"c_struct_array", op_c_struct_array},
+  {"c_struct_nested", op_c_struct_nested},
+  {"c_struct_dbl", op_c_struct_dbl},
+  {"c_class_method", op_c_class_method},
+  {"c_class_ctor_fields", op_c_class_ctor_fields},
+  {"c_call_leaf", op_c_call_leaf},
+  {"c_call_4args", op_c_call_4args},
+  {"c_call_2deep", op_c_call_2deep},
+  {"c_call_void", op_c_call_void},
+  {"c_call_recursive_depth4", op_c_call_recursive_depth4},
+  {"c_call_dbl", op_c_call_dbl},
+  {"c_closure_read", op_c_closure_read},
+  {"c_method_poly2", op_c_method_poly2},
+  {"c_return_early", op_c_return_early},
+  {"c_dbl_expr", op_c_dbl_expr},
+  {"c_dbl_cmp_branch", op_c_dbl_cmp_branch},
+  {"c_dbl_to_int", op_c_dbl_to_int},
+  {"c_int_to_dbl", op_c_int_to_dbl},
+  {"c_int_div_const", op_c_int_div_const},
+  {"c_int_mod_pow2", op_c_int_mod_pow2},
+  {"c_popcount", op_c_popcount},
+  {"c_bit_test", op_c_bit_test},
+  {"c_rotate", op_c_rotate},
+  {"c_hash_mix", op_c_hash_mix},
+  {"c_abs_int", op_c_abs_int},
+  {"c_clamp", op_c_clamp},
+  {"c_str_char_scan", op_c_str_char_scan},
+  {"c_str_hash", op_c_str_hash},
+  {"c_str_index_eq", op_c_str_index_eq},
+  {"c_str_len_loop", op_c_str_len_loop},
+  {"c_counter_dec", op_c_counter_dec},
 };
 
 int main(int argc, char **argv) {
