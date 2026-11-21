@@ -462,6 +462,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// record's raw producer (its `mode` raw mask: `raw_bit(0)` for `A`, or a last link with `MODE_RAW_OUT`),
     /// whose one reader is the next Number row. A NaN still canonicalizes (`write`).
     raw_result: bool,
+    /// Every register operand the record reads is an int32 its view proved (`slot_kinds`): read
+    /// untested.
+    operands_int: bool,
     /// How the running activation suspends in place, for a staged suspension row.
     suspends: Option<LaneSuspends>,
     /// The activation entries of the running lane context, for a staged prologue row (`PrologueFrame`);
@@ -856,7 +859,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None, call: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1079,6 +1082,11 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
+        // A proven int32 operand (`operands_int`): its value half, re-tagged as a constant, so the
+        // staged row's tag tests fold.
+        if self.operands_int {
+            return Value::integer(self.registers.get(register).to_bits() as u32 as i32).to_bits();
+        }
         // The carried accumulator stands for field B, the one register a single-operand row reads;
         // a row that reads several (one with heap records) reads the file, which every producer writes.
         if self.heap.is_some() || register != self.accumulated { return self.registers.get(register).to_bits(); }
@@ -1987,6 +1995,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         // A register no accumulator stands for: its tag half-word tested in memory
         // (`Registers::int`), not the whole word loaded and masked.
         if ACC == ACC_NONE && let Some(register) = operand.register_index() {
+            if self.operands_int {
+                return Some(u64::from(self.registers.get(register).to_bits() as u32));
+            }
             return self.registers.int(register).map(|int| u64::from(int as u32));
         }
         let word = self.operand_word(stage, operand)?;
@@ -3567,6 +3578,10 @@ pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTERS: u8 = 1;
 pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTER_CONSTANT: u8 = 2;
 pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTER_INT32: u8 = 3;
 pub(in crate::vm::dispatch_fast) const OPERANDS_INT32: u8 = 4;
+/// Two registers the view's int32 kinds prove int32s (`int_kinds`): read with no tag test.
+pub(in crate::vm::dispatch_fast) const OPERANDS_PROVEN: u8 = 5;
+/// A register the view's int32 kinds prove an int32 and an int32 constant on the right.
+pub(in crate::vm::dispatch_fast) const OPERANDS_PROVEN_INT32: u8 = 6;
 
 script_handler! {
     /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
@@ -3580,18 +3595,18 @@ script_handler! {
         let generic: Handler = generated_row!(H, OP, ACC, FLAG_UNREAD);
         // SAFETY: `specialize_plain_operators` chose `FORM` from the record's own operand kinds.
         unsafe {
-            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 } {
+            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 } {
                 std::hint::assert_unchecked(Operand(i.b).kind() == Some(crate::bytecode::OperandKind::Register));
             }
-            if const { FORM == OPERANDS_REGISTERS } {
+            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_PROVEN } {
                 std::hint::assert_unchecked(Operand(i.c).kind() == Some(crate::bytecode::OperandKind::Register));
             }
-            if const { FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 } {
+            if const { FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
                 std::hint::assert_unchecked(Operand(i.c).kind() == Some(crate::bytecode::OperandKind::Constant));
             }
         }
         let (left, right) = (Operand(i.b), Operand(i.c));
-        let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_INT32 } {
+        let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
             crate::staged::numeric::int32_binary_operation(OPERATOR as u32, i.a, left, right)
         } else {
             crate::staged::numeric::binary_operation(OPERATOR as u32, i.a, left, right)
@@ -3605,16 +3620,24 @@ script_handler! {
         // The int32 constant the view folded into the record's `mode` (`specialize_plain_operators`, which
         // installs this form only with it): an int32 the row knows as one, so its constant's load, bounds
         // test and tag test fold away.
-        if const { FORM == OPERANDS_REGISTER_INT32 } {
+        if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
             frame.reads = frame.reads.with_immediate(Value::integer(i.mode as u32 as i32));
         }
+        // The view's int32 kinds proved each register operand an int32 (`int_kinds`), which an
+        // overflowing update of a speculative one retires before it writes a double.
+        if const { FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 } { frame.operands_int = true; }
         match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
             Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
             Step::Control(_) | Step::Unresolved => {
                 // An int32 form whose result left int32 (`h * 31` overflowing, a fraction) widens to
                 // its Number form over the same operands, not to the generic row: only a pair the
                 // Number form refuses too goes generic.
-                let widened: Handler = if const { FORM == OPERANDS_REGISTER_INT32 } {
+                // A proven form's result left int32: its checked Number form, over the same proven operands.
+                let widened: Handler = if const { FORM == OPERANDS_PROVEN } {
+                    operator_row::<H, OP, ACC, OPERATOR, OPERANDS_REGISTERS> as Handler
+                } else if const { FORM == OPERANDS_PROVEN_INT32 } {
+                    operator_row::<H, OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT> as Handler
+                } else if const { FORM == OPERANDS_REGISTER_INT32 } {
                     operator_row::<H, OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT> as Handler
                 } else if const { FORM == OPERANDS_INT32 } {
                     operator_row::<H, OP, ACC, OPERATOR, OPERANDS_ANY> as Handler

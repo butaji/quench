@@ -378,7 +378,7 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
     }
 }
 
-pub(super) fn definitions(
+pub(crate) fn definitions(
     instruction: WideInstruction,
     superinstructions: &[Superinstruction],
 ) -> RegisterSet {
