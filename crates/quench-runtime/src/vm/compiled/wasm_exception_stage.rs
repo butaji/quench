@@ -15,7 +15,7 @@
 
 use super::wasm_gc_allocate::operand_value;
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, Slot, Value, Vm, finish_callout};
+use super::{Analysis, AnalysisState, CallContext, Emitter, JsError, Kind, Slot, Value, Vm, finish_callout};
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess as _, MachineStage as _};
 use crate::staged::wasm::Width;

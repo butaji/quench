@@ -3,7 +3,6 @@
 //! recipes are VM-specific, so it cannot link yet. It reports that instead of publishing a
 //! fallback body.
 
-use crate::Host;
 use crate::bytecode::ResidualProgram;
 
 pub(crate) fn compile_eager_native(program: ResidualProgram) -> Result<crate::NativeJsProgram, String> {

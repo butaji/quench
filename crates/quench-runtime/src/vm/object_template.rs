@@ -22,7 +22,7 @@
 //! its record reused, and remaps their shapes when shapes are compacted
 //! (`remap_object_template_shapes`).
 use super::property_key::PropertyKey;
-use super::{Host, Vm};
+use super::Vm;
 use crate::heap::RootId;
 use crate::value::Value;
 use smallvec::SmallVec;

@@ -10,7 +10,7 @@
 
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, Slot, Value, Vm, finish_callout};
+use super::{Analysis, AnalysisState, CallContext, Emitter, JsError, Kind, Slot, Value, Vm, finish_callout};
 use crate::bytecode::{Function, Op, WideInstruction};
 use crate::heap::WasmGcRecord;
 use crate::staged::layout_offsets::NATIVE_WASM_GC_LAYOUT;

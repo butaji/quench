@@ -3,7 +3,7 @@
 //! of each step's operands.
 
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, Emitter, Host, Kind, Slot, eager_unreachable_admitted};
+use super::{Analysis, AnalysisState, Emitter, Kind, Slot, eager_unreachable_admitted};
 use crate::WasmType;
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineFlow, MachineStage};

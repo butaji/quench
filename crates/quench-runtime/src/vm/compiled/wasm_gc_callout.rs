@@ -25,7 +25,7 @@
 //! The rules are the ones the interpreter runs (`staged::wasm_gc`, on `HeapStage`), so both tiers
 //! share the checks, their order and their traps.
 
-use super::{CallContext, Host, JsError, ProgramId, Vm, finish_callout};
+use super::{CallContext, JsError, ProgramId, Vm, finish_callout};
 use crate::staged::wasm_gc::{Aggregate, WasmGc, array_length, field_read, field_write, non_null};
 use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue};
 use crate::wasm::reference::{NonNullCheck, ReferenceTarget};

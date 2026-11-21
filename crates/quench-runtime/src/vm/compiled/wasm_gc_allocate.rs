@@ -11,7 +11,7 @@
 //! references (`wasm_roots`).
 
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, ProgramId, Slot, Value, Vm, finish_callout, refresh_wasm_gc_records};
+use super::{Analysis, AnalysisState, CallContext, Emitter, JsError, Kind, ProgramId, Slot, Value, Vm, finish_callout, refresh_wasm_gc_records};
 use crate::bytecode::{Function, Op, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;

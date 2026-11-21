@@ -4,7 +4,6 @@
 //! decide is `Step::Unresolved`, and the general path takes it under the VM's own rules.
 
 use crate::bytecode::{Operand, Register, ResidualProgram, WideInstruction};
-use crate::host::Host;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::value::TypeofKind;
 use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};

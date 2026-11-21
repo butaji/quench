@@ -14,7 +14,7 @@ use super::AotImage;
 use crate::bytecode::ResidualProgram;
 use crate::vm::compiled::RelocKind;
 use crate::vm::{DataAttributes, PropertyKey, Vm};
-use crate::{Host, Value};
+use crate::Value;
 use rustc_hash::FxHashMap;
 use std::hash::Hash;
 

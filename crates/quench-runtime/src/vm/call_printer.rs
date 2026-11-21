@@ -11,7 +11,7 @@ use oxc_ast_visit::Visit;
 use oxc_parser::{ParseOptions, Parser, Token, Kind, config::TokensParserConfig};
 use oxc_span::SourceType;
 
-use super::{Host, Vm};
+use super::Vm;
 use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;

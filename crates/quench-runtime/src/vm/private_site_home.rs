@@ -21,7 +21,7 @@
 //! it proves the brand, and no environment is found. A class evaluated again, or a name eval
 //! code can see, disables only the sites of its own names.
 
-use super::{Atom, Host, ProgramId, ResidualProgram, Value, Vm};
+use super::{Atom, ProgramId, ResidualProgram, Value, Vm};
 use rustc_hash::FxHashMap;
 use crate::heap::PrivateBrand;
 

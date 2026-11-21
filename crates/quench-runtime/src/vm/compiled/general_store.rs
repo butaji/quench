@@ -4,7 +4,7 @@
 //! representations only widen (`ValueArena::note_slot_value`), and rewriting or invalidating
 //! the entry clears the class, so the proof holds until then. Any other store takes the
 //! helper (`field_set_in_lane`), which records the proof.
-use super::{emit_js_payload_word, Host, JsStepDispatch, Vm};
+use super::{emit_js_payload_word, JsStepDispatch, Vm};
 use crate::bytecode::Atom;
 use crate::typed_ir::SlotType;
 use crate::vm::compiled::regions;

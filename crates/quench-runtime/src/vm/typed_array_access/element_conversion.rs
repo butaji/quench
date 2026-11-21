@@ -2,7 +2,6 @@
 
 use super::{TypedArrayKind, Vm};
 use crate::staged::typed_elements::{element_number, element_word, NATIVE_LITTLE_ENDIAN};
-use crate::Host;
 
 impl Vm {
     /// Each `source_kind` element of `source` into `target` as `target_kind`, as storing the

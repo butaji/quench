@@ -1,7 +1,7 @@
 //! `NativeContext` reads and writes of BigInt, Date and ArrayBuffer detach state for hosts
 //! (Node-API); none of them runs guest code.
 use super::{NativeContext, RootedError};
-use crate::{Host, RootId};
+use crate::RootId;
 
 /// What `NativeContext::detach_array_buffer_rooted` did.
 pub use crate::vm::Detach;

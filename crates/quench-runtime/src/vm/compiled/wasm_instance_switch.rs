@@ -6,7 +6,7 @@
 //! bodies take the arguments the caller passes (`InstanceContext::abi`) and the roots have room.
 
 use super::instance_context::{InstanceContext, NativeRoots, SWITCHED};
-use super::{CONTEXT_NATIVE_ROOTS, CallContext, Emitter, Host, Vm, invariant, refresh_memory_length};
+use super::{CONTEXT_NATIVE_ROOTS, CallContext, Emitter, Vm, invariant, refresh_memory_length};
 use crate::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use crate::staged::wasm::Width;
 use crate::wasm::integer::I64BinaryOperator as Binary;

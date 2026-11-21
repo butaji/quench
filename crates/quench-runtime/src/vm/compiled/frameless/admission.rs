@@ -2,7 +2,7 @@
 //! collection epoch, and each closure of it takes the function's admission with its own
 //! captures.
 use super::{CallEntry, CACHE_ENTRIES, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
-use super::super::{Host, JsStepDispatch, ResidualProgram, Vm};
+use super::super::{JsStepDispatch, ResidualProgram, Vm};
 use super::super::admission::{admit_callee, refuse, CalleeUse, Refusal};
 use crate::Value;
 

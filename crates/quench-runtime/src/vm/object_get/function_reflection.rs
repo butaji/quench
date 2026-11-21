@@ -1,7 +1,7 @@
 //! The legacy `caller` and `arguments` reads of a function that has no such own property.
 
 use super::super::object::AtomClass;
-use super::super::{Atom, Host, JsError, Value, Vm};
+use super::super::{Atom, JsError, Value, Vm};
 
 impl Vm {
     /// `[[Get]]` of `caller` or `arguments` on a function without that own property, as the

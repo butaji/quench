@@ -9,7 +9,7 @@
 //! a proof never names a changed chain or a reused record or shape, and a use compares no
 //! epoch. A key the shape holds keeps its symbol alive.
 
-use super::{Host, Value, Vm};
+use super::{Value, Vm};
 use super::property_key::PropertyKey;
 
 /// Direct-mapped entries: a power of two. Node's streams and Fastify's request and reply

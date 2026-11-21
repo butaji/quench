@@ -7,7 +7,7 @@
 //! so the two tiers share the rule (`staged::wasm_table_ops`).
 
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, Kind, Slot, Vm, finish_callout};
+use super::{Analysis, AnalysisState, CallContext, Emitter, Kind, Slot, Vm, finish_callout};
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;

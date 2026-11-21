@@ -1,7 +1,7 @@
 //! The global scope's values as Stable facts (`heap::global_value_fact`): the cell a by-name
 //! read of the global scope resolves to now, which a lane body folds under a dependency, and
 //! the global lexical assignments and declarations that retire the code holding one.
-use super::{Atom, Host, Value, Vm};
+use super::{Atom, Value, Vm};
 use crate::code_dependencies::SlotDependency;
 use crate::heap::{GlobalCell, GlobalFact, GlobalLayoutFact};
 use crate::typed_ir::Type;

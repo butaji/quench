@@ -1,6 +1,6 @@
 //! Stores into dense arrays no guest code reaches yet: the arrays builtins build.
 
-use super::{Host, Value, Vm};
+use super::{Value, Vm};
 
 impl Vm {
     /// Append an own data element to an unexposed dense array. No guest code runs.

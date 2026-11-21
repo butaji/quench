@@ -2,7 +2,7 @@
 //! by the interpreter's own element steps without the exact step: a read the array and its
 //! prototypes do not hold (`Vm::absent_array_element`) and a plain store
 //! (`Vm::store_plain_element`). Anything else takes the step at the same PC.
-use super::{Host, Vm};
+use super::Vm;
 use crate::Value;
 
 /// `Vm::absent_array_element` of `base` and `key`, else `Value::DELETED`.

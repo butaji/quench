@@ -1,7 +1,7 @@
 //! The room bodies called from bodies found short, which the next body entry grows the stacks
 //! to (`LaneStack::recovery_demand`): a call cannot grow the stacks its caller's registers live in.
 
-use super::{Host, LaneRecoverySpace, LaneView, Vm};
+use super::{LaneRecoverySpace, LaneView, Vm};
 
 impl LaneRecoverySpace {
     fn max(self, other: Self) -> Self {

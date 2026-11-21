@@ -16,7 +16,7 @@
 
 use super::instance_context::NativeRoots;
 use super::wasm_stage::infallible;
-use super::{CONTEXT_NATIVE_ROOTS, Emitter, Host, Kind, invariant};
+use super::{CONTEXT_NATIVE_ROOTS, Emitter, Kind, invariant};
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_roots::{WasmRoots, push, restore};

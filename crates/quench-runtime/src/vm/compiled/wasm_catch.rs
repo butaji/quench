@@ -4,7 +4,7 @@
 //! raised when a handler catches it, and binds its thrown value to the handler's frame local. A
 //! trap, a link failure and a termination are never caught, as `Vm::exception_handler_target` does.
 
-use super::{AnalysisState, CallContext, Emitter, Host, JsError, Kind, RAISED_STATUS, Raised, Slot, Vm};
+use super::{AnalysisState, CallContext, Emitter, JsError, Kind, RAISED_STATUS, Raised, Slot, Vm};
 use crate::bytecode::{Function, Handler, ThrownValueSlot};
 use crate::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _};
 use crate::staged::wasm::Width;

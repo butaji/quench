@@ -1,4 +1,4 @@
-use super::{Host, JsError, ResidualProgram, Value, Vm};
+use super::{JsError, ResidualProgram, Value, Vm};
 use std::cmp::Ordering;
 
 /// The shortest run the sort merges: shorter natural runs are extended by binary insertion

@@ -1,5 +1,5 @@
 //! Owned cross-runtime clone draft; no VM handles or reference-counted payloads.
-use crate::{BuiltinBrand as B, BuiltinData as D, Host, NativeContext, RootId, RootedError};
+use crate::{BuiltinBrand as B, BuiltinData as D, NativeContext, RootId, RootedError};
 #[derive(Clone, Debug)]
 pub enum Value {
     Undefined,

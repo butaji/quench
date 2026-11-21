@@ -2,7 +2,7 @@
 //! link: the part of `get_property_with_receiver` that needs no exotic handling.
 
 use super::super::object::AtomClass;
-use super::super::{Atom, Host, JsError, PropertyKey, ResidualProgram, Value, Vm};
+use super::super::{Atom, JsError, PropertyKey, ResidualProgram, Value, Vm};
 use std::ops::ControlFlow;
 
 /// Where `Vm::ordinary_chain_read` stopped.

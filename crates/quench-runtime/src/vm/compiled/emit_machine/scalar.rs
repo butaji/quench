@@ -4,7 +4,7 @@
 //! (`staged::wasm`, `staged::wasm_float`); this file only says what one operator is on the machine.
 
 use super::{Builds, of_in_lane, machine_type};
-use super::super::{Emitter, Host, scalar_ir};
+use super::super::{Emitter, scalar_ir};
 use crate::staged::machine::{Binary, Lane, MachineOperator, MachineScalar, MachineStage, Order, Relation, Unary};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_float::{Float, Truncation, truncation_limits};

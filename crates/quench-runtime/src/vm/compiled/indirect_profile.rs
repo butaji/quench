@@ -4,7 +4,7 @@
 //! caller (`profiled_indirect_targets`): the rows say which function is where, so no per-site
 //! cache keeps a second copy of it.
 
-use super::{CompiledProgram, Host, MAX_JIT_PROFILED_INDIRECT_TARGETS, ProgramId, Vm};
+use super::{CompiledProgram, MAX_JIT_PROFILED_INDIRECT_TARGETS, ProgramId, Vm};
 use crate::Value;
 use crate::heap::{Cell, TableTarget};
 use std::cell::RefCell;

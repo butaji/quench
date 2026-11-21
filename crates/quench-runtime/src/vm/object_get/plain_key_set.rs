@@ -2,7 +2,7 @@
 //! where the write lands, and that proof is the write's only lookup. The plain `[[Delete]]`
 //! of a string key on one such object, decided by its shape alone.
 
-use super::super::{Atom, Host, Object, PropertyKey, Value, Vm};
+use super::super::{Atom, Object, PropertyKey, Value, Vm};
 
 /// Where a plain `[[Set]]` lands, as the chain walk proved it.
 enum PlainWriteTarget {

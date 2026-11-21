@@ -9,7 +9,7 @@ use crate::bytecode::{Function, ResidualProgram};
 use crate::vm::dispatch_fast::lane_body_stats::{miss, Miss};
 use crate::vm::dispatch_fast::LaneView;
 use crate::vm::jit_backend::CompileLevel;
-use crate::vm::{Host, Vm};
+use crate::vm::Vm;
 
 /// Why a compile or a callee's admission is refused. Each variant is one refusal site, counted
 /// by `record` and named in `refusal_report`. The OSR region reasons (`RegionRejection`) share

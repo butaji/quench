@@ -17,7 +17,6 @@ use crate::vm::compiled::{CodeMemory, LaneHelper};
 use quench_bjit::call_record::CallRecord;
 use std::cell::UnsafeCell;
 use crate::vm::jit_backend::relocatable_code::RelocatableCode;
-use crate::Host;
 
 /// Every body starts at this alignment in the block.
 const CODE_ALIGNMENT: usize = 16;

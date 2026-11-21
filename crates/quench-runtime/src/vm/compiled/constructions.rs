@@ -1,6 +1,6 @@
 //! Constructions native code makes in place: a lane body's planned or initialized
 //! receiver, a frameless construction's receiver and result, and an intrinsic array.
-use super::{Host, JsStepDispatch, ResidualProgram, Vm};
+use super::{JsStepDispatch, ResidualProgram, Vm};
 use crate::Value;
 
 /// A lane body's `new callee(...)` of the `argc` registers at `arguments`

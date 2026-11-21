@@ -1,7 +1,7 @@
 //! The Wasm tier's registers, constants, bindings and globals (`staged::wasm_instance`): the
 //! instance primitives as Cranelift code, and the lowering and analysis of each `Instance` step.
 
-use super::{Analysis, AnalysisState, Emitter, Host, Kind, Region, Slot};
+use super::{Analysis, AnalysisState, Emitter, Kind, Region, Slot};
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage, MachineVector};
 use crate::staged::wasm::Width;

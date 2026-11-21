@@ -1,5 +1,5 @@
 //! OpenSSL error presentation shared by Node crypto and TLS operations.
-use quench_runtime::{Host, NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 // OpenSSL err.h library IDs and Node crypto_util.cc's public code prefixes.
 const LIBRARY_CODES: &[(i32, &str)] = &[

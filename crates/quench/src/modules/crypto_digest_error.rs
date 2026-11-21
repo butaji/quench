@@ -1,7 +1,7 @@
 //! Node26 operation-specific presentation, delegated to the shared crypto/TLS
 //! error authority. SDK validation remains in the unmodified original SDK.
 use super::{crypto_digest::DigestError, crypto_error_shared_vm};
-use quench_runtime::{Host, NativeContext, RootedError};
+use quench_runtime::{NativeContext, RootedError};
 use std::ffi::{c_char, c_int};
 #[derive(Clone, Copy)]
 pub enum Operation<'a> {

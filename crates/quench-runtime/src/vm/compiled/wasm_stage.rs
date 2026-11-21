@@ -2,7 +2,7 @@
 //! through the staged rules (`staged::wasm::integer_binary`, `staged::wasm_float`), so traps and
 //! their order are the interpreter's. The operators themselves are the machine's
 //! (`emit_machine`).
-use super::{AnalysisState, Emitter, Host, Kind, Slot};
+use super::{AnalysisState, Emitter, Kind, Slot};
 use crate::bytecode::WideInstruction;
 use crate::staged::machine::MachineStage;
 use crate::staged::wasm::{Width, integer_binary};

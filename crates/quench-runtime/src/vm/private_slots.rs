@@ -7,7 +7,7 @@
 //! takes string and symbol keys only, and integrity levels change those alone.
 
 use super::property_key::PropertyKey;
-use super::{Atom, DataAttributes, FieldCache, Host, ResidualProgram, Value, Vm};
+use super::{Atom, DataAttributes, FieldCache, ResidualProgram, Value, Vm};
 use crate::heap::PrivateBrand;
 
 /// The bit of a private key's name that marks a brand-only entry (a private method or
