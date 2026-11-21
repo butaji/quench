@@ -83,6 +83,15 @@ fn operate(op: NodeOp, out: &mut [f64], a: Column, b: Column) {
         ($($kind:ident :: $operation:ident => $f:ident),*) => {
             match op {
                 $(NodeOp::$kind($kind::$operation) => map2(out, a, b, |x, y| $f($kind::$operation, x, y)),)*
+                // One loop per relation, its test folded into the loop.
+                NodeOp::Cmp(relation) => match relation {
+                    NumberRelation::LessThan => map2(out, a, b, |x, y| compare(NumberRelation::LessThan, x, y)),
+                    NumberRelation::LessEqual => map2(out, a, b, |x, y| compare(NumberRelation::LessEqual, x, y)),
+                    NumberRelation::GreaterThan => map2(out, a, b, |x, y| compare(NumberRelation::GreaterThan, x, y)),
+                    NumberRelation::GreaterEqual => map2(out, a, b, |x, y| compare(NumberRelation::GreaterEqual, x, y)),
+                    NumberRelation::Equal => map2(out, a, b, |x, y| compare(NumberRelation::Equal, x, y)),
+                    NumberRelation::NotEqual => map2(out, a, b, |x, y| compare(NumberRelation::NotEqual, x, y)),
+                },
                 NodeOp::Load { .. } | NodeOp::Iota { .. } => unreachable!("not an operator"),
             }
         };
@@ -111,8 +120,7 @@ fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
     use crate::staged::NumericStage;
     // Two int32s (almost every bitwise operand: an int32 constant, an induction, another bitwise
     // result) are their own ToInt32: the operation runs on them as is.
-    let (left, right) = (a as i32, b as i32);
-    if f64::from(left) == a && f64::from(right) == b {
+    if let (Some(left), Some(right)) = (exact_int32(a), exact_int32(b)) {
         let word = crate::vm::operations::int32_bitwise_bits(operation, left, right);
         // A zero-fill shift's Number is its unsigned bits.
         return if operation == NumberBitwise::ShiftRightUnsigned { f64::from(word as u32) } else { f64::from(word) };
@@ -128,11 +136,33 @@ fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
     })
 }
 
+/// The int32 a Number that is an integer of magnitude below 2^51 wraps to (its ToInt32),
+/// `None` for any other Number: adding 1.5 * 2^52 puts such an integer in the low bits of the
+/// binary64 word exactly, and subtracting it back gives the Number again only for an integer
+/// (a fraction rounds, a NaN never compares equal). A magnitude of 2^51 or more is tested
+/// apart: one past 2^53 absorbs the constant and round-trips with other low bits.
+#[inline(always)]
+pub(super) fn exact_int32(x: f64) -> Option<i32> {
+    const MAGIC: f64 = 6755399441055744.0;
+    const LIMIT: f64 = 2251799813685248.0;
+    let shifted = x + MAGIC;
+    (x.abs() < LIMIT && shifted - MAGIC == x).then_some(shifted.to_bits() as u32 as i32)
+}
+
+/// `relation` of two Numbers as 1 or 0, as the staged relation row decides it (a NaN operand
+/// fails every relation but `!=`).
+#[inline(always)]
+fn compare(relation: NumberRelation, a: f64, b: f64) -> f64 {
+    let mut stage = super::super::super::operations::PartialOrderStage;
+    if relation.apply(&mut stage, a, b) { 1.0 } else { 0.0 }
+}
+
 #[inline(always)]
 pub(super) fn apply(op: NodeOp, a: f64, b: f64) -> f64 {
     match op {
         NodeOp::Arith(operation) => arith(operation, a, b),
         NodeOp::Bits(operation) => bits(operation, a, b),
+        NodeOp::Cmp(relation) => compare(relation, a, b),
         NodeOp::Load { .. } | NodeOp::Iota { .. } => unreachable!("loads and iotas are column operations"),
     }
 }
@@ -424,16 +454,16 @@ impl LoopKernel {
                 NodeOp::Load { base, index } => {
                     numbers &= self.load(state, &mut scratch[id * CHUNK..][..len], base, index, done);
                 }
-                NodeOp::Iota { .. } if self.recurrence.unread_column(id) => {}
+                NodeOp::Iota { .. } if node.dead || self.recurrence.unread_column(id) => {}
                 NodeOp::Iota { index } => scratch[id * CHUNK..][..len]
                     .iter_mut()
                     .enumerate()
                     .for_each(|(k, o)| *o = self.index(state, index, done + k as u64) as f64),
-                NodeOp::Arith(_) | NodeOp::Bits(_) => {}
+                NodeOp::Arith(_) | NodeOp::Bits(_) | NodeOp::Cmp(_) => {}
             }
         }
         for (id, node) in self.shape.nodes.iter().enumerate() {
-            if matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_)) && !node.seq && !node.hoisted {
+            if matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_) | NodeOp::Cmp(_)) && !node.seq && !node.hoisted && !node.dead {
                 self.operator_column(state, scratch, id, len);
             }
         }

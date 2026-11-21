@@ -69,20 +69,52 @@ fn pass(shape: &Shape) -> Option<recur::Recurrence> {
 /// an expression's scratch registers, whose last values no one reads, so the run neither keeps
 /// their columns nor writes their final values. The loop's one exit is its test's jump past
 /// the backedge; a register the masks do not cover stays.
+/// `false` where a register the body writes under a branch only (`Shape::guarded`) may be live
+/// past the loop, or no masks say: such a loop has no kernel.
 fn drop_dead_temps(shape: &mut Shape, decoded: &[WideInstruction], header: usize, backedge: usize,
-    live: Option<&crate::compile::liveness::RegisterMasks>) {
-    let Some(masks) = live else { return };
-    let Some(width) = super::int_kinds::covered(masks) else { return };
+    live: Option<&crate::compile::liveness::RegisterMasks>) -> bool {
+    let guarded = shape.guarded.is_empty();
+    let Some(masks) = live else { return guarded };
+    let Some(width) = super::int_kinds::covered(masks) else { return guarded };
     let exits: Vec<usize> = (header..=backedge)
         .filter(|&pc| decoded[pc].op() == crate::bytecode::Op::JumpBinaryFalse)
         .map(|pc| decoded[pc].jump_target() as usize)
         .collect();
-    let [exit] = exits.as_slice() else { return };
-    if *exit != backedge + 1 {
-        return;
+    let Some(&exit) = exits.first() else { return guarded };
+    if exit != backedge + 1 {
+        return guarded;
     }
-    let Some(after) = masks.get(*exit) else { return };
-    shape.temps.retain(|&(register, _)| usize::from(register) >= width || after.contains(usize::from(register)));
+    let Some(after) = masks.get(exit) else { return guarded };
+    let live = |register: u16| usize::from(register) >= width || after.contains(usize::from(register));
+    shape.temps.retain(|&(register, _)| live(register));
+    !shape.guarded.iter().any(|&register| live(register))
+}
+
+/// A register scalar of `shape` that every definition in the function loads with a non-number
+/// constant (`a === "abc"` in the body): the kernel runs on numbers, so every entry would decline,
+/// and an installed kernel costs the view its int kinds and proven loop step (`int_kinds`).
+fn never_number_scalar(shape: &Shape, decoded: &[WideInstruction], constants: &[Value]) -> Option<u16> {
+    use crate::compile::liveness::{definitions, register_in, RegisterSet};
+    shape.scalars.iter().find_map(|scalar| {
+        let shape::Scalar::Register(register) = *scalar else { return None };
+        if usize::from(register) >= RegisterSet::BITS as usize {
+            return None;
+        }
+        let mut defined = false;
+        for &instruction in decoded {
+            if !register_in(definitions(instruction, &[]), usize::from(register)) {
+                continue;
+            }
+            let non_number = instruction.op() == crate::bytecode::Op::LoadConst
+                && instruction.result_flags() == 0
+                && constants.get(instruction.constant_index()).is_some_and(|constant| constant.as_number().is_none());
+            if !non_number {
+                return None;
+            }
+            defined = true;
+        }
+        defined.then_some(register)
+    })
 }
 
 impl LoopKernel {
@@ -90,7 +122,7 @@ impl LoopKernel {
     /// its stencils run it slower (`install_loop_sites`).
     pub(super) fn accepts(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> bool {
         Shape::of(decoded, constants, usize::from(function.registers), header, backedge)
-            .is_some_and(|shape| pass(&shape).is_some())
+            .is_some_and(|shape| shape.guarded.is_empty() && pass(&shape).is_some())
     }
 
     /// The registered kernel of the loop `header..=backedge`, if it has one.
@@ -110,7 +142,18 @@ impl LoopKernel {
             }
             return None;
         };
-        drop_dead_temps(&mut shape, decoded, header, backedge, live);
+        if !drop_dead_temps(&mut shape, decoded, header, backedge, live) {
+            if trace {
+                eprintln!("loop-kernel: loop {header}..{backedge}: a branch-written register is live past the loop");
+            }
+            return None;
+        }
+        if let Some(register) = never_number_scalar(&shape, decoded, constants) {
+            if trace {
+                eprintln!("loop-kernel: loop {header}..{backedge}: scalar r{register} is only ever a non-number constant");
+            }
+            return None;
+        }
         let recurrence = pass(&shape);
         if trace {
             eprintln!("loop-kernel: loop {header}..{backedge}: {}", recurrence.as_ref().map_or("no recurrence pass", |r| r.name()));
