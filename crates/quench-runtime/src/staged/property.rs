@@ -517,7 +517,7 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         }
         FieldPlan::Inherited { shape, constants, proof } =>
             inherited(stage, frame, (owner, readable), object, (shape, constants, proof), miss),
-        FieldPlan::Readable(inner) => read_with(stage, frame, (owner, true), object, *inner, miss),
+        FieldPlan::Readable(inner) => read_nested(stage, frame, (owner, true), object, *inner, miss),
         FieldPlan::Probed { fast, atom, site } => frame.probed(stage, owner, object, (atom, site), miss,
             #[inline(always)] |stage, frame, miss| read_nested(stage, frame, (owner, readable), object, *fast, miss)),
         FieldPlan::Known => frame.known_value(stage, owner),
