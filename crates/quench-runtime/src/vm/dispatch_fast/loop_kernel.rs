@@ -65,6 +65,26 @@ fn pass(shape: &Shape) -> Option<recur::Recurrence> {
     recur::Recurrence::of(shape).filter(|recurrence| !(crate::jit_mode::base_only() && recurrence.interprets()))
 }
 
+/// Drops the temps (registers the body writes before it reads them) dead where the loop exits:
+/// an expression's scratch registers, whose last values no one reads, so the run neither keeps
+/// their columns nor writes their final values. The loop's one exit is its test's jump past
+/// the backedge; a register the masks do not cover stays.
+fn drop_dead_temps(shape: &mut Shape, decoded: &[WideInstruction], header: usize, backedge: usize,
+    live: Option<&crate::compile::liveness::RegisterMasks>) {
+    let Some(masks) = live else { return };
+    let Some(width) = super::int_kinds::covered(masks) else { return };
+    let exits: Vec<usize> = (header..=backedge)
+        .filter(|&pc| decoded[pc].op() == crate::bytecode::Op::JumpBinaryFalse)
+        .map(|pc| decoded[pc].jump_target() as usize)
+        .collect();
+    let [exit] = exits.as_slice() else { return };
+    if *exit != backedge + 1 {
+        return;
+    }
+    let Some(after) = masks.get(*exit) else { return };
+    shape.temps.retain(|&(register, _)| usize::from(register) >= width || after.contains(usize::from(register)));
+}
+
 impl LoopKernel {
     /// Whether the loop `header..=backedge` has a kernel: `--b-jit` leaves such a loop to it, as
     /// its stencils run it slower (`install_loop_sites`).
@@ -81,17 +101,20 @@ impl LoopKernel {
         header: usize,
         backedge: usize,
         original: *const (),
+        live: Option<&crate::compile::liveness::RegisterMasks>,
     ) -> Option<Box<Self>> {
         let trace = crate::trace::Channel::LoopKernel.on();
-        let Some(shape) = Shape::of(decoded, constants, usize::from(function.registers), header, backedge) else {
+        let Some(mut shape) = Shape::of(decoded, constants, usize::from(function.registers), header, backedge) else {
             if trace {
                 eprintln!("loop-kernel: loop {header}..{backedge}: no shape");
             }
             return None;
         };
+        drop_dead_temps(&mut shape, decoded, header, backedge, live);
         let recurrence = pass(&shape);
         if trace {
-            eprintln!("loop-kernel: loop {header}..{backedge}: {}", if recurrence.is_some() { "kernel" } else { "no recurrence pass" });
+            eprintln!("loop-kernel: loop {header}..{backedge}: {}", recurrence.as_ref().map_or("no recurrence pass", |r| r.name()));
+            eprintln!("loop-kernel:   nodes {:?} phis {:?} temps {:?}", shape.nodes, shape.phis, shape.temps);
         }
         let recurrence = recurrence?;
         let mut kernel = Box::new(LoopKernel {
@@ -159,6 +182,7 @@ pub(super) fn install_loop_kernels(
     function: &Function,
     exits: &[bool],
     records: &mut [LaneInstruction],
+    live: Option<&crate::compile::liveness::RegisterMasks>,
 ) -> Box<[Box<LoopKernel>]> {
     let mut kernels = Vec::new();
     for backedge in 0..decoded.len() {
@@ -173,7 +197,7 @@ pub(super) fn install_loop_kernels(
         if exits[header] || records[header].call_link.get() != NO_CALL_LINK {
             continue;
         }
-        let Some(kernel) = LoopKernel::of(decoded, constants, function, header, backedge, records[header].handler) else {
+        let Some(kernel) = LoopKernel::of(decoded, constants, function, header, backedge, records[header].handler, live) else {
             continue;
         };
         records[header].handler = loop_kernel_head as Handler as *const ();

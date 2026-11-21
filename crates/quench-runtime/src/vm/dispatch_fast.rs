@@ -19027,7 +19027,7 @@ fn derive_lane_view<'live>(
     }
     // Loop kernels take their test records last, keeping each record's final handler.
     let loop_kernels = if !wasm && (!loop_tier || crate::jit_mode::base_only()) {
-        loop_kernel::install_loop_kernels(&decoded, constants, function, &exits, &mut records)
+        loop_kernel::install_loop_kernels(&decoded, constants, function, &exits, &mut records, live().map(|masks| &**masks))
     } else {
         Box::default()
     };

@@ -72,7 +72,7 @@ pub(super) fn proven_forms_enabled() -> bool {
 }
 
 /// The registers `masks` covers per pc, `None` for a windowed mask.
-fn covered(masks: &RegisterMasks) -> Option<usize> {
+pub(super) fn covered(masks: &RegisterMasks) -> Option<usize> {
     match masks {
         RegisterMasks::Narrow(_) => Some(u64::BITS as usize),
         RegisterMasks::Half(_) => Some(u128::BITS as usize),
