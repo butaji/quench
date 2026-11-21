@@ -2928,6 +2928,15 @@ const fn compare_operands(flag: u8) -> Option<bool> {
     }
 }
 
+/// Whether `handler`, a `compare_jump_row` instance, fixes its right operand as a constant: one of the
+/// formed register-constant instances (`compare_operands`).
+fn compare_operands_of<H: Host, const BACKWARD: bool>(handler: Handler) -> Option<bool> {
+    macro_rules! row { ($flag:expr) => { row_jump::<H, { crate::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler } }
+    macro_rules! constant_formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
+    let constant: [Handler; FORMED_COMPARISONS.len()] = constant_formed!(1 3 5 7 9 11);
+    Some(constant.iter().any(|row| *row as *const () == handler as *const ()))
+}
+
 /// The instance of the comparison jump row whose comparison is `operator`'s, and whose operand kinds are
 /// `left` and `right`'s where the operator is a `FORMED_COMPARISONS` one and those are a register and a
 /// register or a constant; `None` past the codes.
@@ -2980,7 +2989,17 @@ lane_handler! {
             let operator = u32::from(i.a);
             let decodes_so = matches!(Operation::<u64, ()>::decode_generic(crate::staged::Fields::wide(LaneFields::<OP>(i))),
                 Some(Operation::CompareJump { comparison, .. }) if comparison == crate::staged::Comparison::of_operator(operator));
-            if decodes_so && let Some(handler) = compare_jump_row::<H, BACKWARD>(operator, Operand(i.b), Operand(i.c)) {
+            // A register-constant form's constant is a static fact of the record: it moves into the
+            // record's `mode` (zero on an unfused record), which the formed instance reads it from.
+            let right = Operand(i.c);
+            let constant = (right.kind() == Some(crate::bytecode::OperandKind::Constant))
+                .then(|| unsafe { &*(*cx).constants }.get(usize::from(right.payload())).copied()).flatten();
+            let formable = right.kind() != Some(crate::bytecode::OperandKind::Constant) || constant.is_some();
+            if decodes_so && formable && let Some(handler) = compare_jump_row::<H, BACKWARD>(operator, Operand(i.b), right) {
+                if let (Some(constant), Some(true)) = (constant, compare_operands_of::<H, BACKWARD>(handler)) {
+                    // SAFETY: `ip` is this record of the running view, whose handler changes with it here.
+                    unsafe { (*ip.cast_mut()).mode = constant.to_bits() };
+                }
                 requicken::<H>(ip, handler);
                 sibling!(handler, r, ip, view)
             }
@@ -3028,6 +3047,11 @@ lane_handler! {
         // A loop's exit writes its result register, so no producer's accumulator carries past it.
         let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::past_result(view) } else { view };
         let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
+        // A register-constant form reads its constant from the record (`mode`, set where the record took
+        // this instance), not from the program's constants behind a bounds test.
+        if const { matches!(compare_operands(FLAG), Some(true)) } {
+            frame.reads = frame.reads.with_immediate(Value::from_bits(i.mode));
+        }
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(LaneControl::Edge(Edge::Target)) => {
                 if const { TEST != crate::staged::NO_LINK } {
