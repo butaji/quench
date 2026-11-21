@@ -8914,6 +8914,14 @@ fn loop_run_in_lane(
         loop_diagnose_in_lane(cx, r, site, region, run, program);
     }
     let RegionRun { exit, nested } = run;
+    // A leave inside a b-jit direct callee names the callee's record: the lane continues there, in its
+    // activation (`native_frames::enter_left_body_header`), as after a helper call that left.
+    if !nested && let LaneExit::At(pc) = exit && let Some(base) = native_frames::enter_left_body_header(cx, r) {
+        site.note_run(entry.backedge_count());
+        // SAFETY: the callee leaves at a record of its function, whose records are contiguous.
+        unsafe { (*cx).callee_resume = base.add(pc as usize); (*cx).callee_acc = Value::UNDEFINED; }
+        return LoopContinuation::Callee;
+    }
     if exit.entered_nothing() {
         // An entry guard missed: registers are untouched, so the backward jump runs in the interpreter.
         site.tier.borrow_mut().missed_entry(site.tiers);
@@ -15016,6 +15024,12 @@ fn frames_resumed_in_lane(
     exit: super::compiled::LaneExit,
 ) -> LaneBodyLeft {
     let callee = matches!(exit, super::compiled::LaneExit::Callee);
+    // A leave inside a b-jit direct callee the body called names the callee's record: resume there, in its
+    // activation (`native_frames::enter_left_body_header`).
+    if let super::compiled::LaneExit::At(pc) = exit && !native_frames::left_native_frames(cx) && let Some(base) = native_frames::enter_left_body_header(cx, r) {
+        // SAFETY: the callee leaves at a record of its function; the context now names its activation.
+        return LaneBodyLeft::Resume(unsafe { (*cx).registers }, unsafe { base.add(pc) }, Carried::script(cx));
+    }
     let (r, own, method) = resumed_activation_in_lane(cx, r, (own, root), callee);
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
