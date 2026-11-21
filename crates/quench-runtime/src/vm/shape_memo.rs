@@ -149,6 +149,13 @@ pub(super) struct PlainAssignShape {
 /// whose chain the copy proved intercepts none of the keys, and valid while that chain's cell
 /// holds (`heap::ChainCell`).
 pub(super) type PlainAssignShapeMemo = ShapeMemo<(u32, super::Value), PlainAssignShape>;
+/// The shape an empty ordinary target of the keyed shape takes when it adopts a source of the
+/// second key's shape (`Vm::adopt_source_shape`), a source whose shape is a chain of default
+/// string-key data adds from the root. Keyed by the target's shape, which must be the root, and
+/// the source's; the value is the shape the target takes. The chain is a fact of the source
+/// shape alone, so a hit skips the walk; the target and source object checks still run on
+/// every call. Entries are dropped with the other shape memos on shape compaction and VM reset.
+pub(super) type AdoptedShapeMemo = ShapeMemo<u32, u32>;
 
 impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
     fn default() -> Self {

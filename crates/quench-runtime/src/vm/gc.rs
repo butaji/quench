@@ -1170,6 +1170,7 @@ impl<H: Host> Vm<H> {
         self.shape_attribute_memo.clear();
         self.plain_copy_shapes.clear();
         self.plain_assign_shapes.clear();
+        self.adopted_shapes.clear();
         self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.object_shapes.reset();

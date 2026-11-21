@@ -2082,7 +2082,7 @@ impl<H: Host> Vm<H> {
         match key {
             // A pre-built index atom keeps its string; a larger index stays a transient
             // string, so stringifying a long array does not grow the atom table.
-            JsonKey::Index(index) => match u32::try_from(index).ok().and_then(|small| self.array_index_atoms.get(&small).copied()) {
+            JsonKey::Index(index) => match u32::try_from(index).ok().and_then(|small| self.array_index_atoms.get(small)) {
                 Some(atom) => self.atom_string(atom),
                 None => {
                     let mut buffer = itoa::Buffer::new();

@@ -123,7 +123,7 @@ mod agent;
 mod atom_set;
 mod pending_job;
 use pending_job::PendingJob;
-use atom_set::AtomSet;
+use atom_set::{AtomSet, IndexAtoms};
 mod arguments;
 mod array;
 pub(crate) mod array_buffer;
@@ -2279,6 +2279,8 @@ pub(crate) struct Vm<H> {
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
     plain_assign_shapes: shape_memo::PlainAssignShapeMemo,
+    /// The shapes an empty target takes when it adopts a plain source (`adopt_source_shape`).
+    adopted_shapes: shape_memo::AdoptedShapeMemo,
     /// The final shapes of host records, by their names list (`create_embedding_record`).
     embedding_record_shapes: FxHashMap<usize, u32>,
     /// The geometry accessors typed array reads resolve to (`typed_array_geometry_read`).
@@ -2328,7 +2330,7 @@ pub(crate) struct Vm<H> {
     atoms: hashbrown::HashTable<Atom>,
     /// The atoms that spell canonical array indices, by index: index-keyed lookups find
     /// them without formatting and hashing the decimal text.
-    array_index_atoms: FxHashMap<u32, Atom>,
+    array_index_atoms: IndexAtoms,
     /// Every atom name in id order (`atom_text`, then the names the VM appends), shared by
     /// the dynamic and module programs whose atoms are a prefix of the VM's.
     atom_sequence: Rc<crate::bytecode::AtomSequence>,
@@ -3397,6 +3399,7 @@ impl<H: Host> Vm<H> {
         self.shape_attribute_memo.clear();
         self.plain_copy_shapes.clear();
         self.plain_assign_shapes.clear();
+        self.adopted_shapes.clear();
         self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
