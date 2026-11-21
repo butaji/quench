@@ -351,4 +351,204 @@ ops.c_str_hash = function (n) { let h = 0; for (let i = 0; i < n; i++) { h = (Ma
 ops.c_str_index_eq = function (n) { let c = 0; for (let i = 0; i < n; i++) { if (S[i % 54] === "o") c++; } return c; };
 ops.c_str_len_loop = function (n) { let c = 0; const outer = (n / 54) | 0; for (let i = 0; i < outer; i++) { for (let j = 0; j < S.length; j++) { if (S.charCodeAt(j) < 100) c = c + 1; } } return c; };
 ops.c_counter_dec = function (n) { let s = 0, k = n; while (k > 0) { k--; s = (s + k) | 0; } return s; };
+// ---- VM foundations (V8 v7 suite + JetStream 3.0 hot constructs): v_* ops, C equivalents in ops.c ----
+class v_proto_method_A { constructor(k) { this.k = k; } m(x) { return (this.k + x) | 0; } }
+class v_proto_method_B extends v_proto_method_A {}
+ops.v_proto_method = function (n) { const b = new v_proto_method_B(3); let s = 0; for (let i = 0; i < n; i++) { s = (s + b.m(i)) | 0; } return s; };
+class v_proto_chain3_field_G { constructor() { this.g = 5; } }
+class v_proto_chain3_field_P extends v_proto_chain3_field_G { m(x) { return (x ^ this.g) | 0; } }
+class v_proto_chain3_field_Q extends v_proto_chain3_field_P {}
+class v_proto_chain3_field_R extends v_proto_chain3_field_Q { constructor() { super(); this.own = 2; } }
+ops.v_proto_chain3_field = function (n) { const r = new v_proto_chain3_field_R(); let s = 0; for (let i = 0; i < n; i++) { s = (s + r.own + r.g + r.m(i)) | 0; } return s; };
+class v_poly_method3_A { constructor(k) { this.k = k; } v(x) { return (x + this.k) | 0; } }
+class v_poly_method3_B { constructor(k) { this.k = k; } v(x) { return (x ^ this.k) | 0; } }
+class v_poly_method3_C { constructor(k) { this.k = k; } v(x) { return (x - this.k) | 0; } }
+ops.v_poly_method3 = function (n) { const arr = [new v_poly_method3_A(1), new v_poly_method3_B(5), new v_poly_method3_C(2)]; let s = 0; for (let i = 0; i < n; i++) { s = (s + arr[i % 3].v(i)) | 0; } return s; };
+class v_poly_method8_S0 { constructor() { this.k = 1; } v(x) { return (x + this.k) | 0; } }
+class v_poly_method8_S1 { constructor() { this.a = 0; this.k = 3; } v(x) { return (x ^ this.k) | 0; } }
+class v_poly_method8_S2 { constructor() { this.k = 2; this.b = 0; } v(x) { return (x - this.k) | 0; } }
+class v_poly_method8_S3 { constructor() { this.a = 0; this.b = 0; this.k = 7; } v(x) { return (x + x + this.k) | 0; } }
+class v_poly_method8_S4 { constructor() { this.k = 4; this.c = 0; } v(x) { return (x | this.k) | 0; } }
+class v_poly_method8_S5 { constructor() { this.a = 1; this.k = 9; } v(x) { return (this.k - x) | 0; } }
+class v_poly_method8_S6 { constructor() { this.k = 5; } v(x) { return (x + this.k + this.k) | 0; } }
+class v_poly_method8_S7 { constructor() { this.a = 2; this.k = 2; } v(x) { return (x ^ (this.k * 3)) | 0; } }
+ops.v_poly_method8 = function (n) { const objs = [new v_poly_method8_S0(), new v_poly_method8_S1(), new v_poly_method8_S2(), new v_poly_method8_S3(), new v_poly_method8_S4(), new v_poly_method8_S5(), new v_poly_method8_S6(), new v_poly_method8_S7()]; let s = 0; for (let i = 0; i < n; i++) { s = (s + objs[i & 7].v(i)) | 0; } return s; };
+class v_super_call_A { constructor(k) { this.k = k; } m(x) { return (x + this.k) | 0; } }
+class v_super_call_B extends v_super_call_A { m(x) { return (super.m(x) + 3) | 0; } }
+ops.v_super_call = function (n) { const b = new v_super_call_B(4); let s = 0; for (let i = 0; i < n; i++) { s = (s + b.m(i)) | 0; } return s; };
+class v_getter_G { constructor() { this._v = 3; } get v() { return (this._v + 1) | 0; } }
+ops.v_getter = function (n) { const g = new v_getter_G(); let s = 0; for (let i = 0; i < n; i++) { s = (s + g.v) | 0; } return s; };
+class v_setter_S { constructor() { this._v = 0; } set v(x) { this._v = (this._v + x) | 0; } }
+ops.v_setter = function (n) { const o = new v_setter_S(); for (let i = 0; i < n; i++) { o.v = i; } return o._v; };
+class v_field_poly4_P0 { constructor() { this.x = 1; this.a = 0; } }
+class v_field_poly4_P1 { constructor() { this.b = 0; this.x = 2; } }
+class v_field_poly4_P2 { constructor() { this.x = 3; this.c = 0; this.d = 0; } }
+class v_field_poly4_P3 { constructor() { this.e = 0; this.f = 0; this.x = 4; } }
+ops.v_field_poly4 = function (n) { const objs = [new v_field_poly4_P0(), new v_field_poly4_P1(), new v_field_poly4_P2(), new v_field_poly4_P3()]; let s = 0; for (let i = 0; i < n; i++) { s = (s + objs[i & 3].x) | 0; } return s; };
+class v_instanceof_A {}
+class v_instanceof_B extends v_instanceof_A {}
+class v_instanceof_C {}
+ops.v_instanceof = function (n) { const objs = [new v_instanceof_A(), new v_instanceof_B(), new v_instanceof_C(), {}]; let c = 0; for (let i = 0; i < n; i++) { if (objs[i & 3] instanceof v_instanceof_A) c = (c + 1) | 0; } return c; };
+class v_new_point_Point { constructor(x, y) { this.x = x; this.y = y; } }
+ops.v_new_point = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new v_new_point_Point(i, i + 1); s = (s + p.x + p.y) | 0; } return s; };
+ops.v_obj_literal = function (n) { let s = 0; for (let i = 0; i < n; i++) { const o = { a: i, b: i + 1, c: i & 7 }; s = (s + o.a + o.b - o.c) | 0; } return s; };
+class v_linked_list_walk_Node { constructor(v) { this.v = v; this.next = null; } }
+ops.v_linked_list_walk = function (n) { const nodes = []; for (let k = 0; k < 256; k++) nodes.push(new v_linked_list_walk_Node((k * 7 + 3) & 255)); for (let k = 0; k < 256; k++) nodes[k].next = nodes[(k + 1) & 255]; let node = nodes[0], s = 0; for (let i = 0; i < n; i++) { s = (s + node.v) | 0; node = node.next; } return s; };
+ops.v_closure_call = function (n) { let a = 3, b = 5; const f = (x) => (x + a + b) | 0; let s = 0; for (let i = 0; i < n; i++) { s = (s + f(i)) | 0; } return s; };
+ops.v_closure_counter = function (n) { let cnt = 0; const bump = (k) => { cnt = (cnt + k) | 0; }; for (let i = 0; i < n; i++) { bump(i & 3); } return cnt; };
+function v_bind_call_getk(x) { return (this.k + x) | 0; }
+ops.v_bind_call = function (n) { const f = v_bind_call_getk.bind({ k: 3 }); let s = 0; for (let i = 0; i < n; i++) { s = (s + f(i)) | 0; } return s; };
+function v_fn_call_f(x) { return (this.k * 2 + x) | 0; }
+ops.v_fn_call = function (n) { const o = { k: 3 }; let s = 0; for (let i = 0; i < n; i++) { s = (s + v_fn_call_f.call(o, i)) | 0; } return s; };
+function v_fn_apply_f(a, b) { return (this.k + a + b) | 0; }
+ops.v_fn_apply = function (n) { const o = { k: 3 }; const arr2 = [0, 4]; let s = 0; for (let i = 0; i < n; i++) { arr2[0] = i & 255; s = (s + v_fn_apply_f.apply(o, arr2)) | 0; } return s; };
+function v_arguments_length_f(a) { return (arguments.length + arguments[0]) | 0; }
+ops.v_arguments_length = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + v_arguments_length_f(i, 7)) | 0; } return s; };
+class v_richards_task_T { constructor() { this.state = 0; this.acc = 0; this.count = 0; } step(x) { switch (this.state) { case 0: this.acc = (this.acc + x) | 0; this.state = 1; break; case 1: this.acc = (this.acc ^ x) | 0; this.state = 2; break; case 2: this.acc = (this.acc - x) | 0; this.state = 3; break; default: this.acc = (this.acc + x + x) | 0; this.state = 0; } this.count = (this.count + 1) | 0; return this.acc; } }
+ops.v_richards_task = function (n) { const t = new v_richards_task_T(); for (let i = 0; i < n; i++) { t.step(i); } return (t.acc + t.count) | 0; };
+class v_deltablue_constraint_Var { constructor(v) { this.value = v; } }
+class v_deltablue_constraint_Cons { constructor(a, b) { this.v1 = a; this.v2 = b; } }
+class v_deltablue_constraint_Eq extends v_deltablue_constraint_Cons { execute() { this.v2.value = this.v1.value; } }
+class v_deltablue_constraint_Scale extends v_deltablue_constraint_Cons { execute() { this.v2.value = (this.v1.value + this.v1.value + 1) | 0; } }
+class v_deltablue_constraint_Xor extends v_deltablue_constraint_Cons { execute() { this.v2.value = (this.v1.value ^ 5) | 0; } }
+ops.v_deltablue_constraint = function (n) { const a = new v_deltablue_constraint_Var(0), b = new v_deltablue_constraint_Var(0); const cs = [new v_deltablue_constraint_Eq(a, b), new v_deltablue_constraint_Scale(a, b), new v_deltablue_constraint_Xor(a, b)]; let s = 0; for (let i = 0; i < n; i++) { a.value = i; cs[i % 3].execute(); s = (s + b.value) | 0; } return s; };
+// --- ob group: arrays and numeric kernels (NavierStokes, Crypto, Box2D, gaussian-blur, hash-map, sha256, float-mm, n-body, stanford-crypto) ---
+ops.v_array_push_pop = function (n) { const arr = [1, 2, 3, 4]; let a = 0; for (let i = 0; i < n; i++) { arr.push(i ^ a); a = (a + arr.pop() + arr.length) | 0; } return a; };
+// Outer n/16 new arrays, 16 pushes each (total ~n pushes).
+ops.v_array_push_grow = function (n) { let a = 0; const outer = n >> 4; for (let j = 0; j < outer; j++) { const arr = []; for (let k = 0; k < 16; k++) arr.push(k + j); a = (a + arr[15] + arr.length) | 0; } return a; };
+// Array of arrays: 16 rows of 16; read grid[i>>4][i&15] with the row index masked to 0..15.
+ops.v_array_2d = function (n) { const grid = []; for (let r = 0; r < 16; r++) { const row = []; for (let c = 0; c < 16; c++) row.push(r * 16 + c); grid.push(row); } let a = 0; for (let i = 0; i < n; i++) { a = (a + grid[(i >> 4) & 15][i & 15]) | 0; } return a; };
+// One lin_solve-style Gauss-Seidel stencil update per iteration on an 18x18 Float64Array grid (16x16 interior); exactly n updates, cell = i & 255.
+ops.v_navier_lin_solve = function (n) { const x = new Float64Array(324), x0 = new Float64Array(324); for (let k = 0; k < 324; k++) { x0[k] = ((k * 37) % 101) * 0.25; } const a = 0.1, c = 1 + 4 * a; for (let i = 0; i < n; i++) { const cell = i & 255; const id = ((cell >> 4) + 1) * 18 + (cell & 15) + 1; const s = x[id - 18] + x[id + 18] + x[id - 1] + x[id + 1]; x[id] = (x0[id] + a * s) / c; } let r = 0; for (let k = 0; k < 324; k++) { r += Math.floor(x[k] * 4096); } return r; };
+ops.v_f64_axpy = function (n) { const x = new Float64Array(256), y = new Float64Array(256); for (let k = 0; k < 256; k++) { x[k] = k * 0.25; y[k] = 1; } const a = 0.5; for (let i = 0; i < n; i++) { const j = i & 255; y[j] = a * x[j] + y[j]; } let s = 0; for (let k = 0; k < 256; k++) { s += y[k]; } return s; };
+ops.v_u8_bytes = function (n) { const b = new Uint8Array(256); for (let k = 0; k < 256; k++) { b[k] = k; } for (let i = 0; i < n; i++) { const j = (i * 7) & 255; b[j] = b[j] ^ 0x5a; } let s = 0; for (let k = 0; k < 256; k++) { s = (s + b[k]) | 0; } return s; };
+// Tom Wu BigInteger am3 inner loop (28-bit digits split at 14 bits); 16 digits per call, n/16 calls.
+function v_crypto_am3_step(a, w, x, c, n) { const xl = x & 0x3fff, xh = x >>> 14; let i = 0, j = 0; while (--n >= 0) { let l = a[i] & 0x3fff; const h = a[i++] >>> 14; const m = xh * l + h * xl; l = xl * l + ((m & 0x3fff) << 14) + w[j] + c; c = (l >>> 28) + (m >>> 14) + xh * h; w[j++] = l & 0xfffffff; } return c; }
+ops.v_crypto_am3 = function (n) { const a = new Int32Array(16), w = new Int32Array(16); for (let k = 0; k < 16; k++) { a[k] = (k * 2654435 + 12345) & 0xfffffff; w[k] = (k * 40503 + 7) & 0xfffffff; } let s = 0; const outer = n >> 4; for (let r = 0; r < outer; r++) { s = (s + v_crypto_am3_step(a, w, (r * 7919 + 3) & 0xfffffff, 0, 16)) | 0; } for (let k = 0; k < 16; k++) { s = (s + w[k]) | 0; } return s; };
+// One SHA-256 style round per iteration on int32 locals: Sigma1, Ch, Sigma0, Maj, rotr via >>> and <<, message word from i.
+ops.v_sha_round = function (n) { let a = 0x6a09e667 | 0, b = 0xbb67ae85 | 0, c = 0x3c6ef372 | 0, d = 0xa54ff53a | 0, e = 0x510e527f | 0, f = 0x9b05688c | 0, g = 0x1f83d9ab | 0, h = 0x5be0cd19 | 0; for (let i = 0; i < n; i++) { const w = (Math.imul(i, 0x85ebca6b) + 0x27d4eb2f) | 0; const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7)); const ch = (e & f) ^ (~e & g); const t1 = (h + S1 + ch + 0x428a2f98 + w) | 0; const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10)); const maj = (a & b) ^ (a & c) ^ (b & c); const t2 = (S0 + maj) | 0; h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0; } return (a ^ b ^ c ^ d ^ e ^ f ^ g ^ h) | 0; };
+// One pair interaction of two bodies per iteration: doubles, Math.sqrt, symplectic-Euler step; softened by eps.
+ops.v_nbody_step = function (n) { let x1 = 1.0, y1 = 0.0, z1 = 0.0, vx1 = 0.0, vy1 = 0.5, vz1 = 0.0; let x2 = -1.0, y2 = 0.1, z2 = 0.0, vx2 = 0.0, vy2 = -0.5, vz2 = 0.0; const m1 = 1.0, m2 = 0.5, dt = 0.001, eps = 0.1; for (let i = 0; i < n; i++) { const dx = x1 - x2, dy = y1 - y2, dz = z1 - z2; const d2 = dx * dx + dy * dy + dz * dz + eps; const mag = dt / (d2 * Math.sqrt(d2)); vx1 = vx1 - dx * m2 * mag; vy1 = vy1 - dy * m2 * mag; vz1 = vz1 - dz * m2 * mag; vx2 = vx2 + dx * m1 * mag; vy2 = vy2 + dy * m1 * mag; vz2 = vz2 + dz * m1 * mag; x1 = x1 + dt * vx1; y1 = y1 + dt * vy1; z1 = z1 + dt * vz1; x2 = x2 + dt * vx2; y2 = y2 + dt * vy2; z2 = z2 + dt * vz2; } return Math.floor((x1 + y1 + z1 + x2 + y2 + z2) * 1000); };
+// 3x3 double matrix multiply-accumulate C += A*B; n/9 iterations (each 9 output entries, 27 mul-adds).
+ops.v_float_mm = function (n) { const A = new Float64Array(9), B = new Float64Array(9), C = new Float64Array(9); for (let k = 0; k < 9; k++) { A[k] = (k + 1) * 0.5; B[k] = (9 - k) * 0.25; C[k] = 0; } const iters = (n / 9) | 0; for (let i = 0; i < iters; i++) { for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) { C[r * 3 + c] += A[r * 3] * B[c] + A[r * 3 + 1] * B[3 + c] + A[r * 3 + 2] * B[6 + c]; } } let s = 0; for (let k = 0; k < 9; k++) { s = s + C[k]; } return s; };
+ops.v_int_to_double = function (n) { let a = 0.25; for (let i = 0; i < n; i++) { const k = i & 1023; a = a + (k * 0.5 - i * 0.25); } return a; };
+// Math.sin + Math.cos per iteration, quantized to an integer per term so the checksum is exact.
+ops.v_math_sin_cos = function (n) { let a = 0; for (let i = 0; i < n; i++) { const x = i * 0.001; a = (a + Math.floor((Math.sin(x) + Math.cos(x)) * 1024)) | 0; } return a; };
+// forEach over a 16-array with a closure callback; outer n/16 calls, so n/16*16 ~ n element visits.
+ops.v_array_foreach = function (n) { const arr = []; for (let k = 0; k < 16; k++) { arr.push(k); } let s = 0; const outer = n >> 4; for (let r = 0; r < outer; r++) { arr.forEach((x) => { s = (s + x) | 0; }); } return s; };
+// map over a 16-array, result read back; outer n/16 calls (~n element visits).
+ops.v_array_map = function (n) { const arr = []; for (let k = 0; k < 16; k++) { arr.push(k); } let s = 0; const outer = n >> 4; for (let r = 0; r < outer; r++) { const m = arr.map((x) => x * 2); s = (s + m[r & 15]) | 0; } return s; };
+// reduce sum over a 16-array; outer n/16 calls (~n element visits).
+ops.v_array_reduce = function (n) { const arr = []; for (let k = 0; k < 16; k++) { arr.push(k * 3 + 1); } let s = 0; const outer = n >> 4; for (let r = 0; r < outer; r++) { s = (s + arr.reduce((p, x) => (p + x) | 0, 0)) | 0; } return s; };
+// indexOf on a 16-int array; keys cycle 0..63, so about a quarter hit and the rest return -1.
+ops.v_array_indexof = function (n) { const arr = []; for (let k = 0; k < 16; k++) { arr.push(k * 3); } let s = 0; for (let i = 0; i < n; i++) { s = (s + arr.indexOf(i & 63)) | 0; } return s; };
+// Holey array: slots 1,3,5,... never set; reading a hole gives undefined, which |0 turns into 0.
+ops.v_array_holey = function (n) { const arr = new Array(32); for (let k = 0; k < 32; k += 2) { arr[k] = k; } let s = 0; for (let i = 0; i < n; i++) { s = (s + (arr[i & 31] | 0)) | 0; } return s; };
+ops.v_array_of_objects_field = function (n) { const arr = []; for (let k = 0; k < 256; k++) { arr.push({ v: k }); } let s = 0; for (let i = 0; i < n; i++) { s = (s + arr[i & 255].v) | 0; } return s; };
+// Int32Array built from a 16-element plain array, then .sort(); outer n/16 iterations with changing input.
+ops.v_typed_from_array_sort = function (n) { const base = new Array(16); let s = 0; const outer = n >> 4; for (let r = 0; r < outer; r++) { for (let k = 0; k < 16; k++) { base[k] = (k * 73 + r * 29) & 255; } const t = new Int32Array(base); t.sort(); s = (s + t[r & 15]) | 0; } return s; };
+// 1D 5-tap blur on Float32Array (wrap-around indices), one output sample per iteration; weights 1/16 4/16 6/16 4/16 1/16.
+ops.v_gaussian_blur = function (n) { const src = new Float32Array(256), dst = new Float32Array(256); for (let k = 0; k < 256; k++) { src[k] = (k * 37) & 255; } for (let i = 0; i < n; i++) { const j = i & 255; dst[j] = 0.0625 * src[(j + 254) & 255] + 0.25 * src[(j + 255) & 255] + 0.375 * src[j] + 0.25 * src[(j + 1) & 255] + 0.0625 * src[(j + 2) & 255]; } let s = 0; for (let k = 0; k < 256; k++) { s = s + dst[k]; } return s; };
+const v_str_charcode_scan_SRC = "let x1 = foo(bar,42) + baz[7] * 3.5; return x1 >= 10 && yy || z;";
+const v_str_split_join_SRC = "alpha beta gamma delta";
+const v_str_indexof_SRC = "the quick brown fox jumps over the lazy dog 0123456789";
+const v_str_slice_SRC = "the quick brown fox jumps over the lazy dog 0123456789";
+const v_str_replace_regexp_SRC = "the quick brown fox jumps over the lazy dog";
+const v_parse_int_TAB = ["12", "7", "301", "45", "9", "1024", "88", "3", "560", "21", "6", "777", "42", "100", "5", "2048"];
+const v_parse_float_TAB = ["3.25", "0.5", "12.75", "100.125", "7.0", "0.25", "2.5", "64.5", "1024.0625", "9.75", "0.125", "5", "33.5", "18.25", "2.0", "0.75"];
+const v_regexp_test_TAB = ["abc123", "xyz", "a1", "hello world", "foo42", "BAR7", "q", "z99x", "pq0", "12ab", "mno789", "k", "ab-12", "go0go", "x_1", "tuv2024"];
+const v_regexp_exec_groups_TAB = ["key=12", "alpha=7", "x=100", "name=3", "val=4096", "k=0", "abc=99", "n=5"];
+const v_json_parse_SRC = '{"a":12,"b":[1,2,3]}';
+const v_str_key_dict_KEYS = ["red", "green", "blue", "cyan", "gold", "pink", "navy", "teal", "lime", "gray", "rose", "sand", "plum", "jade", "ruby", "mint"];
+const v_str_concat3_PARTS = ["ab", "cde", "f", "ghij"];
+// Each op below: n iterations of its construct (no nested loops).
+ops.v_str_build = function (n) { let a = 0, s = ""; for (let i = 0; i < n; i++) { s += "ab"; if (s.length >= 64) { a += s.length; s = ""; } } return a + s.length; };
+ops.v_str_charcode_scan = function (n) { const src = v_str_charcode_scan_SRC; let id = 0, dg = 0, sp = 0, ot = 0; for (let i = 0; i < n; i++) { const c = src.charCodeAt(i & 63); if (c >= 97 && c <= 122) id++; else if (c >= 48 && c <= 57) dg++; else if (c === 32) sp++; else ot++; } return id + dg * 3 + sp * 5 + ot * 7; };
+ops.v_str_fromcharcode = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + String.fromCharCode(65 + (i & 15)).length) | 0; } return a; };
+ops.v_str_indexof = function (n) { const s = v_str_indexof_SRC, nd = "dog"; let a = 0; for (let i = 0; i < n; i++) { a = (a + s.indexOf(nd)) | 0; } return a; };
+ops.v_str_slice = function (n) { const s = v_str_slice_SRC; let a = 0; for (let i = 0; i < n; i++) { const k = i & 15; a = (a + s.slice(k, k + 8).length + s.charCodeAt(0)) | 0; } return a; };
+// Per iteration: one split into 4 parts and one join of them (n splits, n joins).
+ops.v_str_split_join = function (n) { const s = v_str_split_join_SRC; let a = 0; for (let i = 0; i < n; i++) { const parts = s.split(" "); const j = parts.join("-"); a = (a + j.length + parts.length) | 0; } return a; };
+ops.v_str_template = function (n) { let a = 0; for (let i = 0; i < n; i++) { const t = `${i & 255}-${i & 15}`; a = (a + t.length) | 0; } return a; };
+ops.v_str_compare_lt = function (n) { let c = 0; const a = "abcdefgh", b = "abcdefgi"; for (let i = 0; i < n; i++) { if (a < b) c++; } return c; };
+ops.v_str_tolower = function (n) { const s = "ABCDEFGH"; let a = 0; for (let i = 0; i < n; i++) { const t = s.toLowerCase(); a = (a + t.charCodeAt(i & 7)) | 0; } return a; };
+ops.v_str_eq_dynamic = function (n) { const x = ["ab", "cd", "ef", "gh"].join(""), y = ["ab", "cd", "ef", "gh"].join(""); let c = 0; for (let i = 0; i < n; i++) { if (x === y) c++; } return c; };
+ops.v_num_tostring = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + String(i & 1023).length) | 0; } return a; };
+ops.v_parse_int = function (n) { const t = v_parse_int_TAB; let a = 0; for (let i = 0; i < n; i++) { a = (a + parseInt(t[i & 15], 10)) | 0; } return a; };
+ops.v_parse_float = function (n) { const t = v_parse_float_TAB; let a = 0; for (let i = 0; i < n; i++) { a += parseFloat(t[i & 15]); } return a; };
+ops.v_regexp_test = function (n) { const t = v_regexp_test_TAB, re = /^[a-z]+\d+$/; let c = 0; for (let i = 0; i < n; i++) { if (re.test(t[i & 15])) c++; } return c; };
+ops.v_regexp_exec_groups = function (n) { const t = v_regexp_exec_groups_TAB, re = /(\w+)=(\d+)/; let a = 0; for (let i = 0; i < n; i++) { const m = re.exec(t[i & 7]); a = (a + m[1].length + (m[2] | 0)) | 0; } return a; };
+ops.v_str_replace_regexp = function (n) { const s = v_str_replace_regexp_SRC, re = /o/g; let a = 0; for (let i = 0; i < n; i++) { a = (a + s.replace(re, "0").length) | 0; } return a; };
+ops.v_json_stringify = function (n) { const o = { a: 0, b: "str", c: [1, 2] }; let a = 0; for (let i = 0; i < n; i++) { o.a = i & 1023; a = (a + JSON.stringify(o).length) | 0; } return a; };
+ops.v_json_parse = function (n) { const src = v_json_parse_SRC; let a = 0; for (let i = 0; i < n; i++) { const o = JSON.parse(src); a = (a + o.a + o.b[0] + o.b[1] + o.b[2]) | 0; } return a; };
+ops.v_str_key_dict = function (n) { const keys = v_str_key_dict_KEYS, d = {}; for (let j = 0; j < 16; j++) d[keys[j]] = j * 3 + 1; let a = 0; for (let i = 0; i < n; i++) { a = (a + d[keys[i & 15]]) | 0; } return a; };
+ops.v_str_concat3 = function (n) { const P = v_str_concat3_PARTS; let s = 0; for (let i = 0; i < n; i++) { const t = P[i & 3] + "-" + P[(i >> 2) & 3]; s += t.length; } return s; };
+const v_map_get_str_keys = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi"];
+const v_switch_string_names = ["add", "sub", "mul", "div", "mod", "and", "or", "xor"];
+function* v_generator_next_gen() { let x = 0; while (true) { yield x; x = (x + 3) | 0; } }
+function v_throw_helper(i) { if ((i & 15) === 0) throw new Error("v_throw"); return i; }
+function v_spread_f(x, y, z) { return (x + y + z) | 0; }
+function v_rest_g(...r) { return (r.length + r[0]) | 0; }
+function v_destructure_obj_run(n, o) { let a = 0; for (let i = 0; i < n; i++) { const { x, y } = o; a = (a + x + y + (i & 1)) | 0; } return a; }
+function v_optional_chain_run(n, objs) { let a = 0; for (let i = 0; i < n; i++) { const o = objs[i & 3]; const v = o?.p?.q; a = (a + (v === undefined ? 1 : v)) | 0; } return a; }
+function v_splay_build() {
+  const root = { key: (0 * 97) & 255, left: null, right: null };
+  for (let j = 1; j < 256; j++) {
+    const key = (j * 97) & 255; let cur = root;
+    while (true) {
+      if (key < cur.key) { if (cur.left === null) { cur.left = { key, left: null, right: null }; break; } cur = cur.left; }
+      else { if (cur.right === null) { cur.right = { key, left: null, right: null }; break; } cur = cur.right; }
+    }
+  }
+  return root;
+}
+function v_heap_push(h, size, v) { let k = size; h[k] = v; while (k > 0) { const p = (k - 1) >> 1; if (h[p] <= h[k]) break; const t = h[p]; h[p] = h[k]; h[k] = t; k = p; } }
+function v_heap_pop(h, size) { const top = h[0]; const m = size - 1; h[0] = h[m]; let k = 0; while (true) { const l = 2 * k + 1; if (l >= m) break; let c = l; if (l + 1 < m && h[l + 1] < h[l]) c = l + 1; if (h[k] <= h[c]) break; const t = h[k]; h[k] = h[c]; h[c] = t; k = c; } return top; }
+ops.v_map_get_int = function (n) { const m = new Map(); for (let j = 0; j < 256; j++) m.set(j, j * 3); let a = 0; for (let i = 0; i < n; i++) { a = (a + m.get(i & 255)) | 0; } return a; };
+ops.v_map_set_delete = function (n) { const m = new Map(); let a = 0; for (let i = 0; i < n; i++) { const k = i & 255; m.set(k, i); if (m.delete(k)) a = (a + 1) | 0; } return a; };
+ops.v_map_get_str = function (n) { const m = new Map(); for (let j = 0; j < 16; j++) m.set(v_map_get_str_keys[j], j * 5 + 1); let a = 0; for (let i = 0; i < n; i++) { a = (a + m.get(v_map_get_str_keys[i & 15])) | 0; } return a; };
+ops.v_set_has = function (n) { const s = new Set(); for (let j = 0; j < 256; j++) s.add(j * 3); let a = 0; for (let i = 0; i < n; i++) { if (s.has(i & 1023)) a = (a + 1) | 0; } return a; };
+ops.v_map_iterate = function (n) { const m = new Map(); for (let j = 0; j < 16; j++) m.set(j, j + 1); let a = 0; for (let i = 0; i < (n >> 4); i++) { for (const [k, v] of m) { a = (a + k + v) | 0; } } return a; };
+ops.v_obj_keys_loop = function (n) { const o = { alpha: 1, beta: 2, gamma: 3, delta: 4 }; let a = 0; for (let i = 0; i < n; i++) { const ks = Object.keys(o); for (let j = 0; j < ks.length; j++) { a = (a + ks[j].length) | 0; } } return a; };
+ops.v_for_in = function (n) { const o = { alpha: 1, beta: 2, gamma: 3, delta: 4 }; let a = 0; for (let i = 0; i < (n >> 2); i++) { for (const k in o) { a = (a + k.length + o[k]) | 0; } } return a; };
+ops.v_for_of_array = function (n) { const arr = []; for (let j = 0; j < 16; j++) arr.push(j * 7 + 1); let a = 0; for (let i = 0; i < (n >> 4); i++) { for (const x of arr) { a = (a + x) | 0; } } return a; };
+ops.v_generator_next = function (n) { const g = v_generator_next_gen(); let a = 0; for (let i = 0; i < n; i++) { a = (a + g.next().value) | 0; } return a; };
+ops.v_try_nothrow = function (n) { let a = 0; for (let i = 0; i < n; i++) { try { a = (a + (i ^ 5)) | 0; } catch (e) { } } return a; };
+ops.v_throw_catch = function (n) { let a = 0; for (let i = 0; i < n; i++) { try { a = (a + v_throw_helper(i)) | 0; } catch (e) { a = (a + 1) | 0; } } return a; };
+ops.v_spread_call = function (n) { const arr3 = [0, 2, 3]; let a = 0; for (let i = 0; i < n; i++) { arr3[0] = i; a = (a + v_spread_f(...arr3)) | 0; } return a; };
+ops.v_rest_args = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + v_rest_g(i, 2, 3)) | 0; } return a; };
+ops.v_destructure_array = function (n) { let a = 0, b = 1; for (let i = 0; i < n; i++) { [a, b] = [b, (a + i) | 0]; } return (a + b) | 0; };
+ops.v_destructure_obj = function (n) { return v_destructure_obj_run(n, { x: 3, y: 4 }); };
+ops.v_optional_chain = function (n) { return v_optional_chain_run(n, [{ p: { q: 5 } }, null, { p: null }, { p: { q: 9 } }]); };
+ops.v_nullish = function (n) { let a = 0; for (let i = 0; i < n; i++) { const x = (i & 1) ? null : i; a = (a + (x ?? 3)) | 0; } return a; };
+ops.v_splay_insert_find = function (n) { const root = v_splay_build(); let cur = root, want = 0, a = 0; for (let i = 0; i < n; i++) { if (cur.key === want) { a = (a + cur.key) | 0; want = (want + 37) & 255; cur = root; } else { cur = want < cur.key ? cur.left : cur.right; } } return a; };
+ops.v_astar_heap = function (n) { const h = new Array(64).fill(0); let size = 0, a = 0; for (let i = 0; i < n; i++) { if (size === 0 || (size < 60 && (i % 3) !== 2)) { v_heap_push(h, size, (i * 73 + 17) & 4095); size++; } else { a = (a + v_heap_pop(h, size)) | 0; size--; } } return a; };
+ops.v_switch_string = function (n) { let acc = 1; for (let i = 0; i < n; i++) { switch (v_switch_string_names[i & 7]) { case "add": acc = (acc + 1) | 0; break; case "sub": acc = (acc - 3) | 0; break; case "mul": acc = (acc * 3) | 0; break; case "div": acc = (acc / 2) | 0; break; case "mod": acc = (acc % 1009) | 0; break; case "and": acc = acc & 0xffff; break; case "or": acc = acc | 0x55; break; case "xor": acc = acc ^ 0x5a5a; break; } } return acc; };
+// ---- oe group: allocation, GC churn and remaining foundations (V8 v7 suite, JetStream 3.0) ----
+// Nested loops: the outer loop runs n/16 or n/4 times so the inner work totals about n.
+class v_vec3_ops_Vec { constructor(x, y, z) { this.x = x; this.y = y; this.z = z; } add(o) { return new v_vec3_ops_Vec(this.x + o.x, this.y + o.y, this.z + o.z); } scale(k) { return new v_vec3_ops_Vec(this.x * k, this.y * k, this.z * k); } dot(o) { return this.x * o.x + this.y * o.y + this.z * o.z; } }
+class v_box2d_vec2_Vec2 { constructor(x, y) { this.x = x; this.y = y; } addScaled(o, k) { this.x += o.x * k; this.y += o.y * k; return this; } set(x, y) { this.x = x; this.y = y; return this; } }
+class v_class_hierarchy_ctor_A { constructor(i) { this.a = i; } }
+class v_class_hierarchy_ctor_B extends v_class_hierarchy_ctor_A { constructor(i) { super(i); this.b = i + 1; } }
+class v_class_hierarchy_ctor_C extends v_class_hierarchy_ctor_B { constructor(i) { super(i); this.c = i + 2; } }
+ops.v_alloc_small = function (n) { let s = 0; for (let i = 0; i < n; i++) { const o = { v: i }; s = (s + o.v) | 0; } return s; };
+ops.v_alloc_array4 = function (n) { let s = 0; for (let i = 0; i < n; i++) { const arr = [i, i + 1, i + 2, i + 3]; s = (s + arr[0] + arr[1] + arr[2] + arr[3]) | 0; } return s; };
+ops.v_alloc_closure = function (n) { let s = 0; for (let i = 0; i < n; i++) { const k = i & 7; const f = (x) => (x + i + k) | 0; s = (s + f(k)) | 0; } return s; };
+ops.v_alloc_retained = function (n) { const ring = new Array(1024); for (let j = 0; j < 1024; j++) ring[j] = { a: 0, b: 0 }; let s = 0; for (let i = 0; i < n; i++) { ring[i & 1023] = { a: i, b: i + 1 }; s = (s + ring[(i + 512) & 1023].b) | 0; } return s; };
+ops.v_cons_list = function (n) { const outer = n >> 4; let s = 0; for (let i = 0; i < outer; i++) { let l = null; for (let j = 0; j < 16; j++) l = { car: i + j, cdr: l }; for (let p = l; p !== null; p = p.cdr) s = (s + p.car) | 0; } return s; };
+ops.v_vec3_ops = function (n) { let s = 0; for (let i = 0; i < n; i++) { const a = new v_vec3_ops_Vec(i, 1, 2); const b = a.add(new v_vec3_ops_Vec(1, 2, 3)).scale(0.5); s += a.dot(b); } return s; };
+ops.v_box2d_vec2 = function (n) { const p = new v_box2d_vec2_Vec2(0, 0), vel = new v_box2d_vec2_Vec2(1.5, -0.25); let s = 0; for (let i = 0; i < n; i++) { p.addScaled(vel, 0.5); if (p.x > 4096) p.set(0, p.y); s += p.x + p.y; } return s; };
+ops.v_class_hierarchy_ctor = function (n) { let s = 0; for (let i = 0; i < n; i++) { const o = new v_class_hierarchy_ctor_C(i); s = (s + o.a + o.b + o.c) | 0; } return s; };
+ops.v_array_literal_objects = function (n) { const outer = n >> 2; let s = 0; for (let i = 0; i < outer; i++) { const arr = [{ x: i }, { x: i + 1 }, { x: i + 2 }, { x: i + 3 }]; for (let j = 0; j < 4; j++) s = (s + arr[j].x) | 0; } return s; };
+ops.v_object_assign = function (n) { const src = { a: 1, b: 2, c: 3 }; let s = 0; for (let i = 0; i < n; i++) { src.b = i; const o = Object.assign({}, src); s = (s + o.a + o.b + o.c) | 0; } return s; };
+ops.v_object_spread = function (n) { const src = { a: 1, b: 2, c: 3 }; let s = 0; for (let i = 0; i < n; i++) { src.b = i; const r = { ...src, d: i }; s = (s + r.a + r.b + r.c + r.d) | 0; } return s; };
+ops.v_string_keys_obj_build = function (n) { const KEYS = ["alpha", "beta", "gamma", "delta"]; let s = 0; for (let i = 0; i < n; i++) { const o = {}; for (let j = 0; j < 4; j++) o[KEYS[j]] = i + j; s = (s + o[KEYS[i & 3]]) | 0; } return s; };
+ops.v_bigint_add = function (n) { let a = 1n; const k = 0x9e3779b97f4a7c15n; for (let i = 0; i < n; i++) { a = BigInt.asIntN(64, a + k + BigInt(i)); } return Number(BigInt.asUintN(32, a)); };
+ops.v_int53_arith = function (n) { let a = 1; for (let i = 0; i < n; i++) { a = (a * 31 + i) % 2147483647; } return a; };
+ops.v_dataview_get = function (n) { const buf = new ArrayBuffer(64); const dv = new DataView(buf); for (let j = 0; j < 16; j++) dv.setUint32(j * 4, (j * 2654435761) >>> 0, true); let s = 0; for (let i = 0; i < n; i++) { s = (s + dv.getUint32((i & 15) * 4, true)) | 0; } return s; };
+ops.v_unipoker_rank = function (n) { const POP = new Array(256); for (let k = 0; k < 256; k++) { let c = 0, x = k; while (x !== 0) { x &= x - 1; c++; } POP[k] = c; } let s = 0; for (let i = 0; i < n; i++) { let ranks = 0, suits = 0; for (let k = 0; k < 5; k++) { const card = (i * 7 + k * k * 11 + (i >> 3) * k) % 52; ranks |= 1 << (card >> 2); suits |= 1 << (card & 3); } const distinct = POP[ranks & 255] + POP[(ranks >> 8) & 255]; const straight = (ranks & (ranks >> 1) & (ranks >> 2) & (ranks >> 3) & (ranks >> 4)) !== 0 ? 1 : 0; const flush = (suits & (suits - 1)) === 0 ? 1 : 0; s = (s + (flush * 2 + straight) * 8 + distinct) | 0; } return s; };
+ops.v_basic_interp = function (n) { const code = [0, 2, 1, 3, 3, 0, 1, 2, 2, 1, 0, 3, 1, 1, 2, 0]; let acc = 1, pc = 0; for (let i = 0; i < n; i++) { switch (code[pc]) { case 0: acc = (acc + 1) | 0; break; case 1: acc = acc ^ 0x5a; break; case 2: acc = (acc * 3) | 0; break; case 3: acc = acc >> 1; break; } pc = (pc + 1) & 15; } return acc; };
+ops.v_air_regalloc_like = function (n) { const objs = []; for (let j = 0; j < 64; j++) objs.push({ a: j, b: j * 2, c: 0 }); let s = 0; for (let i = 0; i < n; i++) { const o = objs[i & 63]; o.c = (o.a + o.b) | 0; s = (s + o.c) | 0; } return s; };
+ops.v_ml_dot_sigmoid = function (n) { const w = [0.5, -0.25, 0.125, 1, -2, 0.75, 0.0625, -0.5]; let s = 0; for (let i = 0; i < n; i++) { let d = 0; for (let j = 0; j < 8; j++) d += w[j] * (((i + j) & 15) - 8); const z = d * 0.125; s += Math.floor((1 / (1 + Math.exp(-z))) * 1048576); } return s; };
+ops.v_weakmap_get = function (n) { const keys = []; const wm = new WeakMap(); for (let j = 0; j < 16; j++) { const k = { id: j }; keys.push(k); wm.set(k, j * 3); } let s = 0; for (let i = 0; i < n; i++) { s = (s + wm.get(keys[i & 15])) | 0; } return s; };
 globalThis.PRIMITIVE_OPS = ops;
