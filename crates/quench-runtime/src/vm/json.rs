@@ -677,6 +677,13 @@ use crate::units::{CARRIAGE_RETURN, DECIMAL_RADIX, LINE_FEED};
 
 /// Number literals at most this long parse from a stack buffer.
 const JSON_INLINE_NUMBER_LENGTH: usize = 64;
+/// Digits a number literal without an exponent holds to be valued in place (`short_number`): at
+/// most 15 digits keep the mantissa below 10^15, exact in a double.
+const JSON_SHORT_NUMBER_DIGITS: usize = 15;
+/// The exact powers of ten a short fraction divides its mantissa by, 10^0 through 10^15.
+const JSON_SHORT_POWERS_OF_TEN: [f64; JSON_SHORT_NUMBER_DIGITS + 1] = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+];
 
 /// A number literal's value: an `i32` when it is one, which needs no float conversion.
 enum JsonNumber {
@@ -1450,27 +1457,61 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         let negative = self.take_if(b'-');
         let digits = self.index;
         self.integer_part()?;
-        // An integer of at most nine digits, the common key or count, is its digits' value read
-        // once here: no second scan of the literal (`number_value`). `-0` stays a double.
-        let next = self.peek();
-        if next != Some(u16::from(b'.')) && !exponent_mark(next) && self.index - digits <= 9 {
-            let magnitude = self.units[digits..self.index].iter()
-                .fold(0_i32, |value, unit| value * 10 + i32::from(unit.unit() - JSON_DIGIT_START));
-            if !(negative && magnitude == 0) {
-                return Ok(JsonNumber::Integer(if negative { -magnitude } else { magnitude }));
-            }
-        }
-        if self.take_if(b'.') {
+        let point = self.take_if(b'.');
+        if point {
             if self.digit_value().is_none() {
                 return Err(self.error(JsonSyntax::UnterminatedFraction));
             }
             self.skip_digits();
+        }
+        // A literal without an exponent whose digits are few is valued here, in place: no second
+        // scan of the literal (`number_value`). `-0` stays a double.
+        if !exponent_mark(self.peek())
+            && let Some(value) = self.short_number(negative, digits)
+        {
+            return Ok(value);
         }
         if exponent_mark(self.peek()) {
             self.index += 1;
             self.exponent()?;
         }
         Ok(self.number_value(start))
+    }
+
+    /// The value of the unsigned-digit run from `digits` to the current unit, with its sign and
+    /// an optional point, when it has at most `JSON_SHORT_NUMBER_DIGITS` digits and no exponent.
+    /// Its mantissa is exact in a `u64` and a double; a fraction is one correctly rounded division
+    /// by an exact power of ten, the Clinger fast path. `None` otherwise, and for `-0`.
+    #[inline(always)]
+    fn short_number(&self, negative: bool, digits: usize) -> Option<JsonNumber> {
+        let literal = &self.units[digits..self.index];
+        let point = literal.iter().position(|unit| unit.unit() == u16::from(b'.'));
+        let (integer, fraction) = match point {
+            Some(point) => (&literal[..point], &literal[point + 1..]),
+            None => (literal, &literal[literal.len()..]),
+        };
+        if integer.len() + fraction.len() > JSON_SHORT_NUMBER_DIGITS {
+            return None;
+        }
+        let mantissa = literal
+            .iter()
+            .filter_map(|unit| decimal_digit(unit.unit()))
+            .fold(0_u64, |value, digit| value * 10 + digit);
+        if point.is_none() {
+            if negative && mantissa == 0 {
+                return None;
+            }
+            return Some(match i32::try_from(mantissa) {
+                Ok(magnitude) => JsonNumber::Integer(if negative { -magnitude } else { magnitude }),
+                Err(_) => {
+                    let value = mantissa as f64;
+                    JsonNumber::Float(if negative { -value } else { value })
+                }
+            });
+        }
+        let power = *JSON_SHORT_POWERS_OF_TEN.get(fraction.len())?;
+        let value = mantissa as f64 / power;
+        Some(JsonNumber::Float(if negative { -value } else { value }))
     }
 
     /// The integer part of a number from the current unit, which the parse moves past. A

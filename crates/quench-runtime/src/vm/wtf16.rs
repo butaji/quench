@@ -275,6 +275,16 @@ impl FlatUnits {
         Self::Ascii(unsafe { Rc::from_raw(Rc::into_raw(storage) as *const str) })
     }
 
+    /// The storage of `length` Latin-1 units that `fill` writes in place, one allocation with no
+    /// staging copy. The caller ensures the text holds a unit past U+007F, so it is canonical
+    /// Latin-1; `fill` must write every byte it is given.
+    fn latin1_with(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
+        let mut storage = Rc::<[u8]>::new_uninit_slice(length);
+        fill(Rc::get_mut(&mut storage).expect("a new allocation is unshared"));
+        // SAFETY: `fill` wrote every byte.
+        Self::Latin1(unsafe { storage.assume_init() })
+    }
+
     /// The number of units, read from the representation without making a view.
     #[inline]
     fn len(&self) -> usize {

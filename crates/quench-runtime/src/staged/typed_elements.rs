@@ -412,18 +412,63 @@ pub(crate) fn element_at(index: f64, length: usize) -> Option<usize> {
 /// The index of the first element of `elements` (the bytes of a run of `kind` elements, in native
 /// order) at or after `from` whose Number matches `search`: strict equality, or under
 /// `nan_matches` (SameValueZero) a NaN matching a NaN; zeros of either sign are equal.
+///
+/// The search value is converted to the kind once, outside the scan, and a value the kind cannot
+/// hold exactly matches nothing. The scan is one loop per kind over fixed-width fields read with
+/// `from_ne_bytes`, with no per-element conversion and no copy of the bytes.
 #[inline(always)]
 pub(crate) fn find_number_element(elements: &[u8], kind: TypedArrayKind, from: usize, search: f64, nan_matches: bool)
     -> Option<usize> {
-    elements
-        .chunks_exact(kind.width())
-        .enumerate()
-        .skip(from)
-        .find(|(_, field)| {
-            let element = element_number(kind, field, NATIVE_LITTLE_ENDIAN);
-            element == search || (nan_matches && element.is_nan() && search.is_nan())
-        })
-        .map(|(index, _)| index)
+    let rest = elements.get(from.checked_mul(kind.width())?..)?;
+    let found = match kind {
+        TypedArrayKind::Float64 => find_float::<8>(rest, search, nan_matches, f64::from_ne_bytes),
+        TypedArrayKind::Float32 => {
+            // A Number binary32 cannot hold exactly matches no element.
+            if !search.is_nan() && f64::from(search as f32) != search {
+                return None;
+            }
+            find_float::<4>(rest, search, nan_matches, |field| f64::from(f32::from_ne_bytes(field)))
+        }
+        TypedArrayKind::Float16 => find_float::<2>(rest, search, nan_matches, |field| half_to_f64(u16::from_ne_bytes(field))),
+        TypedArrayKind::Int8 => find_integer(rest, search, i8::from_ne_bytes),
+        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => find_integer(rest, search, u8::from_ne_bytes),
+        TypedArrayKind::Int16 => find_integer(rest, search, i16::from_ne_bytes),
+        TypedArrayKind::Uint16 => find_integer(rest, search, u16::from_ne_bytes),
+        TypedArrayKind::Int32 => find_integer(rest, search, i32::from_ne_bytes),
+        TypedArrayKind::Uint32 => find_integer(rest, search, u32::from_ne_bytes),
+        TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => return None,
+    };
+    found.map(|index| index + from)
+}
+
+/// The index, within `rest` (whole fields of `W` bytes), of the first field whose `matches` holds.
+#[inline(always)]
+fn scan_fields<const W: usize>(rest: &[u8], matches: impl Fn([u8; W]) -> bool) -> Option<usize> {
+    // `chunks_exact(W)` yields slices of exactly `W` bytes, so the conversion cannot fail.
+    rest.chunks_exact(W).position(|field| matches(field.try_into().unwrap()))
+}
+
+/// `find_number_element` for a float kind of `W`-byte fields, decoded to a Number by `decode`. A NaN
+/// search matches only a NaN element, and only under SameValueZero; zeros of either sign compare equal.
+#[inline(always)]
+fn find_float<const W: usize>(rest: &[u8], search: f64, nan_matches: bool, decode: fn([u8; W]) -> f64)
+    -> Option<usize> {
+    if search.is_nan() {
+        return if nan_matches { scan_fields::<W>(rest, |field| decode(field).is_nan()) } else { None };
+    }
+    scan_fields::<W>(rest, |field| decode(field) == search)
+}
+
+/// `find_number_element` for an integer kind of `W`-byte fields, read by `decode`. The search is
+/// converted once: a NaN, an infinity, a fraction or a value outside the kind matches nothing.
+#[inline(always)]
+fn find_integer<T: TryFrom<i64> + PartialEq, const W: usize>(rest: &[u8], search: f64, decode: fn([u8; W]) -> T)
+    -> Option<usize> {
+    if search.fract() != 0.0 {
+        return None;
+    }
+    let target = T::try_from(search as i64).ok()?;
+    scan_fields::<W>(rest, |field| decode(field) == target)
 }
 
 /// Writes `element` at `target`, which need not be aligned.

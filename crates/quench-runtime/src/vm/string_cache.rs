@@ -289,65 +289,79 @@ impl<H: Host> Vm<H> {
         self.string_concat(p, usize::from(window.count), |vm, part| vm.frames[f].registers[start + part])
     }
 
-    /// `string_concat` of parts that are numbers, booleans, null, undefined and flat ASCII
-    /// strings, short together: the total length is measured first (`ascii_part_len`), then each
-    /// part is written once straight into the result's storage (`JsString::from_ascii_filled`).
-    /// `None` for any other part, which `converted_string_concat` converts, or for a result past
-    /// `STRING_CONCAT_MAX_BYTES`.
+    /// `string_concat` of parts that are numbers, booleans, null, undefined and flat ASCII or
+    /// Latin-1 strings, short together: the total length is measured first (`narrow_part_len`),
+    /// then each part is written once straight into the result's storage, one allocation: ASCII
+    /// storage (`JsString::from_ascii_filled`) unless a Latin-1 part holds a unit past U+007F, in
+    /// which case it is Latin-1 storage (`JsString::from_latin1_filled`). `None` for any other
+    /// part, which `converted_string_concat` converts, or for a result past `STRING_CONCAT_MAX_BYTES`.
     #[inline(always)]
     pub(super) fn ascii_string_concat(&self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<JsString> {
         // A Number part is formatted here once, and its text is written from this list.
         let mut texts =
             smallvec::SmallVec::<[Option<crate::number_to_string::Short>; STRING_CONCAT_INLINE_PARTS]>::with_capacity(count);
         let mut length = 0;
+        let mut latin1 = false;
         for index in 0..count {
             let value = part(self, index);
             let text = number_part_text(value);
             length += match &text {
                 Some(text) => text.len(),
-                None => self.ascii_part_len(value)?,
+                None => {
+                    let (part_length, past_ascii) = self.narrow_part_len(value)?;
+                    latin1 |= past_ascii;
+                    part_length
+                }
             };
             if length > STRING_CONCAT_MAX_BYTES {
                 return None;
             }
             texts.push(text);
         }
-        Some(JsString::from_ascii_filled(length, |out| {
+        let fill = |out: &mut [std::mem::MaybeUninit<u8>]| {
             let mut at = 0;
             for (index, text) in texts.iter().enumerate() {
                 at = match text {
                     Some(text) => put_text(out, at, text),
-                    None => self.write_ascii_part(part(self, index), out, at),
+                    None => self.write_narrow_part(part(self, index), out, at),
                 };
             }
             assert_eq!(at, out.len(), "the parts fill the length measured for them");
-        }))
+        };
+        Some(if latin1 {
+            JsString::from_latin1_filled(length, fill)
+        } else {
+            JsString::from_ascii_filled(length, fill)
+        })
     }
 
-    /// The byte length `write_ascii_part` writes for the part `value`, which is not a Number;
-    /// `None` for a part that is not flat ASCII text, which the concatenation does not join.
+    /// The byte length `write_narrow_part` writes for the part `value`, which is not a Number, and
+    /// whether that text holds a unit past U+007F (Latin-1 text that is not ASCII); `None` for a
+    /// part that is not flat ASCII or Latin-1 text, which the concatenation does not join.
     #[inline(always)]
-    fn ascii_part_len(&self, value: Value) -> Option<usize> {
+    fn narrow_part_len(&self, value: Value) -> Option<(usize, bool)> {
         if let Some(boolean) = value.as_bool() {
-            return Some(if boolean { TRUE_TEXT.len() } else { FALSE_TEXT.len() });
+            return Some((if boolean { TRUE_TEXT.len() } else { FALSE_TEXT.len() }, false));
         }
         if value.is_null() {
-            return Some(NULL_TEXT.len());
+            return Some((NULL_TEXT.len(), false));
         }
         if value.is_undefined() {
-            return Some(UNDEFINED_TEXT.len());
+            return Some((UNDEFINED_TEXT.len(), false));
         }
         match self.heap.flat_text(value)? {
-            crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => Some(bytes.len()),
-            crate::heap::FlatText::Record(super::wtf16::Units::Wide(_) | super::wtf16::Units::Latin1(_)) => None,
-            crate::heap::FlatText::Small(small) => Some(small.as_bytes().len()),
+            crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => Some((bytes.len(), false)),
+            crate::heap::FlatText::Record(super::wtf16::Units::Latin1(bytes)) => Some((bytes.len(), !bytes.is_ascii())),
+            crate::heap::FlatText::Record(super::wtf16::Units::Wide(_)) => None,
+            crate::heap::FlatText::Small(small) => Some((small.as_bytes().len(), false)),
         }
     }
 
     /// Writes the text of the part `value`, which is not a Number, into `out` at `at`, returning
-    /// the offset past it. The part was measured by `ascii_part_len`, so it is flat ASCII text.
+    /// the offset past it, one byte per unit. The part was measured by `narrow_part_len`, so it
+    /// is flat ASCII or Latin-1 text.
     #[inline(always)]
-    fn write_ascii_part(&self, value: Value, out: &mut [std::mem::MaybeUninit<u8>], at: usize) -> usize {
+    fn write_narrow_part(&self, value: Value, out: &mut [std::mem::MaybeUninit<u8>], at: usize) -> usize {
         if let Some(boolean) = value.as_bool() {
             return put_text(out, at, if boolean { TRUE_TEXT } else { FALSE_TEXT });
         }
@@ -358,9 +372,9 @@ impl<H: Host> Vm<H> {
             return put_text(out, at, UNDEFINED_TEXT);
         }
         match self.heap.flat_text(value) {
-            Some(crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes))) => put_text(out, at, bytes),
+            Some(crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes) | super::wtf16::Units::Latin1(bytes))) => put_text(out, at, bytes),
             Some(crate::heap::FlatText::Small(small)) => put_text(out, at, small.as_bytes()),
-            _ => unreachable!("`ascii_part_len` measured this part as flat ASCII"),
+            _ => unreachable!("`narrow_part_len` measured this part as flat ASCII or Latin-1"),
         }
     }
 

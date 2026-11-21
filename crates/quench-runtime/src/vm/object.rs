@@ -899,6 +899,12 @@ impl<H: Host> Vm<H> {
     /// (`inherited_index_absent`), whichever the index.
     pub(super) fn prototypes_hold_no_index(&self, object: Value) -> bool {
         let first = self.object_data(object).map(|data| data.proto());
+        self.chain_from_holds_no_index(first)
+    }
+
+    /// `prototypes_hold_no_index` of the chain that starts at `first`, the prototype of the object
+    /// being checked; `None` where that object has no record.
+    pub(super) fn chain_from_holds_no_index(&self, first: Option<Value>) -> bool {
         // The held proof answers a chain it covers without the walk.
         if first.is_some_and(|first| self.chain_holds_no_index(first)) {
             return true;
