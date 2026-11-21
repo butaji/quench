@@ -238,7 +238,7 @@ pub(super) fn lane_getter_step<H: Host>(cx: *mut LaneContext<H>, r: Registers, i
 
 /// The getter call `activate_kept_in_lane` makes for `target`, of the running program, with
 /// receiver `this` and no arguments, as the plain call it is (getters-as-calls.md): the
-/// header goes below the window straight from the read's words (`lane_enter_plain_window`),
+/// header goes below the window straight from the read's words (`enter_plain_window`),
 /// with no `Activation` value, no `LaneStack::header_flags` test and no keeping-record words. Its
 /// completion is `Plain`: the return writes the read record's register (`write_call_result`
 /// of the call record's `a`, which a `GetField` names as its destination). `None`, which
@@ -286,7 +286,7 @@ pub(super) fn lane_push_getter<H: Host>(
     // of an empty slice does (a dangling, aligned pointer, never read for a count of 0).
     let none: &[Value] = &[];
     let callee_registers = fill_window_in_lane(vm, target, none.as_ptr(), 0);
-    let entered = lane_enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this);
+    let entered = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this);
     // `enter_window_of_in_lane`'s `COUNTED`: a getter's call is no proved call, so the tier's
     // diagnostics still count its entry.
     vm.programs.record_js_jit_lane_entry(target.program(), target.function);
