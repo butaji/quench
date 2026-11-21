@@ -4656,6 +4656,35 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// A plain `Binary` of `===` (`!==` where `NEGATE`): equal words are one value but a NaN, and two
+    /// unequal int32 words two Numbers; any other pair is the strict equality's pure answer
+    /// (`binary_values`), else the general step. No generic row decodes the operator first.
+    #[inline(never)]
+    pub(super) fn strict_equality_row<NEGATE: bool>(cx, r, ip, i, view) {
+        let operator = if NEGATE { oxc_ast::ast::BinaryOperator::StrictInequality } else { oxc_ast::ast::BinaryOperator::StrictEquality } as u32;
+        let (Some(left), Some(right)) = (operand_value_in_lane(cx, r, i.b), operand_value_in_lane(cx, r, i.c)) else {
+            sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        let equal = if left.to_bits() == right.to_bits() {
+            (!left.as_number().is_some_and(f64::is_nan)).then_some(true)
+        } else if left.as_int().is_some() && right.as_int().is_some() {
+            Some(false)
+        } else {
+            None
+        };
+        let value = match equal {
+            Some(equal) => Value::boolean(equal != NEGATE),
+            None => match unsafe { binary_values::<H>(cx, operator, left, right) } {
+                Some(value) => value,
+                None => sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view)),
+            },
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..Carried::script_in(cx, view) })
+    }
+}
+
 /// The memory view the record after a general step carries: a Wasm run's frame memory, read again
 /// as a call's return reads it (`complete_call`: the step may have grown it), never the script
 /// view `Carried::stepped` makes. A Wasm record addressing through the script view wrote and read
@@ -19321,6 +19350,10 @@ fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &
         }
         if let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) {
             records[pc].handler = handler as *const ();
+        } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
+            records[pc].handler = strict_equality_row::<H, false> as Handler as *const ();
+        } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictInequality as u32 {
+            records[pc].handler = strict_equality_row::<H, true> as Handler as *const ();
         }
     }
 }
