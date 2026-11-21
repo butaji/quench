@@ -8220,16 +8220,20 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils.
-        let claims = self.tier_may_run(crate::jit_mode::Tier::CRANELIFT)
-            || (self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::jit_mode::Tier::Base]));
-        if !claims || program.kind == crate::bytecode::ProgramKind::Wasm {
+        if program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
         }
         // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size: its
         // image body is compiled already, so there is no compile to amortize, and its callers' bodies are native.
+        // No tier policy gates it: `js_function_tiers` prices the JIT's own compiles, and an image's body is not one.
         if self.programs.js_jit_lane_methods_enabled() && self.programs.ahead_images(id, program).is_some() {
             return true;
+        }
+        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils.
+        let claims = self.tier_may_run(crate::jit_mode::Tier::CRANELIFT)
+            || (self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::jit_mode::Tier::Base]));
+        if !claims {
+            return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;
