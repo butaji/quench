@@ -315,13 +315,18 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let strings: Vec<crate::bytecode::Register> = region.entry_registers()
         .chain(region.arrays.iter().filter(|array| array.field.is_none()).map(|array| array.register))
         .filter(|register| machine.heap.is_string(r.get(*register))).collect();
+    // The kind each loop array holds at entry: a typed array's accesses then keep one arm
+    // (`ElementViews::Typed`), where a region of mixed kinds would walk every kind per access.
+    let typed_kinds: Vec<(crate::bytecode::Register, crate::heap::TypedArrayKind)> = region.arrays.iter()
+        .filter(|array| array.field.is_none())
+        .filter_map(|array| machine.typed_array_kind(r.get(array.register)).map(|kind| (array.register, kind))).collect();
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
     // A construction site's plan, where the region may keep its receiver as its field values.
     let construct_plans = |function: u32, pc: u32| super::unit_targets_in_lane(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures, typed_kinds: &typed_kinds,
         entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
     let policy = machine.heap.memory_policy();

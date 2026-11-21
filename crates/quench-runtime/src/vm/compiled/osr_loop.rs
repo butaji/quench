@@ -2348,6 +2348,10 @@ pub(crate) struct Observation<'a> {
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],
+    /// The typed arrays the region's arrays hold at entry, by register (`Vm::typed_array_kind`):
+    /// an array read or written through one is viewed at that kind, one arm per access instead of
+    /// `typed_elements::by_word`'s walk over every kind (`LoopArray::views`).
+    pub(crate) typed_kinds: &'a [(Register, crate::heap::TypedArrayKind)],
     /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
     pub(crate) entry_bounds: bool,
     /// Per inlined frame of the region (`Inlining::frames`), the dense capture slots of its

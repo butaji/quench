@@ -145,6 +145,8 @@ struct LoopFacts {
     string_registers: Vec<Register>,
     typed_captures: Vec<u16>,
     int_captures: Vec<u16>,
+    /// The kind each loop array's register held at entry (`Observation::typed_kinds`).
+    typed_kinds: Vec<(Register, crate::heap::TypedArrayKind)>,
     frame_captures: Vec<(usize, usize)>,
     entry_bounds: bool,
     /// By (function, PC) of each construction of the plans' units, the scalar plan its callee
@@ -199,7 +201,7 @@ impl LoopJob {
                 names: Some(&names), own_constant: &own_constant, root_constant: &root_constant });
             super::lane_region::RegionSpecializer {
                 number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers, string_entries: &self.facts.string_registers,
-                typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures,
+                typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures, typed_kinds: &self.facts.typed_kinds,
                 function_id: self.function_id, unit: &plan.unit, helpers: self.helpers, fields: &self.fields,
                 global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, construct_plans: Some(&construct_plans), online, ..VmFacts::STATIC }, generic: &plan.generic,
                 direct: &plan.sites, frame_captures: &self.facts.frame_captures, isa: &*self.isa,
@@ -487,7 +489,7 @@ pub(in crate::vm) fn start_osr_region(
         .filter(|(_, ty)| **ty == crate::typed_ir::Type::NUMBER)
         .filter_map(|(register, _)| crate::bytecode::Register::try_from(register).ok()).collect();
     let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: number_entries, string_registers: observation.string_entries.to_vec(),
-        typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(),
+        typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(), typed_kinds: observation.typed_kinds.to_vec(),
         frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds, construct_plans };
     let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers,
         held: stores.map(|names| (names.clone(), invalidation.address())),

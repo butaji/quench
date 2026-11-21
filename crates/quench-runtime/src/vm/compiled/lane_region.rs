@@ -1781,6 +1781,9 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) typed_captures: &'p [u16],
     /// The capture slots that held int32s at compilation (`Observation::int_captures`).
     pub(super) int_captures: &'p [u16],
+    /// The kind each loop array's register held at entry (`Observation::typed_kinds`): an array's
+    /// reads and writes keep their own kind's arm, not a walk over every kind.
+    pub(super) typed_kinds: &'p [(Register, crate::heap::TypedArrayKind)],
     pub(super) plan: RegionPlan,
 }
 
@@ -1790,7 +1793,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.number_reads, (self.int_entries, self.number_entries, self.string_entries), self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
+            self.isa, self.entry_fields, self.number_reads, (self.int_entries, self.number_entries, self.string_entries), self.typed_captures, self.int_captures, self.typed_kinds, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1827,7 +1830,7 @@ pub(super) fn lower_body(
     DECLINED.with(|declined| declined.set(None));
     UNLOWERED.with(|unlowered| unlowered.borrow_mut().clear());
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[],
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views: ElementViews::Dense } };
     // The scalar entry lowers first: the body calls it only where it exists.
@@ -1891,6 +1894,7 @@ pub(super) fn lower(
     (int_entries, number_entries, string_entries): (&[(Register, IntRange)], &[Register], &[Register]),
     typed_captures: &[u16],
     int_captures: &[u16],
+    typed_kinds: &[(Register, crate::heap::TypedArrayKind)],
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -2163,7 +2167,7 @@ pub(super) fn lower(
     // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
     // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false,
-        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+        lowering.views, typed_kinds, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     let preliminary = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
@@ -2173,7 +2177,7 @@ pub(super) fn lower(
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::vm::compiled::performed(&instructions[at]), Some(crate::staged::Operation::LoadCapture { .. })))),
-        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+        lowering.views, typed_kinds, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
     lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)
         && !matches!(array.source, ArraySource::Register(register) if string_entries.contains(&register))).collect();

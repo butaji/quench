@@ -67,7 +67,8 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 /// the append stores within the view's room (`Lowering::hoisted_push`). A search's receiver
 /// (`includes`, `indexOf`) is a read-only view, scanned in place (`Lowering::element_search`).
 pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
-    captured: impl Fn(usize, usize) -> bool, views: ElementViews, typed_captures: &[u16],
+    captured: impl Fn(usize, usize) -> bool, views: ElementViews,
+    typed_kinds: &[(Register, crate::heap::TypedArrayKind)], typed_captures: &[u16],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
     let mut arrays = Vec::new();
     for &(header, back) in loops {
@@ -82,8 +83,16 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
                 _ if super::native_calls::searches(intrinsics, pc) => (Some(instruction.register_c()), false),
                 _ => continue,
             };
-            let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
-                |slot| typed_captures.contains(&slot), pc, base)) else { continue };
+            // The kind the array held at entry is keyed by the instruction's operand register and,
+            // where the access reads a copy, by the register it resolves to.
+            let resolved = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
+                |slot| typed_captures.contains(&slot), pc, base));
+            let Some(source) = resolved else { continue };
+            let kind = base.and_then(|base| typed_kinds.iter().find(|(own, _)| *own == base).map(|(_, kind)| *kind))
+                .or_else(|| match source {
+                    ArraySource::Register(register) => typed_kinds.iter().find(|(own, _)| *own == register).map(|(_, kind)| *kind),
+                    ArraySource::Capture(_) => None,
+                });
             // A double region stores raw doubles: a typed capture's raw NaN could carry a hole's
             // bits (`heap::DOUBLE_LEN`), so its elements are read boxed, NaN canonical.
             if views == ElementViews::Double && matches!(source, ArraySource::Capture(_)) { continue; }
@@ -94,7 +103,12 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.source == source) {
                 Some(array) => array.writable |= stores,
                 None => {
-                    let views = if matches!(source, ArraySource::Capture(_)) { ElementViews::Typed(None) } else { views };
+                    // The kind the array held at entry is the arm its accesses keep; an array the
+                    // observation saw no kind for takes the region's view.
+                    let views = match source {
+                        ArraySource::Capture(_) => ElementViews::Typed(None),
+                        ArraySource::Register(_) => kind.map_or(views, |kind| ElementViews::Typed(Some(kind))),
+                    };
                     arrays.push(LoopArray { header, back, source, views, writable: stores });
                 }
             }
