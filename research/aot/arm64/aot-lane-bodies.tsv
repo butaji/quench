@@ -227,3 +227,9 @@ ml_short_trip_region\twith the LoadThis admission, the new ML region `header=39`
 ml_restored\twith the rule, ML reads 37.7-37.9 s with the LoadThis admission in place, and 37.3-37.9 s at HEAD; the switch micro is unaffected (1.96 ns/op, it has millions of iterations per entry), gaussian-blur 1339 ms, and every reproducer/differential exact. The rule is committed alone; the held-back admissions can be re-landed on top of it with ML as the gate.\trows + micros
 # Re-landed admissions with the short-trip rule (2026-11-21): aes -9%, ML and gbemu unchanged.
 reland_measured\tLoadThis and the tagged-row admissions are back on top of the short-trip rule: ML 37.5 s (37.3-37.9 without them), gbemu 22.7 s, op_switch_mem 1.95-5.7 ns/op, and stanford-crypto-aes 4029 -> 3660 ms (-9%) is the row they pay on; all other rows within 3% (gaussian-blur 1346, hash-map 8480, navier-stokes 500, raytrace 7206, Basic 4329, splay 3325). Reproducers and differentials exact.\trows.tsv sweep
+# gbemu header=67 is not the cost (2026-11-21, CLIF of code-010): the innermost loop is 9 blocks /
+# 37 ops (5 brif, 2 stores, 2 loads, 0 calls) -- ~40 operations per iteration, so its 17M native
+# iterations are ~0.3 s of the 23 s row. All of the native regions together (~72M iterations)
+# are about a second: gbemu's time is interpreted code, in functions whose loops the region
+# analysis refuses.
+gbemu_refusal_order\tin `admit_register_roles`, only 7 calls reach `admit` (all `exits=true`, so it accepts them); the 22 `Call` refusals are the `admit_lifetime_roles` fallback, which runs after `admit_register_roles` fails first for another op (`JumpBinaryFalse` x5, `Binary` x4 in the labelled table). So the opcode loop's first blocker is a comparison jump or a tagged arithmetic row, not the call.\tCALL_ROW probe + labelled REFUSED table
