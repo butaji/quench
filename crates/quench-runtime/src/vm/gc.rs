@@ -371,6 +371,12 @@ impl<H: Host> Vm<H> {
         // The reclaimed programs' lane records are freed, and a later view may take their
         // addresses, which name the private-name sites' entries.
         self.private_site_homes.clear();
+        // A reclaimed program's realm is no closure's any more (`Heap::program_realms`).
+        for program in &reclaimed {
+            if let Some(realm) = self.heap.program_realms.get_mut(program.raw() as usize) {
+                *realm = Value::UNDEFINED;
+            }
+        }
         self.free_cache_layouts_of(reclaimed.iter().copied());
         let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
         self.function_values
