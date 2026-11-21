@@ -310,7 +310,15 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
             return Some(Value::UNDEFINED);
         };
-        let bytes = bytes.read();
+        // A store this heap owns is read in place (`BufferBytes::owned`); a shared one through its lock.
+        let read;
+        let bytes: &[u8] = match bytes.owned() {
+            Some(owned) => owned,
+            None => {
+                read = bytes.read();
+                &read
+            }
+        };
         let Some(start) = view.element(index, bytes.len()) else {
             return Some(Value::UNDEFINED);
         };
@@ -715,10 +723,17 @@ impl<H: Host> Vm<H> {
     }
 
     /// One element encoding serves indexed stores and validated bulk fills.
+    #[inline]
     fn typed_array_element_bytes(
         kind: TypedArrayKind,
         value: &TypedArrayElement,
     ) -> [u8; MAX_TYPED_ARRAY_ELEMENT_WIDTH] {
+        // A Number element is its kind's word (`element_word`): the first `width` bytes, the rest zero.
+        if let TypedArrayElement::Number(number) = value
+            && !kind.is_bigint()
+        {
+            return crate::staged::typed_elements::element_word(kind, *number);
+        }
         let mut bytes = [0; MAX_TYPED_ARRAY_ELEMENT_WIDTH];
         let number = match value {
             TypedArrayElement::Number(value) => *value,
@@ -754,40 +769,36 @@ impl<H: Host> Vm<H> {
         if start >= end {
             return true;
         }
-        let (buffer, offset, kind) = match self.heap.get(object) {
-            Some(Cell::TypedArray {
-                object: view,
-                buffer,
-                ..
-            }) => (*buffer, view.offset, view.native.kind()),
-            _ => return false,
+        // One read of the view and one of its buffer: an attached, unshared buffer whose
+        // bytes hold `[start, end)` of the view.
+        let Some(view) = self.typed_array_view(object) else {
+            return false;
         };
-        if self.array_buffer_detached(buffer)
-            || self
-                .typed_array_length(object)
-                .is_none_or(|length| end > length)
-            || self.array_buffer_out_of_bounds(buffer, offset, kind.width() * end)
-        {
+        let width = view.kind.width();
+        let encoded = Self::typed_array_element_bytes(view.kind, value);
+        let Some(Cell::ArrayBuffer { bytes, detached: false, shared: false, .. }) = self.heap.get_mut(view.buffer) else {
+            return false;
+        };
+        let byte_length = bytes.len();
+        if end > view.length_within(byte_length) || view.offset.saturating_add(width * end) > byte_length {
             return false;
         }
-        let encoded = Self::typed_array_element_bytes(kind, value);
-        let Some(Cell::ArrayBuffer {
-            bytes,
-            shared: false,
-            ..
-        }) = self.heap.get_mut(buffer)
-        else {
-            return false;
-        };
-        let bytes =
-            &mut bytes.make_mut()[offset + start * kind.width()..offset + end * kind.width()];
-        let element = &encoded[..kind.width()];
-        if element.iter().all(|byte| *byte == element[0]) {
-            bytes.fill(element[0]);
-        } else {
-            for chunk in bytes.chunks_exact_mut(kind.width()) {
-                chunk.copy_from_slice(element);
+        let span = view.offset + start * width..view.offset + end * width;
+        let element = &encoded[..width];
+        let fill = |bytes: &mut [u8]| {
+            if width == 1 || element.iter().all(|byte| *byte == element[0]) {
+                bytes.fill(element[0]);
+            } else {
+                for chunk in bytes.chunks_exact_mut(width) {
+                    chunk.copy_from_slice(element);
+                }
             }
+        };
+        // A store the buffer owns alone is written in place: its bytes neither move nor unshare
+        // (`BufferBytes::mut_in_lane`), so no view epoch ends. Any other store unshares first.
+        match bytes.mut_in_lane() {
+            Some(store) => fill(&mut store[span]),
+            None => fill(&mut bytes.make_mut()[span]),
         }
         true
     }

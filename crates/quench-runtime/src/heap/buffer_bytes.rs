@@ -297,7 +297,9 @@ impl BufferBytes {
     pub(crate) fn len(&self) -> usize {
         match &*self.0 {
             BufferStore::AtomicShared(b) => b.length().expect("shared backing length"),
-            _ => self.read().len(),
+            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => bytes.len(),
+            BufferStore::Shared(bytes) => bytes.len(),
+            BufferStore::Wasm(v) => v.len,
         }
     }
     pub(crate) fn is_empty(&self) -> bool {
