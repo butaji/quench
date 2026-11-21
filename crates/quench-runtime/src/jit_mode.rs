@@ -67,6 +67,12 @@ impl JitMode {
             (Self::BaseOnly, tier) => tier == Tier::Base,
             (Self::QuickOnly, tier) => tier == Tier::Quick,
             (Self::UltraOnly, tier) => tier == Tier::Ultra,
+            // AArch64's stitched (BaseJIT) loop region starts an induction at 0 when it is
+            // entered mid-loop, so a loop that entered it after k iterations runs k extra ones
+            // (`ty2.js`: n=20000+k; the floor rows, which enter at 0, are exact). The default
+            // mode leaves Base out there and the Cranelift tiers run; `--b-jit`, which asks for
+            // it, still runs it. Debt (TOD-1202): Base returns when that entry is fixed.
+            (Self::Full, Tier::Base) if cfg!(target_arch = "aarch64") => false,
             (Self::Full, _) => true,
         }
     }
