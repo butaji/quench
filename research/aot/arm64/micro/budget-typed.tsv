@@ -1,0 +1,23 @@
+# Typed-array access costs, ns/op on Apple M4 (research/aot/arm64/micro). aot = the same
+# source under `quench` (Ultra regions), no-jit = the interpreter, node 26.12.1, bun 1.4.4.
+# Why they matter: gaussian-blur's inner loop is a Uint32Array read plus four Float32Array
+# stores per pixel, and gaussian-blur is one of the two rows closest to Node (1686 ms).
+op	aot	no-jit	node	bun
+ta_read	2.592	15.339	0.952	1.289
+ta_store	1.474	20.156	0.738	0.837
+ta_f32	6.189	181.310	1.982	1.652
+gauss_inner	25.861	29.676	2.898	2.612
+# ta_read: `s += a[i & 3]` on a Uint32Array.
+# ta_store: `a[i & 3] = i * 0.5` on a Float32Array, read back.
+# ta_f32: one row of gaussian-blur's convolve (one u32 read, 4 f32 stores, 4 mul/add), 450
+#   rows x 800 px x 25 passes.
+# gauss_inner: gaussian-blur's convolveRGBA left-to-right loop verbatim (W=800, H=450, 25
+#   passes): 25.9 ns/pixel against Node's 2.9, while its compiled outer loop does run (one
+#   region, `iterations=450`, 22 entries for 25 passes) -- so the cost is inside the loop.
+# Cause (code-001.clif of ta_f32, the executed chain is 26 blocks): the region's typed views
+#   are `Typed(None)` because its arrays have different kinds (u32 src, f32 line), so every
+#   access dispatches on the kind word: `typed_elements::by_word` is a linear chain of
+#   `eq_imm` + branch over the 9 native kinds (Float32 is the 4th, Uint32 the 5th), plus a
+#   bounds check per access and a `sadd_overflow` per `line_index + k`. One pixel = 5 accesses
+#   x 4-5 compares + 5 bounds + 4 overflow checks, i.e. ~30 branches, and the row reads
+#   26 cycles per pixel against Node's 8.
