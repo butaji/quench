@@ -126,11 +126,12 @@ lto = "off"
 inherits = "experiment"
 lto = "off"
 
-# Fold and smoke builds only (published numbers come from `experiment`): unmerged units, so a
-# one-file runtime edit recompiles the units that hold or inline it (v2-aot 761050dc7a measured
-# 410 of 1,431 units for a line shift in value.rs) instead of the whole crate.
+# quench-runtime holds every row since the host is erased (TOD-2034): an incremental session of
+# it peaks at 13.5 GB at -j1 or -j2 (fresh, or after a one-line edit), and the 13.8 GB box kills
+# it. Non-incremental it peaks at about 6 GB at -j1 (820 s, 717 s of it LLVM on one thread) and
+# 12 GB at -j2 (8 min). Until the crate's compile memory is cut, it builds non-incremental here.
 [profile.smoke.package.quench-runtime]
-codegen-units = 4096
+incremental = false
 
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.
