@@ -2,10 +2,10 @@
 //!
 //! - the reference and array-length operations (`array.len`, `ref.is_null`, `ref.as_non_null`,
 //!   `ref.eq`, `ref.test`, `ref.cast`) and the struct and array field accesses (`struct.get`,
-//!   `array.set`, ...) call `wasm_gc_callout::<H>` (`wasm_gc_callout.rs`) through the kind-21 row
+//!   `array.set`, ...) call `wasm_gc_callout` (`wasm_gc_callout.rs`) through the kind-21 row
 //!   `call_w_21_<flags>_1_0` (`quench-bjit/stencils/wasm_rows_callout.rs`);
 //! - the allocating operations (`struct.new`, `array.new*`, `ref.i31`, ...) call
-//!   `allocate_frame::<H>` (`wasm_gc_allocate.rs`) through `call_w_26_0_1_0`
+//!   `allocate_frame` (`wasm_gc_allocate.rs`) through `call_w_26_0_1_0`
 //!   (`wasm_rows_callout.rs`, `gc_allocate`), which reads the operands from the frame.
 //!
 //! The callouts run the staged rules the interpreter runs, so both tiers share their checks and
@@ -110,7 +110,7 @@ fn allocating(pc: usize, instruction: WideInstruction, world: &World<'_>) -> Opt
     let count = u64::try_from(reads.len()).ok().filter(|count| *count <= 0xff)?;
     let descriptor: Vec<u64> = kinds.iter().map(|(register, kind)| u64::from(*register) | *kind << 16).collect();
     let descriptor: &'static [u64] = Box::leak(descriptor.into_boxed_slice());
-    let result = u64::from(allocating_result(instruction.op()).is_some());
+    let result = u64::from(allocating_result(instruction).is_some());
     // Holes: the callout; the packed instruction; the immediate and count, the result flag at bit 40;
     // the descriptor's address; unused.
     let meta = u64::from(instruction.imm()) | count << 32 | result << 40;

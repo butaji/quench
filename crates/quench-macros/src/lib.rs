@@ -135,7 +135,7 @@ fn derive_native_exports(
             // instantiating their definitions for the host defines every one.
             (@operation $host:ty, "quench_lane_helper_symbols") => {
                 #[unsafe(export_name = "quench_lane_helper_symbols")]
-                pub extern "C" fn lane_helper_symbols() { $crate::define_lane_helper_symbols::<$host>() }
+                pub extern "C" fn lane_helper_symbols() { $crate::define_lane_helper_symbols() }
             };
             #(#export_arms)*
         }

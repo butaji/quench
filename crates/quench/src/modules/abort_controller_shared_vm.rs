@@ -4,14 +4,13 @@
 //! composite signals that follow it (`AbortSignal.any`), and its `onabort` handler. Aborting
 //! marks the signal and every dependent aborted first, then dispatches each one's trusted
 //! `abort` event in that order.
-use quench_runtime::ErasedHost;
 use super::event_target_shared_vm::{
     api, argument, attach_slot, custom_inspect, flag, get, install_members, install_tag_and_inspect,
     is_undefined, put, put_flag, receiver_slot, require_new, slot, Member, Shallow,
 };
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 pub(super) const SIGNAL_SLOT: &str = "signalSlot";
 pub(super) const CONTROLLER_SLOT: &str = "controllerSlot";

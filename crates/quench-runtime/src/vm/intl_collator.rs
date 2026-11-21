@@ -18,7 +18,7 @@ struct CollatorOverrides {
     ignore_punctuation: bool,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_collator_for_realm(
         &mut self,
         program: &ResidualProgram,
@@ -519,9 +519,9 @@ impl Collation {
     }
 }
 
-fn validate_collator_option<H: Host>(
+fn validate_collator_option(
     p: &ResidualProgram,
-    vm: &mut Vm<H>,
+    vm: &mut Vm,
     value: &str,
     allowed: &[&str],
     name: &str,

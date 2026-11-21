@@ -5,7 +5,6 @@
 //! An entry's fields are one record in a private slot (`ENTRY_FIELDS`); the buffers,
 //! mark timings and connected observers are host state (`Timeline`), each entry retained
 //! while a buffer holds it.
-use crate::host::NodeAccess;
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, missing_args, put};
 use super::perf_hooks::{
     api, api_member, attach_slot, call_method, class, coded_error, define_getter, define_inspect, define_methods,
@@ -162,7 +161,7 @@ const LIST_METHODS: [Method; 3] = [
 ];
 
 fn timeline<T>(c: &mut Context<'_>, f: impl FnOnce(&mut Timeline) -> T) -> T {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut state = shared.borrow_mut();
     f(&mut state.performance_native.timeline)
 }
@@ -1109,7 +1108,7 @@ pub(crate) fn list_inspect(c: &mut Context<'_>, receiver: RootId, args: &[RootId
 }
 
 /// Releases the timeline's roots with the heap that held them.
-pub(crate) fn release(runtime: &mut Runtime<crate::host::ErasedHost>, timeline: Timeline) {
+pub(crate) fn release(runtime: &mut Runtime<crate::host::NodeHost>, timeline: Timeline) {
     let Timeline { marks, measures, resources, overflow, observers, .. } = timeline;
     let observed = observers.into_iter().flat_map(|observer| observer.buffer.into_iter().chain([observer.object]));
     for root in marks.into_iter().chain(measures).chain(resources).chain(overflow).chain(observed) {

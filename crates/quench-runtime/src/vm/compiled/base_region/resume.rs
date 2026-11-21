@@ -153,7 +153,7 @@ mod tests {
         let (program, id, region) = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
         let known = Known { program: &program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[] };
         let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: Some(RealmProof::default()), widened: &[], seen: &[], kinds: &[] };
-        let helpers = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        let helpers = crate::vm::compiled::process_lane_helpers();
         // SAFETY: the region has no callees, so no entry cell is read.
         let built = unsafe { function::build_region(&region, &spec, ElementViews::Dense, &callees::Callees::default(), helpers) }.expect("the loop has a row for each instruction");
         let (code, table) = (&built.code, &built.resumes);

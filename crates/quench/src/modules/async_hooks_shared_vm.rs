@@ -3,10 +3,9 @@
 //! Async identity counters are shared by both adapters; shared roots and the
 //! exported classes live on the shared-VM side of the host boundary.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::async_hooks_state::{JobContext, StoreContext};
 use super::host_members::leading;
+use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
 use std::{cell::RefCell, rc::Rc};
 
@@ -46,7 +45,7 @@ pub(crate) fn enter_default_trigger(
 }
 
 pub(crate) fn default_trigger_scope(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -59,7 +58,7 @@ pub(crate) fn default_trigger_scope(
     } else {
         // Node stores through Float64Array; use its ordinary ToNumber coercion.
         let trigger = context.to_number(trigger)?;
-        let shared = context.node().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         Some(enter_default_trigger(&shared, trigger))
     };
     let receiver = context.null();
@@ -68,12 +67,12 @@ pub(crate) fn default_trigger_scope(
     result
 }
 pub(crate) fn get_default_trigger(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let trigger = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .async_hooks
@@ -124,20 +123,20 @@ pub(crate) fn create_promise_context(
 }
 
 pub(crate) fn initialize_promise(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     promise: RootId,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
     // A promise is weakly tracked only while an init or destroy hook can observe it; its
     // identity and job context need no record (`tracks_promise_lifecycle_resources`).
-    if !context.node().shared_state().borrow().async_hooks.tracks_promise_lifecycle_resources() {
+    if !context.host_as::<crate::host::NodeHost>().shared_state().borrow().async_hooks.tracks_promise_lifecycle_resources() {
         return Ok(());
     }
     // A long run of promises can stay within one event-loop turn, where the turn-end prune
     // never comes: every new promise first prunes the table once a collection has run since
     // the last prune, so it holds only promises that may still be live.
     let prune_due = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .async_hooks
@@ -148,13 +147,13 @@ pub(crate) fn initialize_promise(
     }
     let weak = context.host_weak_root(promise)?;
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .async_hooks
         .promise_resources
         .insert(resource.0, weak);
-    if context.node().shared_state().borrow().async_hooks.observes_promise_hooks() {
+    if context.host_as::<crate::host::NodeHost>().shared_state().borrow().async_hooks.observes_promise_hooks() {
         emit_promise_init(context, promise, resource)?;
     }
     emit_init(context, promise, "PROMISE", resource.0)
@@ -163,12 +162,12 @@ pub(crate) fn initialize_promise(
 /// V8's promise `init` hook: the new promise and the live promise it was chained from, if any
 /// (`SharedAsyncHooksState::promise_parents`).
 fn emit_promise_init(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     promise: RootId,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
     let parent_weak = {
-        let shared = context.node().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let shared = shared.borrow();
         let hooks = &shared.async_hooks;
         hooks.promise_parents.get(&resource.0).copied().flatten().and_then(|id| hooks.promise_resources.get(&id).copied())
@@ -191,11 +190,11 @@ fn emit_promise_init(
 /// reported after Promise jobs have unwound, so their resource has to be
 /// recovered from the weak Promise table before routing the rejection.
 pub(crate) fn promise_async_id(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     promise: RootId,
 ) -> Result<Option<u64>, RootedError> {
     let entries = runtime
-        .node()
+        .host_mut()
         .shared_state()
         .borrow()
         .async_hooks
@@ -217,7 +216,7 @@ pub(crate) fn promise_async_id(
 }
 
 pub(crate) fn prune_promises(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -226,9 +225,9 @@ pub(crate) fn prune_promises(
 }
 
 /// Releases the weak references of collected promises and queues their destroy hooks.
-fn prune_promise_resources(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
+fn prune_promise_resources(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     let epoch = context.collection_epoch();
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     shared.borrow_mut().async_hooks.promise_resources_pruned_epoch = epoch;
     let entries: Vec<_> = shared.borrow().async_hooks.promise_resources.iter().map(|(&id, &weak)| (id, weak)).collect();
     for (id, weak) in entries {
@@ -250,11 +249,11 @@ fn promise_hook_target(
 }
 
 pub(crate) fn promise_job_boundary(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     snapshot: quench_runtime::HostExecutionContext,
     before: bool,
 ) -> Result<(), RootedError> {
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     // A long run of promise jobs can stay within one event-loop turn, where the turn-end
     // prune never comes: prune here once a collection has run since the last prune, so the
     // table holds only promises that may still be live.
@@ -275,7 +274,7 @@ pub(crate) fn promise_job_boundary(
     };
     // V8's promise `before` hook runs ahead of async_hooks' and its `after` hook behind.
     let promise_weak = promise_hook_target(&shared.borrow().async_hooks, resource);
-    let emit_promise_hook = |context: &mut NativeContext<'_, ErasedHost>| {
+    let emit_promise_hook = |context: &mut NativeContext<'_>| {
         let Some(promise) = promise_weak.and_then(|weak| context.resolve_host_weak_root(weak)) else {
             return Ok(());
         };
@@ -302,10 +301,10 @@ pub(crate) fn promise_job_boundary(
 }
 
 pub(crate) fn promise_settled(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
-    let weak = promise_hook_target(&context.node().shared_state().borrow().async_hooks, resource.0);
+    let weak = promise_hook_target(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().async_hooks, resource.0);
     if let Some(promise) = weak.and_then(|weak| context.resolve_host_weak_root(weak)) {
         let result = super::promise_hooks_shared_vm::emit(
             context,
@@ -542,13 +541,13 @@ pub(crate) fn enter_resource_context(
     }
 }
 
-pub(crate) fn complete_callback_context(context: &mut NativeContext<'_, ErasedHost>, id: u64) -> Result<(), RootedError> {
-    for root in retire_context(&context.node().shared_state(), id) { context.release_root(root); }
+pub(crate) fn complete_callback_context(context: &mut NativeContext<'_>, id: u64) -> Result<(), RootedError> {
+    for root in retire_context(&context.host_as::<crate::host::NodeHost>().shared_state(), id) { context.release_root(root); }
     queue_destroy(context, id)
 }
 
-pub(crate) fn complete_runtime_context(runtime: &mut Runtime<ErasedHost>, id: u64) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn complete_runtime_context(runtime: &mut Runtime<NodeHost>, id: u64) {
+    let shared = runtime.host_mut().shared_state();
     clear_context(runtime, &shared, id);
     if !super::async_hook_registry_shared_vm::runtime_has_hooks(
         runtime,
@@ -603,7 +602,7 @@ pub(crate) fn enter_context(
 
 /// Release stores owned by a completed request context.
 pub(crate) fn clear_context(
-    runtime: &mut Runtime<crate::host::ErasedHost>,
+    runtime: &mut Runtime<crate::host::NodeHost>,
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     async_id: u64,
 ) {
@@ -680,9 +679,9 @@ impl Drop for ContextScope {
     }
 }
 
-pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     if let Some(module) = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .async_hooks
@@ -710,7 +709,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
     context.define_data_property_rooted(module, set_promise_hooks_key, set_promise_hooks, false, false, false)?;
     let retained = context.retain(module)?;
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .async_hooks
@@ -722,12 +721,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
 /// creates a Node timer resource. The emitter is installed with the
 /// async_hooks module and remains optional for programs that never load it.
 pub(crate) fn emit_init(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     resource: RootId,
     resource_type: &str,
     async_id: u64,
 ) -> Result<(), RootedError> {
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     {
         let mut state = state.borrow_mut();
         let parent = state.async_hooks.default_trigger_async_id();
@@ -767,20 +766,20 @@ pub(crate) fn emit_init(
 }
 
 pub(crate) fn execution_id(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let id = visible_async_id(&shared.borrow().async_hooks);
     Ok(context.number(id as f64))
 }
 pub(crate) fn trigger_id(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
     let id = visible_async_id(&state.async_hooks);
     let trigger = state
@@ -792,12 +791,12 @@ pub(crate) fn trigger_id(
     Ok(context.number(trigger as f64))
 }
 pub(crate) fn execution_resource(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (api, scoped) = {
-        let state = context.node().shared_state();
+        let state = context.host_as::<crate::host::NodeHost>().shared_state();
         let state = state.borrow();
         let hooks = &state.async_hooks;
         let id = hooks.identity.current_async_id();
@@ -810,7 +809,7 @@ pub(crate) fn execution_resource(
         return Ok(resource);
     }
     let promise = {
-        let shared = context.node().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let state = shared.borrow();
         state
             .async_hooks
@@ -826,7 +825,7 @@ pub(crate) fn execution_resource(
 }
 
 pub(crate) fn external_init(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -837,14 +836,14 @@ pub(crate) fn external_init(
     let id = if let Some(id) = context.rooted_value(id).and_then(|v| v.as_number()) {
         id as u64
     } else {
-        create_context(&context.node().shared_state())
+        create_context(&context.host_as::<crate::host::NodeHost>().shared_state())
     };
     emit_init(context, resource, &kind, id)?;
     Ok(context.number(id as f64))
 }
 
 pub(crate) fn initialize_resource(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -857,7 +856,7 @@ pub(crate) fn initialize_resource(
             context, kind, "type", "string",
         )?);
     };
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let identity = state.borrow().async_hooks.identity.clone();
     let parent = identity.store_context();
     let trigger_parent = state.borrow().async_hooks.default_trigger_async_id();
@@ -944,7 +943,7 @@ pub(crate) struct EnteredScope {
 /// (`exit_async_scope`) however the call completes, as Node's `try`/`finally` does. A throw
 /// from a `before` hook leaves the scope at once, without the `after` hooks.
 pub(crate) fn enter_async_scope(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -957,7 +956,7 @@ pub(crate) fn enter_async_scope(
     let id = number_property(context, receiver, ASYNC_ID)?
         .ok_or_else(|| RootedError::host("AsyncResource has no async ID"))?;
     let resource = context.retain(receiver)?;
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let identity = state.borrow().async_hooks.identity.clone();
     let trigger = state
         .borrow()
@@ -990,12 +989,12 @@ pub(crate) fn enter_async_scope(
 /// `AsyncResource#runInAsyncScope`'s exit: the `after` hooks of the innermost entered scope
 /// run, then the context it replaced is current again.
 pub(crate) fn exit_async_scope(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _receiver: RootId,
     _args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .async_hooks
@@ -1014,8 +1013,8 @@ pub(crate) fn exit_async_scope(
 }
 
 /// Restores the context the innermost entered scope replaced and releases its resource.
-fn leave_entered_scope(context: &mut NativeContext<'_, ErasedHost>) {
-    let state = context.node().shared_state();
+fn leave_entered_scope(context: &mut NativeContext<'_>) {
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let Some(scope) = state.borrow_mut().async_hooks.entered_scopes.pop() else {
         return;
     };
@@ -1027,7 +1026,7 @@ fn leave_entered_scope(context: &mut NativeContext<'_, ErasedHost>) {
     context.release_root(scope.resource);
 }
 
-fn queue_destroy(context: &mut NativeContext<'_, ErasedHost>, id: u64) -> Result<(), RootedError> {
+fn queue_destroy(context: &mut NativeContext<'_>, id: u64) -> Result<(), RootedError> {
     if !super::async_hook_registry_shared_vm::has_hooks(
         context,
         super::async_hook_registry_shared_vm::HookKind::Destroy,
@@ -1045,7 +1044,7 @@ fn queue_destroy(context: &mut NativeContext<'_, ErasedHost>, id: u64) -> Result
     // setImmediate callback, while keeping destroy callbacks asynchronous.
     let data = context.retain(data)?;
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .scheduler
@@ -1059,7 +1058,7 @@ fn queue_destroy(context: &mut NativeContext<'_, ErasedHost>, id: u64) -> Result
 }
 
 pub(crate) fn queue_destroy_async_id(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1075,7 +1074,7 @@ pub(crate) fn queue_destroy_async_id(
 }
 
 pub(crate) fn destroy_dispatch(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1091,13 +1090,13 @@ pub(crate) fn destroy_dispatch(
     Ok(context.undefined())
 }
 pub(crate) fn emit_destroy(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = number_property(context, receiver, ASYNC_ID)?
         .ok_or_else(|| RootedError::host("AsyncResource has no async ID"))?;
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     // Taking a resource's stores removes them, so a repeated destroy releases nothing twice.
     for root in take_context_stores(&state, id) {
         context.release_root(root);
@@ -1106,7 +1105,7 @@ pub(crate) fn emit_destroy(
     Ok(receiver)
 }
 
-fn async_field_key(context: &mut NativeContext<'_, ErasedHost>, name: &str) -> Result<RootId, RootedError> {
+fn async_field_key(context: &mut NativeContext<'_>, name: &str) -> Result<RootId, RootedError> {
     if name == LOCAL_ID {
         let data = context.host_function_data()?;
         context.get_named_property_rooted(data, "localId")
@@ -1114,7 +1113,7 @@ fn async_field_key(context: &mut NativeContext<'_, ErasedHost>, name: &str) -> R
 }
 
 pub(super) fn number_property(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
 ) -> Result<Option<u64>, RootedError> {
@@ -1128,7 +1127,7 @@ pub(super) fn number_property(
 }
 
 pub(super) fn set_number(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: u64,
@@ -1145,7 +1144,7 @@ pub(super) fn set_number(
 }
 
 pub(super) fn invalid_function(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     name: &str,
 ) -> Result<RootId, RootedError> {
     let error =

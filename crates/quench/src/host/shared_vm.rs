@@ -1,7 +1,5 @@
 //! The existing Node host adapted to the shared VM; Node policy stays in modules.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::NodeHost;
 use quench_runtime::{HostCallback, HostFunctionDescriptor, NativeContext, RootedError, SystemHost};
 
@@ -35,14 +33,14 @@ macro_rules! node_bindings {
             $($(#[$attribute])* const { operation_abi(stringify!($scope), $name, $length, stringify!($callback)) }),*
         ]);
 
-        fn callbacks() -> &'static [HostCallback<ErasedHost>] {
+        fn callbacks() -> &'static [HostCallback] {
             quench_runtime::host_functions![@callbacks;
                 $($(#[$attribute])* $scope $name ($length) => $callback),*
             ]
         }
 
         // Compatibility projection for embedders using the combined catalog.
-        fn bindings() -> &'static [quench_runtime::HostFunction<ErasedHost>] {
+        fn bindings() -> &'static [quench_runtime::HostFunction] {
             quench_runtime::host_functions![
                 $($(#[$attribute])* $scope $name ($length) => $callback),*
             ]
@@ -2417,7 +2415,7 @@ fn esm_directory_import_suggestion(directory: &std::path::Path) -> Option<String
         .map(|url| url.to_string())
 }
 
-impl quench_runtime::ErasableHost for NodeHost {
+impl quench_runtime::Host for NodeHost {
     fn observes_promise_lifecycle(&self) -> bool {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
@@ -2450,7 +2448,7 @@ impl quench_runtime::ErasableHost for NodeHost {
         crate::host::resident_pages::release_before_first_collection();
     }
 
-    fn after_collection(context: &mut quench_runtime::CollectionContext<'_, ErasedHost>) {
+    fn after_collection(context: &mut quench_runtime::CollectionContext<'_>) {
         #[cfg(quench_openssl_provider)]
         crate::modules::crypto_hash_shared_vm::prune(context);
         #[cfg(not(quench_openssl_provider))]
@@ -2481,7 +2479,7 @@ impl quench_runtime::ErasableHost for NodeHost {
     }
 
     #[cfg(feature = "native-execution")]
-    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<ErasedHost>>, quench_runtime::NativeSourceError> {
+    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram>, quench_runtime::NativeSourceError> {
         match self.native_program_resolver.as_mut() {
             Some(resolve) => resolve(name, parts),
             None => Ok(None),
@@ -2626,7 +2624,7 @@ impl quench_runtime::ErasableHost for NodeHost {
     }
 
     fn initialize_import_meta(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         source_name: &str,
         import_meta: quench_runtime::RootId,
     ) -> Result<(), RootedError> {
@@ -2652,7 +2650,7 @@ impl quench_runtime::ErasableHost for NodeHost {
     }
 
     fn initialize_promise(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         promise: quench_runtime::RootId,
         resource: quench_runtime::HostExecutionContext,
     ) -> Result<(), RootedError> {
@@ -2660,7 +2658,7 @@ impl quench_runtime::ErasableHost for NodeHost {
     }
 
     fn promise_job_boundary(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         resource: quench_runtime::HostExecutionContext,
         before: bool,
     ) -> Result<(), RootedError> {
@@ -2668,7 +2666,7 @@ impl quench_runtime::ErasableHost for NodeHost {
     }
 
     fn promise_settled(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         resource: quench_runtime::HostExecutionContext,
     ) -> Result<(), RootedError> {
         crate::modules::async_hooks_shared_vm::promise_settled(context, resource)
@@ -2725,7 +2723,7 @@ impl quench_runtime::ErasableHost for NodeHost {
         crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
     }
 
-    fn functions(&self) -> &[quench_runtime::HostFunction<ErasedHost>] {
+    fn functions(&self) -> &[quench_runtime::HostFunction] {
         bindings()
     }
 
@@ -2737,7 +2735,7 @@ impl quench_runtime::ErasableHost for NodeHost {
         OPERATION_DESCRIPTORS.get(index).copied()
     }
 
-    fn function_callback(&self, index: usize) -> Option<HostCallback<ErasedHost>> {
+    fn function_callback(&self, index: usize) -> Option<HostCallback> {
         callbacks().get(index).copied()
     }
 
@@ -2749,7 +2747,7 @@ impl quench_runtime::ErasableHost for NodeHost {
             .is_some_and(|word| word & (1 << (index % u64::BITS as usize)) != 0)
     }
 
-    fn initialize(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
+    fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
         crate::host::resident_pages::release_read_only_pages();
         // Each step stores what it builds in the heap or retains it, so its own handles are
         // released as it ends (`scoped`) instead of piling up for the whole bootstrap.
@@ -2757,7 +2755,7 @@ impl quench_runtime::ErasableHost for NodeHost {
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_text_decoder");
         context
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .reset_cached_vm_roots();
@@ -2780,11 +2778,11 @@ impl quench_runtime::ErasableHost for NodeHost {
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
-        context.node().bootstrapped = true;
+        context.host_as::<crate::host::NodeHost>().bootstrapped = true;
         Ok(())
     }
 
-    fn resume(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
+    fn resume(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
         crate::host::resident_pages::release_read_only_pages();
         context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
         context.scoped(commonjs::refresh_module_paths)?;
@@ -2794,15 +2792,15 @@ impl quench_runtime::ErasableHost for NodeHost {
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_resume_time_origins");
         commonjs::finish_initialize(context)?;
-        context.node().bootstrapped = true;
+        context.host_as::<crate::host::NodeHost>().bootstrapped = true;
         Ok(())
     }
 }
 
 /// The shared EventEmitter, and the process streams that take part in its protocol.
-fn install_event_emitter(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
+fn install_event_emitter(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     let event_data = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .event_targets_api
@@ -2853,8 +2851,8 @@ fn install_event_emitter(context: &mut NativeContext<'_, ErasedHost>) -> Result<
 }
 
 /// `globalThis.gc` under `--expose-gc`.
-fn install_gc_global(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
-    let shared = context.node().shared_state();
+fn install_gc_global(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let shared = shared.borrow();
     let expose_gc = shared.cli_options.expose_gc;
     drop(shared);

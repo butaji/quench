@@ -3,7 +3,7 @@
 use super::super::object_symbols::{PLAIN_COPY_INLINE_PROPERTIES, PropertyCopyKind};
 use super::super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Object.keys(object)` of a plain object whose shape lists its enumerable string keys
     /// (`shape_enumerable_slots`), as V8's enum cache answers it: the shape's key strings
     /// (`Vm::own_enumerable_key_values_cached`, made once per shape and collection) are copied
@@ -64,8 +64,9 @@ impl<H: Host> Vm<H> {
             return false;
         };
         // The memo's word proof makes the source's contiguous words the target's: one run copy.
+        // `target` is fresh (`is_fresh_empty`): no prototype, so the adds name no method cache's
+        // chain and need no `note_plain_copy_atoms`.
         if entry.words == Some(self.heap.slot_encoding_epoch()) && self.heap.copy_slot_words(target, source, entry.shape) {
-            self.note_plain_copy_atoms(target, slots.iter().map(|&(atom, _)| atom));
             return true;
         }
         let Some(source_data) = self.heap.object_record(source) else {
@@ -75,7 +76,7 @@ impl<H: Host> Vm<H> {
         if !self.read_shaped_values(source_data, &slots, &mut values) {
             return false;
         }
-        self.initialize_plain_copy(target, entry.shape, &values, slots.iter().map(|&(atom, _)| atom));
+        self.heap.initialize_object_properties(target, entry.shape, &values);
         true
     }
 

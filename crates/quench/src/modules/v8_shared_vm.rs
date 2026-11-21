@@ -3,12 +3,10 @@
 //! runtime's heap accounting, under Node's default heap limit. A heap snapshot is V8's
 //! format holding only its root; the GC profiler and coverage report nothing collected.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use crate::modules::util_shared_vm::validate_function;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 
 /// V8's space names, in `kHeapSpaces` order; Quench's single heap reports as old space.
@@ -67,7 +65,7 @@ fn heap_size_limit(exec_argv: &[String]) -> u64 {
 /// `[used, reserved, limit]` bytes.
 fn heap_sizes(c: &mut Context<'_>) -> [f64; 3] {
     let composition = c.heap_memory_composition();
-    let limit = heap_size_limit(&c.node().shared_state().borrow().exec_argv);
+    let limit = heap_size_limit(&c.host_as::<crate::host::NodeHost>().shared_state().borrow().exec_argv);
     [composition.used_bytes() as f64, composition.reserved_bytes() as f64, limit as f64]
 }
 
@@ -181,7 +179,7 @@ pub(crate) fn warn_experimental_once(c: &mut Context<'_>, feature: &'static str,
     if !first {
         return Ok(());
     }
-    let process = c.node().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let process = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     let message = c.string_rooted(message);
     let kind = c.string_rooted("ExperimentalWarning");
     super::stream_shared_vm::call_method(c, process, "emitWarning", &[message, kind])?;
@@ -311,7 +309,7 @@ pub(crate) fn get_heap_snapshot(c: &mut Context<'_>, _: RootId, args: &[RootId])
 fn snapshot_filename(c: &mut Context<'_>) -> String {
     static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let thread = c.node().shared_state().borrow().messaging.context.as_ref().map_or(0, |context| context.thread_id);
+    let thread = c.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.context.as_ref().map_or(0, |context| context.thread_id);
     let now = chrono::Local::now();
     format!(
         "Heap.{}.{}.{}.{thread}.{sequence:0width$}.{HEAP_SNAPSHOT_EXTENSION}",
@@ -843,7 +841,7 @@ pub(crate) fn is_string_one_byte_representation(c: &mut Context<'_>, _: RootId, 
 /// `internalBinding('internal_only_v8').queryObjects(prototype)`: the heap's objects whose
 /// prototype is `prototype`.
 pub(crate) fn query_objects(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

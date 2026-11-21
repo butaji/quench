@@ -1,9 +1,7 @@
 //! Native TCP binding over Transport's actual socket ownership.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::{event_constructor_shared_vm::get, net_shared_vm as net};
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 const LIBUV_PROTOTYPE: &str = "\0native:LibuvStreamWrapPrototype";
 const TCP_PROTOTYPE: &str = "\0native:TCPPrototype";
 const HANDLE_PROTOTYPE: &str = "\0native:HandleWrapPrototype";
@@ -142,7 +140,7 @@ pub(crate) fn construct(
         let e = c.type_error_rooted("Invalid TCP socket type")?;
         return Err(c.throw(e));
     }
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let endpoint = net::native_tcp_create(&mut shared.borrow_mut().tcp)
         .map_err(|e| RootedError::host(e.to_string()))?;
     super::net_reference_shared_vm::register_identity(c, receiver, endpoint)?;
@@ -180,7 +178,7 @@ fn bind(
     } else {
         0
     };
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = net::native_tcp_bind(
         &mut shared.borrow_mut().tcp,
         endpoint,
@@ -203,7 +201,7 @@ pub(crate) fn listen(
     let endpoint = id(c, receiver)?;
     let backlog = args.first().copied().unwrap_or_else(|| c.undefined());
     let backlog = net::convert_listen_backlog(c, backlog)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = net::native_tcp_listen(&mut shared.borrow_mut().tcp, endpoint, backlog);
     if result.is_ok() && !shared.borrow().native_tcp_listeners.contains_key(&endpoint) {
         let root = c.retain(receiver)?;
@@ -220,7 +218,7 @@ pub(crate) fn name(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let endpoint = id(c, receiver)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = net::native_tcp_address(&shared.borrow().tcp, endpoint);
     match result {
         Ok(a) => {
@@ -242,7 +240,7 @@ pub(crate) fn queue(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let endpoint = id(c, receiver)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let n = net::socket_write_queue_size(&shared.borrow().tcp, endpoint);
     Ok(c.number((n as u32) as f64))
 }
@@ -273,7 +271,7 @@ pub(crate) fn close(
             return Ok(c.undefined());
         }
     }
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if !net::native_tcp_is_open(&shared.borrow().tcp, endpoint) {
         return Ok(c.undefined());
     }
@@ -301,7 +299,7 @@ fn reference(c: &mut Context<'_>, receiver: RootId, value: bool) -> Result<RootI
         return super::udp_binding::reference(c, receiver, value);
     }
     let endpoint = id(c, receiver)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     net::native_tcp_reference(&mut shared.borrow_mut().tcp, endpoint, value);
     Ok(c.undefined())
 }
@@ -328,7 +326,7 @@ pub(crate) fn has_ref(
         return super::udp_binding::has_ref(c, receiver);
     }
     let endpoint = id(c, receiver)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let v = net::native_tcp_has_ref(&shared.borrow().tcp, endpoint);
     Ok(c.boolean(v))
 }
@@ -339,7 +337,7 @@ pub(crate) fn fd(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, receiver)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let fd = net::native_tcp_fd(&shared.borrow().tcp, id);
     Ok(c.number(fd as f64))
 }
@@ -351,7 +349,7 @@ pub(crate) fn duplicate_descriptor(
 ) -> Result<std::os::fd::OwnedFd, RootedError> {
     use std::os::fd::{AsRawFd, FromRawFd};
     let endpoint = id(c, handle)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let fd = net::native_tcp_fd(&shared.borrow().tcp, endpoint);
     if fd < 0 {
         return Err(RootedError::host("TCP descriptor owner is closed"));
@@ -399,7 +397,7 @@ pub(crate) fn from_owned_descriptor(
     let kind = c.number(SOCKET as f64);
     let handle = c.construct_rooted(ctor, ctor, &[kind])?;
     let endpoint = id(c, handle)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = net::native_tcp_receive(&mut shared.borrow_mut().tcp, endpoint, fd);
     if let Err(error) = result {
         let _ = close(c, handle, &[]);

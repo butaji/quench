@@ -48,3 +48,26 @@ pub(crate) const SHARED_LENGTH_OFFSET: i32 = SHARED_POINTER_OFFSET + size_of::<u
 pub(crate) const fn shared_units_offset() -> u64 {
     2 * size_of::<usize>() as u64
 }
+
+/// A prefix form: the tag byte, the handle to the append buffer, then the prefix's unit count
+/// (`FlatUnits::AsciiPrefix`).
+#[repr(C)]
+pub(crate) struct PrefixFormHead<Buffer> {
+    pub(crate) tag: u8,
+    pub(crate) buffer: Buffer,
+    pub(crate) length: u32,
+}
+
+/// The prefix form with the stencil's words: the handle as a pointer.
+pub(crate) type PrefixFormWords = PrefixFormHead<usize>;
+
+/// Where an `AsciiPrefix` record keeps the address of its buffer's `Rc` allocation (where a shared
+/// form keeps its storage's), and its unit count.
+pub(crate) const PREFIX_BUFFER_OFFSET: i32 = offset_of!(PrefixFormWords, buffer) as i32;
+pub(crate) const PREFIX_LENGTH_OFFSET: i32 = offset_of!(PrefixFormWords, length) as i32;
+const _: () = assert!(PREFIX_BUFFER_OFFSET == SHARED_POINTER_OFFSET);
+const _: () = assert!(size_of::<PrefixFormWords>() <= RECORD_SIZE);
+
+/// Where an append buffer (`#[repr(C)] AppendBuffer`, the value of the prefix's `Rc`) keeps the
+/// address of its first unit: its first word.
+pub(crate) const APPEND_UNITS_OFFSET: i32 = 0;

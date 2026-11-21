@@ -64,10 +64,6 @@ mod jit_coverage;
 mod jit_mode;
 pub use jit_mode::JitMode;
 mod host;
-mod erased_host;
-pub use erased_host::{ErasableHost, ErasedHost};
-#[doc(hidden)]
-pub use erased_host::erased_host_instances;
 mod integer_conversion;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 mod memory_edge;

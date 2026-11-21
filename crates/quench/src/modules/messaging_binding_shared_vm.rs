@@ -1,9 +1,8 @@
 //! Native messaging primitives consumed by Node's `internal/worker` library.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 pub(crate) fn binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:messaging", build)

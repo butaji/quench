@@ -159,7 +159,7 @@ impl LearnedReceiver {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Allocates the receiver template `object` of a construction whose body `constructor` runs
     /// first thing, with `constructor` its `new.target`, in the constructor's constant layout or
     /// with its learned storage (`preshape_receiver`).

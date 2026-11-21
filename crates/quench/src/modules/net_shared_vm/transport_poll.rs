@@ -2,9 +2,7 @@
 //! ends and destroys the sockets queued, then delivers the transport's events to the public
 //! `net` objects and native stream handles that own them.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
-use crate::host::SharedNodeState;
+use crate::host::{NodeHost, SharedNodeState};
 use crate::modules::buffer_codec::latin1_text;
 use crate::modules::net_shared_vm;
 use quench_runtime::{RootId, Runtime, Value};
@@ -13,12 +11,12 @@ use std::rc::Rc;
 
 #[inline(never)]
 pub(crate) fn poll(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let quiescent = {
-        let host = runtime.node();
+        let host = runtime.host_mut();
         let state = shared_state.borrow();
         // Zero capacity also proves emptiness, while the general path still releases
         // allocated empty command buffers as before.
@@ -32,7 +30,7 @@ pub(crate) fn poll(
         return Ok(false);
     }
     let (pending_writes, pending_ends, pending_destroys) = {
-        let host = runtime.node();
+        let host = runtime.host_mut();
         (
             std::mem::take(&mut host.net_pending_writes),
             std::mem::take(&mut host.net_pending_ends),
@@ -58,7 +56,7 @@ pub(crate) fn poll(
             }
         }
         drop(host);
-        let host = runtime.node();
+        let host = runtime.host_mut();
         host.net_pending_writes.extend(deferred_writes);
         host.net_pending_ends.extend(deferred_ends);
     }
@@ -536,7 +534,7 @@ pub(crate) fn poll(
 }
 
 pub(crate) fn cleanup(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) {
     let roots = {
@@ -555,7 +553,7 @@ pub(crate) fn cleanup(
 }
 
 fn queue_write_callback(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     state: &Rc<RefCell<SharedNodeState>>,
     callback: RootId,
     error: Option<RootId>,
@@ -575,14 +573,14 @@ fn queue_write_callback(
     );
 }
 
-fn net_error(runtime: &mut Runtime<ErasedHost>, message: &str) -> Result<RootId, String> {
+fn net_error(runtime: &mut Runtime<NodeHost>, message: &str) -> Result<RootId, String> {
     runtime
         .error_rooted(message)
         .map_err(|error| error.to_string())
 }
 
 fn tcp_connect_error(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     failure: &crate::modules::net_connect_error::TcpConnectFailure,
 ) -> Result<RootId, String> {
     let error = net_error(runtime, &failure.message())?;
@@ -599,7 +597,7 @@ fn tcp_connect_error(
 }
 
 fn net_socket_error_with_code(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     message: &str,
     code: &str,
 ) -> Result<RootId, String> {
@@ -609,7 +607,7 @@ fn net_socket_error_with_code(
 }
 
 fn tls_socket_path(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     socket: RootId,
 ) -> Result<Option<String>, String> {
     let mut roots = Vec::new();
@@ -643,7 +641,7 @@ fn tls_socket_path(
 }
 
 fn emit_net_server_events(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let (listening, closed) = {
@@ -686,7 +684,7 @@ fn emit_net_server_events(
 /// Queue `socket.emit(name, Buffer)` for bytes its TLS session reported; whether the socket
 /// was still live to hear it.
 fn queue_tls_announcement(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     socket: u64,
     name: &str,
@@ -703,7 +701,7 @@ fn queue_tls_announcement(
 }
 
 fn queue_net_event(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     receiver: RootId,
     name: &str,
@@ -719,7 +717,7 @@ fn queue_net_event(
 }
 
 fn queue_connection_event(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     receiver: RootId,
     name: &str,
@@ -743,7 +741,7 @@ fn queue_connection_event(
 }
 
 fn queue_net_method(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     receiver: RootId,
     method: &str,
@@ -758,7 +756,7 @@ enum NetDelivery {
     Eof,
 }
 fn queue_net_method_completion(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     receiver: RootId,
     method: &str,
@@ -821,7 +819,7 @@ fn queue_net_method_completion(
 
 /// A Buffer holding a copy of `bytes`: a Uint8Array owning the one copy, and
 /// `Buffer.from(arrayBuffer)` over its store, which Buffer shares rather than copies.
-fn buffer_from_bytes(runtime: &mut Runtime<ErasedHost>, bytes: &[u8]) -> Result<RootId, String> {
+fn buffer_from_bytes(runtime: &mut Runtime<NodeHost>, bytes: &[u8]) -> Result<RootId, String> {
     let view = runtime.uint8_array_from_rooted(bytes.to_vec()).map_err(|error| error.to_string())?;
     let store_key = runtime.string_rooted("buffer");
     let store = runtime.get_property_rooted(view, store_key);
@@ -847,7 +845,7 @@ fn buffer_from_bytes(runtime: &mut Runtime<ErasedHost>, bytes: &[u8]) -> Result<
     chunk.map_err(|error| error.to_string())
 }
 fn set_text(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     object: RootId,
     name: &str,
     value: &str,
@@ -857,7 +855,7 @@ fn set_text(
 }
 
 fn set_number(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     object: RootId,
     name: &str,
     value: f64,
@@ -867,7 +865,7 @@ fn set_number(
 }
 
 fn set_bool(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     object: RootId,
     name: &str,
     value: bool,
@@ -877,7 +875,7 @@ fn set_bool(
 }
 
 fn set_named(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -897,7 +895,7 @@ fn accepted(written: bool) -> Result<(), String> {
 }
 
 fn queue_native_read(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     socket: u64,
     bytes: Option<&[u8]>,
@@ -968,7 +966,7 @@ fn queue_native_read(
     Ok(true)
 }
 fn complete_native_request(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     request: RootId,
@@ -1070,7 +1068,7 @@ fn complete_native_request(
 }
 
 fn cancel_native_requests(
-    runtime: &mut Runtime<ErasedHost>,
+    runtime: &mut Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     socket: u64,

@@ -5,7 +5,6 @@
 //! `cursor`, `history`, ...) and its private fields under the symbols Node names them with;
 //! the legacy `readline.Interface` exposes those as `_`-prefixed members.
 
-use crate::host::NodeAccess;
 use super::stream_shared_vm::{
     inherit,
     arg, call_method, captures, closure, emit, get, is_nullish, is_string, is_undefined, next_tick, number, on, once,
@@ -86,7 +85,7 @@ const CLEAR_SCREEN_DOWN: &str = "\x1b[0J";
 // ---------------------------------------------------------------------------------------
 
 fn slot(c: &mut Context<'_>, which: Slot) -> Outcome {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let found = shared.borrow().builtin_cache.get(&which.cache_key()).copied();
     if let Some(symbol) = found {
         return Ok(symbol);
@@ -2115,7 +2114,7 @@ pub(crate) fn readline_constructor(c: &mut Context<'_>, this: RootId, args: &[Ro
 
 fn private_key(c: &mut Context<'_>, name: &'static str) -> Outcome {
     let cache = format!("\0readline:{name}");
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(key) = shared.borrow().builtin_cache.get(&cache).copied() {
         return Ok(key);
     }
@@ -2273,7 +2272,7 @@ fn accessor(c: &mut Context<'_>, target: RootId, key: RootId, getter: RootId, se
 /// `internal/readline/interface`'s `Interface`, over `InterfaceConstructor`.
 fn base_interface(c: &mut Context<'_>) -> Outcome {
     let cache = "\0readline:Interface";
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(class) = shared.borrow().builtin_cache.get(cache).copied() {
         return Ok(class);
     }
@@ -2376,7 +2375,7 @@ fn define_function(c: &mut Context<'_>, target: RootId, name: &str, operation: &
 
 /// `readline`.
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(module) = shared.borrow().builtin_cache.get(MODULE_CACHE).copied() {
         return Ok(module);
     }
@@ -2401,7 +2400,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
 
 /// `readline/promises`.
 pub(crate) fn promises_module(c: &mut Context<'_>) -> Outcome {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(module) = shared.borrow().builtin_cache.get(PROMISES_CACHE).copied() {
         return Ok(module);
     }

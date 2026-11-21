@@ -39,7 +39,7 @@ pub(super) const fn disposal_native_length(native: Native) -> Option<f64> {
     })
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn is_disposal_native(native: Native) -> bool {
         matches!(
             native,

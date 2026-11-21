@@ -1,7 +1,7 @@
 //! Node26 operation-specific presentation, delegated to the shared crypto/TLS
 //! error authority. SDK validation remains in the unmodified original SDK.
 use super::{crypto_digest::DigestError, crypto_error_shared_vm};
-use quench_runtime::{Host, NativeContext, RootedError};
+use quench_runtime::{NativeContext, RootedError};
 use std::ffi::{c_char, c_int};
 #[derive(Clone, Copy)]
 pub enum Operation<'a> {
@@ -31,8 +31,8 @@ pub fn invalid_xof_length() -> openssl::error::ErrorStack {
     }
     openssl::error::ErrorStack::get()
 }
-pub fn throw<H: Host>(
-    context: &mut NativeContext<'_, H>,
+pub fn throw(
+    context: &mut NativeContext<'_>,
     operation: Operation<'_>,
     error: DigestError,
 ) -> RootedError {

@@ -6,7 +6,7 @@ use super::*;
 /// unproved. Test fixtures and protocol payloads nest a few levels.
 const PLAIN_EQUAL_DEPTH: usize = 64;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether `left` and `right` are provably the same plain data: SameValue, or plain
     /// containers of the same kind whose members are pairwise the same plain data.
     ///

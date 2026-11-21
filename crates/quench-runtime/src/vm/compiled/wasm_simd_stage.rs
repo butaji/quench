@@ -6,7 +6,7 @@
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
-    Analysis, AnalysisState, Emitter, Host, Kind, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
+    Analysis, AnalysisState, Emitter, Kind, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
     SIMD_KERNEL_RIGHT, SIMD_KERNEL_WORDS, Slot, VECTOR_IR, compiled_simd_kernel,
 };
 use crate::WasmType;
@@ -21,7 +21,7 @@ use crate::wasm::simd::SimdKernel;
 use cranelift_codegen::ir::{self, types};
 use cranelift_frontend::Variable;
 
-impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
+impl WasmSimd for Emitter<'_, '_> {
     type Value = ir::Value;
     type Scalar = ir::Value;
 
@@ -68,7 +68,7 @@ impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// The kernel callout: the operands go to words, `compiled_simd_kernel` computes, and the
     /// result comes back typed by the kernel (a vector, or a scalar of its result type).
     fn kernel(&mut self, selector: u32, left: ir::Value, right: Option<ir::Value>) -> ir::Value {
@@ -221,7 +221,7 @@ fn holds_operand(state: &AnalysisState, registers: u16, register: u16, ty: WasmT
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks a vector step reads vectors where it must and its memory through the function's
     /// memory, and applies its register writes.
     pub(super) fn transfer_simd(

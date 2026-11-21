@@ -1,7 +1,6 @@
 //! Node's LazyTransform defers stream state until it is observed.
-use quench_runtime::ErasedHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 pub(crate) fn constructor(c: &mut Context<'_>, transform: RootId) -> Result<RootId, RootedError> {
     let operation = crate::host::shared_vm::operation;

@@ -13,7 +13,7 @@ pub(super) struct ArraySpeciesProof {
     constructor: Option<Value>,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The element `Array.prototype.at` reads for `value` among `length` elements: ToIntegerOrInfinity
     /// of `value`, then the staged relative position `element_at` (shared with
     /// `%TypedArray%.prototype.at`). `None` when the position lies outside the array.
@@ -473,16 +473,6 @@ impl<H: Host> Vm<H> {
         Ok(object)
     }
 
-    /// Whether every Set on `array` is the plain element store (see `fill_plain_array_elements`).
-    fn has_plain_elements(&self, array: Value) -> bool {
-        self.object_data(array).is_some_and(|object| {
-            object.is_extensible()
-                && !object.is_frozen()
-                && !object.has_indexed_descriptors()
-                && !object.is_arguments_object()
-        }) && self.prototypes_hold_no_index(array)
-    }
-
     /// Stores `value` at every index of `indices`, all below the array's length, where each
     /// Set is the plain element store: an extensible, unfrozen array whose elements carry
     /// default attributes and whose prototypes hold no index (`prototypes_hold_no_index`), so
@@ -494,10 +484,17 @@ impl<H: Host> Vm<H> {
         indices: std::ops::Range<usize>,
         value: Value,
     ) -> bool {
-        let Some(dense) = self.heap.array(array).map(|array| array.elements().len()) else {
+        // One record serves the length, the flags that make every Set plain, and the prototype
+        // whose chain is then checked.
+        let Some(object) = self.heap.array(array) else {
             return false;
         };
-        if !self.has_plain_elements(array) {
+        let dense = object.elements().len();
+        let plain = object.is_extensible()
+            && !object.is_frozen()
+            && !object.has_indexed_descriptors()
+            && !object.is_arguments_object();
+        if !plain || !self.chain_from_holds_no_index(Some(object.proto())) {
             return false;
         }
         let in_dense = indices.start..indices.end.min(dense);

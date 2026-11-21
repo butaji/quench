@@ -1,6 +1,5 @@
 //! Child environment enumeration and coercion shared by async and sync spawn.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{collections::HashSet, process::Command};
 
@@ -9,7 +8,7 @@ use crate::modules::util_shared_vm::named_get as get;
 // Node intentionally includes enumerable prototype properties. A nearer own
 // property shadows an inherited key even when the nearer property is hidden.
 fn keys(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     env: RootId,
 ) -> Result<Vec<(String, RootId)>, RootedError> {
     let mut current = env;
@@ -53,7 +52,7 @@ fn keys(
 }
 
 fn null_check(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -76,7 +75,7 @@ fn null_check(
 }
 
 pub(crate) fn configure(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     command: &mut Command,
     env: RootId,
 ) -> Result<(), RootedError> {

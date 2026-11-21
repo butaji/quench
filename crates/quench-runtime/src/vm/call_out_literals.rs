@@ -5,7 +5,7 @@ use super::*;
 use crate::bytecode::Register;
 use crate::staged::protocol_literals::LiteralStep;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The literal, template, closure and object-construction `step` of its operand values (`first` is the first operand register's
     /// value, `second` the second's): the value it defines, if any.
     pub(super) fn literal_step(&mut self, p: &ResidualProgram, site: super::call_out::CallSite, step: LiteralStep, first: Option<Value>, second: Option<Value>)

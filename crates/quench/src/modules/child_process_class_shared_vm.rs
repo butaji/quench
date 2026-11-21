@@ -3,11 +3,9 @@
 //! operations own the OS process and its pipes; a ChildProcess projects their events
 //! (`__quenchDispatch`) onto its streams and its own `exit`/`close` events.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 /// The child's host id and its timeout and abort subscriptions.
@@ -93,7 +91,7 @@ fn process(c: &mut Context<'_>) -> Outcome {
 /// The public module object, built once with the classes it exports.
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let emitter_api = c
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .event_targets_api

@@ -2,13 +2,11 @@
 //! `CloseEvent` and `ErrorEvent`. Each is an `Event` with read-only fields from its init
 //! dictionary; one table describes every interface's fields and their Web IDL types.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use crate::modules::host_members::{captured, current, function, members};
 use crate::modules::webstreams_shared_vm::{self as web, arg, get, is_nullish, is_undefined, put, record};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Member, "messageEvent", [ConstructMessage, ConstructClose, ConstructError, Field, InitMessageEvent]);
@@ -86,12 +84,12 @@ impl Event {
 
 /// The classes table by interface name, built once over `Event`.
 fn classes(c: &mut Context<'_>) -> Outcome {
-    if let Some(table) = c.node().shared_state().borrow().builtin_cache.get(CLASSES).copied() {
+    if let Some(table) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(CLASSES).copied() {
         return Ok(table);
     }
     let table = c.with_startup_intrinsics(build)?;
     let retained = c.retain(table)?;
-    c.node().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
     Ok(table)
 }
 

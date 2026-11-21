@@ -1,0 +1,44 @@
+# Per-op instruction budgets (quench-gate step `ir-budget`, `crates/quench-gate/src/op_budget.rs`).
+# Every tier (--no-jit, --b-jit, --u-jit) is held to them. An op's count is net of the `empty` op,
+# the loop's own step, so the budget is what the op's body may cost per iteration.
+# `@unit count` is a unit budget; `op terms` sums units (`unit*k` counts k of one unit).
+# Units (Vitaly, 2026-11-21): `a.x` <= 5, `i + 1` <= 3, a call <= 20.
+@arith 3     # one int or double operator, `|0` included, or a compare-and-branch
+@field 5     # a named read or store, `a.x`
+@element 5   # an indexed read or store, `a[i]`
+@call 20     # a call and its return, the callee's body not included
+@loop 9      # the loop's own step: `i < n`, `i++`, the back edge (the `empty` op's body is `a = i`)
+empty loop
+int_add arith*2              # (a + i) | 0
+int_add_noor arith*2         # a + (i & 7)
+int_sub arith*2              # (a - i) | 0
+int_mul arith*3              # (a * 3 + i) | 0
+shl_shr arith*5              # ((a << 3) ^ (a >> 2) ^ i) | 0
+ushr arith*3                 # (a >>> 1) + i | 0
+bitwise arith*4              # ((a & m) | (i ^ k)) & m
+dbl_add arith                # a + 0.25
+dbl_mul arith                # a * k
+mixed_int_dbl arith*2        # a + i * 0.5
+cmp_int arith*4              # i < 1000 || (i & 3) > 1, c++
+eq_int arith*3               # (i & 7) === 3, c++
+eq_undef_null arith*4        # u === undefined, u == null, two c++
+truthy_int arith*3           # i & 3, test, c++
+truthy_obj arith*2           # test, c++
+truthy_str arith*2           # test, c++
+not_op arith*3               # !(i & 1), c++
+neg_op arith*3               # (-a + i) | 0
+typeof_op arith*2            # typeof x === "number", c++
+inc_local arith*2            # a++, b--
+arr_load_int element+arith*3 # (a + arr[i & 255]) | 0
+arr_store_int element+arith  # arr[i & 255] = i
+arr_load_dbl element+arith*2 # a += arr[i & 255]
+arr_store_dbl element+arith*2 # arr[i & 255] = i * 0.5
+arr_length field+arith       # a += arr.length
+typed_load element+arith*3   # (a + t[i & 255]) | 0
+typed_store_f64 element+arith*2 # t[i & 255] = i * 0.5
+str_length field+arith       # a += s.length
+field_read field+arith*2     # (a + o.y) | 0
+field_store field            # o.y = i
+call_direct call+arith*4     # (a + addOne(i)) | 0, body (x + 1) | 0
+call_closure call+field+arith*4 # (a + f(i)) | 0, body (x + k) | 0 with k captured
+call_method call+field*2+arith*4 # (a + o.m(i)) | 0, body (x + this.k) | 0

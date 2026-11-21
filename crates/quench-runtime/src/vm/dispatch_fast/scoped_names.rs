@@ -14,7 +14,7 @@ use crate::bytecode::Atom;
 /// The scope of the innermost activation, when it is an environment window: registers `r` and
 /// the record at `ip` of its function are the access's. `at_site` where the access is an
 /// instruction a binding site scopes (`Frame::binding_site_pc`). `None` in a frame's run.
-pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site: bool) -> Option<WindowScope> {
+pub(super) fn window_scope(cx: *mut LaneContext, r: Registers, ip: Ip, at_site: bool) -> Option<WindowScope> {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.activation_count().checked_sub(1)?;
     let activation = vm.lane_stack.top_frame()?;
@@ -45,7 +45,7 @@ pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
 /// The innermost activation as the owner of its steps where it is a plain one (registers only, no locals window): its
 /// closure's environment is the one its captures read, it has no locals, no record and no `with` objects. `None` in an
 /// environment window (`window_scope`) or a frame's run.
-pub(super) fn plain_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers) -> Option<WindowScope> {
+pub(super) fn plain_scope(cx: *mut LaneContext, r: Registers) -> Option<WindowScope> {
     let vm = unsafe { vm(cx) };
     let activation = vm.lane_stack.top_frame()?;
     let script = activation.script().filter(|script| !script.environment)?;
@@ -64,7 +64,7 @@ pub(super) fn plain_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers) -> Opt
     })
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The innermost object of `scope`'s chain that has `atom`, with its value there, as
     /// `find_with_binding` finds it for a frame: `Some(None)` where none does, `None` where the
     /// objects' shapes alone do not decide. The lookup reads the scope as a frame's and runs
@@ -84,7 +84,7 @@ impl<H: Host> Vm<H> {
 /// environment, or an enclosing activation's; else, where no scope binds it, the global read
 /// (`Vm::read_past_scopes`, its cached field at `site`), as a direct eval's `eval` or a global's
 /// name is read. `None`, before any effect, leaves it to the general path.
-fn scoped_name_read<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, atom: Atom, site: u16) -> Option<(Value, Value)> {
+fn scoped_name_read(cx: *mut LaneContext, r: Registers, ip: Ip, atom: Atom, site: u16) -> Option<(Value, Value)> {
     let vm = unsafe { vm(cx) };
     if vm.atom_class(atom).contains(AtomClass::INTERNAL) {
         return None;
@@ -113,7 +113,7 @@ enum ScopedStore {
 }
 
 /// `value` stored to `atom` in the scope `scope` of the window activation.
-fn scoped_store<H: Host>(vm: &mut Vm<H>, scope: &WindowScope, atom: Atom, value: Value) -> ScopedStore {
+fn scoped_store(vm: &mut Vm, scope: &WindowScope, atom: Atom, value: Value) -> ScopedStore {
     match vm.window_with_binding(scope, atom) {
         None => ScopedStore::Undecided,
         Some(None) => ScopedStore::Unscoped,
@@ -128,8 +128,8 @@ fn scoped_store<H: Host>(vm: &mut Vm<H>, scope: &WindowScope, atom: Atom, value:
 /// (`Vm::site_environment`), and capturing the `with` objects it entered
 /// (`Vm::closure_over_scope`). Out of line, as `window_closure_value_in_lane`.
 #[inline(never)]
-fn scoped_closure_value<H: Host>(
-    cx: *mut LaneContext<H>,
+fn scoped_closure_value(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     function: u32,
@@ -161,9 +161,9 @@ fn scoped_closure_value<H: Host>(
 ///
 /// # Safety
 /// `cx` is the running lane's context, and `r` its register file, live for the row's step.
-pub(super) unsafe fn scoped_name_into<H: Host>(cx: *mut (), r: Registers, ip: Ip, atom: u32,
+pub(super) unsafe fn scoped_name_into(cx: *mut (), r: Registers, ip: Ip, atom: u32,
     destination: Register, receiver: Option<Register>, site: u16) -> bool {
-    let Some((value, receiver_value)) = scoped_name_read(cx.cast::<LaneContext<H>>(), r, ip, atom, site) else {
+    let Some((value, receiver_value)) = scoped_name_read(cx.cast::<LaneContext>(), r, ip, atom, site) else {
         return false;
     };
     r.set(destination, value);
@@ -177,8 +177,8 @@ pub(super) unsafe fn scoped_name_into<H: Host>(cx: *mut (), r: Registers, ip: Ip
 ///
 /// # Safety
 /// As `scoped_name_into`.
-pub(super) unsafe fn scoped_store_into<H: Host>(cx: *mut (), r: Registers, ip: Ip, atom: u32, value: u64) -> bool {
-    let cx = cx.cast::<LaneContext<H>>();
+pub(super) unsafe fn scoped_store_into(cx: *mut (), r: Registers, ip: Ip, atom: u32, value: u64) -> bool {
+    let cx = cx.cast::<LaneContext>();
     let vm = unsafe { vm(cx) };
     let Some(scope) = window_scope(cx, r, ip, true) else {
         return false;
@@ -190,8 +190,8 @@ pub(super) unsafe fn scoped_store_into<H: Host>(cx: *mut (), r: Registers, ip: I
 ///
 /// # Safety
 /// As `scoped_name_into`.
-pub(super) unsafe fn scoped_local_store_into<H: Host>(cx: *mut (), r: Registers, ip: Ip, slot: u16, value: u64) -> bool {
-    let cx = cx.cast::<LaneContext<H>>();
+pub(super) unsafe fn scoped_local_store_into(cx: *mut (), r: Registers, ip: Ip, slot: u16, value: u64) -> bool {
+    let cx = cx.cast::<LaneContext>();
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let vm = unsafe { vm(cx) };
@@ -209,8 +209,8 @@ pub(super) unsafe fn scoped_local_store_into<H: Host>(cx: *mut (), r: Registers,
 ///
 /// # Safety
 /// As `scoped_name_into`.
-pub(super) unsafe fn scoped_closure_into<H: Host>(cx: *mut (), r: Registers, ip: Ip, function: u32, window: u16) -> Option<Value> {
-    let cx = cx.cast::<LaneContext<H>>();
+pub(super) unsafe fn scoped_closure_into(cx: *mut (), r: Registers, ip: Ip, function: u32, window: u16) -> Option<Value> {
+    let cx = cx.cast::<LaneContext>();
     if unsafe { (*cx).registers }.env().is_deleted() {
         return closure_value_of_in_lane(cx, function);
     }

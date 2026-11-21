@@ -1,9 +1,7 @@
 //! Genuine Unix process facts: the `process_methods` binding, and the public methods
 //! Node's `wrapProcessMethods` (lib/internal/process/per_thread.js) makes over it.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 use crate::modules::util_shared_vm::named_get as get;
 use crate::modules::util_shared_vm::named_put as put;
@@ -388,7 +386,7 @@ pub(crate) fn public_thread_cpu(c: &mut Context<'_>, _: RootId, args: &[RootId])
 /// `process.execve(execPath[, args[, env]])`: validates, then replaces the process image.
 pub(crate) fn public_execve(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     super::process_warning_shared_vm::emit_experimental(c, "process.execve")?;
-    if c.node().shared_state().borrow().messaging.is_worker() {
+    if c.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.is_worker() {
         let error = c.type_error_rooted("Calling process.execve is not supported in a worker")?;
         super::node_errors_shared_vm::decorate_type_error(c, error, "ERR_WORKER_UNSUPPORTED_OPERATION")?;
         return Err(c.throw(error));

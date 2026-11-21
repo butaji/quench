@@ -35,7 +35,7 @@ mod tests {
                 if(readOwn(own)!==7||readCell(Static)!==8||readInherited(inherited)!==9)throw 'data';
             }
         "#, "native-field-permission.js").unwrap();
-        let native = crate::NativeJsProgram::<TestHost>::compile_eager(program).unwrap();
+        let native = crate::NativeJsProgram::compile_eager(program).unwrap();
         let program = native.residual();
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(crate::ExecutionMode::NativeOnly);
@@ -193,7 +193,7 @@ mod shape_trace {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Name-derived property classes, computed from the atom text once per atom.
     #[inline(always)]
     pub(super) fn atom_class(&self, atom: Atom) -> AtomClass {
@@ -899,6 +899,12 @@ impl<H: Host> Vm<H> {
     /// (`inherited_index_absent`), whichever the index.
     pub(super) fn prototypes_hold_no_index(&self, object: Value) -> bool {
         let first = self.object_data(object).map(|data| data.proto());
+        self.chain_from_holds_no_index(first)
+    }
+
+    /// `prototypes_hold_no_index` of the chain that starts at `first`, the prototype of the object
+    /// being checked; `None` where that object has no record.
+    pub(super) fn chain_from_holds_no_index(&self, first: Option<Value>) -> bool {
         // The held proof answers a chain it covers without the walk.
         if first.is_some_and(|first| self.chain_holds_no_index(first)) {
             return true;
@@ -1285,7 +1291,7 @@ impl FieldCacheSet {
 fn field_cache_key(receiver: u32, holder: u32) -> u64 {
     (u64::from(receiver) << u32::BITS) | u64::from(holder)
 }
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A fresh array of the active realm holding `length` holes: `MakeArray`'s result.
     /// Its holes are defined next (`define_literal_element`), so no young run holds them.
     pub(super) fn hole_array(&mut self, length: usize) -> Value {
@@ -5462,7 +5468,7 @@ fn cached_holder_matches(holder: &crate::heap::Object, shape: u32) -> bool {
     matches
 }
 
-impl<H> Vm<H> {
+impl Vm {
     /// The shape table as the heap registers it (`Heap::track_slot_representations`).
     pub(super) fn shape_layouts(&self) -> Vec<(usize, Option<(u32, usize)>)> {
         super::shape_layouts(&self.shapes)

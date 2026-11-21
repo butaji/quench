@@ -1,12 +1,11 @@
 //! Node's lazy data properties: a property that reads a library module's export on first
 //! access (SetLazyDataProperty), and the globals the bootstrap defines that way.
-use quench_runtime::ErasedHost;
 use crate::modules::event_constructor_shared_vm::get;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// Node's native SetLazyDataProperty protocol, using Core's genuine lazy data slots.
 pub(crate) fn define_lazy_properties(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -31,7 +30,7 @@ pub(crate) fn define_lazy_properties(
 
 /// `property` on `target` reads export `export` of library module `id` on first access.
 fn define_lazy_export(
-    context: &mut NativeContext<'_, ErasedHost>, target: RootId, id: RootId, property: RootId, export: RootId, enumerable: bool,
+    context: &mut NativeContext<'_>, target: RootId, id: RootId, property: RootId, export: RootId, enumerable: bool,
 ) -> Result<(), RootedError> {
     let name = context.to_string(property)?;
     let flag = context.boolean(enumerable);
@@ -59,7 +58,7 @@ pub(crate) fn lazy_global_names() -> impl Iterator<Item = &'static str> {
     LAZY_GLOBALS.iter().map(|&(property, _, _, _)| property)
 }
 
-pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
+pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     let global = context.global_root()?;
     for &(property, id, export, enumerable) in LAZY_GLOBALS {
         let property = context.string_rooted(property);
@@ -71,7 +70,7 @@ pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_, ErasedHost>) 
 }
 
 pub(crate) fn initialize_lazy_property(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {

@@ -1,10 +1,9 @@
 //! `internalBinding('url')` (src/node_url.cc): WHATWG URL parsing and setters for Node's
 //! lib/internal/url.js. The `url` crate stands in for ada; both implement the WHATWG URL
 //! Standard, and ada's component offsets are derived from the crate's.
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use url::Url;
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// `kURLComponentsLength`: the slots of `urlComponents`.
 const COMPONENTS: usize = 9;

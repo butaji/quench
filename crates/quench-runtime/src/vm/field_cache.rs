@@ -17,7 +17,7 @@ pub(super) enum InheritedReceiver {
     Builtin,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The object an inherited entry's receiver test reads, and its kind: an object record;
     /// a function, which an entry answers only where its shape holds the name
     /// (`InheritedFieldCache::function_links`); or an array or ordinary builtin (a
@@ -33,18 +33,28 @@ impl<H: Host> Vm<H> {
             return Some((&function.object, InheritedReceiver::Function));
         }
         let builtin: Option<&Object> = self.heap.array(value).map(|array| &**array);
+        // A typed array inherits its methods two links up (`%TypedArray%.prototype`); its numeric
+        // names are its own elements, which `inherited_entry_answers` keeps from any entry.
         builtin
             .or_else(|| self.heap.ordinary_builtin_object(value))
+            // A typed array's shape holds every own name but its canonical numeric strings,
+            // which `inherited_entry_answers` refuses (`AtomClass::TYPED_ARRAY_INDEX`): its
+            // prototype methods (`u8.fill`, `f64.indexOf`) take the inherited entry.
+            .or_else(|| match self.heap.get(value) {
+                Some(cell @ Cell::TypedArray { .. }) => cell.object(),
+                _ => None,
+            })
             .map(|object| (object, InheritedReceiver::Builtin))
     }
 
     /// Whether inherited entry `index` answers a receiver of `kind`: a builtin's own lookup of
-    /// a private, virtual-field or index name is not its shape's (`shape_answers`).
+    /// a private, virtual-field, index or canonical numeric name (a typed array's element) is not
+    /// its shape's (`shape_answers`).
     #[inline(always)]
     pub(super) fn inherited_entry_answers(&self, kind: InheritedReceiver, index: u32) -> bool {
         kind != InheritedReceiver::Builtin
             || self.heap.dependencies().inherited_get(index).is_some_and(|cache| {
-                !self.atom_class(cache.atom).intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD | AtomClass::ARRAY_INDEX)
+                !self.atom_class(cache.atom).intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD | AtomClass::ARRAY_INDEX | AtomClass::TYPED_ARRAY_INDEX)
             })
     }
 
@@ -225,7 +235,7 @@ pub(super) enum FieldCacheProbe {
 }
 
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The data field a receiver any heap cell holds (a function's `f.call`) inherits from its
     /// immediate prototype, among its site's recorded entries (`megamorphic_field_cache`): the
     /// holder tier `polymorphic_field_hit` probes for a record receiver. Every function named

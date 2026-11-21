@@ -4,7 +4,6 @@
 //! decide is `Step::Unresolved`, and the general path takes it under the VM's own rules.
 
 use crate::bytecode::{Operand, Register, ResidualProgram, WideInstruction};
-use crate::host::Host;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::value::TypeofKind;
 use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
@@ -61,10 +60,10 @@ pub(in crate::vm) fn runs_row(operation: Operation<u64, ()>) -> bool {
 
 /// The running frame's register file and local slots, and the VM the row's calls answer through,
 /// borrowed for one staged row.
-pub(in crate::vm) struct InterpreterFrame<'a, H: Host> {
+pub(in crate::vm) struct InterpreterFrame<'a> {
     /// The running VM (`InterpreterFrame::step_row`). The row runner holds no other reference into
     /// the VM while the row runs, so the frame's calls are its only access to it.
-    vm: *mut Vm<H>,
+    vm: *mut Vm,
     program: &'a ResidualProgram,
     site: CallSite,
     registers: *mut Value,
@@ -84,11 +83,11 @@ pub(in crate::vm) struct InterpreterFrame<'a, H: Host> {
     pushed: Option<StepResult>,
 }
 
-impl<'a, H: Host> InterpreterFrame<'a, H> {
+impl<'a> InterpreterFrame<'a> {
     /// The frame over the running activation `frame` of the VM `vm`, its registers and locals read and written in
     /// place; `pc` is the resume PC the row's effects are made at.
     #[inline(always)]
-    fn over(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize, allow_inline_calls: bool) -> Self {
+    fn over(vm: *mut Vm, program: &'a ResidualProgram, frame: usize, pc: usize, allow_inline_calls: bool) -> Self {
         // SAFETY: `vm` is the running VM, live for the row. The register and local pointers are the
         // running activation's, which stay allocated for the activation's run.
         let (registers, locals, locals_len, function) = unsafe {
@@ -115,7 +114,7 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
     /// after the record's staged row declined (`CallFrame::call_general`). Its completion is `Done` where the
     /// call completed its result, else the step the VM's call ends in (`Stop`).
     #[inline(always)]
-    pub(in crate::vm) fn call_row(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize,
+    pub(in crate::vm) fn call_row(vm: *mut Vm, program: &'a ResidualProgram, frame: usize, pc: usize,
         allow_inline_calls: bool, instruction: WideInstruction, form: CallForm) -> RowRun {
         let mut interpreted = Self::over(vm, program, frame, pc, allow_inline_calls);
         let step = interpreted.call_general(form, instruction, pc);
@@ -135,7 +134,7 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
     /// decides it (`RowRun::Declined` where it does not). `pc` is the resume PC of `instruction`,
     /// which a `Yield` takes its destination from.
     #[inline(always)]
-    pub(in crate::vm) fn step_row(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize,
+    pub(in crate::vm) fn step_row(vm: *mut Vm, program: &'a ResidualProgram, frame: usize, pc: usize,
         allow_inline_calls: bool, instruction: WideInstruction, operation: Operation<u64, ()>) -> RowRun {
         let mut interpreted = Self::over(vm, program, frame, pc, allow_inline_calls);
         let step = crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut interpreted, operation);
@@ -166,7 +165,7 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
     }
 
     /// The error a `Throw` of `value` raises: the primitive's own, else the object's with its detail.
-    fn thrown(vm: *mut Vm<H>, value: Value) -> JsError {
+    fn thrown(vm: *mut Vm, value: Value) -> JsError {
         // SAFETY: the row has finished with the VM's calls; `vm` is live (`step_row`).
         let vm = unsafe { &*vm };
         JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, vm.detail_string(value)))
@@ -174,7 +173,7 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
 
     /// The running VM, which the frame's calls answer through.
     #[inline(always)]
-    fn vm<'v>(&self) -> &'v mut Vm<H> {
+    fn vm<'v>(&self) -> &'v mut Vm {
         // SAFETY: `vm` is the running VM, live for the row (`step_row`), and the row holds no other
         // reference into it while its calls run.
         unsafe { &mut *self.vm }
@@ -204,7 +203,7 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
     }
 }
 
-impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
+impl crate::staged::Frame<Concrete> for InterpreterFrame<'_> {
     type Fact = InterpreterFact;
     type Control = InterpreterControl;
 
@@ -587,9 +586,9 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
     }
 }
 
-impl<H: Host> crate::staged::GlobalFrame<Concrete> for InterpreterFrame<'_, H> {}
+impl crate::staged::GlobalFrame<Concrete> for InterpreterFrame<'_> {}
 
-impl<H: Host> crate::staged::CallFrame<Concrete> for InterpreterFrame<'_, H> {
+impl crate::staged::CallFrame<Concrete> for InterpreterFrame<'_> {
     /// The call's general form, run by the VM on the running activation (`Vm::call_form_step`). Its
     /// completion is a result the frame defines (`Step::Value`, the row's edge follows), or the step
     /// the call ends in (`pushed`, the activation or tail call the run stops on, or a return); a raise
@@ -612,15 +611,15 @@ impl<H: Host> crate::staged::CallFrame<Concrete> for InterpreterFrame<'_, H> {
     }
 }
 
-impl<H: Host> crate::staged::ElementFrame<Concrete> for InterpreterFrame<'_, H> {}
+impl crate::staged::ElementFrame<Concrete> for InterpreterFrame<'_> {}
 
-impl<H: Host> crate::staged::PropertyFrame<Concrete> for InterpreterFrame<'_, H> {
+impl crate::staged::PropertyFrame<Concrete> for InterpreterFrame<'_> {
     type Plans = crate::staged::NoPlans;
 
     fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
 }
 
-impl<H: Host> NumericFrame<Concrete> for InterpreterFrame<'_, H> {
+impl NumericFrame<Concrete> for InterpreterFrame<'_> {
     /// An int32 operand's word, from its register's tagged word.
     #[inline(always)]
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {

@@ -1,10 +1,8 @@
 //! Raw directory scanning for the configured Node filesystem policy.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::fs_shared_vm::{self as fs, UV_DIRENT_DIR, UV_DIRENT_LINK, UV_DIRENT_UNKNOWN};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 pub(crate) struct Entry {
     pub(crate) name: std::ffi::OsString,
     pub(crate) kind: i32,
@@ -149,7 +147,7 @@ pub(crate) fn internal_module_stat(
         path.truncate(end);
     }
     let path = c
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .cwd

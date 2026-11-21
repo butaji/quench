@@ -45,14 +45,14 @@ fn call_boundary<const NATIVE: bool, const BODY: bool, const SPECIALIZED: bool>(
     let inputs: [Value; BATCH_VALUES] = std::array::from_fn(|index| {
         Value::integer(-(index as i32) - 1)
     });
-    let call = |vm: &mut super::Vm<crate::test_host::TestHost>, input| {
+    let call = |vm: &mut super::Vm, input| {
         if BODY {
             vm.call_native(&program, black_box(crate::heap::Native::MathAbs), Value::UNDEFINED, &[input])
         } else {
             vm.call_value(&program, black_box(callee), Value::UNDEFINED, &[input])
         }.unwrap()
     };
-    let validate = |vm: &mut super::Vm<crate::test_host::TestHost>| {
+    let validate = |vm: &mut super::Vm| {
         for (index, input) in inputs.iter().copied().enumerate() {
             let expected = if NATIVE { Value::integer(index as i32 + 1) } else { input };
             assert_eq!(call(vm, input), expected);
@@ -116,7 +116,7 @@ fn capture_read<const REMEMBERED: bool>(b: &mut Bencher, depth: u16) {
         ).0;
     }
     vm.walked_capture_slots(env, false, depth).unwrap();
-    let read = |vm: &super::Vm<crate::test_host::TestHost>, env, depth| {
+    let read = |vm: &super::Vm, env, depth| {
         if REMEMBERED {
             vm.remembered_capture(env, false, depth, 0)
         } else {

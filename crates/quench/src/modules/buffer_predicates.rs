@@ -1,10 +1,9 @@
 //! `buffer.isUtf8`, `buffer.isAscii` and `buffer.isLatin1` (lib/buffer.js), with the public
 //! functions' argument checks: nothing else reaches the binding's.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The largest code unit Node's one-byte `latin1` encodes.
 const LATIN1_MAX: u16 = 0xff;

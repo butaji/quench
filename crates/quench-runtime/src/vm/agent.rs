@@ -40,7 +40,7 @@ const AGENT_METHODS: &[(AgentMethod, &str, f64)] = &[
     (AgentMethod::MonotonicNow, "monotonicNow", 0.0),
 ];
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_test262_agent(
         &mut self,
         p: &ResidualProgram,

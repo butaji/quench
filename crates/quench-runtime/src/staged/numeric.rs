@@ -236,10 +236,11 @@ pub(crate) mod kind {
 #[inline(always)]
 pub(crate) fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: NumberOperation) -> Step<S::Word, F::Control> {
+    // The general operator is decoded only once the words leave the row, so a decided row pays nothing for it.
     #[cfg(not(stencil_build))]
-    let general = if frame.general_operators() { general_binary(&operation) } else { None };
+    let general = frame.general_operators().then_some(operation);
     #[cfg(stencil_build)]
-    let general: Option<(super::CallOut, Option<Register>)> = None;
+    let general: Option<NumberOperation> = None;
     let step = match operation {
         NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero } =>
             if const { KIND == kind::ANY || KIND == kind::ARITHMETIC } { arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)) } else { Step::Unresolved },
@@ -269,7 +270,11 @@ pub(crate) fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage
             if const { KIND == kind::ANY || KIND == kind::INT_CASE } { int_case(stage, frame, destination, source, (minimum, maximum), count) } else { Step::Unresolved },
     };
     match (general, step) {
-        (Some((call, destination)), Step::Unresolved) => super::callout::calling(stage, frame, call, destination),
+        #[cfg(not(stencil_build))]
+        (Some(operation), Step::Unresolved) => match general_binary(&operation) {
+            Some((call, destination)) => super::callout::calling(stage, frame, call, destination),
+            None => Step::Unresolved,
+        },
         (_, step) => step,
     }
 }
@@ -279,6 +284,7 @@ pub(crate) fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage
 /// for an operation that is no binary operator's. A relation's value is left out where it is `==` or `===`,
 /// which one relation names both of: the `Binary` row of that record asks the VM for it.
 #[cfg(not(stencil_build))]
+#[inline(always)]
 fn general_binary(operation: &NumberOperation) -> Option<(super::CallOut, Option<Register>)> {
     let (destination, left, right, operator) = match *operation {
         NumberOperation::Arithmetic { destination, left, right, operation, .. } => (destination, left, right, operation.binary_operator()),

@@ -13,13 +13,13 @@ pub(in crate::vm::dispatch_fast) const PLANNED_CONSTRUCT_RETURNED: u8 = 2;
 pub(in crate::vm::dispatch_fast) const SCRIPT_CONSTRUCT_KEEPING: u8 = 3;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::CONSTRUCT | parameters }>`).
-pub(in crate::vm::dispatch_fast) const fn construct_miss_of<H: Host>(parameters: u8) -> Handler {
+/// (`protocol_row::<OP, ACC, { protocol_family::CONSTRUCT | parameters }>`).
+pub(in crate::vm::dispatch_fast) const fn construct_miss_of(parameters: u8) -> Handler {
     match parameters {
-        SCRIPT_CONSTRUCT => super::super::script_construct_miss::<H> as Handler,
-        PLANNED_CONSTRUCT => super::super::planned_construct_miss::<H> as Handler,
-        PLANNED_CONSTRUCT_RETURNED => super::super::planned_construct_returned_miss::<H> as Handler,
-        SCRIPT_CONSTRUCT_KEEPING => super::super::script_construct_keeping_miss::<H> as Handler,
-        _ => general_step_in_lane::<H>,
+        SCRIPT_CONSTRUCT => super::super::script_construct_miss as Handler,
+        PLANNED_CONSTRUCT => super::super::planned_construct_miss as Handler,
+        PLANNED_CONSTRUCT_RETURNED => super::super::planned_construct_returned_miss as Handler,
+        SCRIPT_CONSTRUCT_KEEPING => super::super::script_construct_keeping_miss as Handler,
+        _ => general_step_in_lane,
     }
 }

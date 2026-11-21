@@ -110,13 +110,6 @@ incremental = true
 debug = 0
 strip = "none"
 
-# quench-runtime holds the VM (compiled for `ErasedHost`) in about 2,600 per-module units. Merged
-# into 256, any size change moved items between merged units and left almost none of them
-# reusable, so a one-line runtime edit recompiled the whole crate (about 240 s). Unmerged, an edit
-# recompiles the units that hold or inline what changed.
-[profile.experiment.package.quench-runtime]
-codegen-units = 4096
-
 # Targeted library tests in a short change-test cycle: `experiment` compiled with crate-local
 # ThinLTO and full optimization, where an edit to one test re-ran ThinLTO and LLVM passes over
 # most of quench-runtime's 256 units (time-passes: 330 s ThinLTO + 294 s passes of 725 s).
@@ -132,6 +125,13 @@ lto = "off"
 [profile.smoke]
 inherits = "experiment"
 lto = "off"
+
+# quench-runtime holds every row since the host is erased (TOD-2034): an incremental session of
+# it peaks at 13.5 GB at -j1 or -j2 (fresh, or after a one-line edit), and the 13.8 GB box kills
+# it. Non-incremental it peaks at about 6 GB at -j1 (820 s, 717 s of it LLVM on one thread) and
+# 12 GB at -j2 (8 min). Until the crate's compile memory is cut, it builds non-incremental here.
+[profile.smoke.package.quench-runtime]
+incremental = false
 
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.

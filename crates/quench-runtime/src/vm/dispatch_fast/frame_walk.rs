@@ -92,7 +92,7 @@ impl Completion {
     /// Whether an activation completing so carries a payload in its side record (`SidePayload`).
     #[inline]
     fn carries_payload(self) -> bool {
-        matches!(self, Self::Forwarder | Self::SettlesPromise | Self::ToWasm | Self::ReadsTrapped | Self::AssignsTrapped)
+        matches!(self, Self::Forwarder | Self::SettlesPromise | Self::AsyncRequest | Self::ToWasm | Self::ReadsTrapped | Self::AssignsTrapped)
     }
 }
 

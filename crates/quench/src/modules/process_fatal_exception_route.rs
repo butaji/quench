@@ -1,10 +1,8 @@
 //! Dynamic C++ fatal-exception boundary, separated from the replaceable default.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.node()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -34,7 +32,7 @@ fn discard(c: &mut Context<'_>, error: RootedError) -> Result<(), RootedError> {
     Ok(())
 }
 pub(crate) fn install(c: &mut Context<'_>, process: RootId) -> Result<(), RootedError> {
-    let name = if c.node().shared_state().borrow().messaging.is_worker() {
+    let name = if c.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.is_worker() {
         "workerOnGlobalUncaughtException"
     } else {
         ""
@@ -64,7 +62,7 @@ pub(crate) fn dispatch(
             return Ok(c.boolean(true));
         }
     };
-    let control = c.node().shared_state().borrow().process_control.clone();
+    let control = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.clone();
     if !c.is_callable_rooted(hook)? {
         control.request_fatal_uncaught(
             super::node_protocol_constants::ExitCode::InvalidFatalExceptionMonkeyPatching as i32,

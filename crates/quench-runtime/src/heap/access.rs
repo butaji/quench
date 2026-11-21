@@ -641,12 +641,18 @@ impl Heap {
         value.direct_function_index().and_then(|_| self.function(value)).map(|function| &function.object)
     }
 
-    /// `held_other_receiver` of a function or ordinary builtin.
+    /// `held_other_receiver` of a function, ordinary builtin or typed array. A typed array is held
+    /// here though `ordinary_builtin_object` leaves it out: a held read is of its site's one atom,
+    /// recorded where the read reached a prototype, which a typed array's numeric key never does
+    /// (an integer-indexed object answers it itself), so its hint names a method or accessor.
     #[cold]
     #[inline(never)]
     fn held_cell_receiver(&self, value: Value) -> Option<&Object> {
         let function = value.direct_function_index().and_then(|_| self.function(value));
-        function.map(|function| &function.object).or_else(|| self.ordinary_builtin_object(value))
+        function.map(|function| &function.object).or_else(|| self.ordinary_builtin_object(value)).or_else(|| match self.get(value)? {
+            cell @ Cell::TypedArray { .. } => cell.object(),
+            _ => None,
+        })
     }
 
     /// The array a direct-array Value names; `None` for any other value, including an array

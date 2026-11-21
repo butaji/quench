@@ -19,7 +19,7 @@ pub(super) enum Brand {
     Date,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A virtual field read (`AtomClass::VIRTUAL_FIELD`) of a collection or buffer view that
     /// runs no guest code: the walk from the receiver through ordinary prototypes meets no
     /// other property of the name before an accessor whose getter answers this receiver

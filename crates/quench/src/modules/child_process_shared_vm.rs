@@ -1,8 +1,6 @@
 //! Child process execution backed by the host operating system.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
-use crate::host::node_host::SharedChildProcess;
+use crate::host::{node_host::SharedChildProcess, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 #[cfg(not(unix))]
 use std::io::Read;
@@ -18,12 +16,12 @@ use std::{
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 
-pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     super::child_process_class_shared_vm::module(context)
 }
 
 fn spawn_child_with_stdio(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     args: &[RootId],
     stdio: Option<Vec<super::child_process_stdio_shared_vm::Specification>>,
 ) -> Result<RootId, RootedError> {
@@ -208,7 +206,7 @@ fn spawn_child_with_stdio(
                 return Err(RootedError::host(error.to_string()));
             }
             context
-                .node()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow_mut()
                 .child_processes
@@ -343,7 +341,7 @@ fn spawn_error_code(code: Option<i32>) -> String {
 }
 
 pub(crate) fn register_child(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -376,7 +374,7 @@ pub(crate) fn register_child(
     let stdout = context.retain(stdout)?;
     let stderr = context.retain(stderr)?;
     let Some(mut process) = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .child_processes
@@ -391,7 +389,7 @@ pub(crate) fn register_child(
     process.stdout = Some(stdout);
     process.stderr = Some(stderr);
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .child_processes
@@ -423,7 +421,7 @@ pub(crate) fn register_child(
 /// Guest stream destruction closes our end of a child pipe independently of
 /// EOF: a shell descendant may still hold its writer after the shell exits.
 pub(crate) fn stream_closed(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -438,7 +436,7 @@ pub(crate) fn stream_closed(
     let kind_key = context.string_rooted("1");
     let kind = context.get_property_rooted(data, kind_key)?;
     let is_stdout = context.truthy_rooted(kind)?;
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(process) = state.borrow_mut().child_processes.get_mut(&id) {
         if is_stdout {
             process.stdout_terminal = true;
@@ -454,7 +452,7 @@ pub(crate) fn stream_closed(
 }
 
 pub(crate) fn queue_stdio_flush(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -467,7 +465,7 @@ pub(crate) fn queue_stdio_flush(
 }
 
 pub(crate) fn flush_stdio(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -476,7 +474,7 @@ pub(crate) fn flush_stdio(
         .and_then(|root| context.rooted_value(*root))
         .and_then(quench_runtime::Value::as_number)
         .ok_or_else(|| RootedError::host("child stdio flush has no id"))? as u64;
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let streams = {
         let state = state.borrow();
         state
@@ -513,7 +511,7 @@ pub(crate) fn flush_stdio(
 }
 
 pub(crate) fn request_read(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -531,7 +529,7 @@ pub(crate) fn request_read(
             .map(|root| context.truthy_rooted(root))
             .transpose()?
             .unwrap_or(false);
-        let state = context.node().shared_state();
+        let state = context.host_as::<crate::host::NodeHost>().shared_state();
         if let Some(process) = state.borrow_mut().child_processes.get_mut(&id) {
             if stdout {
                 process.stdout_pipe.request();
@@ -546,7 +544,7 @@ pub(crate) fn request_read(
 }
 
 pub(crate) fn request_extra_read(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -565,7 +563,7 @@ pub(crate) fn request_extra_read(
             .ok_or_else(|| RootedError::host("child extra-stdio read has no index"))?
             as usize;
         if let Some(output) = context
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .child_processes
@@ -587,7 +585,7 @@ pub(crate) fn request_extra_read(
 }
 
 pub(crate) fn write_child(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -608,7 +606,7 @@ pub(crate) fn write_child(
         .copied()
         .ok_or_else(|| RootedError::host("child stdin write callback missing"))?;
     let callback = context.retain(callback)?;
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let result = state.borrow_mut().child_processes.get_mut(&id).map_or_else(
         || Err(std::io::Error::from_raw_os_error(libc::EPIPE)),
         |process| process.stdin.write(bytes, callback),
@@ -619,7 +617,7 @@ pub(crate) fn write_child(
 /// A child pipe write's answer to JavaScript: `false` while the write is queued (the callback
 /// stays retained for its completion), `true` once written, or the write's error thrown.
 fn write_outcome(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     result: std::io::Result<bool>,
     callback: RootId,
 ) -> Result<RootId, RootedError> {
@@ -641,7 +639,7 @@ fn write_outcome(
 }
 
 pub(crate) fn write_extra_child(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -667,7 +665,7 @@ pub(crate) fn write_extra_child(
     let callback = context.retain(callback)?;
     #[cfg(unix)]
     let result = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .child_processes
@@ -689,7 +687,7 @@ pub(crate) fn write_extra_child(
 }
 
 pub(crate) fn end_child(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -703,7 +701,7 @@ pub(crate) fn end_child(
         .copied()
         .ok_or_else(|| RootedError::host("child stdin final callback missing"))?;
     let callback = context.retain(callback)?;
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let completed = state
         .borrow_mut()
         .child_processes
@@ -716,7 +714,7 @@ pub(crate) fn end_child(
 }
 
 pub(crate) fn end_extra_child(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -738,7 +736,7 @@ pub(crate) fn end_extra_child(
     let callback = context.retain(callback)?;
     #[cfg(unix)]
     let completed = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .child_processes
@@ -765,7 +763,7 @@ pub(crate) fn end_extra_child(
 /// Node closes the child's input at exit, before notifying exit observers.
 /// The stream owns its destruction callback and public hook dispatch.
 pub(crate) fn prepare_exit(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -793,7 +791,7 @@ pub(crate) fn prepare_exit(
 }
 
 pub(crate) fn destroy_input(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -803,7 +801,7 @@ pub(crate) fn destroy_input(
         .and_then(quench_runtime::Value::as_number)
         .ok_or_else(|| RootedError::host("child stdin destroy id missing"))? as u64;
     if let Some(process) = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .child_processes
@@ -822,7 +820,7 @@ pub(crate) fn destroy_input(
 }
 
 pub(crate) fn poll(
-    runtime: &mut quench_runtime::Runtime<ErasedHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     shared_state: &std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>>,
 ) -> Result<bool, String> {
@@ -1056,7 +1054,7 @@ enum Payload {
     Index(usize),
 }
 
-fn payload_root(runtime: &mut quench_runtime::Runtime<ErasedHost>, payload: Payload) -> Result<RootId, String> {
+fn payload_root(runtime: &mut quench_runtime::Runtime<NodeHost>, payload: Payload) -> Result<RootId, String> {
     Ok(match payload {
         Payload::None => runtime.root(quench_runtime::Value::NULL),
         Payload::Bytes(bytes) => runtime
@@ -1067,7 +1065,7 @@ fn payload_root(runtime: &mut quench_runtime::Runtime<ErasedHost>, payload: Payl
 }
 
 fn dispatch(
-    runtime: &mut quench_runtime::Runtime<ErasedHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     child: RootId,
     event: &str,
@@ -1103,7 +1101,7 @@ fn dispatch(
 }
 
 fn dispatch_exit(
-    runtime: &mut quench_runtime::Runtime<ErasedHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     child: RootId,
     event: &str,
@@ -1193,7 +1191,7 @@ pub(crate) const fn poll_interval() -> Duration {
 }
 
 pub(crate) fn spawn_sync(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1382,7 +1380,7 @@ fn set_command_arg0(command: &mut Command, arg0: Option<&str>) {
 }
 
 fn make_result(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     pid: Option<u32>,
     status: Option<i32>,
     signal: Option<&str>,
@@ -1436,7 +1434,7 @@ fn make_result(
 }
 
 fn sync_buffer(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     bytes: &[u8],
 ) -> Result<RootId, RootedError> {
     let prototype = context.host_function_data()?;
@@ -1446,7 +1444,7 @@ fn sync_buffer(
 }
 
 fn project_sync_output(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     result: RootId,
     options: Option<RootId>,
 ) -> Result<(), RootedError> {
@@ -1483,7 +1481,7 @@ fn project_sync_output(
 }
 
 pub(crate) fn string_array(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     array: RootId,
 ) -> Result<Vec<String>, RootedError> {
     let length = property(context, array, "length")?;
@@ -1509,17 +1507,17 @@ pub(crate) fn string_array(
 /// Resolve the OS launch boundary against the logical process directory after
 /// guest argument/environment hooks finish. Keep kernel symlink resolution.
 fn child_cwd(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     command: &mut Command,
     requested: Option<&str>,
 ) -> std::io::Result<()> {
-    let cwd = context.node().shared_state().borrow().cwd.clone();
+    let cwd = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.clone();
     cwd.configure_child_command(command, requested)
 }
 
 /// Node validates cwd as a filesystem path, including branded file URLs.
 fn property_cwd(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     options: RootId,
 ) -> Result<Option<String>, RootedError> {
     // Public child-process entry points snapshot own options. Keep the launch
@@ -1546,7 +1544,7 @@ fn property_cwd(
 }
 
 pub(crate) fn validate_cwd(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
 ) -> Result<RootId, RootedError> {
     if context
@@ -1584,7 +1582,7 @@ pub(crate) fn validate_cwd(
 }
 
 fn reject_cwd_null(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     contains_null: bool,
 ) -> Result<(), RootedError> {
@@ -1602,7 +1600,7 @@ fn reject_cwd_null(
 }
 
 fn property_string(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
 ) -> Result<Option<String>, RootedError> {
@@ -1618,7 +1616,7 @@ fn property_string(
 }
 
 fn property(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
@@ -1627,7 +1625,7 @@ fn property(
 }
 
 fn set_string(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: &str,
@@ -1637,7 +1635,7 @@ fn set_string(
 }
 
 fn set(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -1731,7 +1729,7 @@ pub(crate) fn signal_name(_: &std::process::ExitStatus) -> Option<&'static str> 
 
 /// normalizeSpawnArguments emits DEP0190 once across sync and async calls.
 pub(crate) fn shell_args_warning(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1746,7 +1744,7 @@ pub(crate) fn shell_args_warning(
     {
         return Ok(undefined);
     }
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if shared.borrow().child_process_shell_args_warning_emitted {
         return Ok(undefined);
     }
@@ -1764,7 +1762,7 @@ pub(crate) fn shell_args_warning(
 }
 
 fn sync_timeout(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     options: Option<RootId>,
 ) -> Result<Option<Duration>, RootedError> {
     let Some(options) = options else {
@@ -1779,7 +1777,7 @@ fn sync_timeout(
         .map(|value| Duration::from_millis(value as u64)))
 }
 fn sync_input(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     options: Option<RootId>,
 ) -> Result<Vec<u8>, RootedError> {
     let Some(options) = options else {
@@ -1809,7 +1807,7 @@ fn sync_input(
 }
 #[cfg(unix)]
 pub(crate) fn sync_kill_signal(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     options: Option<RootId>,
 ) -> Result<i32, RootedError> {
     let Some(options) = options else {
@@ -1861,7 +1859,7 @@ pub(crate) fn sync_kill_signal(
 /// Node's generic disposable observes public killed/kill hooks and returns
 /// undefined, retaining the original thrown value from either hook.
 pub(crate) fn dispose_child(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1876,7 +1874,7 @@ pub(crate) fn dispose_child(
 }
 
 fn install_process_handle(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     id: u64,
     child: RootId,
 ) -> Result<(), RootedError> {
@@ -1909,7 +1907,7 @@ fn install_process_handle(
 }
 
 pub(crate) fn reference_child(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1932,7 +1930,7 @@ pub(crate) fn reference_child(
 }
 
 fn handle_owner(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
 ) -> Result<(u64, RootId), RootedError> {
     let data = context.host_function_data()?;
@@ -1950,7 +1948,7 @@ fn handle_owner(
 }
 
 pub(crate) fn reference_handle(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1958,7 +1956,7 @@ pub(crate) fn reference_handle(
     let reference = property(context, data, "2")?;
     let reference = context.truthy_rooted(reference)?;
     if let Some(process) = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .child_processes
@@ -1971,13 +1969,13 @@ pub(crate) fn reference_handle(
     Ok(context.undefined())
 }
 pub(crate) fn handle_has_ref(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (id, _) = handle_owner(context, receiver)?;
     let reference = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .child_processes
@@ -1991,7 +1989,7 @@ pub(crate) fn handle_has_ref(
 }
 
 pub(crate) fn prototype_spawn(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2129,7 +2127,7 @@ pub(crate) fn prototype_spawn(
 }
 
 fn publish_spawn_diagnostic(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     event: &str,
     child: RootId,
     options: RootId,
@@ -2155,14 +2153,14 @@ fn publish_spawn_diagnostic(
 
 /// The backend waiter owns the actual Child; cancellation cannot target a reused pid.
 /// Drop real pipe/IPC owners and retained receiver roots even after partial register.
-fn cleanup_failed_initialization(context: &mut NativeContext<'_, ErasedHost>, started: RootId) {
+fn cleanup_failed_initialization(context: &mut NativeContext<'_>, started: RootId) {
     let id = property(context, started, "id")
         .ok()
         .and_then(|root| context.rooted_value(root).and_then(|v| v.as_number()))
         .map(|v| v as u64);
     let process = id.and_then(|id| {
         context
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .child_processes
@@ -2188,7 +2186,7 @@ fn cleanup_failed_initialization(context: &mut NativeContext<'_, ErasedHost>, st
 /// Public projection constructs first, then observes the mutable prototype hook.
 /// This keeps real SDK MockTracker interception on the actual child receiver.
 pub(crate) fn construct_child(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2317,7 +2315,7 @@ impl Cancellation {
 /// SDK onErrorNT ordering: set exitCode, destroy stdin, emit error, drain outputs;
 /// close follows all counted output close events and never emits spawn/exit.
 pub(crate) fn spawn_failed(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2370,7 +2368,7 @@ pub(crate) fn spawn_failed(
 }
 
 fn emit_failure_event(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     child: RootId,
     event: &str,
     arguments: &[RootId],
@@ -2384,7 +2382,7 @@ fn emit_failure_event(
 }
 
 pub(crate) fn spawn_failed_run(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2438,7 +2436,7 @@ pub(crate) fn spawn_failed_run(
         crate::host::shared_vm::operation!("childProcessSpawnFailedFlush"),
         data,
     )?;
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let id = shared
         .borrow_mut()
         .scheduler
@@ -2467,7 +2465,7 @@ pub(crate) fn spawn_failed_run(
 }
 
 pub(crate) fn spawn_failed_flush(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2487,7 +2485,7 @@ pub(crate) fn spawn_failed_flush(
 }
 
 fn failed_close_progress(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     data: RootId,
 ) -> Result<(), RootedError> {
     let remaining = property(context, data, "remaining")?;
@@ -2508,7 +2506,7 @@ fn failed_close_progress(
 }
 
 pub(crate) fn spawn_failed_closed(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2518,7 +2516,7 @@ pub(crate) fn spawn_failed_closed(
 }
 
 pub(crate) fn spawn_succeeded(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2535,7 +2533,7 @@ pub(crate) fn spawn_succeeded(
 }
 
 pub(crate) fn spawn_succeeded_run(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {

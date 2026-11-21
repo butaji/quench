@@ -2,14 +2,12 @@
 //! its statics, its prototype and the module's exports. Byte work goes through the buffer
 //! binding (`buffer_binding_shared_vm`) and codecs (`buffer_codec`).
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use crate::modules::buffer_binding_shared_vm as binding;
 use crate::modules::buffer_codec as codec;
 use crate::modules::util_shared_vm::validate_number;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// `buffer.kMaxLength`: the largest typed array the engine makes.
 pub(crate) const MAX_LENGTH: f64 = quench_runtime::units::MAX_SAFE_INTEGER;
@@ -187,7 +185,7 @@ pub(crate) fn constructor(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Re
 /// `showFlaggedDeprecation`: `Buffer()` warns once (DEP0005), unless its caller runs from
 /// node_modules without `--pending-deprecation`.
 fn show_flagged_deprecation(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let pending = c.node().shared_state().borrow().cli_options.enabled("--pending-deprecation");
+    let pending = c.host_as::<crate::host::NodeHost>().shared_state().borrow().cli_options.enabled("--pending-deprecation");
     if !pending {
         let frames = c.number(DEPRECATION_FRAMES);
         let undefined = c.undefined();
@@ -1250,7 +1248,7 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     // `Buffer()`'s deprecation; the two share one prototype.
     let fast = c.host_constructor_named(crate::host::shared_vm::operation!("bufferFastConstructor"), "FastBuffer")?;
     let retained = c.retain(fast)?;
-    c.node().shared_state().borrow_mut().builtin_cache.insert(super::buffer_shared_vm::FAST_BUFFER_CONSTRUCTOR.to_owned(), retained);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(super::buffer_shared_vm::FAST_BUFFER_CONSTRUCTOR.to_owned(), retained);
     c.set_prototype_rooted(fast, uint8)?;
     c.define_named_data_property_rooted(fast, "prototype", prototype, false, false, false)?;
     let species_getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("streamConstant"), "get", fast)?;

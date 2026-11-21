@@ -2,7 +2,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn diagnostic_object_receiver(&mut self, object: Value) -> String {
         let to_string = self.intern_atom("toString");
         let method = self.diagnostic_data_property(object, PropertyKey::string(to_string));

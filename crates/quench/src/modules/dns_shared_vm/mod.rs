@@ -4,13 +4,12 @@
 //! drains, calling each request's `oncomplete` like Node's `ReqWrap::MakeCallback`.
 //! `cares_binding` owns the binding object and its address lookups.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 mod answers;
 mod system;
 mod transport;
 mod wire;
 
+use crate::host::NodeHost;
 use answers::{Answer, Field, Item, QueryKind, Reply, Status, QUERIES};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::collections::{HashMap, VecDeque};
@@ -19,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use system::Source;
 use transport::Config;
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The address family a `setServers` entry names.
 const FAMILY_IPV4: i32 = 4;
@@ -67,7 +66,7 @@ impl State {
 }
 
 fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>> {
-    c.node().shared_state()
+    c.host_as::<crate::host::NodeHost>().shared_state()
 }
 
 pub(crate) fn has_work(shared_state: &std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>>) -> bool {
@@ -76,7 +75,7 @@ pub(crate) fn has_work(shared_state: &std::rc::Rc<std::cell::RefCell<crate::host
 
 /// Event-loop source: deliver finished queries.
 pub(crate) fn poll(
-    runtime: &mut quench_runtime::Runtime<ErasedHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     shared_state: &std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>>,
 ) -> Result<bool, String> {

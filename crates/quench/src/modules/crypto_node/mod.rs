@@ -5,8 +5,6 @@
 //! host's handle table. The table owns the OpenSSL contexts; a weak root per entry lets the
 //! idle sweep release the state of objects the collector reclaimed.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 pub(crate) mod cipher;
 pub(crate) mod clone;
 pub(crate) mod dh;
@@ -20,12 +18,13 @@ pub(crate) mod sign;
 pub(crate) mod web;
 pub(crate) mod x509;
 
+use crate::host::NodeHost;
 use errors::CryptoError;
 use quench_runtime::{BuiltinBrand, DescriptorFields, HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 
 pub(crate) use crate::modules::stream_shared_vm::{arg, attempt, call_method, get, inherit, is_null, is_nullish, is_undefined, put};
 
-pub(crate) type Context<'a> = NativeContext<'a, ErasedHost>;
+pub(crate) type Context<'a> = NativeContext<'a>;
 pub(crate) type Outcome = Result<RootId, RootedError>;
 
 /// The module's constructors, kept so instances made natively share them.
@@ -127,7 +126,7 @@ impl State {
 }
 
 fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>> {
-    c.node().shared_state()
+    c.host_as::<crate::host::NodeHost>().shared_state()
 }
 
 pub(crate) fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {
@@ -208,8 +207,8 @@ pub(crate) fn with_native<R>(
 }
 
 /// Releases the state of objects the collector reclaimed (the idle hook).
-pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     let dead = shared.borrow().crypto.dead(|owner| runtime.host_weak_root_is_live(owner));
     for index in dead {
         let owner = shared.borrow_mut().crypto.release(index);
@@ -220,8 +219,8 @@ pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
 }
 
 /// Releases every handle at shutdown.
-pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     let handles = std::mem::take(&mut shared.borrow_mut().crypto.handles);
     shared.borrow_mut().crypto.vacant.clear();
     for handle in handles.into_iter().flatten() {

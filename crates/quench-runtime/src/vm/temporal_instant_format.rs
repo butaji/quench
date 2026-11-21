@@ -47,8 +47,8 @@ impl TemporalStringOptions {
     }
 }
 
-pub(super) fn read_options<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn read_options(
+    vm: &mut Vm,
     p: &ResidualProgram,
     value: Value,
     show_calendar: bool,

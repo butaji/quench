@@ -12,7 +12,7 @@ script_handler! {
     fn string_replace_length_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::StringReplace), .. })) {
-            sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(native_call_miss, r, ip, Carried::script_in(cx, view))
         }
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
@@ -20,7 +20,7 @@ script_handler! {
         // call copies before anything can move them.
         let args = unsafe { call_window_in_lane(r, i) };
         let Some(outcome) = vm.steady_string_replace_length(code, Native::StringReplace, r.get(i.c), args) else {
-            sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(native_call_miss, r, ip, Carried::script_in(cx, view))
         };
         // The call's allocations may make a collection due, which the lane's safepoints take.
         note_allocation(vm);
@@ -41,8 +41,8 @@ script_handler! {
 
 /// The handler of a `String.prototype.replace` site whose result only `.length` reads
 /// (`native_call_handler`): `string_replace_length_miss`.
-pub(super) fn replace_length_handler<H: Host>() -> Handler {
-    string_replace_length_miss::<H> as Handler
+pub(super) fn replace_length_handler() -> Handler {
+    string_replace_length_miss as Handler
 }
 
 /// The record after a `Call`'s that reads its result (`length_read`).
@@ -54,7 +54,7 @@ const AFTER_CALL_READ: usize = CALL_READ_RECORD + 1;
 /// right after it, which nothing reads the string again after (`native_call_handler`'s
 /// `length_only`): the site may answer the call with that length alone. Proved once, when the
 /// site resolves its native.
-pub(super) fn length_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> bool {
+pub(super) fn length_read(cx: *mut LaneContext, ip: Ip, i: &LaneInstruction) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };

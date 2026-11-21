@@ -78,7 +78,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
         assert_eq!(captures.len(), if polymorphic { 0 } else { 2 }, "{source}\n{}", program.disassemble());
         if polymorphic { continue; }
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+        let addresses = LaneHelper::addresses();
         let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
             &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true).expect("capture loop region");
         let function = region.function;

@@ -2,10 +2,9 @@
 //!
 //! Every operation mirrors the source libuv reads for Node on the host
 //! platform, so the projected values keep Node's identities and units.
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::ffi::CStr;
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 use crate::modules::util_shared_vm::named_put as put;
 fn text(c: &mut Context<'_>, object: RootId, name: &str, value: &str) -> Result<(), RootedError> {

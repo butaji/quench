@@ -100,11 +100,51 @@ const POWERS_OF_TEN: [u128; 21] = {
     powers
 };
 
-/// The `toFixed(digits)` text of a finite `number` below 1e21, with `digits` at most 100: a sign
-/// for a negative number (a negative that rounds to zero keeps it, as the spec's step 6 gives it),
-/// the magnitude rounded half up at `digits` places (`fixed_rounded`, or the exact integer path
-/// where that does not fit 128 bits), and its point. A zero is written unsigned.
-pub(super) fn fixed_text(number: f64, digits: usize) -> SmallVec<[u8; FIXED_INLINE_LEN]> {
+/// Calls `use_text` with the `toFixed(digits)` text of a finite `number` below 1e21, with `digits`
+/// at most 100: a sign for a negative number (a negative that rounds to zero keeps it, as the spec's
+/// step 6 gives it), the magnitude rounded half up at `digits` places, and its point. A zero is
+/// written unsigned. A rounded magnitude that fits 64 bits with `digits` at most 20 is written into a
+/// stack buffer (`write_fixed_u64`); any other text is built by `fixed_text_wide`.
+pub(super) fn with_fixed_text<T>(number: f64, digits: usize, use_text: impl FnOnce(&[u8]) -> T) -> T {
+    if let Some(rounded) = fixed_rounded(number, digits).and_then(|value| u64::try_from(value).ok()) {
+        let mut buffer = [0u8; FIXED_INLINE_LEN];
+        let length = write_fixed_u64(number < 0.0, rounded, digits, &mut buffer);
+        return use_text(&buffer[..length]);
+    }
+    use_text(&fixed_text_wide(number, digits))
+}
+
+/// Writes the `toFixed` text of `rounded`, the magnitude already scaled by 10^`digits` (`digits` at
+/// most 20), into `out`: a sign when `negative`, the decimal digits zero-padded to `digits + 1`
+/// places, and the point before the last `digits` of them. Returns the text's length.
+fn write_fixed_u64(negative: bool, rounded: u64, digits: usize, out: &mut [u8; FIXED_INLINE_LEN]) -> usize {
+    /// One more than the 20 digits of a u64, the most a padded digit run takes.
+    const PADDED_DIGITS: usize = 21;
+    let mut padded = [b'0'; PADDED_DIGITS];
+    let mut itoa_buffer = itoa::Buffer::new();
+    let integer = itoa_buffer.format(rounded).as_bytes();
+    padded[PADDED_DIGITS - integer.len()..].copy_from_slice(integer);
+    let width = integer.len().max(digits + 1);
+    let digit_text = &padded[PADDED_DIGITS - width..];
+    let mut length = 0;
+    if negative {
+        out[0] = b'-';
+        length = 1;
+    }
+    if digits == 0 {
+        out[length..length + width].copy_from_slice(digit_text);
+        return length + width;
+    }
+    let head = width - digits;
+    out[length..length + head].copy_from_slice(&digit_text[..head]);
+    out[length + head] = b'.';
+    out[length + head + 1..length + width + 1].copy_from_slice(&digit_text[head..]);
+    length + width + 1
+}
+
+/// The `toFixed(digits)` text of `number` as `with_fixed_text` writes it, built in a SmallVec for
+/// the rounded magnitudes that do not fit 64 bits or the digit counts `fixed_rounded` does not hold.
+fn fixed_text_wide(number: f64, digits: usize) -> SmallVec<[u8; FIXED_INLINE_LEN]> {
     let mut buffer = itoa::Buffer::new();
     let exact;
     let integer: &[u8] = match fixed_rounded(number, digits) {
@@ -138,6 +178,9 @@ fn fixed_rounded(number: f64, digits: usize) -> Option<u128> {
     /// Right shifts at or past this bit count are left to the exact path.
     const MAX_RIGHT_SHIFT: u32 = 127;
     let (significand, exponent) = crate::float_layout::binary64_parts(number);
+    if significand == 0 {
+        return Some(0);
+    }
     let scaled = u128::from(significand).checked_mul(*POWERS_OF_TEN.get(digits)?)?;
     if exponent >= 0 {
         let shift = exponent as u32;
@@ -168,7 +211,7 @@ fn fixed_rounded_exact(number: f64, digits: usize) -> BigInt {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Installs the `Number` constructor, its prototype and their constants in the main realm.
     pub(super) fn install_number(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let number = self.native_value(Native::Number);
@@ -308,7 +351,7 @@ impl<H: Host> Vm<H> {
             .transpose()?;
         let text = match kind {
             Native::NumberFixed if number.abs() < FIXED_EXPONENTIAL_FROM => {
-                return Ok(self.heap.alloc_ascii_run(&fixed_text(number, digits.unwrap_or(0))));
+                return Ok(with_fixed_text(number, digits.unwrap_or(0), |text| self.heap.alloc_ascii_run(text)));
             }
             Native::NumberFixed => number_to_decimal(number),
             Native::NumberPrecision => match digits {
@@ -591,7 +634,7 @@ pub(super) fn is_math_unary(native: Native) -> bool {
     math_call(native).is_some_and(MathCall::reads_one_number)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn math_hypot(
         &mut self,
         p: &ResidualProgram,

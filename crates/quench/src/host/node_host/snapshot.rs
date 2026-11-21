@@ -345,7 +345,7 @@ if (before === Module.globalPaths || JSON.stringify(before) !== JSON.stringify(M
                     fs::write(file, bytes).unwrap();
                 } else {
                     #[cfg(feature = "native-execution")]
-                    assert!(runtime.node().accepts_native_bootstrap());
+                    assert!(runtime.host_mut().accepts_native_bootstrap());
                     let entry = runtime.restore_snapshot(Rc::new(fs::read(file).unwrap()), &program, |host, reader| host.read_snapshot(reader)).unwrap();
                     runtime.execute_restored(&entry).unwrap();
                 }
@@ -380,6 +380,6 @@ if (before === Module.globalPaths || JSON.stringify(before) !== JSON.stringify(M
         let mut runtime = Runtime::new(NodeHost::new(vec!["quench".into()]));
         let error = runtime.restore_snapshot(Rc::new(bytes), &program, |host, reader| host.read_snapshot(reader)).unwrap_err();
         assert!(error.contains("Node bootstrap ABI does not match runtime"), "{error}");
-        assert!(!runtime.node().bootstrapped);
+        assert!(!runtime.host_mut().bootstrapped);
     }
 }

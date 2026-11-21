@@ -49,7 +49,7 @@ fn generator_job_step(end: JobEnd) -> Stop {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// What the run of `owner`'s activation did, which the lane ended with `end`: a sync
     /// generator steps (`generator_job_step`), an async activation's promise or request settles
     /// or it awaits again, and the frames its activations became settle as

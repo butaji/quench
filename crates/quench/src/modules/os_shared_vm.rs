@@ -1,14 +1,12 @@
 //! `node:os` in Rust: lib/os.js over the native OS binding on Unix, and the host facts
 //! `sysinfo` reports elsewhere.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 #[cfg(not(target_os = "macos"))]
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[cfg(not(unix))]
-pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     for name in [
         "type", "platform", "arch", "release", "hostname", "homedir", "tmpdir",
@@ -46,7 +44,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
 }
 
 pub(crate) fn string_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -77,7 +75,7 @@ pub(crate) fn string_operation(
 }
 
 pub(crate) fn totalmem_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -85,7 +83,7 @@ pub(crate) fn totalmem_operation(
 }
 
 pub(crate) fn uptime_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -97,7 +95,7 @@ pub(crate) fn uptime_operation(
 }
 
 pub(crate) fn network_interfaces_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -181,7 +179,7 @@ fn mask6(prefix: u8) -> u128 {
 }
 
 fn set(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -195,7 +193,7 @@ fn set(
 }
 
 fn set_string(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: &str,
@@ -206,7 +204,7 @@ fn set_string(
 
 #[cfg(not(target_os = "macos"))]
 fn set_bool(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: bool,
@@ -216,7 +214,7 @@ fn set_bool(
 }
 
 fn set_number(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: f64,
@@ -228,7 +226,7 @@ fn set_number(
 /// Public and captured-private projections derive from the OS signal owner.
 #[cfg(unix)]
 pub(crate) fn signal_constants(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     inventory: &[(&str, libc::c_int)],
 ) -> Result<RootId, RootedError> {
     let signals = context.null_object_rooted()?;
@@ -244,7 +242,7 @@ pub(crate) fn signal_constants(
 }
 
 pub(crate) fn freemem_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -322,7 +320,7 @@ pub(crate) const INTERFACE_FIELDS: usize = 7;
 
 /// `node:os` (lib/os.js) over the native OS binding.
 #[cfg(unix)]
-pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     let global = context.global_root()?;
     let symbol = context.get_named_property_rooted(global, "Symbol")?;
@@ -365,8 +363,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
 /// throws `ERR_SYSTEM_ERROR`.
 #[cfg(unix)]
 pub(crate) fn checked(
-    context: &mut NativeContext<'_, ErasedHost>,
-    read: fn(&mut NativeContext<'_, ErasedHost>, RootId, &[RootId]) -> Result<RootId, RootedError>,
+    context: &mut NativeContext<'_>,
+    read: fn(&mut NativeContext<'_>, RootId, &[RootId]) -> Result<RootId, RootedError>,
     leading: &[RootId],
 ) -> Result<RootId, RootedError> {
     let ctx = context.object_rooted()?;
@@ -381,9 +379,9 @@ pub(crate) fn checked(
 }
 
 #[cfg(unix)]
-fn process_property(context: &mut NativeContext<'_, ErasedHost>, name: &str) -> Result<RootId, RootedError> {
+fn process_property(context: &mut NativeContext<'_>, name: &str) -> Result<RootId, RootedError> {
     let process = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -393,14 +391,14 @@ fn process_property(context: &mut NativeContext<'_, ErasedHost>, name: &str) -> 
 
 /// The OS information `getOSInformation` reports: type, version, release and machine.
 #[cfg(unix)]
-fn information(context: &mut NativeContext<'_, ErasedHost>, field: usize) -> Result<RootId, RootedError> {
+fn information(context: &mut NativeContext<'_>, field: usize) -> Result<RootId, RootedError> {
     let information = checked(context, super::os_binding_shared_vm::information, &[])?;
     context.get_named_property_rooted(information, &field.to_string())
 }
 
 /// An `os` fact export; its data is its `EXPORTS` index.
 #[cfg(unix)]
-pub(crate) fn fact(context: &mut NativeContext<'_, ErasedHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn fact(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     use super::os_binding_shared_vm as binding;
     let data = context.host_function_data()?;
     let index = context.to_number(data)? as usize;
@@ -436,7 +434,7 @@ pub(crate) fn fact(context: &mut NativeContext<'_, ErasedHost>, _: RootId, _: &[
 
 /// `os.cpus()`: `{ model, speed, times }` records from the binding's flat list.
 #[cfg(unix)]
-fn cpus(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+fn cpus(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let mut result = Vec::new();
     for cpu in crate::modules::os_facts::cpus() {
         let object = context.object_rooted()?;
@@ -460,7 +458,7 @@ fn cpus(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedErr
 
 /// `os.networkInterfaces()`: the binding's seven-field records grouped by interface name.
 #[cfg(unix)]
-fn network_interfaces(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+fn network_interfaces(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let records = checked(context, super::os_binding_shared_vm::interfaces, &[])?;
     let fields = context.array_like_values_rooted(records)?;
     let result = context.object_rooted()?;
@@ -524,14 +522,14 @@ fn cidr(address: &str, netmask: &str, family: &str) -> Option<String> {
 
 /// `validateInt32(value, name, min, max)`.
 #[cfg(unix)]
-fn validate_int32(context: &mut NativeContext<'_, ErasedHost>, value: RootId, name: &str, minimum: f64, maximum: f64) -> Result<f64, RootedError> {
+fn validate_int32(context: &mut NativeContext<'_>, value: RootId, name: &str, minimum: f64, maximum: f64) -> Result<f64, RootedError> {
     let maximum = context.number(maximum);
     super::util_shared_vm::validate_integer(context, value, name, minimum, maximum)
 }
 
 /// `os.getPriority(pid)`.
 #[cfg(unix)]
-pub(crate) fn get_priority(context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn get_priority(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let pid = match args.first().copied().filter(|pid| !context.rooted_value(*pid).is_some_and(|value| value.is_undefined())) {
         Some(pid) => {
             validate_int32(context, pid, "pid", f64::from(i32::MIN), f64::from(i32::MAX))?;
@@ -544,7 +542,7 @@ pub(crate) fn get_priority(context: &mut NativeContext<'_, ErasedHost>, _: RootI
 
 /// `os.setPriority([pid, ]priority)`.
 #[cfg(unix)]
-pub(crate) fn set_priority(context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn set_priority(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let first = args.first().copied().unwrap_or(undefined);
     let second = args.get(1).copied().unwrap_or(undefined);
@@ -565,7 +563,7 @@ pub(crate) fn set_priority(context: &mut NativeContext<'_, ErasedHost>, _: RootI
 
 /// `os.userInfo(options)`.
 #[cfg(unix)]
-pub(crate) fn user_info(context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn user_info(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let options = args.first().copied().unwrap_or_else(|| context.undefined());
     let options = if context.value_type_rooted(options) == Some(quench_runtime::ValueType::Object) { options } else { context.null() };
     checked(context, super::os_binding_shared_vm::user_info, &[options])

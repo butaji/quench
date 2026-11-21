@@ -8,7 +8,7 @@ use super::call_out::{CallSite, HostControl, HostFrame};
 use crate::bytecode::WideInstruction;
 use crate::staged::{CallFrame, Concrete, DelegationStep, SuspendEffect, Operation, Step, Suspending};
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The suspension row `i` at `site`, by its staged row on the interpreter's stage: the step
     /// result that suspends the activation, or `StepResult::Continue` where a `yield*` delegate
     /// completed. A suspension that resumes at this instruction (a `yield*` step) moves `pc` back
@@ -76,7 +76,7 @@ fn suspended_step(suspending: Suspending<u64>, pc: &mut usize) -> StepResult {
     })
 }
 
-impl<H: Host> HostFrame<'_, H> {
+impl HostFrame<'_> {
     /// The value of `answer`, or `None` with its error kept for the step's caller to throw.
     fn answered(&mut self, answer: Result<Value, JsError>) -> Option<u64> {
         match answer {
@@ -89,7 +89,7 @@ impl<H: Host> HostFrame<'_, H> {
     }
 }
 
-impl<H: Host> CallFrame<Concrete> for HostFrame<'_, H> {
+impl CallFrame<Concrete> for HostFrame<'_> {
     /// The suspension as the frame's control, which `Vm::staged_suspend` makes the step result.
     fn suspend(&mut self, _stage: &mut Concrete, suspending: Suspending<u64>) -> Option<HostControl> {
         Some(HostControl::Suspend(suspending))

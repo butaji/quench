@@ -195,7 +195,7 @@ pub(crate) enum FlatUnits {
     WideSlice(Rc<WideSlice>),
     /// The first `length` units of an ASCII append buffer (`AppendBuffer`): text built by
     /// appends, which later appends extend in place past this string's end.
-    AsciiPrefix(Rc<AppendBuffer<u8>>, u32),
+    AsciiPrefix(Rc<AppendBuffer<u8>>, u32) = native_string::TAG_ASCII_PREFIX,
     /// The first `length` units of a UTF-16 append buffer. As with `WideSlice`, its units
     /// may all be ASCII (a wide slice's text appended to), so it is never taken to be ASCII.
     WidePrefix(Rc<AppendBuffer<u16>>, u32),
@@ -256,10 +256,10 @@ impl FlatUnits {
     /// zeroing. `fill` must write every byte of the slice it is given.
     fn ascii_with(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
         if length <= SHORT_ASCII_CAPACITY {
-            let mut bytes = [MaybeUninit::new(0); SHORT_ASCII_CAPACITY];
-            fill(&mut bytes[..length]);
-            // SAFETY: every byte started initialized, and `fill` writes only bytes.
-            let bytes = bytes.map(|byte| unsafe { byte.assume_init() });
+            let mut bytes = [0u8; SHORT_ASCII_CAPACITY];
+            // SAFETY: `MaybeUninit<u8>` and `u8` share a layout, every byte starts initialized, and
+            // `fill` writes only bytes, so the array stays initialized: no per-byte `assume_init` copy.
+            fill(unsafe { &mut *(&raw mut bytes[..length] as *mut [MaybeUninit<u8>]) });
             debug_assert!(bytes.is_ascii());
             return Self::Short(ShortAscii {
                 length: length as u8,
@@ -273,6 +273,16 @@ impl FlatUnits {
         debug_assert!(storage.is_ascii());
         // SAFETY: `str` and `[u8]` share a layout, and ASCII bytes are UTF-8.
         Self::Ascii(unsafe { Rc::from_raw(Rc::into_raw(storage) as *const str) })
+    }
+
+    /// The storage of `length` Latin-1 units that `fill` writes in place, one allocation with no
+    /// staging copy. The caller ensures the text holds a unit past U+007F, so it is canonical
+    /// Latin-1; `fill` must write every byte it is given.
+    fn latin1_with(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
+        let mut storage = Rc::<[u8]>::new_uninit_slice(length);
+        fill(Rc::get_mut(&mut storage).expect("a new allocation is unshared"));
+        // SAFETY: `fill` wrote every byte.
+        Self::Latin1(unsafe { storage.assume_init() })
     }
 
     /// The number of units, read from the representation without making a view.
@@ -1409,6 +1419,20 @@ impl JsString {
             Repr::Flat(units) => units.len(),
             Repr::Shared(inner) => inner.length as usize,
         }
+    }
+
+    /// `capacity` without making any units: a rope not yet flat, and decoded text whose units
+    /// are not made, count only what they already hold. A census (`Heap::memory_composition`,
+    /// which `process.memoryUsage()` runs) must not flatten every live and dead rope it meets:
+    /// that made each `+=` step of a string built from 600-unit pieces keep a flat copy.
+    pub(crate) fn existing_capacity(&self) -> usize {
+        if let Some(host) = self.unflattened_host() {
+            return host.len();
+        }
+        if self.existing_flat().is_none() {
+            return 0;
+        }
+        self.capacity()
     }
 
     pub(crate) fn capacity(&self) -> usize {

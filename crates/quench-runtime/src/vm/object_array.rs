@@ -23,7 +23,7 @@ fn array_length_uint32(number: f64) -> u32 {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// An own array's `length`: inline for a direct array without extras, whose dense
     /// elements' count is its length (no arguments object, no sparse elements:
     /// `Object::mark_sparse_elements`), as `emit_array_length_read` reads it; any other
@@ -319,7 +319,7 @@ impl<H: Host> Vm<H> {
     /// atom proves that no string-keyed property for this index can exist.
     pub(super) fn lookup_array_index_atom(&self, index: usize) -> Option<Atom> {
         match u32::try_from(index) {
-            Ok(index) if index < u32::MAX => self.array_index_atoms.get(&index).copied(),
+            Ok(index) if index < u32::MAX => self.array_index_atoms.get(index),
             _ => self.lookup_atom(&index.to_string()),
         }
     }
@@ -329,7 +329,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn index_key_atom(&mut self, index: usize) -> Atom {
         if let Ok(small) = u32::try_from(index)
             && small < u32::MAX
-            && let Some(atom) = self.array_index_atoms.get(&small).copied()
+            && let Some(atom) = self.array_index_atoms.get(small)
         {
             return atom;
         }

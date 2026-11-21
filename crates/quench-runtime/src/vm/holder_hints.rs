@@ -74,7 +74,7 @@ impl PrototypeHints {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The operands of getter hint `index` for a read of `atom` (`IcOp::GetterOwn`): the guard
     /// word of the receivers it answers, its watch's address and the own slot it returns, for a
     /// receiver of the hint's shape and prototype while the watch holds. `None` for any other
@@ -111,7 +111,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// What the own-constant hint `index` answers for a read of `atom` from the direct object
     /// `object`: the value the hint recorded, for the hinted object itself while nothing has
     /// written its values or changed its layout. `None` for any other receiver or name.

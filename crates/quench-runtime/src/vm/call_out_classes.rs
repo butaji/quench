@@ -3,7 +3,7 @@
 use super::*;
 use crate::staged::protocol_classes::ClassStep;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The class, private-name and function-naming `step` of its operand values (`first` is the first operand register's
     /// value, `second` the second's): the value it defines, if any.
     pub(super) fn class_step(&mut self, p: &ResidualProgram, _site: super::call_out::CallSite, step: ClassStep, first: Option<Value>, second: Option<Value>)
@@ -140,7 +140,7 @@ impl<H: Host> Vm<H> {
             if self.host.initializes_import_meta() {
                 let mut context = crate::NativeContext::new(self);
                 let import_meta = context.scoped_value(value);
-                H::initialize_import_meta(&mut context, &source_name, import_meta)
+                (context.host_statics().initialize_import_meta)(&mut context, &source_name, import_meta)
                     .map_err(|error| context.finish_error(error))?;
             }
         }

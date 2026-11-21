@@ -234,7 +234,7 @@ fn copy_within_capture(program: &ResidualProgram, function: &crate::bytecode::Fu
     body.capture.filter(|_| body.returned)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Recognizes the Emscripten memcpy import helper by its bytecode, whatever its spelling: a user
     /// function of exactly three parameters whose body is `(p0, p1, p2) => V.copyWithin(p0, p1, p1 + p2)`
     /// over one captured binding `V` (`copy_within_capture`). The binding is named by its capture's depth

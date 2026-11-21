@@ -1,10 +1,9 @@
 //! Draft native SecretKeyGenJob. Uses the configured SDK's key policy and classes.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::crypto_secret_material::Material;
+use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 #[cfg(quench_openssl_provider)]
 #[path = "crypto_kem_request.rs"]
 pub(crate) mod kem_request;
@@ -340,7 +339,7 @@ fn uint(c: &mut Context<'_>, arg: RootId) -> Result<u32, RootedError> {
     }
 }
 fn api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.node()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .builtin_cache
@@ -368,7 +367,7 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         Ok(api)
     })?;
     let root = c.retain(api)?;
-    c.node()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .builtin_cache
@@ -796,7 +795,7 @@ fn register(
     let map = get(c, api, "jobs")?;
     let setter = get(c, api, "set")?;
     c.call_rooted(setter, map, &[job, record])?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     let id_value = c.number(id as f64);
     put(c, record, "asyncId", id_value)?;
@@ -909,7 +908,7 @@ pub(crate) fn create_hash(
 }
 #[cfg(quench_openssl_provider)]
 fn take_request(c: &mut Context<'_>, job: RootId) -> Result<Option<NativeRequest>, RootedError> {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .crypto_secret_jobs
@@ -930,7 +929,7 @@ fn take_request(c: &mut Context<'_>, job: RootId) -> Result<Option<NativeRequest
 }
 #[cfg(quench_openssl_provider)]
 pub(crate) fn digest_inventory(c: &mut Context<'_>, aliases: bool) -> Result<RootId, RootedError> {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let synchronized = shared
         .borrow_mut()
         .crypto_secret_jobs
@@ -1241,7 +1240,7 @@ fn queue(c: &mut Context<'_>, data: RootId, completion: bool) -> Result<(), Root
         }),
         data,
     )?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = shared
         .borrow_mut()
         .scheduler
@@ -1543,7 +1542,7 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
     let data = c.array_rooted(&[job, record])?;
     let identity = c.host_weak_root(job)?;
     let (sender, receiver) = mpsc::channel();
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let worker = shared.borrow_mut().native_tasks.submit(move || {
         let result = work();
         let _ = sender.send(result);
@@ -1552,7 +1551,7 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
         c.release_host_weak_root(identity);
         return Err(RootedError::host(error.to_string()));
     }
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     shared
         .borrow_mut()
         .crypto_secret_jobs
@@ -1576,7 +1575,7 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
 pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let data = c.host_function_data()?;
     let job = get(c, data, "0")?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .crypto_secret_jobs
@@ -1631,7 +1630,7 @@ pub(crate) fn complete(
     let data = c.host_function_data()?;
     let job = get(c, data, "0")?;
     let record = get(c, data, "1")?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .crypto_secret_jobs
@@ -1707,8 +1706,8 @@ pub(crate) fn complete(
     }
     Ok(undefined)
 }
-pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     #[cfg(quench_openssl_provider)]
     {
         let dead = shared
@@ -1758,8 +1757,8 @@ pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
         runtime.release_host_weak_root(entry.identity);
     }
 }
-pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     #[cfg(quench_openssl_provider)]
     {
         let hashes = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.configured);

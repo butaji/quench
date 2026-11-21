@@ -1,7 +1,5 @@
 //! Linked native execution and build-time Node source inputs.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use crate::NodeHost;
 use quench_runtime::{Runtime, NativeImageSupport};
 
@@ -79,7 +77,7 @@ macro_rules! linked_module_assets {
 
 /// Execute linked code with the same Node jobs, exit status and errors as the CLI.
 pub fn execute_native(
-    host: NodeHost, program: &quench_runtime::NativeJsProgram<ErasedHost>,
+    host: NodeHost, program: &quench_runtime::NativeJsProgram,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free, NativeImageSupport::Static, None)
 }
@@ -87,41 +85,41 @@ pub fn execute_native(
 /// Execute a linked entry from canonical bootstrap state and release the runtime
 /// afterward, so an embedding process can run another independent entry.
 pub fn execute_native_with_bootstrap(
-    host: NodeHost, program: &quench_runtime::NativeJsProgram<ErasedHost>,
+    host: NodeHost, program: &quench_runtime::NativeJsProgram,
     support: NativeImageSupport, bootstrap: &'static [u8],
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free, support, Some(bootstrap))
 }
 
 pub fn execute_native_process_entry(
-    host: NodeHost, program: &quench_runtime::NativeJsProgram<ErasedHost>,
+    host: NodeHost, program: &quench_runtime::NativeJsProgram,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     execute_native_process_entry_with_support(host, program, NativeImageSupport::Static)
 }
 
 pub fn execute_native_process_entry_with_support(
-    host: NodeHost, program: &quench_runtime::NativeJsProgram<ErasedHost>, support: NativeImageSupport,
+    host: NodeHost, program: &quench_runtime::NativeJsProgram, support: NativeImageSupport,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support, None)
 }
 
 pub fn execute_native_process_entry_with_bootstrap(
-    host: NodeHost, program: &quench_runtime::NativeJsProgram<ErasedHost>, support: NativeImageSupport,
+    host: NodeHost, program: &quench_runtime::NativeJsProgram, support: NativeImageSupport,
     bootstrap: &'static [u8],
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support, Some(bootstrap))
 }
 
 fn execute_native_with_teardown(
-    host: NodeHost, program: &quench_runtime::NativeJsProgram<ErasedHost>, teardown: crate::shared_run::Teardown, support: NativeImageSupport,
+    host: NodeHost, program: &quench_runtime::NativeJsProgram, teardown: crate::shared_run::Teardown, support: NativeImageSupport,
     bootstrap: Option<&'static [u8]>,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     let bootstrap = bootstrap.filter(|_| host.accepts_native_bootstrap());
-    let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(quench_runtime::ErasedHost::new(host)), teardown);
+    let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(support.execution_mode());
     runtime.set_memory_policy(crate::shared_run::select_memory_policy());
     let execution = match bootstrap {
-        Some(bytes) => runtime.execute_native_from_snapshot(std::rc::Rc::new(bytes), program, |host, reader| host.node().read_snapshot(reader)),
+        Some(bytes) => runtime.execute_native_from_snapshot(std::rc::Rc::new(bytes), program, |host, reader| host.read_snapshot(reader)),
         None => runtime.execute_native_deferred_jobs(program),
     };
     let completion = crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)?;
@@ -129,7 +127,7 @@ fn execute_native_with_teardown(
     if rejected != 0 {
         return Err(format!("native AOT execution rejected {rejected} unsupported operation(s)"));
     }
-    if let Some(path) = runtime.node().missing_frozen_source() {
+    if let Some(path) = runtime.host_mut().missing_frozen_source() {
         return Err(format!("native AOT image omitted required module source: {}", path.display()));
     }
     Ok(completion)
@@ -141,7 +139,7 @@ fn execute_native_with_teardown(
 #[cfg(feature = "native-execution")]
 #[unsafe(export_name = "quench_lane_helper_symbols")]
 pub extern "C" fn lane_helper_symbols() {
-    quench_runtime::define_lane_helper_symbols::<crate::ErasedHost>()
+    quench_runtime::define_lane_helper_symbols()
 }
 
 mod link;

@@ -1,5 +1,4 @@
 //! Cipher discovery follows the active OpenSSL provider and Node TLS policy.
-use crate::host::NodeAccess;
 use foreign_types::ForeignType;
 use openssl::ssl::{Ssl, SslContextBuilder, SslMethod};
 use std::collections::BTreeSet;
@@ -38,11 +37,11 @@ fn discover() -> Result<Vec<String>, openssl::error::ErrorStack> {
 }
 
 pub(crate) fn ciphers(
-    context: &mut quench_runtime::NativeContext<'_, crate::host::ErasedHost>,
+    context: &mut quench_runtime::NativeContext<'_>,
     _: quench_runtime::RootId,
     _: &[quench_runtime::RootId],
 ) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if shared.borrow().tls_contexts.ciphers.is_none() {
         let names = discover()
             .map_err(|errors| super::super::crypto_error_shared_vm::decorated(context, errors))?;
@@ -70,7 +69,7 @@ pub(crate) fn extra_certificates_pem() -> Option<String> {
 }
 
 pub(crate) fn ca_certificates(
-    context: &mut quench_runtime::NativeContext<'_, crate::host::ErasedHost>,
+    context: &mut quench_runtime::NativeContext<'_>,
     _: quench_runtime::RootId,
     args: &[quench_runtime::RootId],
 ) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
@@ -115,7 +114,7 @@ pub(crate) fn ca_certificates(
         .unwrap_or(false);
     if kind == "default" {
         let defaults = context
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .tls_contexts
@@ -172,7 +171,7 @@ pub(crate) fn ca_certificates(
 }
 
 fn set_default_ca_certificates(
-    context: &mut quench_runtime::NativeContext<'_, crate::host::ErasedHost>,
+    context: &mut quench_runtime::NativeContext<'_>,
     certs: Option<quench_runtime::RootId>,
 ) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
     use quench_runtime::RootedError;
@@ -244,7 +243,7 @@ fn set_default_ca_certificates(
         }
     }
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .tls_contexts

@@ -18,7 +18,7 @@ fn empty_program() -> ResidualProgram {
 /// the call and construction helpers' own.
 #[test]
 fn every_opcode_is_lowered() {
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let program = empty_program();
     let mut counts = [0usize; 2];
     for index in 0..Op::COUNT {
@@ -96,7 +96,7 @@ const RESIDUAL: [Op; 20] = [
 /// step that jumps names its target (its row branches).
 #[test]
 fn lane_fixtures_use_the_generic_helper_only_for_residual_opcodes() {
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/lanes");
     for entry in std::fs::read_dir(&directory).expect("the lane fixtures") {
         let path = entry.expect("a directory entry").path();
@@ -122,7 +122,7 @@ fn lane_fixtures_use_the_generic_helper_only_for_residual_opcodes() {
 /// A `throw` is the raising step, which with the catch ends the run; a helper step falls on.
 #[test]
 fn a_throw_is_the_raising_step_and_ends_the_run() {
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let program = empty_program();
     assert_eq!(lowering(instruction(Op::Throw), known(&program), process), Step::Throw);
     assert_eq!(decode_step(0, instruction(Op::Throw), known(&program), (process, false)).step, Some(Step::Throw));
@@ -133,7 +133,7 @@ fn a_throw_is_the_raising_step_and_ends_the_run() {
 /// leave where none does (a loop region's).
 #[test]
 fn a_backward_conditional_jump_is_a_helper_step_where_a_row_polls_before_it() {
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let program = empty_program();
     let back = |polls| decode_step(5, instruction(Op::JumpBinaryFalse), known(&program), (process, polls));
     assert_eq!(back(false).step, Some(Step::Leave));
@@ -152,7 +152,7 @@ fn only_the_throw_raises() {
 /// the instruction that has no flags, and leave where it has them.
 #[test]
 fn body_steps_are_helper_steps_without_result_flags() {
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let program = empty_program();
     for op in [Op::CloneEnv, Op::InitializeTdz, Op::StoreEnvLocal, Op::LoadConst, Op::ValidateClassHeritage, Op::LoadName] {
         assert_eq!(lowering(instruction(op), known(&program), process), Step::Helper, "{op:?}");
@@ -166,7 +166,7 @@ fn body_steps_are_helper_steps_without_result_flags() {
 #[test]
 fn a_one_element_append_has_a_fast_row_and_a_spread_the_helper_alone() {
     use crate::bytecode::encode_optional_register;
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let program = empty_program();
     let append = |element: Option<u16>, spread: u16, elisions: u32| {
         lowering(WideInstruction::new(Op::AppendArray, 1, encode_optional_register(element), spread, elisions), known(&program), process)
@@ -183,7 +183,7 @@ fn a_one_element_append_has_a_fast_row_and_a_spread_the_helper_alone() {
 /// only hole; a literal array of elements is the helper alone.
 #[test]
 fn an_empty_allocation_has_a_fast_row_and_a_literal_the_helper_alone() {
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let program = empty_program();
     let lower = |instruction| lowering(instruction, known(&program), process);
     assert_eq!(lower(WideInstruction::new(Op::MakeObject, 1, 0, 0, 0)), Step::Fast(Heap::EmptyObject));
@@ -221,7 +221,7 @@ fn a_nop_is_the_jump_to_the_next_instruction() {
 /// jump a `Nop` is), whatever the program holds.
 #[test]
 fn nothing_in_the_lane_fixtures_is_refused() {
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/lanes");
     let (mut fixtures, mut instructions) = (0, 0);
     for entry in std::fs::read_dir(&directory).expect("the lane fixtures") {
@@ -249,7 +249,7 @@ fn nothing_in_the_lane_fixtures_is_refused() {
 /// addresses it; a literal that writes a flag does not.
 #[test]
 fn fixed_shape_objects_lower_to_the_allocation_step() {
-    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let process = crate::vm::compiled::process_lane_helpers();
     let program = empty_program();
     assert_eq!(lowering(WideInstruction::new(Op::MakeObject, 1, 0, 0, 0), known(&program), process), Step::Allocate);
     assert_eq!(lowering(WideInstruction::new(Op::MakeObjectLiteral, 4, 1, 3, 9), known(&program), process), Step::Allocate);

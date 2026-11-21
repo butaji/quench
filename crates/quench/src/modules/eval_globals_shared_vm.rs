@@ -1,8 +1,6 @@
 //! CLI eval's lazy builtin globals, using the original Module loader and VM properties.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 use crate::modules::util_shared_vm::named_get as get;
 use crate::modules::util_shared_vm::named_put as put;
@@ -163,7 +161,7 @@ pub(crate) fn print(c: &mut Context<'_>, source: &str, name: &str) -> Result<(),
     let data = c.array_rooted(&[log, result])?;
     let listener = c.host_function_with_data(crate::host::shared_vm::operation!("nodePrintEvalResult"), data)?;
     let process = c
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module

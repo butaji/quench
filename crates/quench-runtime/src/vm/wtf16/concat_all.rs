@@ -153,6 +153,12 @@ impl JsString {
         Self::from_flat(FlatUnits::ascii_with(length, fill))
     }
 
+    /// Latin-1 text of `length` units that `fill` writes in place (`FlatUnits::latin1_with`):
+    /// `fill` must write every byte it is given, and the text must hold a unit past U+007F.
+    pub(crate) fn from_latin1_filled(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
+        Self::from_flat(FlatUnits::latin1_with(length, fill))
+    }
+
     /// `from_ascii_filled` for a `fill` that takes initialized bytes: the storage is zeroed
     /// before `fill` sees it, so `fill` overwrites bytes it can read, and no uninitialized
     /// byte is ever viewed as `u8`.

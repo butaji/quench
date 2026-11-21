@@ -402,13 +402,13 @@ impl LaneView {
 /// The target of the callee the call at `pc` of `view` last reached itself, by the site's own
 /// record (`site_targets_in_lane`): the entry its record links is another callee's once the
 /// target cache replaced it.
-pub(super) fn site_target<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
+pub(super) fn site_target(vm: &super::Vm, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
     site_targets(vm, view, pc).next()
 }
 
 /// Every callee the call at `pc` of `view` reached (`site_targets_in_lane`), by its target, the
 /// latest first.
-pub(super) fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &LaneView, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
+pub(super) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
     super::site_targets_in_lane(vm, view, pc as u32).into_iter().filter(|site| site.through().is_none()).filter_map(|site| {
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         vm.script_call_entry(site.identity()?).map(|target| unsafe { *target })
@@ -418,7 +418,7 @@ pub(super) fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &Lane
 
 /// What a first compile of `view` comes to before any planning. A function whose callees still compile waits for their bodies, which it then calls by their entries
 /// (`compiled::DirectCallee`); one whose callees only lack a body does not.
-pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
+pub(super) fn start_gate(vm: &super::Vm, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
     use super::super::compiled::LaneBodyOutcome;
     let body = body?;
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {

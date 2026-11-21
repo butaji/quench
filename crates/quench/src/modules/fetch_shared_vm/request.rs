@@ -1,6 +1,5 @@
 //! `Request` (undici's `lib/web/fetch/request.js`).
 
-use crate::host::NodeAccess;
 use super::body::{self, Consume};
 use super::headers::{self, Guard};
 use super::{private_slot, required, type_error, usv_or_byte_string, usv_string, Context, Outcome, Slot};
@@ -189,7 +188,7 @@ fn method(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {
         let warning = c.string_rooted(PATCH_WARNING);
         let code = c.string_rooted(PATCH_WARNING_CODE);
         let options = literal(c, &["code"], &[code])?;
-        let process = c.node().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("fetch has no process"))?;
+        let process = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("fetch has no process"))?;
         let emit = get(c, process, "emitWarning")?;
         c.call_rooted(emit, process, &[warning, options])?;
     }

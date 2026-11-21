@@ -63,7 +63,7 @@ fn reaches_root(program: &ResidualProgram, function: u32, depth: u16) -> bool {
 /// active program (`Vm::root_slot_written_once`), by PC, with the value the root environment's
 /// slot holds now, where that value is an initialized function. A read reaches the root by
 /// `reaches_root`; the root environment is the one its activation promoted (`root_environment`).
-fn root_constants<H: Host>(vm: &Vm<H>, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeMap<usize, Value> {
+fn root_constants(vm: &Vm, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeMap<usize, Value> {
     let program_id = vm.active_program;
     let (Some(program), Some(environment)) = (vm.programs.residual(program_id), vm.programs.root_environment(program_id)) else {
         return Default::default();
@@ -97,7 +97,7 @@ pub(super) fn construction_plans(unit: &lane_unit::Unit, function: u32, plan: &d
 impl FactTables {
     /// What `vm` answers now to the questions `function`'s lowering of `unit` may ask;
     /// `construct` names a construction's scalar plan.
-    pub(in crate::vm) fn of<H: Host>(vm: &Vm<H>, function: u32, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
+    pub(in crate::vm) fn of(vm: &Vm, function: u32, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
         global_reads: &crate::vm::global_facts::GlobalReads, construct: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>) -> Self {
         use crate::vm::global_facts::GlobalRead;
         let mut tables = Self::default();
@@ -332,7 +332,7 @@ enum Unstarted {
 
 /// Whether a plan goes on to its lowering, from its unit, field proofs and direct callees
 /// alone; one that does not records why where the gate's owner reads it.
-type PlanGate<'a, H> = dyn Fn(&Vm<H>, &lane_unit::Unit, &dyn std::fmt::Debug, &[DirectCallee]) -> bool + 'a;
+type PlanGate<'a> = dyn Fn(&Vm, &lane_unit::Unit, &dyn std::fmt::Debug, &[DirectCallee]) -> bool + 'a;
 
 /// What the VM did for it.
 pub(in crate::vm) enum LaneBodyOutcome {
@@ -369,7 +369,7 @@ fn left_places(unit: &lane_unit::Unit, generic: &[LaneExit], first: usize) -> (V
     (left_at, entry_left)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The call targets a unit binds at `caller`'s `pc`. A call the body left at takes no
     /// inlined callee: its call binds what the inlined frame could not. A pure numeric callee
     /// binds its definition at the edge, as AOT does, so fresh closures of it are one case;
@@ -416,7 +416,7 @@ impl<H: Host> Vm<H> {
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
         generic: &[LaneExit], budget: usize, entry: Option<u32>,
-        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)], gate: &PlanGate<'_, H>) -> Option<(LanePlan, ir::Function)> {
+        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)], gate: &PlanGate<'_>) -> Option<(LanePlan, ir::Function)> {
         let LanePrepared { unit, fields, global_reads, direct, direct_sites, closed, entry, entry_left, left_at } =
             self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, None, gate)?;
         // The body folds Stable facts under its own invalidation word, which its publication
@@ -437,7 +437,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn prepare_lane_plan(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>,
-        view: Option<&super::super::dispatch_fast::LaneView>, gate: &PlanGate<'_, H>) -> Option<LanePrepared> {
+        view: Option<&super::super::dispatch_fast::LaneView>, gate: &PlanGate<'_>) -> Option<LanePrepared> {
         let unit = self.plan_unit_in_lane(program, function, targets, trips, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { refuse(self, Refusal::NoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
@@ -479,7 +479,7 @@ impl<H: Host> Vm<H> {
 
     /// The lane helpers of this process, noted for the coverage census.
     fn process_helpers() -> LaneHelpers {
-        let helpers = LaneHelper::addresses::<H>();
+        let helpers = LaneHelper::addresses();
         crate::jit_coverage::note_native_helpers(helpers);
         LaneHelpers::Process(helpers)
     }
@@ -731,7 +731,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Registers the writes a unit's raw stores may make (`lane_region::store_domains`) with
     /// the slots' observations; whether every slot already admitted them. A body's slot
     /// dependencies hold its slots at the admitted types, so its runs need not admit again.

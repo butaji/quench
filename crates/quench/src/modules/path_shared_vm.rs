@@ -1,7 +1,5 @@
 //! Shared-VM adapter for the canonical Node Path string algorithms.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 #[derive(Clone, Copy)]
@@ -118,8 +116,8 @@ impl Method {
     }
 }
 
-pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
-    if let Some(module) = context.node().shared_state().borrow().path_module {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    if let Some(module) = context.host_as::<crate::host::NodeHost>().shared_state().borrow().path_module {
         return Ok(module);
     }
 
@@ -149,28 +147,28 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
 
     let platform = if cfg!(windows) { *win32 } else { *posix };
     let retained = context.retain(platform)?;
-    context.node().shared_state().borrow_mut().path_module = Some(retained);
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().path_module = Some(retained);
     Ok(platform)
 }
 
 fn namespace(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     flavor: Flavor,
 ) -> Result<RootId, RootedError> {
     let module = module(context)?;
     get(context, module, flavor.name())
 }
 
-pub(crate) fn posix(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn posix(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     namespace(context, Flavor::Posix)
 }
 
-pub(crate) fn win32(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn win32(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     namespace(context, Flavor::Win32)
 }
 
 pub(crate) fn join_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -178,7 +176,7 @@ pub(crate) fn join_operation(
 }
 
 pub(crate) fn resolve_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -186,7 +184,7 @@ pub(crate) fn resolve_operation(
 }
 
 pub(crate) fn relative_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -194,7 +192,7 @@ pub(crate) fn relative_operation(
 }
 
 pub(crate) fn basename_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -202,7 +200,7 @@ pub(crate) fn basename_operation(
 }
 
 pub(crate) fn dirname_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -212,7 +210,7 @@ pub(crate) fn dirname_operation(
 /// Native host consumers share the path argument contract and platform algorithm
 /// without borrowing an unrelated callback's private operation data.
 pub(crate) fn host_dirname(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     path: RootId,
 ) -> Result<RootId, RootedError> {
     let path = argument_string(context, path, 0, Method::Dirname)?;
@@ -225,7 +223,7 @@ pub(crate) fn host_dirname(
 }
 
 pub(crate) fn extname_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -233,7 +231,7 @@ pub(crate) fn extname_operation(
 }
 
 pub(crate) fn normalize_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -241,7 +239,7 @@ pub(crate) fn normalize_operation(
 }
 
 pub(crate) fn is_absolute_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -249,7 +247,7 @@ pub(crate) fn is_absolute_operation(
 }
 
 pub(crate) fn to_namespaced_path_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -257,7 +255,7 @@ pub(crate) fn to_namespaced_path_operation(
 }
 
 pub(crate) fn parse_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -265,7 +263,7 @@ pub(crate) fn parse_operation(
 }
 
 pub(crate) fn format_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -273,7 +271,7 @@ pub(crate) fn format_operation(
 }
 
 pub(crate) fn matches_glob_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     function: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -281,7 +279,7 @@ pub(crate) fn matches_glob_operation(
 }
 
 fn apply(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
     method: Method,
@@ -576,7 +574,7 @@ fn parse_flavor(name: String) -> Option<Flavor> {
 }
 
 fn argument_string(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     argument: RootId,
     index: usize,
     method: Method,
@@ -598,7 +596,7 @@ fn argument_string(
 }
 
 fn path_type_error(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     name: &str,
     received: &str,
 ) -> Result<RootedError, RootedError> {
@@ -612,7 +610,7 @@ fn path_type_error(
 }
 
 fn format_operation_result(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     argument: Option<RootId>,
     flavor: Flavor,
 ) -> Result<RootId, RootedError> {
@@ -691,7 +689,7 @@ fn format_operation_result(
     Ok(context.string_rooted(&result))
 }
 
-fn process_cwd(context: &mut NativeContext<'_, ErasedHost>) -> Result<String, RootedError> {
+fn process_cwd(context: &mut NativeContext<'_>) -> Result<String, RootedError> {
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
     let cwd = get(context, process, "cwd")?;
@@ -702,7 +700,7 @@ fn process_cwd(context: &mut NativeContext<'_, ErasedHost>) -> Result<String, Ro
             .ok_or_else(|| RootedError::host("process.cwd() returned a non-string"));
     }
     Ok(context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .cwd
@@ -712,7 +710,7 @@ fn process_cwd(context: &mut NativeContext<'_, ErasedHost>) -> Result<String, Ro
 }
 
 fn process_drive_cwd(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     device: &str,
     fallback: &str,
 ) -> Result<String, RootedError> {
@@ -737,7 +735,7 @@ fn process_drive_cwd(
 }
 
 fn set_text(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: &str,
@@ -747,7 +745,7 @@ fn set_text(
 }
 
 fn set(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,

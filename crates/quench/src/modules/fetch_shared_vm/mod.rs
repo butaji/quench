@@ -2,8 +2,6 @@
 //! `Response`, `FormData`, their body mixin and `fetch()` itself, which issues requests
 //! through the `http` and `https` clients.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 pub(crate) mod body;
 pub(crate) mod fetch;
 pub(crate) mod form_data;
@@ -15,7 +13,7 @@ use crate::modules::host_members::Members;
 use crate::modules::webstreams_shared_vm::{self as web, get, put, record};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-pub(crate) type Context<'a> = NativeContext<'a, ErasedHost>;
+pub(crate) type Context<'a> = NativeContext<'a>;
 pub(crate) type Outcome = Result<RootId, RootedError>;
 
 /// The `builtin_cache` key of the realm's fetch classes.
@@ -164,13 +162,13 @@ pub(crate) fn iterator_class<M: Members>(c: &mut Context<'_>, next: M, tag_name:
 
 /// The fetch classes, by name, built once.
 pub(crate) fn classes(c: &mut Context<'_>) -> Outcome {
-    if let Some(table) = c.node().shared_state().borrow().builtin_cache.get(CLASSES).copied() {
+    if let Some(table) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(CLASSES).copied() {
         return Ok(table);
     }
     let table = c.with_startup_intrinsics(|c| {
         let table = record(c, &[], &[])?;
         let retained = c.retain(table)?;
-        c.node().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
+        c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
         let built = (|| {
             let headers = headers::build(c, table)?;
             put(c, table, table::HEADERS, headers)?;
@@ -182,7 +180,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Outcome {
             put(c, table, table::RESPONSE, response)
         })();
         if built.is_err() {
-            c.node().shared_state().borrow_mut().builtin_cache.remove(CLASSES);
+            c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.remove(CLASSES);
         }
         built.map(|()| table)
     })?;

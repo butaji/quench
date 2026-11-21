@@ -1,10 +1,8 @@
 //! Lazily created stdin and nonblocking host-loop admission of OS input.
 #[cfg(unix)]
 mod platform {
-    
-    use quench_runtime::ErasedHost;
-    use crate::host::NodeAccess;
-use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
+    use crate::host::NodeHost;
+    use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
 
     const STDIN_FD: libc::c_int = 0;
     use crate::modules::tty_shared_vm::READ_CHUNK_BYTES;
@@ -34,7 +32,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     pub(crate) fn install(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         process: RootId,
     ) -> Result<(), RootedError> {
         let open = context.host_function_named_with_data(
@@ -60,7 +58,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     pub(crate) fn open(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
@@ -75,11 +73,11 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     pub(crate) fn get(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
-        let state = context.node().shared_state();
+        let state = context.host_as::<crate::host::NodeHost>().shared_state();
         if let Some(stream) = state.borrow().stdin.stream {
             return Ok(stream);
         }
@@ -126,12 +124,12 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     pub(crate) fn read(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
         context
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .stdin
@@ -140,12 +138,12 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     pub(crate) fn pause(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         receiver: RootId,
         args: &[RootId],
     ) -> Result<RootId, RootedError> {
         context
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .stdin
@@ -155,14 +153,14 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     pub(crate) fn reference(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         receiver: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
         let data = context.host_function_data()?;
         let referenced = context.truthy_rooted(data)?;
         context
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .stdin
@@ -171,12 +169,12 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     pub(crate) fn destroy(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         args: &[RootId],
     ) -> Result<RootId, RootedError> {
         {
-            let shared = context.node().shared_state();
+            let shared = context.host_as::<crate::host::NodeHost>().shared_state();
             let mut state = shared.borrow_mut();
             state.stdin.ended = true;
             state.stdin.requested = false;
@@ -194,8 +192,8 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
         state.requested && !state.ended && state.referenced
     }
 
-    pub(crate) fn poll(runtime: &mut Runtime<ErasedHost>) -> Result<bool, String> {
-        let state = runtime.node().shared_state();
+    pub(crate) fn poll(runtime: &mut Runtime<NodeHost>) -> Result<bool, String> {
+        let state = runtime.host_mut().shared_state();
         let callback = {
             let state = state.borrow();
             if !state.stdin.requested || state.stdin.ended {
@@ -263,7 +261,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     pub(crate) fn pump(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
@@ -271,11 +269,11 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
         let key = context.string_rooted("destroyed");
         let destroyed = context.get_property_rooted(stream, key)?;
         if context.truthy_rooted(destroyed)? {
-            context.node().shared_state().borrow_mut().stdin.ended = true;
+            context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stdin.ended = true;
             return Ok(context.undefined());
         }
         let pending = context
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .stdin
@@ -285,7 +283,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
         let bytes = match pending {
             Ok(bytes) => bytes,
             Err(error) => {
-                context.node().shared_state().borrow_mut().stdin.ended = true;
+                context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stdin.ended = true;
                 let code = error.raw_os_error().map(|errno| {
                     super::super::util_system_error_shared_vm::system_error_name(-f64::from(errno))
                 });
@@ -308,7 +306,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
             }
         };
         let value = if bytes.is_empty() {
-            context.node().shared_state().borrow_mut().stdin.ended = true;
+            context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stdin.ended = true;
             context.null()
         } else {
             let buffer = crate::host::shared_vm::commonjs::buffer_module(context)?;
@@ -330,7 +328,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
     }
 
     fn set(
-        context: &mut NativeContext<'_, ErasedHost>,
+        context: &mut NativeContext<'_>,
         object: RootId,
         name: &str,
         value: RootId,
@@ -361,7 +359,7 @@ mod platform {
         }
     }
     pub(crate) fn install(
-        _: &mut NativeContext<'_, ErasedHost>,
+        _: &mut NativeContext<'_>,
         _: RootId,
     ) -> Result<(), RootedError> {
         Ok(())
@@ -369,11 +367,11 @@ mod platform {
     pub(crate) fn has_work(_: &State) -> bool {
         false
     }
-    pub(crate) fn poll(_: &mut Runtime<ErasedHost>) -> Result<bool, String> {
+    pub(crate) fn poll(_: &mut Runtime<NodeHost>) -> Result<bool, String> {
         Ok(false)
     }
     pub(crate) fn unsupported(
-        _: &mut NativeContext<'_, ErasedHost>,
+        _: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {

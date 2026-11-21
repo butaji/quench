@@ -7,13 +7,13 @@ use super::*;
 /// adds made so far are the body's own first stores of the same values, which an activation
 /// of the body then makes again as stores, leaving the object as the activation alone would.
 #[inline(always)]
-pub(in super::super) fn add_initializer_fields_in_lane<H: Host>(
-    vm: &mut Vm<H>,
+pub(in super::super) fn add_initializer_fields_in_lane(
+    vm: &mut Vm,
     code: &ResidualProgram,
     this: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
-    nested: impl FnMut(&mut Vm<H>, &crate::bytecode::NestedConstruct) -> Option<Value>,
+    nested: impl FnMut(&mut Vm, &crate::bytecode::NestedConstruct) -> Option<Value>,
     each: impl FnMut(&crate::bytecode::InitializerStore, Value),
 ) -> bool {
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
@@ -24,13 +24,13 @@ pub(in super::super) fn add_initializer_fields_in_lane<H: Host>(
 
 /// `add_initializer_fields_in_lane` of `stores`, a body's or a class chain's (`chain_stores`).
 #[inline(always)]
-pub(in super::super) fn add_stores_in_lane<H: Host>(
-    vm: &mut Vm<H>,
+pub(in super::super) fn add_stores_in_lane(
+    vm: &mut Vm,
     code: &ResidualProgram,
     this: Value,
     stores: &[crate::bytecode::InitializerStore],
     argument: impl Fn(u16) -> Value,
-    mut nested: impl FnMut(&mut Vm<H>, &crate::bytecode::NestedConstruct) -> Option<Value>,
+    mut nested: impl FnMut(&mut Vm, &crate::bytecode::NestedConstruct) -> Option<Value>,
     mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
 ) -> bool {
     for store in stores {

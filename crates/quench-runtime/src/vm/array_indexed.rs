@@ -6,7 +6,7 @@ use crate::staged::array_iteration::{self as step_rules, Answer, Effect, Kind};
 /// `findIndex` or `findLastIndex` whose callback passes none.
 const NOT_FOUND: f64 = -1.0;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn array_indexed_native(
         &mut self,
         p: &ResidualProgram,
@@ -399,7 +399,7 @@ impl<H: Host> Vm<H> {
     fn call_array_callback(
         &mut self,
         p: &ResidualProgram,
-        prepared: &mut PreparedCallback<H>,
+        prepared: &mut PreparedCallback,
         iteration: &ArrayIteration,
         value: Value,
         key: Value,
@@ -599,7 +599,7 @@ pub(crate) struct ArrayStepCall {
     roots: [crate::heap::RootId; ARRAY_STEP_VALUES],
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The `ArrayStepCall` of a lane's iteration whose callback, passed `element` at `index`,
     /// becomes a frame.
     pub(super) fn array_step_call(&mut self, iteration: ArrayIteration, element: Value, index: usize) -> ArrayStepCall {

@@ -25,7 +25,7 @@ impl EnumerableOwnPropertyKind {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// EnumerableOwnProperties of an object whose shape answers it: `Object.keys` takes the key
     /// memo first (`plain_key_list`), `Object.values` and `Object.entries` the shape's data items
     /// (`shape_enumerable_data_items`). No guest code runs and nothing raises. `None` leaves
@@ -150,16 +150,30 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let data = self.object_data(object)?;
-        let shape = data.shape();
-        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
+        if data.has_side_descriptors() || self.shape_is_dictionary(data.shape()) {
             return None;
         }
+        self.shape_enumerable_slots_checked(object, data)
+    }
+
+    /// `shape_enumerable_slots` for `object`, whose record `data` the caller has read and held to
+    /// its eligibility checks already (`shape_lists_enumerable_keys`, no side descriptors, no
+    /// dictionary shape): the memo, or a walk of its named slots on a miss. No check and no
+    /// record lookup repeats, so a caller that checked the object once (`adopt_source_shape`)
+    /// reads its slots through this.
+    pub(super) fn shape_enumerable_slots_checked(
+        &self,
+        object: Value,
+        data: &Object,
+    ) -> Option<super::enumerable_key_memo::EnumerableSlots> {
+        let shape = data.shape();
         if let Some(slots) = self.enumerable_keys.get(shape) {
             return Some(slots);
         }
         let entries = self
-            .shape_enumerable_key_walk(object)?
+            .own_named_slots(object)
             .into_iter()
+            .filter(|&(atom, slot)| self.own_slot_enumerable(object, atom, slot))
             .map(|(atom, slot)| Some((atom, u32::try_from(slot).ok()?)))
             .collect::<Option<Vec<(Atom, u32)>>>()?;
         let storage_len = self.shapes[shape as usize].storage_len();

@@ -1,11 +1,10 @@
 //! `internalBinding('buffer')` (src/node_buffer.cc): the byte, string and search
 //! primitives Node's lib/buffer.js and lib/internal/buffer.js build `Buffer` from.
-use quench_runtime::ErasedHost;
 use super::buffer_codec as codec;
 use super::buffer_shared_vm::view_bytes;
 use super::string_decoder_codec::ENCODINGS;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// `kMaxLength`: v8::TypedArray::kMaxByteLength on 64-bit hosts, the largest integer
 /// a double represents exactly.

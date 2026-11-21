@@ -1,10 +1,8 @@
 //! Public async-hooks classes over the shared context and hook engines.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::async_hooks_shared_vm as engine;
 use super::host_members::leading;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
-pub(super) type Context<'a> = NativeContext<'a, ErasedHost>;
+pub(super) type Context<'a> = NativeContext<'a>;
 
 /// The function data's private keys of an instance's fields.
 const PRIVATE_FIELDS: [&str; 4] = ["localId", "defaultValue", "name", "scopeState"];
@@ -136,7 +134,7 @@ pub(crate) fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) 
 /// Whether a microtask queued now must carry async context: Node's
 /// `AsyncContextFrame.current() || enabledHooksExist()`, which `queueMicrotask` tests.
 pub(crate) fn microtask_carries_context(c: &mut Context<'_>) -> Result<bool, RootedError> {
-    let store = c.node().shared_state().borrow().async_hooks.has_visible_store();
+    let store = c.host_as::<crate::host::NodeHost>().shared_state().borrow().async_hooks.has_visible_store();
     Ok(store || super::async_hook_registry_shared_vm::hooks_exist(c)?)
 }
 fn method(c: &mut Context<'_>, holder: RootId, name: &str, op: &str, data: RootId) -> Result<(), RootedError> {

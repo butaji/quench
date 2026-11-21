@@ -56,7 +56,7 @@ pub(super) enum IterationStep {
     Call,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// ArrayAccumulation of a spread: each value `source` iterates is appended to literal `array`.
     pub(super) fn spread_into_array(
         &mut self,

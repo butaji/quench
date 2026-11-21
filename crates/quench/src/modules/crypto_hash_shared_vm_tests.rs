@@ -1,5 +1,3 @@
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::*;
 use quench_runtime::{Engine, ResidualProgram, Value as JsValue};
 
@@ -12,7 +10,7 @@ const RELEASE_STRIDE: usize = 3;
 const DIGEST_GROUPS: usize = 3;
 
 struct Binding {
-    runtime: Runtime<ErasedHost>,
+    runtime: Runtime<NodeHost>,
     program: ResidualProgram,
     hash: RootId,
     hmac: RootId,
@@ -41,7 +39,7 @@ fn binding() -> Binding {
     Binding { runtime, program, hash, hmac, key }
 }
 
-fn call(runtime: &mut Runtime<ErasedHost>, object: RootId, name: &str, args: &[RootId]) -> RootId {
+fn call(runtime: &mut Runtime<NodeHost>, object: RootId, name: &str, args: &[RootId]) -> RootId {
     let method = runtime.get_named_property_rooted(object, name).unwrap();
     let result = runtime.call_rooted(method, object, args).unwrap();
     runtime.release_root(method);
@@ -49,14 +47,14 @@ fn call(runtime: &mut Runtime<ErasedHost>, object: RootId, name: &str, args: &[R
 }
 
 /// Feeds `text` to a handle, which reports success.
-fn update(runtime: &mut Runtime<ErasedHost>, value: RootId, text: &str) {
+fn update(runtime: &mut Runtime<NodeHost>, value: RootId, text: &str) {
     let text = runtime.string_rooted(text);
     let result = call(runtime, value, "update", &[text]);
     assert_eq!(runtime.rooted_value(result).unwrap().as_bool(), Some(true));
     for root in [text, result] { runtime.release_root(root); }
 }
 
-fn hex_digest(runtime: &mut Runtime<ErasedHost>, value: RootId) -> String {
+fn hex_digest(runtime: &mut Runtime<NodeHost>, value: RootId) -> String {
     let encoding = runtime.string_rooted("hex");
     let digest = call(runtime, value, "digest", &[encoding]);
     let text = runtime.string_text_rooted(digest).unwrap().unwrap();
@@ -116,7 +114,7 @@ fn copy_digests(binding: &mut Binding) -> serde_json::Value {
 fn reclaim_at_collection(binding: &mut Binding, handles: &[RootId], algorithm: RootId) -> Vec<RootId> {
     let hash = binding.hash;
     let runtime = &mut binding.runtime;
-    let shared = runtime.node().shared_state();
+    let shared = runtime.host_mut().shared_state();
     let allocated = shared.borrow().crypto_hashes.handles.len();
     for &handle in handles.iter().step_by(RELEASE_STRIDE) { runtime.release_root(handle); }
     runtime.collect(&binding.program).unwrap();
@@ -157,7 +155,7 @@ fn native_hash_slots_match_node_and_reclaim_at_collection() {
     let kept = handles.into_iter().enumerate().filter(|(index, _)| index % RELEASE_STRIDE != 0).map(|(_, value)| value);
     for value in kept.chain(replacements).chain([survivor]) { runtime.release_root(value); }
     runtime.collect(&binding.program).unwrap();
-    let shared = runtime.node().shared_state();
+    let shared = runtime.host_mut().shared_state();
     assert!(shared.borrow().crypto_hashes.handles.is_empty());
     assert!(shared.borrow().crypto_hashes.free.is_empty());
 }

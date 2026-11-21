@@ -1,12 +1,10 @@
 //! net.Server listen generations and DNS callbacks share the public Node lifecycle.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
 use super::net_shared_vm;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 fn once(
     context: &mut Context<'_>,
@@ -164,7 +162,7 @@ fn check_net_permission(
     resource: Option<&str>,
 ) -> Result<(), RootedError> {
     let model = {
-        let shared = context.node().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let state = shared.borrow();
         state.cli_options.enabled("--permission") || state.cli_options.enabled("--permission-audit")
     };
@@ -260,12 +258,12 @@ pub(crate) fn listen(
     // address/options normalizer (which requires port or path).
     if let Some(listener) = super::net_reference_shared_vm::optional_handle_id(context, first)? {
         let is_tcp_listener = {
-            let shared = context.node().shared_state();
+            let shared = context.host_as::<crate::host::NodeHost>().shared_state();
             let shared = shared.borrow();
             net_shared_vm::listener_is_tcp(&shared.tcp, listener)
         };
         let is_tcp_handle = {
-            let shared = context.node().shared_state();
+            let shared = context.host_as::<crate::host::NodeHost>().shared_state();
             let shared = shared.borrow();
             net_shared_vm::native_tcp_is_open(&shared.tcp, listener)
         };
@@ -278,7 +276,7 @@ pub(crate) fn listen(
                     net_shared_vm::DEFAULT_TCP_LISTEN_BACKLOG
                 };
                 let result = {
-                    let shared = context.node().shared_state();
+                    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
                     let mut shared = shared.borrow_mut();
                     net_shared_vm::native_tcp_listen(&mut shared.tcp, listener, backlog)
                 };
@@ -386,7 +384,7 @@ pub(crate) fn listen(
     }
     let backlog = net_shared_vm::convert_listen_backlog(context, backlog)?;
     let address = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port);
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let listener = net_shared_vm::listen_with_reuse_port(
         &mut shared.borrow_mut().tcp,
         address,
@@ -420,7 +418,7 @@ pub(crate) fn listen(
     // Node records the normalized bind endpoint (and requested port, including
     // zero) after a successful listen. Cluster code and diagnostics inspect it.
     if let Some(bound) =
-        net_shared_vm::address(&context.node().shared_state().borrow().tcp, listener)
+        net_shared_vm::address(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp, listener)
     {
         let family = if bound.ip().is_ipv6() { 6 } else { 4 };
         let key = context.string_rooted("_connectionKey");
@@ -497,7 +495,7 @@ pub(crate) fn lookup_completed(
     let reuse = context.truthy_rooted(reuse)?;
     let backlog = get(context, data, "backlog")?;
     let backlog = net_shared_vm::convert_listen_backlog(context, backlog)?;
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let listener = net_shared_vm::listen_with_reuse_port(
         &mut shared.borrow_mut().tcp,
         address,
@@ -513,7 +511,7 @@ pub(crate) fn lookup_completed(
     };
     let result = net_shared_vm::register_server(context, server, listener)?;
     if let Some(bound) =
-        net_shared_vm::address(&context.node().shared_state().borrow().tcp, listener)
+        net_shared_vm::address(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp, listener)
     {
         let family = if bound.ip().is_ipv6() { 6 } else { 4 };
         let key = context.string_rooted("_connectionKey");
@@ -552,7 +550,7 @@ pub(crate) fn close(
         once(context, server, "close", callback)?;
     }
     let registered = if let Some(id) = net_shared_vm::optional_server_id(context, server)? {
-        let shared = context.node().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let mut state = shared.borrow_mut();
         if let Some(listener) = state.net_servers.get_mut(&id).map(|server| {
             server.closing = true;

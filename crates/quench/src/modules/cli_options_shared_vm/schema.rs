@@ -20,7 +20,6 @@
 //! LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 //! FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 //! IN THE SOFTWARE.
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 // Only ObjectFromEntries products have ordinary prototypes in the upstream
@@ -36,14 +35,14 @@ enum Position {
     Other,
 }
 
-pub(crate) fn generate(c: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn generate(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let root = c.parse_json_rooted(include_str!("schema.json"))?;
     normalize(c, root, Position::Root)?;
     Ok(root)
 }
 
 fn normalize(
-    c: &mut NativeContext<'_, ErasedHost>,
+    c: &mut NativeContext<'_>,
     value: RootId,
     position: Position,
 ) -> Result<(), RootedError> {

@@ -1,8 +1,7 @@
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn structured_clone(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -101,8 +100,8 @@ const NOT_OBJECT: &str = "Value is not an object";
 
 /// `webidl.converters.StructuredSerializeOptions(options).transfer`: the transfer list as
 /// a `sequence<object>`.
-fn serialize_options_transfer(context: &mut NativeContext<'_, ErasedHost>, options: RootId) -> Result<Vec<RootId>, RootedError> {
-    let conversion_error = |context: &mut NativeContext<'_, ErasedHost>, message: &str| -> RootedError {
+fn serialize_options_transfer(context: &mut NativeContext<'_>, options: RootId) -> Result<Vec<RootId>, RootedError> {
+    let conversion_error = |context: &mut NativeContext<'_>, message: &str| -> RootedError {
         let message = if message == NOT_OBJECT { message.to_owned() } else { format!("{OPTIONS_PREFIX}: {message}") };
         match context.type_error_rooted(&message) {
             Ok(error) => {
@@ -142,7 +141,7 @@ fn serialize_options_transfer(context: &mut NativeContext<'_, ErasedHost>, optio
 }
 
 fn clone_dom_exception(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     global: RootId,
     value: RootId,
 ) -> Result<Option<RootId>, RootedError> {
@@ -177,7 +176,7 @@ fn clone_dom_exception(
 }
 
 /// A `DataCloneError` DOMException, as Node's serializer throws.
-pub(crate) fn data_clone_exception(context: &mut NativeContext<'_, ErasedHost>, message: &str) -> RootedError {
+pub(crate) fn data_clone_exception(context: &mut NativeContext<'_>, message: &str) -> RootedError {
     let built = context.with_startup_intrinsics(|context| {
         let global = context.global_root()?;
         let key = context.string_rooted("DOMException");
@@ -193,7 +192,7 @@ pub(crate) fn data_clone_exception(context: &mut NativeContext<'_, ErasedHost>, 
 }
 
 /// Report the runtime's structured-serialization failures as Node's DOMException.
-pub(crate) fn as_dom_exception(context: &mut NativeContext<'_, ErasedHost>, error: RootedError) -> RootedError {
+pub(crate) fn as_dom_exception(context: &mut NativeContext<'_>, error: RootedError) -> RootedError {
     let Some(message) = error.error.data_clone_failure_message().map(str::to_owned) else {
         return error;
     };
@@ -205,7 +204,7 @@ pub(crate) fn as_dom_exception(context: &mut NativeContext<'_, ErasedHost>, erro
 
 /// Node's host marker is not a property and does not keep its object alive.
 pub(crate) fn mark_as_uncloneable(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -217,7 +216,7 @@ pub(crate) fn mark_as_uncloneable(
 }
 
 pub(crate) fn mark_as_untransferable(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -229,7 +228,7 @@ pub(crate) fn mark_as_untransferable(
 }
 
 pub(crate) fn is_marked_as_untransferable(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -239,7 +238,7 @@ pub(crate) fn is_marked_as_untransferable(
 }
 
 fn validate_marker_target(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
 ) -> Result<(), RootedError> {
     if context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::Proxy)? {

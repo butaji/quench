@@ -21,7 +21,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
     let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[], entry_types: &[], string_entries: &[], operand_kinds: &[], entry_bounds: true, frame_captures: &[], construct_plans: None };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
         (crate::MemoryPolicy::Throughput, super::super::tier_policy::STATIC_ROWS), &program, id,
-        super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_, _| Default::default(), (&[], None), RegionCalls::default(), false, None)
+        super::super::compiled::process_lane_helpers(), &mut |_, _| Default::default(), (&[], None), RegionCalls::default(), false, None)
         .expect("the loop plans");
     assert_eq!(pending.header, region.header, "the loop goes through RegionSpecializer");
 }

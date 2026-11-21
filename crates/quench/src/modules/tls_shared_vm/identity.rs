@@ -1,5 +1,4 @@
 //! Certificate name authorization shared by public TLS and encrypted sockets.
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 use std::net::IpAddr;
 
@@ -40,7 +39,7 @@ fn matches_dns(host: &str, pattern: &str, wildcards: bool) -> bool {
 
 use crate::modules::util_shared_vm::named_get as get;
 use crate::modules::util_shared_vm::named_put as put;
-fn format_error(context: &mut NativeContext<'_, ErasedHost>) -> RootedError {
+fn format_error(context: &mut NativeContext<'_>) -> RootedError {
     match context.syntax_error_rooted("Invalid subject alternative name string") {
         Ok(error) => {
             let code = context.string_rooted("ERR_TLS_CERT_ALTNAME_FORMAT");
@@ -69,7 +68,7 @@ fn quoted_end(text: &str) -> Option<usize> {
     None
 }
 fn alt_names(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     text: &str,
 ) -> Result<Vec<String>, RootedError> {
     if !text.contains('"') {
@@ -115,7 +114,7 @@ fn alt_names(
 }
 
 pub(crate) fn check_server_identity(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -264,7 +263,7 @@ pub(crate) fn check_server_identity(
 }
 
 pub(crate) fn collect_alt_name(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -300,7 +299,7 @@ pub(crate) fn collect_alt_name(
 }
 
 pub(crate) fn match_name(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -320,13 +319,13 @@ fn unfqdn(name: &str) -> &str {
     name.strip_suffix('.').unwrap_or(name)
 }
 
-fn unfqdn_root(context: &mut NativeContext<'_, ErasedHost>, value: RootId) -> Result<RootId, RootedError> {
+fn unfqdn_root(context: &mut NativeContext<'_>, value: RootId) -> Result<RootId, RootedError> {
     let text = context.to_string(value)?;
     Ok(context.string_rooted(unfqdn(&text)))
 }
 
 /// A name as `check` compares it: without its root label, ASCII letters lowercased.
-fn pattern_text(context: &mut NativeContext<'_, ErasedHost>, value: RootId) -> Result<String, RootedError> {
+fn pattern_text(context: &mut NativeContext<'_>, value: RootId) -> Result<String, RootedError> {
     let text = context.to_string(value)?;
     Ok(unfqdn(&text).to_ascii_lowercase())
 }

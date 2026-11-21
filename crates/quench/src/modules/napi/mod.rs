@@ -11,7 +11,6 @@
 //! JavaScript exceptions raised while an addon runs become the environment's pending
 //! exception; the trampoline rethrows it when the addon returns, as Node does.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{
     cell::{Cell, RefCell},
@@ -55,7 +54,7 @@ pub(crate) fn drain_wake() {
     work::drain_wake();
 }
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The environment an addon receives as `napi_env`. One is created per loaded addon module;
 /// its address stays fixed for the process lifetime because native code retains it.

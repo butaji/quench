@@ -10,7 +10,7 @@ enum TypedArrayInitialization {
     List(Vec<RootId>),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn validate_typed_array_result(
         &mut self,
         p: &ResidualProgram,

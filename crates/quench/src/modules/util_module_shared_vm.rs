@@ -1,13 +1,11 @@
 //! `node:util` in Rust (lib/util.js): the module's exports over the native inspector
 //! (`util_inspect_shared_vm`), predicates, comparisons and policies.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use crate::host::shared_vm::operation;
 use crate::modules::util_inspect_shared_vm::{self as inspect, DefaultOption};
 use crate::modules::util_shared_vm::validate_function;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, ValueType};
 
-pub(super) type Context<'a> = NativeContext<'a, ErasedHost>;
+pub(super) type Context<'a> = NativeContext<'a>;
 
 /// The registry key of `util.promisify.custom`.
 pub(crate) const PROMISIFY_CUSTOM: &str = "nodejs.util.promisify.custom";
@@ -148,7 +146,7 @@ fn function_with(c: &mut Context<'_>, operation_name: &str, name: &str, data: Ro
 }
 
 pub(super) fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.node()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -969,7 +967,7 @@ fn settle_aborted(c: &mut Context<'_>, promise: RootId, args: &[RootId]) -> Resu
     }
     let resolve = c.host_function_with_data(crate::host::shared_vm::operation!("utilAbortedResolve"), promise)?;
     let api = c
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .event_targets_api

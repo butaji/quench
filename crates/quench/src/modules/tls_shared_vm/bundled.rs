@@ -1,7 +1,6 @@
 //! The public bundled trust list and SSL contexts share immutable PEM product data.
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 pub(crate) fn install(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let data = c.null_object_rooted()?;

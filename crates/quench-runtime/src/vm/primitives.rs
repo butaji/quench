@@ -8,7 +8,7 @@ pub(super) use whitespace::is_ecma_whitespace_character;
 /// The longest `repeat` result made by one copy of ASCII text (`Native::StringRepeat`).
 const REPEAT_COPY_MAX_UNITS: usize = 4096;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
         match self.heap.function(callee) {
             Some(FunctionRecord {

@@ -212,7 +212,7 @@ impl SourceManifest {
         host.snapshot_builtins = builtins;
         let assets = Rc::new(RefCell::new(ModuleAssets::default()));
         host.module_assets = ModuleAssetState::Capture(assets.clone());
-        let mut runtime = Runtime::new(quench_runtime::ErasedHost::new(host));
+        let mut runtime = Runtime::new(host);
         let entry = Engine::specialize("", NATIVE_ENTRY_NAME).map_err(|errors| format!("{errors:?}"))?;
         runtime.execute_deferred_jobs(&entry).map_err(|error| {
             match error.source_location() {

@@ -22,21 +22,21 @@ script_handler! {
 /// Whether the record at `ip` may keep a value in its operand: a capture read whose operand is
 /// its immediate alone, and no pair's second record, whose immediate the pair's first reads
 /// (`lane_load_outer_capture_pair`). A record a loop header or kernel holds runs neither.
-fn holds_plain_capture_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> bool {
-    if handler_is::<H>(ip, lane_load_outer_capture::<H>) {
+fn holds_plain_capture_read(cx: *mut LaneContext, ip: Ip) -> bool {
+    if handler_is(ip, lane_load_outer_capture) {
         // SAFETY: a record past the view's first has one before it in the same view.
-        return ip <= unsafe { (*cx).base } || !handler_is::<H>(unsafe { ip.sub(1) }, lane_load_outer_capture_pair::<H>);
+        return ip <= unsafe { (*cx).base } || !handler_is(unsafe { ip.sub(1) }, lane_load_outer_capture_pair);
     }
-    handler_is::<H>(ip, lane_load_capture::<H>)
-        || handler_is::<H>(ip, lane_load_capture_walk::<H>)
-        || handler_is::<H>(ip, lane_load_root_binding::<H>)
+    handler_is(ip, lane_load_capture)
+        || handler_is(ip, lane_load_capture_walk)
+        || handler_is(ip, lane_load_root_binding)
 }
 
 /// Makes the record at `ip`, a capture read whose walk just read `value` from root `slot` of
 /// `owner`'s root environment (`lane_root_binding_owner`), keep `value`
 /// (`lane_load_root_constant`) where `owner` is the running program, the slot is written once
 /// and `value` is initialized; whether it did.
-pub(super) fn hold_root_constant<H: Host>(cx: *mut LaneContext<H>, ip: Ip, owner: ProgramId, slot: u16, value: Value) -> bool {
+pub(super) fn hold_root_constant(cx: *mut LaneContext, ip: Ip, owner: ProgramId, slot: u16, value: Value) -> bool {
     let vm = unsafe { vm(cx) };
     let program = unsafe { (*cx).program };
     if value.is_internal_marker() || owner != program || !holds_plain_capture_read(cx, ip) || !vm.programs.root_slot_written_once(program, slot) {
@@ -55,7 +55,7 @@ pub(super) fn hold_root_constant<H: Host>(cx: *mut LaneContext<H>, ip: Ip, owner
         (*record).c = (imm >> u16::BITS) as u16;
         (*record).operand.constant = value;
     }
-    requicken::<H>(ip, lane_load_root_constant::<H>);
+    requicken(ip, lane_load_root_constant);
     true
 }
 
@@ -64,10 +64,10 @@ impl LaneView {
     /// (`lane_load_root_constant`), to the capture's read (`lane_load_capture_walk`), its
     /// immediate back in its operand. A record that no longer keeps one (its view was derived
     /// again) stays as it is.
-    fn release_root_constant<H: Host>(&self, pc: u32) {
+    fn release_root_constant(&self, pc: u32) {
         let Some(cell) = self.records.get(pc as usize) else { return };
         let record = std::cell::UnsafeCell::raw_get(cell);
-        if !handler_is::<H>(record.cast_const(), lane_load_root_constant::<H>) {
+        if !handler_is(record.cast_const(), lane_load_root_constant) {
             return;
         }
         // SAFETY: no lane handler reads the record meanwhile (a collection, or a root's start,
@@ -77,16 +77,16 @@ impl LaneView {
             (*record).operand = LaneOperand { imm: u32::from((*record).b) | (u32::from((*record).c) << u16::BITS) };
             (*record).b = 0;
             (*record).c = 0;
-            (*record).handler = lane_load_capture_walk::<H> as Handler as *const ();
+            (*record).handler = lane_load_capture_walk as Handler as *const ();
         }
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Returns every record that keeps a root slot's value to the capture's read
     /// (`LaneView::release_root_constant`): a collection ran.
     pub(in crate::vm) fn retire_root_constants(&self) {
-        self.programs.retire_root_constant_sites(None, |view, pc| view.release_root_constant::<H>(pc));
+        self.programs.retire_root_constant_sites(None, |view, pc| view.release_root_constant(pc));
     }
 
     /// Notes that the active program's root starts another run (its root closure is made):
@@ -95,7 +95,7 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn note_root_run(&self) {
         let program = self.active_program;
         if self.programs.note_root_run(program) {
-            self.programs.retire_root_constant_sites(Some(program), |view, pc| view.release_root_constant::<H>(pc));
+            self.programs.retire_root_constant_sites(Some(program), |view, pc| view.release_root_constant(pc));
         }
     }
 }

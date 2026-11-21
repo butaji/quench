@@ -20,7 +20,7 @@ pub(in crate::vm) enum RootBinding {
     Import(Value),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// What slot `slot` of `caller`'s function stands for outside the activation: `None` for
     /// the activation's own, which is every slot of a function other than a program's root.
     pub(super) fn root_binding(&self, caller: &dyn CallerView, slot: usize) -> Option<RootBinding> {

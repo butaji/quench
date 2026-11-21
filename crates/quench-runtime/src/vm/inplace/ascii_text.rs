@@ -25,7 +25,7 @@ enum AsciiOutcome {
     Repeated { length: usize },
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The String builtin `native` on `receiver` with `args`, when it completes in place over a
     /// flat ASCII receiver; `None` for any other receiver, argument or result size.
     pub(in crate::vm) fn ascii_text_method(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {

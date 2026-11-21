@@ -110,7 +110,7 @@ const ZONED_DATE_TIME_DEFAULTS: &[(&str, &str)] = &[
     ("second", NUMERIC),
 ];
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_date_time_format_for_realm(
         &mut self,
         intl: Value,
@@ -937,7 +937,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Temporal.ZonedDateTime is not supported".into()));
         }
         let milliseconds = if value.is_undefined() {
-            HostContext::new(&mut self.host)
+            HostContext::new(&mut *self.host)
                 .invoke(CapabilityId::ClockMillis, None)
                 .trunc()
         } else {
@@ -1978,7 +1978,7 @@ fn time_zone_offset_minutes(zone: &str) -> Option<i32> {
     Some(sign * (hours * MINUTES_PER_HOUR + minutes))
 }
 
-fn set_non_writable_property<H: Host>(vm: &mut Vm<H>, object: Value, name: &str) {
+fn set_non_writable_property(vm: &mut Vm, object: Value, name: &str) {
     let atom = vm.intern_atom(name);
     vm.set_property_attributes(
         object,

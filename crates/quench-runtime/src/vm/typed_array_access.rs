@@ -11,7 +11,7 @@ pub(super) enum TypedArrayElement {
     Number(f64),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(crate) fn embedding_array_buffer_aligned_offset(
         &mut self,
         root: RootId,
@@ -310,7 +310,15 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
             return Some(Value::UNDEFINED);
         };
-        let bytes = bytes.read();
+        // A store this heap owns is read in place (`BufferBytes::owned`); a shared one through its lock.
+        let read;
+        let bytes: &[u8] = match bytes.owned() {
+            Some(owned) => owned,
+            None => {
+                read = bytes.read();
+                &read
+            }
+        };
         let Some(start) = view.element(index, bytes.len()) else {
             return Some(Value::UNDEFINED);
         };
@@ -715,10 +723,17 @@ impl<H: Host> Vm<H> {
     }
 
     /// One element encoding serves indexed stores and validated bulk fills.
+    #[inline]
     fn typed_array_element_bytes(
         kind: TypedArrayKind,
         value: &TypedArrayElement,
     ) -> [u8; MAX_TYPED_ARRAY_ELEMENT_WIDTH] {
+        // A Number element is its kind's word (`element_word`): the first `width` bytes, the rest zero.
+        if let TypedArrayElement::Number(number) = value
+            && !kind.is_bigint()
+        {
+            return crate::staged::typed_elements::element_word(kind, *number);
+        }
         let mut bytes = [0; MAX_TYPED_ARRAY_ELEMENT_WIDTH];
         let number = match value {
             TypedArrayElement::Number(value) => *value,
@@ -754,39 +769,51 @@ impl<H: Host> Vm<H> {
         if start >= end {
             return true;
         }
-        let (buffer, offset, kind) = match self.heap.get(object) {
-            Some(Cell::TypedArray {
-                object: view,
-                buffer,
-                ..
-            }) => (*buffer, view.offset, view.native.kind()),
-            _ => return false,
+        let Some(Cell::TypedArray { object: view, buffer, length }) = self.heap.get(object) else {
+            return false;
         };
-        if self.array_buffer_detached(buffer)
-            || self
-                .typed_array_length(object)
-                .is_none_or(|length| end > length)
-            || self.array_buffer_out_of_bounds(buffer, offset, kind.width() * end)
-        {
+        let view = TypedArrayView {
+            kind: view.native.kind(),
+            buffer: *buffer,
+            offset: view.offset,
+            length: *length,
+        };
+        self.fill_view_elements(view, start, end, value)
+    }
+
+    /// `typed_array_fill_elements` on a view already read: one buffer read for the checks (attached,
+    /// not shared, the view's length covering `end`), one encoding of the value, one buffer write.
+    /// A 1-byte kind fills with a memset; a wider one with its encoded element repeated by doubling
+    /// `copy_within` copies, so a long fill makes O(log n) copy calls rather than one per element.
+    fn fill_view_elements(&mut self, view: TypedArrayView, start: usize, end: usize, value: &TypedArrayElement) -> bool {
+        let width = view.kind.width();
+        let Some(Cell::ArrayBuffer { bytes, detached: false, shared: false, .. }) = self.heap.get(view.buffer) else {
+            return false;
+        };
+        let Some(elements) = view.length.within(view.offset, width, bytes.len()) else {
+            return false;
+        };
+        if end > elements {
             return false;
         }
-        let encoded = Self::typed_array_element_bytes(kind, value);
-        let Some(Cell::ArrayBuffer {
-            bytes,
-            shared: false,
-            ..
-        }) = self.heap.get_mut(buffer)
-        else {
+        let encoded = Self::typed_array_element_bytes(view.kind, value);
+        let element = &encoded[..width];
+        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(view.buffer) else {
             return false;
         };
-        let bytes =
-            &mut bytes.make_mut()[offset + start * kind.width()..offset + end * kind.width()];
-        let element = &encoded[..kind.width()];
-        if element.iter().all(|byte| *byte == element[0]) {
-            bytes.fill(element[0]);
+        let mut store = bytes.make_mut();
+        let Some(span) = store.get_mut(view.offset + start * width..view.offset + end * width) else {
+            return false;
+        };
+        if width == 1 || element.iter().all(|byte| *byte == element[0]) {
+            span.fill(element[0]);
         } else {
-            for chunk in bytes.chunks_exact_mut(kind.width()) {
-                chunk.copy_from_slice(element);
+            span[..width].copy_from_slice(element);
+            let mut filled = width;
+            while filled < span.len() {
+                let count = filled.min(span.len() - filled);
+                span.copy_within(..count, filled);
+                filled += count;
             }
         }
         true
@@ -1044,7 +1071,7 @@ impl TypedViewCache {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The element count of the typed array `object` from its current cached entry
     /// (`TypedViewCache`): what its intrinsic `length` getter answers, where the entry holds,
     /// since every event that could detach, resize or move its buffer ends the view epoch.
@@ -1197,7 +1224,7 @@ pub(crate) struct TypedSpan {
     pub(crate) store: (usize, usize),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The elements of the fixed-length typed array `object` of a Number kind, as a loop
     /// kernel reads and writes them without guest code; `None` for any other value, a
     /// detached, length-tracking, shared or Wasm buffer, or a BigInt or Float16 kind. Valid

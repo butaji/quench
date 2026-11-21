@@ -15,7 +15,7 @@ pub(in crate::vm) struct AwaitResume {
     rejected: bool,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
     /// finds live there (`suspension_registers`): a collection while it is suspended traces
     /// those alone, so a dead temporary does not stay reachable until it resumes.
@@ -27,6 +27,14 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Continuation {
         let live = self.suspension_registers(frame.program, frame.function, frame.pc);
+        let mut frame = frame;
+        // A suspended body waits with its registers alone: the spare room a running frame keeps
+        // for the windows a loop region inlines (`RegisterFile::new`, about 800 bytes) is
+        // given back, and a resume that runs a region past the registers grows the file again
+        // or takes the general path (`frame_reaches_in_lane`). doxbee-async kept 10K bodies
+        // suspended at once, 9 MB of that room.
+        let registers = frame.registers.len();
+        frame.registers.shrink_to(registers);
         let mut continuation = Continuation::suspend(frame, completion, resume_register, promise);
         continuation.frame.suspend_registers(live);
         continuation

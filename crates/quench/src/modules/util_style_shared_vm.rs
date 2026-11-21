@@ -1,5 +1,4 @@
 //! ANSI color facts and native util.styleText policy.
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const DEFAULT_FOREGROUND: u16 = 39;
@@ -7,7 +6,7 @@ const BOLD: u16 = 1;
 const DIM: u16 = 2;
 /// `util.styleText`, reading colors from `inspect.colors`.
 pub(crate) fn function(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     inspect: RootId,
 ) -> Result<RootId, RootedError> {
     let null = context.null();
@@ -52,7 +51,7 @@ impl Style {
 fn sequence(code: &str) -> Vec<u16> {
     format!("\x1b[{code}m").encode_utf16().collect()
 }
-fn codes(context: &mut NativeContext<'_, ErasedHost>, value: RootId) -> Result<Style, RootedError> {
+fn codes(context: &mut NativeContext<'_>, value: RootId) -> Result<Style, RootedError> {
     let open = get(context, value, "0")?;
     let close = get(context, value, "1")?;
     let keep_close = context
@@ -89,7 +88,7 @@ fn hex(format: &str) -> Option<Style> {
 }
 
 pub(crate) fn style_text(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -264,7 +263,7 @@ pub(crate) fn style_text(
 }
 
 fn stream_method(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     stream: RootId,
     name: &str,
 ) -> Result<bool, RootedError> {
@@ -272,7 +271,7 @@ fn stream_method(
     context.is_callable_rooted(value)
 }
 fn node_stream(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     stream: RootId,
 ) -> Result<bool, RootedError> {
     if !context.truthy_rooted(stream)? {
@@ -290,7 +289,7 @@ fn node_stream(
     )
 }
 fn valid_stream(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     stream: RootId,
 ) -> Result<bool, RootedError> {
     if !context.truthy_rooted(stream)? {
@@ -314,7 +313,7 @@ fn valid_stream(
 
 /// `shouldColorize(stream)` (internal/util/colors.js).
 pub(crate) fn should_colorize(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     stream: RootId,
 ) -> Result<bool, RootedError> {
     let global = context.global_root()?;
@@ -344,7 +343,7 @@ pub(crate) fn should_colorize(
     context.greater_than_rooted(depth, monochrome)
 }
 fn invalid_format(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     inspect: RootId,
     format: RootId,
     hex: bool,
@@ -377,7 +376,7 @@ fn invalid_format(
     set(context, error, "code", code)?;
     Err(context.throw(error))
 }
-fn nullish(context: &NativeContext<'_, ErasedHost>, value: RootId) -> bool {
+fn nullish(context: &NativeContext<'_>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
@@ -385,7 +384,7 @@ fn nullish(context: &NativeContext<'_, ErasedHost>, value: RootId) -> bool {
 
 use crate::modules::util_shared_vm::named_get as get;
 fn set(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,

@@ -9,16 +9,12 @@
 # the -no-pie executable kept a 71 KB GOT of link-time constants that every run reads
 # (16 resident pages at JS3 Air's peak) and an extra load per such call. Relaxed, the linker
 # turns them into direct calls and LEAs and the GOT is 4.7 KB.
-# Shared generics: the VM is compiled for the one host type `quench_runtime::ErasedHost` in
-# quench-runtime (`erased_host_instances`), and the embedder's crate links those instances
-# instead of compiling its own copy, so a runtime edit no longer recompiles the quench crate's
-# 11.9 MB of VM code (opt-level 3 shares no generics by default).
-rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "relax-elf-relocations=yes", "-Z", "merge-functions=disabled", "-Z", "share-generics=yes"]
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "relax-elf-relocations=yes", "-Z", "merge-functions=disabled"]
 
 # Use LLVM's target alignment on Apple ARM; the forced alignment above is a
 # Linux measurement. Host-specific qualification and code residency: Linear TOD-8.
 [target.aarch64-apple-darwin]
-rustflags = ["-D", "warnings", "-Z", "merge-functions=disabled", "-Z", "share-generics=yes"]
+rustflags = ["-D", "warnings", "-Z", "merge-functions=disabled"]
 
 # x86-64 Linux links OpenSSL statically: the shared libssl/libcrypto pair costs
 # about 1 MiB of resident set in every process at load (relocations and

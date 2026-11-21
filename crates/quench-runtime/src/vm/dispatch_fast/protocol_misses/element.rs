@@ -16,15 +16,15 @@ pub(in crate::vm::dispatch_fast) const GET_FIELD_NESTED: u8 = 4;
 pub(in crate::vm::dispatch_fast) const GET_FIELD_GETTER: u8 = 5;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::ELEMENT | parameters }>`).
-pub(in crate::vm::dispatch_fast) const fn element_miss_of<H: Host>(parameters: u8) -> Handler {
+/// (`protocol_row::<OP, ACC, { protocol_family::ELEMENT | parameters }>`).
+pub(in crate::vm::dispatch_fast) const fn element_miss_of(parameters: u8) -> Handler {
     match parameters {
-        GET_INDEX => super::super::get_index_miss::<H> as Handler,
-        SET_INDEX => super::super::set_index_miss::<H> as Handler,
-        DELETE => super::super::delete_miss::<H> as Handler,
-        GET_FIELD_STRING => super::super::get_field_string_miss::<H> as Handler,
-        GET_FIELD_NESTED => super::super::get_field_nested_miss::<H> as Handler,
-        GET_FIELD_GETTER => super::super::get_field_getter_miss::<H> as Handler,
-        _ => general_step_in_lane::<H>,
+        GET_INDEX => super::super::get_index_miss as Handler,
+        SET_INDEX => super::super::set_index_miss as Handler,
+        DELETE => super::super::delete_miss as Handler,
+        GET_FIELD_STRING => super::super::get_field_string_miss as Handler,
+        GET_FIELD_NESTED => super::super::get_field_nested_miss as Handler,
+        GET_FIELD_GETTER => super::super::get_field_getter_miss as Handler,
+        _ => general_step_in_lane,
     }
 }

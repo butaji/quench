@@ -7,14 +7,13 @@
 //! after it, while the global's prototype, a proxy, forwards other names to the sandbox live.
 //! A context's bookkeeping is a record kept on its sandbox under a private symbol, so it
 //! lives exactly as long as the sandbox.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
+use crate::host::NodeHost;
 use quench_runtime::{CompiledScript, DescriptorFields, HostWeakRoot, NativeContext, RootId, RootedError};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// A live `ContextifyScript`: its object, compiled code and source hash.
 struct Script {
@@ -242,7 +241,7 @@ pub(crate) fn script(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> 
     c.define_data_property_rooted(receiver, key, id_value, false, false, false)?;
     let identity = c.host_weak_root(receiver)?;
     let script = Script { identity, compiled, source_hash: source_hash(&source) };
-    c.node().shared_state().borrow_mut().vm_scripts.scripts.insert(id, script);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().vm_scripts.scripts.insert(id, script);
     Ok(receiver)
 }
 
@@ -251,7 +250,7 @@ fn registered_script(c: &mut Context<'_>, receiver: RootId) -> Result<(CompiledS
     let key = slot_key(c, slot::SCRIPT)?;
     let id = if c.is_object_rooted(receiver)? { c.get_property_rooted(receiver, key)? } else { c.undefined() };
     let id = c.rooted_value(id).and_then(|value| value.as_number());
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let script = id.and_then(|id| {
         let state = shared.borrow();
         state.vm_scripts.scripts.get(&(id as u64)).map(|script| (script.compiled.clone(), script.source_hash))
@@ -762,8 +761,8 @@ pub(crate) fn compile_function(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
     Ok(result)
 }
 
-pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     let dead: Vec<u64> = shared
         .borrow()
         .vm_scripts

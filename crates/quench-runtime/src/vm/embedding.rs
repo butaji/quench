@@ -28,7 +28,7 @@ pub(super) fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
         .0
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(crate) fn embedding_heap_memory_composition(&self) -> crate::HeapMemoryComposition {
         self.heap.memory_composition()
     }
@@ -432,7 +432,7 @@ impl<H: Host> Vm<H> {
             self.source_call_site_record(frame, false).map(|(record, module)| (frame.program, record, module))
         }).take(limit).collect();
         records.into_iter().map(|(program, mut record, module)| {
-            Self::map_call_site_source(&mut self.host, &mut record, module);
+            Self::map_call_site_source(&mut *self.host, &mut record, module);
             let name = self.call_site_name(&record).map_or_else(Vec::new, |name| name.units().to_vec());
             let unnamed_script = record.eval_origin.is_some();
             let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!("source projection"); };
@@ -505,7 +505,7 @@ impl<H: Host> Vm<H> {
         }) else {
             return Ok(None);
         };
-        Self::map_call_site_source(&mut self.host, &mut record, module);
+        Self::map_call_site_source(&mut *self.host, &mut record, module);
         let CallSiteLocation::Source {
             file_name,
             line,

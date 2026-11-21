@@ -122,7 +122,7 @@ impl std::fmt::Debug for TierEvents {
     }
 }
 
-impl<H: super::Host> super::Vm<H> {
+impl super::Vm {
     /// What the tiers did in this VM, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &TierEvents { self.programs.tier_events() }
 }

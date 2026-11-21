@@ -1,13 +1,12 @@
 //! One native key owner per weak JS KeyObjectHandle identity. Slot tuples and
 //! classes project this owner; queued requests retain the same immutable Arc.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 #[cfg(quench_openssl_provider)]
 use super::crypto_asymmetric::OwnedKey;
 use super::crypto_secret_material::Material;
+use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::Arc;
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 #[derive(Clone)]
 enum Value {
     Secret(Arc<Material>),
@@ -23,7 +22,7 @@ pub(crate) struct State {
     handles: Vec<Handle>,
 }
 fn lookup(c: &mut Context<'_>, handle: RootId) -> Result<Option<Value>, RootedError> {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     for entry in &shared.borrow().crypto_key_material.handles {
         if let Some(value) = c.resolve_host_weak_root(entry.identity) {
             if c.strict_equal_rooted(value, handle)? {
@@ -69,7 +68,7 @@ pub(crate) fn register_asymmetric(
 }
 fn register(c: &mut Context<'_>, handle: RootId, value: Value) -> Result<(), RootedError> {
     prune_context(c);
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut replace = None;
     for (index, entry) in shared
         .borrow()
@@ -98,7 +97,7 @@ fn register(c: &mut Context<'_>, handle: RootId, value: Value) -> Result<(), Roo
     Ok(())
 }
 pub(crate) fn prune_context(c: &mut Context<'_>) {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let dead = shared
         .borrow()
         .crypto_key_material
@@ -120,8 +119,8 @@ pub(crate) fn prune_context(c: &mut Context<'_>) {
         c.release_host_weak_root(handle.identity);
     }
 }
-pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     let dead = shared
         .borrow()
         .crypto_key_material
@@ -141,8 +140,8 @@ pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
         runtime.release_host_weak_root(handle.identity);
     }
 }
-pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     for handle in std::mem::take(&mut shared.borrow_mut().crypto_key_material.handles) {
         runtime.release_host_weak_root(handle.identity);
     }

@@ -61,7 +61,7 @@ fn only_trivia(source: &str) -> bool {
 }
 
 
-impl<H: Host> Vm<H> {
+impl Vm {
     #[inline(always)]
     pub(super) fn require_source_compilation(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         if self.execution_mode.allows_dynamic_execution() {
@@ -556,7 +556,7 @@ impl<H: Host> Vm<H> {
         // only for a function's record on its first call. A run that loads many modules
         // before its first release had kept every decoded body resident (undici npm scenario:
         // 4.2 MB of compile-cache pages at its 30 MB peak).
-        H::kept_bytes_read((*read).as_ref());
+        (self.host_statics.kept_bytes_read)((*read).as_ref());
         let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
         if program.source_name != name || !source_matches || program.specialized != specialized {
             return Err("cached program does not match its body".into());
@@ -590,7 +590,7 @@ impl<H: Host> Vm<H> {
         // only for a function's source text or a lazily compiled body: Air kept four sources'
         // pages (1.5 MB of compile-cache pages) resident at its peak.
         if let crate::bytecode::SourceText::Kept(kept) = &text {
-            H::kept_bytes_read(kept.as_bytes());
+            (self.host_statics.kept_bytes_read)(kept.as_bytes());
         }
         let specialized = self.specialized;
         let mut kept = self.decode_cached_program(bytes, text, 0, name, specialized).ok()?;

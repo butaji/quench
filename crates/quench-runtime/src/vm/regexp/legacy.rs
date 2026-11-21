@@ -49,7 +49,7 @@ pub(super) enum LegacyRegExpMatch {
 /// These owned strings/match ranges contain no heap references and survive GC.
 pub(in crate::vm) struct LegacyRegExpSnapshot(LegacyStatics);
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(in crate::vm) fn snapshot_regexp_legacy(&self) -> LegacyRegExpSnapshot {
         match self
             .realm
@@ -74,7 +74,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(in crate::vm) fn install_regexp_legacy_accessors(
         &mut self,
         program: &ResidualProgram,

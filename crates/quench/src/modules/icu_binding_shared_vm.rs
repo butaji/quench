@@ -1,10 +1,8 @@
 //! Native ICU handles consumed by Node's canonical encoding policy.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::text_decoder_icu::Converter;
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 const FLUSH: u32 = 1;
 const FATAL: u32 = 2;
 const IGNORE_BOM: u32 = 4;
@@ -19,7 +17,7 @@ struct Entry {
 use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE: &str = "\0binding:icu";
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(CACHE).copied() {
         return Ok(value);
     }
@@ -47,8 +45,8 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         .insert(CACHE.into(), retained);
     Ok(result)
 }
-pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     let dead = shared
         .borrow()
         .icu_converters
@@ -62,8 +60,8 @@ pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
         runtime.release_host_weak_root(entry.identity);
     }
 }
-pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().icu_converters.entries);
     for entry in entries {
         runtime.release_host_weak_root(entry.identity);
@@ -79,7 +77,7 @@ pub(crate) fn get_converter(
     let Ok(converter) = Converter::new(&name, flags & FATAL != 0, flags & IGNORE_BOM != 0) else {
         return Ok(c.undefined());
     };
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .icu_converters
@@ -116,7 +114,7 @@ pub(crate) fn decode(
         return Err(c.throw(e));
     };
     let flags = c.to_number(args[2])? as u32;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .icu_converters

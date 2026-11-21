@@ -8,7 +8,6 @@
 //! empty at the snapshot point (sockets, timers, pending work), so a field added later does
 //! not compile until it is given one of those places.
 
-use crate::host::NodeAccess;
 mod entry_graph;
 
 /// Bump when the serialized host state or its bootstrap/resume invariants change.
@@ -327,10 +326,10 @@ impl SnapshotKind {
 /// Refuses a read of the process's own state while a snapshot is built: what the snapshot
 /// keeps must not depend on the process that built it.
 pub(crate) fn refuse_process_state(
-    context: &mut quench_runtime::NativeContext<'_, crate::host::ErasedHost>,
+    context: &mut quench_runtime::NativeContext<'_>,
     what: &str,
 ) -> Result<(), quench_runtime::RootedError> {
-    if context.node().building_snapshot.is_some() {
+    if context.host_as::<crate::host::NodeHost>().building_snapshot.is_some() {
         return Err(quench_runtime::RootedError::host(format!("a startup snapshot cannot keep {what}")));
     }
     Ok(())
@@ -338,14 +337,14 @@ pub(crate) fn refuse_process_state(
 
 /// Loads the builtins a snapshot of `kind` keeps, at the snapshot point.
 pub(crate) fn preload(
-    context: &mut quench_runtime::NativeContext<'_, crate::host::ErasedHost>,
+    context: &mut quench_runtime::NativeContext<'_>,
     kind: SnapshotKind,
 ) -> Result<(), quench_runtime::RootedError> {
     preload_named(context, kind.builtins())
 }
 
 pub(crate) fn preload_named(
-    context: &mut quench_runtime::NativeContext<'_, crate::host::ErasedHost>,
+    context: &mut quench_runtime::NativeContext<'_>,
     builtins: &[&str],
 ) -> Result<(), quench_runtime::RootedError> {
     let global = context.global_root()?;
@@ -467,7 +466,7 @@ pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
         let kind = SnapshotKind::of_path(path).ok_or_else(|| format!("{} names no snapshot kind", path.display()))?;
         let mut host = crate::host::NodeHost::new(vec![executable.to_string_lossy().into_owned()]);
         host.building_snapshot = Some(kind);
-        let mut runtime = quench_runtime::Runtime::new(quench_runtime::ErasedHost::new(host));
+        let mut runtime = quench_runtime::Runtime::new(host);
         let program = runtime
             .compile_entry(quench_runtime::ExecutionRequest {
                 source: "",
@@ -475,7 +474,7 @@ pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
                 kind: quench_runtime::SourceKind::Script,
             })
             .map_err(|error| format!("{error:?}"))?;
-        let bytes = runtime.build_snapshot(&program, |host, writer| host.get_ref::<crate::host::NodeHost>().write_snapshot(writer))?;
+        let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
         let temporary = unfinished_write(path, std::process::id());
         let written = std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, path));
         if let Err(error) = written {

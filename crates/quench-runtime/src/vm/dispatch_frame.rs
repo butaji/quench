@@ -198,7 +198,7 @@ impl GeneralCodeCursor {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A code cursor for `function`, with its lane view where the lane runs.
     pub(super) fn general_cursor(
         &self,
@@ -2348,6 +2348,7 @@ impl<H: Host> Vm<H> {
                         ins.boolean_flag().expect("validated boolean immediate"),
                     ) =>
                 {
+                    self.note_int_update(self.read(frame, ins.register_b()), value);
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }

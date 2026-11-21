@@ -8,7 +8,7 @@ use super::super::*;
 use super::PropertyKey;
 use crate::vm::proxy::ProxyTrap;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// GetMethod's read of the trap `atom` from `handler`.
     pub(in crate::vm) fn proxy_trap(
         &mut self,

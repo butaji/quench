@@ -276,7 +276,7 @@ fn reference_value_type_in(element_type: wasmparser::RefType, declarations: &cra
         })
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_webassembly(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let namespace = self.object();
         self.install_builtin_to_string_tag(namespace, "WebAssembly")?;
@@ -720,7 +720,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
         consumer: Native,
-        f: impl FnOnce(&mut H, &[u8]) -> T,
+        f: impl FnOnce(&mut dyn Host, &[u8]) -> T,
     ) -> Result<T, JsError> {
         let range = match self.heap.get(source) {
             Some(Cell::ArrayBuffer { shared: false, .. } | Cell::TypedArray { .. }) => self.embedding_buffer_range(source),
@@ -734,10 +734,10 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, format!("WebAssembly.{name}(): Argument 0 must be {required}")));
         };
         let Some(Cell::ArrayBuffer { bytes, detached, .. }) = self.heap.get(buffer) else {
-            return Ok(f(&mut self.host, &[]));
+            return Ok(f(&mut *self.host, &[]));
         };
         let read = bytes.read();
-        Ok(f(&mut self.host, if *detached { &[] } else { read.get(range).unwrap_or_default() }))
+        Ok(f(&mut *self.host, if *detached { &[] } else { read.get(range).unwrap_or_default() }))
     }
 
     fn wasm_compile_module(

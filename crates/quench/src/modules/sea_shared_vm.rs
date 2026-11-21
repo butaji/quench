@@ -1,10 +1,9 @@
 //! `node:sea` (lib/sea.js) for an executable that is never a single-executable application:
 //! `isSea()` is false and every asset accessor fails as Node's does outside one.
-use quench_runtime::ErasedHost;
 use crate::host::shared_vm::operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 const NOT_IN_SEA: &str = "ERR_NOT_IN_SINGLE_EXECUTABLE_APPLICATION";
 const NOT_IN_SEA_MESSAGE: &str = "Operation cannot be invoked when not in a single-executable application";

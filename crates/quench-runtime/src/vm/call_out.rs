@@ -45,7 +45,7 @@ pub(super) struct CallSite {
     pub(super) resume: usize,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The VM's operation `operation` at `site` of its operand values (`CallOut::operands`): the
     /// value it defines, if any. A for-in step defines `Value::DELETED` once no key is left.
     pub(super) fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
@@ -170,7 +170,10 @@ impl<H: Host> Vm<H> {
     /// (its BigInt update). The value the update defines.
     pub(super) fn inc_dec_value(&mut self, p: &ResidualProgram, input: Value, is_decrement: bool) -> Result<Value, JsError> {
         match super::dispatch::number_increment(input, is_decrement) {
-            Some(value) => Ok(value),
+            Some(value) => {
+                self.note_int_update(input, value);
+                Ok(value)
+            }
             None => {
                 let numeric = self.to_numeric(p, input)?;
                 match super::dispatch::number_increment(numeric, is_decrement) {
@@ -178,6 +181,24 @@ impl<H: Host> Vm<H> {
                     None => self.numeric_update(p, numeric, is_decrement),
                 }
             }
+        }
+    }
+
+    /// Notes an update of `input` to `value`: an int32 stepped past the int32 range retires the
+    /// views' speculative int32 kinds before the double is written (`dispatch_fast::int_kinds`).
+    #[inline(always)]
+    pub(super) fn note_int_update(&self, input: Value, value: Value) {
+        if input.as_int().is_some() && value.as_int().is_none() {
+            self.retire_int_speculation();
+        }
+    }
+
+    /// Retires every view's speculative int32 kinds, once per thread (`dispatch_fast::int_kinds`).
+    #[cold]
+    #[inline(never)]
+    pub(super) fn retire_int_speculation(&self) {
+        if super::dispatch_fast::note_int_speculation_retired() {
+            self.programs.retire_int_speculation();
         }
     }
 
@@ -334,7 +355,6 @@ impl<H: Host> Vm<H> {
         let source = operand.unwrap_or(Value::UNDEFINED);
         match step {
             Protocol::GetIterator => self.get_iterator(p, source).map(Some),
-            Protocol::GetAsyncIterator => self.get_async_iterator(p, source).map(Some),
             Protocol::ForInStart => self.for_in_start(p, source).map(Some),
             Protocol::IteratorClose => self.iterator_close(p, source).map(Some),
             Protocol::RestView { .. } => unreachable!("a rest view's step reads its activation (`rest_view_step`)"),
@@ -393,8 +413,8 @@ impl<H: Host> Vm<H> {
 
 /// The interpreter's frame for staged rows: the running frame's live registers, and the VM that
 /// answers a row's call-out in place. Its suspension hooks are `suspension`'s.
-pub(super) struct HostFrame<'a, H: Host> {
-    pub(super) vm: &'a mut Vm<H>,
+pub(super) struct HostFrame<'a> {
+    pub(super) vm: &'a mut Vm,
     pub(super) program: &'a ResidualProgram,
     pub(super) site: CallSite,
     /// What the VM raised, for the step's caller to throw.
@@ -408,7 +428,7 @@ pub(super) enum HostControl {
     Suspend(crate::staged::Suspending<u64>),
 }
 
-impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
+impl Frame<Concrete> for HostFrame<'_> {
     type Fact = ();
     type Control = HostControl;
 
@@ -505,17 +525,17 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     }
 }
 
-impl<H: Host> GlobalFrame<Concrete> for HostFrame<'_, H> {}
+impl GlobalFrame<Concrete> for HostFrame<'_> {}
 
-impl<H: Host> PropertyFrame<Concrete> for HostFrame<'_, H> {
+impl PropertyFrame<Concrete> for HostFrame<'_> {
     type Plans = NoPlans;
 
     fn plans(&self) -> NoPlans { NoPlans }
 }
 
-impl<H: Host> crate::staged::ElementFrame<Concrete> for HostFrame<'_, H> {}
+impl crate::staged::ElementFrame<Concrete> for HostFrame<'_> {}
 
-impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
+impl NumericFrame<Concrete> for HostFrame<'_> {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> {
         unreachable!("a call-out row has no numeric operand")
     }

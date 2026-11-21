@@ -80,6 +80,11 @@ pub(crate) enum FieldPlan<'a> {
     /// The ops of `staged::ic` over the receiver's record: own slot, prototype slot, or a
     /// prototype constant.
     Ops(&'a [IcOp<'a>]),
+    /// An own read of the receiver's record by its layout word and slot: the ops
+    /// `[GuardLayout(layout), LoadSlot { slot, storage_len: slot + 1, rep: Tagged, .. }]` held by
+    /// value, so a frame whose plan is run-time data (a lane record's hint) keeps it in registers
+    /// rather than in a list it addresses.
+    Own { layout: u32, slot: u16 },
     /// The VM's entry lookup of `kind` for the receiver (`PropertyFrame::field_entry`), with no
     /// op over its record.
     Entry(EntryKind),
@@ -504,6 +509,10 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
             let records = frame.object_records(stage);
             run_owned(stage, frame, (owner, !readable), ops, (at, records), miss)
         }
+        FieldPlan::Own { layout, slot } => {
+            let at = frame.receiver_record(stage, owner, object, readable, miss)?;
+            own_slot(stage, frame, (owner, !readable), &at, (layout, slot), miss)
+        }
         FieldPlan::Arms(list) => {
             let at = frame.receiver_record(stage, owner, object, readable, miss)?;
             for held in list.iter().filter_map(|arm| arm.holds) { frame.hold_prototype(stage, held, miss)?; }
@@ -570,6 +579,14 @@ pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S,
     ic::guard_shape(stage, at, shape, miss)?;
     frame.prove_shape(stage, owner, shape, direct);
     Some(())
+}
+
+/// `run_owned` of `FieldPlan::Own`: the layout guard and the slot it proves.
+#[inline(always)]
+fn own_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owned: (Owner, bool),
+    at: &Reached<S::Word, S::Cond>, (layout, slot): (u32, u16), miss: S::Miss) -> Option<S::Word> {
+    // `run_owned`'s arm of the same two ops.
+    word_formed_slot(stage, frame, owned, at, layout, (slot, crate::typed_ir::Representation::Tagged, usize::from(slot) + 1), miss)
 }
 
 /// `ops` over the record `at` reached, where a leading shape guard is the owner's proof: its
@@ -664,9 +681,26 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         let records = frame.object_records(stage);
         return run_owned(stage, frame, (owner, true), ops, (at, records), miss);
     }
+    if let FieldPlan::Own { layout, slot } = plan {
+        let at = frame.receiver_record(stage, owner, object, false, miss)?;
+        return own_slot(stage, frame, (owner, true), &at, (layout, slot), miss);
+    }
     // A prototype-held read, the other plan a row's holes name, inline too: only nested plans recurse.
     if let FieldPlan::Inherited { shape, constants, proof } = plan {
         return inherited(stage, frame, (owner, false), object, (shape, constants, proof), miss);
+    }
+    // The polymorphic read (the record's hint, then the VM's entries) and the entry reads inline as
+    // well: through `read_with`, out of line, the row built the plan in memory (a 1.5 KB frame,
+    // ~165 Ir) at every hint miss.
+    if let FieldPlan::Hinted { ops, entry } = plan {
+        return frame.entried(stage, owner, object, entry, miss, #[inline(always)] |stage, frame, miss| {
+            let at = frame.receiver_record(stage, owner, object, false, miss)?;
+            let records = frame.object_records(stage);
+            run_owned(stage, frame, (owner, true), ops, (at, records), miss)
+        });
+    }
+    if let FieldPlan::Entry(kind) = plan {
+        return frame.field_entry(stage, owner, object, kind, miss);
     }
     read_with(stage, frame, (owner, false), object, plan, miss)
 }

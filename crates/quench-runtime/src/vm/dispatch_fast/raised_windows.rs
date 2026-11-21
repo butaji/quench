@@ -11,7 +11,7 @@ use super::*;
 /// unwinds from, or the exit of a job's run. `None`, before any effect, where the activation is
 /// no window, owns open loops (whose iterators a frame's unwinding closes) or runs beside a
 /// native's deferred call.
-pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip) -> Option<Ip> {
+pub(super) fn settle_raised_window(cx: *mut LaneContext, record: Ip) -> Option<Ip> {
     let vm = unsafe { vm(cx) };
     if vm.lane_deferred.is_some() || vm.lane_stack.native_boundary.is_some() {
         return None;

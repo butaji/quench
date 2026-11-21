@@ -4,9 +4,8 @@ use super::*;
 impl Lowering<'_> {
     /// The shape of `graph`, whose pass ended with the register file `file`.
     pub(super) fn lower(mut self, graph: Graph, file: &[Sym], test: (Sym, NumberRelation, Sym)) -> Option<Shape> {
-        if graph.loads.is_empty() && graph.stores.is_empty() {
-            return None;
-        }
+        // A loop with no array access is a kernel too: its recurrences and temps run in the
+        // scalar pass, one Rust loop over the iterations (C-shaped code runs as C).
         let mut nodes = Vec::with_capacity(graph.nodes.len());
         for &node in &graph.nodes {
             nodes.push(traced(self.node(node), "a node's operands")?);

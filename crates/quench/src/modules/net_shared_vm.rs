@@ -1,5 +1,3 @@
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::net_connect_error::TcpConnectFailure;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use rustc_hash::FxHashMap;
@@ -464,7 +462,7 @@ pub(super) fn listen_with_reuse_port(
 pub(super) const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
 
 pub(super) fn convert_listen_backlog(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
 ) -> Result<i32, RootedError> {
     // TCPWrap::Listen uses ToInt32 after the JavaScript truthy default.
@@ -699,11 +697,11 @@ pub(crate) fn write_with_completion(
 /// current net socket root tracks the active wrapper; an older receiver is
 /// the original raw socket and must keep raw TCP write/end semantics.
 fn is_raw_wrapped_socket(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     id: u64,
 ) -> Result<bool, RootedError> {
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let current = state
         .borrow()
         .net_sockets
@@ -1263,9 +1261,9 @@ fn connect_resolved_address(
     Ok(socket.into())
 }
 
-pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    let operation = |context: &mut NativeContext<'_, ErasedHost>, name: &str| {
+    let operation = |context: &mut NativeContext<'_>, name: &str| {
         context.host_function(crate::host::shared_vm::operation(name))
     };
     // Destruction latches its outcome before guest error handlers run.
@@ -1280,7 +1278,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
     )?;
     let close_completed = context.retain(close_completed)?;
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .net_socket_close_completed = Some(close_completed);
@@ -1311,7 +1309,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
     let readable_end =
         super::net_internal_shared_vm::method(context, readable_end, "onReadableStreamEnd")?;
     let emitter_api = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .event_targets_api
@@ -1371,7 +1369,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
         async_id,
     };
     let surface = super::net_class_shared_vm::build(context, &operations)?;
-    let export = |context: &mut NativeContext<'_, ErasedHost>, name: &str, value: RootId| {
+    let export = |context: &mut NativeContext<'_>, name: &str, value: RootId| {
         context.assign_named_property_rooted(module, name, value).map(drop)
     };
     let find = |name: &str| {
@@ -1422,7 +1420,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
         export(context, name, function)?;
     }
     let options_data = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .net_socket_option_keys
@@ -1431,7 +1429,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
     context.define_data_property_rooted(options_data, key, module, false, false, false)?;
     let retained = context.retain(find("Socket"))?;
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .net_socket_constructor = Some(retained);
@@ -1439,7 +1437,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<Root
 }
 
 pub(crate) fn is_ip(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1457,7 +1455,7 @@ pub(crate) fn is_ip(
 }
 
 pub(crate) fn is_ipv4(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1467,7 +1465,7 @@ pub(crate) fn is_ipv4(
 }
 
 pub(crate) fn is_ipv6(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1493,7 +1491,7 @@ pub(super) fn parse_ip(input: &str) -> Option<IpAddr> {
 }
 
 pub(crate) fn connect_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1517,7 +1515,7 @@ pub(crate) fn connect_operation(
         .transpose()?
         .flatten()
     {
-        let shared = context.node().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let bind_path = resolve_local_path(&shared.borrow().cwd, &path);
         let id = connect_local(&mut shared.borrow_mut().tcp, bind_path, path)
             .map_err(RootedError::host)?;
@@ -1541,7 +1539,7 @@ pub(crate) fn connect_operation(
         let port_root = context.number(f64::from(port));
         return super::net_lookup_shared_vm::start(context, socket, host_root, port_root, options);
     }
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let id = reserve_lookup(&mut shared.borrow_mut().tcp).map_err(RootedError::host)?;
     register_socket(context, socket, id)?;
     super::net_options_shared_vm::connect_family_options(context, options)?;
@@ -1562,7 +1560,7 @@ pub(crate) fn connect_operation(
 /// Count bytes at stream admission, once. The stream's existing private
 /// accounted handoff prevents pending chunks from being counted again.
 pub(crate) fn account_write_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1585,7 +1583,7 @@ pub(crate) fn account_write_operation(
 }
 
 fn account_write(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     byte_length: RootId,
     socket: RootId,
     chunk: RootId,
@@ -1624,7 +1622,7 @@ fn account_write(
 }
 
 pub(crate) fn end_stream(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1660,7 +1658,7 @@ pub(crate) fn end_stream(
 }
 
 pub(crate) fn write_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1686,7 +1684,7 @@ pub(crate) fn write_operation(
     if !bytes.is_empty() {
         crate::modules::tls_shared_vm::socket::start_for_write(context, socket)?;
     }
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     if !state.borrow().net_sockets.contains_key(&id) {
         return Err(RootedError::host("socket is closed"));
     }
@@ -1706,13 +1704,13 @@ pub(crate) fn write_operation(
             .map_err(RootedError::host)?;
     } else {
         // Connecting sockets keep their existing deferred submission path.
-        context.node().net_pending_writes.push((id, bytes, raw));
+        context.host_as::<crate::host::NodeHost>().net_pending_writes.push((id, bytes, raw));
     }
     Ok(context.boolean(true))
 }
 
 pub(crate) fn end_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1729,12 +1727,12 @@ pub(crate) fn end_operation(
     }
     let id = socket_id(context, socket)?;
     let raw = is_raw_wrapped_socket(context, socket, id)?;
-    context.node().net_pending_ends.push((id, raw));
+    context.host_as::<crate::host::NodeHost>().net_pending_ends.push((id, raw));
     Ok(socket)
 }
 
 pub(crate) fn destroy_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1757,7 +1755,7 @@ pub(crate) fn destroy_operation(
             let undefined = context.undefined();
             context.call_rooted(callback, undefined, &[error])?;
             let callback = context
-                .node()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow()
                 .net_socket_close_completed
@@ -1774,14 +1772,14 @@ pub(crate) fn destroy_operation(
         }
     };
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .net_pending_writes
         .retain(|(socket, _, _)| *socket != id);
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .net_pending_ends
         .retain(|(socket, _)| *socket != id);
-    let state = context.node().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let was_connected = is_connected(&state.borrow().tcp, id);
     let reset_key = context.string_rooted("resetAndClosing");
     let reset = context.get_property_rooted(socket, reset_key)?;
@@ -1791,7 +1789,7 @@ pub(crate) fn destroy_operation(
     }
     close_socket(&mut state.borrow_mut().tcp, id);
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .net_pending_destroys
         .push((id, was_connected));
     let key = context.string_rooted("_handle");
@@ -1806,7 +1804,7 @@ pub(crate) fn destroy_operation(
 }
 
 pub(crate) fn set_encoding_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1827,7 +1825,7 @@ pub(crate) fn set_encoding_operation(
         .map(|value| context.to_string(value))
         .transpose()?;
     if let Some(socket) = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .net_sockets
@@ -1840,11 +1838,11 @@ pub(crate) fn set_encoding_operation(
 
 #[cfg(unix)]
 pub(super) fn listen_local_server(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     server: RootId,
     path: &str,
 ) -> Result<RootId, RootedError> {
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let cwd = shared.borrow().cwd.clone();
     let bind_path = resolve_local_path(&cwd, path);
     let cleanup_path = cleanup_local_path(&cwd, path);
@@ -1866,7 +1864,7 @@ pub(super) fn listen_local_server(
 }
 
 pub(crate) fn server_address_operation(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     server: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1876,7 +1874,7 @@ pub(crate) fn server_address_operation(
     let Some(id) = optional_server_id(context, server)? else {
         return Ok(context.null());
     };
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let local = listener_path(&shared.borrow().tcp, id).map(str::to_owned);
     if let Some(path) = local {
         return Ok(context.string_rooted(&path));
@@ -1903,7 +1901,7 @@ pub(crate) fn server_address_operation(
 }
 
 pub(super) fn optional_server_id(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     server: RootId,
 ) -> Result<Option<u64>, RootedError> {
     let key = context.string_rooted("__quenchNetServerId");
@@ -1916,7 +1914,7 @@ pub(super) fn optional_server_id(
 }
 
 pub(super) fn socket_id(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<u64, RootedError> {
     let key = context.string_rooted("__quenchNetSocketId");
@@ -1934,13 +1932,13 @@ pub(super) fn socket_id(
 /// so the parent socket remains usable while the child writes to its endpoint.
 #[cfg(unix)]
 pub(crate) fn child_stdio_socket_descriptor(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<Option<i32>, RootedError> {
     let Ok(id) = socket_id(context, socket) else {
         return Ok(None);
     };
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
     let fd = native_tcp_fd(&state.tcp, id);
     Ok((fd >= 0).then_some(fd))
@@ -1948,19 +1946,19 @@ pub(crate) fn child_stdio_socket_descriptor(
 
 #[cfg(not(unix))]
 pub(crate) fn child_stdio_socket_descriptor(
-    _: &mut NativeContext<'_, ErasedHost>,
+    _: &mut NativeContext<'_>,
     _: RootId,
 ) -> Result<Option<i32>, RootedError> {
     Ok(None)
 }
 
 pub(crate) fn get_timeout(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let timeout = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .net_auto_select_family_attempt_timeout;
@@ -1968,14 +1966,14 @@ pub(crate) fn get_timeout(
 }
 
 pub(crate) fn set_timeout(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let timeout = super::net_options_shared_vm::attempt_timeout(context, value, "value")?;
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .net_auto_select_family_attempt_timeout = timeout;
@@ -2054,11 +2052,11 @@ pub(crate) fn listener_path(transport: &Transport, id: u64) -> Option<&str> {
 }
 
 pub(crate) fn register_socket(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     id: u64,
 ) -> Result<RootId, RootedError> {
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let key = context.string_rooted("__quenchNetSocketId");
     let id_value = context.number(id as f64);
     if !context.set_property_rooted(socket, key, id_value, socket)? {
@@ -2085,7 +2083,7 @@ pub(crate) fn register_socket(
 /// SCM_RIGHTS leaves the sender's socket usable, as Node's keep-open mode does.
 #[cfg(unix)]
 pub(crate) fn ipc_socket_handle(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     handle: RootId,
 ) -> Result<Option<std::os::fd::OwnedFd>, RootedError> {
     use std::os::fd::AsFd;
@@ -2093,7 +2091,7 @@ pub(crate) fn ipc_socket_handle(
     let Ok(id) = socket_id(context, handle) else {
         return Ok(None);
     };
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
     let Some(socket) = state.tcp.sockets.get(&id) else {
         return Ok(None);
@@ -2112,7 +2110,7 @@ pub(crate) fn ipc_socket_handle(
 /// transfer. This is called only after the descriptor is on the IPC channel.
 #[cfg(unix)]
 pub(crate) fn close_ipc_socket(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<(), RootedError> {
     if socket_id(context, socket).is_err() {
@@ -2125,11 +2123,11 @@ pub(crate) fn close_ipc_socket(
 }
 
 pub(super) fn register_server(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     server: RootId,
     listener: u64,
 ) -> Result<RootId, RootedError> {
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let key = context.string_rooted("__quenchNetServerId");
     let value = context.number(listener as f64);
     if !context.set_property_rooted(server, key, value, server)? {
@@ -2152,7 +2150,7 @@ pub(super) fn register_server(
 
 #[cfg(unix)]
 fn queue_listen_error(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     server: RootId,
     os_error: std::io::Error,
     path: &str,
@@ -2192,7 +2190,7 @@ fn queue_listen_error(
 }
 
 pub(crate) fn listen_error(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2334,7 +2332,7 @@ pub(crate) fn socket_has_ref(transport: &Transport, id: u64) -> Option<bool> {
 }
 
 pub(crate) fn close_completed(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2433,7 +2431,7 @@ pub(crate) fn release_delivery(transport: &mut Transport, id: u64) {
     }
 }
 pub(crate) fn deliver_eof(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2444,7 +2442,7 @@ pub(crate) fn deliver_eof(
     context.call_rooted(read, receiver, &[zero])
 }
 pub(crate) fn deliver_data(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2473,7 +2471,7 @@ pub(crate) fn deliver_data(
         Ok(result)
     })();
     release_delivery(
-        &mut context.node().shared_state().borrow_mut().tcp,
+        &mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp,
         socket,
     );
     result
@@ -2483,7 +2481,7 @@ enum ConnectionDelivery {
     Connected,
 }
 pub(crate) fn deliver_connect(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2491,7 +2489,7 @@ pub(crate) fn deliver_connect(
 }
 
 pub(crate) fn deliver_connection(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2499,7 +2497,7 @@ pub(crate) fn deliver_connection(
 }
 
 fn complete_connection_delivery(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
     delivery: ConnectionDelivery,
@@ -2511,7 +2509,7 @@ fn complete_connection_delivery(
         .ok_or_else(|| RootedError::host("queued socket owner is unavailable"))?
         as u64;
     {
-        let shared = context.node().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         if let Some(socket) = shared.borrow_mut().tcp.sockets.get_mut(&socket) {
             socket.delivery = DeliveryPhase::DeliveringConnection;
         };
@@ -2526,7 +2524,7 @@ fn complete_connection_delivery(
         }
         Ok(result)
     })();
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     {
         let mut state = shared.borrow_mut();
         release_delivery(&mut state.tcp, socket);
@@ -2535,7 +2533,7 @@ fn complete_connection_delivery(
 }
 
 pub(crate) fn readable_end(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2551,7 +2549,7 @@ pub(crate) fn readable_end(
 }
 
 pub(crate) fn write_after_fin(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2586,7 +2584,7 @@ pub(crate) fn write_after_fin(
 }
 
 pub(crate) fn initialize_end(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2604,7 +2602,7 @@ pub(crate) fn initialize_end(
 }
 
 pub(crate) fn initialize_server_emitter(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

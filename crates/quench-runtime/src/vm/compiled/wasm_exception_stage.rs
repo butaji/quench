@@ -19,7 +19,7 @@
 
 use super::wasm_gc_allocate::operand_value;
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, Slot, Value, Vm, finish_callout};
+use super::{Analysis, AnalysisState, CallContext, Emitter, JsError, Kind, Slot, Value, Vm, finish_callout};
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess as _, MachineStage as _};
 use crate::staged::wasm::Width;
@@ -47,7 +47,7 @@ fn holds_reference(state: &AnalysisState, registers: u16, register: u16) -> Opti
     (value_kind(state.get(register, registers)?)? == Kind::Reference).then_some(())
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks an exception step: the operands it reads hold the kinds it needs, and its result takes
     /// the kind it returns. A payload read has no lowering (see the module docs).
     pub(super) fn transfer_exception(
@@ -88,7 +88,7 @@ impl<H: Host> Analysis<'_, H> {
 /// from the frame's environment (as `Vm::wasm_instance_step` reads it), and its payload the operand
 /// block the emitted code spilled: `count` registers, their kinds and their Wasm bits, then the
 /// result word `out`.
-unsafe extern "C" fn exception_new_callout<H: Host>(
+unsafe extern "C" fn exception_new_callout(
     context: *mut CallContext,
     tag_slot: u64,
     operands: *const u64,
@@ -97,7 +97,7 @@ unsafe extern "C" fn exception_new_callout<H: Host>(
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
     let (env, count) = unsafe { ((*context).head.env, count as usize) };
-    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm>() };
     // SAFETY: the emitted code spilled `count` kinds and words after the `count` registers.
     let payload: Vec<Value> = (0..count)
         .map(|index| unsafe {
@@ -121,14 +121,14 @@ unsafe extern "C" fn exception_new_callout<H: Host>(
 }
 
 /// The catch's test of `exception` against `tag`: the flag in `out`.
-unsafe extern "C" fn exception_match_callout<H: Host>(
+unsafe extern "C" fn exception_match_callout(
     context: *mut CallContext,
     exception: u64,
     tag: u64,
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm>() };
     match vm.wasm_exception_matches(Value::from_bits(exception), Value::from_bits(tag)) {
         Ok(matches) => {
             // SAFETY: the emitted code gives `out` a word of its own for this call.
@@ -151,7 +151,7 @@ fn payload_kind(ty: PayloadType) -> Kind {
 
 /// The word of payload `index` of `exception` for a payload of type `code`: a numeric payload's
 /// Wasm bits (decoded from its Value), a reference's Value bits.
-fn payload_word<H: Host>(vm: &mut Vm<H>, exception: u64, index: u64, code: u64) -> Result<u64, JsError> {
+fn payload_word(vm: &mut Vm, exception: u64, index: u64, code: u64) -> Result<u64, JsError> {
     let ty = u16::try_from(code).ok().and_then(PayloadType::of_code).ok_or_else(|| JsError::validation("invalid Wasm payload type".into()))?;
     let value = vm.wasm_exception_payload(Value::from_bits(exception), index as u32)?;
     let Some(numeric) = ty.numeric() else {
@@ -166,7 +166,7 @@ fn payload_word<H: Host>(vm: &mut Vm<H>, exception: u64, index: u64, code: u64) 
 
 /// The payload read of `exception` at `index` for a payload of type `code`: its word in `out`, or
 /// the status a raised error leaves with (`finish_callout`).
-unsafe extern "C" fn exception_payload_callout<H: Host>(
+unsafe extern "C" fn exception_payload_callout(
     context: *mut CallContext,
     exception: u64,
     index: u64,
@@ -174,7 +174,7 @@ unsafe extern "C" fn exception_payload_callout<H: Host>(
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm>() };
     match payload_word(vm, exception, index, code) {
         Ok(word) => {
             // SAFETY: the emitted code gives `out` a word of its own for this call.
@@ -188,15 +188,15 @@ unsafe extern "C" fn exception_payload_callout<H: Host>(
 
 /// `throw_ref` of `exception`: the error it raises is left in the context, and the status is the
 /// raised one. It always returns that status.
-unsafe extern "C" fn exception_throw_callout<H: Host>(context: *mut CallContext, exception: u64) -> i64 {
+unsafe extern "C" fn exception_throw_callout(context: *mut CallContext, exception: u64) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm>() };
     let error = vm.wasm_throw_ref(Value::from_bits(exception));
     // SAFETY: compiled code passes the context of its call.
     finish_callout(unsafe { &mut *context }, Ok(Err(error)))
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Lowers an exception step; whether control falls through to the next instruction.
     pub(super) fn exception_op(&mut self, pc: usize, instruction: WideInstruction, op: Exception) -> bool {
         match op {
@@ -253,7 +253,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let operands = self.slot_address(slot, 0);
         let count_word = self.constant(Width::I64, count as i64);
         let out = self.slot_address(slot, (3 * count * WORD) as i32);
-        let target = exception_new_callout::<H> as *const () as usize;
+        let target = exception_new_callout as *const () as usize;
         let status = self.call_leaf(target, &[context, tag, operands, count_word, out]);
         self.propagate(status);
         let bits = self.load_word(Width::I64, MemFlagsData::trusted(), out, 0);
@@ -271,7 +271,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         ));
         let context = self.body.core.context;
         let out = self.slot_address(slot, 0);
-        let target = exception_match_callout::<H> as *const () as usize;
+        let target = exception_match_callout as *const () as usize;
         let status = self.call_leaf(target, &[context, exception, tag, out]);
         self.propagate(status);
         let bits = self.load_word(Width::I64, MemFlagsData::trusted(), out, 0);
@@ -292,7 +292,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         ));
         let context = self.body.core.context;
         let out = self.slot_address(slot, 0);
-        let target = exception_payload_callout::<H> as *const () as usize;
+        let target = exception_payload_callout as *const () as usize;
         let status = self.call_leaf(target, &[context, exception, index, code, out]);
         self.propagate(status);
         let kind = payload_kind(PayloadType::of_code(instruction.c()).expect("planned"));
@@ -309,7 +309,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     fn exception_throw(&mut self, instruction: WideInstruction) {
         let exception = self.read(instruction.a(), Kind::Reference);
         let context = self.body.core.context;
-        let target = exception_throw_callout::<H> as *const () as usize;
+        let target = exception_throw_callout as *const () as usize;
         let status = self.call_leaf(target, &[context, exception]);
         self.propagate(status);
         self.leave_raised(status);

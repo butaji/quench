@@ -1,13 +1,11 @@
 //! `node:string_decoder` in Rust (lib/string_decoder.js) over the native decoder state.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::string_decoder_codec::{DecoderState, Layout, StringTooLong, ENCODINGS};
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0binding:string_decoder";
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(value);
     }
@@ -126,7 +124,7 @@ const STATE_SYMBOL_KEY: &str = "\0node/string_decoder/kNativeDecoder";
 
 /// `kNativeDecoder`: the private-by-convention key of a decoder's native state buffer.
 fn state_symbol(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(symbol) = shared.borrow().builtin_cache.get(STATE_SYMBOL_KEY).copied() {
         return Ok(symbol);
     }

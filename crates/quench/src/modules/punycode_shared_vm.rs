@@ -1,10 +1,8 @@
 //! `node:punycode` in Rust: Punycode.js (RFC 3492 Bootstring), which lib/punycode.js is.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use crate::host::shared_vm::operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// Punycode.js's `version`.
 const VERSION: &str = "2.1.0";
@@ -266,7 +264,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let inside = super::util_shared_vm::is_inside_node_modules(c, undefined, &[frames])?;
     if !c.truthy_rooted(inside)? {
         let process = c
-            .node()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .process_module

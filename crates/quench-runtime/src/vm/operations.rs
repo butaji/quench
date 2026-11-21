@@ -587,7 +587,7 @@ pub(super) enum OperandCoercion {
     Numeric,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     #[inline(always)]
     pub(super) fn record_binary_value_path(
         &mut self,
@@ -834,7 +834,7 @@ impl<H: Host> Vm<H> {
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, v)?;
-                HostContext::new(&mut self.host).invoke(CapabilityId::WriteLine, Some(&text));
+                HostContext::new(&mut *self.host).invoke(CapabilityId::WriteLine, Some(&text));
                 Ok(Value::UNDEFINED)
             }
             Native::Date => self.date_call(),
@@ -1918,7 +1918,7 @@ impl<H: Host> Vm<H> {
     /// `Date.now()`: the host clock's milliseconds, truncated. It runs no guest code, so the
     /// lane answers it in place (`steady_native_value`) as the native call does.
     pub(super) fn date_now(&mut self) -> Value {
-        Value::number(HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None).trunc())
+        Value::number(HostContext::new(&mut *self.host).invoke(CapabilityId::ClockMillis, None).trunc())
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
@@ -2263,7 +2263,7 @@ pub(super) enum NativeFamily {
     Table,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
 /// `native`'s family, by the families' own membership tests in their precedence order: the
 /// string, RegExp and Math methods belong to none of the families after them.
 fn native_family(native: Native) -> NativeFamily {

@@ -2,7 +2,6 @@
 //! header-value rules, the patterns the HTTP classes match header values with, and the
 //! parser helpers.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// Node's `chunkExpression` and `continueExpression`.
@@ -11,7 +10,7 @@ const EXPRESSIONS: [(&str, &str); 2] = [
     ("continueExpression", "(?:^|\\W)100-continue(?:$|\\W)"),
 ];
 
-pub(crate) fn module(c: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:http_parser", |c| {
         let module = c.object_rooted()?;
         crate::modules::http_shared_vm::common_members(c, module)?;

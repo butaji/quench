@@ -26,7 +26,7 @@ macro_rules! linked_native_sources {
         /// # Safety
         /// Metadata, host ABI and all entry tables must be emitted together by
         /// this compiler, linked unmodified, and kept alive for the process.
-        pub unsafe fn $entry() -> Result<$crate::NativeJsProgram<$host>, String> {
+        pub unsafe fn $entry() -> Result<$crate::NativeJsProgram, String> {
             unsafe extern "C" { #[link_name = $entry_link] static $entry_symbol: u8; }
             let bytes: $crate::KeptBytes = std::rc::Rc::new(&include_bytes!($entry_metadata)[..]);
             let program = $crate::ResidualProgram::from_binary_bytes(bytes)?;
@@ -35,7 +35,7 @@ macro_rules! linked_native_sources {
         }
         /// # Safety
         /// Every catalog record must meet the linked-image contract above.
-        pub unsafe fn $resolve(namespace: &$crate::NativeProgramNamespace, name: &str, parts: &[&str]) -> Result<Option<$crate::NativeJsProgram<$host>>, $crate::NativeSourceError> {
+        pub unsafe fn $resolve(namespace: &$crate::NativeProgramNamespace, name: &str, parts: &[&str]) -> Result<Option<$crate::NativeJsProgram>, $crate::NativeSourceError> {
             $(if name == $name && parts == (&[$($part),*] as &[&str]) {
                 unsafe extern "C" { #[link_name = $link] static $symbol: u8; }
                 let bytes: $crate::KeptBytes = std::rc::Rc::new(&include_bytes!($metadata)[..]);

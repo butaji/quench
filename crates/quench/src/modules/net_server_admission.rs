@@ -1,11 +1,9 @@
 //! Admission and connection counts follow the original net.Server callback.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn set(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -15,7 +13,7 @@ fn set(
     Ok(())
 }
 fn emit(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     server: RootId,
     event: &str,
     args: &[RootId],
@@ -28,14 +26,14 @@ fn emit(
     context.call_rooted(method, server, &arguments)
 }
 fn close_handle(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     handle: RootId,
 ) -> Result<RootId, RootedError> {
     let close = get(context, handle, "close")?;
     context.call_rooted(close, handle, &[])
 }
 fn drop_connection(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     server: RootId,
     handle: RootId,
 ) -> Result<RootId, RootedError> {
@@ -73,7 +71,7 @@ fn drop_connection(
 }
 
 pub(crate) fn on_connection(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -139,7 +137,7 @@ pub(crate) fn on_connection(
     set(context, options, "readable", yes)?;
     set(context, options, "writable", yes)?;
     let constructor = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .net_socket_constructor
@@ -150,7 +148,7 @@ pub(crate) fn on_connection(
     set(context, socket, "__quenchNetSocketId", id_value)?;
     context.set_property_rooted(handle, owner_key, socket, handle)?;
     let retained = context.retain(socket)?;
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     shared.borrow_mut().net_sockets.insert(
         id,
         crate::host::node_host::NetSocket {
@@ -196,7 +194,7 @@ pub(crate) fn on_connection(
 }
 
 pub(crate) fn get_connections(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -212,7 +210,7 @@ pub(crate) fn get_connections(
     Ok(server)
 }
 pub(crate) fn connections_result(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -223,7 +221,7 @@ pub(crate) fn connections_result(
 
 /// Match Socket._destroy's synchronous decrement after its original callback.
 pub(crate) fn socket_destroyed(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     id: Option<u64>,
 ) -> Result<(), RootedError> {
@@ -234,7 +232,7 @@ pub(crate) fn socket_destroyed(
         let count = context.numeric_update_rooted(count, true)?;
         set(context, server, "_connections", count)?;
         if let Some(id) = id {
-            let shared = context.node().shared_state();
+            let shared = context.host_as::<crate::host::NodeHost>().shared_state();
             for owner in shared.borrow_mut().net_servers.values_mut() {
                 owner.connections.remove(&id);
             }

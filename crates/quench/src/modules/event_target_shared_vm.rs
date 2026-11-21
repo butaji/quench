@@ -5,11 +5,9 @@
 //! list of listener records in registration order, as Node keeps them: a removed record
 //! keeps its `next`, so a dispatch walking the list continues past it, and a listener added
 //! during a dispatch is reached unless it follows the record running.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The event group's members (`SharedNodeState::event_targets_api`) naming each private slot.
 pub(super) const EVENT_SLOT: &str = "eventSlot";
@@ -91,7 +89,7 @@ pub(super) fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> Ro
 
 /// The event group's shared data.
 pub(super) fn api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.node()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .event_targets_api
@@ -704,7 +702,7 @@ fn listener_registers(c: &mut Context<'_>, listener: RootId) -> Result<bool, Roo
 /// `process.emitWarning(warning)`.
 pub(super) fn emit_warning(c: &mut Context<'_>, warning: RootId) -> Result<(), RootedError> {
     let process = c
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module

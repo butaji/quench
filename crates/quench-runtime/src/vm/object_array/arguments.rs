@@ -1,7 +1,7 @@
 //! The reads of an arguments object's own `length` and elements, past its parameter mapping.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The own data `length` of an arguments object that keeps the layout it was made with
     /// (a realm's `ArgumentsObjectTemplate` shape, which fixes the property, its attributes
     /// and its slot); `None` for any other value or layout.

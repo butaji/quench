@@ -1,13 +1,12 @@
 //! Shared-VM TextDecoder facade over the Node-owned decoder semantics.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 
 pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder"];
 
 /// Installs `TextDecoder` and `TextEncoder` as lazy data properties, built on first use.
-pub(crate) fn install_global(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
+pub(crate) fn install_global(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     let initializer =
         context.host_function(crate::host::shared_vm::operation!("textDecoderInitialize"))?;
     let global = context.global_root()?;
@@ -25,7 +24,7 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, ErasedHost>) -> Res
 }
 
 pub(crate) fn initialize(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -49,14 +48,14 @@ const PENDING: &str = "3";
 const BOM_SEEN: &str = "4";
 
 /// Ends a stream: no bytes pending and the next output may start with a BOM.
-fn reset_stream(context: &mut NativeContext<'_, ErasedHost>, state: RootId) -> Result<(), RootedError> {
+fn reset_stream(context: &mut NativeContext<'_>, state: RootId) -> Result<(), RootedError> {
     let empty = context.uint8_array_from_rooted(Vec::new())?;
     context.assign_named_property_rooted(state, PENDING, empty)?;
     let no = context.boolean(false);
     context.assign_named_property_rooted(state, BOM_SEEN, no)
 }
 
-fn accessor(context: &mut NativeContext<'_, ErasedHost>, prototype: RootId, name: &str, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
+fn accessor(context: &mut NativeContext<'_>, prototype: RootId, name: &str, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
     let getter = context.host_function_named(operation, &format!("get {name}"))?;
     let descriptor = context.null_object_rooted()?;
     context.assign_named_property_rooted(descriptor, "get", getter)?;
@@ -68,14 +67,14 @@ fn accessor(context: &mut NativeContext<'_, ErasedHost>, prototype: RootId, name
     Ok(())
 }
 
-fn method(context: &mut NativeContext<'_, ErasedHost>, prototype: RootId, name: &str, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
+fn method(context: &mut NativeContext<'_>, prototype: RootId, name: &str, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
     let function = context.host_function_named(operation, name)?;
     let key = context.string_rooted(name);
     context.define_data_property_rooted(prototype, key, function, true, true, true)?;
     Ok(())
 }
 
-fn to_string_tag(context: &mut NativeContext<'_, ErasedHost>, prototype: RootId, tag: &str) -> Result<(), RootedError> {
+fn to_string_tag(context: &mut NativeContext<'_>, prototype: RootId, tag: &str) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let symbol = context.get_named_property_rooted(global, "Symbol")?;
     let key = context.get_named_property_rooted(symbol, "toStringTag")?;
@@ -84,21 +83,21 @@ fn to_string_tag(context: &mut NativeContext<'_, ErasedHost>, prototype: RootId,
     Ok(())
 }
 
-fn argument(context: &mut NativeContext<'_, ErasedHost>, args: &[RootId], index: usize) -> RootId {
+fn argument(context: &mut NativeContext<'_>, args: &[RootId], index: usize) -> RootId {
     match args.get(index) {
         Some(value) => *value,
         None => context.undefined(),
     }
 }
 
-fn illegal_invocation(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootedError, RootedError> {
+fn illegal_invocation(context: &mut NativeContext<'_>) -> Result<RootedError, RootedError> {
     let error = context.type_error_rooted("Illegal invocation")?;
     super::node_errors_shared_vm::decorate_type_error(context, error, "ERR_INVALID_THIS")?;
     Ok(context.throw(error))
 }
 
 /// A TextDecoder's state, or `ERR_INVALID_THIS`.
-fn decoder_state(context: &mut NativeContext<'_, ErasedHost>, receiver: RootId) -> Result<RootId, RootedError> {
+fn decoder_state(context: &mut NativeContext<'_>, receiver: RootId) -> Result<RootId, RootedError> {
     match super::private_slots::read(context, receiver, DECODER_SLOT)? {
         Some(state) => Ok(state),
         None => Err(illegal_invocation(context)?),
@@ -106,7 +105,7 @@ fn decoder_state(context: &mut NativeContext<'_, ErasedHost>, receiver: RootId) 
 }
 
 /// `new TextDecoder([label[, options]])`.
-pub(crate) fn decoder_constructor(context: &mut NativeContext<'_, ErasedHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn decoder_constructor(context: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     if context.new_target_rooted().is_none() {
         let error = context.type_error_rooted("Class constructor TextDecoder cannot be invoked without 'new'")?;
         return Err(context.throw(error));
@@ -138,25 +137,25 @@ pub(crate) fn decoder_constructor(context: &mut NativeContext<'_, ErasedHost>, t
     Ok(missing)
 }
 
-fn state_field(context: &mut NativeContext<'_, ErasedHost>, this: RootId, index: &str) -> Result<RootId, RootedError> {
+fn state_field(context: &mut NativeContext<'_>, this: RootId, index: &str) -> Result<RootId, RootedError> {
     let state = decoder_state(context, this)?;
     context.get_named_property_rooted(state, index)
 }
 
-pub(crate) fn decoder_encoding(context: &mut NativeContext<'_, ErasedHost>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn decoder_encoding(context: &mut NativeContext<'_>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     state_field(context, this, "0")
 }
 
-pub(crate) fn decoder_fatal(context: &mut NativeContext<'_, ErasedHost>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn decoder_fatal(context: &mut NativeContext<'_>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     state_field(context, this, "1")
 }
 
-pub(crate) fn decoder_ignore_bom(context: &mut NativeContext<'_, ErasedHost>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn decoder_ignore_bom(context: &mut NativeContext<'_>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     state_field(context, this, "2")
 }
 
 /// `textDecoder.decode([input[, options]])`.
-pub(crate) fn decoder_decode(context: &mut NativeContext<'_, ErasedHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn decoder_decode(context: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let state = decoder_state(context, this)?;
     let input = argument(context, args, 0);
     let input = if context.rooted_value(input).is_some_and(|value| value.is_undefined()) {
@@ -213,7 +212,7 @@ pub(crate) fn decoder_decode(context: &mut NativeContext<'_, ErasedHost>, this: 
 }
 
 /// `ERR_ENCODING_INVALID_ENCODED_DATA` for `encoding`.
-fn invalid_encoded_data(context: &mut NativeContext<'_, ErasedHost>, encoding: &str) -> Result<RootedError, RootedError> {
+fn invalid_encoded_data(context: &mut NativeContext<'_>, encoding: &str) -> Result<RootedError, RootedError> {
     // Node shares the ISO-8859-8 decoder with its logical-order alias,
     // including that decoder's canonical name in fatal diagnostics.
     let failure_encoding = if encoding == "iso-8859-8-i" { "iso-8859-8" } else { encoding };
@@ -224,7 +223,7 @@ fn invalid_encoded_data(context: &mut NativeContext<'_, ErasedHost>, encoding: &
 
 
 pub(crate) fn canonical_encoding(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -259,7 +258,7 @@ pub(crate) fn canonical_encoding(
 }
 
 pub(crate) fn decode(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -294,7 +293,7 @@ pub(crate) fn decode(
 /// The bytes `decode` reads: the Uint8Array the TextDecoder's `decode` makes over its input,
 /// read in place.
 fn byte_array(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     root: Option<RootId>,
 ) -> Result<Vec<u8>, RootedError> {
     let Some(root) = root else {

@@ -26,7 +26,7 @@ pub(super) enum TypedArrayIndexKey {
 mod record;
 pub(super) use record::PropertyDescriptorRecord;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// ToPropertyDescriptor's fields' keys, in the order it reads them.
     fn descriptor_field_atoms(&self) -> [Atom; DESCRIPTOR_FIELDS] {
         let atoms = self.runtime_atoms;

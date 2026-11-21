@@ -12,7 +12,7 @@ struct FlattenFrame {
     depth: usize,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn array_flatten_native(
         &mut self,
         p: &ResidualProgram,
@@ -63,7 +63,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         target: Value,
         frames: &mut Vec<FlattenFrame>,
-        mut mapper: Option<&mut PreparedCallback<H>>,
+        mut mapper: Option<&mut PreparedCallback>,
     ) -> Result<(), JsError> {
         let mut target_index = 0;
         while let Some(frame) = frames.last_mut() {

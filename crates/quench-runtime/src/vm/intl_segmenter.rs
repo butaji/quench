@@ -5,7 +5,7 @@ const SEGMENTER_LOCALE_SLOT: &str = "\0quench:intl-segmenter-locale";
 const SEGMENTER_GRANULARITY_SLOT: &str = "\0quench:intl-segmenter-granularity";
 const SEGMENTS_DATA_SLOT: &str = "\0quench:intl-segments-data";
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_segmenter_for_realm(
         &mut self,
         intl: Value,

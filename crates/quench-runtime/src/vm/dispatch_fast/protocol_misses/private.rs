@@ -20,17 +20,17 @@ pub(in crate::vm::dispatch_fast) const PRIVATE_IN: u8 = 6;
 pub(in crate::vm::dispatch_fast) const GET_PRIVATE_FIELD: u8 = 7;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::PRIVATE | parameters }>`).
-pub(in crate::vm::dispatch_fast) const fn private_miss_of<H: Host>(parameters: u8) -> Handler {
+/// (`protocol_row::<OP, ACC, { protocol_family::PRIVATE | parameters }>`).
+pub(in crate::vm::dispatch_fast) const fn private_miss_of(parameters: u8) -> Handler {
     match parameters {
-        DEFINE_FIELD => super::super::define_field_miss::<H> as Handler,
-        DEFINE_PRIVATE_FIELD => super::super::define_private_field_miss::<H> as Handler,
-        MARK_PRIVATE_NAME => super::super::mark_private_name_miss::<H> as Handler,
-        DEFINE_PROPERTY_RECORD => super::super::define_property_record_miss::<H> as Handler,
-        CHECK_PRIVATE => super::super::check_private_miss::<H> as Handler,
-        COPY_DATA_PROPERTIES => super::super::copy_data_properties_miss::<H> as Handler,
-        PRIVATE_IN => super::super::private_in_miss::<H> as Handler,
-        GET_PRIVATE_FIELD => super::super::get_private_field_miss::<H> as Handler,
-        _ => general_step_in_lane::<H>,
+        DEFINE_FIELD => super::super::define_field_miss as Handler,
+        DEFINE_PRIVATE_FIELD => super::super::define_private_field_miss as Handler,
+        MARK_PRIVATE_NAME => super::super::mark_private_name_miss as Handler,
+        DEFINE_PROPERTY_RECORD => super::super::define_property_record_miss as Handler,
+        CHECK_PRIVATE => super::super::check_private_miss as Handler,
+        COPY_DATA_PROPERTIES => super::super::copy_data_properties_miss as Handler,
+        PRIVATE_IN => super::super::private_in_miss as Handler,
+        GET_PRIVATE_FIELD => super::super::get_private_field_miss as Handler,
+        _ => general_step_in_lane,
     }
 }

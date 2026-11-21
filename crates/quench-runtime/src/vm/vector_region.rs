@@ -278,7 +278,7 @@ impl VectorRegion {
 
     /// Box the registers of `leave` from the bank.
     #[cold]
-    fn box_out<H: Host>(&self, leave: Leave, bank: &Bank, vm: &mut Vm<H>, r: Registers) {
+    fn box_out(&self, leave: Leave, bank: &Bank, vm: &mut Vm, r: Registers) {
         for &register in &self.spills[leave.start as usize..leave.end as usize] {
             // SAFETY: a leaving set names registers the bank holds there.
             let bits = unsafe { bank[usize::from(register)].assume_init() };
@@ -290,9 +290,9 @@ impl VectorRegion {
     /// Run the steps; `Err(at)` names the record the general path executes, once the
     /// registers it may read hold their values.
     #[inline(always)]
-    fn run<H: Host>(
+    fn run(
         &self,
-        vm: &mut Vm<H>,
+        vm: &mut Vm,
         r: Registers,
         memory: MemoryView,
         integers: crate::value::IntegerEncoding,
@@ -423,8 +423,8 @@ lane_handler! {
 }
 
 /// The handler of a region's first record.
-pub(super) fn region_handler<H: Host>() -> Handler {
-    vector_region_row::<H>
+pub(super) fn region_handler() -> Handler {
+    vector_region_row
 }
 
 /// What an admitted instruction is to a run: the admission decision, with the record's staged
@@ -972,7 +972,7 @@ mod tests {
     }
 
     struct Fixture {
-        vm: Vm<crate::SystemHost>,
+        vm: Vm,
         instance: crate::WasmInstance,
         module: crate::WasmModule,
     }

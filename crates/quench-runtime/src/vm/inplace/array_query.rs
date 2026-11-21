@@ -10,7 +10,7 @@ const NOT_FOUND: i32 = -1;
 /// Inline capacity of the staging buffer a copied element list is built in.
 const INLINE_VALUES: usize = 16;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Array.prototype.at(index)` on a dense array with an int32 `index`. A negative index counts
     /// from the end. A present element is returned; a hole, or an index past either end, is `None`
     /// except past the end of an array of `Array.prototype` whose chain holds no index, which reads
@@ -50,19 +50,16 @@ impl<H: Host> Vm<H> {
     }
 
     /// `Array.prototype.reverse()` in place: an array whose elements are ordinary and all present
-    /// (`holds_ordinary_elements`, no hole). Every HasProperty, Get and Set reads or writes an own
-    /// data element and observes nothing, so the backing is reversed and the receiver returned.
-    /// Moving values within one array stores no new reference.
+    /// (`holds_ordinary_elements`, which also excludes indexed, length and sparse descriptors, and
+    /// no hole). Every HasProperty, Get and Set reads or writes an own data element and observes
+    /// nothing, so the backing is reversed and the receiver returned. Moving values within one
+    /// array stores no new reference. The array is looked up once.
     pub(in crate::vm) fn plain_array_reverse(&mut self, receiver: Value, _args: &[Value]) -> Option<Value> {
-        if !self.heap.array(receiver)?.holds_ordinary_elements() {
-            return None;
-        }
-        if self.array_search_elements(receiver)?.iter().any(|value| value.is_deleted()) {
-            return None;
-        }
         let array = self.heap.array_store_mut(receiver, Value::UNDEFINED)?;
-        super::super::index::mutable_array_elements(array.elements_mut()).reverse();
-        Some(receiver)
+        if !array.holds_ordinary_elements() {
+            return None;
+        }
+        super::super::index::mutable_array_elements(array.elements_mut()).reverse_unless_holed().then_some(receiver)
     }
 
     /// `Array.prototype.toReversed()` of a dense array with no hole: a new array of its elements in

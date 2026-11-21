@@ -2,7 +2,7 @@
 //! and for `Object.getPrototypeOf` of an ordinary object: each completes the call with no guest
 //! code and no raised error, or answers `None` so the general native runs.
 use super::super::*;
-use crate::vm::number::{FIXED_EXPONENTIAL_FROM, fixed_text};
+use crate::vm::number::{FIXED_EXPONENTIAL_FROM, with_fixed_text};
 use smallvec::SmallVec;
 
 /// The largest digit count `toFixed` takes here; the general path takes up to 100.
@@ -17,17 +17,17 @@ const MIN_RADIX: i32 = 2;
 const MAX_RADIX: i32 = 36;
 use super::super::string_extra::with_radix_text;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Number.prototype.toFixed(digits)` of a Number receiver (a double or an int32) with
     /// `digits` absent or an int32 in 0..=20. Finite magnitudes below 1e21 are written by
-    /// `fixed_text`; NaN, the infinities, larger magnitudes and any other case answer `None`.
+    /// `with_fixed_text`; NaN, the infinities, larger magnitudes and any other case answer `None`.
     pub(in crate::vm) fn plain_number_to_fixed(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let number = receiver.as_number()?;
         if !number.is_finite() || number.abs() >= FIXED_EXPONENTIAL_FROM {
             return None;
         }
         let digits = fixed_digit_count(args.first().copied())?;
-        Some(self.heap.alloc_ascii_run(&fixed_text(number, digits)))
+        Some(with_fixed_text(number, digits, |text| self.heap.alloc_ascii_run(text)))
     }
 
     /// `Number.prototype.toString(radix)` of a Number receiver. Radix 10 or absent writes the

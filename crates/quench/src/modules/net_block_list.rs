@@ -3,11 +3,10 @@
 //! spellings of the same host. Each object keeps its native state as a byte record under a
 //! private slot: a SocketAddress one record, a BlockList its rules newest first.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 const IPV4_MAPPED_PREFIX: u128 = 0xffff_0000_0000;

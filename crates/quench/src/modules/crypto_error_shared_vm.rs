@@ -1,5 +1,5 @@
 //! OpenSSL error presentation shared by Node crypto and TLS operations.
-use quench_runtime::{Host, NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 // OpenSSL err.h library IDs and Node crypto_util.cc's public code prefixes.
 const LIBRARY_CODES: &[(i32, &str)] = &[
@@ -84,8 +84,8 @@ pub(crate) fn message(code: std::ffi::c_ulong, capacity: usize) -> String {
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
-fn put<H: Host>(
-    context: &mut NativeContext<'_, H>,
+fn put(
+    context: &mut NativeContext<'_>,
     error: RootId,
     name: &str,
     value: RootId,
@@ -102,16 +102,16 @@ fn put<H: Host>(
     Ok(())
 }
 
-pub(crate) fn create<H: Host>(
-    context: &mut NativeContext<'_, H>,
+pub(crate) fn create(
+    context: &mut NativeContext<'_>,
     stack: &openssl::error::ErrorStack,
     decorate: bool,
 ) -> Result<RootId, RootedError> {
     create_message(context, stack, decorate, None)
 }
 
-fn create_message<H: Host>(
-    context: &mut NativeContext<'_, H>,
+fn create_message(
+    context: &mut NativeContext<'_>,
     stack: &openssl::error::ErrorStack,
     decorate: bool,
     custom: Option<&str>,
@@ -178,8 +178,8 @@ fn create_message<H: Host>(
     Ok(error)
 }
 
-pub(crate) fn decorated<H: Host>(
-    context: &mut NativeContext<'_, H>,
+pub(crate) fn decorated(
+    context: &mut NativeContext<'_>,
     stack: openssl::error::ErrorStack,
 ) -> RootedError {
     match create(context, &stack, true) {
@@ -188,8 +188,8 @@ pub(crate) fn decorated<H: Host>(
     }
 }
 
-pub(crate) fn list<H: Host>(
-    context: &mut NativeContext<'_, H>,
+pub(crate) fn list(
+    context: &mut NativeContext<'_>,
     stack: openssl::error::ErrorStack,
 ) -> RootedError {
     match create(context, &stack, false) {
@@ -201,8 +201,8 @@ pub(crate) fn list<H: Host>(
 /// CryptoJob failures retain their SDK operation message and the complete
 /// actual native error queue with the same shared decoration authority.
 #[cfg(quench_openssl_provider)]
-pub(crate) fn job_failure<H: Host>(
-    context: &mut NativeContext<'_, H>,
+pub(crate) fn job_failure(
+    context: &mut NativeContext<'_>,
     stack: &openssl::error::ErrorStack,
     text: &str,
 ) -> RootedError {

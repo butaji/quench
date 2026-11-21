@@ -4,7 +4,7 @@
 //! (`staged::wasm`, `staged::wasm_float`); this file only says what one operator is on the machine.
 
 use super::{Builds, of_in_lane, machine_type};
-use super::super::{Emitter, Host, scalar_ir};
+use super::super::{Emitter, scalar_ir};
 use crate::staged::machine::{Binary, Lane, MachineOperator, MachineScalar, MachineStage, Order, Relation, Unary};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_float::{Float, Truncation, truncation_limits};
@@ -332,7 +332,7 @@ fn conversion_row(operator: Conversion, result: Lane) -> Unary {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// A comparison's flag as the `I32` word the stage contract names.
     fn flag_word(&mut self, flag: ir::Value) -> ir::Value {
         self.raw_unary(Unary::ZeroExtend(Lane::I32), flag)
@@ -356,7 +356,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> MachineStage for Emitter<'_, '_, H> {
+impl MachineStage for Emitter<'_, '_> {
     type Exit = Infallible;
 
     fn constant(&mut self, width: Width, value: i64) -> ir::Value {

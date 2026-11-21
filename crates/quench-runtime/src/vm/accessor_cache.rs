@@ -3,7 +3,7 @@ use super::object::OWN_ACCESSOR;
 use super::property_key::PropertyKey;
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it.
     pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {

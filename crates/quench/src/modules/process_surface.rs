@@ -1,7 +1,5 @@
 //! Data for `process`'s lazily defined surface.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 /// The `process` members defined on first access (`processSurfaceInitialize`).
 pub(crate) const LAZY_MEMBERS: &[&str] = &[
     "getActiveResourcesInfo",
@@ -312,7 +310,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 /// The variable through which Node's start-up requests V8 coverage.
 const V8_COVERAGE_ENV: &str = "NODE_V8_COVERAGE";
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
     let key = c.string_rooted(name);
@@ -344,7 +342,7 @@ pub(crate) fn initialize(c: &mut Context<'_>) -> Result<(), RootedError> {
     if nullish(c, process) {
         return Ok(());
     }
-    let exec_argv = c.node().shared_state().borrow().exec_argv.clone();
+    let exec_argv = c.host_as::<crate::host::NodeHost>().shared_state().borrow().exec_argv.clone();
     let object = get(c, global, "Object")?;
     let object_prototype = get(c, object, "prototype")?;
     let proto_key = c.string_rooted("__proto__");

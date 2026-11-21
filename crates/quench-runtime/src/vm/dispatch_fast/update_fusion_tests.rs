@@ -38,11 +38,11 @@ fn a_retired_loop_site_fuses_its_update_as_the_interpreter_does() {
 #[test]
 fn an_update_fuses_with_the_jump_after_it() {
     let record = |handler: *const (), a: u16| LaneInstruction { handler, a, b: 0, c: 0, call_link: std::cell::Cell::new(NO_CALL_LINK), operand: LaneOperand { jump: 0 }, mode: 0 };
-    let update = record(generated_row!(TestHost, opc::IncDec, ACC_NONE, FLAG_UNREAD) as Handler as *const (), 0);
-    let jump = record(jump_row::<TestHost, { opc::Jump }>(true) as *const (), 0);
-    let fused = update_fusion::<TestHost>(&update, &jump, None).map(|(handler, mode)| (handler as *const (), mode));
-    assert_eq!(fused, Some((lane_frame::fused_row::<TestHost, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(true) as *const (), crate::staged::MODE_BACKWARD)));
-    assert!(update_fusion::<TestHost>(&jump, &jump, None).is_none(), "only an `IncDec` fuses with the jump after it");
+    let update = record(generated_row!(opc::IncDec, ACC_NONE, FLAG_UNREAD) as Handler as *const (), 0);
+    let jump = record(jump_row::<{ opc::Jump }>(true) as *const (), 0);
+    let fused = update_fusion(&update, &jump, None).map(|(handler, mode)| (handler as *const (), mode));
+    assert_eq!(fused, Some((lane_frame::fused_row::<{ opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(true) as *const (), crate::staged::MODE_BACKWARD)));
+    assert!(update_fusion(&jump, &jump, None).is_none(), "only an `IncDec` fuses with the jump after it");
 }
 
 /// A postfix update fused with its `ToNumeric` (`lane_postfix_update`) skips the `IncDec` row, an

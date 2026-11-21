@@ -1,11 +1,10 @@
 //! The `async_hooks` module's classes over the shared async context state
 //! (`async_hooks_shared_vm`, `async_hook_registry_shared_vm`): `AsyncLocalStorage`,
 //! `AsyncResource`, `createHook`'s `AsyncHook`, and the execution context queries.
-use quench_runtime::ErasedHost;
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, require_new};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The hook callbacks `AsyncHook` reads, in `initialize_hook`'s argument order.
 const HOOK_CALLBACKS: [&str; 6] = ["init", "before", "after", "destroy", "promiseResolve", "trackPromises"];

@@ -41,7 +41,7 @@ fn indexed_composition<const DEPENDENT: bool, const STEPS: usize>(b: &mut Benche
     let callee = vm.own_property(vm.realm.globals, callee_name).unwrap();
     let args = [input, Value::integer(STEPS as i32), Value::integer(0)];
     let expected: i32 = (0..STEPS).map(|index| ((index + 1) % ELEMENTS) as i32 - 1).sum();
-    let call = |vm: &mut Vm<TestHost>| {
+    let call = |vm: &mut Vm| {
         vm.call_value(&program, black_box(callee), Value::UNDEFINED, black_box(&args)).unwrap()
     };
     assert!(STEPS <= ELEMENTS);
@@ -56,13 +56,13 @@ fn indexed_composition<const DEPENDENT: bool, const STEPS: usize>(b: &mut Benche
         let views = vm.programs.views_in_lane(ProgramId::MAIN).unwrap();
         let view = super::super::program_store::derived_lane_view(&views[function]).unwrap();
         // merge: no fused update/read/add row exists on either branch; the census counts the generic keyed read row (`element_read_row`).
-        let proved = super::super::dispatch_fast::element_read_row::<TestHost>() as Handler as *const ();
+        let proved = super::super::dispatch_fast::element_read_row() as Handler as *const ();
         let sites = view.records.iter().filter(|record| {
             let ip = record.get();
             // SAFETY: the untimed call ended; live records and their held headers belong
             // to this view, and no VM execution mutates them during this inspection.
             let handler = unsafe {
-                if (*ip).handler == loop_header_miss::<TestHost> as Handler as *const () {
+                if (*ip).handler == loop_header_miss as Handler as *const () {
                     (*header_site_in_lane(ip)).header_handler.get()
                 } else { (*ip).handler }
             };
@@ -174,7 +174,7 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
     let mut vm = Vm::new(TestHost::default());
     vm.set_execution_mode(crate::ExecutionMode::Interpreted);
     vm.execute(&program).unwrap();
-    let global = |vm: &mut Vm<TestHost>, name| {
+    let global = |vm: &mut Vm, name| {
         let atom = vm.lookup_atom(name).unwrap();
         vm.own_property(vm.realm.globals, atom).unwrap()
     };
@@ -232,8 +232,8 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
     assert_eq!(expected_x, x, "the measured input must remain stationary");
     assert_eq!(expected_y, y);
     let expected_return = Value::number(last_x + last_y);
-    let call = |vm: &mut Vm<TestHost>| vm.call_value(&program, black_box(callee), Value::UNDEFINED, black_box(&args)).unwrap();
-    let validate = |vm: &mut Vm<TestHost>| {
+    let call = |vm: &mut Vm| vm.call_value(&program, black_box(callee), Value::UNDEFINED, black_box(&args)).unwrap();
+    let validate = |vm: &mut Vm| {
         assert_eq!(call(vm), expected_return);
         for (array, expected) in [(arrays[4], &expected_x), (arrays[5], &expected_y)] {
             for (index, &value) in expected.iter().enumerate() {
@@ -254,9 +254,9 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
         // either branch; the derivation's generated keyed rows stand in for them, and the fused
         // update/read/add row has no equivalent, so it is no longer counted.
         let kinds = [
-            ("read", super::super::dispatch_fast::proved_element_read_row::<TestHost>(), false),
+            ("read", super::super::dispatch_fast::proved_element_read_row(), false),
             ("update_read_add", fused_read, false),
-            ("store", super::super::dispatch_fast::proved_element_write_row::<TestHost>(), true),
+            ("store", super::super::dispatch_fast::proved_element_write_row(), true),
         ];
         let mut counts = vec![0; kinds.len()];
         for record in view.records.iter() {
@@ -264,7 +264,7 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
             // SAFETY: validation has returned; the view owns these live records and
             // their loop headers. No VM execution runs during this inspection.
             let handler = unsafe {
-                if (*ip).handler == loop_header_miss::<TestHost> as Handler as *const () {
+                if (*ip).handler == loop_header_miss as Handler as *const () {
                     (*header_site_in_lane(ip)).header_handler.get()
                 } else { (*ip).handler }
             };

@@ -1,11 +1,9 @@
 //! Node's deep equality (lib/internal/util/comparisons.js: `isDeepEqual`,
 //! `isDeepStrictEqual` and `isPartialStrictEqual`) and its line diff (`util.diff`,
 //! internal/assert/myers_diff.js).
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{BuiltinBrand, BuiltinData, NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// `kLoose`, `kStrict` and `kPartial`: primitives by `==` without prototypes, by
 /// SameValue with constructors, or strictly with `actual` allowed to hold more.
@@ -191,7 +189,7 @@ fn equal_boxed(c: &mut Context<'_>, left: RootId, right: RootId) -> Result<bool,
 
 /// The well-known constructors, captured once from the startup realm.
 fn well_known_constructors(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    if let Some(list) = c.node().shared_state().borrow().builtin_cache.get(WELL_KNOWN_KEY).copied() {
+    if let Some(list) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(WELL_KNOWN_KEY).copied() {
         return Ok(list);
     }
     let mut constructors = c.with_startup_intrinsics(|c| {
@@ -202,7 +200,7 @@ fn well_known_constructors(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     constructors.push(get(c, buffer, "Buffer")?);
     let list = c.array_rooted(&constructors)?;
     let list = c.retain(list)?;
-    c.node().shared_state().borrow_mut().builtin_cache.insert(WELL_KNOWN_KEY.into(), list);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(WELL_KNOWN_KEY.into(), list);
     Ok(list)
 }
 

@@ -6,7 +6,7 @@ const RELATIVE_NUMERIC_SLOT: &str = "\0quench:intl-relative-numeric";
 const RELATIVE_NUMBERING_SYSTEM_SLOT: &str = "\0quench:intl-relative-numbering-system";
 const RELATIVE_PARTS_MAX_FRACTION_DIGITS: usize = 3;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_relative_time_format_for_realm(
         &mut self,
         intl: Value,

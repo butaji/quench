@@ -1,11 +1,10 @@
 //! WHATWG TextEncoder over the runtime's UTF-16 strings and byte views.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{
     BuiltinBrand, DescriptorFields, NativeContext, RootId, RootedError, ValueType,
 };
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The constructor and its methods carry the same unforgeable instance key.
 pub(crate) fn constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {

@@ -4,13 +4,11 @@
 //! The entry timeline and observers live in `perf_timeline`, histograms in
 //! `perf_histogram`; this module assembles them and keeps the group's shared data
 //! (`api`): private slot keys, the classes' prototypes and the intrinsics they use.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, missing_args, put};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 pub(super) use crate::modules::util_shared_vm::{validate_function, validate_number};
-pub(super) type Context<'a> = NativeContext<'a, ErasedHost>;
+pub(super) type Context<'a> = NativeContext<'a>;
 pub(super) type Outcome = Result<RootId, RootedError>;
 
 /// A class member: (name, operation, length).
@@ -97,12 +95,12 @@ pub(super) fn operation(name: &str) -> quench_runtime::HostFunctionId {
 
 /// The group's shared data, building the module on first use.
 pub(super) fn shared_api(c: &mut Context<'_>) -> Outcome {
-    let api = c.node().shared_state().borrow().performance_native.api;
+    let api = c.host_as::<crate::host::NodeHost>().shared_state().borrow().performance_native.api;
     if let Some(api) = api {
         return Ok(api);
     }
     crate::host::shared_vm::commonjs::perf_hooks_module(c)?;
-    c.node()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .performance_native
@@ -311,7 +309,7 @@ pub(super) fn plain_object(c: &mut Context<'_>, fields: &[(&str, RootId)]) -> Ou
 
 /// The monotonic milliseconds since the time origin.
 pub(super) fn elapsed_ms(c: &mut Context<'_>) -> f64 {
-    c.node().shared_state().borrow().process_control.performance_elapsed_ms()
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.performance_elapsed_ms()
 }
 
 pub(crate) fn now(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
@@ -357,7 +355,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
         put(c, api, member, method)?;
     }
     let retained = c.retain(api)?;
-    c.node().shared_state().borrow_mut().performance_native.api = Some(retained);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().performance_native.api = Some(retained);
 
     let binding = super::performance_binding_shared_vm::binding(c)?;
     let constants = get(c, binding, "constants")?;
@@ -564,7 +562,7 @@ pub(crate) fn mark_resource_timing(c: &mut Context<'_>, _: RootId, args: &[RootI
 
 /// `process.hrtime()` in milliseconds, as `eventLoopUtilization` reads it.
 fn hrtime_ms(c: &mut Context<'_>) -> f64 {
-    let control = c.node().shared_state().borrow().process_control.clone();
+    let control = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.clone();
     let ns = control.monotonic_now_ns().unwrap_or_default().trunc();
     let seconds = (ns / NANOS_PER_SECOND).trunc();
     seconds * MILLIS_PER_SECOND + (ns - seconds * NANOS_PER_SECOND) / NANOS_PER_MILLI
@@ -590,7 +588,7 @@ pub(crate) fn event_loop_utilization(c: &mut Context<'_>, _: RootId, args: &[Roo
         let zero = c.number(0.0);
         return plain_object(c, &[("idle", zero), ("active", zero), ("utilization", zero)]);
     }
-    let idle_time = c.node().shared_state().borrow().process_control.event_loop_idle_ms();
+    let idle_time = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.event_loop_idle_ms();
     let first = argument(c, args, 0);
     let second = argument(c, args, 1);
     if c.truthy_rooted(second)? {
@@ -651,12 +649,12 @@ pub(crate) fn node_timing_milestone(c: &mut Context<'_>, _: RootId, _: &[RootId]
 }
 
 pub(crate) fn node_timing_idle_time(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let idle = c.node().shared_state().borrow().process_control.event_loop_idle_ms();
+    let idle = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.event_loop_idle_ms();
     Ok(c.number(idle))
 }
 
 pub(crate) fn node_timing_uv_metrics(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let iterations = c.node().shared_state().borrow().process_control.event_loop_iterations() as f64;
+    let iterations = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.event_loop_iterations() as f64;
     let loop_count = c.number(iterations);
     let waiting = c.number(0.0);
     plain_object(c, &[("loopCount", loop_count), ("events", loop_count), ("eventsWaiting", waiting)])

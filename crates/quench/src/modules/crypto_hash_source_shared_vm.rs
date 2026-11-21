@@ -1,10 +1,9 @@
 //! Public Hash/Hmac policy over the canonical native digest binding.
-use quench_runtime::ErasedHost;
 use super::crypto_hash_input_shared_vm as input;
 use super::keys::HANDLE;
 use super::host_members::leading;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, ValueType};
-pub(super) type Context<'a> = NativeContext<'a, ErasedHost>;
+pub(super) type Context<'a> = NativeContext<'a>;
 
 const STATE: &str = "state";
 const FINALIZED: &str = "finalized";

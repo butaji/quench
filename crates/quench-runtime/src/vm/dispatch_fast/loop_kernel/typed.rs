@@ -1,6 +1,5 @@
 //! A kernel's loads and stores of typed array elements: each kind's element as an f64, and
 //! an f64 stored as the kind's element, as the typed array element get and set do.
-use super::*;
 use crate::heap::TypedArrayKind;
 use crate::staged::typed_elements::{
     element_number, store_double_element, store_number_element, NATIVE_LITTLE_ENDIAN,
@@ -49,7 +48,7 @@ pub(super) unsafe fn load(kind: TypedArrayKind, elements: *const u8, first: i64,
 /// Every element written lies inside the typed array whose first element is at `elements`,
 /// whose buffer is the view's alone.
 #[inline(always)]
-pub(super) unsafe fn store<H: Host>(
+pub(super) unsafe fn store(
     kind: TypedArrayKind,
     elements: *mut u8,
     first: isize,

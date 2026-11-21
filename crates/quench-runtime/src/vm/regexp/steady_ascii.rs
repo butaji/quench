@@ -6,7 +6,7 @@ use super::ascii::ascii_search;
 use super::steady::{ExecStart, exec_finish, exec_start_int};
 use crate::code_dependencies::IntactFuse;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `steady_regexp_call` of a flat ASCII subject searched in place, decided in one look at
     /// the regexp, its realm's RegExp record and the subject (`steady_ascii_plan`): a `test`
     /// asks the recorded exec proof there, and where it does not answer yet the full proof
@@ -34,7 +34,12 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn steady_ascii_plan_proven(&mut self, receiver: Value, subject: Value, captures: bool) -> Option<(AsciiFound, IndexStore)> {
-        if !self.fuse_intact(IntactFuse::RegExpExec) || !self.regexp_exec_is_builtin(receiver) {
+        // The fuse is proved for the prototype of the realm the search runs in, which
+        // `steady_exec_holds` asks: proved for the VM's own `regexp_proto` alone, a search in
+        // another realm (a benchmark's fresh global) never found its fuse and came here at
+        // every call.
+        let prototype = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals)?.prototype;
+        if !self.fuse_intact_at(IntactFuse::RegExpExec, prototype) || !self.regexp_exec_is_builtin(receiver) {
             return None;
         }
         match self.steady_ascii_plan(receiver, subject, false, captures)? {
@@ -80,7 +85,7 @@ impl<H: Host> Vm<H> {
     /// slot still holds the intrinsic. A `false` is no answer: the full proof decides.
     #[inline(always)]
     pub(super) fn steady_exec_holds(&self, intrinsics: &RegExpIntrinsics, proto: Value, shape: u32) -> bool {
-        let proven = intrinsics.exec_proof.get().is_some_and(|proof| proof.shape == shape && proof.cell.holds());
+        let proven = intrinsics.exec_proof.find(shape).is_some();
         proven
             && proto == intrinsics.prototype
             && self.heap.dependencies().fuses().intact(IntactFuse::RegExpExec, intrinsics.prototype) == Some(true)

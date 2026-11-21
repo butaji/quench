@@ -8,26 +8,26 @@ use super::lane_stack_growth::LaneStackFull;
 use crate::vm::JsError;
 
 /// The known call's handler, for the shared handler table.
-pub(super) const fn known_call_handler<H: Host>() -> Handler {
-    lane_call_known::<H>
+pub(super) const fn known_call_handler() -> Handler {
+    lane_call_known
 }
 
 /// The reference call's handler, for Wasm views.
-pub(super) const fn reference_call_handler<H: Host>() -> Handler {
-    lane_call_wasm_reference::<H>
+pub(super) const fn reference_call_handler() -> Handler {
+    lane_call_wasm_reference
 }
 
 /// A Wasm call as the lane makes it: the context, the caller's registers and record, and its
 /// memory view. The rules of `staged::wasm_activation` decide the call over these primitives.
-struct LaneCall<'a, H: Host> {
-    cx: *mut LaneContext<H>,
+struct LaneCall<'a> {
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     i: &'a LaneInstruction,
     memory: MemoryView,
 }
 
-impl<H: Host> LaneCall<'_, H> {
+impl LaneCall<'_> {
     /// The callee's function index from the row of the indirect target the lane made just before
     /// this call (`IndirectSlot`), where this call is that target's next record and reads its
     /// register and reference unchanged, and the row names a function of the running instance (one
@@ -49,11 +49,11 @@ impl<H: Host> LaneCall<'_, H> {
     }
 }
 
-impl<H: Host> Machine for LaneCall<'_, H> {
+impl Machine for LaneCall<'_> {
     type Word = u64;
 }
 
-impl<H: Host> MachineStage for LaneCall<'_, H> {
+impl MachineStage for LaneCall<'_> {
     type Exit = JsError;
 
     crate::staged::wasm_concrete::scalar_operators! {}
@@ -63,7 +63,7 @@ impl<H: Host> MachineStage for LaneCall<'_, H> {
     }
 }
 
-impl<H: Host> WasmActivation for LaneCall<'_, H> {
+impl WasmActivation for LaneCall<'_> {
     type Resume = Resumed;
     type Shape = (ActivationShape, Ip);
     type Full = LaneStackFull;
@@ -273,12 +273,12 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
     }
 
     fn enter_frame(&mut self, frame: usize) -> Resumed {
-        enter_frame_in_lane::<H>(self.cx, frame, 0)
+        enter_frame_in_lane(self.cx, frame, 0)
     }
 
     #[inline(always)]
     fn activate_import(&mut self) -> Option<Resumed> {
-        lane_activate_js_import::<H>(self.cx, self.r, self.ip, self.memory)
+        lane_activate_js_import(self.cx, self.r, self.ip, self.memory)
     }
 
     #[inline(always)]
@@ -366,7 +366,7 @@ lane_handler! {
 /// for the environment (its bits) and program it was found for. A record is one per environment
 /// and program, so the address names the running instance.
 #[inline(always)]
-fn lane_instance_address<H: Host>(cx: *mut LaneContext<H>) -> usize {
+fn lane_instance_address(cx: *mut LaneContext) -> usize {
     let env = instance_env_in_lane(cx);
     // SAFETY: the context outlives the lane run.
     let program = unsafe { (*cx).program };
@@ -383,7 +383,7 @@ fn lane_instance_address<H: Host>(cx: *mut LaneContext<H>) -> usize {
 /// initial value, its parameters from the call's arguments, and its `this`, environment and
 /// capture from the caller's. Returns the frame's registers.
 #[inline(always)]
-fn fill_callee_window<H: Host>(vm: &mut Vm<H>, r: Registers, i: &LaneInstruction, shape: ActivationShape) -> Registers {
+fn fill_callee_window(vm: &mut Vm, r: Registers, i: &LaneInstruction, shape: ActivationShape) -> Registers {
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     let count = usize::from(shape.registers);
@@ -425,8 +425,8 @@ fn import_kind(kind: u8) -> crate::WasmType {
 /// (`staged::wasm_activation::import_argument`). `None` where a word is of another
 /// representation, which leaves for the general path.
 #[inline(always)]
-fn import_arguments<H: Host>(
-    vm: &Vm<H>,
+fn import_arguments(
+    vm: &Vm,
     window: &[Value],
     kinds: &[u8; JS_IMPORT_ARGUMENTS],
 ) -> Option<[Value; JS_IMPORT_ARGUMENTS]> {
@@ -445,7 +445,7 @@ fn import_arguments<H: Host>(
 /// The memory binding a JavaScript import's return reads again: `Some(None)` for no memory, the
 /// binding of the run's resolved view, or `None` for a view of another binding, which leaves.
 #[inline(always)]
-fn import_memory<H: Host>(cx: *mut LaneContext<H>, memory: MemoryView) -> Option<Option<Value>> {
+fn import_memory(cx: *mut LaneContext, memory: MemoryView) -> Option<Option<Value>> {
     let (binding, resolved) = unsafe { (*cx).resolved };
     if memory.bytes.is_null() {
         Some(None)
@@ -459,9 +459,9 @@ fn import_memory<H: Host>(cx: *mut LaneContext<H>, memory: MemoryView) -> Option
 /// The cross-program target an import's activation enters, where the lane may activate it with
 /// `argc` arguments: a JavaScript callee of another program that activates across.
 #[inline(always)]
-fn import_activation_target<H: Host>(
-    cx: *mut LaneContext<H>,
-    vm: &mut Vm<H>,
+fn import_activation_target(
+    cx: *mut LaneContext,
+    vm: &mut Vm,
     callee: Value,
     argc: u16,
 ) -> Option<ScriptCallTarget> {
@@ -488,8 +488,8 @@ fn import_activation_target<H: Host>(
 /// (`Completion::ToWasm`): the callee's frame takes the converted arguments, its caller's
 /// instance, memory and result type are kept for the return.
 #[inline(always)]
-fn push_import_activation<H: Host>(
-    cx: *mut LaneContext<H>,
+fn push_import_activation(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     target: &ScriptCallTarget,
@@ -501,7 +501,7 @@ fn push_import_activation<H: Host>(
 ) -> Resumed {
     let instance = unsafe { (*cx).instance };
     let (registers, start) =
-        push_passed_in_lane::<H, true, false>(cx, r, ip, target, args.as_ptr(), argc.min(target.params), this, false);
+        push_passed_in_lane::<true, false>(cx, r, ip, target, args.as_ptr(), argc.min(target.params), this, false);
     let vm = unsafe { vm(cx) };
     vm.lane_stack.recomplete_top(Completion::ToWasm);
     vm.lane_stack.attach_payload(SidePayload::ToWasm(ToWasmCall { instance, memory, result }));
@@ -523,7 +523,7 @@ fn push_import_activation<H: Host>(
 /// boundary is never observed: the callee runs as the wrapper's call of it would. `None`,
 /// which changes nothing, for any other import, callee or call.
 #[inline(always)]
-fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, memory: MemoryView) -> Option<Resumed> {
+fn lane_activate_js_import(cx: *mut LaneContext, r: Registers, ip: Ip, memory: MemoryView) -> Option<Resumed> {
     // SAFETY: called only from the call handler of the record at `ip`, while the lane runs.
     let i = unsafe { &*ip };
     let vm = unsafe { vm(cx) };
@@ -552,7 +552,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
 /// The call facts of the import `wrapper`, from the lane's cache of its last import, else
 /// derived (`js_import_plan`) and cached.
 #[inline(always)]
-fn js_import_of<H: Host>(vm: &mut Vm<H>, wrapper: Value) -> Option<JsImportPlan> {
+fn js_import_of(vm: &mut Vm, wrapper: Value) -> Option<JsImportPlan> {
     match vm.lane_stack.js_import {
         Some(plan) if plan.wrapper == wrapper => Some(plan),
         _ => {
@@ -566,7 +566,7 @@ fn js_import_of<H: Host>(vm: &mut Vm<H>, wrapper: Value) -> Option<JsImportPlan>
 /// The call facts of the import `wrapper` (`JsImportPlan`): `None` for any other callee, a
 /// host-backed or memcpy import, or a signature past the scalars the activation converts.
 #[inline(never)]
-fn js_import_plan<H: Host>(vm: &Vm<H>, wrapper: Value) -> Option<JsImportPlan> {
+fn js_import_plan(vm: &Vm, wrapper: Value) -> Option<JsImportPlan> {
     let record = vm.heap.function(wrapper)?;
     let (callee, capture, signature) = vm.host_import_js_target(wrapper)?;
     if capture.is_some() {

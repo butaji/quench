@@ -3,13 +3,11 @@
 //!
 //! A console's state is one private slot: its group indentation, counters and timers. Its
 //! streams are its `_stdout` and `_stderr`; the global console writes to the process's.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::console_format_shared_vm::{self as format, Options};
 use super::console_shared_vm::Stream;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The cache key of the private symbol naming a console's slot.
 const SLOT_KEY: &str = "\0node/console/slot";
@@ -115,7 +113,7 @@ fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
 }
 
 fn slot_key(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(key) = shared.borrow().builtin_cache.get(SLOT_KEY).copied() {
         return Ok(key);
     }
@@ -378,7 +376,7 @@ fn run(c: &mut Context<'_>, console: RootId, method: Method, args: &[RootId]) ->
             let global = super::console_shared_vm::facade(c)?;
             let stream = if c.strict_equal_rooted(console, global)? {
                 let process = c
-                    .node()
+                    .host_as::<crate::host::NodeHost>()
                     .shared_state()
                     .borrow()
                     .process_module
@@ -464,7 +462,7 @@ fn table(c: &mut Context<'_>, console: RootId, name: &str) -> Result<RootId, Roo
 /// the error handlers and `Console`, in `CONSOLE_KEYS` order.
 pub(super) fn install_global_members(c: &mut Context<'_>, console: RootId, keys: &[(&str, bool)]) -> Result<(), RootedError> {
     let process = c
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -544,7 +542,7 @@ pub(crate) fn task_run(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resul
 /// The `Console` class, built once.
 pub(crate) fn class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CLASS_KEY: &str = "\0node/console/class";
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(class) = shared.borrow().builtin_cache.get(CLASS_KEY).copied() {
         return Ok(class);
     }

@@ -2,8 +2,6 @@
 //!
 //! A `Tracing` keeps its handle, categories and category snapshot in a private slot; the
 //! process retains each enabled one (`TraceState::enabled`).
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
 use super::trace_state::EnabledTracing;
 use quench_runtime::{NativeContext, RootId, RootedError};
@@ -12,7 +10,7 @@ const MAX_ENABLED_TRACING_WITHOUT_WARNING: usize = 10;
 const MAX_SAFE_HANDLE: u64 = (1u64 << 53) - 1;
 
 fn put(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -27,7 +25,7 @@ fn put(
     }
 }
 fn call(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     args: &[RootId],
@@ -35,11 +33,11 @@ fn call(
     let method = get(context, object, name)?;
     context.call_rooted(method, object, args)
 }
-fn undefined(context: &NativeContext<'_, ErasedHost>, root: RootId) -> bool {
+fn undefined(context: &NativeContext<'_>, root: RootId) -> bool {
     context.rooted_value(root).is_some_and(|v| v.is_undefined())
 }
 fn brand(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     member: &str,
 ) -> Result<RootId, RootedError> {
@@ -58,7 +56,7 @@ fn brand(
     }
     Ok(state)
 }
-fn handle(context: &mut NativeContext<'_, ErasedHost>, state: RootId) -> Result<u64, RootedError> {
+fn handle(context: &mut NativeContext<'_>, state: RootId) -> Result<u64, RootedError> {
     let value = get(context, state, "handle")?;
     context
         .rooted_value(value)
@@ -67,7 +65,7 @@ fn handle(context: &mut NativeContext<'_, ErasedHost>, state: RootId) -> Result<
         .ok_or_else(|| RootedError::host("invalid native tracing handle"))
 }
 fn string_array(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     array: RootId,
     validate: bool,
 ) -> Result<Vec<String>, RootedError> {
@@ -112,11 +110,11 @@ fn string_array(
     Ok(strings)
 }
 
-pub(crate) fn module(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     // Node disables trace_events inside Worker isolates because the tracing
     // provider is owned by the process main thread. Keep the module unavailable
     // in the same way instead of exposing an isolated per-worker trace facade.
-    if context.node().shared_state().borrow().messaging.is_worker() {
+    if context.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.is_worker() {
         let error = context.error_rooted("Trace events are unavailable")?;
         let code = context.string_rooted("ERR_TRACE_EVENTS_UNAVAILABLE");
         put(context, error, "code", code)?;
@@ -170,7 +168,7 @@ const TRACING_GETTERS: [(&str, &str); 2] = [("enabled", "traceEnabled"), ("categ
 const MODULE_FUNCTIONS: [(&str, &str); 2] = [("createTracing", "traceCreate"), ("getEnabledCategories", "traceGetEnabledCategories")];
 
 pub(crate) fn create(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -200,7 +198,7 @@ pub(crate) fn create(
 
 /// `new Tracing(categories)`: its handle, `categories` and their snapshot in its slot.
 pub(crate) fn initialize(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -209,7 +207,7 @@ pub(crate) fn initialize(
     let snapshot = string_array(context, original, false)?;
     let roots: Vec<_> = snapshot.iter().map(|s| context.string_rooted(s)).collect();
     let snapshot = context.array_rooted(&roots)?;
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let id = {
         let mut shared = shared.borrow_mut();
         let id = shared.trace.next_handle;
@@ -231,14 +229,14 @@ pub(crate) fn initialize(
 }
 
 pub(crate) fn enable(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let state = brand(context, object, "enabled")?;
     let id = handle(context, state)?;
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if shared.borrow().trace.enabled.contains_key(&id) {
         return Ok(absent);
     }
@@ -266,14 +264,14 @@ pub(crate) fn enable(
     Ok(absent)
 }
 pub(crate) fn disable(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let state = brand(context, object, "enabled")?;
     let id = handle(context, state)?;
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let removed = shared.borrow_mut().trace.enabled.remove(&id);
     if let Some(entry) = removed {
         context.release_root(entry.retained);
@@ -282,14 +280,14 @@ pub(crate) fn disable(
     Ok(absent)
 }
 pub(crate) fn enabled(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let state = brand(context, object, "enabled")?;
     let id = handle(context, state)?;
     let enabled = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .trace
@@ -298,7 +296,7 @@ pub(crate) fn enabled(
     Ok(context.boolean(enabled))
 }
 pub(crate) fn categories(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -310,12 +308,12 @@ pub(crate) fn categories(
     context.call_rooted(join, original, &[separator])
 }
 pub(crate) fn get_enabled_categories(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let categories = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .trace
@@ -327,7 +325,7 @@ pub(crate) fn get_enabled_categories(
 }
 
 pub(crate) fn inspect(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -352,14 +350,14 @@ pub(crate) fn inspect(
 }
 
 pub(crate) fn internal_binding(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let name = context.to_string(args.first().copied().unwrap_or(absent))?;
     let key = format!("\0binding:{name}");
-    let shared = context.node().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(&key).copied() {
         return Ok(value);
     }
@@ -372,7 +370,7 @@ pub(crate) fn internal_binding(
 }
 
 fn build_internal_binding(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     name: &str,
 ) -> Result<RootId, RootedError> {
     match name {
@@ -494,7 +492,7 @@ fn build_internal_binding(
 }
 
 pub(crate) fn cjs_lexer_parse(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -540,7 +538,7 @@ const UV_OK: f64 = 0.0;
 
 /// Node's `tty_wrap` binding: `isTTY(fd)` as the `tty` module answers it, and a `TTY` handle
 /// with no terminal of its own, whose window has no size and whose mode changes succeed.
-fn tty_binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+fn tty_binding(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     let is_tty = context.host_function_named(crate::host::shared_vm::operation!("ttyIsatty"), "isTTY")?;
     put(context, binding, "isTTY", is_tty)?;
@@ -556,12 +554,12 @@ fn tty_binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, Ro
     Ok(binding)
 }
 
-pub(crate) fn tty_wrap_constructor(context: &mut NativeContext<'_, ErasedHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn tty_wrap_constructor(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     Ok(context.undefined())
 }
 
 /// `getWindowSize(size)`: `size` filled with no columns and no rows.
-pub(crate) fn tty_wrap_get_window_size(context: &mut NativeContext<'_, ErasedHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn tty_wrap_get_window_size(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     if let Some(&size) = args.first().filter(|&&size| context.is_object_rooted(size).unwrap_or(false)) {
         for index in 0..2 {
             let key = context.number(f64::from(index));
@@ -572,12 +570,12 @@ pub(crate) fn tty_wrap_get_window_size(context: &mut NativeContext<'_, ErasedHos
     Ok(context.number(UV_OK))
 }
 
-pub(crate) fn tty_wrap_set_raw_mode(context: &mut NativeContext<'_, ErasedHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn tty_wrap_set_raw_mode(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     Ok(context.number(UV_OK))
 }
 
 fn required_string(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     description: &str,
 ) -> Result<String, RootedError> {
@@ -589,7 +587,7 @@ fn required_string(
     Err(context.throw(error))
 }
 fn int32(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     description: &str,
 ) -> Result<i32, RootedError> {
@@ -610,14 +608,14 @@ fn int32(
         .unwrap_or(0.0) as i32)
 }
 pub(crate) fn category_enabled(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let category = required_string(context, args.first().copied().unwrap_or(absent), "category")?;
     let enabled = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .trace
@@ -625,7 +623,7 @@ pub(crate) fn category_enabled(
     Ok(context.boolean(enabled))
 }
 pub(crate) fn record(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -633,7 +631,7 @@ pub(crate) fn record(
     let absent = context.undefined();
     let category = required_string(context, args.get(1).copied().unwrap_or(absent), "category")?;
     if !context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .trace
@@ -666,7 +664,7 @@ pub(crate) fn record(
                 serde_json::from_str(&serialized).map_err(|e| RootedError::host(e.to_string()))?;
         }
     }
-    context.node().shared_state().borrow_mut().trace.record(
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().trace.record(
         &category,
         &name,
         Phase::from_code(phase),
@@ -677,14 +675,14 @@ pub(crate) fn record(
 }
 
 pub(crate) fn category_buffer(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let category = required_string(context, args.first().copied().unwrap_or(absent), "category")?;
     let enabled = context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .trace
@@ -692,7 +690,7 @@ pub(crate) fn category_buffer(
     let buffer = context.uint8_array_rooted(&[u8::from(enabled)])?;
     let weak = context.host_weak_root(buffer)?;
     context
-        .node()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .trace
@@ -700,8 +698,8 @@ pub(crate) fn category_buffer(
         .push((category, weak));
     Ok(buffer)
 }
-fn refresh_category_buffers(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
-    let shared = context.node().shared_state();
+fn refresh_category_buffers(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let mut buffers = std::mem::take(&mut shared.borrow_mut().trace.category_buffers);
     let key = context.string_rooted("0");
     let mut result = Ok(());
@@ -728,7 +726,7 @@ fn refresh_category_buffers(context: &mut NativeContext<'_, ErasedHost>) -> Resu
 }
 
 fn module_protocol_binding(
-    context: &mut NativeContext<'_, ErasedHost>,
+    context: &mut NativeContext<'_>,
 ) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     let statuses = super::node_protocol_constants::COMPILE_CACHE_STATUS

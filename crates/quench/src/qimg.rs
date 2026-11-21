@@ -4,10 +4,10 @@
 //! Nothing is looked up by name or loaded implicitly. A program whose fingerprint differs from
 //! its image simply gets no image (`AheadImages::is_of`) and runs as usual.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{AheadImages, Runtime};
 use std::{cell::RefCell, process::ExitCode};
 
+use crate::host::NodeHost;
 
 /// Extension that routes a command line to [`run`].
 pub const EXTENSION: &str = ".qimg";
@@ -108,7 +108,7 @@ fn run_file(image: &str, file: &[u8], arguments: impl IntoIterator<Item = String
 }
 
 /// Hands the staged images, if any, to a freshly built runtime.
-pub(crate) fn install(runtime: &mut Runtime<ErasedHost>) {
+pub(crate) fn install(runtime: &mut Runtime<NodeHost>) {
     STAGED.with(|staged| {
         let staged = staged.borrow();
         if staged.is_empty() { return; }

@@ -3,7 +3,6 @@
 //! framing state is the host parser its id names. `execute` feeds it a chunk and runs the
 //! parser callbacks Node's `_http_common.js` defines.
 
-use crate::host::NodeAccess;
 use super::parser::{Event, Head, HeadOutcome, Kind, ParseError, Parser};
 use super::{class, get_slot, put_slot, Class, Slot};
 use crate::modules::stream_shared_vm::{call_method, get, is_nullish, put, put_bool, put_number, Context, Outcome};
@@ -33,9 +32,9 @@ pub(crate) fn create(c: &mut Context<'_>, kind: Kind, socket: RootId, owner: Roo
     let insecure = get(c, owner, "insecureHTTPParser")?;
     let lenient = match c.rooted_value(insecure).and_then(|value| value.as_bool()) {
         Some(lenient) => lenient,
-        None => c.node().shared_state().borrow().cli_options.enabled(INSECURE_PARSER_FLAG),
+        None => c.host_as::<crate::host::NodeHost>().shared_state().borrow().cli_options.enabled(INSECURE_PARSER_FLAG),
     };
-    let id = c.node().shared_state().borrow_mut().http.add_parser(Parser::new(kind, limit as usize, lenient));
+    let id = c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().http.add_parser(Parser::new(kind, limit as usize, lenient));
     let parser = c.object_rooted()?;
     let id = c.number(id as f64);
     put_slot(c, parser, Slot::ParserId, id)?;
@@ -58,7 +57,7 @@ fn parser_id(c: &mut Context<'_>, parser: RootId) -> Result<Option<u64>, RootedE
 }
 
 fn with_parser<T>(c: &mut Context<'_>, id: u64, operation: impl FnOnce(&mut Parser) -> T) -> Option<T> {
-    c.node().shared_state().borrow_mut().http.parsers.get_mut(&id).map(operation)
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().http.parsers.get_mut(&id).map(operation)
 }
 
 /// Whether the parser is inside a message: a connection that is not idle.
@@ -165,7 +164,7 @@ fn parse_error(c: &mut Context<'_>, failure: &ParseError) -> Outcome {
 /// `freeParser(parser, req, socket)`: the host parser goes; the object forgets its peers.
 pub(crate) fn free(c: &mut Context<'_>, parser: RootId, request: Option<RootId>, socket: RootId) -> Result<(), RootedError> {
     if let Some(id) = parser_id(c, parser)? {
-        c.node().shared_state().borrow_mut().http.parsers.remove(&id);
+        c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().http.parsers.remove(&id);
         let undefined = c.undefined();
         put_slot(c, parser, Slot::ParserId, undefined)?;
         let null = c.null();

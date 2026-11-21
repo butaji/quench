@@ -1,8 +1,6 @@
 //! Native ABI constants shared by the public and internal crypto namespaces.
 //! Padding values come from the linked OpenSSL headers; the salt/check flags
 //! below are the literal ABI definitions in openssl/rsa.h and openssl/dh.h.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 // node_constants.cc retains this historical ABI when OpenSSL removes its macro.
 const RSA_SSLV23_PADDING: i32 = 2;
@@ -74,8 +72,8 @@ enum Constant {
     Number(f64),
     Text(&'static str),
 }
-pub(crate) fn binding(c: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
-    let shared = c.node().shared_state();
+pub(crate) fn binding(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(root) = shared.borrow().builtin_cache.get(CACHE).copied() {
         return Ok(root);
     }

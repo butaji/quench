@@ -5,7 +5,7 @@
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
-    Analysis, AnalysisState, CONTEXT_MEMORY_LENGTH, CallContext, Emitter, Host, Kind, Region, Slot,
+    Analysis, AnalysisState, CONTEXT_MEMORY_LENGTH, CallContext, Emitter, Kind, Region, Slot,
     Vm, compiled_memory_copy, compiled_memory_fill, refresh_memory_length,
 };
 use crate::bytecode::{Function, WideInstruction};
@@ -20,7 +20,7 @@ use crate::wasm::INDEX_GROW_FAILURE;
 use crate::wasm::memory::WASM_PAGE_BITS;
 use cranelift_codegen::ir::{self, MemFlagsData};
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// The length a call passes after the context when the memory is unguarded (`length` is
     /// passed): the current one (`memory_length`), so a callee sees a length a growing callee
     /// refreshed. `None` where the length is not passed.
@@ -32,7 +32,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
+impl WasmMemory for Emitter<'_, '_> {
     type Vector = ir::Value;
 
     fn guarded(&self) -> bool {
@@ -69,7 +69,7 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
+impl WasmMemoryWrite for Emitter<'_, '_> {
     fn memory_store(&mut self, access: Access, index: ir::Value, offset: u32, value: ir::Value) {
         let host = self.host_address(index, offset);
         let flags = self.flags(Region::LinearMemory);
@@ -107,29 +107,29 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
 /// in pages before, or the failure word where it cannot grow. The memory's length in the
 /// context is read again after it, the event that changes it; its base never moves, the bytes
 /// being a reservation (`Analysis::callouts` is off for any other memory).
-pub(super) unsafe extern "C" fn memory_grow_callout<H: Host>(context: *mut CallContext, pages: u64) -> u64 {
+pub(super) unsafe extern "C" fn memory_grow_callout(context: *mut CallContext, pages: u64) -> u64 {
     // SAFETY: compiled code passes the context `run_compiled` made, whose VM is suspended in
     // that call.
     let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *context.vm.cast::<Vm>() };
     // Only the growth itself fails: the analysis admitted the context's memory binding.
     let grown = vm.wasm_memory_grow(context.memory, pages);
     refresh_memory_length(context, vm);
     grown.ok().flatten().unwrap_or(INDEX_GROW_FAILURE as u64)
 }
 
-impl<H: Host> WasmMemoryGrow for Emitter<'_, '_, H> {
+impl WasmMemoryGrow for Emitter<'_, '_> {
     fn memory_grow(&mut self, pages: ir::Value) -> ir::Value {
         let delta = self.memory_index(pages);
         let context = self.body.core.context;
         let roots = self.root();
-        let before = self.call_leaf(memory_grow_callout::<H> as *const () as usize, &[context, delta]);
+        let before = self.call_leaf(memory_grow_callout as *const () as usize, &[context, delta]);
         self.unroot(roots);
         self.convert(Conversion::WrapI64, before)
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// The flags of a linear-memory load. Where the reservation guards the access it is the bound
     /// check, so it keeps a trap code: even a load whose result is unused must fault before later
     /// effects (`vector_address`).
@@ -203,7 +203,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks a linear-memory step reads the function's memory through its register with
     /// 32-bit operands, and applies its register writes. `memory` is the function's memory
     /// register and the slot it binds.

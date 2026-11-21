@@ -5,11 +5,11 @@
 //! the event loop's `poll` drains them through the `napiDrain` operation, one addon entry
 //! per event, so each completion runs with its own handle scope and exception routing.
 
-use quench_runtime::ErasedHost;
 use super::abi::{node_api, Finalize};
 use super::functions::{call, callable};
 use super::lifecycle::{collected, finalize, Finalizer};
 use super::{api, enter, js_api, out, Context, Env, NapiValue, Status, Thrown, ENVS, NULL_VALUE};
+use crate::host::NodeHost;
 use quench_runtime::{RootId, RootedError};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -732,7 +732,7 @@ pub(crate) fn has_work() -> bool {
 
 /// Event-loop source: deliver pending addon events; `true` when any ran.
 pub(crate) fn poll(
-    runtime: &mut quench_runtime::Runtime<ErasedHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
 ) -> Result<bool, String> {
     drain_wake();

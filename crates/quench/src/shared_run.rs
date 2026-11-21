@@ -1,7 +1,5 @@
 //! Shared-VM entry execution used by the development CLI and inventory worker.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use crate::host::NodeHost;
 use crate::host::shared_vm::typescript_files::TypeScriptFile;
 use quench_runtime::{ExecutionRequest, MemoryPolicy, Runtime, SourceKind};
@@ -192,18 +190,18 @@ pub(crate) enum Teardown {
 
 /// An entry's runtime, ended by its `Teardown` on every path out of the entry.
 pub(crate) struct EntryRuntime {
-    runtime: std::mem::ManuallyDrop<Runtime<ErasedHost>>,
+    runtime: std::mem::ManuallyDrop<Runtime<NodeHost>>,
     teardown: Teardown,
 }
 
 impl EntryRuntime {
-    pub(crate) fn new(runtime: Runtime<ErasedHost>, teardown: Teardown) -> Self {
+    pub(crate) fn new(runtime: Runtime<NodeHost>, teardown: Teardown) -> Self {
         Self { runtime: std::mem::ManuallyDrop::new(runtime), teardown }
     }
 }
 
 impl std::ops::Deref for EntryRuntime {
-    type Target = Runtime<ErasedHost>;
+    type Target = Runtime<NodeHost>;
     fn deref(&self) -> &Self::Target {
         &self.runtime
     }
@@ -424,7 +422,7 @@ fn execute_shared_on_worker(
     };
     let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, snapshot_entry, in_worker);
     let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
-    let mut runtime = EntryRuntime::new(Runtime::new(quench_runtime::ErasedHost::new(host)), teardown);
+    let mut runtime = EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(mode);
     runtime.set_memory_policy(memory_policy); crate::qimg::install(&mut runtime);
     #[cfg(feature = "profile-memory")]
@@ -435,7 +433,7 @@ fn execute_shared_on_worker(
     profile_startup_boundary("node_entry_compiled");
     let mut restored = false;
     if let Some(snapshot) = snapshot {
-        match runtime.restore_snapshot(snapshot, &program, |host, reader| host.node().read_snapshot(reader)) {
+        match runtime.restore_snapshot(snapshot, &program, |host, reader| host.read_snapshot(reader)) {
             Ok(entry) => {
                 crate::host::startup_snapshot::report(snapshot_path.as_deref(), Ok(()));
                 program = entry;
@@ -444,14 +442,14 @@ fn execute_shared_on_worker(
             Err(error) => {
                 crate::host::startup_snapshot::report(snapshot_path.as_deref(), Err(&error));
                 // The restore may have left the runtime half replaced: boot a fresh one.
-                *runtime = Runtime::new(quench_runtime::ErasedHost::new(new_host(None)?));
+                *runtime = Runtime::new(new_host(None)?);
                 runtime.set_execution_mode(mode);
                 runtime.set_memory_policy(memory_policy); crate::qimg::install(&mut runtime);
                 program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
             }
         }
     }
-    let shared_state = runtime.node().shared_state();
+    let shared_state = runtime.host_mut().shared_state();
     if let Some(worker) = &shared_state.borrow().messaging.context {
         worker.control.set_online();
     }
@@ -465,13 +463,13 @@ fn execute_shared_on_worker(
 
 /// Shared Node job/exit/error lifecycle for source and native entry publication.
 pub(crate) fn finish_shared_execution(
-    runtime: &mut Runtime<ErasedHost>, program: &quench_runtime::ResidualProgram,
+    runtime: &mut Runtime<NodeHost>, program: &quench_runtime::ResidualProgram,
     execution: Result<(), quench_runtime::JsError>,
 ) -> Result<SharedCompletion, String> {
     // Completion may run jobs and revive guest work; those paths refault as
     // needed instead of retaining the entire initial execution working set.
     crate::host::resident_pages::release_main_text_at_phase_boundary();
-    let shared_state = runtime.node().shared_state();
+    let shared_state = runtime.host_mut().shared_state();
     let completion = match execution {
         Ok(()) => crate::modules::process_shared_vm::finish_execution(runtime, program),
         Err(error) => {

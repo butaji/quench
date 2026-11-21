@@ -27,7 +27,7 @@ pub(super) enum DiagnosticProperty {
     Blocked,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `constructor[@@species]`. Every intrinsic `get [Symbol.species]` returns its receiver
     /// and observes nothing, so an own accessor that still holds one answers without a call
     /// (`has_intrinsic_species_getter`).

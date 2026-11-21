@@ -13,7 +13,7 @@ use super::wasm_stage::infallible;
 use super::wasm_call_stage::is_tail_call;
 use super::{
     Analysis, BODY_CALL_CONV, CONTEXT_CALL_REFERENCE, CONTEXT_CALL_REFERENCE_DIAGNOSTIC,
-    CONTEXT_INSTANCE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Host, Kind,
+    CONTEXT_INSTANCE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Kind,
     Slot, Vm, internal_signature, invariant,
 };
 use crate::bytecode::WideInstruction;
@@ -51,7 +51,7 @@ pub(super) struct CheckedRow {
 /// `expected` (a type index of the program) although its id is not the expected one: a subtype,
 /// or a host function whose signature the VM compares. A reference the VM cannot compare does
 /// not satisfy it.
-unsafe extern "C" fn compiled_table_accepts<H: Host>(
+unsafe extern "C" fn compiled_table_accepts(
     context: *mut CallContext,
     table: u64,
     index: u64,
@@ -59,7 +59,7 @@ unsafe extern "C" fn compiled_table_accepts<H: Host>(
 ) -> u64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
     let context = unsafe { &*context };
-    let vm = unsafe { &*context.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &*context.vm.cast::<Vm>() };
     let binding = vm.heap.environment_slot(context.env, table as usize);
     let reference = binding.and_then(|table| vm.wasm_table_get(table, index).ok());
     let pool = vm.programs.wasm_signatures(context.program);
@@ -69,7 +69,7 @@ unsafe extern "C" fn compiled_table_accepts<H: Host>(
     u64::from(accepted.unwrap_or(false))
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     fn site(&self) -> IndirectSite {
         self.indirect.expect("an indirect target is being emitted")
     }
@@ -121,7 +121,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> WasmTable for Emitter<'_, '_, H> {
+impl WasmTable for Emitter<'_, '_> {
     fn table_range_exceeds(&mut self, index: ir::Value, extent: ir::Value) -> ir::Value {
         let end = self.operate(Binary::Add, Width::I64, index, extent);
         let words = self.site().words;
@@ -161,7 +161,7 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
         let context = self.body.core.context;
         let table = self.constant(Width::I64, i64::from(site.table));
         let expected_type = self.constant(Width::I64, i64::from(site.signature_index));
-        let target = compiled_table_accepts::<H> as *const () as usize;
+        let target = compiled_table_accepts as *const () as usize;
         let related = self.call_leaf(target, &[context, table, reference, expected_type]);
         let related = self.convert(Conversion::WrapI64, related);
         let mismatch = self.operate_unary(crate::wasm::integer::I64UnaryOperator::EqualZero, Width::I32, related);
@@ -191,7 +191,7 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// The canonical id of the type `index` of the program.
     pub(super) fn type_canonical(&self, index: u32) -> Option<CanonicalSignature> {
         self.vm
@@ -201,7 +201,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Lowers a call of the row an indirect target produced: natively through the function the
     /// row names where it has one, else through the VM's callout.
     pub(super) fn call_reference(&mut self, pc: usize, instruction: WideInstruction) {
@@ -408,7 +408,7 @@ impl<H: Host> Emitter<'_, '_, H> {
 /// The bytes of a word of a spilled argument, a result or a status.
 const WORD: usize = size_of::<u64>();
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// A stack slot of `words` words.
     fn words_slot(&mut self, words: usize) -> ir::StackSlot {
         self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(

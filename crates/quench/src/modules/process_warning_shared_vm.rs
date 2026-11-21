@@ -1,15 +1,13 @@
 //! Node's process warnings: `process.emitWarning` and the default `warning` listener
 //! (`lib/internal/process/warning.js`'s semantics), in Rust.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use std::cell::Cell;
 use std::io::Write;
 
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The name a warning takes without a `type`.
 const DEFAULT_TYPE: &str = "Warning";
@@ -46,7 +44,7 @@ pub(crate) fn emit_experimental(c: &mut Context<'_>, feature: &'static str) -> R
 use crate::modules::util_shared_vm::named_get as get;
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.node().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))
 }
 
 fn is_undefined(c: &Context<'_>, value: RootId) -> bool {
@@ -204,7 +202,7 @@ pub(crate) fn on(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Root
         let argv0 = if c.truthy_rooted(argv0)? { c.to_string(argv0)? } else { "node".to_owned() };
         message.push_str(&format!("\n(Use `{} {flag} ...` to show where the warning was created)", basename(&argv0, ".exe")));
     }
-    let redirect = c.node().shared_state().borrow().cli_options.string_value("--redirect-warnings").map(str::to_owned);
+    let redirect = c.host_as::<crate::host::NodeHost>().shared_state().borrow().cli_options.string_value("--redirect-warnings").map(str::to_owned);
     match redirect {
         Some(path) if !path.is_empty() => {
             let written = std::fs::OpenOptions::new().create(true).append(true).open(&path)

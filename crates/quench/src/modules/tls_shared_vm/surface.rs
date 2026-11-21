@@ -2,13 +2,11 @@
 //! `SecureContext` facades, `TLSSocket` and `Server` over the native session operations,
 //! and the module functions.
 
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::socket::{get, method, set};
 use crate::modules::host_members::{accessors, constructor, current, function, members, methods};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Surface, "tlsSurface", [
@@ -450,7 +448,7 @@ fn ca_certificates(c: &mut Context<'_>, kind: RootId) -> Outcome {
         return Ok(value);
     }
     let use_system = {
-        let shared = c.node().shared_state();
+        let shared = c.host_as::<crate::host::NodeHost>().shared_state();
         let state = shared.borrow();
         let options = &state.cli_options;
         !options.enabled("--no-use-system-ca")

@@ -1,19 +1,17 @@
 //! Internal slots of host classes (Node's `#private` fields): own properties keyed by
 //! host-private symbols, which script can neither see nor reach. Each slot's symbol is
 //! made once per realm and cached under its name.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 fn symbol(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
-    if let Some(symbol) = c.node().shared_state().borrow().builtin_cache.get(name).copied() {
+    if let Some(symbol) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(name).copied() {
         return Ok(symbol);
     }
     let symbol = c.private_symbol_rooted(Some(name.trim_start_matches('\0')));
     let symbol = c.retain(symbol)?;
-    c.node().shared_state().borrow_mut().builtin_cache.insert(name.to_owned(), symbol);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(name.to_owned(), symbol);
     Ok(symbol)
 }
 

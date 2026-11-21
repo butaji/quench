@@ -105,7 +105,7 @@ struct TakenPlan {
 
 impl TakenPlan {
     /// Whether the VM answers now what the plan took: its global reads and its fact tables.
-    fn holds<H: super::super::Host>(&self, vm: &mut super::super::Vm<H>, program: &ResidualProgram, function: u32) -> bool {
+    fn holds(&self, vm: &mut super::super::Vm, program: &ResidualProgram, function: u32) -> bool {
         vm.global_table(program, function, &self.unit, GlobalTable::Lane) == self.global_reads
             && super::lane_compile::FactTables::of(vm, function, &self.unit, &self.fields, &self.global_reads, &|_, _| None) == self.tables
     }
@@ -532,7 +532,7 @@ impl PendingOsrRegion {
     /// that changed while it lowered (a method cache naming an atom it stores in place) fails
     /// the subscription and the code is stale.
     /// A plan that folded Stable facts publishes where the VM still answers what it took (`TakenPlan::holds`).
-    pub(in crate::vm) fn poll<H: super::super::Host>(mut self: Box<Self>, vm: &mut super::super::Vm<H>, program: Option<&ResidualProgram>) -> Result<OsrCompile, Box<Self>> {
+    pub(in crate::vm) fn poll(mut self: Box<Self>, vm: &mut super::super::Vm, program: Option<&ResidualProgram>) -> Result<OsrCompile, Box<Self>> {
         let lowered = match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
             std::task::Poll::Ready(_) if !self.watch.is_published() => return Ok(OsrCompile::Stale),

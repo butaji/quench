@@ -45,7 +45,7 @@ impl RootedPropertyDescriptor {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn define_property_from_descriptor(
         &mut self,
         p: &ResidualProgram,

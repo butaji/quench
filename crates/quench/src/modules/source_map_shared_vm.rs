@@ -1,15 +1,13 @@
 //! Source map support (lib/internal/source_map): the support switches
 //! `--enable-source-maps`, `process.setSourceMapsEnabled` and `module.setSourceMapsSupport`
 //! set, the cache of the source maps loaded modules name, and `module.SourceMap`.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
 use super::util_shared_vm::validate_boolean;
 use crate::host::shared_vm::{commonjs, operation};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 use std::cell::Cell;
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// Which source maps are honoured (`module.getSourceMapsSupport()`).
 #[derive(Clone, Copy)]
@@ -36,7 +34,7 @@ pub(crate) fn support(c: &mut Context<'_>) -> Support {
     if let Some(support) = SUPPORT.get() {
         return support;
     }
-    let enabled = c.node().shared_state().borrow().cli_options.enabled("--enable-source-maps");
+    let enabled = c.host_as::<crate::host::NodeHost>().shared_state().borrow().cli_options.enabled("--enable-source-maps");
     let support = Support { enabled, node_modules: enabled, generated_code: enabled };
     SUPPORT.set(Some(support));
     support
@@ -44,7 +42,7 @@ pub(crate) fn support(c: &mut Context<'_>) -> Support {
 
 pub(crate) fn set_support(c: &mut Context<'_>, support: Support) {
     SUPPORT.set(Some(support));
-    if let Some(cell) = c.node().shared_state().borrow().builtin_cache.get(SUPPORT_OBJECT).copied() {
+    if let Some(cell) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(SUPPORT_OBJECT).copied() {
         let undefined = c.undefined();
         let key = c.string_rooted("0");
         let _ = c.set_property_rooted(cell, key, undefined, cell);

@@ -1,15 +1,14 @@
 //! Native incremental Sign/Verify handles for unchanged SDK sig.js.
 //! Each weak identity owns one EVP digest context. Finalization consumes it;
 //! no message chunks, private DER, or guest roots are retained here.
-use quench_runtime::ErasedHost;
-use crate::host::NodeAccess;
 use super::{
     crypto_asymmetric::KeyKind,
     crypto_asymmetric_operations::SignatureOptions,
     crypto_signature_state::{Error, State as Signature},
 };
+use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 #[derive(Default)]
 pub(crate) struct State {
     handles: Vec<Handle>,
@@ -68,7 +67,7 @@ fn error(c: &mut Context<'_>, error: Error) -> RootedError {
     }
 }
 fn index(c: &mut Context<'_>, receiver: RootId) -> Result<usize, RootedError> {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .crypto_signatures
@@ -95,7 +94,7 @@ pub(crate) fn new(
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let dead = shared
         .borrow()
         .crypto_signatures
@@ -126,7 +125,7 @@ pub(crate) fn init(
 ) -> Result<RootId, RootedError> {
     let index = index(c, receiver)?;
     let name = c.to_string(args[0])?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = shared.borrow_mut().crypto_signatures.handles[index]
         .value
         .initialize(&name);
@@ -140,7 +139,7 @@ pub(crate) fn update(
 ) -> Result<RootId, RootedError> {
     let index = index(c, receiver)?;
     let bytes = super::crypto_hash_shared_vm::input(c, args[0], args.get(1).copied())?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = shared.borrow_mut().crypto_signatures.handles[index]
         .value
         .update(&bytes);
@@ -183,7 +182,7 @@ pub(crate) fn sign(
     let input = [target, args[0], args[1], args[2], args[3], args[4]];
     let key = super::crypto_asymmetric_shared_vm::import_input(c, KeyKind::Private, &input)?;
     let options = options(c, args, 5)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = shared.borrow_mut().crypto_signatures.handles[index]
         .value
         .sign(&key, &options);
@@ -203,7 +202,7 @@ pub(crate) fn verify(
         .bytes_prefix_rooted(args[5], usize::MAX)
         .ok_or_else(|| RootedError::host("Native signature is not a BufferSource"))?;
     let options = options(c, args, 6)?;
-    let shared = c.node().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = shared.borrow_mut().crypto_signatures.handles[index]
         .value
         .verify(&key, &signature, &options);
@@ -239,8 +238,8 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     }
     Ok(())
 }
-pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     let dead = shared
         .borrow()
         .crypto_signatures
@@ -256,8 +255,8 @@ pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
         runtime.release_host_weak_root(handle.identity);
     }
 }
-pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
-    let shared = runtime.node().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
     let handles = std::mem::take(&mut shared.borrow_mut().crypto_signatures.handles);
     for handle in handles {
         runtime.release_host_weak_root(handle.identity);

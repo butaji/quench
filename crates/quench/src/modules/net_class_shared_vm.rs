@@ -3,10 +3,9 @@
 //! Server is an EventEmitter whose listener the transport owns. Every member reads the
 //! module's operation table (its function data) for the transport operations it projects.
 
-use quench_runtime::ErasedHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, ErasedHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 /// The transport operations, stream methods and symbols the members share.

@@ -72,7 +72,7 @@ const PLAIN_YEAR_MONTH_METHODS: &[(&str, Native)] = &[
     ("toPlainDate", Native::TemporalPlainYearMonthToPlainDate),
 ];
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_temporal_calendar_projections(
         &mut self,
         p: &ResidualProgram,
@@ -1562,8 +1562,8 @@ fn is_plain_year_month_native(native: Native) -> bool {
     )
 }
 
-fn parse_plain_month_day_string<H: Host>(
-    vm: &mut Vm<H>,
+fn parse_plain_month_day_string(
+    vm: &mut Vm,
     p: &ResidualProgram,
     text: &str,
 ) -> Result<(super::temporal_date::IsoDate, String), JsError> {
@@ -1583,8 +1583,8 @@ fn parse_plain_month_day_string<H: Host>(
     Ok((date, calendar))
 }
 
-fn parse_plain_year_month_string<H: Host>(
-    vm: &mut Vm<H>,
+fn parse_plain_year_month_string(
+    vm: &mut Vm,
     p: &ResidualProgram,
     text: &str,
 ) -> Result<(super::temporal_date::IsoDate, String), JsError> {
@@ -1617,8 +1617,8 @@ fn parse_plain_year_month_string<H: Host>(
     Err(vm.range_error(p, "Invalid PlainYearMonth".into()))
 }
 
-fn validate_plain_year_month_calendar_string<H: Host>(
-    vm: &mut Vm<H>,
+fn validate_plain_year_month_calendar_string(
+    vm: &mut Vm,
     p: &ResidualProgram,
     text: &str,
     calendar: &str,
@@ -1743,8 +1743,8 @@ fn signed_compact_year_month_components(date: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn parse_plain_year_month_boundary<H: Host>(
-    vm: &mut Vm<H>,
+fn parse_plain_year_month_boundary(
+    vm: &mut Vm,
     p: &ResidualProgram,
     text: &str,
     year: i32,
@@ -1771,8 +1771,8 @@ fn parse_plain_year_month_boundary<H: Host>(
     ))
 }
 
-pub(super) fn to_plain_month_day<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn to_plain_month_day(
+    vm: &mut Vm,
     p: &ResidualProgram,
     this: Value,
 ) -> Result<Value, JsError> {
@@ -1781,8 +1781,8 @@ pub(super) fn to_plain_month_day<H: Host>(
     vm.make_plain_month_day_from_iso_date(p, constructor, (year, month, day), calendar, true)
 }
 
-pub(super) fn to_plain_year_month<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn to_plain_year_month(
+    vm: &mut Vm,
     p: &ResidualProgram,
     this: Value,
 ) -> Result<Value, JsError> {
@@ -1798,7 +1798,7 @@ pub(super) fn to_plain_year_month<H: Host>(
         })
         .map_or(DEFAULT_REFERENCE_ISO_DAY, |(_, _, day)| day);
     Ok(vm.heap.alloc(Cell::TemporalPlainYearMonth {
-        object: Box::new(Vm::<H>::empty_object(vm.temporal_plain_year_month_proto)),
+        object: Box::new(Vm::empty_object(vm.temporal_plain_year_month_proto)),
         year,
         month,
         calendar: Box::new(calendar),
@@ -1806,8 +1806,8 @@ pub(super) fn to_plain_year_month<H: Host>(
     }))
 }
 
-pub(super) fn to_zoned_date_time<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn to_zoned_date_time(
+    vm: &mut Vm,
     p: &ResidualProgram,
     this: Value,
     args: &[Value],
@@ -1876,8 +1876,8 @@ pub(super) fn to_zoned_date_time<H: Host>(
     )
 }
 
-pub(super) fn native<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn native(
+    vm: &mut Vm,
     p: &ResidualProgram,
     native: Native,
     this: Value,
