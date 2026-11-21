@@ -3177,7 +3177,8 @@ static double NOINL op_v_array_reduce(long n) {
   int32_t outer = N >> 4;
   for (int32_t r = 0; r < outer; r++) {
     BODY_BARRIER();
-    s = (int32_t)((uint32_t)s + (uint32_t)v_reduce_run(arr, 16, 0, v_reduce_add));
+    int32_t *p = arr; OPAQUE_P(p); /* the call reads the array each time, as JS's reduce does */
+    s = (int32_t)((uint32_t)s + (uint32_t)v_reduce_run(p, 16, 0, v_reduce_add));
   }
   return s;
 }

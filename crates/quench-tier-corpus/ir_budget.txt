@@ -238,7 +238,7 @@ v_array_map 9.8 13
 v_array_of_objects_field 5.9 8
 v_array_push_grow 65.5 82
 v_array_push_pop 6 8
-v_array_reduce 0.1 2
+v_array_reduce 9.6 12
 v_astar_heap 98.6 124
 v_basic_interp 13.2 17
 v_bigint_add 6 8
