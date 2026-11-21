@@ -10991,6 +10991,7 @@ mod tests {
 
 
     #[test]
+    #[allow(dangerous_implicit_autorefs)] // the test reads and restores the frame header through its raw pointer
     fn nested_lane_entry_restores_outer_fault_binding() {
         if !FAULT_POLL_SUPPORTED { return; }
         let program = crate::Engine::specialize(
