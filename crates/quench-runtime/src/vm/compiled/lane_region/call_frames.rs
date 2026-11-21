@@ -308,9 +308,21 @@ impl EmitFrame<'_> {
         let caller = stage.load_u64(Region::Frame.mutable(), room.top, context_at(CONTEXT_CALLER_REGISTERS));
         let plain = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.plain_depth));
         let depth = stage.load_u64(Region::Payload.mutable(), plain, PLAIN_DEPTH_AT as i32);
+        // A nested entry to emitted code under the callee (`Vm::stack_words_in_lane`) made the header a
+        // record (`LaneStack::spill_plain`): the record pops instead, where Rust keeps it.
+        let (spilled, plain_header, popped) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
+        stage.builder.set_cold_block(spilled);
+        stage.builder.ins().brif(depth, plain_header, &[], spilled, &[]);
+        stage.builder.switch_to_block(spilled);
+        let helper = self.helpers.address(&mut stage.builder, LaneHelper::PopSpilledHeader);
+        emit_lane_helper_call(stage.builder, self.payload, helper, &[]);
+        stage.builder.ins().jump(popped, &[]);
+        stage.builder.switch_to_block(plain_header);
         let depth = stage.add_imm(depth, u64::MAX);
         stage.store_u64(Region::Payload.mutable(), plain, PLAIN_DEPTH_AT as i32, depth);
         stage.store_u64(Region::Payload.mutable(), plain, PLAIN_REGISTERS_AT as i32, caller);
+        stage.builder.ins().jump(popped, &[]);
+        stage.builder.switch_to_block(popped);
         let count_at = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.body_top));
         stage.store_u64(DISPATCH, count_at, 0, room.shadow);
         self.set_values_top(stage, room.top);

@@ -1183,6 +1183,8 @@ lane_helper_inventory! { H;
     Truthy => truthy_in_lane::<H>,
     /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
     RetireArrayProofs => retire_array_proofs_in_lane,
+    /// The native header a nested entry made a record pops as one (`pop_spilled_header_in_lane`).
+    PopSpilledHeader => pop_spilled_header_in_lane::<H>,
     /// An object literal over a register window (`new_object_literal_in_lane`).
     NewObjectLiteral => new_object_literal_in_lane::<H>,
     /// A closure over the frame's environment (`new_closure_in_lane`).
@@ -4228,6 +4230,15 @@ unsafe extern "C" fn index_set_in_lane<H: Host>(vm: u64, _residual: u64, object:
 
 /// Retires the running lane's array storage proofs (`retire_array_storage_proofs`), which a
 /// native `pop` calls once it has shortened an array, as a heap change does.
+/// The return of an emitted call whose native header a nested entry to emitted code spilled
+/// (`LaneStack::spill_plain`): the header is the innermost record now, and pops as one.
+unsafe extern "C" fn pop_spilled_header_in_lane<H: Host>(vm: u64, _residual: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    vm.lane_stack.pop_spilled_header();
+    0
+}
+
 unsafe extern "C" fn retire_array_proofs_in_lane(_vm: u64, _residual: u64) -> u64 {
     crate::heap::retire_array_storage_proofs();
     0
