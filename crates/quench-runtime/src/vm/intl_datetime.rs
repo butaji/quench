@@ -659,6 +659,7 @@ impl Vm {
                 _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
             }
         };
+        self.ensure_intl_intrinsics(p)?;
         let constructor = self
             .realm
             .intrinsics

@@ -387,6 +387,8 @@ impl Vm {
         if default && let Some(collation) = &self.default_collation {
             return Ok(collation.clone());
         }
+        // `localeCompare` runs without observing the global `Intl`: its group may still be lazy.
+        self.ensure_intl_intrinsics(p)?;
         let constructor = self
             .realm
             .intrinsics
