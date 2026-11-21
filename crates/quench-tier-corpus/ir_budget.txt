@@ -2,155 +2,224 @@
 # One row per op of quench-bench/primitives/ops.js: op, C, budget, ceiling, in instructions per loop
 # iteration under --no-jit (callgrind, exact to 0.1).
 # C: the twin in ops.c (cc -O2 -fno-tree-vectorize -fno-unroll-loops), loop step included.
-# budget: the target, 3 x C + 6 (three instructions of handler per instruction of C, plus one
-#   dispatch allowance per iteration for the loop's backward jump).
+# budget: C parity (user rule 2026-11-21: C-shaped code costs the instructions C does, slightly more):
+#   max(C + 1, 1.25 x C), rounded up. The same budget holds for every tier.
 # ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
 #   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
-arr_length 4 18 75.1
-arr_load_dbl 5 21 86.1
-arr_load_int 5 21 72.1
-arr_load_obj 6 24 102.1
-arr_push 8 30 234.1
-arr_store_dbl 8 30 97.1
-arr_store_int 5 21 72.1
-arr_store_obj 3 15 86.1
-bitwise 8 30 75.1
-call_closure 11 39 231.1
-call_direct 8 30 219.1
-call_method 11 39 279.1
-call_rest 10 36 482.1
-call_rest_forward 11 39 841.1
-call_spread 10 36 670.1
-cmp_dbl 6 24 90.1
-cmp_int 7.5 29 63.6
-dbl_add 4 18 45.3
-dbl_div 8 30 92.1
-dbl_mul 4 18 43.1
-empty 3 15 31.2
-eq_int 7.13 28 47.9
-eq_str 67 207 207
-eq_undef_null 5 21 92.1
-field_read 3 15 69.1
-field_store 3 15 73.1
-inc_local 5 21 56.1
-int_add 4 18 39.2
-int_add_noor 8 30 55.2
-int_div 7 27 115.8
-int_mod 16 54 66.2
-int_mod_var 7 27 67.2
-int_mul 5 21 108.1
-int_mul_ovf 18 60 118.8
-int_sub 4 18 39.2
-math_abs 8 30 163.1
-math_floor 22 72 186.2
-math_imul 7 27 147.1
-math_minmax 15 51 286.1
-math_round 23 75 206.7
-math_sqrt 9 33 154.1
-mixed_int_dbl 7 27 71.1
-neg_op 6 24 87.1
-not_op 5.5 23 42.1
-num_to_str 569 1713 1713
-parse_int 196 594 1018.1
-shl_shr 7 27 92.1
-str_charcodeat 9 33 186.1
-str_compare 4 18 174.1
-str_concat 531.56 1601 1601
-str_concat_acc 7 27 464.4
-str_index 9.07 34 373
-str_length 4 18 83.1
-str_to_num 496 1494 1494
-to_uint32 20 66 197.2
-truthy_int 5.75 24 45.6
-truthy_obj 4 18 62.1
-truthy_str 4 18 117.1
-typed_load 5 21 82.1
-typed_store_f64 8 30 98.6
-typeof_op 4 18 57.1
-ushr 5 21 55.1
-k_dispatch 14 48 348.6
-k_json 812 2442 4915.8
-k_nbody_pair 21.1 70 1340.1
-k_regexp 40.2 127 1224.3
-k_str_build 14.1 49 1369.7
-k_struct_sum 8 30 178.1
-arr_includes 247.2 747.6 1193.8
-arr_indexof 248.2 750.6 1194.3
-date_now 34 108 260.1
-k01_sum_or 4 18 39.1
-k02_fib 1440 4326 42494.1
-k03_call_add 4 18 211.1
-k04_dot 4 18 212.7
-k05_field_add 4 18 113.6
-k06_list 69 213 1854.3
-k07_area 3 15 250.1
-k08_escape 4 18 246.8
-k09_reduce 75 231 6686.9
-k10_f64_sum 69 213 1835.1
-k11_saxpy 134 408 5928.3
-k12_copy 15 51 2373.1
-k13_matmul 666 2004 17356.7
-k14_bsearch 62.2 192.6 865.2
-k15_isort 266.8 806.4 5544.4
-k16_sieve 310 936 8088.8
-k17_hash 134 408 5252.3
-k18_math 44 138 744.6
-k19_gcd 47.1 147.3 672.9
-k20_switch 169 513 3944.3
-alloc_class 146 444 444
-alloc_ctor 143 435 362.1
-alloc_literal 143 435 435
-field_length 3 15 69.1
-field_name 3 15 69.2
-k_dist2 12.9 44.7 252.7
-k_field_acc 3.9 17.7 63.3
-k_list_walk 6.9 26.7 148.3
-k_vec_local 8.9 32.7 193.8
-obj_spread 146 444 1350.8
-typed_store_u8c 24 78 155.9
-alloc_literal1 140 426 426
-arr_isarray 4 18 211.1
-arr_slice 144 438 1696.8
-str_includes 99 303 600.1
-str_slice 166 504 779.2
-rx_ahead 74 228 6437.1
-rx_digits 626 1884 1884
-rx_dotstar 377 1137 2765.9
-rx_email 181 549 4255.9
-rx_lit 323 975 1061.7
-rx_word2 54 168 1621
-bi_arr_concat 149 179 1878.2
-bi_arr_slice 149 179 785
-bi_dv_get_f64 6 36 562.8
-bi_dv_get_u32 8 38 655.1
-bi_dv_set_f64 8 38 567.1
-bi_map_get 19 49 339.3
-bi_set_has 16 46 320.1
-bi_tmpl 253.2 283.2 1174.7
-bi_assign 144 174 1522
-bi_fill 455 485 3005.9
-bi_from 145 175 856.1
-bi_join 318 348 1514
-bi_keys 145 175 581
-bi_map 242 272 8690
-bi_pad 148 178 1539.5
-bi_parse 441 471 3397
-bi_replace 148 178 1304
-bi_sindex 3 33 589.1
-bi_sort_cmp 2481 2511 26146
-bi_sort_int 11077 11107 11107
-bi_split 433 463 1901
-bi_sslice 140 170 762
-bi_trim 240 270 683
-bi_upper 186 216 750
-bi_arr_at 6 36 407.1
-bi_arr_lastindexof 36 66 661.1
-bi_arr_reverse 17 47 978.1
-bi_f64_indexof 59 89 1727.3
-bi_getproto 7 37 705.1
-bi_num_radix 29.9 59.9 645.7
-bi_num_tofixed 2334.7 2364.7 2364.7
-bi_obj_keys2 143 173 708.4
-bi_regexp_exec 195 225 2990.7
-bi_regexp_test 50 80 1266.1
-bi_u8_fill 14 44 2131.1
+alloc_class 146 183 444
+alloc_ctor 143 179 362.1
+alloc_literal 143 179 435
+alloc_literal1 140 175 426
+arr_includes 247.2 309 1193.8
+arr_indexof 248.2 311 1194.3
+arr_isarray 4 5 211.1
+arr_length 4 5 75.1
+arr_load_dbl 5 7 86.1
+arr_load_int 5 7 72.1
+arr_load_obj 6 8 102.1
+arr_push 8 10 234.1
+arr_slice 144 180 1696.8
+arr_store_dbl 8 10 97.1
+arr_store_int 5 7 72.1
+arr_store_obj 3 4 86.1
+bi_arr_at 6 8 407.1
+bi_arr_concat 149 187 1878.2
+bi_arr_lastindexof 36 45 661.1
+bi_arr_reverse 17 22 978.1
+bi_arr_slice 149 187 785
+bi_assign 144 180 1522
+bi_dv_get_f64 6 8 562.8
+bi_dv_get_u32 8 10 655.1
+bi_dv_set_f64 8 10 567.1
+bi_f64_indexof 59 74 1727.3
+bi_fill 455 569 3005.9
+bi_from 145 182 856.1
+bi_getproto 7 9 705.1
+bi_join 318 398 1514
+bi_keys 145 182 581
+bi_map 242 303 8690
+bi_map_get 19 24 339.3
+bi_num_radix 29.9 38 645.7
+bi_num_tofixed 2334.7 2919 2364.7
+bi_obj_keys2 143 179 708.4
+bi_pad 148 185 1539.5
+bi_parse 441 552 3397
+bi_regexp_exec 195 244 2990.7
+bi_regexp_test 50 63 1266.1
+bi_replace 148 185 1304
+bi_set_has 16 20 320.1
+bi_sindex 3 4 589.1
+bi_sort_cmp 2481 3102 26146
+bi_sort_int 11077 13847 11107
+bi_split 433 542 1901
+bi_sslice 140 175 762
+bi_tmpl 253.2 317 1174.7
+bi_trim 240 300 683
+bi_u8_fill 14 18 2131.1
+bi_upper 186 233 750
+bitwise 8 10 75.1
+c_abs_int 8.9 12
+c_arr_2d 10.9 14
+c_arr_histogram 7 9
+c_arr_indirect 6 8
+c_arr_len_loop 4 5
+c_arr_rmw 5 7
+c_arr_stencil 12.9 17
+c_arr_store_seq 5 7
+c_arr_sum_dbl 5 7
+c_arr_sum_int 5 7
+c_arr_swap 9.9 13
+c_bit_test 5.4 7
+c_bool_flag 5.7 8
+c_call_2deep 9 12
+c_call_4args 12.9 17
+c_call_dbl 10 13
+c_call_leaf 8 10
+c_call_recursive_depth4 47 59
+c_call_void 7 9
+c_clamp 12 15
+c_class_ctor_fields 8 10
+c_class_method 3 4
+c_closure_read 11 14
+c_counter_dec 4 5
+c_dbl_cmp_branch 6 8
+c_dbl_expr 9 12
+c_dbl_to_int 8 10
+c_do_while 4 5
+c_early_return 50.4 63
+c_f32_mad 8 10
+c_f64_dot 7 9
+c_for_down 3 4
+c_hash_mix 7.9 10
+c_i32_indirect 5.9 8
+c_i32_store 5 7
+c_i32_sum 5 7
+c_int_div_const 6 8
+c_int_expr 11 14
+c_int_mod_pow2 5.9 8
+c_int_to_dbl 6 8
+c_locals_rotate 7 9
+c_logical_and_or 8.7 11
+c_loop_break 47.4 60
+c_loop_continue 6 8
+c_loop_if_chain 8.7 11
+c_loop_if_else 7 9
+c_loop_step2 8 10
+c_method_poly2 12 15
+c_nested_loop 2.3 4
+c_popcount 27 34
+c_return_early 13.9 18
+c_rotate 5 7
+c_select_minmax 9 12
+c_str_char_scan 15.1 19
+c_str_hash 15.9 20
+c_str_index_eq 13 17
+c_str_len_loop 5.5 7
+c_struct_array 6.9 9
+c_struct_dbl 5.9 8
+c_struct_get2 6 8
+c_struct_nested 4 5
+c_struct_rmw 9 12
+c_struct_set 7 9
+c_switch_dense 9.8 13
+c_switch_sparse 13.8 18
+c_ternary 7 9
+c_u16_load 6 8
+c_u8_rmw 4.9 7
+c_while 4 5
+call_closure 11 14 231.1
+call_direct 8 10 219.1
+call_method 11 14 279.1
+call_rest 10 13 482.1
+call_rest_forward 11 14 841.1
+call_spread 10 13 670.1
+cmp_dbl 6 8 90.1
+cmp_int 7.5 10 63.6
+date_now 34 43 260.1
+dbl_add 4 5 45.3
+dbl_div 8 10 92.1
+dbl_mul 4 5 43.1
+empty 3 4 31.2
+eq_int 7.1 9 47.9
+eq_str 67 84 207
+eq_undef_null 5 7 92.1
+field_length 3 4 69.1
+field_name 3 4 69.2
+field_read 3 4 69.1
+field_store 3 4 73.1
+inc_local 5 7 56.1
+int_add 4 5 39.2
+int_add_noor 8 10 55.2
+int_div 7 9 115.8
+int_mod 16 20 66.2
+int_mod_var 7 9 67.2
+int_mul 5 7 108.1
+int_mul_ovf 18 23 118.8
+int_sub 4 5 39.2
+k01_sum_or 4 5 39.1
+k02_fib 1440 1800 42494.1
+k03_call_add 4 5 211.1
+k04_dot 4 5 212.7
+k05_field_add 4 5 113.6
+k06_list 69 87 1854.3
+k07_area 3 4 250.1
+k08_escape 4 5 246.8
+k09_reduce 75 94 6686.9
+k10_f64_sum 69 87 1835.1
+k11_saxpy 134 168 5928.3
+k12_copy 15 19 2373.1
+k13_matmul 666 833 17356.7
+k14_bsearch 62.2 78 865.2
+k15_isort 266.8 334 5544.4
+k16_sieve 310 388 8088.8
+k17_hash 134 168 5252.3
+k18_math 44 55 744.6
+k19_gcd 47.1 59 672.9
+k20_switch 169 212 3944.3
+k_dispatch 14 18 348.6
+k_dist2 12.9 17 252.7
+k_field_acc 3.9 5 63.3
+k_json 812 1015 4915.8
+k_list_walk 6.9 9 148.3
+k_nbody_pair 21.1 27 1340.1
+k_regexp 40.2 51 1224.3
+k_str_build 14.1 18 1369.7
+k_struct_sum 8 10 178.1
+k_vec_local 8.9 12 193.8
+math_abs 8 10 163.1
+math_floor 22 28 186.2
+math_imul 7 9 147.1
+math_minmax 15 19 286.1
+math_round 23 29 206.7
+math_sqrt 9 12 154.1
+mixed_int_dbl 7 9 71.1
+neg_op 6 8 87.1
+not_op 5.5 7 42.1
+num_to_str 569 712 1713
+obj_spread 146 183 1350.8
+parse_int 196 245 1018.1
+rx_ahead 74 93 6437.1
+rx_digits 626 783 1884
+rx_dotstar 377 472 2765.9
+rx_email 181 227 4255.9
+rx_lit 323 404 1061.7
+rx_word2 54 68 1621
+shl_shr 7 9 92.1
+str_charcodeat 9 12 186.1
+str_compare 4 5 174.1
+str_concat 531.6 665 1601
+str_concat_acc 7 9 464.4
+str_includes 99 124 600.1
+str_index 9.1 12 373
+str_length 4 5 83.1
+str_slice 166 208 779.2
+str_to_num 496 620 1494
+to_uint32 20 25 197.2
+truthy_int 5.8 8 45.6
+truthy_obj 4 5 62.1
+truthy_str 4 5 117.1
+typed_load 5 7 82.1
+typed_store_f64 8 10 98.6
+typed_store_u8c 24 30 155.9
+typeof_op 4 5 57.1
+ushr 5 7 55.1

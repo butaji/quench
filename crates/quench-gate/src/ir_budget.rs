@@ -3,7 +3,7 @@
 //! profiling marks (`process.__irMark`, `QUENCH_DEV=ir-mark`, `--dump-before=quench_ir_mark`), so
 //! its instructions per loop iteration are exact: (Ir(2n) - Ir(n)) / n, with start-up, warm-up and
 //! per-call costs cancelled. `crates/quench-tier-corpus/ir_budget.txt` holds, per op, the C
-//! twin's count (`ops.c`), the budget (3x C plus one dispatch allowance) and the ceiling: the
+//! twin's count (`ops.c`), the budget (C parity: max(C + 1, 1.25x C)) and the ceiling: the
 //! measured count that may not grow. A drop lowers the ceiling; a count at or under its budget
 //! makes the budget the ceiling. Ops over budget are the debt the report ranks.
 //!
@@ -16,7 +16,7 @@
 //! and `--u-jit`, and fails the step on either fault:
 //! - tier order: each tier costs no more than the tier below it, no-jit >= b-jit >= u-jit, beyond
 //!   the same-count tolerance. A higher tier that costs more is an inversion.
-//! - the design target: u-jit within its budget, 3x C + 6, on every op.
+//! - the design target: u-jit within its budget, C parity: max(C + 1, 1.25x C), on every op.
 //! The interpreter's budget is checked too. Each inversion is held by `tier_inversions.txt`, each
 //! u-jit count past its budget by `ujit_over_budget.txt`, and each interpreter count past its
 //! budget by `interpreter_over_budget.txt`. These are shrink-only debt lists: an unlisted fault
@@ -28,7 +28,7 @@
 //! The C floor (`ir_floor`, `crates/quench-tier-corpus/ir_floor.txt`): C-shaped code runs as C.
 //! The interpreter may add to the C twin only a dispatch and decode allowance per record it
 //! dispatches, and the records per op only shrink; a full run also ratchets the b-jit and u-jit
-//! ceilings toward their budgets, 3x C + 6 (`QUENCH_IR_BUDGET_TIERS=off` skips the ceilings).
+//! ceilings toward their budgets, C parity: max(C + 1, 1.25x C) (`QUENCH_IR_BUDGET_TIERS=off` skips the ceilings).
 //! Every row above its floor names the thread that owns its largest handler.
 //!
 //! Alone: `quench-gate --only ir-budget`. `QUENCH_IR_BUDGET_OPS=a,b` measures only those ops.
@@ -450,7 +450,7 @@ impl TierFault {
     }
 }
 
-/// One op's fault, from its counts `[no-jit, b-jit, u-jit]` and its budget (3x C + 6) if it has one.
+/// One op's fault, from its counts `[no-jit, b-jit, u-jit]` and its budget (C parity: max(C + 1, 1.25x C)) if it has one.
 fn tier_fault([interpreter, baseline, optimized]: [f64; 3], budget: Option<f64>) -> TierFault {
     TierFault {
         b_jit_over_no_jit: baseline > interpreter + tolerance(interpreter),
@@ -483,7 +483,7 @@ fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>, runs: [&
     let write = debt_write(ops);
     let mut failures = hold_debt(config, TIER_INVERSIONS, &inversions, &measured, write)?;
     failures.extend(hold_debt(config, UJIT_OVER, &over_budget, &measured, write)?);
-    let report = format!("tiers: {broken} of {} ops out of order, {} with u-jit past its budget (3x C + 6)\n{table}", counts.len(), over_budget.len());
+    let report = format!("tiers: {broken} of {} ops out of order, {} with u-jit past its budget (C parity: max(C + 1, 1.25x C))\n{table}", counts.len(), over_budget.len());
     Ok((failures, report))
 }
 
@@ -633,8 +633,8 @@ mod tests {
     }
 
     #[test]
-    fn u_jit_past_three_c_plus_six_is_over_budget() {
-        // C = 5, so the budget is 3 * 5 + 6 = 21.
+    fn u_jit_past_its_budget_is_over_budget() {
+        // The budget is the row's (here 21).
         assert!(tier_fault([30.0, 20.0, 22.0], Some(21.0)).u_jit_over_budget);
         assert!(!tier_fault([30.0, 20.0, 21.4], Some(21.0)).u_jit_over_budget);
         // An op with no budget row has nothing to be over.

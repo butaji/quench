@@ -1,6 +1,6 @@
 # C floor (quench-gate step `ir-budget`, `crates/quench-gate/src/ir_floor.rs`): C-shaped code runs as C.
 # op records b-jit u-jit, per loop iteration. The interpreter's floor is C + records x 6 (dispatch and
-# decode); records only shrink. b-jit and u-jit ceilings ratchet down toward the op's budget (3x C + 6,
+# decode); records only shrink. b-jit and u-jit ceilings ratchet down toward the op's budget (C parity: max(C + 1, 1.25x C),
 # ir_budget.txt). Not edited by hand.
 alloc_class 11.0 495.3 754.0
 alloc_ctor 9.0 405.5 477.5
