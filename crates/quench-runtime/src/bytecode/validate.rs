@@ -274,10 +274,16 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::FieldLookupCacheSiteIndex => true,
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
             FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
-            FieldLayout::ElementCount => instruction
-                .constant_index()
-                .checked_add(usize::from(value))
-                .is_some_and(|end| end <= bounds.constants),
+            // A constant window (`MakeConstArray`, `StringCaseIndex`): its count reaches that many
+            // pool entries from the instruction's own index. A dense int switch's count is a case
+            // count with no constant behind it (`IntCaseIndex`, whose immediate is the minimum).
+            FieldLayout::ElementCount => match instruction.op().immediate_role() {
+                super::ImmediateRole::ConstantIndex => instruction
+                    .constant_index()
+                    .checked_add(usize::from(value))
+                    .is_some_and(|end| end <= bounds.constants),
+                _ => true,
+            },
             FieldLayout::Operand => operand_in_bounds(
                 value,
                 bounds.registers,

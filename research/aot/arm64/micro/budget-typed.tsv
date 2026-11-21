@@ -21,3 +21,8 @@ gauss_inner	25.841	2.898	2.612
 #   constant indices 0..3         4.47          node 1.70
 # i.e. the index-proof machinery (`loop_versions`, `facts::IndexProof::Proven`) recognises a
 # product of the loop counter, not a register stepped by a constant inside the loop.
+# A dense int `switch` dispatch (op_switch_mem.js: `switch (mem[i & 65535])` with 15 cases, a
+# Uint8Array on `this`), ns/op, 2M iterations:
+#   quench --no-jit 61.1   quench default 69.8   node 1.5   bun 1.6
+# The compiled path is *slower* than the interpreter here, and both are ~40x Node: the switch is
+# gbemu's core loop shape (and Basic's string switch the same family).
