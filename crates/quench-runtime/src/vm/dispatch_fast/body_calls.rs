@@ -449,9 +449,17 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
     if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, respecializes, &[], None); }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
+        // Each call of it from native code leaves that code until it has a body (`note_native_caller`).
+        // Not a rest view yet (TOD-2052): its body, entered from a region's call, spreads its kept rest values
+        // with no frame of its own to read them from.
+        let rest_view = unsafe { &*(*cx).code }.function_get(target.function as usize).is_some_and(|function| function.rest_view());
+        // A caller with a body of its own planned this call already (`bind_callees`); a loop region did not.
+        let caller_body = unsafe { (*cx).body_site }.and_then(|(_, function, _, _)| unsafe { &*(*cx).views }.get(function as usize))
+            .and_then(super::super::program_store::derived_lane_view).is_some_and(|caller| caller.body_view_in_lane().is_some());
+        if own.body_view_in_lane().is_none() && !rest_view && !caller_body { own.note_native_caller(); }
         if crate::trace::Channel::BodyLeave.on() {
             let why = if own.body_view_in_lane().is_some() { "not-admitted" } else if own.warming() { "warming" } else { "no-body" };
-            eprintln!("QUENCH_CALLEE_LEAVE callee={} why={why}", target.function);
+            eprintln!("QUENCH_CALLEE_LEAVE callee={} why={why} tier={}", target.function, own.tier_note());
         }
         return leave(start, Value::UNDEFINED);
     };

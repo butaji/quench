@@ -533,7 +533,10 @@ impl Vm {
             let ir = estimated;
             match pays_compile(tiers, program, function, entries, ir, caller, true, false) {
                 super::tier_model::Pick::Ultra => {}
-                super::tier_model::Pick::Interpreter => { record(Refusal::NotAmortized); return Err(Unstarted::Unpaid); }
+                // A function a loop region calls (`LaneView::called_by_regions`) pays per call a crossing the model's
+                // entries do not count (the region leaves to run it in the lane): its body is wanted whatever its length.
+                super::tier_model::Pick::Interpreter if !caller.called_by_regions() => { record(Refusal::NotAmortized); return Err(Unstarted::Unpaid); }
+                super::tier_model::Pick::Interpreter => {}
                 // A function whose u-jit body would never get ahead of a b-jit body's takes the b-jit body (`LaneBodyOutcome::Base`).
                 super::tier_model::Pick::Base => return Err(Unstarted::Base),
             }
@@ -587,7 +590,7 @@ impl Vm {
         // than compile code no caller may ever run.
         // A recurrent compile (no observed entries to price) still repays only where one entry of
         // its unit amortizes it (`amortizes_entry`, the same test as above, inlined callees included).
-        if entry.is_none() && observed.is_none() && looped.is_none() && !recursive && !amortizes_entry(tiers, &unit, function, &direct) { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
+        if entry.is_none() && !caller.called_by_regions() && observed.is_none() && looped.is_none() && !recursive && !amortizes_entry(tiers, &unit, function, &direct) { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
         bind_callees(&direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&unit, &fields, direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
