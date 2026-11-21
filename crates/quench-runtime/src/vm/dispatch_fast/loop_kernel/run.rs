@@ -79,6 +79,11 @@ fn map2(out: &mut [f64], a: Column, b: Column, f: impl Fn(f64, f64) -> f64) {
 
 /// `op` over two column operands, one loop per operator.
 fn operate(op: NodeOp, out: &mut [f64], a: Column, b: Column) {
+    if let NodeOp::Bits(operation) = op {
+        if bits_column(operation, out, a, b) {
+            return;
+        }
+    }
     macro_rules! each {
         ($($kind:ident :: $operation:ident => $f:ident),*) => {
             match op {
@@ -103,6 +108,59 @@ fn operate(op: NodeOp, out: &mut [f64], a: Column, b: Column) {
         Bits::And => bits, Bits::Or => bits, Bits::Xor => bits,
         Bits::ShiftLeft => bits, Bits::ShiftRight => bits, Bits::ShiftRightUnsigned => bits
     )
+}
+
+/// The int32 words of a column operand into `words` (a scalar's once): `false` where one is no
+/// int32 Number (the per-element row then converts it). Branch-free, so the loop vectorizes.
+fn column_words<'a>(column: Column, words: &'a mut [i32]) -> Option<Result<i32, &'a [i32]>> {
+    const MAGIC: f64 = 6755399441055744.0;
+    const LIMIT: f64 = 2251799813685248.0;
+    match column {
+        Column::Scalar(x) => exact_int32(x).map(Ok),
+        Column::Col(xs) => {
+            // A column whose first element is no int32 (a quotient) rarely has only int32s: the
+            // per-element row takes it without a wasted pass.
+            if xs.first().is_some_and(|&x| exact_int32(x).is_none()) {
+                return None;
+            }
+            let mut exact = true;
+            for (o, &x) in words.iter_mut().zip(xs) {
+                let shifted = x + MAGIC;
+                *o = shifted.to_bits() as u32 as i32;
+                exact &= (shifted - MAGIC == x) & (x.abs() < LIMIT);
+            }
+            exact.then_some(Err(&words[..xs.len()]))
+        }
+    }
+}
+
+/// A bitwise column whose operands are int32 Numbers, on int32 words: `false` (nothing written)
+/// where an operand element is another Number.
+fn bits_column(operation: NumberBitwise, out: &mut [f64], a: Column, b: Column) -> bool {
+    let (mut left, mut right) = ([0i32; CHUNK], [0i32; CHUNK]);
+    let len = out.len();
+    let Some(a) = column_words(a, &mut left[..len]) else { return false };
+    let Some(b) = column_words(b, &mut right[..len]) else { return false };
+    let unsigned = operation == NumberBitwise::ShiftRightUnsigned;
+    macro_rules! words {
+        ($f:expr) => {{
+            let f = $f;
+            match (a, b) {
+                (Err(l), Err(r)) => out.iter_mut().zip(l).zip(r).for_each(|((o, &l), &r)| *o = f(l, r)),
+                (Err(l), Ok(r)) => out.iter_mut().zip(l).for_each(|(o, &l)| *o = f(l, r)),
+                (Ok(l), Err(r)) => out.iter_mut().zip(r).for_each(|(o, &r)| *o = f(l, r)),
+                (Ok(l), Ok(r)) => out.fill(f(l, r)),
+            }
+        }};
+    }
+    match operation {
+        NumberBitwise::And => words!(|l: i32, r: i32| f64::from(l & r)),
+        NumberBitwise::Or => words!(|l: i32, r: i32| f64::from(l | r)),
+        NumberBitwise::Xor => words!(|l: i32, r: i32| f64::from(l ^ r)),
+        _ if unsigned => words!(|l: i32, r: i32| f64::from(crate::vm::operations::int32_bitwise_bits(operation, l, r) as u32)),
+        _ => words!(|l: i32, r: i32| f64::from(crate::vm::operations::int32_bitwise_bits(operation, l, r))),
+    }
+    true
 }
 
 /// `operation` of two Numbers as the staged Number row computes it: the interpreter's stage
