@@ -32,17 +32,18 @@ pub(crate) enum LazyFlag {
     DynamicScopeAccess,
     EvalsInScope,
     JsTierCandidate,
+    RestView,
 }
 
 /// The bits a lazy flag's pair spans: its known bit, then its value bit.
 const LAZY_FLAG_PAIR_BITS: u32 = 2;
 
 impl LazyFlag {
-    const fn known_bit(self) -> u16 {
+    const fn known_bit(self) -> u32 {
         1 << (self as u32 * LAZY_FLAG_PAIR_BITS)
     }
 
-    const fn value_bit(self) -> u16 {
+    const fn value_bit(self) -> u32 {
         self.known_bit() << 1
     }
 }

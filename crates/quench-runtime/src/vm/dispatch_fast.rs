@@ -12365,6 +12365,18 @@ fn passed_linked_call_in_lane<H: Host>(
         if !admits_activation_in_lane(&target) || valid < argc {
             return None;
         }
+        // Refused here, not by the activation: without room it makes the lane's activations
+        // frames (`script_call_frame_in_lane`), after which the caller may not go on in the lane.
+        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        let room = usize::from(target.room) + if target.forms & TARGET_REST_VIEW != 0 { usize::from(argc) } else { 0 };
+        if (returns && !returning_call_admitted(cx))
+            || vm.with_scope_entered
+            || !crate::staged::call_keeping::concrete_admits_keeping(
+                vm.lane_stack.activation_count(), vm.lane_stack.activation_limit.get(), vm.lane_stack.values.room(), room,
+            )
+        {
+            return None;
+        }
         let this = call_this_in_lane(vm, &target, r.get(i.c))?;
         return activate_gathering_in_lane(cx, r, ip, &target, passed, argc, this).ok();
     }
@@ -15698,9 +15710,11 @@ fn activate_keeping_in_lane<H: Host, const MAY_CROSS: bool>(
     // A rest body keeps nothing its rest array holds, unless a kept `arguments` or legacy
     // reflection reads them (`TARGET_GATHERS_KEEPING`).
     let gathers = target.entry == CallEntry::Gathers;
+    // A rest view keeps them too, as `activate_gathering_in_lane` keeps them: its reads and
+    // its frame, once materialized, take the values passed, never a rest array.
     let keeps = forwarder.is_some()
         || if gathers {
-            target.forms & TARGET_GATHERS_KEEPING != 0
+            target.forms & (TARGET_GATHERS_KEEPING | TARGET_REST_VIEW) != 0
         } else {
             target.forwards() || argc > usize::from(target.params)
         };
@@ -18165,10 +18179,13 @@ pub(super) fn fields_fit_in_lane(instruction: WideInstruction, function: &Functi
         .iter()
         .all(|&(field, value)| match op.field_layout(field) {
             FieldLayout::ResultRegister if field == InstructionField::A && numeric_local => true,
-            // A lane call reads its return flag from the field (`call_fits_in_lane`).
+            // A lane call reads its return flag from the field (`call_fits_in_lane`), as does
+            // the spread of a kept rest view (`call_rest_miss`), whose every path completes a
+            // returning call.
             FieldLayout::ResultRegister
                 if field == InstructionField::A
                     && (op.traits().has(crate::bytecode::Traits::FRAME_RETURNABLE)
+                        || op.traits().has(crate::bytecode::Traits::REST_SPREAD_CALL)
                         || (crate::staged::computes_binary(op) && instruction.returns_from_frame())) =>
             {
                 instruction.result_register() < registers
