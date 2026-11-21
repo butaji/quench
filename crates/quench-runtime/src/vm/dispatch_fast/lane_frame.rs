@@ -634,6 +634,9 @@ pub(in crate::vm::dispatch_fast) struct RecordPlan {
     /// The VM's entry lookup the plan takes where its ops miss, or alone where `len` is zero
     /// (`FieldPlan::Entry`, `FieldPlan::Hinted`); `None` for every other plan.
     entry: Option<crate::staged::property::EntryKind>,
+    /// An own read of the hint's `(layout, slot)` held by value (`FieldPlan::Own`), in place of
+    /// `ops`, so the row's plan never lives in a list it addresses; `None` for every other plan.
+    own: Option<(u32, u16)>,
 }
 
 impl RecordPlan {
@@ -649,7 +652,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn entry(kind: crate::staged::property::EntryKind, records: u64) -> Self {
         let none = crate::staged::ic::IcOp::GuardLayout(0);
         Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false, nested: None,
-            host: None, entry: Some(kind) }
+            host: None, entry: Some(kind), own: None }
     }
 
     /// The private name's read of the record (`FieldPlan::Private`), whose atom the lookup names.
@@ -663,11 +666,20 @@ impl RecordPlan {
     /// The own-slot read of the hint `(layout, slot)`: one compare of the record's layout id,
     /// whose storage form the site fixed where it fixed one (`own_formed_handler`).
     #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn own_word(layout: u32, slot: u16, records: u64) -> Self {
+        let none = crate::staged::ic::IcOp::GuardLayout(layout);
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false, nested: None, host: None,
+            entry: None, own: Some((layout, slot)) }
+    }
+
+    /// `own_word` as ops, which a receiver of any object part (`own_other`) or a polymorphic
+    /// read (`polymorphic`) extends.
+    #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn own(layout: u32, slot: u16, records: u64) -> Self {
         use crate::staged::ic::IcOp;
         let load = IcOp::LoadSlot { slot, form: crate::staged::ic::form_of_layout(layout), storage_len: usize::from(slot) + 1,
             rep: crate::typed_ir::Representation::Tagged };
-        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, functions: false, nested: None, host: None, entry: None }
+        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, functions: false, nested: None, host: None, entry: None, own: None }
     }
 
     /// `own` of a receiver of any object part (`Heap::held_other_receiver`): a function's record
@@ -683,14 +695,14 @@ impl RecordPlan {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn own_constant(object: u64, watch: u64, value: u64) -> Self {
         let read = crate::staged::ic::IcOp::OwnConstant { record: object, watch, value };
-        Self { ops: [read, read], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None }
+        Self { ops: [read, read], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None, own: None }
     }
 
     /// The `length` of the receiver's word read by `length` (`IcOp::ArrayLength` or
     /// `IcOp::StringLength`), no record addressed before it.
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn length(length: crate::staged::ic::IcOp<'static>) -> Self {
-        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None }
+        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None, own: None }
     }
 
     /// `own_other` of a layout whose storage form `form` the row's site fixed.
@@ -709,7 +721,7 @@ impl RecordPlan {
         other: Option<*const crate::heap::Heap>) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false, nested: None, host: None, entry: None }
+        Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false, nested: None, host: None, entry: None, own: None }
     }
 }
 
@@ -722,7 +734,7 @@ impl RecordPlan {
         use crate::staged::property::{StoreJoin, StorePlan};
         let none = IcOp::GuardLayout(layout);
         let store = StorePlan::Layout { id: layout, slot, join: StoreJoin::Host };
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some(store), functions: false, nested: None, host: None, entry: None }
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some(store), functions: false, nested: None, host: None, entry: None, own: None }
     }
 
     /// The store the hint `(layout, slot)` proves for a tracked (`narrow` false) or narrow store
@@ -762,7 +774,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn held_string(watch: u64, value: u64) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::HeldString { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None }
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None, own: None }
     }
 
     /// The read of a number receiver through a `Number.prototype` hint whose operands are `watch`
@@ -771,7 +783,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn held_number(watch: u64, value: u64) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::HeldNumber { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None }
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None, own: None }
     }
 
     /// The own field a getter's hint returns (`IcOp::GetterOwn`), over the object records the lane
@@ -780,7 +792,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn getter(guard: u64, watch: u64, slot: u16, records: u64) -> Self {
         use crate::staged::ic::IcOp;
         let read = IcOp::GetterOwn { guard, watch, slot };
-        Self { ops: [read, read], len: 1, records, other: None, word: false, store: None, functions: false, nested: None, host: None, entry: None }
+        Self { ops: [read, read], len: 1, records, other: None, word: false, store: None, functions: false, nested: None, host: None, entry: None, own: None }
     }
 }
 
@@ -793,7 +805,7 @@ impl RecordPlan {
         records: u64) -> Self {
         let none = crate::staged::ic::IcOp::GuardLayout(first.0);
         Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
-            nested: Some(([first, second], base)), host: None, entry: None }
+            nested: Some(([first, second], base)), host: None, entry: None, own: None }
     }
 
     /// A read the frame's host answers (`plan`, a `FieldPlan::Geometry` or `FieldPlan::Length`):
@@ -801,7 +813,7 @@ impl RecordPlan {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn host_read(plan: crate::staged::property::FieldPlan<'static>) -> Self {
         let none = crate::staged::ic::IcOp::GuardShape(0);
-        Self { ops: [none, none], len: 0, records: 0, other: None, word: false, store: None, functions: false, nested: None, host: Some(plan), entry: None }
+        Self { ops: [none, none], len: 0, records: 0, other: None, word: false, store: None, functions: false, nested: None, host: Some(plan), entry: None, own: None }
     }
 }
 
@@ -813,6 +825,7 @@ pub(in crate::vm::dispatch_fast) struct LanePlans {
     nested: Option<[(u32, u16); 2]>,
     host: Option<crate::staged::property::FieldPlan<'static>>,
     entry: Option<crate::staged::property::EntryKind>,
+    own: Option<(u32, u16)>,
 }
 
 impl crate::staged::property::PlanSource for LanePlans {
@@ -820,6 +833,7 @@ impl crate::staged::property::PlanSource for LanePlans {
     fn field_plan(&self, _lookup: crate::bytecode::FieldLookup) -> Option<crate::staged::property::FieldPlan<'_>> {
         if let Some(host) = self.host { return Some(host); }
         use crate::staged::property::FieldPlan;
+        if let Some((layout, slot)) = self.own { return Some(FieldPlan::Own { layout, slot }); }
         match (self.read.as_ref(), self.entry) {
             (Some((ops, len)), Some(entry)) if *len > 0 => Some(FieldPlan::Hinted { ops: &ops[..*len], entry }),
             (_, Some(entry)) => Some(FieldPlan::Entry(entry)),
@@ -1719,7 +1733,8 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn plans(&self) -> LanePlans {
         LanePlans {
-            read: self.plan.filter(|plan| plan.host.is_none()).map(|plan| (plan.ops, plan.len)),
+            read: self.plan.filter(|plan| plan.host.is_none() && plan.own.is_none()).map(|plan| (plan.ops, plan.len)),
+            own: self.plan.and_then(|plan| plan.own),
             store: self.plan.and_then(|plan| plan.store),
             nested: self.plan.and_then(|plan| plan.nested.map(|(hops, _)| hops)),
             host: self.plan.and_then(|plan| plan.host),
