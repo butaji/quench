@@ -15,3 +15,9 @@ ta_f32	5.135	1.982	1.652
 gauss_inner	25.841	2.898	2.612
 # ta_f32's inner loop is 166 -> 18 CLIF blocks per pixel; what remains there is 15 branches
 # (5 bounds checks, 4 `sadd_overflow` index steps, the loop test), against Node's 1.
+# The store index's form decides whether the loop's range proofs fire (ns/op):
+#   li += 4 (a strided induction) 6.20 / 5.88   node 2.07
+#   j * 4  (a product index)      4.42          node 2.00     -29%
+#   constant indices 0..3         4.47          node 1.70
+# i.e. the index-proof machinery (`loop_versions`, `facts::IndexProof::Proven`) recognises a
+# product of the loop counter, not a register stepped by a constant inside the loop.
