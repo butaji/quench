@@ -39,6 +39,54 @@ pub(crate) fn flat_record<S: Stage>(stage: &mut S, record_base: S::Word, value: 
     Some((record, short, wide))
 }
 
+/// `flat_record`, or the record of an ASCII append-buffer prefix (`FlatUnits::AsciiPrefix`), whose
+/// units a row reads through its buffer: the record, whether its form is the short one, whether it
+/// is the wide one, and whether it is a prefix. A row that addresses the units itself, not through
+/// `unit_words`, takes `flat_record`.
+#[inline(always)]
+pub(crate) fn unit_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
+    -> Option<(S::Word, S::Cond, S::Cond, S::Cond)> {
+    let is_string = is_direct_string(stage, value);
+    stage.guard(is_string, miss)?;
+    // The small-id mask lies in the low word, so it reads `value` as it is.
+    let small_bits = stage.and_imm(value, u64::from(crate::heap::SMALL_STRING_ID_MASK));
+    let has_record = stage.ne_imm(small_bits, u64::from(crate::heap::SMALL_STRING_ID_BASE));
+    stage.guard(has_record, miss)?;
+    let index = stage.and_imm(value, u64::from(u32::MAX));
+    let offset = stage.mul_imm(index, form::RECORD_SIZE as u64);
+    let record = stage.add(record_base, offset);
+    let tag = stage.load_u8(Region::HeapMeta.mutable(), record, form::TAG_OFFSET);
+    let short = stage.eq_imm(tag, u64::from(form::TAG_SHORT));
+    let ascii = stage.eq_imm(tag, u64::from(form::TAG_ASCII));
+    let wide = stage.eq_imm(tag, u64::from(form::TAG_WIDE));
+    let prefix = stage.eq_imm(tag, u64::from(form::TAG_ASCII_PREFIX));
+    let shared = stage.any(ascii, wide);
+    let flat = stage.any(short, shared);
+    let read = stage.any(flat, prefix);
+    stage.guard(read, miss)?;
+    Some((record, short, wide, prefix))
+}
+
+/// The address of the first unit and the unit count of the string whose record `unit_record`
+/// read, in the form `short` or `prefix` names, else the shared form. Every form keeps the words
+/// of the shared layout inside the record, so each is read and the form selects; a prefix's units
+/// are its buffer's (`APPEND_UNITS_OFFSET` into its `Rc`'s value), which any other form reads from
+/// its own record instead, so no load leaves memory a form owns.
+#[inline(always)]
+pub(crate) fn unit_words<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond, prefix: S::Cond) -> (S::Word, S::Word) {
+    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
+    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
+    let buffer = stage.select(prefix, shared_units, record);
+    let prefix_units = stage.load_u64(Region::HeapMeta.mutable(), buffer, crate::staged::string_form::APPEND_UNITS_OFFSET);
+    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
+    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
+    let prefix_length = stage.load_u32(Region::HeapMeta.mutable(), record, crate::staged::string_form::PREFIX_LENGTH_OFFSET);
+    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
+    let long_units = stage.select(prefix, prefix_units, shared_units);
+    let long_length = stage.select(prefix, prefix_length, shared_length);
+    (stage.select(short, short_units, long_units), stage.select(short, short_length, long_length))
+}
+
 /// A flat string's units as the words a row reads: the address of the first, how many there
 /// are, and whether each is two bytes (one) or one (zero).
 #[derive(Clone, Copy)]
@@ -53,16 +101,8 @@ pub(crate) struct FlatString<W> {
 #[inline(always)]
 pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<FlatString<S::Word>> {
-    let (record, short, wide) = flat_record(stage, record_base, value, miss)?;
-    // Every form keeps the words of both layouts inside the record, so each is read and the
-    // form selects.
-    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
-    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
-    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
-    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
-    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
-    let units = stage.select(short, short_units, shared_units);
-    let length = stage.select(short, short_length, shared_length);
+    let (record, short, wide, prefix) = unit_record(stage, record_base, value, miss)?;
+    let (units, length) = unit_words(stage, record, short, prefix);
     let (one, zero) = (stage.constant(1), stage.constant(0));
     let wide = stage.select(wide, one, zero);
     Some(FlatString { units, length, wide })
@@ -73,12 +113,14 @@ pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: 
 /// for a length past int32.
 #[inline(always)]
 pub(crate) fn string_length<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let (record, short, _) = flat_record(stage, record_base, value, miss)?;
-    // Every form keeps the words of both layouts inside the record, so each is read and the form
-    // selects.
+    let (record, short, _, prefix) = unit_record(stage, record_base, value, miss)?;
+    // Every form keeps the words of the shared layout inside the record, so each is read and the
+    // form selects.
     let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
     let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
-    let length = stage.select(short, short_length, shared_length);
+    let prefix_length = stage.load_u32(Region::HeapMeta.mutable(), record, crate::staged::string_form::PREFIX_LENGTH_OFFSET);
+    let long_length = stage.select(prefix, prefix_length, shared_length);
+    let length = stage.select(short, short_length, long_length);
     length_value(stage, length, miss)
 }
 

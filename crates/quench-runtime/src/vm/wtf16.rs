@@ -195,7 +195,7 @@ pub(crate) enum FlatUnits {
     WideSlice(Rc<WideSlice>),
     /// The first `length` units of an ASCII append buffer (`AppendBuffer`): text built by
     /// appends, which later appends extend in place past this string's end.
-    AsciiPrefix(Rc<AppendBuffer<u8>>, u32),
+    AsciiPrefix(Rc<AppendBuffer<u8>>, u32) = native_string::TAG_ASCII_PREFIX,
     /// The first `length` units of a UTF-16 append buffer. As with `WideSlice`, its units
     /// may all be ASCII (a wide slice's text appended to), so it is never taken to be ASCII.
     WidePrefix(Rc<AppendBuffer<u16>>, u32),
