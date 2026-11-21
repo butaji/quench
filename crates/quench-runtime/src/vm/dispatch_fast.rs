@@ -624,6 +624,10 @@ pub(super) struct LaneView {
     /// a shape compaction clears, and a change of the global
     /// lexical names they answer past (`LaneView::clear_name_hints`).
     name_records: Box<[u32]>,
+    /// The operator records whose proven form reads a speculative int32 register
+    /// (`int_kinds::Kind::Speculative`), each with that proven handler and its checked form:
+    /// what `retire_int_speculation` restores once an update overflowed one.
+    int_speculating: Box<[(u32, *const (), *const ())]>,
 }
 
 #[derive(Debug, Default)]
@@ -1400,6 +1404,28 @@ impl LaneView {
     /// lexical name was declared (`Vm::note_global_lexical_names`).
     pub(super) fn clear_name_hints(&self) {
         self.clear_hints(&self.name_records);
+    }
+
+    /// Gives every operator record that reads a speculative int32 register its checked form
+    /// (`int_kinds`): an update overflowed such a register, so it may hold a double from now on.
+    /// A record whose handler changed since (`operator_row` widened it) already runs a checked one;
+    /// a loop header's handler is held by its site.
+    pub(super) fn retire_int_speculation(&self) {
+        for &(pc, proven, checked) in &self.int_speculating {
+            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
+            // SAFETY: the lane runs on the view's thread, and no reference to a handler field is
+            // live while the VM's increment runs.
+            unsafe {
+                if (*record).handler == proven {
+                    (*record).handler = checked;
+                }
+            }
+            for site in &self.loops {
+                if site.header == pc && site.header_handler.get() == proven {
+                    site.header_handler.set(checked);
+                }
+            }
+        }
     }
 
     fn clear_hints(&self, pcs: &[u32]) {
@@ -19009,9 +19035,16 @@ fn derive_lane_view<'live>(
     // (`operator_row`): its operator and operand tests fold, which a fused pair's or chain's run-time
     // operator does not. Records that read the accumulator wait for the pass at the end, past the
     // accumulator hazard check, which recognizes only generated rows.
+    // The int32 kinds of the registers (`int_kinds`), which pick the operator records' proven forms.
+    // A loop kernel or vector region writes its registers from its own code, under no kind.
+    let int_kinds = (!wasm && int_kinds::proven_forms_enabled() && loop_kernels.is_empty() && vector_regions.is_empty())
+        .then(|| int_kinds::analyze(&decoded, constants, live().map(|masks| &**masks), usize::from(function.registers),
+            resolves_names, int_kinds::speculation_allowed()))
+        .flatten();
+    let mut int_speculating = Vec::new();
     if !wasm {
         let before: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
-        specialize_plain_operators(&decoded, constants, &mut records, true);
+        specialize_plain_operators(&decoded, constants, &mut records, true, int_kinds.as_ref(), &mut int_speculating);
         for ((record, selected), before) in records.iter().zip(selected.iter_mut()).zip(before) {
             if record.handler != before {
                 *selected = record.handler;
@@ -19057,7 +19090,7 @@ fn derive_lane_view<'live>(
     }
     // Last, so the fusions above and the accumulator check see each record's generated row.
     if !wasm {
-        specialize_plain_operators(&decoded, constants, &mut records, false);
+        specialize_plain_operators(&decoded, constants, &mut records, false, None, &mut int_speculating);
         specialize_register_operands(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
@@ -19137,6 +19170,7 @@ fn derive_lane_view<'live>(
             .then(|| osr_rejections.into_boxed_slice()),
         field_records,
         name_records,
+        int_speculating: int_speculating.into_boxed_slice(),
     }
 }
 
@@ -19346,9 +19380,15 @@ fn arithmetic_binary(instruction: WideInstruction) -> bool {
 /// instantiation, so the row neither decodes nor dispatches on it (179 against 64 instructions for an
 /// int32 add). Its operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). Its misses go back to the
 /// generated row, so every operand pair stays decided by the one staged row.
-fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool) {
+///
+/// Where the registers' int32 kinds (`kinds`) prove every register operand of a record with no
+/// accumulator field an int32, it takes the proven form (`OPERANDS_PROVEN`, `OPERANDS_PROVEN_INT32`),
+/// which reads them with no tag test; one that reads a speculative register is listed in
+/// `speculating` with its checked form (`LaneView::retire_int_speculation`).
+fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool,
+    kinds: Option<&int_kinds::IntKinds>, speculating: &mut Vec<(u32, *const (), *const ())>) {
     use crate::bytecode::OperandKind::{Constant, Register};
-    use lane_frame::{OPERANDS_ANY, OPERANDS_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
+    use lane_frame::{OPERANDS_ANY, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
         ($acc:expr) => {
             generated_row!(crate::staged::BINARY_ROW, $acc, FLAG_UNREAD) as Handler as *const ()
@@ -19400,6 +19440,29 @@ fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], 
         }
         if let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) {
             records[pc].handler = handler as *const ();
+            // The proven form, where the kinds prove each register operand an int32.
+            let proven = |operand: crate::bytecode::Operand| operand.register_index().is_some_and(|register| kinds.is_some_and(|kinds| kinds.proven(register)));
+            let speculative = |operand: crate::bytecode::Operand| operand.register_index().is_some_and(|register| kinds.is_some_and(|kinds| kinds.of(register) == int_kinds::Kind::Speculative));
+            let proven_form = match form {
+                OPERANDS_REGISTERS if acc == 0 && proven(left) && proven(right) => Some(OPERANDS_PROVEN),
+                OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) => Some(OPERANDS_PROVEN_INT32),
+                _ => None,
+            };
+            macro_rules! proven_at {
+                ($op:expr) => {
+                    if proven_form == Some(OPERANDS_PROVEN) {
+                        operator_row::<{ crate::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN> as Handler
+                    } else {
+                        operator_row::<{ crate::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN_INT32> as Handler
+                    }
+                };
+            }
+            if proven_form.is_some() && let Some(proven_handler) = arithmetic_operators!(instruction.binary_operator(), proven_at) {
+                if speculative(left) || speculative(right) {
+                    speculating.push((pc as u32, proven_handler as *const (), handler as *const ()));
+                }
+                records[pc].handler = proven_handler as *const ();
+            }
         } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
             records[pc].handler = strict_equality_row::<false> as Handler as *const ();
         } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictInequality as u32 {
@@ -19422,6 +19485,8 @@ fn specialize_constant_returns(records: &mut [LaneInstruction]) {
 }
 
 mod loop_kernel;
+mod int_kinds;
+pub(crate) use int_kinds::note_retired as note_int_speculation_retired;
 
 /// The proved row of the element record running `handler` (`specialize_proved_arrays`): the row of
 /// the same opcode with `FLAG_SET`, which reads or replaces its base's element through the proof of
