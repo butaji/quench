@@ -136,11 +136,11 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
     }
     enum Work {
         Application(Options),
-        Bootstrap { program: PathBuf, output: PathBuf },
+        Bootstrap { program: PathBuf, output: PathBuf, builtins: Vec<String> },
     }
     let work = match arguments.as_slice() {
-        [option, program, output] if option == BOOTSTRAP_WORKER_OPTION =>
-            Work::Bootstrap { program: program.into(), output: output.into() },
+        [option, program, output, builtins @ ..] if option == BOOTSTRAP_WORKER_OPTION =>
+            Work::Bootstrap { program: program.into(), output: output.into(), builtins: builtins.to_vec() },
         _ => Work::Application(Options::parse(arguments)?),
     };
     std::thread::Builder::new()
@@ -148,7 +148,7 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(move || match work {
             Work::Application(options) => compile(options),
-            Work::Bootstrap { program, output } => build_bootstrap(&program, &output),
+            Work::Bootstrap { program, output, builtins } => build_bootstrap(&program, &output, builtins),
         })
         .map_err(|error| error.to_string())?
         .join()
@@ -156,13 +156,14 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         .map(|()| ExitCode::SUCCESS)
 }
 
-fn build_bootstrap(program: &Path, output: &Path) -> Result<(), String> {
+fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Result<(), String> {
     if !crate::host::startup_snapshot::native_bootstrap_environment_is_neutral() {
         return Err("native bootstrap worker received process-specific configuration".into());
     }
     let program = quench_runtime::ResidualProgram::read_binary(program)?;
     let mut host = crate::NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?;
     host.building_snapshot = Some(crate::host::startup_snapshot::SnapshotKind::Bootstrap);
+    host.snapshot_builtins = builtins;
     let mut runtime = quench_runtime::Runtime::new(host);
     let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
     fs::write(output, bytes).map_err(|error| error.to_string())
@@ -253,18 +254,26 @@ fn compile(options: Options) -> Result<(), String> {
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
     let inputs = compiled.emit(&images, &options.target)?;
+    // A program that loads no native addon and nothing at run time needs no dynamic interface.
+    let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
+        inputs
+    } else {
+        inputs.self_contained()
+    };
+    report["self_contained"] = json!(inputs.is_self_contained());
     let bootstrap = work.0.join("bootstrap.bin");
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
         .arg(images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT)))
-        .arg(&bootstrap);
+        .arg(&bootstrap)
+        .args(graph.snapshot_builtins());
     crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
     let inputs = match quench_runtime::native_link::checked_output(&mut worker, "native bootstrap preparation") {
         Ok(_) => {
             let mut catalog = fs::OpenOptions::new().append(true).open(inputs.catalog()).map_err(|error| error.to_string())?;
             writeln!(catalog, "const _: () = assert!(quench::aot::BOOTSTRAP_ABI == {:#x}, \"native bootstrap host ABI mismatch\");", super::BOOTSTRAP_ABI)
                 .map_err(|error| error.to_string())?;
-            report["bootstrap"] = json!({"status": "prepared", "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
+            report["bootstrap"] = json!({"status": "prepared", "builtins": graph.snapshot_builtins(), "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
                 "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
             inputs.with_bootstrap(bootstrap)
         },

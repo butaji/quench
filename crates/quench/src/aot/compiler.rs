@@ -178,18 +178,20 @@ impl SourceManifest {
     /// boundary forbids process-state capture and stops before user preloads,
     /// entry loading, IPC activation and event-loop execution.
     pub fn capture_bootstrap() -> Result<Self, String> {
-        Self::capture(crate::host::startup_snapshot::SnapshotKind::Bootstrap)
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Bootstrap, Vec::new())
     }
 
     /// The existing Node snapshot preload set, staged before any application.
     pub fn capture_preloaded() -> Result<Self, String> {
-        Self::capture(crate::host::startup_snapshot::SnapshotKind::Preloaded)
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Preloaded, Vec::new())
     }
 
     /// Node SDK policies are Rust; only startup inputs can contribute guest source.
     /// Keep this entry point for callers combining bootstrap and application manifests.
-    pub fn capture_for_graph(_graph: &DependencyGraph) -> Result<Self, String> {
-        Self::capture_bootstrap()
+    /// The bootstrap with the builtins the graph names loaded, as the image's snapshot
+    /// keeps them (`DependencyGraph::snapshot_builtins`).
+    pub fn capture_for_graph(graph: &DependencyGraph) -> Result<Self, String> {
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Bootstrap, graph.snapshot_builtins())
     }
 
     pub fn extend(&mut self, other: Self) -> Result<(), String> {
@@ -198,7 +200,7 @@ impl SourceManifest {
         Ok(())
     }
 
-    fn capture(stage: crate::host::startup_snapshot::SnapshotKind) -> Result<Self, String> {
+    fn capture(stage: crate::host::startup_snapshot::SnapshotKind, builtins: Vec<String>) -> Result<Self, String> {
         let inputs = Rc::new(RefCell::new(Self::default()));
         let captured = inputs.clone();
         let mut host = NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?
@@ -207,6 +209,7 @@ impl SourceManifest {
                 Ok(None)
             });
         host.building_snapshot = Some(stage);
+        host.snapshot_builtins = builtins;
         let assets = Rc::new(RefCell::new(ModuleAssets::default()));
         host.module_assets = ModuleAssetState::Capture(assets.clone());
         let mut runtime = Runtime::new(host);

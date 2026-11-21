@@ -8,7 +8,6 @@ mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use 
 pub use native_operands::NativeJsOperands;
 pub(crate) mod aot_image;
 pub(crate) mod native_object;
-#[cfg(feature = "jit")]
 mod specializer;
 pub(crate) mod specialize;
 #[cfg(feature = "native-execution")]
