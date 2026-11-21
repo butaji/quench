@@ -8471,10 +8471,17 @@ fn loop_run_native_in_lane<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<LoopContinuation> {
-    if site.tier.borrow_mut().awaits_code(unsafe { vm(cx) }, site) {
+    let mut tier = site.tier.borrow_mut();
+    if tier.awaits_code(unsafe { vm(cx) }, site) {
+        // The code is compiling: the back edges until the next look run the header untried
+        // (`skips_entry`) rather than each paying the whole entry attempt (~200 Ir) to count
+        // the wait down.
+        site.skipped_entries.set(tier.take_wait());
+        drop(tier);
         site.count_decline(RegionDecline::Awaiting);
         return None;
     }
+    drop(tier);
     let views = match loop_entry_checked_in_lane(cx, r, region, entry) {
         Ok(views) => views,
         Err(decline) => {
