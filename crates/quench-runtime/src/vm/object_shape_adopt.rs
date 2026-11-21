@@ -41,6 +41,22 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let source_shape = source_data.shape();
+        let target_shape = target_data.shape();
+        // A source shape an earlier spread into this root adopted (`plain_copy_shapes` naming the
+        // source shape itself) is a chain of default adds, which no later change makes otherwise:
+        // its values are copied by its slot memo, without walking the chain again.
+        if self.plain_copy_shapes.get(target_shape, source_shape) == Some(source_shape)
+            && let Some(slots) = self.enumerable_keys.get(source_shape)
+        {
+            if slots.len() == 0 {
+                return true;
+            }
+            let mut values = smallvec::SmallVec::<[Value; ADOPT_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
+            if self.read_shaped_values(source_data, &slots, &mut values) {
+                self.initialize_plain_copy(target, source_shape, &values, slots.iter().map(|(atom, _)| *atom));
+                return true;
+            }
+        }
         // Walk the chain from its leaf: every transition must be a default data add of a string key.
         let mut atoms = smallvec::SmallVec::<[Atom; ADOPT_INLINE_PROPERTIES]>::new();
         let mut current = source_shape;
@@ -71,6 +87,7 @@ impl<H: Host> Vm<H> {
             values.push(value);
         }
         self.initialize_plain_copy(target, source_shape, &values, atoms.iter().copied());
+        self.plain_copy_shapes.record(target_shape, source_shape, source_shape);
         true
     }
 

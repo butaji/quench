@@ -886,7 +886,7 @@ mod list_calls;
 mod loop_runs;
 mod unary_values;
 mod lane_capture_store; use lane_capture_store::{store_to_capture, store_to_environment};
-use unary_values::unary_value;
+use unary_values::{unary_value, unary_values};
 use list_calls::{apply_activation_in_lane, list_activation_in_lane, spread_native_call_in_lane};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -9094,7 +9094,7 @@ fn loop_entry_checked_in_lane<H: Host>(
         let value = match read {
             Some(value) if field.tagged || !region.is_dynamic_field(index) || value.as_number().is_some() => value,
             _ => (region.is_dynamic_field(index)
-                    && (blind || vm.field_cache_entry(field.cache_site).receiver != super::NO_FIELD_RECEIVER))
+                    && (blind || field.tagged || vm.field_cache_entry(field.cache_site).receiver != super::NO_FIELD_RECEIVER))
                     .then(|| if field.tagged { Value::UNDEFINED } else { Value::integer(0) })
                     .ok_or(if read_some { RegionDecline::FieldNumber } else { RegionDecline::Field })?,
         };
@@ -12508,6 +12508,8 @@ mod wasm_calls;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use named_keys::named_key_element;
 mod in_place_natives;
+/// Whether a compiled loop may call `native` in place and go on (`in_place_natives::in_place_in_loop`).
+pub(in crate::vm) const fn in_place_in_loop(native: Native) -> bool { in_place_natives::in_place_in_loop(native) }
 mod root_bindings;
 use root_bindings::frame_capture_at_root;
 mod native_calls; mod regexp_calls; mod getters; mod generator_yields;

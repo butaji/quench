@@ -59,7 +59,12 @@ pub(super) unsafe extern "C" fn scalar_native_in_lane<H: Host>(vm: u64, residual
         return Value::DELETED.to_bits();
     };
     let native = *native;
-    if !crate::vm::global_facts::scalar_native(native) || !(1..=2).contains(&argc) || vm.heap.should_collect() {
+    // A call an in-place native's loop makes (`native_calls::IN_PLACE_CALL`) passes its receiver and up to two arguments.
+    let in_place = argc & super::lane_region::IN_PLACE_CALL != 0;
+    let argc = argc & !super::lane_region::IN_PLACE_CALL;
+    let admitted = if in_place { crate::vm::dispatch_fast::in_place_in_loop(native) && argc <= 2 }
+        else { crate::vm::global_facts::scalar_native(native) && (1..=2).contains(&argc) };
+    if !admitted || vm.heap.should_collect() {
         return Value::DELETED.to_bits();
     }
     let arguments = [Value::from_bits(first), Value::from_bits(second)];
