@@ -4,7 +4,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use url::Url;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// `kURLComponentsLength`: the slots of `urlComponents`.
 const COMPONENTS: usize = 9;

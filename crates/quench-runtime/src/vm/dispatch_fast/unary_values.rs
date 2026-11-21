@@ -8,8 +8,8 @@ use super::*;
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
 #[inline(always)]
-pub(super) unsafe fn unary_value<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) unsafe fn unary_value(
+    cx: *mut LaneContext,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
@@ -22,7 +22,7 @@ pub(super) unsafe fn unary_value<H: Host>(
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(always)]
-pub(super) unsafe fn unary_values<H: Host>(cx: *mut LaneContext<H>, operator: u32, operand: Value) -> Option<Value> {
+pub(super) unsafe fn unary_values(cx: *mut LaneContext, operator: u32, operand: Value) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // A Number operand of a Number operator (negation, plus, increments): its result made
     // here, where `Vm::unary` would be a call (Box2D's `-x` on doubles).
@@ -56,7 +56,7 @@ pub(super) unsafe fn unary_values<H: Host>(cx: *mut LaneContext<H>, operator: u3
 /// Logical not and the `typeof` operators: they read any value's truthiness or type, so no
 /// operand runs guest code. `None` for every other operator.
 #[inline(always)]
-fn unary_query<H: Host>(vm: &mut Vm<H>, operator: u32, operand: Value) -> Option<Value> {
+fn unary_query(vm: &mut Vm, operator: u32, operand: Value) -> Option<Value> {
     if operator == super::coercion::LOGICAL_NOT {
         return Some(vm.logical_not(operand));
     }

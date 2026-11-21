@@ -32,7 +32,7 @@ mod platform {
     }
 
     pub(crate) fn install(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         process: RootId,
     ) -> Result<(), RootedError> {
         let open = context.host_function_named_with_data(
@@ -58,7 +58,7 @@ mod platform {
     }
 
     pub(crate) fn open(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
@@ -73,11 +73,11 @@ mod platform {
     }
 
     pub(crate) fn get(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
-        let state = context.host_mut().shared_state();
+        let state = context.host_as::<crate::host::NodeHost>().shared_state();
         if let Some(stream) = state.borrow().stdin.stream {
             return Ok(stream);
         }
@@ -124,12 +124,12 @@ mod platform {
     }
 
     pub(crate) fn read(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
         context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .stdin
@@ -138,12 +138,12 @@ mod platform {
     }
 
     pub(crate) fn pause(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         receiver: RootId,
         args: &[RootId],
     ) -> Result<RootId, RootedError> {
         context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .stdin
@@ -153,14 +153,14 @@ mod platform {
     }
 
     pub(crate) fn reference(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         receiver: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
         let data = context.host_function_data()?;
         let referenced = context.truthy_rooted(data)?;
         context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .stdin
@@ -169,12 +169,12 @@ mod platform {
     }
 
     pub(crate) fn destroy(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         args: &[RootId],
     ) -> Result<RootId, RootedError> {
         {
-            let shared = context.host_mut().shared_state();
+            let shared = context.host_as::<crate::host::NodeHost>().shared_state();
             let mut state = shared.borrow_mut();
             state.stdin.ended = true;
             state.stdin.requested = false;
@@ -261,7 +261,7 @@ mod platform {
     }
 
     pub(crate) fn pump(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {
@@ -269,11 +269,11 @@ mod platform {
         let key = context.string_rooted("destroyed");
         let destroyed = context.get_property_rooted(stream, key)?;
         if context.truthy_rooted(destroyed)? {
-            context.host_mut().shared_state().borrow_mut().stdin.ended = true;
+            context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stdin.ended = true;
             return Ok(context.undefined());
         }
         let pending = context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .stdin
@@ -283,7 +283,7 @@ mod platform {
         let bytes = match pending {
             Ok(bytes) => bytes,
             Err(error) => {
-                context.host_mut().shared_state().borrow_mut().stdin.ended = true;
+                context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stdin.ended = true;
                 let code = error.raw_os_error().map(|errno| {
                     super::super::util_system_error_shared_vm::system_error_name(-f64::from(errno))
                 });
@@ -306,7 +306,7 @@ mod platform {
             }
         };
         let value = if bytes.is_empty() {
-            context.host_mut().shared_state().borrow_mut().stdin.ended = true;
+            context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stdin.ended = true;
             context.null()
         } else {
             let buffer = crate::host::shared_vm::commonjs::buffer_module(context)?;
@@ -328,7 +328,7 @@ mod platform {
     }
 
     fn set(
-        context: &mut NativeContext<'_, NodeHost>,
+        context: &mut NativeContext<'_>,
         object: RootId,
         name: &str,
         value: RootId,
@@ -359,7 +359,7 @@ mod platform {
         }
     }
     pub(crate) fn install(
-        _: &mut NativeContext<'_, NodeHost>,
+        _: &mut NativeContext<'_>,
         _: RootId,
     ) -> Result<(), RootedError> {
         Ok(())
@@ -371,7 +371,7 @@ mod platform {
         Ok(false)
     }
     pub(crate) fn unsupported(
-        _: &mut NativeContext<'_, NodeHost>,
+        _: &mut NativeContext<'_>,
         _: RootId,
         _: &[RootId],
     ) -> Result<RootId, RootedError> {

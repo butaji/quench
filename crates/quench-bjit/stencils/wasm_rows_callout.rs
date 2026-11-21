@@ -32,7 +32,7 @@
 //! (`Size`, `Grow`), so its word is zero-extended from its low 32 bits (`-1` is `0xffff_ffff`).
 //!
 //! The callout's address is per compiled program's Host type: the stitched code is produced by
-//! `Vm<H>` for its own `H`, so it names that `H`'s callout (`stitched_entry`, `compiled.rs`).
+//! `Vm` for its own `H`, so it names that `H`'s callout (`stitched_entry`, `compiled.rs`).
 //!
 //! The allocating GC step (`gc_allocate`) is the same kind of callout with its own ABI: it runs
 //! the staged `allocate_step` rule, which checks the status and writes a result when the instruction

@@ -99,7 +99,7 @@ impl ForInOwnKeys {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The state a for-in over `source` steps (`ForInNext`): its object and key snapshot,
     /// at the first key. `null` and `undefined` list no key.
     pub(in crate::vm) fn for_in_start(&mut self, p: &ResidualProgram, source: Value) -> Result<Value, JsError> {
@@ -488,7 +488,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The array of for-in `keys` with `prototype`.
     pub(super) fn alloc_for_in_key_array(&mut self, keys: crate::heap::ArrayElements, prototype: Value) -> Value {
         self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), keys))

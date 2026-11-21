@@ -8,7 +8,7 @@ use std::{
     collections::{HashMap, VecDeque},
     rc::Rc,
 };
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 #[derive(Default)]
 pub(crate) struct State {
     pub(crate) readers: HashMap<u64, RootId>,
@@ -58,7 +58,7 @@ fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedE
 }
 fn field(c: &mut Context<'_>, index: usize, value: i32) -> Result<(), RootedError> {
     let a = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_stream
@@ -84,7 +84,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         })?;
         let a = c.retain(array)?;
         let getter = c.retain(buffer_getter)?;
-        let shared = c.host_mut().shared_state();
+        let shared = c.host_as::<crate::host::NodeHost>().shared_state();
         shared.borrow_mut().native_stream.array = Some(a);
         shared.borrow_mut().native_stream.buffer_getter = Some(getter);
         let b = c.object_rooted()?;
@@ -130,7 +130,7 @@ fn register_request(
     receiver: RootId,
     kind: RequestKind,
 ) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().native_stream.identities);
     let mut live = Vec::with_capacity(entries.len() + 1);
     for brand in entries {
@@ -142,7 +142,7 @@ fn register_request(
     }
     shared.borrow_mut().native_stream.identities = live;
     let identity = c.host_weak_root(receiver)?;
-    c.host_mut()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .native_stream
@@ -160,7 +160,7 @@ pub(crate) fn request_has_kind(
     kind: RequestKind,
 ) -> Result<bool, RootedError> {
     let ids = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_stream
@@ -194,7 +194,7 @@ pub(crate) fn write_buffer(
         .view_bytes_rooted(input)
         .ok_or_else(|| RootedError::host("writeBuffer requires an ArrayBufferView"))?;
     binding(c)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let admission = net::try_native_write(&mut shared.borrow_mut().tcp, socket, &bytes);
     let (asynchronous, error) = match admission {
         Ok(net::NativeWriteAdmission::Synchronous) => (false, 0),
@@ -248,7 +248,7 @@ pub(crate) fn retain_reader(
     id: u64,
     handle: RootId,
 ) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let raw = !shared.borrow().net_sockets.contains_key(&id);
     if raw && !shared.borrow().native_stream.readers.contains_key(&id) {
         binding(c)?;
@@ -259,7 +259,7 @@ pub(crate) fn retain_reader(
 }
 pub(crate) fn release_reader(c: &mut Context<'_>, id: u64) {
     let root = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .native_stream
@@ -275,7 +275,7 @@ pub(crate) fn read_start(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = super::net_reference_shared_vm::handle_id(c, receiver)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let r = net::start_read(&mut shared.borrow_mut().tcp, id);
     if r.is_ok() {
         retain_reader(c, id, receiver)?;
@@ -291,7 +291,7 @@ pub(crate) fn read_stop(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = super::net_reference_shared_vm::handle_id(c, receiver)?;
-    net::stop_read(&mut c.host_mut().shared_state().borrow_mut().tcp, id);
+    net::stop_read(&mut c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp, id);
     release_reader(c, id);
     Ok(c.number(0.0))
 }
@@ -316,7 +316,7 @@ pub(crate) fn intrinsic_array_buffer(
 ) -> Result<RootId, RootedError> {
     let array = c.uint8_array_rooted(bytes)?;
     let getter = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_stream
@@ -333,7 +333,7 @@ pub(crate) fn deliver_read(
     let count = c.to_number(args[1])? as i32;
     let socket = c.to_number(args[2])? as u64;
     let result = call_onread(c, handle, args[0], count, 0);
-    net::release_delivery(&mut c.host_mut().shared_state().borrow_mut().tcp, socket);
+    net::release_delivery(&mut c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp, socket);
     if count <= 0 {
         release_reader(c, socket);
     }
@@ -412,7 +412,7 @@ fn finish_submission(
         retired?;
         -error.raw_os_error().unwrap_or(libc::EIO)
     } else {
-        c.host_mut()
+        c.host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .native_stream
@@ -459,7 +459,7 @@ fn connect(
             return Err(error);
         }
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = net::native_tcp_connect(
         &mut shared.borrow_mut().tcp,
         socket,
@@ -507,7 +507,7 @@ pub(crate) fn shutdown(
             return Err(error);
         }
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = net::native_shutdown_request(&mut shared.borrow_mut().tcp, socket, request);
     finish_submission(
         c,
@@ -555,7 +555,7 @@ fn request_lease(
     kind: Option<RequestKind>,
 ) -> Result<Option<RequestLease>, RootedError> {
     let brands = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .native_stream
@@ -595,7 +595,7 @@ pub(crate) fn activate_request(
         RequestKind::Connect => Provider::TcpConnect,
         RequestKind::Shutdown => Provider::Shutdown,
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let _scope = super::async_hooks_shared_vm::enter_default_trigger(&shared, parent.id as f64);
     let id = super::async_hooks_shared_vm::create_context(&shared);
     lease.0.set(Some(Resource { id, provider }));

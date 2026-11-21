@@ -8,7 +8,7 @@ mod backend;
 mod service_backend;
 #[path = "dns_uv_error.rs"]
 mod uv_error;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 const DNS_ORDER_VERBATIM: i32 = 0;
 const DNS_ORDER_IPV4_FIRST: i32 = 1;
 const DNS_ORDER_IPV6_FIRST: i32 = 2;
@@ -33,7 +33,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let object = c.object_rooted()?;
     let factory = c.host_function(crate::host::shared_vm::operation!("dnsAddressArray"))?;
     let factory = c.retain(factory)?;
-    c.host_mut().shared_state().borrow_mut().dns.array_factory = Some(factory);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().dns.array_factory = Some(factory);
     let request = c.host_constructor(crate::host::shared_vm::operation!("dnsRequestConstruct"))?;
     put(c, object, "GetAddrInfoReqWrap", request)?;
     let operation = c.host_function(crate::host::shared_vm::operation!("dnsGetAddrInfo"))?;
@@ -150,7 +150,7 @@ fn submit(
     resource_type: &str,
     work: impl FnOnce() -> Completion + Send + 'static,
 ) -> Result<RootId, RootedError> {
-    let state = c.host_mut().shared_state();
+    let state = c.host_as::<crate::host::NodeHost>().shared_state();
     let async_id = super::async_hooks_shared_vm::create_context(&state);
     if let Err(error) =
         super::async_hooks_shared_vm::emit_init(c, request_object, resource_type, async_id)

@@ -10,13 +10,13 @@ use crate::vm::object_get::ordinary_chain::ChainRead;
 /// The lane context of one accessor call: the activations a getter, setter or trap makes run in
 /// it. A row builds it with `of` where it meets the accessor.
 #[derive(Clone, Copy)]
-pub(super) struct AccessorCall<H: Host> {
-    cx: *mut LaneContext<H>,
+pub(super) struct AccessorCall {
+    cx: *mut LaneContext,
 }
 
-impl<H: Host> AccessorCall<H> {
+impl AccessorCall {
     #[inline(always)]
-    pub(super) fn of(cx: *mut LaneContext<H>) -> Self {
+    pub(super) fn of(cx: *mut LaneContext) -> Self {
         Self { cx }
     }
 
@@ -59,7 +59,7 @@ impl<H: Host> AccessorCall<H> {
             return;
         }
         // SAFETY: a `Reads` target of the running program holds its returning record first.
-        let Some(LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache }) = (unsafe { LeafRead::of::<H>(&target) }) else {
+        let Some(LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache }) = (unsafe { LeafRead::of(&target) }) else {
             return;
         };
         if base == crate::bytecode::FieldBase::THIS.0 {
@@ -94,8 +94,8 @@ impl<H: Host> AccessorCall<H> {
             // takes the kind its first run would.
             // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
             let (entry, code) = unsafe { ((*target.view).records(), &*(*self.cx).code) };
-            if unsafe { (*entry).handler } == row_returning_field_first::<H, NOT_LEAF> as *const () {
-                requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(self.cx) }, code, unsafe { &*entry }));
+            if unsafe { (*entry).handler } == row_returning_field_first::<NOT_LEAF> as *const () {
+                requicken(entry, returning_field_first_kind::<NOT_LEAF>(unsafe { vm(self.cx) }, code, unsafe { &*entry }));
             }
         } else if !target.entry.answered_by_read() {
             return None;
@@ -175,7 +175,7 @@ impl<H: Host> AccessorCall<H> {
             .getter_field_slot(getter, base)
             .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
         if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
-            requicken::<H>(ip, protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
+            requicken(ip, protocol_handler::<{ crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
         }
         Some(value)
     }
@@ -187,7 +187,7 @@ impl<H: Host> AccessorCall<H> {
         let vm = unsafe { vm(self.cx) };
         (direct_call_this_in_lane(vm, &target, base)? == base).then_some(())?;
         // SAFETY: a `CallEntry::Reads` target of the running program.
-        let LeafRead::Field { base: field_base, kind: RETURNING_FIELD_OWN, cache } = unsafe { LeafRead::of::<H>(&target) }? else {
+        let LeafRead::Field { base: field_base, kind: RETURNING_FIELD_OWN, cache } = unsafe { LeafRead::of(&target) }? else {
             return None;
         };
         let entry = vm.field_cache_entry(cache);
@@ -288,9 +288,9 @@ impl<H: Host> AccessorCall<H> {
         };
         let passed = ActivationArguments::Kept(arguments.as_ptr(), N);
         if crosses {
-            activate_keeping_in_lane::<H, true>(self.cx, r, ip, &target, passed, this, false, None)
+            activate_keeping_in_lane::<true>(self.cx, r, ip, &target, passed, this, false, None)
         } else {
-            activate_keeping_in_lane::<H, false>(self.cx, r, ip, &target, passed, this, false, None)
+            activate_keeping_in_lane::<false>(self.cx, r, ip, &target, passed, this, false, None)
         }
     }
 
@@ -375,7 +375,7 @@ impl<H: Host> AccessorCall<H> {
         let this = call_this_in_lane(vm, &target, object)?;
         // SAFETY: the record's value register is one of the running function's.
         let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
-        Some(match activate_kept_in_lane::<H, false>(self.cx, r, ip, &target, stored, this) {
+        Some(match activate_kept_in_lane::<false>(self.cx, r, ip, &target, stored, this) {
             Ok((registers, next)) => {
                 if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
                     script.completion = Completion::Assigns;

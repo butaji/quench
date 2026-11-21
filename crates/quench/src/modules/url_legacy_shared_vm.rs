@@ -4,7 +4,7 @@ use crate::host::shared_vm::operation;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The `Url` fields, in the order its constructor creates them.
 const FIELDS: [&str; 12] = [
@@ -521,7 +521,7 @@ fn warn_invalid_port(c: &mut Context<'_>, input: &str) -> Result<(), RootedError
     let yes = c.boolean(true);
     c.set_property_rooted(codes, key, yes, codes)?;
     let process = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -771,7 +771,7 @@ fn split_auth_in_host(result: &mut Legacy) {
 const URL_CLASS: &str = "\0node/url/Url";
 
 pub(crate) fn class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    if let Some(class) = c.host_mut().shared_state().borrow().builtin_cache.get(URL_CLASS).copied() {
+    if let Some(class) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(URL_CLASS).copied() {
         return Ok(class);
     }
     let class = c.host_constructor_named(crate::host::shared_vm::operation!("urlLegacyConstruct"), "Url")?;
@@ -794,7 +794,7 @@ pub(crate) fn class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c.define_data_property_rooted(prototype, key, function, true, true, true)?;
     }
     let class = c.retain(class)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(URL_CLASS.to_owned(), class);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(URL_CLASS.to_owned(), class);
     Ok(class)
 }
 

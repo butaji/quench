@@ -16,7 +16,7 @@ pub(super) const TIME_UNIT_NANOSECOND_SCALES: [i128; 6] = [
     1,
 ];
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The month a property bag names through `month`, `monthCode` or both, which must agree.
     pub(super) fn temporal_month(
         &mut self,

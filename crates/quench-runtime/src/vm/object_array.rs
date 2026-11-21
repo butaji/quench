@@ -23,7 +23,7 @@ fn array_length_uint32(number: f64) -> u32 {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// An own array's `length`: inline for a direct array without extras, whose dense
     /// elements' count is its length (no arguments object, no sparse elements:
     /// `Object::mark_sparse_elements`), as `emit_array_length_read` reads it; any other

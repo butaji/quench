@@ -4,7 +4,7 @@
 //! captures and descriptor, as a JIT caller's direct callee holds them (`direct_callee_in_lane`).
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The direct callee of the call at `pc` of `function` that the closed world proves calls `callee`:
     /// the closure of `callee` the site resolved, where the lane would activate it in place. It pins no
     /// body: a call runs what the callee's entry cell holds then, the helper where that is the stub. The
@@ -26,7 +26,7 @@ impl<H: Host> Vm<H> {
 /// the script function the helper resolved there: the record's guard missed, so where the image
 /// proves the site calls `target`'s function, its rows call this closure by its entry from now on
 /// (`Vm::rebind_ahead_call`).
-pub(super) fn rebind_body_call<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, argc: u16, target: *const ScriptCallTarget) {
+pub(super) fn rebind_body_call(cx: *mut LaneContext, vm: &mut Vm, argc: u16, target: *const ScriptCallTarget) {
     // SAFETY: `cx` is the running lane's context; its decoded site names the call being made.
     let Some((code, function, pc, _)) = (unsafe { (*cx).body_site }) else { return };
     let Ok(pc) = u32::try_from(pc) else { return };

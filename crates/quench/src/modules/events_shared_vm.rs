@@ -5,7 +5,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The `events` module's static functions: (property, function name, operation, length).
 /// Node assigns `listenerCount` an anonymous function.
@@ -110,7 +110,7 @@ pub(crate) fn initialize_targets(context: &mut Context<'_>) -> Result<(), Rooted
     set(context, data, "disposeFactory", dispose_factory)?;
     set(context, data, "brandKey", brand_key)?;
     let retained = context.retain(data)?;
-    context.host_mut().shared_state().borrow_mut().event_targets_api = Some(retained);
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().event_targets_api = Some(retained);
     // The DOM event family is built on first use.
     let initialize = context.host_function(crate::host::shared_vm::operation!("eventGlobalsInitialize"))?;
     context.define_lazy_data_properties_rooted(global, EVENT_GLOBALS, false, initialize)?;

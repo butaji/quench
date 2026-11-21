@@ -58,7 +58,7 @@ pub(in crate::vm) struct ArrayBulkOperands {
     pub(in crate::vm) input: u64,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The operands of a bulk array step of `i`'s registers, as `wasm_array_bulk_step` and the lane
     /// decode them (`copy` for `array.copy`, else `array.fill`).
     #[inline(always)]
@@ -83,7 +83,7 @@ impl<H: Host> Vm<H> {
     matches!(Call::of(op), Some(Call::IndirectTarget | Call::RefFunc))
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// One of the GC value opcodes of `program`'s instance `env`, of the registers `read` answers: the value
     /// it writes to its result register, if any. Inlined, so a lane handler of one opcode
     /// keeps only that opcode's arm.

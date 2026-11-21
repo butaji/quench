@@ -45,7 +45,7 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
 /// A VM that ran a program whose `root` calls its `leaf`, which reads `owner.edgeValue`, with the call
 /// targets of both resolved: the program, the leaf's callee value and the two targets.
 #[cfg(test)]
-fn direct_slot_fixture() -> (Vm<crate::test_host::TestHost>, crate::ResidualProgram, Value, ScriptCallTarget, ScriptCallTarget) {
+fn direct_slot_fixture() -> (Vm, crate::ResidualProgram, Value, ScriptCallTarget, ScriptCallTarget) {
     let program = crate::Engine::specialize(
         "var owner={edgeValue:1}; function leaf(){var n=0;for(var i=0;i<5;i++)n=(n+owner.edgeValue)|0;return n;} function root(){return leaf();} for(var warm=0;warm<40;warm++)root();",
         "direct-slot-retirement.js").unwrap();
@@ -67,7 +67,7 @@ fn direct_slot_fixture() -> (Vm<crate::test_host::TestHost>, crate::ResidualProg
 
 /// Stores `value` to `owner.edgeValue` of the fixture's program, retiring what read the slot.
 #[cfg(test)]
-fn store_edge_value(vm: &mut Vm<crate::test_host::TestHost>, value: f64) {
+fn store_edge_value(vm: &mut Vm, value: f64) {
     let owner_atom = vm.intern_atom("owner");
     let owner = vm.own_property(vm.realm.globals, owner_atom).unwrap();
     let atom = vm.intern_atom("edgeValue");

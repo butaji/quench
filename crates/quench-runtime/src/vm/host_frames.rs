@@ -4,7 +4,7 @@
 use super::activation::{NativeActivation, NativeCallBoundary};
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Enters the native call of `callable`, which keeps `receiver` alive, above `frame_depth` frames.
     #[inline(always)]
     pub(super) fn push_host_frame(&mut self, callable: Value, receiver: Value, frame_depth: usize, boundary: NativeCallBoundary) {

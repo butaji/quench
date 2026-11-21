@@ -49,7 +49,7 @@ impl<'a> BodyCall<'a> {
     /// # Safety
     /// `cx` is the running lane's context and `call_pc` a record of the running body's function.
     #[inline(always)]
-    pub(super) unsafe fn at<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> Option<Self> {
+    pub(super) unsafe fn at(cx: *mut LaneContext, call_pc: u64) -> Option<Self> {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         // SAFETY: the context names the running activation, which a native callee's frame is while its helper
@@ -96,7 +96,7 @@ impl<'a> BodyCall<'a> {
     /// The receiver the call binds: a register, the activation's `this` or the field of it a cached
     /// read gives, or `undefined`. `None` where the helper cannot read it in place: a lexical `this`,
     /// a field the caches do not hold, or a construction's receiver, which its plan allocates.
-    pub(super) fn receiver<H: Host>(&self, vm: &mut Vm<H>) -> Option<Value> {
+    pub(super) fn receiver(&self, vm: &mut Vm) -> Option<Value> {
         match self.site.receiver {
             Receiver::Register(register) => Some(self.registers.get(register)),
             Receiver::Undefined => Some(Value::UNDEFINED),
@@ -116,7 +116,7 @@ impl<'a> BodyCall<'a> {
     /// (`Vm::method_cache_load`), or the function a known call names, which its site linked. `None`
     /// where the method is not cached or the site linked no such function.
     #[inline(always)]
-    pub(super) fn callee<H: Host>(&self, vm: &mut Vm<H>, receiver: Value) -> Option<Value> {
+    pub(super) fn callee(&self, vm: &mut Vm, receiver: Value) -> Option<Value> {
         match self.site.callee {
             Callee::Register(register) => Some(self.registers.get(register)),
             Callee::Method { atom, site } => vm.method_cache_load(self.code, site as usize, atom, receiver),
@@ -162,12 +162,12 @@ impl<'a> BodyCall<'a> {
     /// The plain activation of `target` this call makes: its window of registers filled with the
     /// arguments, then `undefined`. The call passes at most `target`'s parameters and the lane stack
     /// has room (`activation_room_in_lane`).
-    pub(super) fn push_plain<H: Host>(&self, cx: *mut LaneContext<H>, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
+    pub(super) fn push_plain(&self, cx: *mut LaneContext, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
         match self.site.arguments {
             Arguments::Window { first, count } => {
                 // SAFETY: the record's window of the registers holds its values.
                 let passed = unsafe { self.registers.0.add(usize::from(first)).cast_const() };
-                push_passed_in_lane::<H, false, false>(cx, self.registers, self.ip, target, passed, count, this, constructs).0
+                push_passed_in_lane::<false, false>(cx, self.registers, self.ip, target, passed, count, this, constructs).0
             }
             Arguments::List(_) => self.push_listed(cx, target, this, constructs),
         }
@@ -175,7 +175,7 @@ impl<'a> BodyCall<'a> {
 
     /// `push_plain` of a list: the registers it names are read in the window's fill
     /// (`staged::protocol::fill_call`, the row the native tiers emit).
-    fn push_listed<H: Host>(&self, cx: *mut LaneContext<H>, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
+    fn push_listed(&self, cx: *mut LaneContext, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
         let stack = &mut unsafe { vm(cx) }.lane_stack;
         // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); the listed
         // registers are the caller's, outside it; each slot is written before the length covers it.
@@ -186,13 +186,13 @@ impl<'a> BodyCall<'a> {
             stack.values.set_top(top.add(usize::from(target.registers) + super::super::lane_values::CONTEXT));
             Registers(top)
         };
-        enter_window_in_lane::<H, false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None, None).0
+        enter_window_in_lane::<false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None, None).0
     }
 }
 
 /// The function a known call names (`Callee::Known`), the callee its site linked: the cached
 /// entry the record's hint names, where that is a function of the running program.
-fn known_callee<H: Host>(vm: &Vm<H>, link: &std::cell::Cell<u16>, function: FunctionId) -> Option<Value> {
+fn known_callee(vm: &Vm, link: &std::cell::Cell<u16>, function: FunctionId) -> Option<Value> {
     let entry = vm.lane_stack.script_targets.entries.get(usize::from(link.get()))?;
     (entry.function == u32::from(function) && entry.program() == vm.active_program).then_some(entry.callee)
 }

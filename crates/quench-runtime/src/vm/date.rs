@@ -81,7 +81,7 @@ impl DateParts {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_date(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let date = self.native_value(Native::Date);
         let prototype = self
@@ -165,7 +165,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn date_call(&mut self) -> Result<Value, JsError> {
-        let milliseconds = HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
+        let milliseconds = HostContext::new(&mut *self.host).invoke(CapabilityId::ClockMillis, None);
         Ok(self
             .heap
             .alloc_string(format_date_string(milliseconds).into()))
@@ -436,7 +436,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let milliseconds = if args.len() < DATE_CONSTRUCTOR_MULTI_ARGUMENT_THRESHOLD {
             match args.first().copied() {
-                None => HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
+                None => HostContext::new(&mut *self.host).invoke(CapabilityId::ClockMillis, None),
                 Some(value) if matches!(self.heap.get(value), Some(Cell::Date { .. })) => {
                     match self.heap.get(value) {
                         Some(Cell::Date { milliseconds, .. }) => *milliseconds,
@@ -474,8 +474,8 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn date_utc_constructor_value<H: Host>(
-    vm: &mut Vm<H>,
+fn date_utc_constructor_value(
+    vm: &mut Vm,
     p: &ResidualProgram,
     args: &[Value],
 ) -> Result<f64, JsError> {

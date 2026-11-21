@@ -45,7 +45,7 @@ impl Slot {
 
 fn slot(c: &mut Context<'_>, which: Slot) -> Outcome {
     let key = format!("\0fs:{}", which.description());
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(symbol) = shared.borrow().builtin_cache.get(&key).copied() {
         return Ok(symbol);
     }
@@ -233,7 +233,7 @@ pub(crate) fn complete(c: &mut Context<'_>, callback: RootId, args: &[RootId]) -
     let mut values = vec![callback];
     values.extend_from_slice(args);
     let invoke = closure(c, "fsStreamComplete", "", &values)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = shared
         .borrow_mut()
         .scheduler
@@ -444,7 +444,7 @@ pub(crate) fn custom_failed(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
 /// The deprecated `open()` the prototype carries, which construction compares against.
 fn default_open(c: &mut Context<'_>, writing: bool) -> Outcome {
     let key = if writing { "\0fs:openWriteFs" } else { "\0fs:openReadFs" };
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let found = shared.borrow().builtin_cache.get(key).copied();
     found.ok_or_else(|| RootedError::host("fs stream classes are not initialized"))
 }
@@ -887,7 +887,7 @@ fn class(c: &mut Context<'_>, name: &str, operation: &str, parent: &str) -> Outc
 
 fn remember(c: &mut Context<'_>, key: &str, value: RootId) -> Result<(), RootedError> {
     let retained = c.retain(value)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), retained);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), retained);
     Ok(())
 }
 
@@ -939,7 +939,7 @@ fn host_read(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
         .and_then(|value| value.as_number())
         .filter(|position| *position >= 0.0)
         .map(|position| position as u64);
-    let chunk = c.host_mut().shared_state().borrow().fs.read_stream_chunk(fd, size.min(CHUNK_LIMIT) as usize, position);
+    let chunk = c.host_as::<crate::host::NodeHost>().shared_state().borrow().fs.read_stream_chunk(fd, size.min(CHUNK_LIMIT) as usize, position);
     match super::failure::check(c, chunk, super::failure::Syscall::bare("read"))? {
         Some(bytes) => crate::modules::buffer_shared_vm::from_vec(c, bytes),
         None => Ok(c.null()),

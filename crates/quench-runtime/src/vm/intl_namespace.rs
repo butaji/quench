@@ -2,7 +2,7 @@ use super::*;
 
 const INTL_LOCALE_SLOT: &str = "\0quench:intl-locale";
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_for_realm(
         &mut self,
         program: &ResidualProgram,
@@ -799,9 +799,9 @@ fn extension_suffix(extension: &[&str]) -> String {
     }
 }
 
-fn apply_locale_base_option<H: Host>(
+fn apply_locale_base_option(
     p: &ResidualProgram,
-    vm: &mut Vm<H>,
+    vm: &mut Vm,
     locale: &str,
     option: &str,
     input: Value,
@@ -894,9 +894,9 @@ fn valid_language(value: &str) -> bool {
     matches!(value.len(), 2 | 3 | 5..=8) && value.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
-fn option_value<H: Host>(
+fn option_value(
     p: &ResidualProgram,
-    vm: &mut Vm<H>,
+    vm: &mut Vm,
     name: &str,
     value: &str,
 ) -> Result<String, JsError> {
@@ -909,9 +909,9 @@ fn option_value<H: Host>(
     }
 }
 
-fn normalize_first_day_option<H: Host>(
+fn normalize_first_day_option(
     p: &ResidualProgram,
-    vm: &mut Vm<H>,
+    vm: &mut Vm,
     value: &str,
 ) -> Result<String, JsError> {
     let value = value.to_ascii_lowercase();

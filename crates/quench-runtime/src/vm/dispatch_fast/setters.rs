@@ -29,7 +29,7 @@ pub(super) fn met_setter(stack: &LaneStack, site: usize) -> bool {
 /// (`Vm::set_field_uncached`): an ordinary object's own or inherited accessor, with no proxy
 /// up its chain to mediate an inherited one, which the site then caches. `None` for any other
 /// store, a private name's among them.
-pub(super) fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, site: usize) -> Option<Value> {
+pub(super) fn stored_setter(vm: &mut Vm, object: Value, atom: crate::bytecode::Atom, site: usize) -> Option<Value> {
     if let Some((_, setter)) = vm.cached_field_accessor(object, atom, site) {
         return setter;
     }
@@ -50,7 +50,7 @@ pub(super) fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate:
 /// (`Completion::Assigns`). `None`, before any effect, leaves any other store to its path;
 /// an activation the lane has no room for exits at the record, where the general path makes
 /// the call.
-pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
+pub(super) fn lane_store_setter(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let site = vm.field_cache_index(i.c);
     if !met_setter(&vm.lane_stack, site) {
@@ -65,7 +65,7 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let this = call_this_in_lane(vm, &target, object)?;
     // SAFETY: the record's value register is one of the running function's.
     let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
-    Some(match activate_kept_in_lane::<H, false>(cx, r, ip, &target, stored, this) {
+    Some(match activate_kept_in_lane::<false>(cx, r, ip, &target, stored, this) {
         Ok((registers, next)) => {
             vm.lane_stack.recomplete_top(Completion::Assigns);
             Resumed::At(registers, next, Carried::script(cx))
@@ -81,8 +81,8 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
 /// (`Vm::hinted_own_field_store_hit`, which makes the logged store or nothing). A setter
 /// the entry knows nothing of is recognized once and recorded either way, so a setter that
 /// forwards nothing costs one entry walk per store after its first.
-fn lane_forwarded_setter_store<H: Host>(
-    vm: &mut Vm<H>,
+fn lane_forwarded_setter_store(
+    vm: &mut Vm,
     target: &ScriptCallTarget,
     object: Value,
     site: usize,
@@ -126,7 +126,7 @@ enum SetterStore {
 /// `object`'s exact shape: such a store finds no setter, can't throw and runs no guest code;
 /// what the setter returns, an assignment ignores (`Completion::Assigns`). A private name's
 /// store is left to the call (its home is the setter's).
-fn trivial_setter_store<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: Value) -> SetterStore {
+fn trivial_setter_store(vm: &Vm, target: &ScriptCallTarget, object: Value) -> SetterStore {
     if !target.entry.activates() || target.params == 0 || direct_call_this_in_lane(vm, target, object) != Some(object) {
         return SetterStore::Never;
     }
@@ -154,7 +154,7 @@ fn trivial_setter_store<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: 
 /// its returned object, otherwise the receiver it allocated; a setter's store
 /// (`Completion::Assigns`) the value stored, which the caller's register still holds.
 #[inline(always)]
-pub(super) fn completed_value<H: Host>(vm: &Vm<H>, frame: &ActivationView, completion: Completion, this: Value, value: Value) -> Value {
+pub(super) fn completed_value(vm: &Vm, frame: &ActivationView, completion: Completion, this: Value, value: Value) -> Value {
     match completion {
         // The construct family's completion row (`staged::call_construct::construct_value`).
         completion if completion.constructs() =>
@@ -181,7 +181,7 @@ pub(super) fn frame_completion(completion: Option<Completion>, payload: SidePayl
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The general store's call of `setter` at `site` with `value` on `object`, which marks
     /// the site as one that meets a setter (`LaneStack::setter_sites`).
     pub(in crate::vm) fn call_stored_setter(&mut self, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError> {

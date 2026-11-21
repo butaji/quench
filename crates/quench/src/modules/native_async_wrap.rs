@@ -4,7 +4,7 @@ use super::event_constructor_shared_vm::get;
 use crate::host::{NodeHost, SharedNodeState};
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 const UNINITIALIZED_ASYNC_ID: i64 = -1; // AsyncWrap::kInvalidAsyncId.
                                         // Node src/async_wrap.h NODE_ASYNC_PROVIDER_TYPES, before crypto providers.
 pub(crate) const PROVIDER_TYPES: &[&str] = &[
@@ -172,7 +172,7 @@ pub(crate) fn view(c: &mut Context<'_>, receiver: RootId) -> Result<View, Rooted
         other => return Ok(other),
     }
     if let Some(endpoint) = super::net_reference_shared_vm::optional_handle_id(c, receiver)? {
-        if let Some(resource) = tcp_resource(&c.host_mut().shared_state(), endpoint) {
+        if let Some(resource) = tcp_resource(&c.host_as::<crate::host::NodeHost>().shared_state(), endpoint) {
             return Ok(View::Active(resource));
         }
         return Ok(View::Detached);
@@ -214,11 +214,11 @@ pub(crate) fn async_reset(
     let Some(endpoint) = super::net_reference_shared_vm::optional_handle_id(c, receiver)? else {
         return Ok(c.undefined());
     };
-    let Some(old) = tcp_resource(&c.host_mut().shared_state(), endpoint) else {
+    let Some(old) = tcp_resource(&c.host_as::<crate::host::NodeHost>().shared_state(), endpoint) else {
         return Ok(c.undefined());
     };
     super::async_hooks_shared_vm::complete_callback_context(c, old.id)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     if let Some(handle) = shared.borrow_mut().native_async_wrap.tcp.get_mut(&endpoint) {
         handle.resource.id = id;
@@ -233,7 +233,7 @@ pub(crate) fn initialize_tcp(
     endpoint: u64,
     server: bool,
 ) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     let provider = if server {
         Provider::TcpServer

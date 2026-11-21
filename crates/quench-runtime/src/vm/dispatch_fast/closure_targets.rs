@@ -2,7 +2,7 @@
 //! rebuilt when a call site meets a fresh one.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether plain calls of `body` (`plan`) may settle in the caller's lane: of the running
     /// program, unless `framed` (across programs, or numeric), under a host that observes no
     /// promise lifecycle; and whether they would settle from an environment activation

@@ -27,7 +27,7 @@ fn out_of_bounds_table() -> JsError {
     JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsTable)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn wasm_reference_valid(&self, value: Value, ty: wasmparser::RefType) -> bool {
         if value.is_null() {
             return ty.is_nullable();

@@ -41,8 +41,8 @@ const JSON_ROOT_CONTEXT: u32 = 0;
 /// Builds heap values as the parse goes. The heap does not collect inside a native call, so
 /// values gathered for an array or object stay valid until their container holds them, and
 /// the shapes and string values below stay valid for the parse.
-pub(super) struct JsonHeapBuilder<'v, H: Host> {
-    vm: &'v mut Vm<H>,
+pub(super) struct JsonHeapBuilder<'v> {
+    vm: &'v mut Vm,
     array_prototype: Value,
     object_prototype: Value,
     /// The first property store that failed; the parse finishes and then reports it.
@@ -178,13 +178,13 @@ pub(super) fn short_run_ends(bytes: &[u8]) -> (u64, u64) {
     }
 }
 
-impl<'v, H: Host> JsonHeapBuilder<'v, H> {
-    pub(super) fn new(vm: &'v mut Vm<H>) -> Self {
+impl<'v> JsonHeapBuilder<'v> {
+    pub(super) fn new(vm: &'v mut Vm) -> Self {
         let globals = vm.realm.globals;
         let object_prototype = vm.realm_object_prototype(globals);
         let mut cache = vm.json_parse_cache.0.take().unwrap_or_default();
         cache.prepare(vm.heap.collection_epoch(), object_prototype, || {
-            Vm::<H>::empty_object(object_prototype).shape()
+            Vm::empty_object(object_prototype).shape()
         });
         Self {
             array_prototype: vm.array_prototype_for_realm(globals),
@@ -282,7 +282,7 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
         let object = self
             .vm
             .heap
-            .alloc_object(Vm::<H>::empty_object(self.object_prototype));
+            .alloc_object(Vm::empty_object(self.object_prototype));
         for (atom, value) in keys.zip(values) {
             let key = PropertyKey::string(atom);
             let stored = match self.vm.object_data(object).map(|data| data.shape()) {
@@ -320,7 +320,7 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
 }
 
 /// The cache goes back to the VM for the next parse unless this parse grew it large.
-impl<H: Host> Drop for JsonHeapBuilder<'_, H> {
+impl Drop for JsonHeapBuilder<'_> {
     fn drop(&mut self) {
         // SAFETY: the builder is dropping, so nothing reads the cache after this.
         let mut cache = unsafe { std::mem::ManuallyDrop::take(&mut self.cache) };
@@ -331,7 +331,7 @@ impl<H: Host> Drop for JsonHeapBuilder<'_, H> {
     }
 }
 
-impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
+impl JsonBuilder for JsonHeapBuilder<'_> {
     type Value = Value;
     type Key = Atom;
     type Layout = JsonObjectLayout;
@@ -494,8 +494,8 @@ impl JsonSnapshot {
 /// of the same parse beside it. A node is pushed when its value completes. `pending` holds the
 /// nodes no container has taken yet, so the top `n` of it are the children of a container of `n`
 /// members, in source order.
-pub(super) struct JsonRevivalBuilder<'v, H: Host> {
-    heap: JsonHeapBuilder<'v, H>,
+pub(super) struct JsonRevivalBuilder<'v> {
+    heap: JsonHeapBuilder<'v>,
     nodes: Vec<JsonNode>,
     children: Vec<u32>,
     members: Vec<(Atom, u32)>,
@@ -503,8 +503,8 @@ pub(super) struct JsonRevivalBuilder<'v, H: Host> {
     roots: Vec<crate::heap::RootId>,
 }
 
-impl<'v, H: Host> JsonRevivalBuilder<'v, H> {
-    pub(super) fn new(vm: &'v mut Vm<H>) -> Self {
+impl<'v> JsonRevivalBuilder<'v> {
+    pub(super) fn new(vm: &'v mut Vm) -> Self {
         Self {
             heap: JsonHeapBuilder::new(vm),
             nodes: Vec::new(),
@@ -558,7 +558,7 @@ impl<'v, H: Host> JsonRevivalBuilder<'v, H> {
     }
 }
 
-impl<H: Host> JsonBuilder for JsonRevivalBuilder<'_, H> {
+impl JsonBuilder for JsonRevivalBuilder<'_> {
     type Value = Value;
     type Key = Atom;
     type Layout = JsonObjectLayout;

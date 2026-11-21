@@ -25,7 +25,7 @@ pub(crate) struct FsPath {
 /// the host opens relative to the working directory.
 pub(crate) fn path(c: &mut Context<'_>, value: RootId, name: &str) -> Result<FsPath, RootedError> {
     let mut path = path_as_given(c, value, name)?;
-    path.io = c.host_mut().shared_state().borrow().cwd.resolve_io_path(&path.io);
+    path.io = c.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.resolve_io_path(&path.io);
     Ok(path)
 }
 

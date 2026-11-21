@@ -2,7 +2,7 @@
 //! where the write lands, and that proof is the write's only lookup. The plain `[[Delete]]`
 //! of a string key on one such object, decided by its shape alone.
 
-use super::super::{Atom, Host, Object, PropertyKey, Value, Vm};
+use super::super::{Atom, Object, PropertyKey, Value, Vm};
 
 /// Where a plain `[[Set]]` lands, as the chain walk proved it.
 enum PlainWriteTarget {
@@ -12,7 +12,7 @@ enum PlainWriteTarget {
     Add,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The chain walk of `set_plain_named_property` for a key the caller admitted: `None` for
     /// a global, exotic, namespace or non-extensible object on the chain, a side-table
     /// descriptor of the key, or an accessor or read-only property deciding the write.

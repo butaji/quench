@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, Weak};
 pub(crate) use thread::{capture_error, capture_fatal, WorkerContext};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// A port this VM holds: its endpoint and its JavaScript object, retained while open.
 struct LocalPort {
@@ -94,7 +94,7 @@ impl State {
 static BROADCAST_CHANNELS: Mutex<Option<HashMap<String, Vec<Weak<Endpoint>>>>> = Mutex::new(None);
 
 fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>> {
-    c.host_mut().shared_state()
+    c.host_as::<crate::host::NodeHost>().shared_state()
 }
 
 /// The messaging API object, built on first use.
@@ -457,7 +457,7 @@ pub(crate) fn drain(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Root
             result?;
         }
         Delivery::Terminate => {
-            c.host_mut().shared_state().borrow().process_control.request_really_exit(thread::TERMINATED_EXIT_CODE);
+            c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_control.request_really_exit(thread::TERMINATED_EXIT_CODE);
             return Err(RootedError::host("process.exit"));
         }
     }

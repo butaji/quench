@@ -9,7 +9,7 @@
 //! a proof never names a changed chain or a reused record or shape, and a use compares no
 //! epoch. A key the shape holds keeps its symbol alive.
 
-use super::{Host, Value, Vm};
+use super::{Value, Vm};
 use super::property_key::PropertyKey;
 
 /// Direct-mapped entries: a power of two. Node's streams and Fastify's request and reply
@@ -307,7 +307,7 @@ pub(super) fn site_index(site: usize) -> usize {
     (site >> SITE_ADDRESS_SHIFT) & (SITE_OWN_READ_ENTRIES - 1)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The getter a symbol-keyed read of `key` on `object` calls, where a proof records it
     /// (`SymbolLoadAnswer::Getter`).
     pub(super) fn proved_symbol_getter(&self, object: Value, key: Value) -> Option<Value> {

@@ -9,7 +9,7 @@ use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
 use super::super::dispatch_fast::JobEnd;
 use crate::heap::AwaitState;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Resumes the activation `job` names with `resume`, which its owner keeps suspended
     /// (`job_frame`): in the lane over its frame's register file (`run_lane_job`), a throw
     /// included, as a nested run above the activations of a lane run that is live

@@ -11,17 +11,17 @@ lane_handler! {
         // instance, which every table and handler set still names. It continues as the row that
         // reads none, so its code is this one jump rather than another copy of the row.
         if const { ACC != ACC_NONE && !accumulator_readable(LaneFields::<OP, FLAG>::OPCODE, ACC) } {
-            sibling!(generated_row!(H, OP, ACC_NONE, FLAG), r, ip, view)
+            sibling!(generated_row!(OP, ACC_NONE, FLAG), r, ip, view)
         }
         if LaneFields::<OP, FLAG>::FLAG_ROLE && FLAG == FLAG_UNREAD {
-            let flagged: Handler = if i.imm() != 0 { generated_row!(H, OP, ACC, FLAG_SET) } else { generated_row!(H, OP, ACC, FLAG_CLEAR) };
-            requicken::<H>(ip, flagged);
+            let flagged: Handler = if i.imm() != 0 { generated_row!(OP, ACC, FLAG_SET) } else { generated_row!(OP, ACC, FLAG_CLEAR) };
+            requicken(ip, flagged);
             sibling!(flagged, r, ip, view)
         }
         // Where a planned named read misses: the own read past its record's hint, which reads
         // through the site's cache and rebinds the hint; a held read, the site's holder entry.
         macro_rules! property_miss { () => {
-            sibling!(property_miss_row::<H, OP, ACC, FLAG>, r, ip, view)
+            sibling!(property_miss_row::<OP, ACC, FLAG>, r, ip, view)
         } }
         // A deletion shares the property decoder but reads no named property: its misses and results are
         // the generic ones (the call-out's, below), not a named read's plan.
@@ -35,27 +35,27 @@ lane_handler! {
         // A store's miss: the general write's activation path (`GENERAL_SITE`, `POLY_SITE`), or the
         // classifier that names the site the record moves to (`row_set_field_classify`).
         macro_rules! store_miss { () => {{
-            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            let script: *mut LaneContext = view.memory.bytes.cast();
             if const { FLAG == crate::vm::dispatch_fast::ADD_SITE } {
                 // A refused add: the generated general write, which the record keeps from now on.
-                requicken::<H>(ip, generated_row!(H, OP, ACC_NONE, crate::vm::dispatch_fast::GENERAL_SITE));
+                requicken(ip, generated_row!(OP, ACC_NONE, crate::vm::dispatch_fast::GENERAL_SITE));
             }
             if const { FLAG == crate::vm::dispatch_fast::ADD_SITE || FLAG == crate::vm::dispatch_fast::GENERAL_SITE || FLAG == crate::vm::dispatch_fast::POLY_SITE } {
                 if this_store {
-                    sibling!(crate::vm::dispatch_fast::row_set_this_field_miss::<H>, r, ip, Carried::script_in(script, view))
+                    sibling!(crate::vm::dispatch_fast::row_set_this_field_miss, r, ip, Carried::script_in(script, view))
                 }
-                sibling!(crate::vm::dispatch_fast::row_set_object_field_miss::<H>, r, ip, Carried::script_in(script, view))
+                sibling!(crate::vm::dispatch_fast::row_set_object_field_miss, r, ip, Carried::script_in(script, view))
             }
             if const { FLAG == FLAG_UNREAD } {
                 // A tracked runtime's own hint store is the record's first choice from now on.
                 if unsafe { vm(script) }.heap.tracks_slot_representations() {
-                    requicken::<H>(ip, generated_row!(H, OP, ACC_NONE, crate::vm::dispatch_fast::TRACKED_SITE));
+                    requicken(ip, generated_row!(OP, ACC_NONE, crate::vm::dispatch_fast::TRACKED_SITE));
                 }
             }
             if this_store {
-                sibling!(crate::vm::dispatch_fast::row_set_field_classify::<H, OP, true>, r, ip, Carried::script_in(script, view))
+                sibling!(crate::vm::dispatch_fast::row_set_field_classify::<OP, true>, r, ip, Carried::script_in(script, view))
             }
-            sibling!(crate::vm::dispatch_fast::row_set_field_classify::<H, OP, false>, r, ip, Carried::script_in(script, view))
+            sibling!(crate::vm::dispatch_fast::row_set_field_classify::<OP, false>, r, ip, Carried::script_in(script, view))
         }} }
         if property && !store {
             // The site fact names the base (`own_site`), `this` or a register, and the lane admits
@@ -86,7 +86,7 @@ lane_handler! {
         // The cached, private and general reads answer at their record before the staged plan runs: a
         // direct call of the lane's own read, with no erased host. A miss takes the site's miss.
         if property && const { crate::vm::dispatch_fast::cached_field_site(FLAG) || crate::vm::dispatch_fast::private_field_site(FLAG) || crate::vm::dispatch_fast::general_site(FLAG) } {
-            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            let script: *mut LaneContext = view.memory.bytes.cast();
             // The base: `this` for a `this` site, else the register the record names.
             let receiver = if const { crate::vm::dispatch_fast::own_site_this(FLAG) } { r.this() } else { r.get(i.b) };
             // A deleted `this` is no object for a cached or private read; the general read takes it as before.
@@ -94,11 +94,11 @@ lane_handler! {
             // SAFETY: the context's program outlives the lane run.
             let code = unsafe { &*(*script).code };
             let read = if const { crate::vm::dispatch_fast::cached_field_site(FLAG) } {
-                LaneFrame::<ACC>::cached_read::<H>(script, code, receiver, i.imm(), i.c, 0)
+                LaneFrame::<ACC>::cached_read(script, code, receiver, i.imm(), i.c, 0)
             } else if const { crate::vm::dispatch_fast::private_field_site(FLAG) } {
-                LaneFrame::<ACC>::private_value::<H>(script, ip.addr(), code, receiver, i.imm())
+                LaneFrame::<ACC>::private_value(script, ip.addr(), code, receiver, i.imm())
             } else {
-                crate::vm::dispatch_fast::general_field_read::<H>(script.cast(), ip.addr(), const { !crate::vm::dispatch_fast::own_site_this(FLAG) }, receiver, i.imm(), i.c)
+                crate::vm::dispatch_fast::general_field_read(script.cast(), ip.addr(), const { !crate::vm::dispatch_fast::own_site_this(FLAG) }, receiver, i.imm(), i.c)
             };
             match read {
                 Some(value) => {
@@ -125,34 +125,34 @@ lane_handler! {
         // instantiation holds its one decoder (a `match` on a constant compiles every arm).
         // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
         let decoded = (if const { crate::staged::super_const_array_family(LaneFields::<OP, FLAG>::OPCODE) } {
-            Operation::decode_literal_with(crate::staged::Fields::wide(fields), unsafe { crate::vm::dispatch_fast::super_parts_in_lane::<H>(cx, i.imm() as usize) }, ())
+            Operation::decode_literal_with(crate::staged::Fields::wide(fields), unsafe { crate::vm::dispatch_fast::super_parts_in_lane(cx, i.imm() as usize) }, ())
         } else {
             row_decode!(OP, FLAG, fields)
         })
         .map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
-        let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
+        let Some(operation) = decoded else { sibling!(general_step_in_lane, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
         let property_values = if property && !store {
             // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
-            unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap.arena_values_base()
+            unsafe { vm(view.memory.bytes.cast::<LaneContext>()) }.heap.arena_values_base()
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             unsafe { vm(cx) }.heap.arena_values_base()
         } else { std::ptr::null() };
         let mut stage = if store {
             // A store's gate reads the heap's barrier state (`Stage::store_gate`).
-            Concrete::storing(&raw const unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap)
+            Concrete::storing(&raw const unsafe { vm(view.memory.bytes.cast::<LaneContext>()) }.heap)
         } else { Concrete::new(property_values) };
-        let mut frame = row_frame::<H, OP, ACC, FLAG>(cx, r, ip, i, view);
+        let mut frame = row_frame::<OP, ACC, FLAG>(cx, r, ip, i, view);
         // merge: `typed_site`/`proved_site`/`element_move_site` (trunk helpers over PROVED_SITE, PROVED_MOVE_SITE, ELEMENT_MOVE_SITE) do not exist here; TYPED_SITE is the current constant.
         if const { FLAG == crate::vm::dispatch_fast::TYPED_SITE } {
             // The element kind the record observed (`requicken_typed`), and the typed array records
             // the view proof reads.
-            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            let script: *mut LaneContext = view.memory.bytes.cast();
             frame.typed = Some((crate::staged::typed_elements::native_kind_at(i.imm()),
                 unsafe { vm(script) }.heap.typed_view_directory()));
         }
         if store {
-            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            let script: *mut LaneContext = view.memory.bytes.cast();
             // The live record table: a direct object receiver proves it reserved, and any other
             // receiver leaves at the row's family test before it is addressed.
             let records = unsafe { vm(script) }.heap.live_object_records() as u64;
@@ -167,7 +167,7 @@ lane_handler! {
             }
             // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
             // its siblings), at every store row.
-            frame.stores = Some(FieldStores::of::<H>(script));
+            frame.stores = Some(FieldStores::of(script));
             frame.plan = Some(if const { FLAG == crate::vm::dispatch_fast::ADD_SITE } {
                 RecordPlan::own_add()
             } else if const { FLAG == crate::vm::dispatch_fast::GENERAL_SITE } {
@@ -187,11 +187,11 @@ lane_handler! {
             // unbound table is the miss's to bind.
             // A JavaScript view carries its context (`script_handler!`); an own-field row is
             // installed only once the lane bound the object records (`row_get_field_own_refresh`).
-            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            let script: *mut LaneContext = view.memory.bytes.cast();
             debug_assert_eq!(script, cx, "a JavaScript view carries its context");
             if const { crate::vm::dispatch_fast::math_site(FLAG) } {
                 // The Math call the read's value feeds, computed by the VM's functions (`PropertyFrame::math_call`).
-                frame.math = Some(MathCalls::of::<H>(script));
+                frame.math = Some(MathCalls::of(script));
             }
             if const { FLAG == crate::vm::dispatch_fast::LOCAL_FIELD_SITE } {
                 // A local's read through the own-field hint its record holds (`local_field_handler`): the hint's
@@ -199,7 +199,7 @@ lane_handler! {
                 let records = unsafe { (*script).binding.object_base } as u64;
                 let hint = i.field_hint();
                 if records == 0 || hint.receiver == crate::vm::NO_FIELD_RECEIVER {
-                    sibling!(crate::vm::dispatch_fast::local_field_miss::<H>, r, ip, Carried::script_in(script, view))
+                    sibling!(crate::vm::dispatch_fast::local_field_miss, r, ip, Carried::script_in(script, view))
                 }
                 frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
             } else if const { crate::vm::dispatch_fast::inherited_site(FLAG) } {
@@ -233,7 +233,7 @@ lane_handler! {
                         property_miss!()
                     }
                     frame.this = r.this();
-                    frame.stores = Some(FieldStores::of::<H>(script));
+                    frame.stores = Some(FieldStores::of(script));
                 }
                 if site.base == crate::bytecode::FieldBase::THIS { frame.this = r.this(); }
                 frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot), (entry.receiver, entry.slot), site.base,
@@ -285,7 +285,7 @@ lane_handler! {
             } else if const { crate::vm::dispatch_fast::host_read_site(FLAG) } {
                 // A read the VM's geometry or length answers from the receiver's word (`FieldPlan::Length`,
                 // `FieldPlan::Geometry`): the frame's host steps make the answer, no record is addressed.
-                frame.geometry = Some(GeometrySteps::of::<H>(script));
+                frame.geometry = Some(GeometrySteps::of(script));
                 frame.plan = Some(RecordPlan::host_read(if const { FLAG == crate::vm::dispatch_fast::TYPED_LENGTH_SITE } {
                     crate::staged::property::FieldPlan::Length
                 } else {
@@ -315,7 +315,7 @@ lane_handler! {
                 let machine = unsafe { vm(script) };
                 if (const { crate::vm::dispatch_fast::own_site_this(FLAG) } || (const { crate::vm::dispatch_fast::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 let records = machine.heap.live_object_records() as u64;
-                frame.entries = Some(EntryReads::of::<H>(script, ip));
+                frame.entries = Some(EntryReads::of(script, ip));
                 frame.plan = Some(if const { FLAG == crate::vm::dispatch_fast::POLYMORPHIC_SITE } {
                     let hint = i.field_hint();
                     RecordPlan::polymorphic(hint.receiver, hint.slot, records)
@@ -340,9 +340,9 @@ lane_handler! {
                 // its object records: its first miss binds them.
                 if records == 0 {
                     if (const { crate::vm::dispatch_fast::own_site_this(FLAG) } || (const { crate::vm::dispatch_fast::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
-                        sibling!(row_get_field_own_refresh::<H, true, false>, r, ip, Carried::script_in(script, view))
+                        sibling!(row_get_field_own_refresh::<true, false>, r, ip, Carried::script_in(script, view))
                     }
-                    sibling!(row_get_field_own_refresh::<H, false, false>, r, ip, Carried::script_in(script, view))
+                    sibling!(row_get_field_own_refresh::<false, false>, r, ip, Carried::script_in(script, view))
                 }
             }
             debug_assert_ne!(records, 0, "an own-field row runs over bound object records");
@@ -358,7 +358,7 @@ lane_handler! {
         }
         match row_step!(LaneFields::<OP, FLAG>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(_) if store => {
-                let script: *mut LaneContext<H> = view.memory.bytes.cast();
+                let script: *mut LaneContext = view.memory.bytes.cast();
                 // The form the VM's own-field store left for the record (`field_store_host`).
                 if let Some(hint) = frame.stored {
                     set_field_hint(ip, hint);
@@ -367,9 +367,9 @@ lane_handler! {
                     if const { FLAG == FLAG_UNREAD || FLAG == crate::vm::dispatch_fast::NARROW_SITE } && !unsafe { vm(script) }.heap.tracks_slot_representations() {
                         let narrow = crate::heap::layouts::auxiliary(hint.receiver) & crate::value_vec::STORAGE_FORM == crate::value_vec::NARROW_FORM;
                         if const { FLAG == FLAG_UNREAD } {
-                            if narrow { requicken::<H>(ip, generated_row!(H, OP, ACC_NONE, crate::vm::dispatch_fast::NARROW_SITE)); }
+                            if narrow { requicken(ip, generated_row!(OP, ACC_NONE, crate::vm::dispatch_fast::NARROW_SITE)); }
                         } else if !narrow {
-                            requicken::<H>(ip, generated_row!(H, OP, ACC_NONE, FLAG_UNREAD));
+                            requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
                         }
                     }
                 }
@@ -380,8 +380,8 @@ lane_handler! {
                 // A returning read's value completes its activation as a returning record does
                 // (`lane_return_value!`), so it writes no register.
                 let value = if const { crate::vm::dispatch_fast::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
-                let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                if let Some(resumed) = by_leaf!(crate::vm::dispatch_fast::returning_leaf(FLAG), |L| crate::vm::dispatch_fast::complete_plain_activation_in_lane::<H, L>(script, value)) {
+                let script: *mut LaneContext = view.memory.bytes.cast();
+                if let Some(resumed) = by_leaf!(crate::vm::dispatch_fast::returning_leaf(FLAG), |L| crate::vm::dispatch_fast::complete_plain_activation_in_lane::<L>(script, value)) {
                     resume!(script, resumed)
                 }
                 resume!(script, crate::vm::dispatch_fast::return_value_general_in_lane(script, ip, value));
@@ -389,15 +389,15 @@ lane_handler! {
             Step::Value(value) if property => {
                 // The read's value, a slot word decoded where the form may hold a raw double.
                 let value = if const { crate::vm::dispatch_fast::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
-                let script: *mut LaneContext<H> = view.memory.bytes.cast();
+                let script: *mut LaneContext = view.memory.bytes.cast();
                 // A sinking read stores its value to `this` before its register is written: a refused
                 // store repeats the read from the registers as they were.
                 if const { crate::vm::dispatch_fast::sink_site(FLAG) } {
                     let Some((atom, site)) = crate::vm::dispatch_fast::sink_operands(script, i) else {
-                        sibling!(crate::vm::dispatch_fast::row_get_field_sink::<H>, r, ip, Carried::script_in(script, view))
+                        sibling!(crate::vm::dispatch_fast::row_get_field_sink, r, ip, Carried::script_in(script, view))
                     };
                     if crate::staged::property::PropertyFrame::sink_store(&mut frame, &mut stage, atom, site, value.to_bits()).is_none() {
-                        sibling!(crate::vm::dispatch_fast::row_get_field_sink::<H>, r, ip, Carried::script_in(script, view))
+                        sibling!(crate::vm::dispatch_fast::row_get_field_sink, r, ip, Carried::script_in(script, view))
                     }
                     r.set(i.a & crate::bytecode::REGISTER_MASK, value);
                     next!(script, r, following(ip), Carried::script_in(script, view))
@@ -430,17 +430,17 @@ lane_handler! {
             // A keyed read past its in-place arm: the record's keyed paths (a slot, a getter).
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element))
                 && matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) } => {
-                let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                sibling!(crate::vm::dispatch_fast::row_index_read_miss::<H>, r, ip, Carried::script_in(script, view))
+                let script: *mut LaneContext = view.memory.bytes.cast();
+                sibling!(crate::vm::dispatch_fast::row_index_read_miss, r, ip, Carried::script_in(script, view))
             }
             // A keyed write past its in-place replacement: an append, a hole, a typed array, a key.
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } => {
-                let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                sibling!(crate::vm::dispatch_fast::set_index_slot_miss::<H>, r, ip, Carried::script_in(script, view))
+                let script: *mut LaneContext = view.memory.bytes.cast();
+                sibling!(crate::vm::dispatch_fast::set_index_slot_miss, r, ip, Carried::script_in(script, view))
             }
             // A transfer (a Wasm return) resumes the register file the frame switched to.
             Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
-            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
+            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
         }
     }
 }

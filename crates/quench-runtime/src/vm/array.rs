@@ -13,7 +13,7 @@ pub(super) struct ArraySpeciesProof {
     constructor: Option<Value>,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The element `Array.prototype.at` reads for `value` among `length` elements: ToIntegerOrInfinity
     /// of `value`, then the staged relative position `element_at` (shared with
     /// `%TypedArray%.prototype.at`). `None` when the position lies outside the array.

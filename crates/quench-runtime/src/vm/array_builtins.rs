@@ -6,7 +6,7 @@ const ARRAY_CONSTRUCTOR_LENGTH: f64 = 1.0;
 const ARRAY_PROTOTYPE_METHODS: &[(&str, Native)] = super::native_rows::ARRAY_PROTOTYPE_METHODS;
 const ARRAY_STATIC_METHODS: &[(&str, Native)] = super::native_rows::ARRAY_STATIC_METHODS;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
         self.array_proto = self.heap.alloc_array(crate::heap::ArrayObject::new(

@@ -21,7 +21,7 @@ fn sum_loop() -> (ir::Function, usize) {
     let written: BTreeSet<Register> = unit.instructions[header..=backedge].iter().flat_map(|instruction| writes(*instruction)).collect();
     let entering: Vec<_> = (1..unit.registers).map(|register| (register, IntRange::FULL)).collect();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
-    let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let addresses = LaneHelper::addresses();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
         &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entering, &[], &[]), &[], &[],
         Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Typed(Some(Kind::Float64)), true)

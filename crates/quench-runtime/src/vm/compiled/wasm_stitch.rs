@@ -433,13 +433,13 @@ pub(super) struct World<'a> {
     pub(super) globals_offset: u64,
     /// The indirect site of a `Call::Reference` at `pc` (`indirect::site`).
     pub(super) indirect: &'a dyn Fn(usize) -> Option<IndirectSite>,
-    /// The table or segment operation's callout, `table_op_callout::<H>` as an address: the
+    /// The table or segment operation's callout, `table_op_callout` as an address: the
     /// stitched code is the program's own, so it names its Host type's callout.
     pub(super) table_callout: u64,
-    /// The GC operations' callout, `wasm_gc_callout::<H>` as an address (`wasm_gc_callout.rs`):
+    /// The GC operations' callout, `wasm_gc_callout` as an address (`wasm_gc_callout.rs`):
     /// the stitched code names its Host type's callout, as `table_callout` does.
     pub(super) gc_callout: u64,
-    /// The allocating GC steps' callout, `allocate_frame::<H>` as an address (`wasm_gc_allocate.rs`).
+    /// The allocating GC steps' callout, `allocate_frame` as an address (`wasm_gc_allocate.rs`).
     pub(super) allocate_callout: u64,
     /// The reference registers a pc's calls hold (`Plan::references`), which the native roots hold
     /// across them (`wasm_stitch_roots.rs`).

@@ -42,7 +42,7 @@ pub(super) enum DifferenceDomain {
     ZonedDateTime,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn temporal_plain_date_time_difference(
         &mut self,
         p: &ResidualProgram,

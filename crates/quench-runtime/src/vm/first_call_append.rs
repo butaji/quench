@@ -5,7 +5,7 @@
 //! the chunk adds is a few entries and the values of its constants.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The function of stub `function` of program `program`, whose residual is `p`, compiled
     /// into the program, or `None` where the chunk must be a program of its own.
     pub(super) fn append_first_chunk(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32)) -> Option<FunctionKind> {

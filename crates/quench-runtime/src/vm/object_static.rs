@@ -7,7 +7,7 @@ use super::*;
 mod for_in_keys;
 pub(super) use for_in_keys::ForInMemo;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Object.create(proto)` before its properties argument: an empty ordinary object
     /// inheriting from `proto`, which runs no guest code; `None` when `proto` is neither an
     /// object nor `null`.

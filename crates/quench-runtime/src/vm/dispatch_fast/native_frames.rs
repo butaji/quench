@@ -20,7 +20,7 @@ struct CallerState {
 
 impl CallerState {
     #[inline(always)]
-    fn of_context<H: Host>(cx: *mut LaneContext<H>) -> Self {
+    fn of_context(cx: *mut LaneContext) -> Self {
         // SAFETY: the running lane's context, which nothing else accesses.
         unsafe { Self { registers: (*cx).registers, base: (*cx).base, program: (*cx).program } }
     }
@@ -40,24 +40,24 @@ impl CallerState {
 
     /// Makes this the context's state; the program is the run's, which no direct call changes.
     #[inline(always)]
-    fn install<H: Host>(self, cx: *mut LaneContext<H>) {
+    fn install(self, cx: *mut LaneContext) {
         // SAFETY: as `of_context`.
         unsafe { (*cx).registers = self.registers; (*cx).base = self.base; }
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Links the native frames on top of the activations, if any: the one test a helper
     /// that observes the lane stack makes before it does.
     #[inline(always)]
-    pub(super) fn link_natives(&mut self, cx: *mut LaneContext<H>) {
+    pub(super) fn link_natives(&mut self, cx: *mut LaneContext) {
         if self.lane_stack.top_is_native() { link_unlinked(cx); }
     }
 }
 
 #[cold]
 #[inline(never)]
-fn link_unlinked<H: Host>(cx: *mut LaneContext<H>) {
+fn link_unlinked(cx: *mut LaneContext) {
     // SAFETY: the reference ends here; native frames are records on top of the records.
     let activations = unsafe { vm(cx).lane_stack.records_unspilled() };
     let (unlinked, len) = (activations.unlinked(), activations.len());
@@ -122,7 +122,7 @@ impl LaneStack {
 /// record and caller base come from its descriptor, its argc from its call record, and it gets a side record
 /// naming the descriptor, pushed on top of the sides. Its caller registers are the header's own word, written
 /// at its push. The window takes the context words its call would have written (`enter_window_in_lane`).
-fn link_header<H: Host>(cx: *mut LaneContext<H>, window: Registers, index: usize) {
+fn link_header(cx: *mut LaneContext, window: Registers, index: usize) {
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
     // SAFETY: the table entry was written by the push that made the header; its descriptor outlives the run.
@@ -152,7 +152,7 @@ fn link_header<H: Host>(cx: *mut LaneContext<H>, window: Registers, index: usize
 /// Links the native frame at `depth`: the `Script` activation its call would have made. Its
 /// caller is the frame below it where that one has a descriptor, else the running context,
 /// which is the state of the activation the body runs in. A link never advances the context.
-pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
+pub(super) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
     let vm = unsafe { vm(cx) };
     // SAFETY: each slot below the top holds at least its prefix.
     let below = depth.checked_sub(1).map(|below| unsafe { let record = &*vm.lane_stack.records_mut().slot(below); (record.callee, record.window) }).filter(|&(callee, _)| !callee.is_null());
@@ -198,7 +198,7 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
 /// is that activation's, not the frame below it. The owner's state returns unless the helper left
 /// the lane in an activation of its own or ended the run.
 #[inline(always)]
-pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
+pub(super) fn in_innermost_frame(cx: *mut LaneContext, helper: impl FnOnce() -> u64) -> u64 {
     let headers = unsafe { vm(cx) }.lane_stack.body_headers();
     let status = in_innermost_frame_of(cx, helper);
     if let Some(headers) = headers && status != LANE_CALL_LEFT && status != LANE_CALL_TERMINATED {
@@ -256,7 +256,7 @@ impl LaneStack {
 }
 
 #[inline(always)]
-fn in_innermost_frame_of<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
+fn in_innermost_frame_of(cx: *mut LaneContext, helper: impl FnOnce() -> u64) -> u64 {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
     materialize_running_leaf_in_lane(cx);
@@ -282,7 +282,7 @@ fn in_innermost_frame_of<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce()
 /// caller's records (a callee's `return p === 0` wrote the caller's loop counter). The callee runs in its caller's
 /// program, whose lane view of its function gives its records. Elsewhere `helper` as it is.
 #[inline(always)]
-fn in_innermost_body<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
+fn in_innermost_body(cx: *mut LaneContext, helper: impl FnOnce() -> u64) -> u64 {
     let vm = unsafe { vm(cx) };
     let stack = &vm.lane_stack;
     if stack.plain.depth.get() == 0 { return helper(); }
@@ -307,7 +307,7 @@ fn in_innermost_body<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> 
 
 /// The environment a running body's captures resolve in when it runs as a native callee: its
 /// closure's, which no lane activation holds; `None` in the activation's own.
-pub(super) fn innermost_callee_env<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
+pub(super) fn innermost_callee_env(cx: *mut LaneContext) -> Option<Value> {
     // SAFETY: a frame names the caller-owned callee, whose descriptor outlives the run.
     unsafe { vm(cx) }.lane_stack.top_native().map(|frame| unsafe { (*frame.callee).target.env })
 }
@@ -317,7 +317,7 @@ pub(super) fn innermost_callee_env<H: Host>(cx: *mut LaneContext<H>) -> Option<V
 /// forwarding constructor rides in its side record, `SidePayload::Forwarder`), and the context becomes the
 /// innermost's. Its view and the body it ran, where the run left inside frames.
 #[inline(always)]
-pub(super) fn advance_into_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
+pub(super) fn advance_into_frames(cx: *mut LaneContext) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
     // A run that left no native frame, the common completion, has nothing to link or advance.
     if !left_native_frames(cx) { return None; }
     advance_into_native_frames(cx)
@@ -325,14 +325,14 @@ pub(super) fn advance_into_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&
 
 /// Whether the run that just ended left native frames on the lane stack, linked or not.
 #[inline(always)]
-pub(super) fn left_native_frames<H: Host>(cx: *mut LaneContext<H>) -> bool {
+pub(super) fn left_native_frames(cx: *mut LaneContext) -> bool {
     let stack = &unsafe { vm(cx) }.lane_stack;
     stack.top_is_native() || stack.native_depth() != 0
 }
 
 /// `advance_into_frames` past its test: the native frames to link and advance into.
 #[inline(never)]
-fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
+fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
     let headers = vm.lane_stack.header_native_depth();
@@ -382,7 +382,7 @@ fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'sta
 }
 
 /// Drops the native frames a terminated run left, with their windows.
-pub(super) fn discard_frames<H: Host>(cx: *mut LaneContext<H>) {
+pub(super) fn discard_frames(cx: *mut LaneContext) {
     let vm = unsafe { vm(cx) };
     let headers = vm.lane_stack.header_native_depth();
     let (count, len) = (vm.lane_stack.record_native_depth_in_run(headers), vm.lane_stack.record_count());
@@ -403,7 +403,7 @@ pub(super) fn discard_frames<H: Host>(cx: *mut LaneContext<H>) {
 
 /// Retires the bodies of the native headers the lane continues in, innermost out, as `retire_bodies` does for
 /// records: their table entries name no body after this (one-frame-one-call.md F5).
-pub(super) fn retire_header_bodies<H: Host>(cx: *mut LaneContext<H>) {
+pub(super) fn retire_header_bodies(cx: *mut LaneContext) {
     let stack = &mut unsafe { vm(cx) }.lane_stack;
     let headers = stack.header_native_depth();
     let (depth, base) = (stack.plain.depth.get(), stack.frames_below_plain());

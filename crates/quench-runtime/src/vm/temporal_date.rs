@@ -51,7 +51,7 @@ pub(super) struct IsoDate {
     pub(super) day: u32,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_temporal_plain_date(
         &mut self,
         p: &ResidualProgram,

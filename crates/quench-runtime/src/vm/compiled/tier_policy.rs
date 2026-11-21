@@ -294,9 +294,9 @@ impl TierRows {
 }
 
 #[cfg(test)]
-impl<H: crate::host::Host> super::super::Vm<H> {
+impl super::super::Vm {
     /// A VM whose tier controllers read `rows`: a stress run needs no build of its own.
-    pub(in crate::vm) fn with_tier_rows(host: H, rows: TierRows) -> Self {
+    pub(in crate::vm) fn with_tier_rows<T: crate::Host>(host: T, rows: TierRows) -> Self {
         let mut vm = Self::new(host);
         vm.programs.hold_tiers(rows.table());
         vm

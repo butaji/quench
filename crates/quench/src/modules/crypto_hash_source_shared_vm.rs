@@ -4,7 +4,7 @@ use super::keys::HANDLE;
 use super::host_members::leading;
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, ValueType};
-pub(super) type Context<'a> = NativeContext<'a, NodeHost>;
+pub(super) type Context<'a> = NativeContext<'a>;
 
 const STATE: &str = "state";
 const FINALIZED: &str = "finalized";

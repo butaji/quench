@@ -1,7 +1,7 @@
 use super::wtf16::{str_text_hash, TextHash, Units};
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The interned string value of ASCII `text`, allocated only when no live one exists.
     pub(super) fn intern_dynamic_ascii(&mut self, text: &str) -> Value {
         debug_assert!(text.is_ascii());

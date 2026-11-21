@@ -118,7 +118,7 @@ pub(in crate::vm) fn inlines_in_loop_call(native: Native, count: u16) -> bool {
 /// Whether the call at `pc` of `decoded` is a method call of a native that `inlines_in_loop_call` runs in place:
 /// its callee is the register a field read of the realm's native method defined last before it (as
 /// `intrinsic_calls` finds it), which `Vm::method_native` answers.
-pub(in crate::vm) fn native_method_call<H: Host>(machine: &mut Vm<H>, decoded: &[WideInstruction], pc: usize) -> bool {
+pub(in crate::vm) fn native_method_call(machine: &mut Vm, decoded: &[WideInstruction], pc: usize) -> bool {
     let call = decoded[pc];
     if !crate::staged::meaning::means(call, crate::staged::meaning::Meaning::Call) { return false; }
     let callee = call.register_b();

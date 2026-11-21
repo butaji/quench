@@ -17,7 +17,7 @@ const MIN_RADIX: i32 = 2;
 const MAX_RADIX: i32 = 36;
 use super::super::string_extra::with_radix_text;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Number.prototype.toFixed(digits)` of a Number receiver (a double or an int32) with
     /// `digits` absent or an int32 in 0..=20. Finite magnitudes below 1e21 are written by
     /// `with_fixed_text`; NaN, the infinities, larger magnitudes and any other case answer `None`.

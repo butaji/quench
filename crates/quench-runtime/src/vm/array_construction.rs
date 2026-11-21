@@ -2,7 +2,7 @@
 //! native code makes in place without running guest code.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     fn array_prototype_from_new_target(
         &mut self,
         p: &ResidualProgram,

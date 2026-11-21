@@ -95,7 +95,7 @@ impl LoopBody {
 /// Each call must be one the body runs inline (a Math function, a string builtin) or a script
 /// function's, which it inlines or calls by its entry, by the callee its register holds now: a
 /// body's general native call costs more than the lane's own.
-pub(super) fn offer_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite) -> bool {
+pub(super) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) -> bool {
     let vm = unsafe { vm(cx) };
     if (site.call_boundary_pcs.is_empty() && site.analysis_failure.is_none()) || site.body_offered.replace(true) || !vm.programs.js_jit_lane_methods_enabled()
         || !crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) { return false; }
@@ -129,7 +129,7 @@ pub(super) fn offer_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &
 }
 
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
-fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView, site: &LoopSite) {
+fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &LoopSite) {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -147,7 +147,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         *body = LoopBody::Declined;
         return;
     }
-    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
+    let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     // The loop's arrays are the activation's registers live at its header now: sampled, as an
     // OSR loop samples its own. A dead register may hold any value a window held before
     // (`ResidualProgram::entry_fill`), so it reads as `undefined`.
@@ -174,7 +174,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
 
 /// The running regions leave at their next backward jump (`left_for_tier_up`), and the header
 /// dispatch (`enter_loop_body`) takes the body that published.
-fn raise_tier_up<H: Host>(vm: &Vm<H>, site: &LoopSite) {
+fn raise_tier_up(vm: &Vm, site: &LoopSite) {
     vm.execution_interrupt.request_tier_up();
     if site.diagnostics { site.tier_ups.set(site.tier_ups.get().saturating_add(1)); }
 }
@@ -182,7 +182,7 @@ fn raise_tier_up<H: Host>(vm: &Vm<H>, site: &LoopSite) {
 /// Whether a region's exit at `pc` is its poll's tier-up leave: at the loop's unconditional
 /// backward jump (no guard of it can fail) while a tier-up is requested and no termination,
 /// which the jump's own safepoint ends. The lane resumes at the header, which dispatches.
-pub(super) fn left_for_tier_up<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) -> bool {
+pub(super) fn left_for_tier_up(cx: *mut LaneContext, site: &LoopSite, pc: u32) -> bool {
     let vm = unsafe { vm(cx) };
     if pc != site.backedge || !vm.execution_interrupt.tier_up_requested() || vm.execution_interrupt.is_termination_requested() {
         return false;
@@ -207,7 +207,7 @@ const fn tier_up_resume(header: u32, backedge: u32, pc: u32, held: bool, ready: 
 /// compiled it): while a tier-up is requested for a loop whose body has published, the lane
 /// resumes at that loop's header, as a region's leave does (`left_for_tier_up`). The leaving
 /// body stays published for its other entries.
-pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, pc: usize) -> Option<usize> {
+pub(super) fn header_for_tier_up(cx: *mut LaneContext, own: &LaneView, pc: usize) -> Option<usize> {
     let pc = u32::try_from(pc).ok()?;
     let at = own.loop_at_backedge.binary_search_by_key(&pc, |&(backedge, _)| backedge).ok()?;
     let site = &own.loops[own.loop_at_backedge[at].1 as usize];
@@ -221,7 +221,7 @@ pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneVie
 /// interpreter. A body is planned once the loop is hot, where function tiers run and no region
 /// has published: a body over a published region replaces native code with native code, the
 /// same work at its own plan, compile and entry cost (navier-stokes: twice the region's time).
-pub(super) fn enter_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+pub(super) fn enter_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     vm.execution_interrupt.clear_tier_up();
     // A declined body is terminal: its dispatch has nothing to plan, run or count.
@@ -231,14 +231,14 @@ pub(super) fn enter_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip
     }
     // An idle body counts its dispatches down to its plan: until then, no view or plan is touched.
     if matches!(*site.body.borrow(), LoopBody::Idle { .. }) && site.body_waits() { return None; }
-    run_loop_body::<H>(cx, r, ip, site)
+    run_loop_body(cx, r, ip, site)
 }
 
 /// Runs the lane body planned to start at `site`'s header, on the activation's registers
 /// `r`: a hot loop reaching its backward jump enters native code that inlines its calls as
 /// a lane body does, and the lane resumes where the body leaves. `None` where no body runs
 /// (still planning or compiling, or declined): the loop's other tiers take it.
-fn run_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;
@@ -266,14 +266,14 @@ fn run_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &
 /// What a loop site's attempt leaves the lane to do after native code of its loop left, and the lane
 /// recovered `resumed` (`body_left_in_lane`, `body_inlined_activation_in_lane`): `ip` is the record the run
 /// was reached at.
-pub(super) fn loop_attempt<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resumed: LaneBodyLeft) -> LoopAttempt {
+pub(super) fn loop_attempt(cx: *mut LaneContext, ip: Ip, resumed: LaneBodyLeft) -> LoopAttempt {
     match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),
         // A callee's run that left the lane for the general path leaves it at its record.
         LaneBodyLeft::Resume(_, next, _) if body_calls::left_lane(next) => LoopAttempt::Leave(next),
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Raised(record) => LoopAttempt::Leave(raised_exit_in_lane(cx, record)),
-        LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(return_value_general_in_lane::<H>(cx, record, value)),
+        LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(return_value_general_in_lane(cx, record, value)),
     }
 }
 

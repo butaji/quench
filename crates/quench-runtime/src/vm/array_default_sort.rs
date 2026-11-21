@@ -2,7 +2,7 @@
 //! units of their ToString.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Sorts `values` (none `undefined`) as SortCompare without a comparator orders them.
     /// ToString of a value that is no object runs no guest code, so when none is one each
     /// value's string is made once and the values follow their strings' order; an object's

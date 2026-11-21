@@ -4,7 +4,7 @@ use crate::code_dependencies::IntactFuse;
 use super::steady_ascii::IndexStore;
 use super::ascii::ascii_search;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
     /// nothing, so it observes no frame (`regexp_call_in_lane`): a RegExp receiver, a string
     /// subject, an own writable data `lastIndex` holding a Number (`regexp_last_index_slot`,

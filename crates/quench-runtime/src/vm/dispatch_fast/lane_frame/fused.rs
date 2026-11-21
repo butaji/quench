@@ -41,12 +41,12 @@ lane_handler! {
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
             let fields = LaneFields::<A, { $flag }>(i);
-            let Some(operation) = row_decode!(A, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, ip, view) };
+            let Some(operation) = row_decode!(A, { $flag }, fields) else { sibling!(general_step_in_lane, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<A>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            let mut frame = row_frame::<A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             let raw_result = mode & crate::staged::raw_bit(0) != 0;
             frame.raw_result = raw_result;
             match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
@@ -55,7 +55,7 @@ lane_handler! {
                         r.set(i.a, raw_word(raw_result, value));
                     }
                 }
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<A>::OPCODE) }, r, ip, view),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<{ $flag }>(LaneFields::<A>::OPCODE) }, r, ip, view),
             }
         }}; }
         if LaneFields::<A>::FLAG_ROLE {
@@ -80,39 +80,39 @@ lane_handler! {
             } else {
                 Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
             };
-            let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
+            let Some(operation) = decoded else { sibling!(general_step_in_lane, r, ip, view) };
             let mut stage = Concrete::new(std::ptr::null());
             let carried = if const { LaneFields::<B>::RESULT_A } { Carried::past_result(view) } else { view };
             // The jump's direction: a branch table's is its `BACKWARD` (entry edges); any other jump's is the record's `MODE_BACKWARD`.
             let backward = if const { crate::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } { BACKWARD } else { mode & crate::staged::MODE_BACKWARD != 0 };
-            let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
+            let mut frame = row_frame::<B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(LaneControl::Edge(Edge::Target)) => {
                     if const { FAMILY == crate::staged::FUSED_TARGET } {
                         target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, CMP)
                     } else {
-                        resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None))
+                        resume!(cx, super::super::take_jump(cx, r, ip, backward, carried, None))
                     }
                 }
-                Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
+                Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
                 Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
                 Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
                 Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following(ip), carried),
                 Step::Unresolved => if backward {
-                    sibling!(const { jump_row_miss::<H, true>(LaneFields::<B>::OPCODE) }, r, ip, view)
+                    sibling!(const { jump_row_miss::<true>(LaneFields::<B>::OPCODE) }, r, ip, view)
                 } else {
-                    sibling!(const { jump_row_miss::<H, false>(LaneFields::<B>::OPCODE) }, r, ip, view)
+                    sibling!(const { jump_row_miss::<false>(LaneFields::<B>::OPCODE) }, r, ip, view)
                 },
             }
         }
         macro_rules! step_b { ($flag:expr) => {{
             let fields = LaneFields::<B, { $flag }>(i);
-            let Some(operation) = row_decode!(B, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, ip, view) };
+            let Some(operation) = row_decode!(B, { $flag }, fields) else { sibling!(general_step_in_lane, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, B, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            let mut frame = row_frame::<B, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             // `B` is the last link: its double result stays raw where the next record reads it (`MODE_RAW_OUT`).
             let raw_result = mode & crate::staged::MODE_RAW_OUT != 0;
             frame.raw_result = raw_result;
@@ -128,7 +128,7 @@ lane_handler! {
                     }
                     next!(cx, r, following(ip), view)
                 }
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<B>::OPCODE) }, r, ip, view),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<{ $flag }>(LaneFields::<B>::OPCODE) }, r, ip, view),
             }
         }}; }
         if LaneFields::<B>::FLAG_ROLE {
@@ -160,12 +160,12 @@ lane_handler! {
         // Link `$k` at flag `$flag`; its double result is raw where `mode`'s raw mask has bit `$k`.
         macro_rules! link_flag { ($ip:ident, $i:ident, $L:ident, $k:literal, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
-            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
+            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane, r, $ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
+            let mut frame = row_frame::<$L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
             let raw_result = mode & crate::staged::raw_bit($k) != 0;
             frame.raw_result = raw_result;
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
@@ -174,7 +174,7 @@ lane_handler! {
                         r.set($i.a, raw_word(raw_result, value));
                     }
                 }
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<{ $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
             }
         }}; }
         macro_rules! value_link { ($ip:ident, $i:ident, $L:ident, $k:literal) => {
@@ -186,12 +186,12 @@ lane_handler! {
         }; }
         macro_rules! last_flag { ($ip:ident, $i:ident, $L:ident, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
-            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
+            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane, r, $ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
+            let mut frame = row_frame::<$L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
             // The last link's double result stays raw where the next record reads it (`CHAIN_RAW_OUT`, `MODE_RAW_OUT`).
             let raw_result = mode & crate::staged::MODE_RAW_OUT != 0;
             frame.raw_result = raw_result;
@@ -207,7 +207,7 @@ lane_handler! {
                     }
                     next!(cx, r, following($ip), view)
                 }
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<{ $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
             }
         }}; }
         macro_rules! last_link { ($ip:ident, $i:ident, $L:ident) => {{
@@ -222,22 +222,22 @@ lane_handler! {
                 } else {
                     Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
                 };
-                let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
+                let Some(operation) = decoded else { sibling!(general_step_in_lane, r, $ip, view) };
                 let mut stage = Concrete::new(std::ptr::null());
                 // A chain's last link is never a branch table, so its direction is the record's `MODE_BACKWARD`.
                 let backward = mode & crate::staged::MODE_BACKWARD != 0;
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::past_result(view) } else { view };
-                let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, $ip, $i, view);
+                let mut frame = row_frame::<$L, ACC_NONE, FLAG_UNREAD>(cx, r, $ip, $i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
-                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump::<H>(cx, r, $ip, backward, carried, None)),
-                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { $ip.add(1 + k as usize) }, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump(cx, r, $ip, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump(cx, r, unsafe { $ip.add(1 + k as usize) }, backward, carried, None)),
                     Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
                     Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
                     Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following($ip), carried),
                     Step::Unresolved => if backward {
-                        sibling!(const { jump_row_miss::<H, true>(LaneFields::<$L>::OPCODE) }, r, $ip, view)
+                        sibling!(const { jump_row_miss::<true>(LaneFields::<$L>::OPCODE) }, r, $ip, view)
                     } else {
-                        sibling!(const { jump_row_miss::<H, false>(LaneFields::<$L>::OPCODE) }, r, $ip, view)
+                        sibling!(const { jump_row_miss::<false>(LaneFields::<$L>::OPCODE) }, r, $ip, view)
                     },
                 }
             }
@@ -268,14 +268,14 @@ lane_handler! {
 }
 
 /// Chain `(L0, L1, L2, L3)`'s record handler: one for both jump directions of its last link, which reads its own distance.
-pub(in crate::vm::dispatch_fast) const fn chain_row<H: Host, const L0: u16, const L1: u16, const L2: u16, const L3: u16, const FAMILY: u8>() -> Handler {
-    chain_rows::<H, L0, L1, L2, L3, FAMILY>
+pub(in crate::vm::dispatch_fast) const fn chain_row<const L0: u16, const L1: u16, const L2: u16, const L3: u16, const FAMILY: u8>() -> Handler {
+    chain_rows::<L0, L1, L2, L3, FAMILY>
 }
 
 /// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
 /// an environment window's function, which `window_local_handler` gives its row.
-pub(in crate::vm::dispatch_fast) fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
-    generated_row!(H, OP, ACC_NONE, FLAG_WINDOW) as Handler as *const () == handler
+pub(in crate::vm::dispatch_fast) fn is_window_row<const OP: u16>(handler: *const ()) -> bool {
+    generated_row!(OP, ACC_NONE, FLAG_WINDOW) as Handler as *const () == handler
 }
 
 /// `chains!` index `chain` within `staged::FUSED_CHAINS` (past its end, entry 0 again).
@@ -300,8 +300,8 @@ fn chain_link_raw(records: &[LaneInstruction], live: Option<&crate::compile::liv
 /// Records a raw result may pass over between its producer and its consumer (`raw_out_link`): the
 /// plain increment and element read rows (`plain_row`), at any flag. Neither jumps nor calls, and a
 /// jump row or a call row never matches these two opcodes' plain rows.
-fn passed_row<H: Host>(handler: *const ()) -> bool {
-    plain_row::<H, { crate::staged::INC_DEC_ROW }>(handler) || plain_row::<H, { crate::staged::ELEMENT_READ_ROW }>(handler)
+fn passed_row(handler: *const ()) -> bool {
+    plain_row::<{ crate::staged::INC_DEC_ROW }>(handler) || plain_row::<{ crate::staged::ELEMENT_READ_ROW }>(handler)
 }
 
 /// The jump targets of a function's decoded instructions, or `None` where one cannot be named: a Wasm
@@ -331,7 +331,7 @@ const RAW_PASS: usize = 6;
 /// `passed_row`, not a jump target (`targets`, from `jump_targets`), and none is a jump or a call. Its raw
 /// bits are then only ever read as the Number operand of that row, which reads a raw double as a Number
 /// (`number_operand`). `targets` is `None` where the function's jump targets are unknown: no record passes.
-fn raw_out_link<H: Host>(
+fn raw_out_link(
     records: &[LaneInstruction],
     live: Option<&crate::compile::liveness::RegisterMasks>,
     targets: Option<&crate::bitset::BitSet>,
@@ -345,24 +345,24 @@ fn raw_out_link<H: Host>(
     loop {
         let Some(record) = records.get(consumer) else { return false };
         if names_record(record) { break; }
-        if consumer - producer > RAW_PASS || !passed_row::<H>(record.handler) || targets.contains(consumer) {
+        if consumer - producer > RAW_PASS || !passed_row(record.handler) || targets.contains(consumer) {
             return false;
         }
         consumer += 1;
     }
     let next = &records[consumer];
     let reads = [next.b, next.c].into_iter().any(|field| Operand(field).register_index() == Some(register));
-    reads && number_binary_row::<H>(next.handler)
+    reads && number_binary_row(next.handler)
         && (next.a == register || live.and_then(|masks| masks.get(consumer + 1))
             .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(register))))
 }
 
 /// Whether `handler` is a plain Number binary row (`staged::BINARY_ROW`, `NUMERIC_ADD_ROW`, `NUMERIC_MULTIPLY_ROW`):
 /// the rows a raw result may feed (`raw_out_link`).
-fn number_binary_row<H: Host>(handler: *const ()) -> bool {
-    plain_row::<H, { crate::staged::BINARY_ROW }>(handler)
-        || plain_row::<H, { crate::staged::NUMERIC_ADD_ROW }>(handler)
-        || plain_row::<H, { crate::staged::NUMERIC_MULTIPLY_ROW }>(handler)
+fn number_binary_row(handler: *const ()) -> bool {
+    plain_row::<{ crate::staged::BINARY_ROW }>(handler)
+        || plain_row::<{ crate::staged::NUMERIC_ADD_ROW }>(handler)
+        || plain_row::<{ crate::staged::NUMERIC_MULTIPLY_ROW }>(handler)
 }
 
 /// Gives each record that starts a run of records whose rows are a chain of
@@ -372,7 +372,7 @@ fn number_binary_row<H: Host>(handler: *const ()) -> bool {
 /// that record's own row. A link keeps its double result raw (its `mode` raw mask, `raw_bit`) where
 /// `chain_raw_links` allows it and `chain_link_raw` holds for the record; `raw_results` (no
 /// handler in the function) gates it, as for `fuse_rows`. Returns each fused record's head and last record.
-pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction], decoded: &[crate::bytecode::WideInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, raw_results: bool) -> Vec<(usize, usize)> {
+pub(in crate::vm::dispatch_fast) fn fuse_chains(records: &mut [LaneInstruction], decoded: &[crate::bytecode::WideInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, raw_results: bool) -> Vec<(usize, usize)> {
     if const { crate::staged::FUSED_CHAINS.is_empty() } { return Vec::new(); }
     // The jump targets a raw result may not pass over (`raw_out_link`); a function with a handler has no raw results.
     let targets = if raw_results { jump_targets(decoded) } else { None };
@@ -383,13 +383,13 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
         ($($chain:literal),*) => {
             [$((
                 [
-                    (|handler| plain_row::<H, { link!($chain, 0) }>(handler)) as fn(*const ()) -> bool,
-                    (|handler| plain_row::<H, { link!($chain, 1) }>(handler)) as fn(*const ()) -> bool,
-                    (|handler| plain_row::<H, { link!($chain, 2) }>(handler)) as fn(*const ()) -> bool,
-                    (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { true } else { plain_row::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
+                    (|handler| plain_row::<{ link!($chain, 0) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| plain_row::<{ link!($chain, 1) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| plain_row::<{ link!($chain, 2) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { true } else { plain_row::<{ link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
                 ],
                 if link!($chain, 3) == crate::staged::NO_LINK { 3usize } else { 4 },
-                chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_PLAIN }>(),
+                chain_row::<{ link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_PLAIN }>(),
                 crate::staged::chain_raw_eligible(crate::staged::FUSED_CHAINS[chain_index($chain)]),
                 crate::staged::chain_keyed_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
                 crate::staged::chain_last_row(crate::staged::FUSED_CHAINS[chain_index($chain)]),
@@ -402,13 +402,13 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
         ($($chain:literal),*) => {
             [$((
                 [
-                    (|handler| is_window_row::<H, { link!($chain, 0) }>(handler)) as fn(*const ()) -> bool,
-                    (|handler| plain_row::<H, { link!($chain, 1) }>(handler)) as fn(*const ()) -> bool,
-                    (|handler| plain_row::<H, { link!($chain, 2) }>(handler)) as fn(*const ()) -> bool,
-                    (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { true } else { plain_row::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
+                    (|handler| is_window_row::<{ link!($chain, 0) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| plain_row::<{ link!($chain, 1) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| plain_row::<{ link!($chain, 2) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { true } else { plain_row::<{ link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
                 ],
                 if link!($chain, 3) == crate::staged::NO_LINK { 3usize } else { 4 },
-                chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_WINDOW }>(),
+                chain_row::<{ link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_WINDOW }>(),
                 crate::staged::chain_raw_eligible(crate::staged::FUSED_CHAINS[chain_index($chain)]),
                 crate::staged::chain_keyed_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
                 crate::staged::chain_last_row(crate::staged::FUSED_CHAINS[chain_index($chain)]),
@@ -432,7 +432,7 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
             }
             // The last link's raw-out bit (`CHAIN_RAW_OUT`): the record after the chain reads it as a Number.
             let out = crate::staged::CHAIN_RAW_OUT;
-            if eligible & (1 << out) != 0 && raw_out_link::<H>(records, live, targets.as_ref(), pc + length - 1) { raw |= 1 << out; }
+            if eligible & (1 << out) != 0 && raw_out_link(records, live, targets.as_ref(), pc + length - 1) { raw |= 1 << out; }
         }
         // A chain whose last link is a jump takes its direction from that record's distance (`MODE_BACKWARD`).
         let backward = if jumps_by_row(crate::staged::row_op(*last_row)) && records[pc + length - 1].jump() <= 0 { crate::staged::MODE_BACKWARD } else { 0 };
@@ -446,11 +446,11 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
 /// Opcode pair `(A, B)`'s fused record handler for `B`'s jump direction `backward`. Only a branch table
 /// second row reads the direction (`fused_rows`' `BACKWARD`); any other `B` takes its own distance, so
 /// both directions name one record and one instance.
-pub(in crate::vm::dispatch_fast) fn fused_row<H: Host, const A: u16, const B: u16, const FAMILY: u8>(backward: bool) -> Handler {
+pub(in crate::vm::dispatch_fast) fn fused_row<const A: u16, const B: u16, const FAMILY: u8>(backward: bool) -> Handler {
     if const { crate::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } {
-        if backward { fused_rows::<H, A, B, true, FAMILY, B, { crate::staged::NO_LINK }, 0> } else { fused_rows::<H, A, B, false, FAMILY, B, { crate::staged::NO_LINK }, 0> }
+        if backward { fused_rows::<A, B, true, FAMILY, B, { crate::staged::NO_LINK }, 0> } else { fused_rows::<A, B, false, FAMILY, B, { crate::staged::NO_LINK }, 0> }
     } else {
-        fused_rows::<H, A, B, false, FAMILY, B, { crate::staged::NO_LINK }, 0>
+        fused_rows::<A, B, false, FAMILY, B, { crate::staged::NO_LINK }, 0>
     }
 }
 
@@ -466,24 +466,24 @@ const fn fused_index(pair: usize) -> usize { if pair < crate::staged::FUSED_ROWS
 /// A `FUSED_RAW` pair takes its raw record only where `raw_results` (no handler in the function) and
 /// `B` reads `A`'s register with `A`'s register dead after it or overwritten by `B`. Returns each fused
 /// record's head and its last record, which `derive_lane_view` reads for the accumulator carry.
-pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], decoded: &[crate::bytecode::WideInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
+pub(in crate::vm::dispatch_fast) fn fuse_rows(records: &mut [LaneInstruction], decoded: &[crate::bytecode::WideInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
     // Pair `$pair`'s record handlers for its step family, indexed by the direction (`fused_row`). Its table
     // mode is no instance: `fuse_rows` writes it as the record's settings bits, so one family instance serves
     // every mode of the pair.
     macro_rules! pairs {
         ($($pair:literal),*) => {
             [$((
-                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }>(handler)) as fn(*const ()) -> bool,
-                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }>(handler)) as fn(*const ()) -> bool,
-                jump_row_backward::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }> as fn(*const ()) -> bool,
+                (|handler| plain_row::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }>(handler)) as fn(*const ()) -> bool,
+                (|handler| plain_row::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }>(handler)) as fn(*const ()) -> bool,
+                jump_row_backward::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }> as fn(*const ()) -> bool,
                 crate::staged::FUSED_ROWS[fused_index($pair)].2,
                 // Both rows are Number operators: a raw `A` result is then only a Number's operand.
                 const { crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }>::OPCODE)
                     && crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }>::OPCODE) },
                 // `B` is a Number operator, so its result may be a raw-out (`MODE_RAW_OUT`) producer.
                 const { crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }>::OPCODE) },
-                [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(false),
-                    fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(true)],
+                [fused_row::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(false),
+                    fused_row::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(true)],
             )),*]
         };
     }
@@ -492,11 +492,11 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
     macro_rules! window_pairs {
         ($($pair:literal),*) => {
             [$((
-                (|handler| is_window_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }>(handler)) as fn(*const ()) -> bool,
-                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }>(handler)) as fn(*const ()) -> bool,
-                jump_row_backward::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }> as fn(*const ()) -> bool,
-                [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_WINDOW }>(false),
-                    fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_WINDOW }>(true)],
+                (|handler| is_window_row::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }>(handler)) as fn(*const ()) -> bool,
+                (|handler| plain_row::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }>(handler)) as fn(*const ()) -> bool,
+                jump_row_backward::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }> as fn(*const ()) -> bool,
+                [fused_row::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_WINDOW }>(false),
+                    fused_row::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_WINDOW }>(true)],
             )),*]
         };
     }
@@ -526,7 +526,7 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
         let direction = usize::from(backward(second));
         // A move or an add of a constant at a hot OSR latch stays its own record, which
         // `install_loop_sites` read as the latch's (`derive_lane_view`'s `then_fuses`).
-        if osr_loop && direction == 1 && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first)) {
+        if osr_loop && direction == 1 && (plain_row::<{ crate::staged::MOVE_ROW }>(first) || plain_row::<{ crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first)) {
             continue;
         }
         // The dead-first form is only sound when `B` never reads `A`'s register, and nothing
@@ -553,7 +553,7 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
                 || live.and_then(|masks| masks.get(pc + 2)).is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(producer.a))))
         };
         // `B`'s raw-out: its double result feeds the next record as a raw Number (`raw_out_link`).
-        let out = raw_results && *number_b && raw_out_link::<H>(records, live, targets.as_ref(), pc + 1);
+        let out = raw_results && *number_b && raw_out_link(records, live, targets.as_ref(), pc + 1);
         // The record's settings: a `FUSED_DEAD_FIRST` pair skips `A`'s write only where liveness proves it
         // (`dead_first`), a `FUSED_RAW` pair keeps `A`'s result raw only where `raw` holds, and `B`'s raw-out
         // bit is `out`. Each is clear where its table mode does not hold, which is the staged pair without it.

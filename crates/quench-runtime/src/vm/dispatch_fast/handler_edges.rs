@@ -10,7 +10,7 @@ use crate::bytecode::ThrownValueSlot;
 
 /// Drops what the lane caches of the running frame's environment, which a copy of it replaced
 /// (`Vm::clone_frame_environment`): its captures, its outer walk and its storage.
-pub(super) fn drop_environment_caches<H: Host>(cx: *mut LaneContext<H>) {
+pub(super) fn drop_environment_caches(cx: *mut LaneContext) {
     // SAFETY: the running lane's context.
     unsafe {
         (*cx).registers.set_capture(std::ptr::null());
@@ -22,7 +22,7 @@ pub(super) fn drop_environment_caches<H: Host>(cx: *mut LaneContext<H>) {
 
 /// The running function, the home a handler's scopes and binding live in, and whether the running
 /// function keeps its locals in its record: the innermost activation's, else the frame's.
-fn handler_home<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> (u32, HandlerHome, bool) {
+fn handler_home(cx: *mut LaneContext, vm: &Vm) -> (u32, HandlerHome, bool) {
     match vm.lane_stack.top_frame() {
         Some(activation) => {
             let home = HandlerHome::Window(WindowHome {
@@ -46,14 +46,14 @@ fn handler_home<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> (u32, HandlerHo
 /// fresh environment per entry, whose copy replaces the one the lane's caches name in a frame.
 /// A promoted binding is the body's own register. The running function is the innermost
 /// activation's, else the frame's.
-pub(in crate::vm) unsafe extern "C" fn handler_edge<H: Host>(
+pub(in crate::vm) unsafe extern "C" fn handler_edge(
     _vm: u64,
     _residual: u64,
     context: u64,
     call_pc: u64,
     value: u64,
 ) -> u64 {
-    let cx = context as usize as *mut LaneContext<H>;
+    let cx = context as usize as *mut LaneContext;
     let (call_pc, value) = (call_pc as u32, Value::from_bits(value));
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
@@ -97,7 +97,7 @@ script_handler! {
 /// there (`Vm::lane_raise_site`), then taken by a handler of the running function or of a plain
 /// caller in the lane (`catch_raised`), else left as a body's raise leaves
 /// (`raised_exit_in_lane`), from wherever unwinding stopped.
-pub(super) fn unwind_raised<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Ip {
+pub(super) fn unwind_raised(cx: *mut LaneContext, ip: Ip) -> Ip {
     let vm = unsafe { vm(cx) };
     // SAFETY: the record lies in the running view.
     let pc = unsafe { ip.offset_from((*cx).base) } as u32;
@@ -117,10 +117,10 @@ pub(super) fn unwind_raised<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Ip {
 /// and it is raised and unwound as any operation made in place raises (`unwind_raised` where
 /// the activations stayed the lane's, else from frames on the general path). Where it
 /// unexpectedly succeeded, its effect is made and the general path continues after the record.
-pub(super) fn raise_again<H: Host, T>(
-    cx: *mut LaneContext<H>,
+pub(super) fn raise_again<T>(
+    cx: *mut LaneContext,
     ip: Ip,
-    again: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<T, JsError>,
+    again: impl FnOnce(&mut Vm, &ResidualProgram) -> Result<T, JsError>,
 ) -> Ip {
     match unwound_in_place(cx, ip, again) {
         Err(next) => next,
@@ -155,7 +155,7 @@ enum Covered {
 /// the general loop rewrites (`Vm::name_non_callable_callee`), Wasm, a running leaf, a native's
 /// deferred call or callback boundary, and any activation with a completion, a side record or owned
 /// iterators or `with` objects.
-fn catch_raised<H: Host>(cx: *mut LaneContext<H>, mut record: Ip) -> Unwound {
+fn catch_raised(cx: *mut LaneContext, mut record: Ip) -> Unwound {
     let Some(value) = catchable_value(cx) else {
         return Unwound::Uncaught(record);
     };
@@ -172,7 +172,7 @@ fn catch_raised<H: Host>(cx: *mut LaneContext<H>, mut record: Ip) -> Unwound {
 }
 
 /// The thrown value of the raise in `Vm::lane_raised`, where the lane may unwind it (`catch_raised`).
-fn catchable_value<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
+fn catchable_value(cx: *mut LaneContext) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the running lane's context; its program outlives the run.
     let (leaf, wasm) = unsafe { (!(*cx).leaf.call.is_null(), (*(*cx).code).kind == crate::bytecode::ProgramKind::Wasm) };
@@ -196,7 +196,7 @@ pub(super) fn unwinds_in_lane(error: &JsError) -> bool {
 /// binding stored, the raise taken, and the accumulator its first record reads carried
 /// (`carried_at_in_lane`). `Declined`, before any effect, where the running function is no script
 /// activation's, or its binding is a local the activation does not keep.
-fn enter_covering<H: Host>(cx: *mut LaneContext<H>, record: Ip, value: Value) -> Covered {
+fn enter_covering(cx: *mut LaneContext, record: Ip, value: Value) -> Covered {
     let vm = unsafe { vm(cx) };
     if vm.lane_stack.top_frame().is_some_and(|frame| frame.script().is_none()) {
         return Covered::Declined;
@@ -232,7 +232,7 @@ fn enter_covering<H: Host>(cx: *mut LaneContext<H>, record: Ip, value: Value) ->
 /// record, a plain completion (no trampoline's) and no loop iterator or `with` object of its own.
 /// Its caller is restored (`restore_caller_in_lane`), and its call record is where the raise goes on;
 /// `None` changes nothing.
-fn pop_unwound<H: Host>(cx: *mut LaneContext<H>) -> Option<Ip> {
+fn pop_unwound(cx: *mut LaneContext) -> Option<Ip> {
     let vm = unsafe { vm(cx) };
     let stack = &vm.lane_stack;
     if stack.plain.depth.get() == 0 || stack.innermost_side().is_some() {

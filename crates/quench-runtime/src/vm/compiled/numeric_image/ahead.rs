@@ -49,7 +49,7 @@ fn run_pick(linked: &[u8], registers: usize) {
 
 /// The image linked against this process's helper table.
 fn link_here(image: &RelocatableCode) -> Vec<u8> {
-    let table = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let table = LaneHelper::addresses();
     image.link(0, |namespace, key| match relocs::atom_key(namespace, key) {
         Some(atom) => Some(u64::from(atom)),
         None => table.get(relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),

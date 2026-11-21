@@ -313,7 +313,7 @@ impl JsError {
 /// per call. Past the budget, programs still load from the cache but are no longer offered.
 pub(super) const DYNAMIC_FUNCTIONS_KEPT: u16 = 64;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn error_is_error(&self, value: Value) -> bool {
         self.heap
             .object_record(value)
@@ -638,7 +638,7 @@ impl<H: Host> Vm<H> {
                 .flatten()).map(|name| self.atom_value(name));
             (record, module, name.filter(|name| !name.units().is_empty()))
         };
-        Self::map_call_site_source(&mut self.host, &mut record, module);
+        Self::map_call_site_source(&mut *self.host, &mut record, module);
         let mut text = super::wtf16::JsStringBuilder::default();
         text.append(&JsString::from_str("eval at "));
         text.append(&name.unwrap_or_else(|| JsString::from_str("<anonymous>")));
@@ -659,7 +659,7 @@ impl<H: Host> Vm<H> {
         self.string_build_result(context, text.finish())
     }
 
-    pub(super) fn map_call_site_source(host: &mut H, record: &mut CallSiteRecord, module: bool) {
+    pub(super) fn map_call_site_source(host: &mut dyn crate::Host, record: &mut CallSiteRecord, module: bool) {
         if let CallSiteLocation::Source { file_name, .. } = &mut record.location {
             *file_name = host.stack_source_name(file_name, module);
         }
@@ -1435,7 +1435,7 @@ impl<H: Host> Vm<H> {
             .filter(|value| !value.is_undefined())
             .map(|value| self.to_string(program, value))
             .transpose()?;
-        HostContext::new(&mut self.host).invoke(CapabilityId::Done, text.as_deref());
+        HostContext::new(&mut *self.host).invoke(CapabilityId::Done, text.as_deref());
         Ok(Value::UNDEFINED)
     }
 

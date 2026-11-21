@@ -33,7 +33,7 @@ impl FrameSite {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The field site a frame of `function` of `program` paused at the call record `pc` reads
     /// from, where that record is a nested read (`FieldLookup::Site`) whose last read's getter
     /// is the call: the general loop's caller carries it while the getter runs
@@ -64,7 +64,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The call sites `Error.captureStackTrace` records, trimmed through `constructor_opt`
     /// when it is a function on the stack, up to `Error.stackTraceLimit`. While a native runs
     /// beside a lane's activations, they are read from the frame walk, the root frame paused at
@@ -162,7 +162,7 @@ impl<H: Host> Vm<H> {
                     // Captured positions remain valid after its Script is collected.
                     source.clone_from(&residual.source);
                 }
-                Self::map_call_site_source(&mut self.host, &mut record, module);
+                Self::map_call_site_source(&mut *self.host, &mut record, module);
                 records.push(record);
             }
         }

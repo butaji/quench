@@ -1,16 +1,19 @@
 use super::*;
 
-impl<H: Host> Vm<H> {
-    pub(crate) fn new(host: H) -> Self {
+impl Vm {
+    pub(crate) fn new<T: crate::Host>(host: T) -> Self {
         Self::new_with_execution_interrupt(host, crate::ExecutionInterrupt::default())
     }
 
-    pub(crate) fn new_with_execution_interrupt(
-        host: H,
+    pub(crate) fn new_with_execution_interrupt<T: crate::Host>(
+        host: T,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
+        let runs_lane = host.runs_lane();
         let mut vm = Self {
-            host,
+            host: Box::new(host),
+            host_statics: crate::host::HostStatics::of::<T>(),
+            runs_lane,
             typed_views: Default::default(),
             native_microtask_running: false,
             queue_resumed: Value::UNDEFINED,

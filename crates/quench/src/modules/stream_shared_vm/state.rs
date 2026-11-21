@@ -356,7 +356,7 @@ impl Default for DefaultHighWaterMarks {
 }
 
 pub(crate) fn default_high_water_mark(c: &mut Context<'_>, object_mode: bool) -> f64 {
-    let defaults = c.host_mut().shared_state().borrow().stream_high_water_marks;
+    let defaults = c.host_as::<crate::host::NodeHost>().shared_state().borrow().stream_high_water_marks;
     if object_mode { defaults.objects } else { defaults.bytes }
 }
 
@@ -410,7 +410,7 @@ pub(crate) fn set_default_high_water_mark(c: &mut Context<'_>, _: RootId, args: 
     let maximum = c.number(MAX_SAFE_INTEGER);
     let mark = super::super::util_shared_vm::validate_integer(c, value, "value", 0.0, maximum)?;
     let object_mode = c.truthy_rooted(object_mode)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut shared = shared.borrow_mut();
     if object_mode {
         shared.stream_high_water_marks.objects = mark;

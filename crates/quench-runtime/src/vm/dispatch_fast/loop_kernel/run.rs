@@ -197,7 +197,7 @@ const WORK_PER_ITERATION: u64 = 4;
 
 impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
-    pub(super) unsafe fn run<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, ip: Ip) {
+    pub(super) unsafe fn run(&self, cx: *mut LaneContext, r: Registers, ip: Ip) {
         // SAFETY: the kernel's state, used by one run at a time (the body calls nothing).
         let state: &mut State = unsafe { &mut **(*self.state.get()).get_or_insert_with(|| Box::new(State::EMPTY)) };
         let Some(()) = self.enter(cx, r, state) else {
@@ -215,13 +215,13 @@ impl LoopKernel {
         let mut done = 0u64;
         while done < state.limit {
             let len = (state.limit - done).min(state.chunk as u64) as usize;
-            if !self.chunk::<H>(state, scratch, done, len) {
+            if !self.chunk(state, scratch, done, len) {
                 // A chunk met a value the kernel does not compute: the loop's own records
                 // run from its first iteration, now and at every later entry.
                 if crate::trace::Channel::LoopKernel.on() {
                     eprintln!("loop-kernel: a chunk met a value the kernel does not compute; standing down");
                 }
-                self.stand_down::<H>(ip);
+                self.stand_down(ip);
                 break;
             }
             done += len as u64;
@@ -240,7 +240,7 @@ impl LoopKernel {
     /// The run's entry facts, or `None` where the kernel runs nothing.
     /// Every slot the shape uses is written here or by the run before it is read; the rest
     /// keep what an earlier run left and are never read.
-    fn enter<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, state: &mut State) -> Option<()> {
+    fn enter(&self, cx: *mut LaneContext, r: Registers, state: &mut State) -> Option<()> {
         let shape = &self.shape;
         state.chunk = CHUNK;
         for (slot, affine) in shape.affines.iter().enumerate() {
@@ -270,14 +270,14 @@ impl LoopKernel {
 
     /// The scalars' values at entry: constants, unwritten registers, and the loop-invariant
     /// arithmetic over them.
-    fn scalars<H: Host>(&self, cx: *mut LaneContext<H>, state: &mut State, r: Registers) -> Option<()> {
+    fn scalars(&self, cx: *mut LaneContext, state: &mut State, r: Registers) -> Option<()> {
         for (slot, scalar) in self.shape.scalars.iter().enumerate() {
             state.scalars[slot] = match *scalar {
                 Scalar::Const(value) => value,
                 Scalar::Register(register) => r.get(register).as_number()?,
                 Scalar::Capture(imm) => {
                     let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-                    super::super::capture_read_value::<H>(cx, depth, slot)?.as_number()?
+                    super::super::capture_read_value(cx, depth, slot)?.as_number()?
                 }
                 Scalar::Length { register, atom } => {
                     // SAFETY: the running VM.
@@ -350,7 +350,7 @@ impl LoopKernel {
     }
 
     /// One chunk of `len` iterations from iteration `done`; `false` where it committed nothing.
-    fn chunk<H: Host>(&self, state: &mut State, scratch: &mut [f64], done: u64, len: usize) -> bool {
+    fn chunk(&self, state: &mut State, scratch: &mut [f64], done: u64, len: usize) -> bool {
         if !self.columns(state, scratch, done, len) {
             return false;
         }
@@ -362,7 +362,7 @@ impl LoopKernel {
         if !self.stores_present(state, done, len) {
             return false;
         }
-        self.commit::<H>(state, scratch, done, len);
+        self.commit(state, scratch, done, len);
         self.finals(state, scratch, done, len);
         true
     }
@@ -505,7 +505,7 @@ impl LoopKernel {
     }
 
     /// The chunk's stores, as `ArrayStorageProofs::replace` makes them.
-    fn commit<H: Host>(&self, state: &State, scratch: &[f64], done: u64, len: usize) {
+    fn commit(&self, state: &State, scratch: &[f64], done: u64, len: usize) {
         for store in &self.shape.stores {
             let span = state.spans[usize::from(store.base)];
             let values = span.values;
@@ -514,7 +514,7 @@ impl LoopKernel {
             if let Some((kind, _)) = span.typed {
                 let numbers = (0..len).map(|k| self.value(state, scratch, store.value, k, done));
                 // SAFETY: `limit` keeps every index below the span's writable length.
-                unsafe { typed::store::<H>(kind, values.cast(), first, step, numbers) };
+                unsafe { typed::store(kind, values.cast(), first, step, numbers) };
                 continue;
             }
             // SAFETY: as in `stores_present`; a Number needs no write barrier.
@@ -583,7 +583,7 @@ fn overlaps((a, a_length): (usize, usize), (b, b_length): (usize, usize)) -> boo
 }
 
 /// The span of an array kernel accesses: a record array's or a typed array's elements.
-fn span<H: Host>(vm: &mut Vm<H>, base: Value) -> Option<Span> {
+fn span(vm: &mut Vm, base: Value) -> Option<Span> {
     if let Some((values, readable, writable)) = vm.heap.array_storage_span(base) {
         return Some(Span { base, values: values.as_ptr(), readable, writable, typed: None });
     }

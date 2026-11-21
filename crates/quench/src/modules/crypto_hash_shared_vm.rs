@@ -9,7 +9,7 @@ use super::{
 use crate::host::NodeHost;
 use quench_runtime::{CollectionContext, HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::Arc;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 #[derive(Default)]
 pub(crate) struct State {
     handles: Vec<Option<Handle>>,
@@ -123,7 +123,7 @@ fn index(c: &mut Context<'_>, receiver: RootId) -> Result<usize, RootedError> {
 }
 fn register(c: &mut Context<'_>, receiver: RootId, value: Value) -> Result<RootId, RootedError> {
     let identity = c.host_weak_root(receiver)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let index = {
         let mut shared = shared.borrow_mut();
         let state = &mut shared.crypto_hashes;
@@ -155,7 +155,7 @@ fn resolve(
     name: &str,
     cached_id: Option<RootId>,
 ) -> Result<(Arc<Digest>, i32), DigestError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = cached_id
         .and_then(|root| c.rooted_value(root))
         .and_then(|value| value.as_number())
@@ -197,7 +197,7 @@ pub(crate) fn create_hash(
     let output_length = length(c, args.get(1).copied())?;
     let state = if c.is_object_rooted(algorithm)? {
         let index = index(c, algorithm)?;
-        let shared = c.host_mut().shared_state();
+        let shared = c.host_as::<crate::host::NodeHost>().shared_state();
         let result = match &shared.borrow().crypto_hashes.handles[index].as_ref().expect("live hash slot").value {
             Value::Hash(state) => state.copy(output_length),
             _ => return Err(fail(c, "Invalid native hash copy source")),
@@ -241,7 +241,7 @@ pub(crate) fn init_hmac(
         .map_err(|error| errors::throw(c, Operation::Hmac(&name), error))?;
     let result = HmacState::new(digest, &key);
     let state = result.map_err(|error| errors::throw(c, Operation::Hmac(&name), error))?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut state_ref = shared.borrow_mut();
     let handle = state_ref.crypto_hashes.handles[index].as_mut().expect("live hash slot");
     if !matches!(handle.value, Value::Hmac(_)) {
@@ -267,7 +267,7 @@ pub(crate) fn update(
         return Err(c.throw(root));
     }
     let index = index(c, receiver)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = match &mut shared.borrow_mut().crypto_hashes.handles[index].as_mut().expect("live hash slot").value {
         Value::Hash(state) => state.update(&bytes),
         Value::Hmac(Some(state)) => state.update(&bytes),
@@ -282,7 +282,7 @@ pub(crate) fn digest(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let index = index(c, receiver)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = match &mut shared.borrow_mut().crypto_hashes.handles[index].as_mut().expect("live hash slot").value {
         Value::Hash(state) => state.digest(),
         Value::Hmac(Some(state)) => state.digest(),
@@ -380,8 +380,8 @@ pub(crate) fn binding(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Ro
     })
 }
 
-pub(crate) fn prune(context: &mut CollectionContext<'_, NodeHost>) {
-    let shared = context.host_mut().shared_state();
+pub(crate) fn prune(context: &mut CollectionContext<'_>) {
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let mut shared = shared.borrow_mut();
     let state = &mut shared.crypto_hashes;
     for (index, slot) in state.handles.iter_mut().enumerate() {

@@ -22,7 +22,7 @@ const VOID: u32 = UnaryOperator::Void as u32;
     matches!(op, UNARY_PLUS | UNARY_NEGATION | BITWISE_NOT)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
         let mut stage = crate::staged::Concrete::new(std::ptr::null());
         let names = self.typeof_names.as_ptr() as u64;

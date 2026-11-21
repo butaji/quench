@@ -6,7 +6,7 @@ mod imports;
 /// so a scalar call returns without a heap allocation.
 pub(super) type WasmResults = smallvec::SmallVec<[crate::WasmValue; crate::wasm::SCALAR_RETURN_ARITY]>;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(crate) fn wasm_value_matches_type(
         &self,
         value: crate::WasmValue,
@@ -2001,7 +2001,7 @@ mod tests {
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         let instance = vm.instantiate_wasm_module(&module).unwrap();
         let i32s = |values: &[i32]| values.iter().map(|value| crate::WasmValue::I32(*value)).collect::<Vec<_>>();
-        let copy = |vm: &mut Vm<crate::SystemHost>, args: &[i32]| vm.invoke_wasm(&instance, 0, &i32s(args));
+        let copy = |vm: &mut Vm, args: &[i32]| vm.invoke_wasm(&instance, 0, &i32s(args));
         vm.invoke_wasm(&instance, 1, &i32s(&[0, 0x0403_0201])).unwrap();
         // Forward overlap: bytes 0..3 move up by one.
         assert_eq!(copy(&mut vm, &[1, 0, 3]).unwrap(), Some(crate::WasmValue::I32(0x0302_0101)));
@@ -2642,7 +2642,7 @@ mod tests {
     }
 
     /// Asserts that entry 1 of `instance` traps `unreachable`.
-    fn assert_unreachable_trap(vm: &mut Vm<crate::SystemHost>, instance: &crate::WasmInstance) {
+    fn assert_unreachable_trap(vm: &mut Vm, instance: &crate::WasmInstance) {
         assert_eq!(vm.invoke_wasm(instance, 1, &[]).unwrap_err().wasm_trap(), Some(crate::WasmTrap::Unreachable));
     }
 
@@ -3230,7 +3230,7 @@ mod tests {
     }
 
     /// A VM in compiled mode with `module` instantiated.
-    fn compiled_instance(module: &crate::WasmModule) -> (Vm<crate::SystemHost>, crate::WasmInstance) {
+    fn compiled_instance(module: &crate::WasmModule) -> (Vm, crate::WasmInstance) {
         let mut vm = Vm::new(crate::SystemHost);
         vm.programs.compile_wasm_modules_at_first_entry();
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
@@ -4660,7 +4660,7 @@ mod tests {
         let binding = vm.wasm_global_binding(&first, 0).unwrap();
         let payload = vm
             .heap
-            .alloc_object(Vm::<crate::SystemHost>::empty_object(
+            .alloc_object(Vm::empty_object(
                 Value::NULL,
             ));
         vm.wasm_global_store(binding, payload).unwrap();
@@ -4680,7 +4680,7 @@ mod tests {
         );
         let replacement = vm
             .heap
-            .alloc_object(Vm::<crate::SystemHost>::empty_object(
+            .alloc_object(Vm::empty_object(
                 Value::NULL,
             ));
         vm.wasm_global_store(binding, replacement).unwrap();
@@ -4990,7 +4990,7 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         let first = vm.instantiate_wasm_module(&module).unwrap();
         let second = vm.instantiate_wasm_module(&module).unwrap();
-        let memory = |vm: &Vm<crate::SystemHost>, instance: &crate::WasmInstance| {
+        let memory = |vm: &Vm, instance: &crate::WasmInstance| {
             vm.heap
                 .environment_slot(vm.root_value(instance.environment).unwrap(), 0)
                 .unwrap()
@@ -5113,7 +5113,7 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         let first = vm.instantiate_wasm_module(&module).unwrap();
         let second = vm.instantiate_wasm_module(&module).unwrap();
-        let environment = |vm: &Vm<crate::SystemHost>, instance: &crate::WasmInstance| {
+        let environment = |vm: &Vm, instance: &crate::WasmInstance| {
             vm.root_value(instance.environment).unwrap()
         };
         let memory = vm
@@ -5267,8 +5267,8 @@ mod tests {
     fn compiled_wasm_loop_backedge_polls_execution_interrupt() {
         struct StartHost(std::sync::mpsc::Sender<()>);
         impl crate::Host for StartHost {
-            // Its test runs compiled Wasm only (`Host::RUNS_LANE`).
-            const RUNS_LANE: bool = false;
+            // Its test runs compiled Wasm only (`Host::runs_lane`).
+            fn runs_lane(&self) -> bool { false }
             fn write_line(&mut self, _: &str) {}
             fn clock_millis(&mut self) -> f64 {
                 0.0

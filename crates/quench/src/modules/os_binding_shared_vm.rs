@@ -5,7 +5,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::ffi::CStr;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 use crate::modules::util_shared_vm::named_put as put;
 fn text(c: &mut Context<'_>, object: RootId, name: &str, value: &str) -> Result<(), RootedError> {

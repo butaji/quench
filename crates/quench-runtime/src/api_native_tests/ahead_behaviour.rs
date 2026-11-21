@@ -29,7 +29,7 @@ fn ended(result: Result<(), crate::JsError>) -> String {
     }
 }
 
-fn compile_image(program: &ResidualProgram) -> crate::NativeJsProgram<TestHost> {
+fn compile_image(program: &ResidualProgram) -> crate::NativeJsProgram {
     crate::NativeJsProgram::compile_eager(program.clone()).unwrap()
 }
 
@@ -289,9 +289,9 @@ fn bounded_entries_split_stop_control_and_keep_generator_parameters() {
 }
 
 fn started(
-    context: &mut crate::NativeContext<'_, TestHost>, _: crate::RootId, _: &[crate::RootId],
+    context: &mut crate::NativeContext<'_>, _: crate::RootId, _: &[crate::RootId],
 ) -> Result<crate::RootId, crate::RootedError> {
-    context.host_mut().state::<mpsc::Sender<()>>().send(()).unwrap();
+    context.host_as::<crate::test_host::TestHost>().state::<mpsc::Sender<()>>().send(()).unwrap();
     Ok(context.undefined())
 }
 

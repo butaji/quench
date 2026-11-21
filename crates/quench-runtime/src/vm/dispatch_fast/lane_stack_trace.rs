@@ -35,7 +35,7 @@ fn paused_at(above: &ActivationView) -> Option<usize> {
     Some(above.record().caller_resume(call_pc).1.saturating_sub(1))
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The frames a stack capture reads while a native runs beside the lane's activations
     /// (`lane_deferred`), read from the frame walk: the root frame's pc and the sites of the
     /// activations' frames. `None`, changing nothing but linking native frames (as the
@@ -45,7 +45,7 @@ impl<H: Host> Vm<H> {
     /// activation (Wasm) or its frame's state cannot be read: the caller then materializes.
     pub(in crate::vm) fn lane_stack_sites(&mut self) -> Option<LaneSites> {
         let DeferredLaneCall { cx, call_pc, frames } = self.lane_deferred?;
-        let cx = cx.cast::<LaneContext<H>>();
+        let cx = cx.cast::<LaneContext>();
         // SAFETY: the deferred call's lane runs, so its context lives.
         let (root, innermost_program) = unsafe { ((*cx).root, (*cx).program) };
         if frames != self.frames.len()

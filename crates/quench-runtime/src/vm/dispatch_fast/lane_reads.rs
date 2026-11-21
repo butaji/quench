@@ -49,23 +49,23 @@ impl RecordOperand {
     }
 
     /// The value the operand holds in `r`, as the frame reads it.
-    #[inline(always)] pub(super) fn value<H: Host>(self, cx: *mut LaneContext<H>, r: Registers) -> Option<Value> {
+    #[inline(always)] pub(super) fn value(self, cx: *mut LaneContext, r: Registers) -> Option<Value> {
         match self {
             Self::Register(register) => Some(r.get(register)),
             operand => {
                 let (staged, immediate) = operand.staged();
-                Reads::of_jump::<H>(cx, immediate).word(staged)
+                Reads::of_jump(cx, immediate).word(staged)
             }
         }
     }
 
     /// The staged operands of a jump over `operands`, and the reads that answer them.
     #[inline(always)]
-    pub(super) fn staged_pair<H: Host>(cx: *mut LaneContext<H>, operands: [Self; 2]) -> ([Operand; 2], Reads) {
+    pub(super) fn staged_pair(cx: *mut LaneContext, operands: [Self; 2]) -> ([Operand; 2], Reads) {
         // Destructured, not `array::map`, whose out-of-line drain would keep the pair in memory.
         let [left, right] = operands;
         let ((left, left_immediate), (right, right_immediate)) = (left.staged(), right.staged());
-        ([left, right], Reads::of_jump::<H>(cx, left_immediate.or(right_immediate)))
+        ([left, right], Reads::of_jump(cx, left_immediate.or(right_immediate)))
     }
 }
 
@@ -101,11 +101,11 @@ impl Reads {
 
     /// The reads of a comparison jump of the running lane's `cx`, whose record holds `immediate`.
     #[inline(always)]
-    pub(super) fn of_jump<H: Host>(cx: *mut LaneContext<H>, immediate: Option<Value>) -> Self {
+    pub(super) fn of_jump(cx: *mut LaneContext, immediate: Option<Value>) -> Self {
         let context: *mut () = cx.cast();
         Self { constants: unsafe { (*cx).constants }, immediate,
             locals: Some(LocalReads { context, read: |context, slot|
-                plain_local_operand(context.cast::<LaneContext<H>>(), slot) }),
+                plain_local_operand(context.cast::<LaneContext>(), slot) }),
             captures: None }
     }
 
@@ -118,9 +118,9 @@ impl Reads {
 
     /// The reads of a capture access of the running lane's `cx`.
     #[inline(always)]
-    pub(super) fn of_captures<H: Host>(cx: *mut LaneContext<H>) -> Self {
+    pub(super) fn of_captures(cx: *mut LaneContext) -> Self {
         Self { captures: Some(CaptureReads { context: cx.cast(), read: |context, depth, slot, root|
-            capture_slot_read(context.cast::<LaneContext<H>>(), depth, slot, root) }), ..Self::NONE }
+            capture_slot_read(context.cast::<LaneContext>(), depth, slot, root) }), ..Self::NONE }
     }
 
     /// The value of a constant or local operand. Inlined, as `capture`: a call here would take the
@@ -153,7 +153,7 @@ impl Reads {
 /// or a new walk it then remembers; with `root`, the root environment's projected binding
 /// (`projected_capture`). A read at the function's own scope is the walk handler's, which
 /// also finds the function's dense slots (`LaneContext::capture`).
-fn capture_slot_read<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, root: bool) -> Option<Value> {
+fn capture_slot_read(cx: *mut LaneContext, depth: u16, slot: u16, root: bool) -> Option<Value> {
     if root {
         return projected_capture(cx, depth, slot);
     }

@@ -76,7 +76,7 @@ impl Internal {
 }
 
 fn internal(c: &mut Context<'_>, which: Internal) -> Outcome {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let found = shared.borrow().builtin_cache.get(which.key()).copied();
     found.ok_or_else(|| RootedError::host("zlib module is not initialized"))
 }
@@ -1294,7 +1294,7 @@ fn base_class(c: &mut Context<'_>, transform: RootId) -> Outcome {
 }
 
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(module) = shared.borrow().builtin_cache.get(MODULE_CACHE).copied() {
         return Ok(module);
     }

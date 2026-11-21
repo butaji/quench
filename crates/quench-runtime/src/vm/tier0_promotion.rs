@@ -4,7 +4,7 @@
 use super::*;
 use crate::bytecode::ResidualProgram;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Lowers function `id` of `code` where its unlowered runs are done, no frame of it is
     /// live and no lane view derived from its unlowered code (`ResidualProgram::pin_tier0`).
     /// Programs may share `code` (`ProgramStore::insert_shared`): a frame of any of them counts.

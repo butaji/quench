@@ -7,7 +7,7 @@ use crate::host::NodeHost;
 use crate::modules::util_shared_vm::{validate_boolean, validate_function};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 /// Node's `IANA_DNS_PORT`: a server on it is listed without its port.

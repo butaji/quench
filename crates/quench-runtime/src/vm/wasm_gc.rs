@@ -45,7 +45,7 @@ impl ArraySegmentValues {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A new struct of declaration `index`: `values` answers its `len` field operands, or
     /// its fields take their defaults when it is `None`.
     pub(super) fn wasm_struct_new(

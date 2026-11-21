@@ -14,7 +14,7 @@ enum WasmHostInvocation {
     },
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A host function of an embedding signature, whose types name no declarations.
     pub(crate) fn create_wasm_host_function(
         &mut self,
@@ -532,7 +532,7 @@ mod tests {
         bytes
     }
 
-    fn reset_test_memory<H: Host>(vm: &mut Vm<H>, memory: Value) -> Vec<u8> {
+    fn reset_test_memory(vm: &mut Vm, memory: Value) -> Vec<u8> {
         let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(memory) else {
             panic!("test memory binding should be a Wasm memory")
         };
@@ -543,7 +543,7 @@ mod tests {
         bytes.to_vec()
     }
 
-    fn read_test_memory<H: Host>(vm: &Vm<H>, memory: Value) -> Vec<u8> {
+    fn read_test_memory(vm: &Vm, memory: Value) -> Vec<u8> {
         vm.wasm_memory_bytes(memory).unwrap().to_vec()
     }
 
@@ -830,7 +830,7 @@ mod tests {
             (i32::MIN, i32::MAX, i32::MAX),
             (i32::MAX, i32::MIN, i32::MIN),
         ];
-        let invoke_cases = |vm: &mut Vm<crate::SystemHost>| {
+        let invoke_cases = |vm: &mut Vm| {
             for &(dest, src, num) in &cases {
                 let before = reset_test_memory(vm, memory);
                 let expected = memcpy_reference(before, dest, src, num);
@@ -1012,8 +1012,8 @@ mod tests {
         expired_gc: Option<RootId>,
     }
     impl Host for EchoHost {
-        // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
-        const RUNS_LANE: bool = false;
+        // Its tests exercise no lane behaviour (`Host::runs_lane`).
+        fn runs_lane(&self) -> bool { false }
         fn write_line(&mut self, _: &str) {}
         fn clock_millis(&mut self) -> f64 {
             0.0
@@ -1148,7 +1148,7 @@ mod tests {
         assert!(vm.heap.is_live(descriptor));
         let payload = vm
             .heap
-            .alloc_object(Vm::<EchoHost>::empty_object(Value::NULL));
+            .alloc_object(Vm::empty_object(Value::NULL));
         let payload_root = vm.root(payload);
         let args = [
             WasmValue::ExternRef(payload),
@@ -1188,9 +1188,9 @@ mod tests {
                     .is_err()
             );
             assert_eq!(vm.heap.root_count_for_test(), count);
-            let expired = vm.host.expired.unwrap();
+            let expired = vm.host_ref::<EchoHost>().expired.unwrap();
             assert!(vm.root_value(expired).is_none());
-            assert!(vm.root_value(vm.host.expired_gc.unwrap()).is_none());
+            assert!(vm.root_value(vm.host_ref::<EchoHost>().expired_gc.unwrap()).is_none());
             assert_eq!(vm.heap.root_count_for_test(), count);
             for reply in [
                 Reply::StaleReference,
@@ -1199,7 +1199,7 @@ mod tests {
                 Reply::WrongArity,
                 Reply::Error,
             ] {
-                vm.host.reply = reply;
+                vm.host_as::<EchoHost>().reply = reply;
                 assert!(
                     vm.invoke_wasm_values(&instance, function_index, &args)
                         .is_err()
@@ -1209,7 +1209,7 @@ mod tests {
                 assert!(vm.active_call_roots.is_empty());
                 assert_eq!(vm.active_program, ProgramId::MAIN);
             }
-            vm.host.reply = Reply::Echo;
+            vm.host_as::<EchoHost>().reply = Reply::Echo;
             assert_eq!(
                 vm.invoke_wasm_values(&instance, function_index, &args)
                     .unwrap(),

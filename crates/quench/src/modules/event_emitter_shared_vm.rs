@@ -5,12 +5,12 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 
 use crate::modules::util_shared_vm::named_get as get;
-fn undefined(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn undefined(context: &NativeContext<'_>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_undefined())
 }
-fn arguments(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> (RootId, RootId) {
+fn arguments(context: &mut NativeContext<'_>, args: &[RootId]) -> (RootId, RootId) {
     let undefined = context.undefined();
     (
         args.first().copied().unwrap_or(undefined),
@@ -18,7 +18,7 @@ fn arguments(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> (Roo
     )
 }
 fn record(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     emitter: RootId,
     event: RootId,
 ) -> Result<RootId, RootedError> {
@@ -29,7 +29,7 @@ fn record(
     context.get_property_rooted(events, event)
 }
 fn entries(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     record: RootId,
 ) -> Result<Vec<RootId>, RootedError> {
     if undefined(context, record) {
@@ -52,12 +52,12 @@ fn entries(
         .collect()
 }
 
-pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let emitter = get(context, global, "__nodeEventEmitter")?;
     let prototype = get(context, emitter, "prototype")?;
     let data = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .event_targets_api
@@ -77,7 +77,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 }
 
 pub(crate) fn names(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -99,7 +99,7 @@ pub(crate) fn names(
 }
 
 pub(crate) fn raw_listeners(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -110,7 +110,7 @@ pub(crate) fn raw_listeners(
 }
 
 pub(crate) fn listeners(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -127,7 +127,7 @@ pub(crate) fn listeners(
 }
 
 pub(crate) fn count(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -163,15 +163,15 @@ pub(crate) fn count(
 }
 
 fn listener_arguments(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     arguments: RootId,
 ) -> Result<Vec<RootId>, RootedError> {
     context.array_like_values_rooted(arguments)
 }
 
 /// The retained string `"error"` (`SharedNodeState::error_event_name`).
-fn error_event_name(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+fn error_event_name(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(name) = shared.borrow().error_event_name {
         return Ok(name);
     }
@@ -183,7 +183,7 @@ fn error_event_name(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId,
 
 /// The emitting counter belongs to the listener array, including nested emits.
 pub(crate) fn emit_listeners(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -244,7 +244,7 @@ pub(crate) fn emit_listeners(
 }
 
 fn mutable_record(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     data: RootId,
     events: RootId,
     event: RootId,
@@ -275,7 +275,7 @@ enum RemovedListener {
 }
 
 fn notify_removed(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     target: RootId,
     events: RootId,
     event: RootId,
@@ -303,7 +303,7 @@ fn notify_removed(
 
 /// Remove the most recent matching callback, retaining other identical entries.
 pub(crate) fn remove_listener(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -402,7 +402,7 @@ pub(crate) fn remove_listener(
 }
 
 fn reset_listener_store(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     data: RootId,
     target: RootId,
 ) -> Result<(), RootedError> {
@@ -418,7 +418,7 @@ fn reset_listener_store(
 
 /// Bulk removal has its own numeric update rule and public notification order.
 pub(crate) fn remove_all_listeners(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -492,7 +492,7 @@ pub(crate) fn remove_all_listeners(
 }
 
 fn validate_listener(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     listener: RootId,
 ) -> Result<(), RootedError> {
     if context.is_callable_rooted(listener)? {
@@ -505,7 +505,7 @@ fn validate_listener(
 
 /// Registration mutates an idle listener array and copies only an active array.
 pub(crate) fn add_listener(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -570,7 +570,7 @@ pub(crate) fn add_listener(
 
 /// Once's fired bit is private to its wrapper and changes before public removal.
 pub(crate) fn once_invoke(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -591,7 +591,7 @@ pub(crate) fn once_invoke(
 }
 
 pub(crate) fn once(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -633,7 +633,7 @@ pub(crate) fn once(
 
 /// Dispatch from the canonical store.
 pub(crate) fn emit(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -676,7 +676,7 @@ pub(crate) fn emit(
 /// `ERR_UNHANDLED_ERROR` describing a non-Error value; anything else dispatches to its
 /// listeners.
 fn unhandled_or_dispatch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     target: RootId,
     event: RootId,
     arguments: RootId,
@@ -744,7 +744,7 @@ const STREAM_OWNER: &str = "quench.internal.streamOwner";
 /// `EventEmitter.captureRejectionSymbol`.
 const REJECTION_SYMBOL: &str = "nodejs.rejection";
 
-fn symbol_for(context: &mut NativeContext<'_, NodeHost>, description: &str) -> Result<RootId, RootedError> {
+fn symbol_for(context: &mut NativeContext<'_>, description: &str) -> Result<RootId, RootedError> {
     let global = context.global_root()?;
     let symbol = get(context, global, "Symbol")?;
     let registry = get(context, symbol, "for")?;
@@ -768,73 +768,73 @@ const PROTOTYPE_METHODS: &[(&str, &str, u32)] = &[
     ("emit", "emitterProtoEmit", 1),
 ];
 
-fn argument(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], index: usize) -> RootId {
+fn argument(context: &mut NativeContext<'_>, args: &[RootId], index: usize) -> RootId {
     match args.get(index) {
         Some(value) => *value,
         None => context.undefined(),
     }
 }
 
-pub(crate) fn proto_event_names(c: &mut NativeContext<'_, NodeHost>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_event_names(c: &mut NativeContext<'_>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let missing = c.undefined();
     names(c, missing, &[this])
 }
 
-pub(crate) fn proto_listeners(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_listeners(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (missing, event) = (c.undefined(), argument(c, args, 0));
     listeners(c, missing, &[this, event])
 }
 
-pub(crate) fn proto_raw_listeners(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_raw_listeners(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (missing, event) = (c.undefined(), argument(c, args, 0));
     raw_listeners(c, missing, &[this, event])
 }
 
-pub(crate) fn proto_listener_count(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_listener_count(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (missing, event, listener) = (c.undefined(), argument(c, args, 0), argument(c, args, 1));
     count(c, missing, &[this, event, listener])
 }
 
-fn proto_add(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId], prepend: bool) -> Result<RootId, RootedError> {
+fn proto_add(c: &mut NativeContext<'_>, this: RootId, args: &[RootId], prepend: bool) -> Result<RootId, RootedError> {
     let (missing, event, listener) = (c.undefined(), argument(c, args, 0), argument(c, args, 1));
     let prepend = c.boolean(prepend);
     add_listener(c, missing, &[this, event, listener, prepend])
 }
 
-pub(crate) fn proto_add_listener(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_add_listener(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     proto_add(c, this, args, false)
 }
 
-pub(crate) fn proto_prepend_listener(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_prepend_listener(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     proto_add(c, this, args, true)
 }
 
-fn proto_once_with(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId], prepend: bool) -> Result<RootId, RootedError> {
+fn proto_once_with(c: &mut NativeContext<'_>, this: RootId, args: &[RootId], prepend: bool) -> Result<RootId, RootedError> {
     let (missing, event, listener) = (c.undefined(), argument(c, args, 0), argument(c, args, 1));
     let prepend = c.boolean(prepend);
     once(c, missing, &[this, event, listener, prepend])
 }
 
-pub(crate) fn proto_once(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_once(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     proto_once_with(c, this, args, false)
 }
 
-pub(crate) fn proto_prepend_once_listener(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_prepend_once_listener(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     proto_once_with(c, this, args, true)
 }
 
-pub(crate) fn proto_remove_listener(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_remove_listener(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (missing, event, listener) = (c.undefined(), argument(c, args, 0), argument(c, args, 1));
     remove_listener(c, missing, &[this, event, listener])
 }
 
-pub(crate) fn proto_remove_all_listeners(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_remove_all_listeners(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (missing, event) = (c.undefined(), argument(c, args, 0));
     let has_event = c.boolean(!args.is_empty());
     remove_all_listeners(c, missing, &[this, event, has_event])
 }
 
-pub(crate) fn proto_emit(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_emit(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (missing, event) = (c.undefined(), argument(c, args, 0));
     let rest = c.array_rooted(args.get(1..).unwrap_or(&[]))?;
     emit(c, missing, &[this, event, rest])
@@ -843,7 +843,7 @@ pub(crate) fn proto_emit(c: &mut NativeContext<'_, NodeHost>, this: RootId, args
 /// `EventEmitter` (callable as `EventEmitter.call(this)` and with `new`): runs
 /// `EventEmitter.init` on the receiver, whatever function that property holds (`node:domain`
 /// replaces it).
-pub(crate) fn constructor(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn constructor(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let data = c.host_function_data()?;
     let emitter = get(c, data, "emitter")?;
     let init = get(c, emitter, "init")?;
@@ -853,7 +853,7 @@ pub(crate) fn constructor(c: &mut NativeContext<'_, NodeHost>, this: RootId, arg
 
 /// `EventEmitter.init(options)`: a fresh listener store unless the receiver inherits one it
 /// already shadows, `_maxListeners` kept or `undefined`, and the capture-rejections flag.
-pub(crate) fn init(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn init(c: &mut NativeContext<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let data = c.host_function_data()?;
     let shape_key = get(c, data, "shapeKey")?;
     let capture_key = get(c, data, "captureKey")?;
@@ -889,7 +889,7 @@ pub(crate) fn init(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[Ro
 }
 
 /// Defines the shared `EventEmitter` class as `globalThis.__nodeEventEmitter`.
-pub(crate) fn install_class(c: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<RootId, RootedError> {
+pub(crate) fn install_class(c: &mut NativeContext<'_>, data: RootId) -> Result<RootId, RootedError> {
     let emitter = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("emitterConstructor"), "EventEmitter", data)?;
     c.assign_named_property_rooted(data, "emitter", emitter)?;
     // Node assigns `init` an anonymous function.

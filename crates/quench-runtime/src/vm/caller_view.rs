@@ -110,7 +110,7 @@ impl CallerView for FrameRecord {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The view of the frame at `index` of the VM's stack.
     pub(super) fn frame_caller(&self, index: usize) -> &dyn CallerView {
         &*self.frames[index]

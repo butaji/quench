@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether code may hold an object's exact `shape` past a call, under a dependency on its
     /// departures (`Heap::subscribe_shape`): no object has ever left it, which the table shows as
     /// a shape with no child (a departure adds, deletes, reconfigures or converts, each making a

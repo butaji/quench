@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn normalize(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -177,7 +177,7 @@ pub(crate) fn normalize(
     Ok(plan)
 }
 fn port_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     connecting: bool,
 ) -> Result<RootedError, RootedError> {
@@ -193,7 +193,7 @@ fn port_error(
     Ok(context.throw(error))
 }
 fn invalid_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     options: RootId,
 ) -> Result<RootedError, RootedError> {
     let mut missing = false;

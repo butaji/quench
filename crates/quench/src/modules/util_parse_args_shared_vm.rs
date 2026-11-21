@@ -1,7 +1,7 @@
 //! Node argument parsing over the shared VM's original ECMAScript operations.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 use crate::modules::util_shared_vm::named_get as get;
 fn define(
@@ -806,14 +806,14 @@ fn config_value(
 }
 fn main_args(c: &mut Context<'_>, op: Operations) -> Result<RootId, RootedError> {
     let process = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
         .ok_or_else(|| RootedError::host("process is not initialized"))?;
     let argv = get(c, process, "argv")?;
     // Read the normalized startup fact, independent of public argv metadata.
-    let eval = c.host_mut().eval_source_nonempty;
+    let eval = c.host_as::<crate::host::NodeHost>().eval_source_nonempty;
     let start = c.number(if eval { 1.0 } else { 2.0 });
     op.call(c, "arraySlice", argv, &[start])
 }

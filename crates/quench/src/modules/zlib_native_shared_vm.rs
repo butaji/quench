@@ -4,7 +4,7 @@ use super::zlib_constants::Mode;
 use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 const CACHE: &str = "\0binding:zlib/native";
 #[derive(Default)]
 pub(crate) struct State {
@@ -47,7 +47,7 @@ fn number(c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<usize, R
     }
 }
 fn find_index(c: &mut Context<'_>, handle: RootId) -> Result<Option<usize>, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let keys = shared
         .borrow()
         .zlib_native
@@ -73,7 +73,7 @@ fn payload(c: &mut Context<'_>, api: RootId, handle: RootId) -> Result<RootId, R
     c.weak_map_get_rooted(map, handle)
 }
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(v) = shared.borrow().builtin_cache.get(CACHE).copied() {
         return Ok(v);
     }
@@ -177,7 +177,7 @@ fn create_handle(c: &mut Context<'_>, handle: RootId, mode: Mode) -> Result<Root
     let set = get(c, api, "set")?;
     c.call_rooted(set, map, &[handle, data])?;
     let identity = c.host_weak_root(handle)?;
-    c.host_mut()
+    c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .zlib_native
@@ -196,7 +196,7 @@ pub(crate) fn initialize(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mode = shared.borrow().zlib_native.entries[i].mode;
     if !matches!(shared.borrow().zlib_native.entries[i].phase, Phase::New) {
         return Err(fail(c, "Compression handle already initialized"));
@@ -425,7 +425,7 @@ pub(crate) fn write_sync(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let write = arguments(c, args)?;
     let api = c.host_function_data()?;
     let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
@@ -453,7 +453,7 @@ pub(crate) fn write_sync(
 fn queue_poll(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
     let callback =
         c.host_function_with_data(crate::host::shared_vm::operation!("zlibNativePoll"), data)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = shared
         .borrow_mut()
         .scheduler
@@ -481,7 +481,7 @@ pub(crate) fn write(
     let i = index(c, handle)?;
     let write = arguments(c, args)?;
     let api = c.host_function_data()?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
     let mut engine = match phase {
         Phase::Ready(engine) => engine,
@@ -522,7 +522,7 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
     let api = get(c, data, "0")?;
     let handle = get(c, data, "1")?;
     let i = index(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let completed = {
         let state = shared.borrow();
         match &state.zlib_native.entries[i].phase {
@@ -591,7 +591,7 @@ fn close_handle(c: &mut Context<'_>, api: RootId, handle: RootId) -> Result<(), 
     let Some(i) = find_index(c, handle)? else {
         return Ok(());
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if matches!(shared.borrow().zlib_native.entries[i].phase, Phase::Busy(_)) {
         shared.borrow_mut().zlib_native.entries[i].close_requested = true;
         return Ok(());
@@ -633,7 +633,7 @@ fn with_engine(
     operation: impl FnOnce(&mut Engine) -> Result<(), Failure>,
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = match &mut shared.borrow_mut().zlib_native.entries[i].phase {
         Phase::Ready(engine) => Some(operation(engine)),
         Phase::Busy(_) => None,

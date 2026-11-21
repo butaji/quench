@@ -51,7 +51,7 @@ fn query_pair<const COLLIDING: bool, const HASH_LOOKUP: bool>(b: &mut Bencher) {
     assert_ne!(expected[0], expected[1]);
     assert_eq!(vm.name_atom_memo.candidate(inputs[0]).is_some(), !COLLIDING);
     assert_eq!(vm.name_atom_memo.candidate(inputs[1]), Some(expected[1]));
-    let query = |vm: &mut super::super::Vm<crate::test_host::TestHost>, name| {
+    let query = |vm: &mut super::super::Vm, name| {
         if HASH_LOOKUP {
             vm.lookup_atom(name).unwrap()
         } else {

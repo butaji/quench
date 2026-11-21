@@ -44,7 +44,7 @@ impl ArrayCopyPlan<'_> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn array_copy_native(
         &mut self,
         p: &ResidualProgram,
@@ -183,7 +183,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `[...source]` appended to the empty literal `array`: an intact array without holes
     /// (`array_iteration_intact`, `present_dense_elements`) yields exactly its elements, so
     /// the literal shares their backing, copied on either's first write. `false` changes

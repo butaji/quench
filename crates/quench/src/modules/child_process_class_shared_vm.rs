@@ -6,7 +6,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 /// The child's host id and its timeout and abort subscriptions.
@@ -92,7 +92,7 @@ fn process(c: &mut Context<'_>) -> Outcome {
 /// The public module object, built once with the classes it exports.
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let emitter_api = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .event_targets_api

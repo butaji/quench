@@ -11,7 +11,7 @@ pub(super) enum TypedArrayElement {
     Number(f64),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(crate) fn embedding_array_buffer_aligned_offset(
         &mut self,
         root: RootId,
@@ -1071,7 +1071,7 @@ impl TypedViewCache {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The element count of the typed array `object` from its current cached entry
     /// (`TypedViewCache`): what its intrinsic `length` getter answers, where the entry holds,
     /// since every event that could detach, resize or move its buffer ends the view epoch.
@@ -1224,7 +1224,7 @@ pub(crate) struct TypedSpan {
     pub(crate) store: (usize, usize),
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The elements of the fixed-length typed array `object` of a Number kind, as a loop
     /// kernel reads and writes them without guest code; `None` for any other value, a
     /// detached, length-tracking, shared or Wasm buffer, or a BigInt or Float16 kind. Valid

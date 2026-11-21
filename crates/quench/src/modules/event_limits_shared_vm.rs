@@ -10,7 +10,7 @@ pub(crate) const ABORT_SIGNAL_MAX_LISTENERS: f64 = 0.0;
 
 use crate::modules::util_shared_vm::named_get as get;
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -21,7 +21,7 @@ fn set(
 }
 // Keep strict JavaScript assignment errors in the runtime's property semantics.
 fn assign(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     data: RootId,
     object: RootId,
     key: RootId,
@@ -32,13 +32,13 @@ fn assign(
     context.call_rooted(operation, undefined, &[object, key, value])?;
     Ok(())
 }
-fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn nullish(context: &NativeContext<'_>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 fn validate(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -62,8 +62,8 @@ fn validate(
     Ok(())
 }
 
-pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    let state = context.host_mut().shared_state();
+pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let data = state
         .borrow()
         .event_targets_api
@@ -103,7 +103,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 }
 
 pub(crate) fn default_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -111,7 +111,7 @@ pub(crate) fn default_get(
     get(context, data, "defaultMaxListeners")
 }
 pub(crate) fn default_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -123,7 +123,7 @@ pub(crate) fn default_set(
     Ok(undefined)
 }
 fn emitter_max(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     data: RootId,
     emitter: RootId,
 ) -> Result<RootId, RootedError> {
@@ -138,7 +138,7 @@ fn emitter_max(
     }
 }
 pub(crate) fn emitter_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -148,7 +148,7 @@ pub(crate) fn emitter_get(
     emitter_max(context, data, target)
 }
 pub(crate) fn emitter_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -162,7 +162,7 @@ pub(crate) fn emitter_set(
     Ok(target)
 }
 pub(crate) fn global_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -191,7 +191,7 @@ pub(crate) fn global_get(
     )?)
 }
 pub(crate) fn global_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -248,7 +248,7 @@ pub(crate) fn global_set(
 /// Derive warning metadata after the bridge installs the new listener array.
 /// Warning state belongs to the canonical listener array.
 pub(super) fn registered(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     data: RootId,
     target: RootId,
     event: RootId,
@@ -312,7 +312,7 @@ pub(super) fn registered(
 
 /// `EventEmitter.prototype.getMaxListeners()`.
 pub(crate) fn proto_max_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     this: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -322,7 +322,7 @@ pub(crate) fn proto_max_get(
 
 /// `EventEmitter.prototype.setMaxListeners(n)`.
 pub(crate) fn proto_max_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     this: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

@@ -45,7 +45,7 @@ impl ParameterHome {
     }
 
     /// Stores `value` to the parameter's binding, an environment's after its barrier.
-    pub(in crate::vm) fn write<H: Host>(self, vm: &mut Vm<H>, value: Value) {
+    pub(in crate::vm) fn write(self, vm: &mut Vm, value: Value) {
         match self {
             // SAFETY: a local of a live window.
             Self::Local(binding) => unsafe { *binding = value },
@@ -89,7 +89,7 @@ impl LaneStack {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Records the depth of the window activation just pushed at `depth` on the `arguments`
     /// object its window holds, where an element's write finds its parameter
     /// (`LaneStack::window_parameter`).

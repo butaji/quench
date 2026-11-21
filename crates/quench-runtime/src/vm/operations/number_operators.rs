@@ -98,7 +98,7 @@ fn immediate_int(value: Value) -> Option<i32> {
     })
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A numeric operator or a relational comparison of operands that are Numbers or
     /// immediate primitives (`undefined`, `null`, a Boolean): their ToPrimitive is themselves
     /// and their ToNumeric is `Value::immediate_number`, which runs no guest code, so they

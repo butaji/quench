@@ -1,6 +1,6 @@
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn cached_functions(
         &self,
         program: ProgramId,
@@ -118,7 +118,7 @@ impl ModuleFunctions {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The hoisted function `id` of module instance `program`, if its instance made one that is
     /// still live.
     pub(super) fn module_function(&self, program: ProgramId, id: u32) -> Option<Value> {

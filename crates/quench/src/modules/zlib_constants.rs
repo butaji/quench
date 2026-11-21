@@ -252,9 +252,9 @@ fn vernum(version: &str) -> f64 {
 }
 
 /// `internalBinding('constants').zlib`: read-only, non-deletable (NODE_DEFINE_CONSTANT).
-pub(crate) fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn constants(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0builtin:zlib/constants";
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(value);
     }

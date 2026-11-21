@@ -8,7 +8,7 @@ use crate::modules::host_members::{captured, current, members};
 use crate::modules::webstreams_shared_vm::{arg, deferred, get, is_nullish, literal, put, record, resolved, upon};
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Member, "streamConsumers", [

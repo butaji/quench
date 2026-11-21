@@ -1,7 +1,7 @@
 //! The vector family of the specializer's machine: `MachineVector` as Cranelift vector
 //! instructions; a vector loads and stores as `Lane::V128` (`MachineAccess`). A vector shift reduces its count modulo the lane width, as Wasm does.
 
-use super::super::{Emitter, Host, Kind, VECTOR_IR};
+use super::super::{Emitter, Kind, VECTOR_IR};
 use crate::WasmType;
 use crate::staged::machine::MachineVector;
 use crate::staged::wasm_simd::{Lanes, Native, NativeOp};
@@ -20,7 +20,7 @@ fn type_in_lane(lanes: Lanes) -> ir::Type {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     fn shift_in_lane(&mut self, op: NativeOp, left: ir::Value, count: ir::Value) -> ir::Value {
         let ins = self.body.core.builder.ins();
         match op {
@@ -48,7 +48,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> MachineVector for Emitter<'_, '_, H> {
+impl MachineVector for Emitter<'_, '_> {
     fn operation_in_lane(&mut self, native: Native, left: ir::Value, right: Option<ir::Value>) -> ir::Value {
         let left = self.vector_view(native.lanes, left);
         match (native.op, right) {

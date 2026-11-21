@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 /// reach builtins and Node library modules through.
 pub(crate) const BOOTSTRAP_REQUIRE: &str = "\0quench:require";
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 // Node's public CommonJS wrapper; this is guest compilation input, not an API shim.
 const WRAPPER_PREFIX: &str = "(function (exports, require, module, __filename, __dirname) { ";
@@ -152,7 +152,7 @@ pub(crate) fn entry_path(path: &Path, addons_enabled: bool) -> Result<PathBuf, S
 
 /// Match Node's tryGetCwd fallback for eval and stdin module setup.
 fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
-    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    let cwd = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.clone();
     if let Ok(path) = cwd.query_path() {
         return Ok(path);
     }
@@ -472,7 +472,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // builtin loader in both Script and Module goals. Keep it under a private
     // global key so ESM does not acquire a user-visible global `require`.
     let bootstrap_filename =
-        inline_directory(context)?.join(context.host_mut().inline_source.label());
+        inline_directory(context)?.join(context.host_as::<crate::host::NodeHost>().inline_source.label());
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
     set(context, global, BOOTSTRAP_REQUIRE, bootstrap_require)?;
     context.release_root(bootstrap_require);
@@ -509,12 +509,12 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_console_global");
     crate::host::resident_pages::release_read_only_pages();
-    if let Some(kind) = context.host_mut().building_snapshot {
+    if let Some(kind) = context.host_as::<crate::host::NodeHost>().building_snapshot {
         crate::host::startup_snapshot::preload(context, kind)?;
-        let builtins = std::mem::take(&mut context.host_mut().snapshot_builtins);
+        let builtins = std::mem::take(&mut context.host_as::<crate::host::NodeHost>().snapshot_builtins);
         let names: Vec<&str> = builtins.iter().map(String::as_str).collect();
         let loaded = crate::host::startup_snapshot::preload_named(context, &names);
-        context.host_mut().snapshot_builtins = builtins;
+        context.host_as::<crate::host::NodeHost>().snapshot_builtins = builtins;
         return loaded;
     }
     finish_initialize(context)
@@ -532,9 +532,9 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     context.scoped(initialize_cluster_worker)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_channels");
-    let interactive = context.host_mut().commonjs_entry.is_none()
+    let interactive = context.host_as::<crate::host::NodeHost>().commonjs_entry.is_none()
         && context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
             .exec_argv
@@ -554,15 +554,15 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
-    if context.host_mut().eval_builtin_globals {
+    if context.host_as::<crate::host::NodeHost>().eval_builtin_globals {
         context.scoped(crate::modules::eval_globals_shared_vm::install)?;
     }
     if context.is_module()? {
         return Ok(());
     }
-    if let Some(entry) = context.host_mut().commonjs_entry.clone() {
+    if let Some(entry) = context.host_as::<crate::host::NodeHost>().commonjs_entry.clone() {
         #[cfg(feature = "native-execution")]
-        let filename = context.host_mut().module_path(&entry.path).map_err(|error| RootedError::host(error.to_string()))?;
+        let filename = context.host_as::<crate::host::NodeHost>().module_path(&entry.path).map_err(|error| RootedError::host(error.to_string()))?;
         #[cfg(not(feature = "native-execution"))]
         let filename = std::fs::canonicalize(entry.path).map_err(|error| RootedError::host(error.to_string()))?;
         #[cfg(feature = "profile-memory")]
@@ -576,9 +576,9 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         context.profile_memory_checkpoint("node_entry_run_main_ready");
         context.call_rooted(run_main, module, &[filename])?;
     } else {
-        let filename = inline_directory(context)?.join(context.host_mut().inline_source.label());
+        let filename = inline_directory(context)?.join(context.host_as::<crate::host::NodeHost>().inline_source.label());
         let module = module_record(context, &filename, None, false)?;
-        let label = context.host_mut().inline_source.label();
+        let label = context.host_as::<crate::host::NodeHost>().inline_source.label();
         let label = context.string_rooted(label);
         set(context, module, "id", label)?;
         let global = context.global_root()?;
@@ -591,11 +591,11 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         let dirname = context.string_rooted(".");
         set(context, global, "__dirname", dirname)?;
         #[cfg(quench_openssl_provider)]
-        if context.host_mut().eval_crypto {
+        if context.host_as::<crate::host::NodeHost>().eval_crypto {
             crate::modules::eval_globals_shared_vm::bind_crypto(context)?;
         }
-        if let Some(source) = context.host_mut().eval_print.take() {
-            let name = context.host_mut().inline_source.compilation_name();
+        if let Some(source) = context.host_as::<crate::host::NodeHost>().eval_print.take() {
+            let name = context.host_as::<crate::host::NodeHost>().inline_source.compilation_name();
             crate::modules::eval_globals_shared_vm::print(context, &source, name)?;
         }
     }
@@ -607,7 +607,7 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
     // The shared option parser combines NODE_OPTIONS with the invocation
     // arguments, preserving repeated --require flags in startup order.
     let requires = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .cli_options
@@ -683,7 +683,7 @@ const WEBSOCKET_GLOBALS: [&str; 2] = ["WebSocket", "CloseEvent"];
 /// WebSocket family on `--experimental-websocket`).
 fn web_global_enabled(context: &mut Context<'_>, name: &str) -> bool {
     !WEBSOCKET_GLOBALS.contains(&name)
-        || context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-websocket")
+        || context.host_as::<crate::host::NodeHost>().shared_state().borrow().cli_options.enabled("--experimental-websocket")
 }
 
 
@@ -728,7 +728,7 @@ pub(super) fn module_run_main(
         .string_text(filename)?
         .ok_or_else(|| RootedError::host("Module.runMain entry path is not a string"))?;
     let goal = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .commonjs_entry
         .as_ref()
         .map_or(EntryGoal::Node, |entry| entry.goal);
@@ -753,7 +753,7 @@ pub(crate) fn require_for_module(
 ) -> Result<RootId, RootedError> {
     let requested = specifier(context, args, Request::Require)?;
     let already_tracing = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .module_require_trace_active;
@@ -761,7 +761,7 @@ pub(crate) fn require_for_module(
         return require_for_module_inner(context, parent, args);
     }
     let subscribed = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .diagnostics
@@ -779,7 +779,7 @@ pub(crate) fn require_for_module(
     set(context, event, "parentFilename", parent_filename)?;
     context.release_root(parent_filename);
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .module_require_trace_active = true;
@@ -790,7 +790,7 @@ pub(crate) fn require_for_module(
     );
     if let Err(error) = start_publish {
         context
-            .host_mut()
+            .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow_mut()
             .module_require_trace_active = false;
@@ -798,19 +798,19 @@ pub(crate) fn require_for_module(
         return Err(error);
     }
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .module_require_trace_active = false;
 
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .module_require_trace_active = true;
     let result = require_for_module_inner(context, parent, args);
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .module_require_trace_active = false;
@@ -818,7 +818,7 @@ pub(crate) fn require_for_module(
         Ok(exports) => {
             set(context, event, "result", exports)?;
             context
-                .host_mut()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow_mut()
                 .module_require_trace_active = true;
@@ -828,7 +828,7 @@ pub(crate) fn require_for_module(
                 event,
             );
             context
-                .host_mut()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow_mut()
                 .module_require_trace_active = false;
@@ -840,7 +840,7 @@ pub(crate) fn require_for_module(
             if let Some(exception) = error.exception {
                 set(context, event, "error", exception)?;
                 context
-                    .host_mut()
+                    .host_as::<crate::host::NodeHost>()
                     .shared_state()
                     .borrow_mut()
                     .module_require_trace_active = true;
@@ -856,7 +856,7 @@ pub(crate) fn require_for_module(
                 );
             }
             context
-                .host_mut()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow_mut()
                 .module_require_trace_active = false;
@@ -891,7 +891,7 @@ fn require_for_module_inner(
                 .is_some_and(|value| value.is_undefined())
             {
                 if context
-                    .host_mut()
+                    .host_as::<crate::host::NodeHost>()
                     .shared_state()
                     .borrow()
                     .active_esm_requires
@@ -936,7 +936,7 @@ fn require_for_module_inner(
     }
     match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {
-            return match context.host_mut().shared_state().borrow().process_module {
+            return match context.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module {
                 Some(root) => Ok(root),
                 _ => Err(RootedError::host(
                     "shared process module is not initialized",
@@ -1445,7 +1445,7 @@ impl BuiltinModule {
 /// Whether scripts can require Node's internal modules (`--expose-internals`).
 fn internals_exposed(context: &mut Context<'_>) -> bool {
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .cli_options
@@ -1612,7 +1612,7 @@ fn builtin_cache_key(builtin: BuiltinModule) -> Result<String, RootedError> {
 /// Rebind process-dependent state without loading an otherwise unused module.
 pub(super) fn refresh_module_paths(context: &mut Context<'_>) -> Result<(), RootedError> {
     let key = builtin_cache_key(BuiltinModule::Module)?;
-    let module = context.host_mut().shared_state().borrow().builtin_cache.get(&key).copied();
+    let module = context.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(&key).copied();
     if let Some(module) = module {
         crate::modules::module_shared_vm::install_global_paths(context, module)?;
     }
@@ -1627,7 +1627,7 @@ fn cached_builtin(
     // Reentrant requires must observe module.exports reassignment during loading,
     // rather than a second cache retaining an earlier partial export object.
     let key = builtin_cache_key(builtin)?;
-    let roots = context.host_mut().shared_state();
+    let roots = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(module) = roots.borrow().builtin_cache.get(&key).copied() {
         return Ok(module);
     }
@@ -1648,7 +1648,7 @@ pub(crate) fn cached_native_binding(
     key: &'static str,
     build: impl FnOnce(&mut Context<'_>) -> Result<RootId, RootedError>,
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(key).copied() {
         return Ok(value);
     }
@@ -1900,7 +1900,7 @@ fn install_global_descriptors(context: &mut Context<'_>) -> Result<(), RootedErr
 /// `navigator`'s getter: one object whose `userAgent` names the Node major version.
 pub(crate) fn navigator_get(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     const CACHE: &str = "\0builtin:navigator";
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(navigator) = shared.borrow().builtin_cache.get(CACHE).copied() {
         return Ok(navigator);
     }
@@ -2027,7 +2027,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Internal("_tls_common") | BuiltinModule::Internal("_tls_wrap") => {
             let process = context
-                .host_mut()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow()
                 .process_module
@@ -2083,7 +2083,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal("internal/abort_controller") => {
             let module = native_global_namespace(context, &["AbortController", "AbortSignal"])?;
             let data = context
-                .host_mut()
+                .host_as::<crate::host::NodeHost>()
                 .shared_state()
                 .borrow()
                 .event_targets_api
@@ -2279,14 +2279,14 @@ fn resolve_filename_in(
     let filename = context.string_text(filename)?;
     #[cfg(feature = "native-execution")]
     if lookup.is_none() {
-        if let Some(target) = filename.as_deref().and_then(|parent| context.host_mut().embedded_resolution(Path::new(parent), specifier)) {
+        if let Some(target) = filename.as_deref().and_then(|parent| context.host_as::<crate::host::NodeHost>().embedded_resolution(Path::new(parent), specifier)) {
             return Ok(target);
         }
     }
     let resolved = resolve_filename_from_host(context, specifier, parent, lookup, filename.as_deref());
     if lookup.is_none() {
         if let (Some(parent), Ok(target)) = (filename.as_deref(), &resolved) {
-            context.host_mut().record_module_resolution(Path::new(parent), specifier, target).map_err(RootedError::host)?;
+            context.host_as::<crate::host::NodeHost>().record_module_resolution(Path::new(parent), specifier, target).map_err(RootedError::host)?;
         }
     }
     resolved
@@ -2314,7 +2314,7 @@ fn resolve_filename_from_host(
             None
         };
         if let Some(path) = virtual_path {
-            if context.host_mut().embedded_module(&path).is_some() {
+            if context.host_as::<crate::host::NodeHost>().embedded_module(&path).is_some() {
                 return Ok(path);
             }
         }
@@ -2340,7 +2340,7 @@ fn resolve_filename_from_host(
         }
         Err(failure)
     };
-    let addons_enabled = context.host_mut().shared_state().borrow().cli_options.enabled("--addons");
+    let addons_enabled = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cli_options.enabled("--addons");
     let (outcome, missing_package) = with_commonjs_resolver_for(addons_enabled, |resolver| match resolve_kept(resolver, resolve_in_bases) {
         Ok(found) => (Ok(found), None),
         Err((base, error)) => {
@@ -2417,7 +2417,7 @@ fn resolve_filename_from_host(
 /// The weak keys preserve Node's private first-parent relation independently of
 /// the mutable public module.parent projection.
 fn module_parent_api(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    if let Some(api) = context.host_mut().shared_state().borrow().module_parent_api {
+    if let Some(api) = context.host_as::<crate::host::NodeHost>().shared_state().borrow().module_parent_api {
         return Ok(api);
     }
     let global = context.global_root()?;
@@ -2447,7 +2447,7 @@ fn module_parent_api(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     let api = context.retain(api)?;
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .module_parent_api = Some(api);
@@ -2483,7 +2483,7 @@ fn delete_relative_resolution(
 
 pub(crate) fn commonjs_cache(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     use crate::host::node_host::CommonJsCache;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let owner = shared.borrow().commonjs_cache;
     match owner {
         Some(CommonJsCache::Bootstrap(cache)) => Ok(cache),
@@ -2506,7 +2506,7 @@ pub(crate) fn attach_module_cache(
     set(context, module, "_cache", cache)?;
     let owner = context.retain(module)?;
     let previous = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .commonjs_cache
@@ -2564,7 +2564,7 @@ fn module_record(
     let module = context.object_rooted()?;
     let exports = context.object_rooted()?;
     set(context, module, "exports", exports)?;
-    let hot = context.host_mut().shared_state().borrow().hmr.is_some()
+    let hot = context.host_as::<crate::host::NodeHost>().shared_state().borrow().hmr.is_some()
         && crate::host::hmr::HmrState::watches(filename);
     if hot {
         let hot = crate::host::hmr::create_hot(context, &filename.to_string_lossy())?;
@@ -2618,7 +2618,7 @@ fn module_record(
         .collect::<Vec<_>>();
     let paths = context.array_rooted(&paths)?;
     set(context, module, "paths", paths)?;
-    let process = match context.host_mut().shared_state().borrow().process_module {
+    let process = match context.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module {
         Some(root) => root,
         _ => {
             return Err(RootedError::host(
@@ -2693,7 +2693,7 @@ fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<
         return Err(throw_module_load_error(context, error)?);
     }
     let url = url::Url::from_file_path(filename).map_err(|_| RootedError::host("invalid ES module filename"))?;
-    let module = match context.host_mut().resolve_required_module(&filename.to_string_lossy(), url.as_str()) {
+    let module = match context.host_as::<crate::host::NodeHost>().resolve_required_module(&filename.to_string_lossy(), url.as_str()) {
         Ok(module) => module,
         Err(error) => return Err(throw_module_load_error(context, error)?),
     }
@@ -2770,7 +2770,7 @@ fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<
 /// Read a module's original bytes through the selected module input provider.
 fn module_file_bytes(context: &mut Context<'_>, path: &Path, kind: quench_runtime::SourceKind) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "native-execution")]
-    { context.host_mut().module_bytes(path, kind) }
+    { context.host_as::<crate::host::NodeHost>().module_bytes(path, kind) }
     #[cfg(not(feature = "native-execution"))]
     { let _ = (context, kind); std::fs::read(path) }
 }
@@ -2793,7 +2793,7 @@ fn load_with_resolution(
 ) -> Result<RootId, RootedError> {
     record_hmr_load(context, parent, filename, resolution.map(|(_, specifier)| specifier))?;
     let key = filename.to_string_lossy().into_owned();
-    let roots = context.host_mut().shared_state();
+    let roots = context.host_as::<crate::host::NodeHost>().shared_state();
     let active = roots.borrow().active_esm_requires.get(&key).copied();
     if let Some(active) = active {
         let mut message = format!("Cannot require() ES Module {key} in a cycle.");
@@ -2824,7 +2824,7 @@ fn load_with_resolution(
     // file is parsed once, not again for detection (typescript.js: a 9 MB text's tree and
     // tables, the peak of loading it).
     #[cfg(feature = "native-execution")]
-    let archived_kind = context.host_mut().embedded_module(filename).map(|file| file.kind);
+    let archived_kind = context.host_as::<crate::host::NodeHost>().embedded_module(filename).map(|file| file.kind);
     #[cfg(not(feature = "native-execution"))]
     let archived_kind: Option<quench_runtime::SourceKind> = None;
     let declared = match goal {
@@ -2833,7 +2833,7 @@ fn load_with_resolution(
             .map_err(RootedError::host)?,
         _ => Some(quench_runtime::SourceKind::Script),
     };
-    let is_main = parent.is_none() && context.host_mut().commonjs_entry.is_some();
+    let is_main = parent.is_none() && context.host_as::<crate::host::NodeHost>().commonjs_entry.is_some();
     let module = module_record(context, filename, parent, is_main)?;
     if let Some(parent) = parent {
         transition_child(context, parent, module, ChildTransition::Attach)?;
@@ -2871,7 +2871,7 @@ fn record_hmr_load(
     filename: &Path,
     specifier: Option<&str>,
 ) -> Result<(), RootedError> {
-    if context.host_mut().shared_state().borrow().hmr.is_none() {
+    if context.host_as::<crate::host::NodeHost>().shared_state().borrow().hmr.is_none() {
         return Ok(());
     }
     let importer = match parent {
@@ -2933,7 +2933,7 @@ pub(crate) fn hmr_replace(context: &mut Context<'_>, path: &Path) -> Result<bool
         return Ok(false);
     };
     let process = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .process_module
@@ -3055,7 +3055,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
             Err(error) => return Err(RootedError::host(error.to_string())),
         };
     #[cfg(feature = "native-execution")]
-    let prepared = context.host_mut().embedded_module(filename).and_then(|file| file.prepared);
+    let prepared = context.host_as::<crate::host::NodeHost>().embedded_module(filename).and_then(|file| file.prepared);
     #[cfg(not(feature = "native-execution"))]
     let prepared: Option<()> = None;
     let file_text: std::borrow::Cow<'static, str> = match prepared {
@@ -3066,7 +3066,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
         _ => file_text,
     };
     if TypeScriptFile::of(filename).is_some_and(TypeScriptFile::loads_as_commonjs) {
-        context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
+        context.host_as::<crate::host::NodeHost>().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
     }
 
     // An embedded file is static text the compiled program can retain as is; a
@@ -3180,7 +3180,7 @@ fn load_es_module(
     parent: Option<RootId>,
 ) -> Result<RootId, RootedError> {
     let retained = context.retain(module)?;
-    context.host_mut().shared_state().borrow_mut().active_esm_requires.insert(key.to_owned(), retained);
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().active_esm_requires.insert(key.to_owned(), retained);
     let exports = require_es_module(context, filename, parent)?;
     set(context, module, "exports", exports)?;
     let loaded = context.boolean(true);
@@ -3325,7 +3325,7 @@ fn set(
 /// Run the unchanged SDK worker policy after native process IPC and require
 /// exist, matching initializeClusterIPC's startup boundary.
 pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let process = shared
         .borrow()
         .process_module

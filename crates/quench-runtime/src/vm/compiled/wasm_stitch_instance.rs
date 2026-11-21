@@ -1,6 +1,6 @@
 //! The instance operations of the b-jit's Wasm functions that call the VM: `memory.grow`
 //! (`Memory::Grow`, `staged/wasm_memory.rs`), the row `quench-bjit/stencils/wasm_rows_instance.rs`
-//! (`MEMORY_GROW`). The u-jit's callout is `memory_grow_callout::<H>` (`vm/compiled/wasm_memory_stage.rs`),
+//! (`MEMORY_GROW`). The u-jit's callout is `memory_grow_callout` (`vm/compiled/wasm_memory_stage.rs`),
 //! reached through the context's `memory_grow` slot (`CONTEXT_MEMORY_GROW`), which the VM fills
 //! when it builds the run's context. The row's offsets are `compiled.rs`'s constants, so no
 //! `World` field is needed for them.

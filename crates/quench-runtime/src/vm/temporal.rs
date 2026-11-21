@@ -49,7 +49,7 @@ struct TemporalRelativeDate {
     minimum_date_time_boundary: bool,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_temporal(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let temporal = self.object();
         let duration =
@@ -190,7 +190,7 @@ impl<H: Host> Vm<H> {
         if native == Native::TemporalNowTimeZoneId {
             return Ok(self.heap.alloc_string("UTC".into()));
         }
-        let milliseconds = HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
+        let milliseconds = HostContext::new(&mut *self.host).invoke(CapabilityId::ClockMillis, None);
         if !milliseconds.is_finite() {
             return Err(self.range_error(p, "Invalid current time".into()));
         }

@@ -15,7 +15,7 @@ pub(in crate::vm) struct AwaitResume {
     rejected: bool,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
     /// finds live there (`suspension_registers`): a collection while it is suspended traces
     /// those alone, so a dead temporary does not stay reachable until it resumes.

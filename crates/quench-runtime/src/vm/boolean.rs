@@ -1,7 +1,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_boolean(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let constructor = self.native_value(Native::Boolean);
         self.install_boolean_for_realm(p, self.realm.globals, self.object_proto, constructor)

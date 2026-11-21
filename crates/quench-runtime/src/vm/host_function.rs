@@ -20,7 +20,7 @@ impl HostEnvironmentSlot {
 /// operations `quench` declares take at most this many.
 const HOST_CALL_INLINE_ARGUMENTS: usize = 6;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A native function's private environment: traced slots outside any scope chain.
     pub(super) fn native_environment(&mut self, slots: &[Value]) -> Value {
         self.heap.alloc_environment(
@@ -199,7 +199,7 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let mut context = NativeContext::new(self);
-        H::promise_job_boundary(&mut context, resource, before)
+        (context.host_statics().promise_job_boundary)(&mut context, resource, before)
             .map_err(|error| context.finish_error(error))
     }
 
@@ -231,13 +231,13 @@ impl<H: Host> Vm<H> {
             )?;
         }
         let mut context = NativeContext::new(self);
-        H::initialize(&mut context).map_err(|error| context.finish_error(error))
+        (context.host_statics().initialize)(&mut context).map_err(|error| context.finish_error(error))
     }
 
     /// The rest of the host's installation in a restored VM (`Host::resume`).
     pub(super) fn resume_host(&mut self) -> Result<(), JsError> {
         let mut context = NativeContext::new(self);
-        H::resume(&mut context).map_err(|error| context.finish_error(error))
+        (context.host_statics().resume)(&mut context).map_err(|error| context.finish_error(error))
     }
 
     pub(super) fn initialize_host_shadow_realm(
@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
         global: crate::RootId,
     ) -> Result<Option<Value>, JsError> {
         let mut context = NativeContext::new(self);
-        let callback = H::initialize_shadow_realm(&mut context, global)
+        let callback = (context.host_statics().initialize_shadow_realm)(&mut context, global)
             .map_err(|error| context.finish_error(error))?;
         callback
             .map(|root| {

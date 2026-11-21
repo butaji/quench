@@ -1,7 +1,7 @@
 //! What a collection's end returns under the process's memory policy.
 use super::super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A collection's end: memory-first returns the warm parse arena
     /// (`compile::release_warm_arena`), a full collection expires it when no parse used it since
     /// the last one (`compile::expire_warm_arena`), and the host releases its own pages.

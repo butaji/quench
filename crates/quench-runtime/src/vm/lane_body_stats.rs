@@ -154,7 +154,7 @@ impl Miss {
 
 /// Counts a miss for `reason` in the VM's tier events and answers the helper's miss.
 #[cold]
-pub(in crate::vm) fn miss<H: super::super::Host>(vm: &super::super::Vm<H>, reason: Miss) -> u64 {
+pub(in crate::vm) fn miss(vm: &super::super::Vm, reason: Miss) -> u64 {
     vm.programs.tier_events().record_miss(reason);
     decline(MISS_NAMES[reason as usize]);
     super::super::compiled::LANE_CALL_MISSED

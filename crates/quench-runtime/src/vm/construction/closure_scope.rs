@@ -30,7 +30,7 @@ struct ClosureParts {
     shapes_key: usize,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// A closure of function `id` over `env` made by an activation whose scope chain is `chain`,
     /// outermost first: its VM frame's (`closure_in_realm`) or a window activation's
     /// (`LaneStack::with_chain`). The closure captures the objects the activation entered,

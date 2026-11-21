@@ -54,7 +54,7 @@ pub(in crate::vm) fn admits(words: [u64; 2], site: Option<OperandKinds>, fields:
 ///
 /// # Safety
 /// `cx` is the running lane's context.
-pub(in crate::vm) unsafe fn direct<H: Host>(cx: *mut LaneContext<H>, first: u64, imm: u64) -> Option<u64> {
+pub(in crate::vm) unsafe fn direct(cx: *mut LaneContext, first: u64, imm: u64) -> Option<u64> {
     let raw = WideInstruction::from_words(first, u32::try_from(imm).ok()?)?;
     if raw.returns_from_frame() {
         return None;
@@ -85,7 +85,7 @@ pub(in crate::vm) unsafe fn direct<H: Host>(cx: *mut LaneContext<H>, first: u64,
 
 /// A binary operator on two operands `Vm::number_binary` answers (Numbers, no user code), written by
 /// to its numeric local target or result register.
-fn binary<H: Host>(vm: &mut Vm<H>, frame: usize, instruction: WideInstruction, left: Operand, right: Operand, operator: u32) -> bool {
+fn binary(vm: &mut Vm, frame: usize, instruction: WideInstruction, left: Operand, right: Operand, operator: u32) -> bool {
     let (Some(left), Some(right)) = (left.register_index(), right.register_index()) else {
         return false;
     };
@@ -103,7 +103,7 @@ fn binary<H: Host>(vm: &mut Vm<H>, frame: usize, instruction: WideInstruction, l
 
 /// An element read of a present dense element or a typed array's number (`element_read_kind`), written to the
 /// result register as the interpreter's `step_index_get` writes it. A key that is not a register declines.
-fn element_read<H: Host>(vm: &mut Vm<H>, frame: usize, instruction: WideInstruction, base: Register, key: Operand) -> bool {
+fn element_read(vm: &mut Vm, frame: usize, instruction: WideInstruction, base: Register, key: Operand) -> bool {
     let Some(key) = key.register_index() else {
         return false;
     };
@@ -117,7 +117,7 @@ fn element_read<H: Host>(vm: &mut Vm<H>, frame: usize, instruction: WideInstruct
 
 /// A store to a present dense element of a plain array (`store_present_element`), the interpreter's first
 /// `step_index_set` arm; any other store declines to the general path.
-fn element_write<H: Host>(vm: &mut Vm<H>, frame: usize, value: Register, base: Register, key: Register) -> bool {
+fn element_write(vm: &mut Vm, frame: usize, value: Register, base: Register, key: Register) -> bool {
     let (object, key, value) = (vm.read(frame, base), vm.read(frame, key), vm.read(frame, value));
     let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
         return false;
@@ -128,7 +128,7 @@ fn element_write<H: Host>(vm: &mut Vm<H>, frame: usize, value: Register, base: R
 /// A named read of an object's own or prototype-held data field the cache site holds (`cached_field_hit`), the
 /// interpreter's `GetField` Atom arm without its getter, private-name and frame cases, which decline. A miss
 /// declines before the general read, which then probes the site again.
-fn get_field<H: Host>(vm: &mut Vm<H>, p: &ResidualProgram, frame: usize, instruction: WideInstruction,
+fn get_field(vm: &mut Vm, p: &ResidualProgram, frame: usize, instruction: WideInstruction,
     (atom, base, cache_site): (Atom, FieldBase, u16)) -> bool {
     if base.local_index().is_some() || vm.is_private_name(atom) {
         return false;
@@ -150,14 +150,14 @@ fn get_field<H: Host>(vm: &mut Vm<H>, p: &ResidualProgram, frame: usize, instruc
 
 /// A store to an object's own data field the site's entry holds (`cached_field_store_hit`), the interpreter's
 /// first `set_field_cached` arm; any other store declines to the general path.
-fn set_field<H: Host>(vm: &mut Vm<H>, p: &ResidualProgram, frame: usize, instruction: WideInstruction,
+fn set_field(vm: &mut Vm, p: &ResidualProgram, frame: usize, instruction: WideInstruction,
     value: Register, base: Register) -> bool {
     let (object, value) = (vm.read(frame, base), vm.read(frame, value));
     vm.cached_field_store_hit(p, object, instruction.atom_index(), value, instruction.cache_site_index())
 }
 
 /// A pure unary query of a register (`logical_not`, `typeof_index_value`), written to its destination.
-fn query<H: Host>(vm: &mut Vm<H>, frame: usize, (destination, source): (Register, Register), answer: fn(&Vm<H>, Value) -> Value) -> bool {
+fn query(vm: &mut Vm, frame: usize, (destination, source): (Register, Register), answer: fn(&Vm, Value) -> Value) -> bool {
     let value = answer(vm, vm.read(frame, source));
     vm.write(frame, destination, value);
     true

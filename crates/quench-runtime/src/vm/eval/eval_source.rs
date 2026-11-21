@@ -42,7 +42,7 @@ fn wrapped_offset(text: &str, body: &str) -> Option<usize> {
     (0..=extra).find(|&start| text.as_bytes()[start..].starts_with(head) && text.get(start..start + body.len()) == Some(body))
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Makes `residual`, compiled from all of an eval string's text, and that string keep one
     /// buffer, as V8's Script keeps its source string (inspector code-load: 2 MB per eval;
     /// babylonjs-startup: 8.5 MB per iteration, each program kept to the end of the job by a
@@ -105,7 +105,7 @@ pub(in crate::vm) struct EvalCaller {
     pub(in crate::vm) script_or_module: std::rc::Rc<str>,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The caller facts of the eval of `source`; a direct eval of a cached text also gets its
     /// cache key.
     pub(super) fn eval_caller_facts(&mut self, p: &ResidualProgram, source: &str, strict: bool, text: Option<&EvalSource>) -> Result<CallerFacts, JsError> {

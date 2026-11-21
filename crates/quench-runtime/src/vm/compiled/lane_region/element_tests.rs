@@ -26,7 +26,7 @@ fn region_over(source: &str, observed: bool, left: bool, views: ElementViews) ->
         .map(|pc| super::super::facts::ObservedRead { pc, ty: Type::NUMBER }).collect();
     let generic = if left { at(Class::SetIndex) } else { Vec::new() };
     let isa = super::super::super::jit_backend::target_isa().unwrap();
-    let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let addresses = LaneHelper::addresses();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
         &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &reads, (&[], &[], &[]), &[], &[],
         Coverage::PrefixFrom(header), Completion::Body, views, true).expect("a loop region").function
@@ -66,7 +66,7 @@ fn a_hoisted_number_read_has_no_hole_test_and_any_other_read_keeps_it() {
 
 /// The calls to the element store's host helper in `body`.
 fn index_set_calls(function: &ir::Function, body: &[ir::Inst]) -> usize {
-    let helper = LaneHelper::addresses::<crate::test_host::TestHost>()[LaneHelper::IndexSet as usize] as usize;
+    let helper = LaneHelper::addresses()[LaneHelper::IndexSet as usize] as usize;
     body.iter().filter(|&&inst| function.dfg.insts[inst].opcode() == ir::Opcode::CallIndirect
         && is_constant(function, function.dfg.inst_args(inst)[0], helper as u64)).count()
 }
@@ -148,7 +148,7 @@ fn entered_region(source: &str, views: ElementViews, entering: IntRange) -> ir::
         .expect("the function has a loop");
     let entries: Vec<(Register, IntRange)> = (0..unit.registers).map(|register| (register, entering)).collect();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
-    let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let addresses = LaneHelper::addresses();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
         &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entries, &[], &[]), &[], &[],
         Coverage::Loop { header, backedge, poll: false }, Completion::Body, views, true).expect("a loop region").function
@@ -259,7 +259,7 @@ fn region_with_feedback(source: &str, views: ElementViews, left_header: bool, en
         instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize).filter(|target| *target <= pc))
         .min().unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
-    let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let addresses = LaneHelper::addresses();
     let generic = if left_header { vec![header] } else { Vec::new() };
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
         &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],

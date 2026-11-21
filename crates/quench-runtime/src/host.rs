@@ -118,12 +118,14 @@ impl ModuleSource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HostExecutionContext(pub u64);
 
-pub trait Host {
+pub trait Host: core::any::Any {
     /// Whether this host's VM runs bodies in the lane (`dispatch_fast`). Every host type
     /// instantiates the VM, and the lane's generated handlers are most of it, so a test host
     /// that exercises no lane behaviour answers `false`: its VM derives no lane view and the
     /// compiler instantiates none of the lane for it (the lib test binary built nine copies).
-    const RUNS_LANE: bool = true;
+    fn runs_lane(&self) -> bool {
+        true
+    }
 
     /// Whether host function `index` (into `functions`) observes the frame stack only by
     /// calling guest code, capturing an error's stack or making a collection due, so a lane
@@ -161,7 +163,7 @@ pub trait Host {
 
     /// Weak targets have been cleared and VM cleanup has finished. Release native resources
     /// owned by collected values before execution resumes, without running guest code.
-    fn after_collection(_context: &mut crate::CollectionContext<'_, Self>) where Self: Sized {}
+    fn after_collection(_context: &mut crate::CollectionContext<'_>) where Self: Sized {}
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
     /// for compiling `parts` (the program's text, in order) under `name` in this build. The
@@ -178,9 +180,7 @@ pub trait Host {
     #[cfg(feature = "native-execution")]
     fn kept_native_program(
         &mut self, _name: &str, _parts: &[&str],
-    ) -> Result<Option<crate::NativeJsProgram<Self>>, NativeSourceError>
-    where Self: Sized,
-    {
+    ) -> Result<Option<crate::NativeJsProgram>, NativeSourceError> {
         Ok(None)
     }
 
@@ -252,35 +252,30 @@ pub trait Host {
 
     /// Stable native-operation table for this host's lifetime. Mutable host
     /// state belongs in `Self`; operation indices must never be reassigned.
-    fn functions(&self) -> &[crate::HostFunction<Self>]
-    where
-        Self: Sized,
-    {
+    fn functions(&self) -> &[crate::HostFunction] {
         &[]
     }
 
     /// Metadata and callback projections share stable indices. Every index below
     /// this count must have a descriptor. Split catalogs may override these
     /// operations without constructing a combined address table.
-    fn function_count(&self) -> usize where Self: Sized {
+    fn function_count(&self) -> usize {
         self.functions().len()
     }
 
-    fn function_descriptor(&self, index: usize) -> Option<crate::HostFunctionDescriptor>
-    where Self: Sized {
+    fn function_descriptor(&self, index: usize) -> Option<crate::HostFunctionDescriptor> {
         self.functions().get(index).map(|binding| crate::HostFunctionDescriptor {
             name: binding.name, length: binding.length, global: binding.global,
         })
     }
 
-    fn function_callback(&self, index: usize) -> Option<crate::HostCallback<Self>>
-    where Self: Sized {
+    fn function_callback(&self, index: usize) -> Option<crate::HostCallback> {
         self.functions().get(index).map(|binding| binding.call)
     }
 
     /// Install host-owned objects after shared intrinsics and native globals,
     /// before guest execution. Context roots expire when installation returns.
-    fn initialize(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>
+    fn initialize(_context: &mut crate::NativeContext<'_>) -> Result<(), crate::RootedError>
     where
         Self: Sized,
     {
@@ -290,7 +285,7 @@ pub trait Host {
     /// Continue installation in a VM restored from a startup snapshot this host's state was
     /// written into (`Runtime::write_snapshot`): what `initialize` does after the point the
     /// snapshot was taken at.
-    fn resume(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>
+    fn resume(_context: &mut crate::NativeContext<'_>) -> Result<(), crate::RootedError>
     where
         Self: Sized,
     {
@@ -302,7 +297,7 @@ pub trait Host {
     /// (global, error, callSites). The VM traces it with the realm intrinsics;
     /// temporary context roots can be returned without retaining them.
     fn initialize_shadow_realm(
-        _context: &mut crate::NativeContext<'_, Self>,
+        _context: &mut crate::NativeContext<'_>,
         _global: crate::RootId,
     ) -> Result<Option<crate::RootId>, crate::RootedError>
     where
@@ -322,7 +317,7 @@ pub trait Host {
 
     /// Observe creation of an actual Promise with its installed host identity.
     fn initialize_promise(
-        _context: &mut crate::NativeContext<'_, Self>,
+        _context: &mut crate::NativeContext<'_>,
         _promise: crate::RootId,
         _resource: HostExecutionContext,
     ) -> Result<(), crate::RootedError>
@@ -334,7 +329,7 @@ pub trait Host {
 
     /// Observe execution boundaries and settlement of genuine Promise resources.
     fn promise_job_boundary(
-        _context: &mut crate::NativeContext<'_, Self>,
+        _context: &mut crate::NativeContext<'_>,
         _resource: HostExecutionContext,
         _before: bool,
     ) -> Result<(), crate::RootedError>
@@ -345,7 +340,7 @@ pub trait Host {
     }
 
     fn promise_settled(
-        _context: &mut crate::NativeContext<'_, Self>,
+        _context: &mut crate::NativeContext<'_>,
         _resource: HostExecutionContext,
     ) -> Result<(), crate::RootedError>
     where
@@ -477,7 +472,7 @@ pub trait Host {
 
     /// Add host-owned fields to `import_meta` after its standard fields are defined.
     fn initialize_import_meta(
-        _context: &mut crate::NativeContext<'_, Self>,
+        _context: &mut crate::NativeContext<'_>,
         _source_name: &str,
         _import_meta: crate::RootId,
     ) -> Result<(), crate::RootedError>
@@ -507,14 +502,69 @@ pub trait Host {
     }
 }
 
-/// Borrowed capability context. It exposes typed host effects without
-/// handing heap cells or guest `Value` handles to the host.
-pub struct HostContext<'a, H: Host> {
-    host: &'a mut H,
+/// The host's associated functions, taken once when the VM is built for a host type, so the
+/// VM itself names no host type: every row and native in `quench-runtime` is compiled once,
+/// and only these boundary calls go through a pointer.
+#[derive(Clone, Copy)]
+pub(crate) struct HostStatics {
+    pub after_collection: fn(&mut crate::CollectionContext<'_>),
+    pub kept_bytes_read: fn(&[u8]),
+    pub initialize: fn(&mut crate::NativeContext<'_>) -> Result<(), crate::RootedError>,
+    pub resume: fn(&mut crate::NativeContext<'_>) -> Result<(), crate::RootedError>,
+    pub initialize_shadow_realm:
+        fn(&mut crate::NativeContext<'_>, crate::RootId) -> Result<Option<crate::RootId>, crate::RootedError>,
+    pub initialize_promise:
+        fn(&mut crate::NativeContext<'_>, crate::RootId, HostExecutionContext) -> Result<(), crate::RootedError>,
+    pub promise_job_boundary:
+        fn(&mut crate::NativeContext<'_>, HostExecutionContext, bool) -> Result<(), crate::RootedError>,
+    pub promise_settled: fn(&mut crate::NativeContext<'_>, HostExecutionContext) -> Result<(), crate::RootedError>,
+    pub initialize_import_meta:
+        fn(&mut crate::NativeContext<'_>, &str, crate::RootId) -> Result<(), crate::RootedError>,
 }
 
-impl<'a, H: Host> HostContext<'a, H> {
-    pub(crate) fn new(host: &'a mut H) -> Self {
+impl HostStatics {
+    pub(crate) fn of<T: Host>() -> Self {
+        Self {
+            after_collection: T::after_collection,
+            kept_bytes_read: T::kept_bytes_read,
+            initialize: T::initialize,
+            resume: T::resume,
+            initialize_shadow_realm: T::initialize_shadow_realm,
+            initialize_promise: T::initialize_promise,
+            promise_job_boundary: T::promise_job_boundary,
+            promise_settled: T::promise_settled,
+            initialize_import_meta: T::initialize_import_meta,
+        }
+    }
+}
+
+/// Recover a host's own type from the VM's erased host.
+#[inline]
+pub(crate) fn host_as<T: Host>(host: &mut dyn Host) -> &mut T {
+    let any: &mut dyn core::any::Any = host;
+    match any.downcast_mut::<T>() {
+        Some(host) => host,
+        None => panic!("host is not a {}", core::any::type_name::<T>()),
+    }
+}
+
+#[inline]
+pub(crate) fn host_ref_as<T: Host>(host: &dyn Host) -> &T {
+    let any: &dyn core::any::Any = host;
+    match any.downcast_ref::<T>() {
+        Some(host) => host,
+        None => panic!("host is not a {}", core::any::type_name::<T>()),
+    }
+}
+
+/// Borrowed capability context. It exposes typed host effects without
+/// handing heap cells or guest `Value` handles to the host.
+pub struct HostContext<'a> {
+    host: &'a mut dyn Host,
+}
+
+impl<'a> HostContext<'a> {
+    pub(crate) fn new(host: &'a mut dyn Host) -> Self {
         Self { host }
     }
 

@@ -31,7 +31,7 @@ const DATE_TIME_FIELDS: &[&str] = &[
     "timeZoneName",
 ];
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_display_names_for_realm(
         &mut self,
         program: &ResidualProgram,

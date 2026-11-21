@@ -98,7 +98,7 @@ fn finished_closure_slots(
     slots
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The creation realm of a function record: its override, else its program's realm
     /// (`Heap::program_realms`), else the main realm.
     #[inline(always)]

@@ -3,7 +3,7 @@ use crate::Engine;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
-fn run(source: &str) -> (Vm<TestHost>, String) {
+fn run(source: &str) -> (Vm, String) {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "string-data.js").unwrap()).unwrap();

@@ -12,7 +12,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// How each of `primordials.js`'s copy functions wraps a copied data property's function value.
 #[derive(Clone, Copy, PartialEq, Eq)]

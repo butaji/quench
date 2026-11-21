@@ -1,7 +1,7 @@
 //! Constructions decided before the general steps of `Vm::construct_value_with_new_target`.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The start of `construct_value_with_new_target`. Guest code observes the frame stack;
     /// a native's construction reaches it only through the calls, errors and collections
     /// that make deferred activations frames first. A native constructor that is its own new

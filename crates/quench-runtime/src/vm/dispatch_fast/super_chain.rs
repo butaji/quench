@@ -71,8 +71,8 @@ fn append(stores: &mut ChainStores, program: ProgramId, own: &[InitializerStore]
 /// constructor that only passes its arguments on (`Function::super_forwarding`) or
 /// constructs its parent and initializes `this` (`Function::super_initializer`), its parent
 /// its own [[Prototype]] as `super(...)` reads it. `None` for any other chain.
-fn chain_stores<H: Host>(
-    vm: &Vm<H>,
+fn chain_stores(
+    vm: &Vm,
     class: Value,
     passed: Passed<'_>,
     stores: &mut ChainStores,
@@ -93,7 +93,7 @@ fn chain_stores<H: Host>(
     let body = code.function_get(*function as usize).filter(|_| code.kind != crate::bytecode::ProgramKind::Wasm)?;
     if !body.derived_constructor {
         let own = body.initializer_stores(&code.constants).or_else(|| body.only_returns_undefined(&code.constants).then_some(&[]));
-        return append(stores, program, own.filter(|_| Vm::<H>::inline_constructible(body))?, passed).map(|()| class);
+        return append(stores, program, own.filter(|_| Vm::inline_constructible(body))?, passed).map(|()| class);
     }
     let parent = vm.object_data(class)?.proto();
     if body.super_forwarding(&code.atoms, &code.constants) == Some(SuperForwarded::Passed) {
@@ -108,8 +108,8 @@ fn chain_stores<H: Host>(
 
 /// `stores` made to `this` as cached adds (`add_stores_in_lane`), each under its class's program,
 /// whose field caches its site indexes; the program running before is active again after.
-fn add_chain_stores<H: Host>(
-    vm: &mut Vm<H>,
+fn add_chain_stores(
+    vm: &mut Vm,
     this: Value,
     stores: &[(ProgramId, InitializerStore)],
     argument: &impl Fn(u16) -> Value,
@@ -139,12 +139,12 @@ fn add_chain_stores<H: Host>(
 }
 
 /// Makes `program` the VM's active one, with its constants.
-fn enter_program<H: Host>(vm: &mut Vm<H>, program: ProgramId) {
+fn enter_program(vm: &mut Vm, program: ProgramId) {
     vm.set_active_program(program);
 }
 
 /// Notes on `callee`'s plan, when the construction left one, the parent it holds with.
-fn plan_super_parent<H: Host>(vm: &mut Vm<H>, callee: Value) {
+fn plan_super_parent(vm: &mut Vm, callee: Value) {
     if let Some(index) = construct_plan_index(callee)
         && vm.lane_stack.construct_plans[index].callee == callee
         && let Some(class) = vm.object_data(callee)
@@ -166,8 +166,8 @@ fn plan_super_parent<H: Host>(vm: &mut Vm<H>, callee: Value) {
 /// at every node. `None` leaves the construction to the general path: another program's or
 /// realm's class, or an add the caches do not answer, whose partial receiver no code has seen.
 #[inline(never)]
-pub(super) fn super_construction<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn super_construction(
+    cx: *mut LaneContext,
     r: Registers,
     i: &LaneInstruction,
     callee: Value,

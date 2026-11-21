@@ -8,7 +8,7 @@ use super::*;
 use crate::staged::Passing;
 use std::borrow::Cow;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `callee` called with `this` and the arguments `passing` makes of `list`, the values of the
     /// call's argument registers.
     pub(super) fn spread_call(&mut self, p: &ResidualProgram, site: super::call_out::CallSite, passing: Passing,

@@ -51,30 +51,30 @@ pub(in crate::vm::dispatch_fast) const CROSS_PLAIN_3: u8 = 23;
 pub(in crate::vm::dispatch_fast) const CROSS_PLAIN_4: u8 = 24;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::SCRIPT_CALL | parameters }>`).
-pub(in crate::vm::dispatch_fast) const fn script_call_miss_of<H: Host>(parameters: u8) -> Handler {
+/// (`protocol_row::<OP, ACC, { protocol_family::SCRIPT_CALL | parameters }>`).
+pub(in crate::vm::dispatch_fast) const fn script_call_miss_of(parameters: u8) -> Handler {
     match parameters {
-        ARGC_0 => script_call_miss::<H, 0, false> as Handler,
-        ARGC_1 => script_call_miss::<H, 1, false> as Handler,
-        ARGC_2 => script_call_miss::<H, 2, false> as Handler,
-        ARGC_3 => script_call_miss::<H, 3, false> as Handler,
-        ARGC_4 => script_call_miss::<H, 4, false> as Handler,
-        ARGC_ANY => script_call_miss::<H, ANY_ARGC, false> as Handler,
-        PLAIN_ARGC_0 => script_call_miss::<H, 0, true> as Handler,
-        PLAIN_ARGC_1 => script_call_miss::<H, 1, true> as Handler,
-        PLAIN_ARGC_2 => script_call_miss::<H, 2, true> as Handler,
-        PLAIN_ARGC_3 => script_call_miss::<H, 3, true> as Handler,
-        PLAIN_ARGC_4 => script_call_miss::<H, 4, true> as Handler,
-        PLAIN_ARGC_ANY => script_call_miss::<H, ANY_ARGC, true> as Handler,
-        FULL => script_call_full_miss::<H> as Handler,
-        ENVIRONMENT => script_call_environment_miss::<H> as Handler,
-        SETTLES => script_call_settles_miss::<H> as Handler,
-        CROSS => script_call_cross_miss::<H> as Handler,
-        CROSS_PLAIN_0 => script_call_cross_plain_miss::<H, 0> as Handler,
-        CROSS_PLAIN_1 => script_call_cross_plain_miss::<H, 1> as Handler,
-        CROSS_PLAIN_2 => script_call_cross_plain_miss::<H, 2> as Handler,
-        CROSS_PLAIN_3 => script_call_cross_plain_miss::<H, 3> as Handler,
-        CROSS_PLAIN_4 => script_call_cross_plain_miss::<H, 4> as Handler,
-        _ => general_step_in_lane::<H>,
+        ARGC_0 => script_call_miss::<0, false> as Handler,
+        ARGC_1 => script_call_miss::<1, false> as Handler,
+        ARGC_2 => script_call_miss::<2, false> as Handler,
+        ARGC_3 => script_call_miss::<3, false> as Handler,
+        ARGC_4 => script_call_miss::<4, false> as Handler,
+        ARGC_ANY => script_call_miss::<ANY_ARGC, false> as Handler,
+        PLAIN_ARGC_0 => script_call_miss::<0, true> as Handler,
+        PLAIN_ARGC_1 => script_call_miss::<1, true> as Handler,
+        PLAIN_ARGC_2 => script_call_miss::<2, true> as Handler,
+        PLAIN_ARGC_3 => script_call_miss::<3, true> as Handler,
+        PLAIN_ARGC_4 => script_call_miss::<4, true> as Handler,
+        PLAIN_ARGC_ANY => script_call_miss::<ANY_ARGC, true> as Handler,
+        FULL => script_call_full_miss as Handler,
+        ENVIRONMENT => script_call_environment_miss as Handler,
+        SETTLES => script_call_settles_miss as Handler,
+        CROSS => script_call_cross_miss as Handler,
+        CROSS_PLAIN_0 => script_call_cross_plain_miss::<0> as Handler,
+        CROSS_PLAIN_1 => script_call_cross_plain_miss::<1> as Handler,
+        CROSS_PLAIN_2 => script_call_cross_plain_miss::<2> as Handler,
+        CROSS_PLAIN_3 => script_call_cross_plain_miss::<3> as Handler,
+        CROSS_PLAIN_4 => script_call_cross_plain_miss::<4> as Handler,
+        _ => general_step_in_lane,
     }
 }

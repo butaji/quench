@@ -214,7 +214,7 @@ impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {
     }
 }
 
-impl<H: super::Host> super::Vm<H> {
+impl super::Vm {
     /// Whether `shape` holds array index `index` as a key: only a shape whose memo says it has
     /// an index key (`shape_has_index_key`) is asked for the index's canonical atom.
     pub(super) fn shape_names_index(&self, shape: u32, index: usize) -> bool {
