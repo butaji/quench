@@ -72,7 +72,7 @@ pub(super) struct RegExpIntrinsics {
     pub(super) result_template: Option<RegExpResultTemplate>,
     /// Where `regexp_builtin_exec_matcher` last proved the builtin exec (`RegExpExecProof`);
     /// a memo, never snapshotted.
-    pub(super) exec_proof: std::cell::Cell<Option<RegExpExecProof>>,
+    pub(super) exec_proof: ExecProofs,
     /// A function value found to be this realm's builtin `exec`: a function's kind never
     /// changes, so the prototype's `exec` slot holding this value needs no further look.
     /// Rooted (`gc.rs`), so the handle names it for as long as the memo does.
@@ -85,6 +85,42 @@ pub(super) struct RegExpIntrinsics {
 /// so a change to its layout retires the proof, and another prototype's leaves it; shape
 /// compaction retires every cell, so a proof never names a renumbered shape. The slot's value
 /// may change in place, so each use reads it.
+/// The exec proofs of the RegExp shapes a realm's searches met (`RegExpExecProof`), one per
+/// shape: literals cloned from a site and RegExps made by the constructor can differ in shape,
+/// and one slot made a loop alternating them prove its exec again at every call.
+#[derive(Clone)]
+pub(super) struct ExecProofs {
+    entries: [std::cell::Cell<Option<RegExpExecProof>>; EXEC_PROOFS],
+    next: std::cell::Cell<u8>,
+}
+
+const EXEC_PROOFS: usize = 4;
+
+impl ExecProofs {
+    pub(super) const EMPTY: Self = Self {
+        entries: [const { std::cell::Cell::new(None) }; EXEC_PROOFS],
+        next: std::cell::Cell::new(0),
+    };
+
+    /// The proof for RegExps of `shape` whose cell still holds.
+    #[inline(always)]
+    pub(super) fn find(&self, shape: u32) -> Option<RegExpExecProof> {
+        self.entries.iter().find_map(|entry| entry.get().filter(|proof| proof.shape == shape && proof.cell.holds()))
+    }
+
+    /// Records `proof` over the entry of its shape, else one whose cell retired, else the
+    /// oldest.
+    pub(super) fn record(&self, proof: RegExpExecProof) {
+        let at = self.entries.iter().position(|entry| entry.get().is_none_or(|old| old.shape == proof.shape || !old.cell.holds()))
+            .unwrap_or_else(|| {
+                let at = usize::from(self.next.get()) % EXEC_PROOFS;
+                self.next.set(((at + 1) % EXEC_PROOFS) as u8);
+                at
+            });
+        self.entries[at].set(Some(proof));
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct RegExpExecProof {
     pub(super) shape: u32,
@@ -131,7 +167,7 @@ impl RegExpIntrinsics {
             prototype,
             legacy: LegacyStatics::EMPTY,
             result_template: None,
-            exec_proof: std::cell::Cell::new(None),
+            exec_proof: ExecProofs::EMPTY,
             builtin_exec: std::cell::Cell::new(None),
         }
     }
@@ -223,6 +259,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .regexp_intrinsics
             .insert(realm, RegExpIntrinsics::new(constructor, prototype));
+        self.realm.intrinsics.builtin_prototypes.insert((realm, Native::RegExp), prototype);
         self.set_builtin_function_name(constructor, "RegExp")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
@@ -1501,7 +1538,7 @@ impl<H: Host> Vm<H> {
         // Allocating a RegExp marks its prototype, so the proof is recorded from the first; an
         // unwatched prototype's slot answers this call alone.
         if let Some(cell) = self.watched_chain_cell(intrinsics.prototype, 1) {
-            intrinsics.exec_proof.set(Some(RegExpExecProof { shape, cell, exec_slot }));
+            intrinsics.exec_proof.record(RegExpExecProof { shape, cell, exec_slot });
         }
         Some(exec_slot)
     }
@@ -3213,7 +3250,7 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
             prototype,
             legacy,
             result_template,
-            exec_proof: std::cell::Cell::new(None),
+            exec_proof: ExecProofs::EMPTY,
             builtin_exec: std::cell::Cell::new(None),
         })
     }

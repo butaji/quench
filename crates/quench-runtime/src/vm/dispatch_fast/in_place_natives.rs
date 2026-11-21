@@ -30,6 +30,10 @@ impl<H: Host> Vm<H> {
         if (families & !STEADY) == 0 {
             return None;
         }
+        // A pure String method alone: its body is the whole answer, so it skips the cascade.
+        if families == PURE_STRING {
+            return pure_string_value(self, code, native, receiver, args);
+        }
         in_place_family_value(self, code, native, callee, receiver, args, families)
     }
 
@@ -96,6 +100,14 @@ fn in_place_family_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native
         return primitive_leaf_value(vm, code, native, receiver, args);
     }
     None
+}
+
+/// The in-place body of a pure String method (`Vm::pure_string_method_call`), out of line: the
+/// only family of `native`, so no other family's arm is tried after it.
+#[inline(never)]
+fn pure_string_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value,
+    args: &[Value]) -> Option<Value> {
+    vm.pure_string_method_call(code, native, receiver, args)
 }
 
 // The in-place families, one bit each, in the order `in_place_native_value` tries them.
@@ -447,10 +459,11 @@ fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, arg
         Native::StringFromCharCode => vm.from_char_code_numbers(args),
         Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
         Native::String if vm.heap.string(argument).is_some() => Some(argument),
+        Native::String if let Some(number) = argument.as_number() => Some(decimal_text(vm, number)),
         Native::String if !args.is_empty() => Some(vm.heap.alloc_string(super::super::coercion::immediate_to_string(argument)?)),
         Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
         Native::NumberString if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(DECIMAL)) =>
-            Some(vm.heap.alloc_string(super::super::wtf16::JsString::from_number(receiver.as_number()?))),
+            Some(decimal_text(vm, receiver.as_number()?)),
         Native::NumberString => vm.plain_number_to_string(receiver, args),
         Native::NumberFixed => vm.plain_number_to_fixed(receiver, args),
         Native::StringLocaleCompare => default_locale_compare(vm, receiver, args),
@@ -477,6 +490,17 @@ fn default_locale_compare<H: Host>(vm: &Vm<H>, receiver: Value, args: &[Value]) 
 
 /// The radix `Number.prototype.toString` writes in place.
 const DECIMAL: f64 = 10.0;
+
+/// The decimal string of `number` (`Number::toString`, radix 10). A one-digit integer (-0
+/// included) is the unit string of its digit, read from the heap's unit-string cache with no
+/// number text built; any other number is formatted.
+fn decimal_text<H: Host>(vm: &mut Vm<H>, number: f64) -> Value {
+    if (0.0..DECIMAL).contains(&number) && number.fract() == 0.0 {
+        let digit = [b'0' + number as u8];
+        return vm.heap.alloc_unit_run(super::super::wtf16::Units::Ascii(&digit[..]));
+    }
+    vm.heap.alloc_string(super::super::wtf16::JsString::from_number(number))
+}
 
 #[cfg(test)]
 #[path = "../lane_exit_tests.rs"]

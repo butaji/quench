@@ -37,8 +37,11 @@ impl<H: Host> Vm<H> {
         // names are its own elements, which `inherited_entry_answers` keeps from any entry.
         builtin
             .or_else(|| self.heap.ordinary_builtin_object(value))
-            .or_else(|| match self.heap.get(value)? {
-                cell @ Cell::TypedArray { .. } => cell.object(),
+            // A typed array's shape holds every own name but its canonical numeric strings,
+            // which `inherited_entry_answers` refuses (`AtomClass::TYPED_ARRAY_INDEX`): its
+            // prototype methods (`u8.fill`, `f64.indexOf`) take the inherited entry.
+            .or_else(|| match self.heap.get(value) {
+                Some(cell @ Cell::TypedArray { .. }) => cell.object(),
                 _ => None,
             })
             .map(|object| (object, InheritedReceiver::Builtin))
@@ -51,8 +54,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn inherited_entry_answers(&self, kind: InheritedReceiver, index: u32) -> bool {
         kind != InheritedReceiver::Builtin
             || self.heap.dependencies().inherited_get(index).is_some_and(|cache| {
-                !self.atom_class(cache.atom).intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD | AtomClass::ARRAY_INDEX
-                    | AtomClass::TYPED_ARRAY_INDEX)
+                !self.atom_class(cache.atom).intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD | AtomClass::ARRAY_INDEX | AtomClass::TYPED_ARRAY_INDEX)
             })
     }
 

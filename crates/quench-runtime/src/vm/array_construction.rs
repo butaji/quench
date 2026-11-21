@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
         // is one allocation of holes, with no sparse record made and then materialized.
         let length_units = length as usize;
         if length_units <= crate::heap::MAX_DENSE_ARRAY_HOLE_LENGTH {
-            return Some(self.heap.alloc_literal_array(prototype, length_units, |_| Value::DELETED));
+            return Some(self.heap.alloc_filled_array(prototype, length_units, Value::DELETED));
         }
         let array = self
             .heap
@@ -65,6 +65,11 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), .. })) {
             return None;
         }
+        // This realm's `Array` has a non-writable, non-configurable `prototype` that is the realm's
+        // Array.prototype, so the realm's intrinsic prototype is read with no lookup on the callee.
+        if self.realm_array_constructor(callee) && self.object_data(self.array_proto).is_some() {
+            return self.array_with_prototype(self.array_proto, args);
+        }
         self.array_construction_by(callee, args)
     }
 
@@ -75,6 +80,12 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(new_target, prototype_atom)
             .filter(|prototype| self.object_data(*prototype).is_some())?;
+        self.array_with_prototype(prototype, args)
+    }
+
+    /// `construct_array_native`'s array of `prototype` for `args`: `new Array(length)` for one Number
+    /// argument (`None` for an invalid length), else the array of the values.
+    fn array_with_prototype(&mut self, prototype: Value, args: &[Value]) -> Option<Value> {
         match args {
             [length] if let Some(length) = length.as_number() => self.array_of_length(prototype, length),
             _ => Some(self.array_of_values(prototype, args)),

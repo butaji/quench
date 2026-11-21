@@ -51,8 +51,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// `%TypedArray%.prototype.indexOf` (`Native::Uint8ArrayIndexOf`): the first index at or after
-    /// `fromIndex` whose element is strictly equal to the Number search value, or -1. Uint8,
-    /// Int32 and Float64 views only; a NaN search never matches.
+    /// `fromIndex` whose element is strictly equal to the Number search value, or -1. Any non-BigInt
+    /// view; a NaN search never matches.
     pub(in crate::vm) fn plain_typed_index_of(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if native != Native::Uint8ArrayIndexOf {
             return None;
@@ -94,9 +94,6 @@ impl<H: Host> Vm<H> {
     /// plain path does not read.
     fn plain_typed_search(&self, mode: Search, receiver: Value, args: &[Value]) -> Option<Value> {
         let view = self.plain_typed_view(receiver)?;
-        if !is_searchable(view.kind) {
-            return None;
-        }
         let search = args.first()?.as_number()?;
         let from = relative_bound(args.get(1), 0, view.length)?;
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(view.buffer) else {
@@ -126,11 +123,6 @@ impl<H: Host> Vm<H> {
         };
         Some(PlainView { kind, buffer: *buffer, offset: object.offset, length })
     }
-}
-
-/// Whether the elements of `kind` are searched in place: Uint8, Int32 and Float64 only.
-fn is_searchable(kind: TypedArrayKind) -> bool {
-    matches!(kind, TypedArrayKind::Uint8 | TypedArrayKind::Int32 | TypedArrayKind::Float64)
 }
 
 /// A bound of `fill` or of a search, resolved against `length`: `default` when absent or

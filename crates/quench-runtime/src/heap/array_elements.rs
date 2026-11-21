@@ -274,6 +274,20 @@ impl ArrayElements {
         elements
     }
 
+    /// `from_fn` of a constant: `len` copies of `value` in one allocation, filled as a slice,
+    /// whose count of others is `len` when `value` is no int32 and none otherwise.
+    pub(crate) fn filled(len: usize, value: Value) -> Self {
+        if len == 0 {
+            return Self::new();
+        }
+        let mut elements = Self::allocate(len, len);
+        // SAFETY: the new allocation holds `len` slots after the header.
+        unsafe { std::slice::from_raw_parts_mut(elements.values(), len) }.fill(value);
+        let counted = if other(value) == 0 { 0 } else { len as u32 };
+        elements.make_mut().set_others(counted);
+        elements
+    }
+
     /// The young run (`HEADER_VALUES` and then `len` values) at `run` for the `len` values
     /// `value` gives for each index in order, admitting reads until a write or a survived
     /// collection copies it to an allocation (`make_mut`, `leave_nursery`).
@@ -1045,25 +1059,52 @@ impl UniqueElements {
         unsafe { self.0.values().add(index).write(value) };
     }
 
-    /// `value` at every index of `range`: one pass that counts the others it overwrites and
-    /// stores `value` over them.
+    /// `value` at every index of `range`, counting the others it overwrites. The count of others
+    /// the range holds is known without a scan when the backing counts none, or when the range is
+    /// the whole backing and its count is known; then the range is a plain slice fill. Otherwise
+    /// one pass counts the others it overwrites and stores `value` over them.
     pub(crate) fn fill(&mut self, range: std::ops::Range<usize>, value: Value) {
         assert!(range.start <= range.end && range.end <= self.0.len(), "array fill out of bounds");
         let added = other(value) * range.len() as u32;
+        let counted = self.0.header().others;
+        let known = if counted == 0 {
+            Some(0)
+        } else if counted != OTHERS_UNKNOWN && range.start == 0 && range.end == self.0.len() {
+            Some(counted)
+        } else {
+            None
+        };
         // SAFETY: the range is within the length of this unique backing, which owns its values.
         let slots = unsafe { std::slice::from_raw_parts_mut(self.0.values().add(range.start), range.len()) };
-        let mut removed = 0;
-        for slot in slots {
-            removed += other(*slot);
-            *slot = value;
-        }
+        let removed = match known {
+            Some(removed) => {
+                slots.fill(value);
+                removed
+            }
+            None => {
+                let mut removed = 0;
+                for slot in slots {
+                    removed += other(*slot);
+                    *slot = value;
+                }
+                removed
+            }
+        };
         self.recount(added, removed);
     }
 
-    /// The values in reverse order; the count of other values is unchanged.
-    pub(crate) fn reverse(&mut self) {
+    /// Reverses the values and returns `true`, unless one is a hole (`Value::DELETED`): then nothing
+    /// changes and this returns `false`. The count of other values is unchanged. A hole counts as
+    /// other, so an exact count of zero proves there is none and the scan is skipped.
+    pub(crate) fn reverse_unless_holed(&mut self) -> bool {
+        let counted_none = self.0.header().others == 0;
         // SAFETY: a unique backing is wide; its first `len` values are initialized.
-        unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) }.reverse();
+        let values = unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) };
+        if !counted_none && values.iter().any(|value| value.is_deleted()) {
+            return false;
+        }
+        values.reverse();
+        true
     }
 
     /// `values` at the indices from `start`.

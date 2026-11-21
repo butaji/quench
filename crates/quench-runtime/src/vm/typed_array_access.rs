@@ -769,29 +769,51 @@ impl<H: Host> Vm<H> {
         if start >= end {
             return true;
         }
-        // One read of the view and one of its buffer: an attached, unshared buffer whose
-        // bytes hold `[start, end)` of the view.
-        let Some(view) = self.typed_array_view(object) else {
+        let Some(Cell::TypedArray { object: view, buffer, length }) = self.heap.get(object) else {
             return false;
         };
+        let view = TypedArrayView {
+            kind: view.native.kind(),
+            buffer: *buffer,
+            offset: view.offset,
+            length: *length,
+        };
+        self.fill_view_elements(view, start, end, value)
+    }
+
+    /// `typed_array_fill_elements` on a view already read: one buffer read for the checks (attached,
+    /// not shared, the view's length covering `end`), one encoding of the value, one buffer write.
+    /// A 1-byte kind fills with a memset; a wider one with its encoded element repeated by doubling
+    /// `copy_within` copies, so a long fill makes O(log n) copy calls rather than one per element.
+    fn fill_view_elements(&mut self, view: TypedArrayView, start: usize, end: usize, value: &TypedArrayElement) -> bool {
         let width = view.kind.width();
-        let encoded = Self::typed_array_element_bytes(view.kind, value);
-        let Some(Cell::ArrayBuffer { bytes, detached: false, shared: false, .. }) = self.heap.get_mut(view.buffer) else {
+        let Some(Cell::ArrayBuffer { bytes, detached: false, shared: false, .. }) = self.heap.get(view.buffer) else {
             return false;
         };
-        let byte_length = bytes.len();
-        if end > view.length_within(byte_length) || view.offset.saturating_add(width * end) > byte_length {
+        let Some(elements) = view.length.within(view.offset, width, bytes.len()) else {
+            return false;
+        };
+        if end > elements {
             return false;
         }
-        let span = view.offset + start * width..view.offset + end * width;
+        let encoded = Self::typed_array_element_bytes(view.kind, value);
         let element = &encoded[..width];
-        let fill = |bytes: &mut [u8]| {
-            if width == 1 || element.iter().all(|byte| *byte == element[0]) {
-                bytes.fill(element[0]);
-            } else {
-                for chunk in bytes.chunks_exact_mut(width) {
-                    chunk.copy_from_slice(element);
-                }
+        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(view.buffer) else {
+            return false;
+        };
+        let mut store = bytes.make_mut();
+        let Some(span) = store.get_mut(view.offset + start * width..view.offset + end * width) else {
+            return false;
+        };
+        if width == 1 || element.iter().all(|byte| *byte == element[0]) {
+            span.fill(element[0]);
+        } else {
+            span[..width].copy_from_slice(element);
+            let mut filled = width;
+            while filled < span.len() {
+                let count = filled.min(span.len() - filled);
+                span.copy_within(..count, filled);
+                filled += count;
             }
         };
         // A store the buffer owns alone is written in place: its bytes neither move nor unshare
