@@ -5189,9 +5189,14 @@ lane_handler! {
         };
         let vm = unsafe { vm(cx) };
         let key = vm.canonical_index_key(key);
+        // A register-operand read (the element row's form) that found a typed element switches to
+        // the typed row of its kind (`row_typed_element`), so the next read makes no protocol miss.
+        let registers = i.a <= crate::bytecode::REGISTER_MASK
+            && i.b <= crate::bytecode::REGISTER_MASK
+            && i.c <= crate::bytecode::REGISTER_MASK;
         let Some(value) = vm
             .dense_array_element(base, key)
-            .or_else(|| vm.plain_typed_element(base, key))
+            .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
             .or_else(|| string_element_in_lane(vm, base, key))
             .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
@@ -5457,6 +5462,9 @@ fn row_typed_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: Value, v
         .array_index_key(key)
         .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
     if stored {
+        // The typed row proves the view the VM publishes (`LaneFrame::kept_view`): unpublished, every
+        // store would miss back here.
+        vm.publish_typed_view(object);
         requicken_typed::<H>(ip, false, vm.typed_array_kind_of(object));
     }
     stored
