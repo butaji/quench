@@ -1765,7 +1765,7 @@ fn admit_register_roles(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
-    method_calls: MethodCalls,
+    _method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     // A held register keeps the value its path read at entry, which a store to any name on
@@ -1932,23 +1932,9 @@ fn admit_register_roles(
                 field_stores.insert(offset as u32, index);
             }
         }
-        // A field-resolved method call is the inliner's (`MethodCalls::inlined`), unless the
-        // inliner declined it. Dynamic/direct calls have no such owner.
-        if method_calls.inlined(objects) && crate::staged::calls_ordinary(instruction.op()) {
-            let callee_register = instruction.register_b();
-            if instructions[..offset]
-                .iter()
-                .rev()
-                .find(|candidate| candidate.defined_register() == Some(callee_register))
-                .is_some_and(|definition| crate::staged::reads_named_field(definition.op()))
-            {
-                return Err(RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(instruction.op() as u16),
-                    header,
-                    offset,
-                ));
-            }
-        }
+        // A field-resolved method call the inliner declined is no refusal: it leaves at its own
+        // PC (`admit`'s exits arm), where the lane makes the call and resumes after it, as any
+        // call it does not make itself.
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
