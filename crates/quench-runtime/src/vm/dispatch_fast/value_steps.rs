@@ -119,7 +119,7 @@ unsafe fn activation_field_write(cx: *mut LaneContext, call_pc: u64, instruction
 ///
 /// # Safety
 /// As `activation_value_step`.
-unsafe fn activation_element_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
+unsafe fn activation_element_step(cx: *mut LaneContext, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
     if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
