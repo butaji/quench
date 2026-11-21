@@ -70,6 +70,14 @@ pub struct DependencyGraph {
 }
 
 impl DependencyGraph {
+    /// The builtins the image's snapshot loads at compile time: every builtin the graph
+    /// requires or imports, so a run finds them built instead of building them at startup.
+    pub fn snapshot_builtins(&self) -> Vec<String> {
+        let names: BTreeSet<String> = self.builtins.iter().chain(&self.esm_builtins)
+            .map(|name| name.strip_prefix("node:").unwrap_or(name).to_owned()).collect();
+        names.into_iter().collect()
+    }
+
     /// Keep a module's literal source obligations and its offsets of sites that
     /// may receive source first known at execution, in file coordinates.
     fn record_source_demands(&mut self, manifest: &mut SourceManifest, demands: quench_runtime::SourceDemands, path: &Path, base: u32) {
