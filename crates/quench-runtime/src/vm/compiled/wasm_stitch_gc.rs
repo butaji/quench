@@ -110,7 +110,7 @@ fn allocating(pc: usize, instruction: WideInstruction, world: &World<'_>) -> Opt
     let count = u64::try_from(reads.len()).ok().filter(|count| *count <= 0xff)?;
     let descriptor: Vec<u64> = kinds.iter().map(|(register, kind)| u64::from(*register) | *kind << 16).collect();
     let descriptor: &'static [u64] = Box::leak(descriptor.into_boxed_slice());
-    let result = u64::from(allocating_result(instruction.op()).is_some());
+    let result = u64::from(allocating_result(instruction).is_some());
     // Holes: the callout; the packed instruction; the immediate and count, the result flag at bit 40;
     // the descriptor's address; unused.
     let meta = u64::from(instruction.imm()) | count << 32 | result << 40;

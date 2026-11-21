@@ -2675,20 +2675,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 vm.call_value(&code, callee, receiver, &values)?
             }
         };
-        let bits = match result_type {
-            Some(ty) => match vm
-                .decode_wasm_value(result, ty)?
-                .bits()
-                .ok_or_else(|| JsError::validation("non-scalar Wasm call result".into()))?
-            {
-                crate::wasm::ScalarBits::Bits32(bits) => u64::from(bits),
-                crate::wasm::ScalarBits::Bits64(bits) => bits,
-                crate::wasm::ScalarBits::Bits128(_) => {
-                    return Err(JsError::validation("non-scalar Wasm call result".into()));
-                }
-            },
-            None => 0,
-        };
+        let bits = wasm_call_vm::result_bits(vm, program, result, result_type)?;
         // SAFETY: `out` points into the result word emitted for this helper.
         unsafe { *out = bits };
         Ok(())
@@ -5769,9 +5756,13 @@ impl<H: Host> Analysis<'_, H> {
         self.vm.programs.constant(self.program, index)
     }
 
-    /// The machine kind of a constant: i32-encoded scalars, boxed 64-bit
-    /// scalars, and any other constant (the void result) as an inert i32.
+    /// The machine kind of a constant: `ref.null`'s null as a reference (`Kind::Reference`, its
+    /// Value bits), i32-encoded scalars, boxed 64-bit scalars, and any other constant (the void
+    /// result) as an inert i32.
     fn constant_kind(&self, value: Value) -> Kind {
+        if value.is_null() {
+            return Kind::Reference;
+        }
         match self.vm.decode_bits64(value) {
             Some(_) => Kind::I64,
             None => Kind::I32,
@@ -5828,6 +5819,9 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     fn constant_bits(&self, value: Value) -> i64 {
+        if value.is_null() {
+            return value.to_bits() as i64;
+        }
         match self.vm.decode_bits64(value) {
             Some(bits) => bits as i64,
             None => i64::from(value.wasm_bits32() as i32),
@@ -9631,19 +9625,7 @@ impl<H: Host> Vm<H> {
                 self.set_active_program(active_program);
                 if let Some(compiled) = compiled {
                     let result = compiled?;
-                    let bits = if let Some(ty) = result_type {
-                        match self.decode_wasm_value(result, ty)?.bits() {
-                            Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
-                            Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
-                            _ => {
-                                return Err(JsError::validation(
-                                    "non-scalar Wasm import result".into(),
-                                ));
-                            }
-                        }
-                    } else {
-                        0
-                    };
+                    let bits = wasm_call_vm::result_bits(self, program, result, result_type)?;
                     // SAFETY: the caller passes a result word.
                     unsafe { *out = bits };
                     return Ok(());
@@ -9669,12 +9651,8 @@ impl<H: Host> Vm<H> {
                 self.call_value(&code, callee, receiver, &values)?
             }
         };
-        if let Some(ty) = result_type {
-            let bits = match self.decode_wasm_value(result, ty)?.bits() {
-                Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
-                Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
-                _ => return Err(JsError::validation("non-scalar Wasm import result".into())),
-            };
+        if result_type.is_some() {
+            let bits = wasm_call_vm::result_bits(self, program, result, result_type)?;
             // SAFETY: the caller passes a result word.
             unsafe { *out = bits };
         }
