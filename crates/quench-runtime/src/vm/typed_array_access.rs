@@ -815,12 +815,6 @@ impl<H: Host> Vm<H> {
                 span.copy_within(..count, filled);
                 filled += count;
             }
-        };
-        // A store the buffer owns alone is written in place: its bytes neither move nor unshare
-        // (`BufferBytes::mut_in_lane`), so no view epoch ends. Any other store unshares first.
-        match bytes.mut_in_lane() {
-            Some(store) => fill(&mut store[span]),
-            None => fill(&mut bytes.make_mut()[span]),
         }
         true
     }
