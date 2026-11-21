@@ -68,11 +68,16 @@ pub(super) unsafe extern "C" fn scalar_native_in_lane<H: Host>(vm: u64, residual
         return Value::DELETED.to_bits();
     }
     let arguments = [Value::from_bits(first), Value::from_bits(second)];
+    // A native that allocated nothing (a lookup: `Map.prototype.get`) moved no base the code holds.
+    let unchanged = |vm: &Vm<H>| (vm.heap.allocated_weight(), vm.heap.native_layout_epoch(), vm.heap.store_watch_word(), vm.method_cache_atoms.words().len());
+    let before = unchanged(vm);
     let Some(value) = vm.in_place_native_value(residual, native, callee, Value::from_bits(receiver), &arguments[..argc as usize]) else {
         return Value::DELETED.to_bits();
     };
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
+    if unchanged(vm) != before {
+        super::dispatch_fast::note_allocation(vm);
+        dispatch.refresh_object_bases(vm);
+    }
     value.to_bits()
 }
 

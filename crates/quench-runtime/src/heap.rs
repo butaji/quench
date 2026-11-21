@@ -2408,6 +2408,8 @@ impl Heap {
     pub(super) fn request_collection(&self) {
         self.collect_at.set(self.collect_at.get().min(self.allocated));
     }
+    /// The weight charged since the heap began: unchanged across a call that allocated nothing.
+    #[inline(always)] pub(crate) fn allocated_weight(&self) -> usize { self.allocated }
     #[inline] pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at.get()
     }
