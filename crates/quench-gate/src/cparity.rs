@@ -45,6 +45,8 @@ const TRACE_VARIABLE: &str = "QUENCH_TRACE";
 const TRACE_CHANNELS: &str = "js-jit,loop-kernel,jit-dump=";
 const DEV_VARIABLE: &str = "QUENCH_DEV";
 const SYNCHRONOUS_COMPILE: &str = "sync-compile";
+/// The longest one kernel run may take before it counts as hung.
+const RUN_SECONDS: u32 = 300;
 
 /// The kernel sources, in name order.
 pub fn kernels(directory: &Path) -> io::Result<Vec<PathBuf>> {
@@ -76,7 +78,8 @@ fn node(config: &Config, host: &Path, kernel: &Path, flag: &str, dumps: Option<&
     if let Some(directory) = dumps {
         command.env(TRACE_VARIABLE, format!("{TRACE_CHANNELS}{}", directory.display())).env(DEV_VARIABLE, SYNCHRONOUS_COMPILE);
     }
-    let run = process::run(&mut command)?;
+    // A kernel runs in seconds; one past the deadline is hung (a sync compile that never returns) and fails the step.
+    let run = process::run_within(&command, RUN_SECONDS)?;
     if run.success { Ok(run) } else { Err(format!("{} {flag} failed:\n{}", kernel.display(), run.excerpt())) }
 }
 

@@ -38,3 +38,26 @@ impl Finished {
 pub fn run(command: &mut Command) -> Result<Finished, String> {
     command.output().map(Finished::from).map_err(|error| format!("cannot run {:?}: {error}", command.get_program()))
 }
+
+/// Runs `command` to completion, or kills it once `seconds` pass (`timeout -s KILL`), where a hung
+/// run must fail its step rather than stall the gate: a killed run is unsuccessful, its code absent.
+pub fn run_within(command: &Command, seconds: u32) -> Result<Finished, String> {
+    let mut bounded = Command::new("timeout");
+    bounded.arg("-s").arg("KILL").arg(seconds.to_string()).arg(command.get_program()).args(command.get_args());
+    for (key, value) in command.get_envs() {
+        match value {
+            Some(value) => { bounded.env(key, value); }
+            None => { bounded.env_remove(key); }
+        }
+    }
+    if let Some(directory) = command.get_current_dir() {
+        bounded.current_dir(directory);
+    }
+    let mut finished = run(&mut bounded)?;
+    // `timeout` exits 137 after its KILL; the report names the deadline.
+    if finished.code == Some(137) {
+        finished.success = false;
+        finished.stderr.push_str(&format!("\nkilled after {seconds} s\n"));
+    }
+    Ok(finished)
+}
