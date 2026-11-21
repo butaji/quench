@@ -47,6 +47,12 @@ const HANDLERS: &str = "crates/quench-tier-corpus/ir_budget_handlers.txt";
 const TIER_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions.txt";
 const UJIT_OVER: &str = "crates/quench-tier-corpus/ujit_over_budget.txt";
 const INTERPRETER_OVER: &str = "crates/quench-tier-corpus/interpreter_over_budget.txt";
+/// Node's optimizing JIT (TurboFan, node 22, after warm-up) per op, in the same Ir per iteration:
+/// u-jit must cost no more (user goal 2026-11-21: u-jit beats Node and Bun JIT, as a projection of
+/// the interpreter). `op count` per line.
+const NODE_JIT: &str = "crates/quench-tier-corpus/node_jit.txt";
+/// The shrink-only debt list of ops whose u-jit count is past Node JIT's.
+const UJIT_OVER_NODE: &str = "crates/quench-tier-corpus/ujit_over_node_jit.txt";
 /// `1` rewrites the debt lists from the measured values instead of failing on them (a full run).
 const DEBT_WRITE: &str = "QUENCH_DEBT_WRITE";
 /// A handler share under this many instructions per iteration is left out of the split.
@@ -434,6 +440,7 @@ struct TierFault {
     b_jit_over_no_jit: bool,
     u_jit_over_b_jit: bool,
     u_jit_over_budget: bool,
+    u_jit_over_node_jit: bool,
 }
 
 impl TierFault {
@@ -442,7 +449,7 @@ impl TierFault {
     }
 
     fn labels(&self) -> Vec<&'static str> {
-        [(self.b_jit_over_no_jit, "b-jit>no-jit"), (self.u_jit_over_b_jit, "u-jit>b-jit"), (self.u_jit_over_budget, "u-jit>budget")]
+        [(self.b_jit_over_no_jit, "b-jit>no-jit"), (self.u_jit_over_b_jit, "u-jit>b-jit"), (self.u_jit_over_budget, "u-jit>budget"), (self.u_jit_over_node_jit, "u-jit>node-jit")]
             .into_iter()
             .filter(|(on, _)| *on)
             .map(|(_, label)| label)
@@ -452,11 +459,18 @@ impl TierFault {
 
 /// One op's fault, from its counts `[no-jit, b-jit, u-jit]` and its budget (C parity: max(C + 1, 1.25x C)) if it has one.
 fn tier_fault([interpreter, baseline, optimized]: [f64; 3], budget: Option<f64>) -> TierFault {
+    tier_fault_against([interpreter, baseline, optimized], budget, None)
+}
+
+/// `tier_fault`, with Node JIT's count for the op (`node_jit.txt`) where it has one.
+fn tier_fault_against([interpreter, baseline, optimized]: [f64; 3], budget: Option<f64>, node_jit: Option<f64>) -> TierFault {
     TierFault {
         b_jit_over_no_jit: baseline > interpreter + tolerance(interpreter),
         u_jit_over_b_jit: optimized > baseline + tolerance(baseline),
         // The design target: u-jit within the op's budget.
         u_jit_over_budget: budget.is_some_and(|budget| optimized > budget + SAME_COUNT),
+        // The competitive bar: u-jit no costlier than Node's optimizing JIT on the op.
+        u_jit_over_node_jit: node_jit.is_some_and(|node| optimized > node + tolerance(node)),
     }
 }
 
@@ -464,11 +478,14 @@ fn tier_fault([interpreter, baseline, optimized]: [f64; 3], budget: Option<f64>)
 /// not hold, and the report, each op's counts with the faults it breaks, worst u-jit-to-C first.
 fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>, runs: [&[Measured]; 3]) -> Result<(Vec<String>, String), String> {
     let counts = tier_counts(runs);
+    let node_jit = node_jit_counts(config);
+    let mut over_node = BTreeSet::new();
     let (mut broken, mut inversions, mut over_budget) = (0, BTreeSet::new(), BTreeSet::new());
     let mut lines: Vec<(f64, String)> = Vec::new();
     for (name, &[interpreter, baseline, optimized]) in &counts {
         let c = rows.get(name).map_or(f64::NAN, |row| row.c);
-        let fault = tier_fault([interpreter, baseline, optimized], rows.get(name).map(|row| row.budget));
+        let fault = tier_fault_against([interpreter, baseline, optimized], rows.get(name).map(|row| row.budget), node_jit.get(name).copied());
+        if fault.u_jit_over_node_jit { over_node.insert(name.clone()); }
         if fault.b_jit_over_no_jit { inversions.insert(format!("{name} b-jit")); }
         if fault.u_jit_over_b_jit { inversions.insert(format!("{name} u-jit")); }
         if fault.u_jit_over_budget { over_budget.insert(name.clone()); }
@@ -483,8 +500,18 @@ fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>, runs: [&
     let write = debt_write(ops);
     let mut failures = hold_debt(config, TIER_INVERSIONS, &inversions, &measured, write)?;
     failures.extend(hold_debt(config, UJIT_OVER, &over_budget, &measured, write)?);
-    let report = format!("tiers: {broken} of {} ops out of order, {} with u-jit past its budget (C parity: max(C + 1, 1.25x C))\n{table}", counts.len(), over_budget.len());
+    failures.extend(hold_debt(config, UJIT_OVER_NODE, &over_node, &measured, write)?);
+    let report = format!("tiers: {broken} of {} ops out of order, {} with u-jit past its budget (C parity: max(C + 1, 1.25x C)), {} with u-jit past Node JIT\n{table}", counts.len(), over_budget.len(), over_node.len());
     Ok((failures, report))
+}
+
+/// Node JIT's count per op (`NODE_JIT`); empty where the file is missing.
+fn node_jit_counts(config: &Config) -> BTreeMap<String, f64> {
+    let text = fs::read_to_string(config.root.join(NODE_JIT)).unwrap_or_default();
+    text.lines().filter(|line| !line.starts_with('#')).filter_map(|line| {
+        let mut fields = line.split_whitespace();
+        Some((fields.next()?.to_owned(), fields.next()?.parse().ok()?))
+    }).collect()
 }
 
 /// Whether a run of every op ratchets the JIT ceilings too (on unless `QUENCH_IR_BUDGET_TIERS=off`).
@@ -639,6 +666,8 @@ mod tests {
         assert!(!tier_fault([30.0, 20.0, 21.4], Some(21.0)).u_jit_over_budget);
         // An op with no budget row has nothing to be over.
         assert!(!tier_fault([30.0, 20.0, 99.0], None).u_jit_over_budget);
+        assert!(tier_fault_against([30.0, 20.0, 12.0], None, Some(11.0)).u_jit_over_node_jit);
+        assert!(!tier_fault_against([30.0, 20.0, 11.0], None, Some(11.0)).u_jit_over_node_jit);
     }
 
     #[test]
