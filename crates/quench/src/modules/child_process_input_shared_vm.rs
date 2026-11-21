@@ -1,5 +1,6 @@
 //! Nonblocking child stdin owns each accepted byte until OS write completion.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::VecDeque;
 #[cfg(unix)]
@@ -198,7 +199,7 @@ impl Input {
 }
 
 pub(crate) fn write_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     errno: i32,
 ) -> Result<RootId, RootedError> {
     let code = super::util_system_error_shared_vm::system_error_name(-f64::from(errno));
@@ -215,7 +216,7 @@ pub(crate) fn write_error(
 }
 
 pub(crate) fn complete(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -238,7 +239,7 @@ pub(crate) fn complete(
 }
 
 pub(crate) fn queue(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
     callbacks: Vec<Completion>,
 ) -> Result<(), String> {
@@ -253,7 +254,7 @@ pub(crate) fn queue(
             completion.errno.unwrap_or(COMPLETION_SUCCESS),
         )));
         runtime
-            .host_mut()
+            .node()
             .shared_state()
             .borrow_mut()
             .scheduler

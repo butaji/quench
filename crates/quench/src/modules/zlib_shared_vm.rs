@@ -5,6 +5,7 @@
 //! output window in `_outBuffer`/`_outOffset`, and the handle's progress (`availInBefore`,
 //! `availOutBefore`, `inOff`, `flushFlag`) on the handle itself.
 
+use crate::host::NodeAccess;
 use super::stream_shared_vm::{
     inherit,
     arg, call_method, captures, closure, eos, get, is_nullish, is_undefined, next_tick, number, put, put_number,
@@ -76,7 +77,7 @@ impl Internal {
 }
 
 fn internal(c: &mut Context<'_>, which: Internal) -> Outcome {
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let found = shared.borrow().builtin_cache.get(which.key()).copied();
     found.ok_or_else(|| RootedError::host("zlib module is not initialized"))
 }
@@ -1294,7 +1295,7 @@ fn base_class(c: &mut Context<'_>, transform: RootId) -> Outcome {
 }
 
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     if let Some(module) = shared.borrow().builtin_cache.get(MODULE_CACHE).copied() {
         return Ok(module);
     }

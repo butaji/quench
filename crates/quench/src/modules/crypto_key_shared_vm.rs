@@ -1,9 +1,10 @@
 //! Native key slot ownership for the configured Node key classes.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::crypto_secret_material::Material;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Arc;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 // Node crypto_keys.cc's native key type and slot tuple ABI.
 const KEY_TYPE_SECRET: f64 = super::crypto_key_layout::Kind::Secret as u32 as f64;
 const KEY_TYPE_PUBLIC: f64 = super::crypto_key_layout::Kind::Public as u32 as f64;
@@ -69,7 +70,7 @@ fn function(
 
 fn state(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if let Some(value) = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .builtin_cache
@@ -96,7 +97,7 @@ fn state(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     };
     set(c, state, "set", setter)?;
     let root = c.retain(state)?;
-    c.host_mut()
+    c.node()
         .shared_state()
         .borrow_mut()
         .builtin_cache

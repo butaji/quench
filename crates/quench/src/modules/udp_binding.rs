@@ -1,9 +1,11 @@
 //! UDPWrap native objects own genuine sockets and actual async identities.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::{
     event_constructor_shared_vm::get,
     udp_transport::{Endpoint, Pending, SendMode, Submission},
 };
-use crate::host::{NodeHost, SharedNodeState};
+use crate::host::SharedNodeState;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime, Value};
 use std::{
     cell::{Cell, RefCell},
@@ -11,7 +13,7 @@ use std::{
     net::SocketAddr,
     rc::Rc,
 };
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 #[derive(Default)]
 pub(crate) struct State {
     identities: Vec<(HostWeakRoot, u64)>,
@@ -49,7 +51,7 @@ impl State {
 }
 use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn identity(c: &mut Context<'_>, receiver: RootId) -> Result<Option<u64>, RootedError> {
-    let entries = c.host_mut().shared_state().borrow().udp.identities.clone();
+    let entries = c.node().shared_state().borrow().udp.identities.clone();
     for (weak, id) in entries {
         if let Some(object) = c.resolve_host_weak_root(weak) {
             if c.strict_equal_rooted(object, receiver)? {
@@ -165,7 +167,7 @@ pub(crate) fn construct(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     super::native_async_wrap::require_construct(c)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     let weak = c.host_weak_root(receiver)?;
     let owner = c.retain(receiver)?;
@@ -191,7 +193,7 @@ pub(crate) fn send_wrap(
 ) -> Result<RootId, RootedError> {
     super::native_async_wrap::require_construct(c)?;
     let weak = c.host_weak_root(receiver)?;
-    c.host_mut()
+    c.node()
         .shared_state()
         .borrow_mut()
         .udp
@@ -218,7 +220,7 @@ fn bind(
     } else {
         uint32_value(c, input)?
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow_mut()
         .udp
@@ -244,7 +246,7 @@ fn connect(
     let Some(address) = address(c, args, ipv6)? else {
         return Ok(c.number(-f64::from(libc::EINVAL)));
     };
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow_mut()
         .udp
@@ -275,7 +277,7 @@ fn name(
     peer: bool,
 ) -> Result<RootId, RootedError> {
     let id = id(c, receiver)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow()
         .udp
@@ -313,7 +315,7 @@ pub(crate) fn peer_name(
 }
 pub(crate) fn fd(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let fd = shared
         .borrow()
         .udp
@@ -328,7 +330,7 @@ pub(crate) fn reference(
     referenced: bool,
 ) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let mut state = shared.borrow_mut();
     if let Some(socket) = state.udp.endpoints.get_mut(&id) {
         socket.io.referenced = referenced;
@@ -339,7 +341,7 @@ pub(crate) fn reference(
 }
 pub(crate) fn has_ref(c: &mut Context<'_>, r: RootId) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let state = shared.borrow();
     let referenced = state
         .udp
@@ -356,7 +358,7 @@ pub(crate) fn recv_start(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow_mut()
         .udp
@@ -382,7 +384,7 @@ pub(crate) fn recv_stop(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let root = if let Some(s) = shared.borrow_mut().udp.endpoints.get_mut(&id) {
         s.io.recv_stop();
         s.reader.take()
@@ -396,7 +398,7 @@ pub(crate) fn recv_stop(
 }
 fn queue(c: &mut Context<'_>, r: RootId, size: bool) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let state = shared.borrow();
     let Some(s) = state.udp.endpoints.get(&id) else {
         return Ok(c.number(-f64::from(libc::EBADF)));
@@ -430,7 +432,7 @@ fn send(
 ) -> Result<RootId, RootedError> {
     let id = id(c, receiver)?;
     let request = args.first().copied().unwrap_or_else(|| c.undefined());
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let brands = shared.borrow().udp.send_brands.clone();
     let mut resource = None;
     for brand in brands {
@@ -538,7 +540,7 @@ pub(crate) fn close(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, receiver)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     if !shared.borrow().udp.endpoints.contains_key(&id) {
         return Ok(c.undefined());
     }
@@ -601,14 +603,14 @@ pub(crate) fn deliver_send(
     c.call_rooted(callback, receiver, args)
 }
 
-fn copy_root(runtime: &mut Runtime<NodeHost>, root: RootId) -> Result<RootId, String> {
+fn copy_root(runtime: &mut Runtime<ErasedHost>, root: RootId) -> Result<RootId, String> {
     let value = runtime
         .rooted_value(root)
         .ok_or("expired native UDP root")?;
     Ok(runtime.root(value))
 }
 fn queued_send(
-    runtime: &mut Runtime<NodeHost>,
+    runtime: &mut Runtime<ErasedHost>,
     shared: &Rc<RefCell<SharedNodeState>>,
     token: SendToken,
     size: usize,
@@ -649,7 +651,7 @@ fn queued_send(
     Ok(())
 }
 pub(crate) fn poll(
-    runtime: &mut Runtime<NodeHost>,
+    runtime: &mut Runtime<ErasedHost>,
     shared: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let identities = std::mem::take(&mut shared.borrow_mut().udp.identities);
@@ -759,7 +761,7 @@ pub(crate) fn poll(
     Ok(progressed)
 }
 pub(crate) fn queue_close(
-    runtime: &mut Runtime<NodeHost>,
+    runtime: &mut Runtime<ErasedHost>,
     shared: &Rc<RefCell<SharedNodeState>>,
     id: u64,
 ) -> Result<bool, String> {
@@ -818,7 +820,7 @@ fn option(
     let id = id(c, receiver)?;
     let missing = c.undefined();
     let value = uint32_value(c, args.first().copied().unwrap_or(missing))? as i32;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow()
         .udp
@@ -858,7 +860,7 @@ pub(crate) fn disconnect(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = id(c, r)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow()
         .udp
@@ -877,7 +879,7 @@ pub(crate) fn buffer_size(
     let missing = c.undefined();
     let size = uint32_value(c, args.first().copied().unwrap_or(missing))?;
     let recv = c.truthy_rooted(args.get(1).copied().unwrap_or(missing))?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = if size > i32::MAX as u32 {
         Err(std::io::Error::from_raw_os_error(libc::EINVAL))
     } else {
@@ -921,7 +923,7 @@ pub(crate) fn open(
     let id = id(c, receiver)?;
     let missing = c.undefined();
     let fd = uint32_value(c, args.first().copied().unwrap_or(missing))? as i32;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let mut state = shared.borrow_mut();
     let mut duplicate = None;
     let mut active = false;
@@ -971,7 +973,7 @@ fn membership(
     let group_index = usize::from(source_specific);
     let group = c.to_string(args.get(group_index).copied().unwrap_or(missing))?;
     let interface = c.string_text(args.get(group_index + 1).copied().unwrap_or(missing))?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow_mut()
         .udp
@@ -1021,7 +1023,7 @@ pub(crate) fn multicast_interface(
     let id = id(c, r)?;
     let missing = c.undefined();
     let interface = c.string_text(args.first().copied().unwrap_or(missing))?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow()
         .udp
@@ -1038,7 +1040,7 @@ pub(crate) fn resource_view(
     receiver: RootId,
 ) -> Result<super::native_async_wrap::View, RootedError> {
     use super::native_async_wrap::{Provider, Resource, View};
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     if let Some(id) = identity(c, receiver)? {
         let state = shared.borrow();
         return Ok(
@@ -1080,8 +1082,8 @@ pub(crate) fn detach_resource(shared: &Rc<RefCell<SharedNodeState>>, id: u64) {
 
 /// Native handle constructors retain their wrapper until native close, matching
 /// HandleWrap's persistent handle. Teardown abandons work without guest calls.
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
+    let shared = runtime.node().shared_state();
     let state = std::mem::take(&mut shared.borrow_mut().udp);
     let mut roots = Vec::new();
     let mut contexts = Vec::new();
@@ -1125,7 +1127,7 @@ pub(crate) fn duplicate_descriptor(
     handle: RootId,
 ) -> Result<std::os::fd::OwnedFd, RootedError> {
     let id = id(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow()
         .udp
@@ -1157,7 +1159,7 @@ pub(crate) fn from_owned_descriptor(
     )?;
     let handle = c.construct_rooted(constructor, constructor, &[])?;
     let id = id(c, handle)?;
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let result = shared
         .borrow_mut()
         .udp

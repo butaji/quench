@@ -3,11 +3,11 @@
 //! Resolver's `ChannelWrap`. The callback and promise surfaces share one Resolver base and
 //! one default channel; only how a completion is delivered differs.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use crate::modules::util_shared_vm::{validate_boolean, validate_function};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 /// Node's `IANA_DNS_PORT`: a server on it is listed without its port.

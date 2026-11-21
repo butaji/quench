@@ -3,8 +3,9 @@
 //! control block carries the lifecycle back: online, termination requests, and the exit
 //! code with any fatal exception.
 
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::ports::{Endpoint, Message};
-use crate::host::NodeHost;
 use crate::shared_run::{EntryGoal, SharedCompletion, SharedInput};
 use quench_runtime::{NativeContext, RootId, RootedError, SerializedValue, Value};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -199,8 +200,8 @@ fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
 
 /// Record a worker's fatal exception for its parent before the VM reports it. Main-thread
 /// VMs are unaffected.
-pub(crate) fn capture_fatal(runtime: &mut quench_runtime::Runtime<NodeHost>, exception: Option<RootId>) {
-    if runtime.host_mut().shared_state().borrow().messaging.context.is_none() {
+pub(crate) fn capture_fatal(runtime: &mut quench_runtime::Runtime<ErasedHost>, exception: Option<RootId>) {
+    if runtime.node().shared_state().borrow().messaging.context.is_none() {
         return;
     }
     let Ok(operation) = runtime.host_function(crate::host::shared_vm::operation!("workerCaptureError")) else {
@@ -217,12 +218,12 @@ pub(crate) fn capture_fatal(runtime: &mut quench_runtime::Runtime<NodeHost>, exc
 
 /// `workerCaptureError(exception)`: serialize a worker's fatal exception into its control.
 pub(crate) fn capture_error(
-    c: &mut NativeContext<'_, NodeHost>,
+    c: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let exception = args.first().copied().unwrap_or_else(|| c.undefined());
-    let control = c.host_mut().shared_state().borrow().messaging.context.as_ref().map(|context| context.control.clone());
+    let control = c.node().shared_state().borrow().messaging.context.as_ref().map(|context| context.control.clone());
     if let Some(control) = control {
         let failure = match c.serialize_rooted(exception, &[], &[]) {
             Ok(value) => Failure::Thrown(value),

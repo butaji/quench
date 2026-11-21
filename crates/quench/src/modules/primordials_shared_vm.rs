@@ -9,10 +9,10 @@
 //! renamed keys, descriptor fields, `uncurryThis`, `applyBind` and `bind` wrappers, and the
 //! same `Reflect.defineProperty` results.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// How each of `primordials.js`'s copy functions wraps a copied data property's function value.
 #[derive(Clone, Copy, PartialEq, Eq)]

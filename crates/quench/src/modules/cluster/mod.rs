@@ -5,14 +5,15 @@
 //! Which side a process is follows Node: a process started with `NODE_UNIQUE_ID` is a
 //! worker ([`child`]), any other the primary ([`primary`]). Both speak Node's internal
 //! `NODE_CLUSTER` messages, where a reply names the `seq` it acknowledges.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 pub(crate) mod child;
 pub(crate) mod primary;
 
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The environment variable naming a worker's id (Node's cluster child marker).
 pub(crate) const WORKER_ID_VARIABLE: &str = "NODE_UNIQUE_ID";
@@ -66,7 +67,7 @@ pub(crate) struct State {
 }
 
 fn with_state<T>(c: &mut Context<'_>, f: impl FnOnce(&mut State) -> T) -> T {
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let mut shared = shared.borrow_mut();
     f(&mut shared.cluster)
 }
@@ -93,7 +94,7 @@ fn number(c: &mut Context<'_>, value: RootId) -> Option<f64> {
 }
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_mut()
+    c.node()
         .shared_state()
         .borrow()
         .process_module

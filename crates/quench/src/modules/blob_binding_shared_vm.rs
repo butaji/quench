@@ -4,9 +4,10 @@
 //! A handle holds its parts (buffers and the ranges they cover) under a private symbol,
 //! so slices share bytes and the collector owns their lifetime. Every part of a
 //! Quench Blob is memory-resident, so a reader answers each pull synchronously.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// `bob::Status` values a reader reports to its pull callback.
 const STATUS_EOS: f64 = 0.0;
@@ -83,7 +84,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let bytes = c.private_symbol_rooted(Some("node:blob:bytes"));
             put(c, data, data::BYTES, bytes)?;
             let retained = c.retain(data)?;
-            c.host_mut().shared_state().borrow_mut().builtin_cache.insert(DATA.to_owned(), retained);
+            c.node().shared_state().borrow_mut().builtin_cache.insert(DATA.to_owned(), retained);
             let binding = c.object_rooted()?;
             for &(name, operation) in NATIVES {
                 let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
@@ -96,11 +97,11 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 /// The binding's private data, building the binding on first use.
 fn data(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    if let Some(data) = c.host_mut().shared_state().borrow().builtin_cache.get(DATA).copied() {
+    if let Some(data) = c.node().shared_state().borrow().builtin_cache.get(DATA).copied() {
         return Ok(data);
     }
     binding(c)?;
-    c.host_mut().shared_state().borrow().builtin_cache.get(DATA).copied().ok_or_else(|| RootedError::host("blob binding data missing"))
+    c.node().shared_state().borrow().builtin_cache.get(DATA).copied().ok_or_else(|| RootedError::host("blob binding data missing"))
 }
 
 fn arg(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {

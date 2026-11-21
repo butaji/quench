@@ -5,7 +5,8 @@
 //! object keeps its handle id in a private slot; a collected object's handle is released
 //! after the collection.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{
     BuiltinBrand, DeserializerDelegate, HostObjectRead, HostWeakRoot, NativeContext, RootId, RootedError, SerializerDelegate,
     SharedWireInput, ValueDeserializer, ValueSerializer, Value, WireInput, WireOutput,
@@ -14,7 +15,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 
 /// One serializer: the runtime state, absent while a `writeValue` runs, and its output.
@@ -51,7 +52,7 @@ impl State {
 }
 
 fn state(c: &mut Context<'_>) -> Rc<RefCell<crate::host::SharedNodeState>> {
-    c.host_mut().shared_state()
+    c.node().shared_state()
 }
 
 fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
@@ -107,7 +108,7 @@ struct ScriptedSerializer {
     receiver: RootId,
 }
 
-impl SerializerDelegate<NodeHost> for ScriptedSerializer {
+impl SerializerDelegate<ErasedHost> for ScriptedSerializer {
     fn write_host_object(&mut self, c: &mut Context<'_>, _: &WireOutput, object: RootId) -> Result<Option<RootId>, RootedError> {
         match method(c, self.receiver, "_writeHostObject")? {
             Some(write) => c.call_rooted(write, self.receiver, &[object]).map(|_| None),
@@ -151,7 +152,7 @@ struct ScriptedDeserializer {
 
 pub(crate) use quench_runtime::DESERIALIZATION_ERROR;
 
-impl DeserializerDelegate<NodeHost> for ScriptedDeserializer {
+impl DeserializerDelegate<ErasedHost> for ScriptedDeserializer {
     fn read_host_object(&mut self, c: &mut Context<'_>, _: &SharedWireInput) -> Result<HostObjectRead<RootId>, RootedError> {
         let Some(read) = method(c, self.receiver, "_readHostObject")? else {
             return Err(throw_error(c, DESERIALIZATION_ERROR));
@@ -415,8 +416,8 @@ pub(crate) fn prune_collected(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> R
 }
 
 /// After a collection: release what collected handles root, through `serdesPrune`.
-pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) -> Result<(), RootedError> {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<ErasedHost>) -> Result<(), RootedError> {
+    let shared = runtime.node().shared_state();
     if shared.borrow().serdes.is_empty() {
         return Ok(());
     }

@@ -1,6 +1,7 @@
 //! `internalBinding('zlib')`'s mode ABI and `internalBinding('constants').zlib`
 //! (src/node_zlib.cc `node_zlib_mode`, `DefineZlibConstants`).
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 /// node_zlib.cc `node_zlib_mode`: the numbers lib/zlib.js passes to the handles.
@@ -252,9 +253,9 @@ fn vernum(version: &str) -> f64 {
 }
 
 /// `internalBinding('constants').zlib`: read-only, non-deletable (NODE_DEFINE_CONSTANT).
-pub(crate) fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn constants(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0builtin:zlib/constants";
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(value);
     }

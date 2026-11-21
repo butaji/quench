@@ -1,5 +1,6 @@
 //! Configuration values are read once; public native-method hooks retain their effects.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 pub(crate) const METHODS: &[&str] = &[
     "setCiphers",
@@ -51,13 +52,13 @@ fn extra_roots() -> &'static [openssl::x509::X509] {
 }
 
 use crate::modules::util_shared_vm::named_get as get;
-fn absent(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn absent(context: &NativeContext<'_, ErasedHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 pub(crate) fn configure(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     outer: RootId,
     options: RootId,
 ) -> Result<(), RootedError> {
@@ -70,13 +71,13 @@ const TICKET_KEYS_LENGTH: usize = 48;
 /// The TLS 1.3 cipher suites' common name prefix (`processCiphers`).
 const TLS13_SUITE_PREFIX: &str = "TLS_";
 
-fn method_call(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, name: &str, args: &[RootId]) -> Result<RootId, RootedError> {
+fn method_call(context: &mut NativeContext<'_, ErasedHost>, receiver: RootId, name: &str, args: &[RootId]) -> Result<RootId, RootedError> {
     let function = get(context, receiver, name)?;
     context.call_rooted(function, receiver, args)
 }
 
 /// `validateKeyOrCertOption(name, value)`.
-fn validate_material(context: &mut NativeContext<'_, NodeHost>, name: &str, value: RootId) -> Result<(), RootedError> {
+fn validate_material(context: &mut NativeContext<'_, ErasedHost>, name: &str, value: RootId) -> Result<(), RootedError> {
     if context.string_text(value)?.is_some() || context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::ArrayBufferView)? {
         return Ok(());
     }
@@ -88,14 +89,14 @@ fn validate_material(context: &mut NativeContext<'_, NodeHost>, name: &str, valu
     )?)
 }
 
-fn validate_string(context: &mut NativeContext<'_, NodeHost>, value: RootId, name: &str) -> Result<(), RootedError> {
+fn validate_string(context: &mut NativeContext<'_, ErasedHost>, value: RootId, name: &str) -> Result<(), RootedError> {
     if context.string_text(value)?.is_some() {
         return Ok(());
     }
     Err(super::super::util_shared_vm::argument_type_error(context, value, name, "string")?)
 }
 
-fn list(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Vec<RootId>, RootedError> {
+fn list(context: &mut NativeContext<'_, ErasedHost>, value: RootId) -> Result<Vec<RootId>, RootedError> {
     if context.is_array_rooted(value)? {
         context.array_like_values_rooted(value)
     } else {
@@ -106,11 +107,11 @@ fn list(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Vec<
 /// Node's `configSecureContext(context, options)` (lib/internal/tls/secure-context.js):
 /// the trust, identity, cipher and session options applied to a native context.
 fn configure_secure_context(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     inner: RootId,
     options: RootId,
 ) -> Result<(), RootedError> {
-    let option = |context: &mut NativeContext<'_, NodeHost>, key: &str| get(context, options, key);
+    let option = |context: &mut NativeContext<'_, ErasedHost>, key: &str| get(context, options, key);
     let passphrase = option(context, "passphrase")?;
     let ca = option(context, "ca")?;
     if context.truthy_rooted(ca)? {
@@ -292,7 +293,7 @@ fn configure_secure_context(
 }
 
 pub(crate) fn method(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -301,7 +302,7 @@ pub(crate) fn method(
     let action = context.to_string(action)?;
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let index = super::contexts::owner(context, receiver)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     match action.as_str() {
         "setClientCertEngine" | "setEngineKey" => {
             let name = context

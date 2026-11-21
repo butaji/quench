@@ -1,5 +1,6 @@
 //! Stat polling owns its resource lifetime separately from the public path cache.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -37,7 +38,7 @@ pub(crate) struct State {
 
 use crate::modules::util_shared_vm::named_get as get;
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -48,10 +49,10 @@ fn set(
 }
 /// `fs.watchFile` or `fs.unwatchFile` (`name`), over the stat-watcher API built on first use.
 pub(crate) fn function(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     name: &str,
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     let existing = shared.borrow().fs_stat_watch.api;
     let api = match existing {
         Some(api) => api,
@@ -71,7 +72,7 @@ pub(crate) fn function(
 }
 
 fn resolved_path(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     filename: RootId,
 ) -> Result<PathBuf, RootedError> {
     let (path, _) = super::fs_watch_shared_vm::path_argument(context, filename, "path")?;
@@ -91,10 +92,10 @@ fn resolved_path(
     Ok(result)
 }
 fn find(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     watcher: RootId,
 ) -> Result<Option<usize>, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     let identities = shared
         .borrow()
         .fs_stat_watch
@@ -111,7 +112,7 @@ fn find(
     }
     Ok(None)
 }
-fn interval(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<u32, RootedError> {
+fn interval(context: &mut NativeContext<'_, ErasedHost>, value: RootId) -> Result<u32, RootedError> {
     let Some(number) = context
         .rooted_value(value)
         .and_then(|value| value.as_number())
@@ -142,7 +143,7 @@ fn interval(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<
     Ok((number as u32).max(MIN_POLL_INTERVAL_MS))
 }
 pub(crate) fn watch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -173,7 +174,7 @@ pub(crate) fn watch(
             "ERR_INVALID_ARG_TYPE",
         )?);
     }
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     let cached = shared.borrow().fs_stat_watch.cache.get(&path).copied();
     let watcher = if let Some(watcher) = cached {
         let index = find(context, watcher)?
@@ -228,7 +229,7 @@ pub(crate) fn watch(
     Ok(watcher)
 }
 pub(crate) fn reference(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -239,7 +240,7 @@ pub(crate) fn reference(
         .unwrap_or_else(|| context.boolean(false));
     let reference = context.truthy_rooted(reference)?;
     if let Some(index) = find(context, watcher)? {
-        let shared = context.host_mut().shared_state();
+        let shared = context.node().shared_state();
         let mut state = shared.borrow_mut();
         let entry = &mut state.fs_stat_watch.watchers[index];
         if entry.active.is_some() {
@@ -253,13 +254,13 @@ pub(crate) fn reference(
     Ok(watcher)
 }
 pub(crate) fn stop(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let watcher = args.first().copied().unwrap_or_else(|| context.undefined());
     if let Some(index) = find(context, watcher)? {
-        let shared = context.host_mut().shared_state();
+        let shared = context.node().shared_state();
         let active = shared.borrow_mut().fs_stat_watch.watchers[index]
             .active
             .take();
@@ -276,7 +277,7 @@ pub(crate) fn stop(
     Ok(context.undefined())
 }
 pub(crate) fn stop_event(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -286,13 +287,13 @@ pub(crate) fn stop_event(
     context.call_rooted(emit, watcher, &[stop])
 }
 pub(crate) fn unwatch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let filename = args.first().copied().unwrap_or_else(|| context.undefined());
     let path = resolved_path(context, filename)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     let Some(watcher) = shared.borrow().fs_stat_watch.cache.get(&path).copied() else {
         return Ok(context.undefined());
     };
@@ -354,10 +355,10 @@ pub(crate) fn has_work(state: &State) -> bool {
     })
 }
 pub(crate) fn poll(
-    runtime: &mut Runtime<NodeHost>,
+    runtime: &mut Runtime<ErasedHost>,
     program: &quench_runtime::ResidualProgram,
 ) -> Result<bool, String> {
-    let shared = runtime.host_mut().shared_state();
+    let shared = runtime.node().shared_state();
     let due = shared.borrow().fs_stat_watch.watchers.iter().any(|entry| {
         entry
             .active
@@ -388,11 +389,11 @@ pub(crate) fn poll(
 }
 
 pub(crate) fn dispatch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.node().shared_state();
     let now = Instant::now();
     let ready = shared
         .borrow()
@@ -488,8 +489,8 @@ fn same_stat(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
         && a.len() == b.len()
         && a.permissions() == b.permissions()
 }
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
+    let shared = runtime.node().shared_state();
     let watchers = std::mem::take(&mut shared.borrow_mut().fs_stat_watch.watchers);
     let cache = std::mem::take(&mut shared.borrow_mut().fs_stat_watch.cache);
     for entry in watchers {
@@ -503,8 +504,8 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     }
 }
 
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
+    let shared = runtime.node().shared_state();
     let dead = shared
         .borrow()
         .fs_stat_watch

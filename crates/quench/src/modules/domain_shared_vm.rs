@@ -2,12 +2,13 @@
 //! active one mirrored in `process.domain`; emitters, async resources and native callbacks
 //! made in a domain run inside it, and an uncaught error reaches the active domain's
 //! `'error'` listeners through the uncaught-exception capture callback.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::event_constructor_shared_vm::get;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 use crate::modules::keys::STATE;
 const STATE_STACK: &str = "stack";
@@ -81,11 +82,11 @@ fn call_method(c: &mut Context<'_>, target: RootId, name: &str, args: &[RootId])
 }
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))
+    c.node().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))
 }
 
 fn state(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_mut().shared_state().borrow().builtin_cache.get(STATE).copied().ok_or_else(|| RootedError::host("node:domain is not loaded"))
+    c.node().shared_state().borrow().builtin_cache.get(STATE).copied().ok_or_else(|| RootedError::host("node:domain is not loaded"))
 }
 
 fn intrinsic(c: &mut Context<'_>, constructor: &str, member: &str) -> Result<RootId, RootedError> {
@@ -197,7 +198,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     let state = c.null_object_rooted()?;
     let state = c.retain(state)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(STATE.into(), state);
+    c.node().shared_state().borrow_mut().builtin_cache.insert(STATE.into(), state);
     let exports = c.object_rooted()?;
     put(c, state, STATE_EXPORTS, exports)?;
     let stack = c.array_rooted(&[])?;

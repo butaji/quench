@@ -1,10 +1,11 @@
 //! Callable EventEmitter construction and the canonical capture policy.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
@@ -12,7 +13,7 @@ pub(crate) fn get(
 }
 /// Strict-mode `object[key] = value`, the assignment the event configuration's guest
 /// `assign` operation performs.
-fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn nullish(context: &NativeContext<'_, ErasedHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
@@ -26,10 +27,10 @@ pub(crate) struct EmitterKeys {
 }
 
 fn emitter_keys(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
 ) -> Result<EmitterKeys, RootedError> {
-    let state = context.host_mut().shared_state();
+    let state = context.node().shared_state();
     if let Some(keys) = state.borrow().emitter_keys {
         return Ok(keys);
     }
@@ -44,7 +45,7 @@ fn emitter_keys(
 }
 
 fn capture_default(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
 ) -> Result<RootId, RootedError> {
     let keys = emitter_keys(context, data)?;
@@ -52,7 +53,7 @@ fn capture_default(
     context.get_property_rooted(prototype, keys.capture)
 }
 fn validate_boolean(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -67,9 +68,9 @@ fn validate_boolean(
     )?)
 }
 
-pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn install(context: &mut NativeContext<'_, ErasedHost>) -> Result<(), RootedError> {
     let data = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .event_targets_api
@@ -106,7 +107,7 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
 /// The `options.captureRejections` check of `EventEmitter.init`: a non-boolean throws Node's
 /// argument type error.
 pub(crate) fn validate_capture_rejections(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -116,7 +117,7 @@ pub(crate) fn validate_capture_rejections(
 }
 
 pub(crate) fn default_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -124,7 +125,7 @@ pub(crate) fn default_get(
     capture_default(context, data)
 }
 pub(crate) fn default_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -140,7 +141,7 @@ pub(crate) fn default_set(
 
 /// Metadata transitions follow creation/removal of the event's canonical record.
 pub(crate) fn event_added(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     target: RootId,
 ) -> Result<(), RootedError> {
     let count = get(context, target, "_eventsCount")?;
@@ -148,7 +149,7 @@ pub(crate) fn event_added(
     context.assign_named_property_rooted(target, "_eventsCount", next)
 }
 pub(super) fn event_removed(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     target: RootId,
     events: RootId,
@@ -177,7 +178,7 @@ pub(super) fn event_removed(
 
 /// Node observes thenables only while the emitter's private capture flag is set.
 pub(super) fn capture_result(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     target: RootId,
     result: RootId,
@@ -220,7 +221,7 @@ pub(super) fn capture_result(
     }
 }
 pub(crate) fn capture_rejected(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -235,7 +236,7 @@ pub(crate) fn capture_rejected(
     Ok(undefined)
 }
 pub(crate) fn capture_deliver(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

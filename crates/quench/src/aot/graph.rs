@@ -2,6 +2,7 @@
 //! discovery never executes module initialization or promises a closed graph.
 
 use super::{SourceManifest, ModuleFile};
+use quench_runtime::ErasableHost;
 use crate::host::shared_vm::commonjs;
 use crate::host::shared_vm::typescript_files::TypeScriptFile;
 use oxc_ast::ast::{CallExpression, ComputedMemberExpression, Expression, IdentifierReference, ImportExpression, LogicalExpression, StaticMemberExpression, UnaryExpression};
@@ -209,7 +210,7 @@ impl<'a> Visit<'a> for Requests<'_> {
 
 pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<DependencyGraph, String> {
     use std::{cell::RefCell, rc::Rc};
-    use quench_runtime::{Host, ModuleSource, SourceKind};
+    use quench_runtime::{ModuleSource, SourceKind};
     let entry = entry.canonicalize().map_err(|error| error.to_string())?;
     let assets = Rc::new(RefCell::new(super::ModuleAssets::default()));
     let mut host = crate::NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?;

@@ -7,7 +7,8 @@
 //! the ordinary CommonJS and ES module paths, so TypeScript reloads with the same type
 //! stripping as a first load.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use rustc_hash::{FxHashMap, FxHashSet};
 use sha1::Digest;
@@ -45,7 +46,7 @@ const HOT_METHODS: [(&str, &str); 4] = [
     ("invalidate", "hmrHotInvalidate"),
 ];
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// Whether `exec_argv` opts into HMR.
 pub(crate) fn requested(exec_argv: &[String]) -> bool {
@@ -571,15 +572,15 @@ pub(crate) fn accept_plan(
 
 /// The event loop's HMR poll: apply each stable edit, or restart the process for one that
 /// cannot be applied. Whether an update ran guest code.
-pub(crate) fn poll(runtime: &mut quench_runtime::Runtime<NodeHost>, program: &quench_runtime::ResidualProgram) -> Result<bool, String> {
+pub(crate) fn poll(runtime: &mut quench_runtime::Runtime<ErasedHost>, program: &quench_runtime::ResidualProgram) -> Result<bool, String> {
     if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
-        return if runtime.host_mut().shared_state().borrow().hmr.is_some() {
+        return if runtime.node().shared_state().borrow().hmr.is_some() {
             Err(SOURCE_REPLACEMENT_UNAVAILABLE.into())
         } else {
             Ok(false)
         };
     }
-    let shared_state = runtime.host_mut().shared_state();
+    let shared_state = runtime.node().shared_state();
     let update = shared_state.borrow_mut().hmr.as_mut().and_then(|state| state.poll(Instant::now()));
     let changed = match update {
         None => return Ok(false),
@@ -603,7 +604,7 @@ pub(crate) fn poll(runtime: &mut quench_runtime::Runtime<NodeHost>, program: &qu
     Ok(true)
 }
 
-fn apply(runtime: &mut quench_runtime::Runtime<NodeHost>, program: &quench_runtime::ResidualProgram, path: &Path) -> Result<bool, String> {
+fn apply(runtime: &mut quench_runtime::Runtime<ErasedHost>, program: &quench_runtime::ResidualProgram, path: &Path) -> Result<bool, String> {
     let operation = runtime
         .host_function(crate::host::shared_vm::operation!("hmrApply"))
         .map_err(|error| runtime.format_error(program, &error.error))?;
@@ -650,7 +651,7 @@ pub(crate) fn apply_operation(context: &mut Context<'_>, _: RootId, args: &[Root
 
 /// The ES module at `path` evaluated again under its compiled name.
 fn replace_es_module(context: &mut Context<'_>, path: &Path) -> Result<bool, RootedError> {
-    let shared_state = context.host_mut().shared_state();
+    let shared_state = context.node().shared_state();
     let (name, hot, importers) = {
         let state = shared_state.borrow();
         let Some(state) = state.hmr.as_ref() else { return Ok(false) };
@@ -664,7 +665,7 @@ fn replace_es_module(context: &mut Context<'_>, path: &Path) -> Result<bool, Roo
     };
     let Some(plan) = accept_plan(context, ModuleSystem::Module, hot, &importers)? else { return Ok(false) };
     let bytes = std::fs::read(path).map_err(|error| RootedError::host(format!("{}: {error}", path.display())))?;
-    let module = context.host_mut().module_source(path, name, bytes).map_err(|error| RootedError::host(error.message))?;
+    let module = context.node().module_source(path, name, bytes).map_err(|error| RootedError::host(error.message))?;
     if let Some(hot) = hot {
         let data = dispose(context, hot)?;
         if rejected(context, hot)? {
@@ -718,7 +719,7 @@ fn replace_es_module(context: &mut Context<'_>, path: &Path) -> Result<bool, Roo
 /// `import.meta.hot` for an application module (`Host::initialize_import_meta`).
 pub(crate) fn initialize_import_meta(context: &mut Context<'_>, source_name: &str, import_meta: RootId) -> Result<(), RootedError> {
     let (_, path) = crate::host::shared_vm::referrer_location(source_name).map_err(|error| RootedError::host(error.message))?;
-    let path = context.host_mut().real_path(path);
+    let path = context.node().real_path(path);
     if !HmrState::watches(&path) {
         return Ok(());
     }
@@ -741,7 +742,7 @@ pub(crate) fn initialize_import_meta(context: &mut Context<'_>, source_name: &st
 
 /// Run `operate` on the HMR state of a host that has one; callers are HMR operations.
 pub(crate) fn with_state<R>(context: &mut Context<'_>, operate: impl FnOnce(&mut HmrState) -> R) -> R {
-    let shared_state = context.host_mut().shared_state();
+    let shared_state = context.node().shared_state();
     let mut shared_state = shared_state.borrow_mut();
     operate(shared_state.hmr.as_mut().expect("HMR operations run only with HMR enabled"))
 }

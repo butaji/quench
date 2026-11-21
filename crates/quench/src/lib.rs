@@ -16,6 +16,7 @@ pub mod qimg;
 pub mod shared_run;
 
 pub use host::{NodeHost, NodeOutputSink};
+pub use quench_runtime::ErasedHost;
 
 /// The environment variable naming the file a `quench-node-test` case process writes its result to.
 pub const CASE_RESULT_ENV: &str = "QUENCH_NODE_TEST_CASE_RESULT";

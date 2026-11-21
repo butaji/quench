@@ -1,11 +1,11 @@
 //! `console.table` (lib/internal/console/constructor.js `table`, lib/internal/cli_table.js):
 //! the rows and columns of its data, drawn as a box.
 
+use quench_runtime::ErasedHost;
 use super::console_format_shared_vm::{self as format, Options};
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 const TABLE_INDEX: &str = "(index)";
 const TABLE_ITERATION_INDEX: &str = "(iteration index)";

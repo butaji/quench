@@ -1,13 +1,14 @@
 //! Recursive watch policy composes the canonical public per-path watcher.
 //! Private class data owns the tree in the VM heap, so callback cycles are GC-visible.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::{get, nullish, set};
-use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 pub(crate) mod iterator;
 
 
-fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+fn api(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+    let shared = context.node().shared_state();
     let parent = shared
         .borrow()
         .fs_watch
@@ -16,7 +17,7 @@ fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError>
     get(context, parent, "recursive")
 }
 fn operation(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     name: &str,
     receiver: RootId,
     args: &[RootId],
@@ -26,7 +27,7 @@ fn operation(
     context.call_rooted(function, receiver, args)
 }
 fn fs_call(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     name: &str,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -36,7 +37,7 @@ fn fs_call(
     context.call_rooted(function, undefined, args)
 }
 fn map_get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     key: RootId,
 ) -> Result<RootId, RootedError> {
@@ -44,7 +45,7 @@ fn map_get(
     operation(context, "mapGet", map, &[key])
 }
 fn map_set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     key: RootId,
     value: RootId,
@@ -54,7 +55,7 @@ fn map_set(
     Ok(())
 }
 fn map_delete(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     key: RootId,
 ) -> Result<(), RootedError> {
@@ -63,7 +64,7 @@ fn map_delete(
     Ok(())
 }
 fn files(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
 ) -> Result<Vec<(RootId, RootId)>, RootedError> {
     let map = get(context, data, "files")?;
@@ -72,12 +73,12 @@ fn files(
         _ => Err(RootedError::host("recursive watch tree is not a Map")),
     }
 }
-fn closed(context: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<bool, RootedError> {
+fn closed(context: &mut NativeContext<'_, ErasedHost>, data: RootId) -> Result<bool, RootedError> {
     let closed = get(context, data, "closed")?;
     context.truthy_rooted(closed)
 }
 fn method(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
@@ -85,7 +86,7 @@ fn method(
     context.call_rooted(method, object, &[])
 }
 fn is_enoent(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     error: &RootedError,
 ) -> Result<bool, RootedError> {
     let Some(exception) = error.exception else {
@@ -95,7 +96,7 @@ fn is_enoent(
     Ok(context.string_text(code)?.as_deref() == Some("ENOENT"))
 }
 fn boolean_option(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<(), RootedError> {
@@ -116,7 +117,7 @@ fn boolean_option(
     Ok(())
 }
 pub(crate) fn initialize(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -179,7 +180,7 @@ pub(crate) fn initialize(
     Ok(data)
 }
 pub(super) fn watch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     filename: RootId,
     options: RootId,
     listener: RootId,
@@ -201,7 +202,7 @@ pub(super) fn watch(
 }
 
 pub(crate) fn promise_watch(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -248,7 +249,7 @@ pub(crate) fn promise_watch(
     super::promise::create(context, filename, options)
 }
 pub(crate) fn start(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -291,7 +292,7 @@ pub(crate) fn start(
     }
 }
 fn watch_file(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     watcher: RootId,
     data: RootId,
     file: RootId,
@@ -336,7 +337,7 @@ fn watch_file(
     Ok(())
 }
 fn relative(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     file: RootId,
 ) -> Result<RootId, RootedError> {
@@ -345,7 +346,7 @@ fn relative(
     operation(context, "relative", undefined, &[root, file])
 }
 fn emit(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     watcher: RootId,
     kind: &str,
     filename: RootId,
@@ -357,7 +358,7 @@ fn emit(
     Ok(())
 }
 fn watch_folder(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     watcher: RootId,
     data: RootId,
     folder: RootId,
@@ -426,7 +427,7 @@ fn watch_folder(
     Ok(())
 }
 fn close_child(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     record: RootId,
 ) -> Result<(), RootedError> {
     let child = get(context, record, "watcher")?;
@@ -436,7 +437,7 @@ fn close_child(
     Ok(())
 }
 fn unwatch_tree(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     data: RootId,
     file: RootId,
 ) -> Result<(), RootedError> {
@@ -452,7 +453,7 @@ fn unwatch_tree(
     Ok(())
 }
 pub(crate) fn notify(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -556,7 +557,7 @@ pub(crate) fn notify(
     Ok(context.undefined())
 }
 pub(crate) fn close(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -577,7 +578,7 @@ pub(crate) fn close(
     Ok(context.undefined())
 }
 pub(crate) fn reference(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {

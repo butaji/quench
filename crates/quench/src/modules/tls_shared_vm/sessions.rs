@@ -1,5 +1,6 @@
 //! A TLS socket owns its SSL session before the physical connection exists.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use openssl::ssl::Ssl;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 
@@ -24,14 +25,14 @@ pub(crate) struct State {
     pub(crate) entries: Vec<Session>,
 }
 pub(crate) fn register(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
     ssl: Ssl,
     role: super::super::net_shared_vm::encrypted::Role,
 ) -> Result<(), RootedError> {
     let identity = context.host_weak_root(socket)?;
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .tls_contexts
@@ -49,7 +50,7 @@ pub(crate) fn register(
     Ok(())
 }
 pub(crate) fn owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
 ) -> Result<usize, RootedError> {
     if let Some(index) = find_owner(context, socket)? {
@@ -59,11 +60,11 @@ pub(crate) fn owner(
     Err(context.throw(error))
 }
 pub(crate) fn find_owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
 ) -> Result<Option<usize>, RootedError> {
     let identities = context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .tls_contexts
@@ -82,13 +83,13 @@ pub(crate) fn find_owner(
     Ok(None)
 }
 pub(crate) fn set_purpose(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     socket: RootId,
     purpose: Purpose,
 ) -> Result<(), RootedError> {
     let index = owner(context, socket)?;
     context
-        .host_mut()
+        .node()
         .shared_state()
         .borrow_mut()
         .tls_contexts
@@ -97,8 +98,8 @@ pub(crate) fn set_purpose(
         .purpose = purpose;
     Ok(())
 }
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn prune(runtime: &mut Runtime<ErasedHost>) {
+    let shared = runtime.node().shared_state();
     let dead = shared
         .borrow()
         .tls_contexts
@@ -120,8 +121,8 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
         runtime.release_host_weak_root(entry.identity);
     }
 }
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
+pub(crate) fn cleanup(runtime: &mut Runtime<ErasedHost>) {
+    let shared = runtime.node().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().tls_contexts.sessions.entries);
     for entry in entries {
         runtime.release_host_weak_root(entry.identity);

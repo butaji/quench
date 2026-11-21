@@ -1,5 +1,6 @@
 //! `MockTracker` and `MockFunctionContext`: mock functions record each call and run the
 //! current implementation; method mocks replace a property and restore its descriptor.
+use crate::host::NodeAccess;
 use super::{accessor, function, get, put, with_state, Context, NodeId};
 use crate::modules::private_slots;
 use quench_runtime::{RootId, RootedError};
@@ -82,11 +83,11 @@ pub(super) fn test_tracker(c: &mut Context<'_>, id: NodeId) -> Result<RootId, Ro
 
 fn context_prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE: &str = "\0quench:test:mockContextPrototype";
-    if let Some(prototype) = c.host_mut().shared_state().borrow().builtin_cache.get(CACHE).copied() {
+    if let Some(prototype) = c.node().shared_state().borrow().builtin_cache.get(CACHE).copied() {
         return Ok(prototype);
     }
     let prototype = prototype(c, &CONTEXT_METHODS, Some(("calls", "nodeTestMockCalls")))?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(CACHE.to_owned(), prototype);
+    c.node().shared_state().borrow_mut().builtin_cache.insert(CACHE.to_owned(), prototype);
     Ok(prototype)
 }
 

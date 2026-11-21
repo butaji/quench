@@ -1,14 +1,14 @@
 //! A failing test's error as Node's reporters read it: the TAP fields after `location`, and
 //! the `util.inspect` text spec, dot and junit print. Child module of `reporters`.
+use quench_runtime::ErasedHost;
 use super::super::report::{Failure, Yaml};
 use super::text_of;
 use crate::host::shared_vm::commonjs::util_module;
 use crate::modules::stream_shared_vm::{get, put};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-use crate::host::NodeHost;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// A failing test's error, as Node's reporters show it: the error wrapper's `failureType`,
 /// the cause's message and stack, and the wrapper's `util.inspect`.

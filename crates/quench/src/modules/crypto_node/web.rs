@@ -5,6 +5,7 @@
 //! KeyObject `KeyObject.from()` returns are kept in private slots so each read gives the
 //! same object.
 
+use crate::host::NodeAccess;
 use super::errors::{self, CryptoError};
 use super::keys::{self, Key};
 use super::{arg, define_getters, define_methods, get, is_nullish, is_undefined, put, with_native, Class, Context, Members, Native, Outcome};
@@ -755,7 +756,7 @@ fn normalize(c: &mut Context<'_>, value: RootId, operation: Operation) -> Result
 const EXPERIMENTAL_ALGORITHMS: [Algorithm; 2] = [Algorithm::Ed448, Algorithm::X448];
 
 fn warn_experimental(c: &mut Context<'_>, algorithm: Algorithm) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     if shared.borrow().crypto.experimental_warned.contains(&algorithm) {
         return Ok(());
     }

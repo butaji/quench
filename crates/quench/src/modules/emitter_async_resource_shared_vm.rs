@@ -1,10 +1,10 @@
 //! `events.EventEmitterAsyncResource`: an EventEmitter whose emits run in the scope of its own
 //! `AsyncResource`, an `EventEmitterReferencingAsyncResource` that names it back.
+use quench_runtime::ErasedHost;
 use super::event_target_shared_vm::{api, argument, attach_slot, get, put, receiver_slot, require_new};
-use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The event group's members naming the private slots: an emitter's resource, a resource's
 /// emitter.

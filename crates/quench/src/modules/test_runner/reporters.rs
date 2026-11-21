@@ -1,18 +1,18 @@
 //! `node:test/reporters`: Node's reporter exports. `tap`, `dot` and `junit` are async
 //! generator functions over an event source; `spec` and `lcov` are Transform classes.
 //! Each renders events through [`Reporter`], one at a time, as Node's reporters do.
+use quench_runtime::ErasedHost;
 use super::report::{Directive, Kind, Reporter, Style, TestReport};
 #[path = "reporters_failure.rs"]
 mod failure_text;
 use crate::host::shared_vm::commonjs::{cached_native_binding, stream_module};
-use crate::host::NodeHost;
 use crate::modules::host_members::{captured, constructor, current, function, leading, members, methods};
 use crate::modules::stream_shared_vm::{get, inherit, is_undefined, put};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 /// The property naming a Transform instance's reporter.

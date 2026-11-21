@@ -1,9 +1,10 @@
 //! Callable constructor presentation delegates TLS policy to Rust.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use crate::modules::util_shared_vm::named_get as get;
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -12,8 +13,8 @@ fn set(
     context.set_property_rooted(object, key, value, object)?;
     Ok(())
 }
-pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+pub(crate) fn install(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
+    let shared = context.node().shared_state();
     if let Some(api) = shared.borrow().tls_contexts.api {
         return Ok(api);
     }
@@ -28,14 +29,14 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     Ok(api)
 }
 /// Gives a host function the `name` Node's function of that name reports.
-fn name_function(context: &mut NativeContext<'_, NodeHost>, function: RootId, name: &str) -> Result<(), RootedError> {
+fn name_function(context: &mut NativeContext<'_, ErasedHost>, function: RootId, name: &str) -> Result<(), RootedError> {
     let key = context.string_rooted("name");
     let text = context.string_rooted(name);
     context.define_data_property_rooted(function, key, text, false, false, true)?;
     Ok(())
 }
 /// The `crypto` internal binding: SecureContext and the native crypto operations.
-fn crypto_binding(context: &mut NativeContext<'_, NodeHost>, native: RootId) -> Result<RootId, RootedError> {
+fn crypto_binding(context: &mut NativeContext<'_, ErasedHost>, native: RootId) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     #[cfg(quench_openssl_provider)]
     super::super::crypto_provider_shared_vm::install(context, binding)?;
@@ -61,7 +62,7 @@ fn crypto_binding(context: &mut NativeContext<'_, NodeHost>, native: RootId) -> 
     Ok(binding)
 }
 /// SecureContext's native methods, then its configuration methods the engine supports.
-fn install_context_methods(context: &mut NativeContext<'_, NodeHost>, prototype: RootId) -> Result<(), RootedError> {
+fn install_context_methods(context: &mut NativeContext<'_, ErasedHost>, prototype: RootId) -> Result<(), RootedError> {
     let native = [
         ("init", "tlsContextInit"),
         ("setOptions", "tlsContextSetOptions"),
@@ -87,13 +88,13 @@ fn install_context_methods(context: &mut NativeContext<'_, NodeHost>, prototype:
     }
     Ok(())
 }
-fn absent(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn absent(context: &NativeContext<'_, ErasedHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 fn protocol_json(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<String, RootedError> {
     let value = context.stringify_json_rooted(value)?;
@@ -107,7 +108,7 @@ fn protocol_json(
     }
 }
 fn version(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     api: RootId,
     value: RootId,
     minimum: bool,
@@ -148,7 +149,7 @@ fn version(
     Ok(context.number(f64::from(raw)))
 }
 pub(crate) fn initialize(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -203,7 +204,7 @@ pub(crate) fn initialize(
     Ok(context.undefined())
 }
 fn validate_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<(), RootedError> {
     use crate::modules::util_shared_vm::MAX_SAFE_INTEGER;
@@ -239,7 +240,7 @@ fn validate_options(
     Ok(())
 }
 pub(crate) fn create(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -267,7 +268,7 @@ pub(crate) fn create(
     Ok(outer)
 }
 
-pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn binding(context: &mut NativeContext<'_, ErasedHost>) -> Result<RootId, RootedError> {
     let api = install(context)?;
     get(context, api, "binding")
 }

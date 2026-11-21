@@ -1,10 +1,11 @@
 //! Node path validation and raw bytes at the filesystem boundary.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 use std::path::PathBuf;
 
 pub(super) fn validate(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
@@ -56,7 +57,7 @@ pub(super) fn validate(
     Ok(value)
 }
 
-fn bytes(context: &mut NativeContext<'_, NodeHost>, path: RootId) -> Result<Vec<u8>, RootedError> {
+fn bytes(context: &mut NativeContext<'_, ErasedHost>, path: RootId) -> Result<Vec<u8>, RootedError> {
     if let Some(text) = context.string_text(path)? {
         return Ok(text.into_bytes());
     }
@@ -67,7 +68,7 @@ fn bytes(context: &mut NativeContext<'_, NodeHost>, path: RootId) -> Result<Vec<
 
 /// Snapshot after option getters, when the native operation consumes the path.
 pub(super) fn native_path(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<PathBuf, RootedError> {
     let bytes = bytes(context, value)?;
@@ -82,17 +83,17 @@ pub(super) fn native_path(
 }
 
 pub(super) fn resolve(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
 ) -> Result<PathBuf, RootedError> {
     let path = native_path(context, value)?;
-    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    let cwd = context.node().shared_state().borrow().cwd.clone();
     Ok(cwd.resolve_io_path(&path))
 }
 
 /// System errors display UTF-8 replacement characters without public conversion hooks.
 pub(super) fn display(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     path: RootId,
 ) -> Result<String, RootedError> {
     Ok(String::from_utf8_lossy(&bytes(context, path)?).into_owned())

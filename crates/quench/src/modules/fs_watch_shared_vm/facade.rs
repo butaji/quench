@@ -2,6 +2,7 @@
 //! `FSWatcher`) and the adapters that route their methods to the host operations, which
 //! take the receiver as their first argument.
 
+use crate::host::NodeAccess;
 use crate::modules::stream_shared_vm::{arg, get, put, Context, Outcome};
 use quench_runtime::{RootId, RootedError};
 
@@ -151,7 +152,7 @@ fn recursive_state(c: &mut Context<'_>, this: RootId) -> Outcome {
 
 fn state_key(c: &mut Context<'_>) -> Outcome {
     const KEY: &str = "\0fs:recursiveWatcherState";
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     if let Some(symbol) = shared.borrow().builtin_cache.get(KEY).copied() {
         return Ok(symbol);
     }

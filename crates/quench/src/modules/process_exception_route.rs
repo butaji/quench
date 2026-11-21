@@ -1,7 +1,9 @@
 //! Source-only common reduction of process_shared_vm's exception route.
 //! Both Runtime and NativeContext must call this authority after integration;
 //! do not leave a second copy of the route in the Runtime path.
-use crate::host::{NodeHost, SharedNodeState};
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
+use crate::host::SharedNodeState;
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
 use std::{cell::RefCell, rc::Rc};
 
@@ -23,9 +25,9 @@ pub(crate) trait Context {
     /// frame. A NativeContext adapter therefore leaves disposal to its frame.
     fn release_owned(&mut self, root: RootId);
 }
-impl Context for NativeContext<'_, NodeHost> {
+impl Context for NativeContext<'_, ErasedHost> {
     fn shared(&mut self) -> Rc<RefCell<SharedNodeState>> {
-        self.host_mut().shared_state()
+        self.node().shared_state()
     }
     fn text(&mut self, text: &str) -> RootId {
         self.string_rooted(text)
@@ -55,9 +57,9 @@ impl Context for NativeContext<'_, NodeHost> {
     }
     fn release_owned(&mut self, _: RootId) {}
 }
-impl Context for Runtime<NodeHost> {
+impl Context for Runtime<ErasedHost> {
     fn shared(&mut self) -> Rc<RefCell<SharedNodeState>> {
-        self.host_mut().shared_state()
+        self.node().shared_state()
     }
     fn text(&mut self, text: &str) -> RootId {
         self.string_rooted(text)

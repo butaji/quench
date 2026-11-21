@@ -1,12 +1,13 @@
 //! `util.MIMEType` and `util.MIMEParams` (lib/internal/mime.js) in Rust. A MIME type keeps
 //! its type, subtype and parameters in private slots; parameters keep their ordered
 //! name/value list (alternating strings).
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::private_slots as slots;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 const TYPE_SLOT: &str = "\0node/mime/type";
 const SUBTYPE_SLOT: &str = "\0node/mime/subtype";
@@ -264,7 +265,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedErr
         c.define_data_property_rooted(params_prototype, iterator, entries, true, false, true)?;
     }
     let cached = c.retain(params)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(PARAMS_CLASS.to_owned(), cached);
+    c.node().shared_state().borrow_mut().builtin_cache.insert(PARAMS_CLASS.to_owned(), cached);
     Ok((mime, params))
 }
 
@@ -282,7 +283,7 @@ pub(crate) fn construct_type(c: &mut Context<'_>, this: RootId, args: &[RootId])
     let subtype = c.string_rooted(&subtype);
     slots::write(c, this, SUBTYPE_SLOT, subtype)?;
     let class = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .builtin_cache

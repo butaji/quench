@@ -1,11 +1,12 @@
 //! `node:url` (lib/url.js) and the `internal/url` namespace host code converts file URLs
 //! through: the WHATWG classes (`url_whatwg_shared_vm`), the legacy API
 //! (`url_legacy_shared_vm`) and the file URL conversions.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use crate::host::shared_vm::operation;
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The `url` exports beyond the classes, in Node's order: (name, operation, length).
 const LEGACY_EXPORTS: &[(&str, &str, &str, f64)] = &[
@@ -109,7 +110,7 @@ pub(crate) fn is_url_operation(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
 fn strings_have_href(c: &mut Context<'_>) -> Result<bool, RootedError> {
     // The intrinsic `String.prototype`, read once: every path argument asks.
     const CACHE_KEY: &str = "\0url:String.prototype";
-    let shared = c.host_mut().shared_state();
+    let shared = c.node().shared_state();
     let cached = shared.borrow().builtin_cache.get(CACHE_KEY).copied();
     let prototype = match cached {
         Some(prototype) => prototype,

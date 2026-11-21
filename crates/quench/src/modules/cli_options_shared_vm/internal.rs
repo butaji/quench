@@ -1,10 +1,12 @@
 //! Node's `internal/options` facade. Captured state preserves the identities and
 //! refresh boundary of the upstream JS module over the same native projections.
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 use super::{embedder_options, flags, info, values};
-use crate::host::{shared_vm::operation, NodeHost};
+use crate::host::shared_vm::operation;
 use quench_runtime::{HostFunctionId, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 type Projection = fn(&mut Context<'_>, RootId, &[RootId]) -> Outcome;
 
@@ -82,7 +84,7 @@ impl Slot {
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let state = c.null_object_rooted()?;
     let process = c
-        .host_mut()
+        .node()
         .shared_state()
         .borrow()
         .process_module

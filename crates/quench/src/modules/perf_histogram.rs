@@ -5,6 +5,7 @@
 //! A histogram's private slot holds its record (`HISTOGRAM_FIELDS`): the HdrHistogram's
 //! buffer, the `Map` its `percentiles` refills, whether it records, and for an event loop
 //! delay histogram its enabled state, timer and resolution.
+use crate::host::NodeAccess;
 use super::event_target_shared_vm::{argument, get, is_undefined, put};
 use super::hdr_histogram::{buffer_len, Histogram, FIGURES};
 use super::perf_hooks::{
@@ -271,7 +272,7 @@ pub(crate) fn record(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> 
 }
 
 fn clock_ns(c: &mut Context<'_>) -> i64 {
-    let control = c.host_mut().shared_state().borrow().process_control.clone();
+    let control = c.node().shared_state().borrow().process_control.clone();
     control.monotonic_now_ns().unwrap_or_default() as i64
 }
 

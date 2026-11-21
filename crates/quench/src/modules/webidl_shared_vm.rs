@@ -1,8 +1,8 @@
 //! WebIDL ByteString conversion and HTTP header-field checks, in Rust.
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{IntactBuiltin, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 
 /// The largest code unit a WebIDL ByteString holds (WebIDL, "ByteString").
 const BYTE_STRING_MAX_UNIT: u16 = 0xff;

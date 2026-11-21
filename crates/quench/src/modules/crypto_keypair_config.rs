@@ -1,4 +1,5 @@
 //! Projects the native constructor ABI after unchanged SDK policy validation.
+use quench_runtime::ErasedHost;
 use super::{
     crypto_asymmetric::Format,
     crypto_digest::Digest,
@@ -7,10 +8,9 @@ use super::{
     },
     crypto_secret_material::Material,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Arc;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 fn fail(c: &mut Context<'_>, code: &str, message: &str) -> RootedError {
     match c.type_error_rooted(message) {
         Ok(error) => {

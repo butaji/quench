@@ -1,13 +1,13 @@
 //! execFile output collection and its single terminal callback transition.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) const DEFAULT_MAX_BUFFER: f64 = (1024 * 1024) as f64;
 use super::util_shared_vm::MAX_SAFE_INTEGER;
 
 pub(crate) fn function(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     spawn: RootId,
     buffer: RootId,
 ) -> Result<RootId, RootedError> {
@@ -16,7 +16,7 @@ pub(crate) fn function(
 }
 
 pub(crate) fn install_promisified(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     originals: &[RootId],
 ) -> Result<(), RootedError> {
     let global = context.global_root()?;
@@ -43,7 +43,7 @@ pub(crate) fn install_promisified(
 /// executor: validation throws synchronously, and the returned promise owns
 /// the child handle even when the completion callback has already run.
 pub(crate) fn promise_exec(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -69,7 +69,7 @@ pub(crate) fn promise_exec(
 }
 
 pub(crate) fn promise_settled(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -98,7 +98,7 @@ pub(crate) fn promise_settled(
 /// exec normalizes shell policy, then delegates through the public execFile
 /// property just as Node does. Output and completion have one shared owner.
 pub(crate) fn exec(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -142,7 +142,7 @@ pub(crate) fn exec(
 }
 
 pub(crate) fn exec_file(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -275,7 +275,7 @@ pub(crate) fn exec_file(
 }
 
 pub(crate) fn event(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -429,7 +429,7 @@ pub(crate) fn event(
 }
 
 pub(crate) fn validate_limit(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     value: RootId,
     name: &str,
     integer: bool,
@@ -464,7 +464,7 @@ pub(crate) fn validate_limit(
     Ok(())
 }
 
-fn kill(context: &mut NativeContext<'_, NodeHost>, state: RootId) -> Result<(), RootedError> {
+fn kill(context: &mut NativeContext<'_, ErasedHost>, state: RootId) -> Result<(), RootedError> {
     let stopped = context.boolean(true);
     set(context, state, "stopped", stopped)?;
     close_streams(context, state)?;
@@ -487,7 +487,7 @@ fn kill(context: &mut NativeContext<'_, NodeHost>, state: RootId) -> Result<(), 
 }
 
 fn close_streams(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     state: RootId,
 ) -> Result<(), RootedError> {
     let child = get(context, state, "child")?;
@@ -500,13 +500,13 @@ fn close_streams(
     Ok(())
 }
 
-fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+fn nullish(context: &NativeContext<'_, ErasedHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 
-fn number(context: &NativeContext<'_, NodeHost>, value: RootId) -> Option<f64> {
+fn number(context: &NativeContext<'_, ErasedHost>, value: RootId) -> Option<f64> {
     context
         .rooted_value(value)
         .and_then(|value| value.as_number())
@@ -515,7 +515,7 @@ fn number(context: &NativeContext<'_, NodeHost>, value: RootId) -> Option<f64> {
 use crate::modules::util_shared_vm::named_get as get;
 
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -526,7 +526,7 @@ fn set(
 }
 
 fn method(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, ErasedHost>,
     object: RootId,
     name: &str,
     args: &[RootId],

@@ -7,6 +7,8 @@
 //! Algorithms follow Node's `lib/internal/webstreams`, including where its promise and
 //! microtask steps differ from the standard's prose, so reactions run in Node's order.
 
+use quench_runtime::ErasedHost;
+use crate::host::NodeAccess;
 pub(crate) mod adapters;
 pub(crate) mod byte;
 pub(crate) mod codecs;
@@ -17,11 +19,10 @@ pub(crate) mod strategies;
 pub(crate) mod transform;
 pub(crate) mod writable;
 
-use crate::host::NodeHost;
 use crate::modules::host_members::{self, Members};
 use quench_runtime::{DescriptorFields, NativeContext, PromiseSnapshot, RootId, RootedError};
 
-pub(crate) type Context<'a> = NativeContext<'a, NodeHost>;
+pub(crate) type Context<'a> = NativeContext<'a, ErasedHost>;
 pub(crate) type Outcome = Result<RootId, RootedError>;
 type Done = Result<(), RootedError>;
 
@@ -310,12 +311,12 @@ pub(crate) mod list {
 
 /// The realm's intrinsics record, built on first use from the startup intrinsics.
 pub(crate) fn intrinsics(c: &mut Context<'_>) -> Outcome {
-    if let Some(root) = c.host_mut().shared_state().borrow().builtin_cache.get(INTRINSICS).copied() {
+    if let Some(root) = c.node().shared_state().borrow().builtin_cache.get(INTRINSICS).copied() {
         return Ok(root);
     }
     let built = c.with_startup_intrinsics(build_intrinsics)?;
     let retained = c.retain(built)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(INTRINSICS.to_owned(), retained);
+    c.node().shared_state().borrow_mut().builtin_cache.insert(INTRINSICS.to_owned(), retained);
     Ok(built)
 }
 

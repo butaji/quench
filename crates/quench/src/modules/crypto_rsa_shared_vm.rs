@@ -1,12 +1,12 @@
 //! Native RSA primitives called by unchanged internal/crypto/cipher.js policy.
+use quench_runtime::ErasedHost;
 use super::{
     crypto_asymmetric::KeyKind,
     crypto_asymmetric_operations::{RsaOperation, RsaOptions},
     crypto_digest::Digest,
 };
-use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 fn coded(c: &mut Context<'_>, code: &str, text: &str) -> RootedError {
     match c.error_rooted(text) {
         Ok(error) => {

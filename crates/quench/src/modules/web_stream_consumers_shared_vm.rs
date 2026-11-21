@@ -3,12 +3,12 @@
 //! bytes, a string or parsed JSON. Each consumer is Node's `for await` loop as a state
 //! machine: one step per `next()` result, the iterator closed when a chunk fails.
 
-use crate::host::NodeHost;
+use quench_runtime::ErasedHost;
 use crate::modules::host_members::{captured, current, members};
 use crate::modules::webstreams_shared_vm::{arg, deferred, get, is_nullish, literal, put, record, resolved, upon};
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a, ErasedHost>;
 type Outcome = Result<RootId, RootedError>;
 
 members!(Member, "streamConsumers", [
