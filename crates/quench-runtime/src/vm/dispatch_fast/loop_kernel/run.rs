@@ -463,7 +463,9 @@ impl LoopKernel {
             }
         }
         for (id, node) in self.shape.nodes.iter().enumerate() {
-            if matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_) | NodeOp::Cmp(_)) && !node.seq && !node.hoisted && !node.dead {
+            if matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_) | NodeOp::Cmp(_)) && !node.seq && !node.hoisted && !node.dead
+                && !self.recurrence.unread_column(id)
+            {
                 self.operator_column(state, scratch, id, len);
             }
         }
