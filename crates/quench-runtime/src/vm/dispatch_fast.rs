@@ -357,6 +357,9 @@ pub(super) enum RegionDecline {
     EntryContract,
     /// The region's entry cell held its stub, so its code did not run.
     Stub,
+    /// The loop's region is not built yet: its calls have linked no targets, so the inliner
+    /// makes one when they do.
+    NoRegion,
 }
 
 impl RegionDecline {
@@ -393,6 +396,7 @@ impl RegionDecline {
             Self::Locals => "locals",
             Self::EntryContract => "entry-contract",
             Self::Stub => "stub",
+            Self::NoRegion => "no-region",
         }
     }
 }
@@ -8442,9 +8446,12 @@ script_handler! {
                 // loop body's: the body planner inlines what it knows (`native_calls`) and
                 // starts at the header, so the loop runs natively without a function entry.
                 None if loop_body::offer_body(cx, r, site) => next!(cx, r, header, Carried::script_in(cx, view)),
+                // The loop's callees have not linked their targets yet, so no region can be
+                // built: the site stays, and the decline's backoff retries when they have. A
+                // cause that persists past the model's repayment retires it (`note_decline`).
                 None => {
-                    site.entering.set(false);
-                    loop_retire_in_lane(cx, ip, site);
+                    site.count_decline(RegionDecline::NoRegion);
+                    site.note_decline();
                     next!(cx, r, header, Carried::script_in(cx, view))
                 }
             },

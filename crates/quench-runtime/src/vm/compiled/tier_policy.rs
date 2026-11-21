@@ -377,7 +377,7 @@ pub(in crate::vm) const PERCENT: u64 = 100;
 
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8,
+    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 16,
         trip_check_entries: 64, min_trip_per_entry: 4 },
     lane_body: LaneBody {
         warmup_entries: 400,

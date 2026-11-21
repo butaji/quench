@@ -176,7 +176,10 @@ impl LoopTier {
     /// the interpreter without reading an entry: reading one at every iteration had cost
     /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
     pub(super) fn may_run(&self, tiers: &Tiers, policy: crate::MemoryPolicy) -> bool {
+        // A compile still in flight is polled even past the budget: the last generation's request
+        // may publish, and a site that never polls it leaves the loop interpreted for good.
         self.is_published()
+            || self.pending.is_some()
             || (self.compilations < tiers.loops.max_compilations && super::super::compiled::loop_tier_compiles(policy))
     }
 
@@ -217,7 +220,10 @@ impl LoopTier {
                 return true;
             }
             Ok(OsrCompile::Done(region)) => self.publish(vm, region),
-            Ok(OsrCompile::Stale) => {}
+            // A compile whose facts changed under it produced no code: it spends no generation
+            // (`compilations`), or a last-round staleness would leave the site with neither code
+            // nor budget and run the loop interpreted for good.
+            Ok(OsrCompile::Stale) => self.compilations = self.compilations.saturating_sub(1),
             Ok(OsrCompile::Failed) => {
                 // A region that lowered no code (it is lowered off the loop's thread) or whose
                 // code failed retires the site, as one declined at the start does.

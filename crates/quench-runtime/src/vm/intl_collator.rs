@@ -387,6 +387,9 @@ impl Vm {
         if default && let Some(collation) = &self.default_collation {
             return Ok(collation.clone());
         }
+        // A program that never names `Intl` still reaches it here: the group materializes, as it
+        // would have at startup, before the constructor's intrinsic is looked up.
+        self.ensure_intl_intrinsics(p)?;
         let constructor = self
             .realm
             .intrinsics
