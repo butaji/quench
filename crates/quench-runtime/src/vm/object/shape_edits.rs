@@ -3,7 +3,7 @@
 //! shape it had.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(in crate::vm) fn transition_shape(&mut self, shape: u32, atom: Atom) -> u32 {
         self.transition_property_shape(shape, PropertyKey::string(atom))
     }

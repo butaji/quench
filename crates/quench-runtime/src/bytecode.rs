@@ -741,9 +741,9 @@ macro_rules! opcodes {
             const VALUE_STEPS: [Option<ValueStep>; Self::COUNT] = [$(opcodes!(@value $($value)?)),+];
             #[inline(always)] pub(crate) const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
             #[cfg(feature = "native-execution")]
-            pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
+            pub(crate) fn native_semantic_entry(self) -> crate::NativeJsOperationEntry {
                 match self {
-                    $(Self::$name => crate::native_js_operation_entry::<H, { Self::$name as usize }>),+
+                    $(Self::$name => crate::native_js_operation_entry::<{ Self::$name as usize }>),+
                 }
             }
             const EFFECTS: [Effect; Self::COUNT] = [$($effect),+];
@@ -1180,7 +1180,7 @@ opcodes!($;
 
     WasmExceptionNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE MAY_ALLOCATE WASM_EXCEPTION_WINDOW, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmExceptionMatch => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmExceptionPayload => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmExceptionFieldIndex; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmExceptionPayload => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmExceptionFieldIndex; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, WasmPayloadType),
     WasmThrowRef => Effect::READS_HEAP.union(Effect::THROWS).union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
     WasmStructNewDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefaultDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
@@ -1546,7 +1546,7 @@ pub struct Function {
     /// behind `caches`.
     pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
     /// The lazily derived booleans (`LazyFlag`), each a known bit and a value bit; never serialized.
-    pub(crate) lazy_flags: std::cell::Cell<u16>,
+    pub(crate) lazy_flags: std::cell::Cell<u32>,
     /// The caches a call or a collection fills, boxed by the first fill (`caches`); never serialized.
     pub(crate) caches: std::cell::OnceCell<Box<FunctionCaches>>,
     /// Lazily derived `call_plan`; never serialized.
@@ -2337,8 +2337,12 @@ impl Function {
     /// Whether its rest parameter is read only by `RestGet`, `RestLength` and `CallRest`
     /// (`compile::rest_reads`): an entry that keeps the values passed leaves the rest
     /// register `undefined` and makes no array.
+    /// Derived once (`LazyFlag::RestView`): every frame entry of a rest function asks.
+    #[inline]
     pub(crate) fn rest_view(&self) -> bool {
-        self.rest && self.instructions_of(|op| matches!(op, Op::RestGet | Op::RestLength | Op::CallRest)).next().is_some()
+        self.rest && self.lazy_flag(LazyFlag::RestView, || {
+            self.instructions_of(|op| matches!(op, Op::RestGet | Op::RestLength | Op::CallRest)).next().is_some()
+        })
     }
 
     pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
@@ -3539,11 +3543,24 @@ impl Function {
     }
 
     pub(crate) fn local_slot_uses_environment(&self, slot: usize) -> bool {
-        self.selective_capture_slots
-            .as_ref()
-            .is_none_or(|captured| {
-                u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
-            })
+        match self.selective_capture_slots.as_ref() {
+            Some(captured) => u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()),
+            None => self.locals_use_environment(),
+        }
+    }
+
+    /// Whether a body without a selective layout keeps its locals in an environment: one its
+    /// code addresses (`rewrite_all_locals_to_environment`), captures or makes closures over,
+    /// a root's, or one a dynamic lookup or suspension reaches. A closure-free body keeps every
+    /// local in its frame (`capture_layout`'s early return), read by plain local ops.
+    pub(crate) fn locals_use_environment(&self) -> bool {
+        self.lazy_flag(LazyFlag::LocalsUseEnvironment, || {
+            self.parent.is_none()
+                || self.is_generator
+                || self.is_async
+                || self.has_dynamic_scope_access()
+                || self.instructions_of(|op| op.captures_environment() || op.addresses_env_local() || op.makes_closure()).next().is_some()
+        })
     }
 }
 

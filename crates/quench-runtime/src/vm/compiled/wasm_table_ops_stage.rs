@@ -7,7 +7,7 @@
 //! so the two tiers share the rule (`staged::wasm_table_ops`).
 
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, Kind, Slot, Vm, finish_callout};
+use super::{Analysis, AnalysisState, CallContext, Emitter, Kind, Slot, Vm, finish_callout};
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
@@ -20,7 +20,7 @@ const WORD: u32 = size_of::<u64>() as u32;
 
 /// The environment slot of a binding word `slot` names, or the undefined value when the
 /// environment holds no binding there (which the analysis never admits).
-fn bound<H: Host>(vm: &Vm<H>, environment: super::Value, slot: u64) -> super::Value {
+fn bound(vm: &Vm, environment: super::Value, slot: u64) -> super::Value {
     vm.heap
         .environment_slot(environment, slot as usize)
         .unwrap_or(super::Value::UNDEFINED)
@@ -31,7 +31,7 @@ fn bound<H: Host>(vm: &Vm<H>, environment: super::Value, slot: u64) -> super::Va
 /// segment a drop names, in the first). The words `a`, `b` and `c` are the operation's
 /// `TableOp::words`, `value` its reference (`TableOp::value`), and its result word is written
 /// to `out`. A trap raised by the operation propagates through `finish_callout`.
-pub(super) unsafe extern "C" fn table_op_callout<H: Host>(
+pub(super) unsafe extern "C" fn table_op_callout(
     context: *mut CallContext,
     request: u64,
     a: u64,
@@ -42,7 +42,7 @@ pub(super) unsafe extern "C" fn table_op_callout<H: Host>(
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
     let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *context.vm.cast::<Vm>() };
     let environment = context.env;
     let memory = context.memory;
     let first = (request >> 8) & 0xffff;
@@ -74,7 +74,7 @@ pub(super) unsafe extern "C" fn table_op_callout<H: Host>(
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The operation `op` over decoded operands: the one semantics the interpreter and the u-jit's
     /// callout both run. `tables` are the table (or, for `memory.init`, the memory) and the
     /// second table or segment, `words` the operation's `TableOp::words` (zero-extended indices),
@@ -211,7 +211,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Checks a table or segment step: its table is a 32-bit table binding and its segment a
     /// binding, its words are `I32`, its reference an `I64` word, and `memory.init`'s memory is
     /// the function's memory register, which the step reads (`Step::reads_memory`). A step is
@@ -294,7 +294,7 @@ impl<H: Host> Analysis<'_, H> {
     }
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// A 32-bit word operand, zero-extended; an absent one is zero.
     fn table_word(&mut self, register: Option<u16>) -> ir::Value {
         match register {
@@ -338,7 +338,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         ));
         let out = self.slot_address(slot, 0);
         let request = self.constant(Width::I64, request as i64);
-        let target = table_op_callout::<H> as *const () as usize;
+        let target = table_op_callout as *const () as usize;
         // The callout runs the table's operation, which may run JS (a grow's or fill's
         // conversions), so the frame's references are held across it.
         let roots = self.root();

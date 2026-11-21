@@ -14,7 +14,7 @@ use crate::modules::host_members::Members;
 use crate::modules::webstreams_shared_vm::{self as web, get, put, record};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-pub(crate) type Context<'a> = NativeContext<'a, NodeHost>;
+pub(crate) type Context<'a> = NativeContext<'a>;
 pub(crate) type Outcome = Result<RootId, RootedError>;
 
 /// The `builtin_cache` key of the realm's fetch classes.
@@ -163,13 +163,13 @@ pub(crate) fn iterator_class<M: Members>(c: &mut Context<'_>, next: M, tag_name:
 
 /// The fetch classes, by name, built once.
 pub(crate) fn classes(c: &mut Context<'_>) -> Outcome {
-    if let Some(table) = c.host_mut().shared_state().borrow().builtin_cache.get(CLASSES).copied() {
+    if let Some(table) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(CLASSES).copied() {
         return Ok(table);
     }
     let table = c.with_startup_intrinsics(|c| {
         let table = record(c, &[], &[])?;
         let retained = c.retain(table)?;
-        c.host_mut().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
+        c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(CLASSES.to_owned(), retained);
         let built = (|| {
             let headers = headers::build(c, table)?;
             put(c, table, table::HEADERS, headers)?;
@@ -181,7 +181,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Outcome {
             put(c, table, table::RESPONSE, response)
         })();
         if built.is_err() {
-            c.host_mut().shared_state().borrow_mut().builtin_cache.remove(CLASSES);
+            c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.remove(CLASSES);
         }
         built.map(|()| table)
     })?;

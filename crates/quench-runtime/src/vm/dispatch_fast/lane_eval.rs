@@ -37,7 +37,7 @@ struct EvalWindow {
 /// the `with` chain of the call. `None`, before any effect, where the activation is no window
 /// of a function that admits a direct eval, or its parameters' eval raises (`Function::parameter_eval_arguments_error`),
 /// which the general step does.
-fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parameter_eval: bool) -> Option<EvalWindow> {
+fn promote_window(cx: *mut LaneContext, r: Registers, ip: Ip, parameter_eval: bool) -> Option<EvalWindow> {
     let vm = unsafe { vm(cx) };
     let scope = window_scope(cx, r, ip, true)?;
     // SAFETY: the context's program outlives the lane run.
@@ -92,7 +92,7 @@ unsafe fn settle_eval_record(record: *mut FrameRecord, previous_this: Option<Val
 /// makes, which runs above the activation with the record as its caller (`Vm::eval_callers`).
 /// A raised error is stashed in `Vm::lane_raised` for the frames the general path makes to raise,
 /// and `None` is returned, as for any step the lane makes in place (`in_place_in_lane`).
-fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Value> {
+fn direct_eval_in_window(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
     if i.a & crate::bytecode::RETURN_REGISTER != 0 || !vm.calls_direct_eval(callee) {
@@ -132,7 +132,7 @@ script_handler! {
     #[inline(never)]
     fn direct_eval_row<>(cx, r, ip, i, view) {
         let Some(value) = direct_eval_in_window(cx, r, ip, i) else {
-            sibling!(direct_eval_miss::<H>, r, ip, Carried::script(cx))
+            sibling!(direct_eval_miss, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -149,6 +149,6 @@ script_handler! {
 }
 
 /// The handler of a direct eval call in a function whose window activations run it.
-pub(super) const fn direct_eval_row_handler<H: Host>() -> Handler {
-    direct_eval_row::<H>
+pub(super) const fn direct_eval_row_handler() -> Handler {
+    direct_eval_row
 }

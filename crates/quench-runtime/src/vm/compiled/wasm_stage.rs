@@ -2,7 +2,7 @@
 //! through the staged rules (`staged::wasm::integer_binary`, `staged::wasm_float`), so traps and
 //! their order are the interpreter's. The operators themselves are the machine's
 //! (`emit_machine`).
-use super::{AnalysisState, Emitter, Host, Kind, Slot};
+use super::{AnalysisState, Emitter, Kind, Slot};
 use crate::bytecode::WideInstruction;
 use crate::staged::machine::MachineStage;
 use crate::staged::wasm::{Width, integer_binary};
@@ -17,7 +17,7 @@ pub(super) fn infallible<T>(result: Result<T, Infallible>) -> T {
     result.unwrap_or_else(|never| match never {})
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// `operator` at `width`, whose traps leave through the function's trap blocks.
     pub(super) fn integer(
         &mut self,

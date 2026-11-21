@@ -4,7 +4,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The largest code unit Node's one-byte `latin1` encodes.
 const LATIN1_MAX: u16 = 0xff;

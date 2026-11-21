@@ -7,8 +7,8 @@ struct StackHost {
     output: Rc<RefCell<Vec<String>>>,
 }
 impl Host for StackHost {
-    // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
-    const RUNS_LANE: bool = false;
+    // Its tests exercise no lane behaviour (`Host::runs_lane`).
+    fn runs_lane(&self) -> bool { false }
     fn write_line(&mut self, text: &str) {
         self.output.borrow_mut().push(text.into());
     }
@@ -19,7 +19,7 @@ impl Host for StackHost {
         self.formatter
     }
     fn initialize_shadow_realm(
-        context: &mut NativeContext<'_, Self>,
+        context: &mut NativeContext<'_>,
         global: RootId,
     ) -> Result<Option<RootId>, RootedError> {
         context.collect()?;
@@ -35,10 +35,10 @@ impl Host for StackHost {
             )
             .map(Some)
     }
-    fn functions(&self) -> &[crate::HostFunction<Self>] {
+    fn functions(&self) -> &[crate::HostFunction] {
         crate::host_functions![method "collect" (0) => collect]
     }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+    fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
         let formatter = context.evaluate_script_rooted(
             r#"(global, error, sites) => {
             const prepare = global.Error.prepareStackTrace;
@@ -55,12 +55,12 @@ impl Host for StackHost {
         let collect = context.host_function(crate::HostFunctionId(0))?;
         context.define_data_property_rooted(global, key, collect, true, true, true)?;
         let formatter = context.retain(formatter)?;
-        context.host_mut().formatter = Some(formatter);
+        context.host_as::<Self>().formatter = Some(formatter);
         Ok(())
     }
 }
 fn collect(
-    context: &mut NativeContext<'_, StackHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {

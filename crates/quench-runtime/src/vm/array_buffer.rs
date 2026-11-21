@@ -7,7 +7,7 @@ pub(super) enum BufferIndexUse {
     TypedArrayByteOffset,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Object identity and shared data-block identity are distinct facts.
     pub(super) fn array_buffers_share_data_block(&self,left:Value,right:Value)->bool{
         if left==right{return true}

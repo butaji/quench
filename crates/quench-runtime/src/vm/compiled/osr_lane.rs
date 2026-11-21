@@ -8,7 +8,7 @@ use super::*;
 ///
 /// # Safety
 /// `lane_context` is the running lane's context for `H`.
-pub(super) unsafe fn bind_loop<H: Host>(dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize) {
+pub(super) unsafe fn bind_loop(dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize) {
     dispatch.lane_context = lane_context;
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
@@ -43,7 +43,7 @@ pub(super) fn region_calls(region: &LoopRegion) -> bool {
 /// # Safety
 /// `lane_context` is the running lane's context for `H`; `registers` is the live window the run
 /// executes in, whose header is its own.
-pub(super) unsafe fn bind_captures<H: Host>(
+pub(super) unsafe fn bind_captures(
     region: &LoopRegion, entry: &LoopEntry, lane_context: usize, registers: *mut crate::value::Value, calls: bool,
     captures: &mut Vec<crate::Value>,
 ) {
@@ -55,7 +55,7 @@ pub(super) unsafe fn bind_captures<H: Host>(
     // store one, which a copy would not see. Where it has none, the copy as before.
     let live = (calls || !region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
-        .then(|| unsafe { super::dispatch_fast::context_captures::<H>(lane_context) }).flatten();
+        .then(|| unsafe { super::dispatch_fast::context_captures(lane_context) }).flatten();
     if let Some(((values, len), stores)) = live {
         // SAFETY: as the caller promises.
         unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_BODY, super::entry_cell::capture_word(values, len, stores)) };
@@ -72,8 +72,8 @@ pub(super) unsafe fn bind_captures<H: Host>(
 /// # Safety
 /// `registers` is the activation's live register file; `lane_context` the running lane's
 /// context for `H`.
-pub(super) unsafe fn bind_frame<H: Host>(
-    dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>, (program, function, lane_context): (ProgramId, u32, usize),
+pub(super) unsafe fn bind_frame(
+    dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm, (program, function, lane_context): (ProgramId, u32, usize),
     registers: *mut crate::value::Value, rebound: bool,
 ) {
     // The activation holds the program and the function's body it was made for (`with_function`).
@@ -82,7 +82,7 @@ pub(super) unsafe fn bind_frame<H: Host>(
         dispatch.native_registers = registers;
         dispatch.register_count = usize::from(body.registers);
         // SAFETY: as the caller promises; the run's registers are the window's.
-        dispatch.native_locals = unsafe { super::dispatch_fast::body_locals::<H>(lane_context as *mut (), registers, super::dispatch_fast::LocalsOf::Osr) }.locals;
+        dispatch.native_locals = unsafe { super::dispatch_fast::body_locals(lane_context as *mut (), registers, super::dispatch_fast::LocalsOf::Osr) }.locals;
         dispatch.local_count = usize::from(body.locals);
         dispatch.body = body as *const _;
         dispatch.residual = Rc::as_ptr(residual) as usize;
@@ -104,7 +104,7 @@ pub(super) unsafe fn bind_frame<H: Host>(
 ///
 /// # Safety
 /// As `region_lend::lend`.
-unsafe fn payload_for<H: Host>(vm: &mut Vm<H>, dispatch: &mut JsStepDispatch, lend: Option<bool>) -> *mut JsStepDispatch {
+unsafe fn payload_for(vm: &mut Vm, dispatch: &mut JsStepDispatch, lend: Option<bool>) -> *mut JsStepDispatch {
     match lend {
         Some(direct_calls) => unsafe { region_lend::lend(vm, dispatch, direct_calls) },
         None => &raw mut *dispatch,
@@ -119,8 +119,8 @@ unsafe fn payload_for<H: Host>(vm: &mut Vm<H>, dispatch: &mut JsStepDispatch, le
 /// # Safety
 /// As `CompiledOsrRegion::run`: `registers` is the live register file, and `vm` and
 /// `interrupt` belong to this lane activation.
-pub(super) unsafe fn enter<H: Host>(
-    dispatch: &mut JsStepDispatch, vm: &mut Vm<H>, program: ProgramId,
+pub(super) unsafe fn enter(
+    dispatch: &mut JsStepDispatch, vm: &mut Vm, program: ProgramId,
     (code, resume): (BodyEntry, u64), registers: *mut crate::value::Value,
     interrupt: *const crate::execution_interrupt::ExecutionInterrupt, (lane_context, lend): (usize, Option<bool>),
 ) -> RegionRun {
@@ -130,7 +130,7 @@ pub(super) unsafe fn enter<H: Host>(
     // receiver word; the window's header holds the same word for the helpers that read `this`
     // there (`this_in_lane`), so it is written once per run, here.
     // SAFETY: as the caller promises.
-    let receiver = unsafe { super::dispatch_fast::context_this_in_lane::<H>(lane_context).to_bits() };
+    let receiver = unsafe { super::dispatch_fast::context_this_in_lane(lane_context).to_bits() };
     unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_THIS, receiver) };
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.vm = std::ptr::from_mut(vm).cast();
@@ -140,12 +140,12 @@ pub(super) unsafe fn enter<H: Host>(
     // A region's direct calls push their callees' frames over the running activation, which a leaf has not made yet:
     // they refuse there, once the lent payload's words (which set the limit) are bound.
     if lend.is_some() {
-        super::dispatch_fast::refuse_direct_calls_in_leaf::<H>(lane_context as *mut (), registers);
+        super::dispatch_fast::refuse_direct_calls_in_leaf(lane_context as *mut (), registers);
     }
     context.adapter_payload = payload.cast();
     // The region's call rows reload its payload's heap bases after the callee ran (`region_call_in_lane`).
     // SAFETY: `lane_context` is the running lane's.
-    let outer = unsafe { super::dispatch_fast::region_payload_in_lane::<H>(lane_context, payload.addr()) };
+    let outer = unsafe { super::dispatch_fast::region_payload_in_lane(lane_context, payload.addr()) };
     // The region's entry takes its receiver, its resume stub's address as the capture word, and the
     // register file.
     let descriptor = super::entry_protocol::EntryDescriptor {
@@ -156,7 +156,7 @@ pub(super) unsafe fn enter<H: Host>(
     // its status and result word.
     let returned = unsafe { super::entry_protocol::enter(&mut context, &descriptor) };
     // SAFETY: as above.
-    unsafe { super::dispatch_fast::region_payload_in_lane::<H>(lane_context, outer) };
+    unsafe { super::dispatch_fast::region_payload_in_lane(lane_context, outer) };
     if lend.is_some() {
         // SAFETY: `payload` is the one `lend` was given, and the run it lent for is over.
         unsafe { region_lend::reclaim(dispatch) };

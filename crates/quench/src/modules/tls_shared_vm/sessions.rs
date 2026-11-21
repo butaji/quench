@@ -24,14 +24,14 @@ pub(crate) struct State {
     pub(crate) entries: Vec<Session>,
 }
 pub(crate) fn register(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     ssl: Ssl,
     role: super::super::net_shared_vm::encrypted::Role,
 ) -> Result<(), RootedError> {
     let identity = context.host_weak_root(socket)?;
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .tls_contexts
@@ -49,7 +49,7 @@ pub(crate) fn register(
     Ok(())
 }
 pub(crate) fn owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<usize, RootedError> {
     if let Some(index) = find_owner(context, socket)? {
@@ -59,11 +59,11 @@ pub(crate) fn owner(
     Err(context.throw(error))
 }
 pub(crate) fn find_owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<Option<usize>, RootedError> {
     let identities = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .tls_contexts
@@ -82,13 +82,13 @@ pub(crate) fn find_owner(
     Ok(None)
 }
 pub(crate) fn set_purpose(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     purpose: Purpose,
 ) -> Result<(), RootedError> {
     let index = owner(context, socket)?;
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .tls_contexts

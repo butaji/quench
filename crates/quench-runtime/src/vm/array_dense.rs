@@ -2,7 +2,7 @@
 //! and the present own elements a result is made of, read straight from the backing.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// IsConcatSpreadable of `item`, `symbol` being `@@isConcatSpreadable`.
     pub(super) fn concat_item_spreadable(&mut self, p: &ResidualProgram, item: Value, symbol: Value) -> Result<bool, JsError> {
         if self.concat_spreadable_absent(item, symbol) {

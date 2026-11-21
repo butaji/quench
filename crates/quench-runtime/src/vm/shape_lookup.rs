@@ -62,7 +62,7 @@ impl Iterator for ShapeEntries<'_> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The properties of `shape` in definition order, with their slots.
     ///
     /// A shape without a lookup index whose chain holds no deletion and is no dictionary
@@ -213,7 +213,7 @@ impl ShapeTransition {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s
     /// chain. A shape whose walks keep running long earns its lookup index, which answers in
     /// one probe (`shape_slot_attributes`).

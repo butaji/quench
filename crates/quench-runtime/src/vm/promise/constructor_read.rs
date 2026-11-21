@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether `promise`'s `constructor` reads as `receiver`, this realm's `%Promise%`, without
     /// running guest code: by the `PromiseSpeciesProof`, which holds exactly that for the
     /// receivers of its shape, or by the plain read, which records the proof for them when the

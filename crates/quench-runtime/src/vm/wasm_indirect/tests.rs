@@ -75,7 +75,7 @@ fn module_returning(value: i32) -> crate::WasmModule {
     .unwrap()
 }
 
-fn call(vm: &mut Vm<crate::SystemHost>, instance: &WasmInstance, index: i32) -> Result<i32, WasmTrap> {
+fn call(vm: &mut Vm, instance: &WasmInstance, index: i32) -> Result<i32, WasmTrap> {
     match vm.invoke_wasm(instance, CALLER, &[WasmValue::I32(index)]) {
         Ok(Some(WasmValue::I32(value))) => Ok(value),
         Ok(other) => panic!("an i32 result, not {other:?}"),
@@ -83,7 +83,7 @@ fn call(vm: &mut Vm<crate::SystemHost>, instance: &WasmInstance, index: i32) -> 
     }
 }
 
-fn signatures(vm: &Vm<crate::SystemHost>, table: Value) -> Vec<CanonicalSignature> {
+fn signatures(vm: &Vm, table: Value) -> Vec<CanonicalSignature> {
     match vm.heap.get(table) {
         Some(Cell::WasmTable { elements, .. }) => elements.targets().iter().map(|target| target.signature).collect(),
         _ => panic!("a table"),
@@ -141,7 +141,7 @@ fn a_table_carries_the_signature_of_each_element_through_every_write() {
     assert_eq!(signatures(&vm, table).len(), vm.wasm_table_elements(table).unwrap().len());
 }
 
-fn rows(vm: &Vm<crate::SystemHost>, table: Value) -> Vec<TableTarget> {
+fn rows(vm: &Vm, table: Value) -> Vec<TableTarget> {
     match vm.heap.get(table) {
         Some(Cell::WasmTable { elements, .. }) => elements.targets().to_vec(),
         _ => panic!("a table"),
@@ -183,11 +183,11 @@ fn a_row_names_the_function_and_the_instance_of_its_element_through_every_write(
 }
 
 /// The results of calling each index in `indices` through the caller of `instance`.
-fn calls(vm: &mut Vm<crate::SystemHost>, instance: &WasmInstance, indices: &[i32]) -> Vec<Result<i32, WasmTrap>> {
+fn calls(vm: &mut Vm, instance: &WasmInstance, indices: &[i32]) -> Vec<Result<i32, WasmTrap>> {
     indices.iter().map(|index| call(vm, instance, *index)).collect()
 }
 
-fn vm_running(compiled: bool) -> Vm<crate::SystemHost> {
+fn vm_running(compiled: bool) -> Vm {
     let mut vm = Vm::new(crate::SystemHost);
     if compiled {
         vm.programs.compile_wasm_modules_at_first_entry();
@@ -197,7 +197,7 @@ fn vm_running(compiled: bool) -> Vm<crate::SystemHost> {
 }
 
 /// How many times the VM entered function `index` of `module`'s compiled code.
-fn entries(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize) -> Option<u64> {
+fn entries(vm: &Vm, module: &crate::WasmModule, index: usize) -> Option<u64> {
     let program = vm.programs.find_shared(&module.program)?;
     vm.programs.compiled(program).flatten()?.native_entries(index)
 }

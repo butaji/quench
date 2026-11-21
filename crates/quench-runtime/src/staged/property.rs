@@ -689,6 +689,19 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     if let FieldPlan::Inherited { shape, constants, proof } = plan {
         return inherited(stage, frame, (owner, false), object, (shape, constants, proof), miss);
     }
+    // The polymorphic read (the record's hint, then the VM's entries) and the entry reads inline as
+    // well: through `read_with`, out of line, the row built the plan in memory (a 1.5 KB frame,
+    // ~165 Ir) at every hint miss.
+    if let FieldPlan::Hinted { ops, entry } = plan {
+        return frame.entried(stage, owner, object, entry, miss, #[inline(always)] |stage, frame, miss| {
+            let at = frame.receiver_record(stage, owner, object, false, miss)?;
+            let records = frame.object_records(stage);
+            run_owned(stage, frame, (owner, true), ops, (at, records), miss)
+        });
+    }
+    if let FieldPlan::Entry(kind) = plan {
+        return frame.field_entry(stage, owner, object, kind, miss);
+    }
     read_with(stage, frame, (owner, false), object, plan, miss)
 }
 

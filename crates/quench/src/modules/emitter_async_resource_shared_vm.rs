@@ -4,7 +4,7 @@ use super::event_target_shared_vm::{api, argument, attach_slot, get, put, receiv
 use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The event group's members naming the private slots: an emitter's resource, a resource's
 /// emitter.

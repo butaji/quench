@@ -13,7 +13,7 @@ unsafe extern "C" {
 }
 
 pub(crate) fn owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<u64, RootedError> {
     if let Some(id) = physical_owner(context, socket)? {
@@ -23,10 +23,10 @@ pub(crate) fn owner(
     Err(context.throw(error))
 }
 pub(crate) fn physical_owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<Option<u64>, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let sockets = shared
         .borrow()
         .net_sockets
@@ -41,7 +41,7 @@ pub(crate) fn physical_owner(
     Ok(None)
 }
 fn create_session(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     configuration: RootId,
     is_server: RootId,
@@ -74,7 +74,7 @@ fn create_session(
                     let secure = get(context, secure, "context")?;
                     let context_index = super::contexts::owner(context, secure)?;
                     let pointer = context
-                        .host_mut()
+                        .host_as::<crate::host::NodeHost>()
                         .shared_state()
                         .borrow_mut()
                         .tls_contexts
@@ -85,7 +85,7 @@ fn create_session(
             }
         }
     }
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let ssl = {
         let mut state = shared.borrow_mut();
         let configuration = state.tls_contexts.configuration(index)?;
@@ -163,7 +163,7 @@ fn create_session(
 }
 
 fn encode_alpn_protocols(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     options: RootId,
 ) -> Result<Option<Vec<u8>>, RootedError> {
     let value = get(context, options, "ALPNProtocols")?;
@@ -221,7 +221,7 @@ fn encode_alpn_protocols(
 }
 
 fn validate_alpn_wire(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     protocols: &[u8],
 ) -> Result<(), RootedError> {
     let mut offset = 0;
@@ -242,7 +242,7 @@ fn validate_alpn_wire(
 }
 
 pub(crate) fn upgrade(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -251,7 +251,7 @@ pub(crate) fn upgrade(
         return Ok(context.undefined());
     };
     let index = super::sessions::owner(context, root)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if !super::super::net_shared_vm::is_connected(&shared.borrow().tcp, socket) {
         return Ok(context.undefined());
     }
@@ -287,14 +287,14 @@ pub(crate) fn upgrade(
     Ok(context.undefined())
 }
 pub(crate) fn info(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let socket = physical_owner(context, args[0])?;
     let session = super::sessions::owner(context, args[0])?;
     let name = context.to_string(args[1])?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     enum Info {
         Text(String),
         Bool(bool),
@@ -461,7 +461,7 @@ pub(crate) fn info(
 }
 
 fn session_buffer(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     bytes: &[u8],
 ) -> Result<RootId, RootedError> {
     let typed_array = context.uint8_array_rooted(bytes)?;
@@ -474,14 +474,14 @@ fn session_buffer(
 }
 
 pub(super) fn get(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
     context.get_named_property_rooted(object, name)
 }
 pub(super) fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -491,7 +491,7 @@ pub(super) fn set(
     Ok(())
 }
 pub(super) fn method(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     args: &[RootId],
@@ -500,7 +500,7 @@ pub(super) fn method(
     context.call_rooted(function, object, args)
 }
 fn copy_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     target: RootId,
     source: RootId,
 ) -> Result<(), RootedError> {
@@ -517,7 +517,7 @@ fn copy_options(
     Ok(())
 }
 pub(crate) fn construct(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -634,7 +634,7 @@ pub(crate) fn construct(
         // the parent relationship in that case; once a native socket exists,
         // transfer its identity and read handle to the TLS wrapper as usual.
         if let Some(id) = physical_owner(context, wrapped)? {
-            let shared = context.host_mut().shared_state();
+            let shared = context.host_as::<crate::host::NodeHost>().shared_state();
             let retained = context.retain(socket)?;
             let old = shared
                 .borrow_mut()
@@ -682,7 +682,7 @@ pub(crate) fn construct(
         // there is no native session to upgrade at construction time.
         if let Some(id) = physical_owner(context, socket)? {
             let connected = super::super::net_shared_vm::is_connected(
-                &context.host_mut().shared_state().borrow().tcp,
+                &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp,
                 id,
             );
             if connected {
@@ -702,7 +702,7 @@ pub(crate) fn construct(
     Ok(socket)
 }
 pub(crate) fn init_read(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -731,7 +731,7 @@ pub(crate) fn init_read(
                     .ok_or_else(|| RootedError::host("TLS buffered input is not a byte view"))?;
                 let id = owner(context, socket)?;
                 super::super::net_shared_vm::receive_tls(
-                    &mut context.host_mut().shared_state().borrow_mut().tcp,
+                    &mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp,
                     id,
                     &bytes,
                 );
@@ -749,7 +749,7 @@ const ALLOW_UNAUTHORIZED_WARNED: &str = "allowUnauthorizedWarned";
 
 /// Node's `getAllowUnauthorized()`: whether `NODE_TLS_REJECT_UNAUTHORIZED` is `'0'`, which
 /// warns once per realm.
-fn allow_unauthorized(context: &mut NativeContext<'_, NodeHost>, api: RootId) -> Result<bool, RootedError> {
+fn allow_unauthorized(context: &mut NativeContext<'_>, api: RootId) -> Result<bool, RootedError> {
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
     let env = get(context, process, "env")?;
@@ -770,7 +770,7 @@ fn allow_unauthorized(context: &mut NativeContext<'_, NodeHost>, api: RootId) ->
 }
 
 pub(crate) fn connect(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -919,14 +919,14 @@ pub(crate) fn connect(
     Ok(socket)
 }
 pub(crate) fn start(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let socket = args.first().copied().unwrap_or(receiver);
     let index = super::sessions::owner(context, socket)?;
     if let Some(pending) = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .tls_contexts
@@ -941,21 +941,21 @@ pub(crate) fn start(
     upgrade(context, undefined, &[socket])?;
     if let Some(id) = physical_owner(context, socket)? {
         super::super::net_shared_vm::start_tls(
-            &mut context.host_mut().shared_state().borrow_mut().tcp,
+            &mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp,
             id,
         );
     }
     Ok(context.undefined())
 }
 pub(crate) fn start_for_write(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<(), RootedError> {
     let Some(index) = super::sessions::find_owner(context, socket)? else {
         return Ok(());
     };
     let id = physical_owner(context, socket)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let needed = {
         let state = shared.borrow();
         state.tls_contexts.sessions.entries[index]
@@ -971,7 +971,7 @@ pub(crate) fn start_for_write(
     Ok(())
 }
 pub(super) fn verify_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     result: i32,
     reason: &str,
 ) -> Result<RootId, RootedError> {
@@ -1019,7 +1019,7 @@ pub(super) fn verify_error(
 
     // Node crypto_common.cc adds this advice for the native chain result.
     let use_system_ca = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .exec_argv
@@ -1045,14 +1045,14 @@ pub(super) fn verify_error(
 }
 /// `enableKeylogCallback()`: record the session's key log lines from now on, whether the
 /// SSL still waits for its connection or the transport already runs it.
-pub(crate) fn enable_keylog(context: &mut NativeContext<'_, NodeHost>, socket: RootId) -> Result<(), RootedError> {
+pub(crate) fn enable_keylog(context: &mut NativeContext<'_>, socket: RootId) -> Result<(), RootedError> {
     let enable = |ssl: &openssl::ssl::SslRef| {
         super::contexts::with_announcements(ssl, |announcements| {
             announcements.keylog.get_or_insert_with(Vec::new);
         });
     };
     let session = super::sessions::owner(context, socket)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(pending) = &shared.borrow().tls_contexts.sessions.entries[session].pending {
         enable(&pending.ssl);
         return Ok(());
@@ -1066,13 +1066,13 @@ pub(crate) fn enable_keylog(context: &mut NativeContext<'_, NodeHost>, socket: R
 }
 
 /// The positive `handshakeTimeout` a socket's TLS options arm, in milliseconds.
-fn handshake_timeout(context: &mut NativeContext<'_, NodeHost>, options: RootId) -> Result<Option<RootId>, RootedError> {
+fn handshake_timeout(context: &mut NativeContext<'_>, options: RootId) -> Result<Option<RootId>, RootedError> {
     let timeout = get(context, options, "handshakeTimeout")?;
     Ok(context.rooted_value(timeout).and_then(|value| value.as_number()).filter(|ms| *ms > 0.0).map(|_| timeout))
 }
 
 pub(crate) fn secure(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1084,7 +1084,7 @@ pub(crate) fn secure(
     }
     let id = owner(context, socket)?;
     let session = super::sessions::owner(context, socket)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let purpose = shared.borrow().tls_contexts.sessions.entries[session].purpose;
     let (result, reason, peer, reused, servername, alpn) = {
         let state = shared.borrow();
@@ -1245,7 +1245,7 @@ pub(crate) fn secure(
 }
 
 pub(crate) fn tls_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1261,7 +1261,7 @@ pub(crate) fn tls_error(
     })
 }
 pub(crate) fn release_control(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1278,7 +1278,7 @@ pub(crate) fn release_control(
     Ok(yes)
 }
 pub(crate) fn transport_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     socket: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1286,7 +1286,7 @@ pub(crate) fn transport_error(
         .rooted_value(args[0])
         .and_then(|value| value.as_number())
         .ok_or_else(|| RootedError::host("TLS error owner missing"))? as u64;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let stack = {
         let mut state = shared.borrow_mut();
         let index = state

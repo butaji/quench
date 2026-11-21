@@ -34,7 +34,7 @@ const BOUND_FUNCTION_NAMED_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     setter: None,
 };
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn set_function_source(
         &mut self,
         function: Value,

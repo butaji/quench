@@ -88,8 +88,8 @@ fn returns_true(result: WideInstruction, done: WideInstruction, constants: &[cra
 /// `target` belongs to this lane's program and has entry `AppendsCapture`; its load record
 /// and capture storage remain live until a collection, which concatenation only schedules.
 #[inline(always)]
-pub(super) unsafe fn run<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) unsafe fn run(
+    cx: *mut LaneContext,
     target: &ScriptCallTarget,
     arguments: ReadArguments,
 ) -> Option<Value> {
@@ -191,7 +191,7 @@ print(JSON.stringify(out));
     const EFFECTS_PRINTED: &str = r##"[240,"a😀",true,241,240,"a😀",true,241,240,"a😀",true,241,true,true,true,true,true,true,"x12undefinedtrue3","LR","Q!","default,default","TypeError","Q!",true,"Q!",true,"TypeError",true,"ReferenceError",true,"Tx",true,10,"10z","old1","new2"]"##;
 
     /// `program`'s printed lines, run by a VM in the given modes, and that VM.
-    fn printed(program: &ResidualProgram, test262: bool, compiled: bool) -> (Vm<TestHost>, Vec<String>) {
+    fn printed(program: &ResidualProgram, test262: bool, compiled: bool) -> (Vm, Vec<String>) {
         let output = Rc::new(RefCell::new(Vec::new()));
         let host = TestHost::writing_to(output.clone());
         let mut vm = Vm::new(if test262 { host.with_test262() } else { host });
@@ -219,7 +219,7 @@ print(JSON.stringify(out));
     }
 
     /// The append target the ordinary calls of `vm`'s run resolved.
-    fn append_target(vm: &Vm<TestHost>) -> ScriptCallTarget {
+    fn append_target(vm: &Vm) -> ScriptCallTarget {
         vm.lane_stack
             .script_targets
             .entries

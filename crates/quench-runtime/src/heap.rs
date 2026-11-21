@@ -611,6 +611,11 @@ pub(crate) struct Heap {
     /// Bytes of the reclaimable programs that stayed at the last full collection, which the
     /// next one's program growth is measured against.
     reclaimable_program_bytes_after_full: usize,
+    /// Per program (by raw id), the realm its closures were made in, `UNDEFINED` before its
+    /// first: a closure of a program stores no realm of its own unless it was made in another
+    /// (`Vm::in_realm_record`). Not a root: marking a closure marks its program's realm
+    /// (`function_children`), as a stored realm override is marked with its object.
+    pub(crate) program_realms: Vec<Value>,
     young: YoungSlots,
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
@@ -963,6 +968,7 @@ impl Heap {
             carried_owners: Vec::new(),
             reclaimable_program_bytes_since_full: 0,
             reclaimable_program_bytes_after_full: 0,
+            program_realms: Vec::new(),
             young: YoungSlots::default(),
             weak_cells: Vec::new(),
             free_by_slab: Vec::with_capacity(12),
@@ -1339,6 +1345,19 @@ impl Heap {
             // SAFETY: the run is the nursery's and nothing else's; the record follows at once.
             Some(run) => unsafe { ArrayElements::young(run, len, element) },
             None => ArrayElements::from_fn(len, element),
+        };
+        let object = ArrayObject::fresh(prototype, elements);
+        self.alloc_slotless_array_of(object, prototype)
+    }
+
+    /// `alloc_literal_array` of `len` copies of `value`, whose fallback is one slice-filled
+    /// allocation (`ArrayElements::filled`) rather than a per-element closure.
+    #[inline(always)]
+    pub(crate) fn alloc_filled_array(&mut self, prototype: Value, len: usize, value: Value) -> Value {
+        let elements = match self.properties.young_elements(len) {
+            // SAFETY: the run is the nursery's and nothing else's; the record follows at once.
+            Some(run) => unsafe { ArrayElements::young(run, len, |_| value) },
+            None => ArrayElements::filled(len, value),
         };
         let object = ArrayObject::fresh(prototype, elements);
         self.alloc_slotless_array_of(object, prototype)
@@ -2320,6 +2339,7 @@ impl Heap {
         self.allocated_at_full = 0;
         self.reclaimable_program_bytes_since_full = 0;
         self.reclaimable_program_bytes_after_full = 0;
+        self.program_realms.clear();
         self.live_after_full = 0;
         self.live_at_environment_trim = None;
         self.full_due = false;
@@ -2408,6 +2428,8 @@ impl Heap {
     pub(super) fn request_collection(&self) {
         self.collect_at.set(self.collect_at.get().min(self.allocated));
     }
+    /// The weight charged since the heap began: unchanged across a call that allocated nothing.
+    #[inline(always)] pub(crate) fn allocated_weight(&self) -> usize { self.allocated }
     #[inline] pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at.get()
     }
@@ -3893,6 +3915,7 @@ impl Heap {
             Self::function_children(
                 value,
                 function,
+                &self.program_realms,
                 &self.properties,
                 ctx.work,
                 ctx.object_roots,
@@ -5206,6 +5229,7 @@ impl Heap {
     fn function_children(
         owner: Value,
         function: &FunctionRecord,
+        program_realms: &[Value],
         properties: &ValueArena,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
@@ -5222,7 +5246,14 @@ impl Heap {
             last_proto,
         );
         // The environment edge is the caller's (`EnvironmentTrace::closure`). The realm edge is
-        // the object's extras (`visit_extras_roots`) when overridden, and the main realm is a root.
+        // the object's extras (`visit_extras_roots`) when overridden, else its program's realm
+        // (`program_realms`), and the main realm is a root.
+        if let FunctionKind::User(program, _) = function.kind
+            && let Some(realm) = program_realms.get(program.raw() as usize)
+            && realm.is_heap()
+        {
+            work.push(*realm);
+        }
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {

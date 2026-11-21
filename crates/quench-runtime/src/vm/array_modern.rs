@@ -11,7 +11,7 @@ enum ArrayFromTarget {
 #[path = "array_default_sort.rs"]
 mod default_sort;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn array_modern_native(
         &mut self,
         p: &ResidualProgram,

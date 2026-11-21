@@ -1,6 +1,6 @@
 //! The table, element-segment and data-segment operations of the b-jit's Wasm functions
 //! (`Step::Table`, `TableOp`): each one a VM callout row (`call_w_21_<OP>_1_0`,
-//! `quench-bjit/stencils/wasm_rows_callout.rs`). The callout is `table_op_callout::<H>`, the one
+//! `quench-bjit/stencils/wasm_rows_callout.rs`). The callout is `table_op_callout`, the one
 //! the u-jit's `Emitter::table_op` calls, with the same request encoding, the same word operands,
 //! the same result handling and the same status, so the two tiers share one semantics.
 //!

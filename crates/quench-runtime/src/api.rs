@@ -74,12 +74,16 @@ impl Engine {
 
 /// Explicit compile/execute owner.  Keeping the host and VM together prevents
 /// callers from bypassing residual validation or creating an uninitialized VM.
-pub struct Runtime<H> {
-    vm: Vm<H>,
+///
+/// The VM names no host type (`Vm::host` is erased), so the runtime is compiled once; this
+/// wrapper only keeps the host's type for the embedder's `host_mut` and snapshot hooks.
+pub struct Runtime<H: Host> {
+    vm: Vm,
+    host: std::marker::PhantomData<fn() -> H>,
 }
 
 impl<H: Host> Runtime<H> {
-    pub fn new(host: H) -> Self { Self { vm: Vm::new(host) } }
+    pub fn new(host: H) -> Self { Self { vm: Vm::new(host), host: std::marker::PhantomData } }
     /// What this runtime's tiers did, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
@@ -111,6 +115,7 @@ impl<H: Host> Runtime<H> {
     pub fn new_with_execution_interrupt(host: H, interrupt: crate::ExecutionInterrupt) -> Self {
         Self {
             vm: Vm::new_with_execution_interrupt(host, interrupt),
+            host: std::marker::PhantomData,
         }
     }
 
@@ -138,11 +143,15 @@ impl<H: Host> Runtime<H> {
     }
 
     pub fn host_mut(&mut self) -> &mut H {
-        &mut self.vm.host
+        crate::host::host_as::<H>(&mut *self.vm.host)
     }
 
     pub fn into_host(self) -> H {
-        self.vm.host
+        let any: Box<dyn std::any::Any> = self.vm.host;
+        match any.downcast::<H>() {
+            Ok(host) => *host,
+            Err(_) => unreachable!("a runtime's VM holds the host it was built with"),
+        }
     }
 
     fn execute_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
@@ -158,27 +167,27 @@ impl<H: Host> Runtime<H> {
     /// Stage thread-local native artifacts without moving code ownership into
     /// the host. Missing keys defer to Host::kept_native_program; errors do not.
     #[cfg(feature = "native-execution")]
-    pub fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<H>>, crate::NativeSourceError> + 'static) {
+    pub fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram>, crate::NativeSourceError> + 'static) {
         self.vm.set_native_program_resolver(resolver);
     }
 
     /// Adopt an already type-erased resolver without allocating another wrapper.
     #[cfg(feature = "native-execution")]
-    pub fn set_native_program_resolver_boxed(&mut self, resolver: Box<crate::NativeProgramResolver<H>>) {
+    pub fn set_native_program_resolver_boxed(&mut self, resolver: Box<crate::NativeProgramResolver>) {
         self.vm.set_native_program_resolver_boxed(resolver);
     }
 
     /// Execute an entry whose known functions are already native, retaining its
     /// code owner for closures and jobs that outlive this call.
     #[cfg(feature = "native-execution")]
-    pub fn execute_native(&mut self, program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+    pub fn execute_native(&mut self, program: &crate::NativeJsProgram) -> Result<(), JsError> {
         self.vm.execute_native_program(program, true).map(drop)
     }
 
     /// Run a native entry while leaving jobs queued for the host event loop's
     /// checkpoints, just as `execute_deferred_jobs` does for a residual entry.
     #[cfg(feature = "native-execution")]
-    pub fn execute_native_deferred_jobs(&mut self, program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+    pub fn execute_native_deferred_jobs(&mut self, program: &crate::NativeJsProgram) -> Result<(), JsError> {
         self.vm.execute_native_program(program, false).map(drop)
     }
 
@@ -188,16 +197,16 @@ impl<H: Host> Runtime<H> {
     pub fn execute_native_from_snapshot(
         &mut self,
         snapshot: crate::KeptBytes,
-        program: &crate::NativeJsProgram<H>,
+        program: &crate::NativeJsProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<(), JsError> {
-        self.vm.restore_native_snapshot(snapshot, program, read_host)?;
+        self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))?;
         self.vm.execute_restored(program.residual()).map(drop)
     }
 
     /// Run precompiled global Scripts before a native entry in the same realm.
     #[cfg(feature = "native-execution")]
-    pub fn execute_native_after_scripts(&mut self, scripts: &[crate::NativeJsProgram<H>], program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+    pub fn execute_native_after_scripts(&mut self, scripts: &[crate::NativeJsProgram], program: &crate::NativeJsProgram) -> Result<(), JsError> {
         self.vm.execute_native_after_scripts(scripts, program).map(drop)
     }
 
@@ -205,7 +214,7 @@ impl<H: Host> Runtime<H> {
     /// the entry run. Native code stays owned by this runtime's module records.
     #[cfg(feature = "native-execution")]
     pub fn execute_native_module_graph(
-        &mut self, scripts: &[crate::NativeJsProgram<H>], modules: &[crate::NativeJsProgram<H>], program: &crate::NativeJsProgram<H>,
+        &mut self, scripts: &[crate::NativeJsProgram], modules: &[crate::NativeJsProgram], program: &crate::NativeJsProgram,
     ) -> Result<(), JsError> {
         self.vm.execute_native_module_graph(scripts, modules, program).map(drop)
     }
@@ -272,7 +281,7 @@ impl<H: Host> Runtime<H> {
         // snapshot kept would stay until the next full collection.
         self.vm.forget_spare_await_state();
         self.vm.collect_now(program);
-        self.vm.write_snapshot(write_host).map_err(|error| error.0)
+        self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
     }
 
     /// Makes this new runtime the one a `build_snapshot` wrote into `snapshot`, with `entry`
@@ -286,7 +295,7 @@ impl<H: Host> Runtime<H> {
     ) -> Result<ResidualProgram, String> {
         entry.validate_unless_proven()?;
         let mode = self.execution_mode();
-        let restored = self.vm.restore_snapshot(snapshot, entry, read_host).map_err(|error| error.0)?;
+        let restored = self.vm.restore_snapshot(snapshot, entry, |host, reader| read_host(crate::host::host_as::<H>(host), reader)).map_err(|error| error.0)?;
         // A snapshot carries the realm, not the process's tier enrollment: the restored
         // program store starts from the store defaults, which enable no lane body. The mode
         // this runtime was put in is the process's, so it is adopted again here.

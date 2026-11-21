@@ -16,7 +16,7 @@ use crate::staged::Concrete;
 /// common form, completes as `complete_activation_in_lane` completes it. `None` when no
 /// activation runs: the running function is a VM frame.
 #[inline(always)]
-pub(super) fn complete_returning_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
+pub(super) fn complete_returning_in_lane(cx: *mut LaneContext, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     // The innermost's completion read where it is: a header's side record names it, or the
     // header alone (`Plain`, or a trampoline's), or a record (no spill and no record built,
@@ -32,8 +32,8 @@ pub(super) fn complete_returning_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: I
         // `complete_activation_in_lane` begins with the same chain.
         Some(Completion::Plain) => None,
         Some(Completion::Cross) => complete_cross_activation_in_lane(cx, value),
-        Some(Completion::SettlesPromise) => return_from_in_lane::<H, false, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
-        Some(Completion::Constructs) => return_from_in_lane::<H, false, false, true, false>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
+        Some(Completion::SettlesPromise) => return_from_in_lane::<false, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
+        Some(Completion::Constructs) => return_from_in_lane::<false, false, true, false>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         Some(Completion::ReadsTrapped) => complete_trapped_read_in_lane(cx, ip, value),
         _ => None,
     };
@@ -49,7 +49,7 @@ pub(super) fn complete_returning_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: I
 /// target's invariants may refuse returns from the trap's frame, whose pending call checks
 /// it; a read that returns its value (`RETURN_REGISTER`) takes `complete_activation_in_lane`.
 #[inline(always)]
-fn complete_trapped_read_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
+fn complete_trapped_read_in_lane(cx: *mut LaneContext, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     // The trap's frame read where it is (no spill, one-frame-one-call.md F4).
     let top = vm.lane_stack.top_frame();
@@ -75,17 +75,17 @@ fn complete_trapped_read_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value
 /// leaves every other completion to the returns past it, which take another program's
 /// activation the same way (`complete_cross_activation_in_lane`).
 #[inline(always)]
-pub(super) fn return_plain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+pub(super) fn return_plain_in_lane(cx: *mut LaneContext, value: Value) -> Option<(Registers, Ip)> {
     // The header's plain return first (`lane_return_header`), then a run of returning plain
     // frames, then the side record's.
     let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
-    if let Some(returned) = lane_return_header::<H, false>(cx, window, value) {
+    if let Some(returned) = lane_return_header::<false>(cx, window, value) {
         return Some(returned);
     }
     // A plain activation whose call returns its callee's completion (`return f()`) completes with
     // the same value: where a run of such plain frames ends in a call that keeps it, they pop
     // header by header and the outermost returns into that call, with no frame walk.
-    if let Some(above) = returning_plain_run::<H>(cx, window) {
+    if let Some(above) = returning_plain_run(cx, window) {
         for _ in 0..above {
             let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
             // SAFETY: `returning_plain_run` proved this many plain activations, innermost first.
@@ -93,16 +93,16 @@ pub(super) fn return_plain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Valu
             unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
         }
         let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
-        return lane_return_header::<H, false>(cx, window, value);
+        return lane_return_header::<false>(cx, window, value);
     }
-    return_from_in_lane::<H, false, false, false, false>(cx, value)
+    return_from_in_lane::<false, false, false, false>(cx, value)
 }
 
 /// How many plain activations, innermost first from the one on `window`, return their callee's
 /// completion before one whose header returns plainly into a call that keeps it; `None` where
 /// the run ends any other way. Reads headers only.
 #[inline(always)]
-fn returning_plain_run<H: Host>(cx: *mut LaneContext<H>, mut window: Registers) -> Option<usize> {
+fn returning_plain_run(cx: *mut LaneContext, mut window: Registers) -> Option<usize> {
     let depth = unsafe { vm(cx) }.lane_stack.plain.depth.get() as usize;
     let stage = &mut crate::staged::Concrete::new(std::ptr::null());
     for above in 0..depth {
@@ -129,7 +129,7 @@ fn returning_plain_run<H: Host>(cx: *mut LaneContext<H>, mut window: Registers) 
 /// nothing, for any other frame: a side record's completion (`return_from_in_lane`), a returning
 /// call's chain (`return_chain_in_lane`), or a record. It reads no record and makes no call.
 #[inline(always)]
-pub(super) fn lane_return_header<H: Host, const INTO_BODY: bool>(cx: *mut LaneContext<H>, window: Registers, value: Value) -> Option<(Registers, Ip)> {
+pub(super) fn lane_return_header<const INTO_BODY: bool>(cx: *mut LaneContext, window: Registers, value: Value) -> Option<(Registers, Ip)> {
     let stack: &mut LaneStack = &mut unsafe { vm(cx) }.lane_stack;
     if stack.plain.depth.get() == 0 {
         return None;
@@ -152,9 +152,9 @@ pub(super) fn lane_return_header<H: Host, const INTO_BODY: bool>(cx: *mut LaneCo
 /// call's register takes the result too, since the body completes its own activation with
 /// it next (`LaneExit::Returned`).
 #[inline(always)]
-pub(super) fn return_to_body_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+pub(super) fn return_to_body_in_lane(cx: *mut LaneContext, value: Value) -> Option<(Registers, Ip)> {
     let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
-    lane_return_header::<H, true>(cx, window, value).or_else(|| return_from_in_lane::<H, false, true, false, false>(cx, value))
+    lane_return_header::<true>(cx, window, value).or_else(|| return_from_in_lane::<false, true, false, false>(cx, value))
 }
 
 /// `complete_plain_activation_in_lane` of an activation of another program than its caller's
@@ -162,7 +162,7 @@ pub(super) fn return_to_body_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Va
 /// common one (`return_general_in_lane`, `return_value_general_in_lane`), so the common return
 /// carries none of the program switch.
 #[inline(always)]
-pub(super) fn complete_cross_activation_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_cross_activation_in_lane(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
     // A plain frame crosses by its header's flag (`staged::call_complete::side_completion`):
     // one without it declines before its side record is read.
     let stack = &unsafe { vm(cx) }.lane_stack;
@@ -172,7 +172,7 @@ pub(super) fn complete_cross_activation_in_lane<H: Host>(cx: *mut LaneContext<H>
             return None;
         }
     }
-    let (registers, next) = return_from_in_lane::<H, true, false, false, false>(cx, value)?;
+    let (registers, next) = return_from_in_lane::<true, false, false, false>(cx, value)?;
     Some(Resumed::At(registers, next, Carried::script(cx)))
 }
 
@@ -181,7 +181,7 @@ pub(super) fn complete_cross_activation_in_lane<H: Host>(cx: *mut LaneContext<H>
 /// completes with the value (`frame_return`). A host permitting proper tail calls sends
 /// a strict caller's terminal calls to the general dispatch path instead.
 #[inline(always)]
-pub(super) fn returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> bool {
+pub(super) fn returning_call_admitted(cx: *mut LaneContext) -> bool {
     let vm = unsafe { vm(cx) };
     let proper = vm.host.proper_tail_calls();
     // The running function's strictness is read only where proper tail calls are on.
@@ -195,7 +195,7 @@ pub(super) fn returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> bool 
 /// The frame's own call record at `call` returns `value`, its callee's completion: the
 /// general loop returns it from the frame at that instruction (`Vm::returned_in_lane`).
 #[inline(always)]
-pub(super) fn frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
+pub(super) fn frame_return(vm: &mut Vm, call: Ip, value: Value) -> Ip {
     vm.lane_completion.set(LaneCompletion::Returned(value));
     exit(call)
 }
@@ -208,10 +208,10 @@ pub(super) fn frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> I
 /// `LaneView::specialize_leaf_returns`) completes the running leaf call first
 /// (`complete_leaf_in_lane`); no other record runs while one does.
 #[inline(always)]
-pub(super) fn complete_plain_activation_in_lane<H: Host, const LEAF: u8>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_plain_activation_in_lane<const LEAF: u8>(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
     let completed = match LEAF {
         NOT_LEAF => None,
-        form => complete_leaf_in_lane::<H>(cx, value, form),
+        form => complete_leaf_in_lane(cx, value, form),
     };
     let (registers, next) = match completed {
         Some(completed) => completed,
@@ -231,7 +231,7 @@ pub(super) fn complete_plain_activation_in_lane<H: Host, const LEAF: u8>(cx: *mu
 /// restored: an inner one's would be overwritten by it. `None`, which changes nothing, leaves
 /// any other completion to the activation-by-activation loop.
 #[inline(always)]
-pub(super) fn complete_plain_chain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_plain_chain_in_lane(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     // The run walked where its frames are, headers with their side records, then records: no
     // spill and no record built (one-frame-one-call.md F4).
@@ -262,7 +262,7 @@ pub(super) fn complete_plain_chain_in_lane<H: Host>(cx: *mut LaneContext<H>, val
         enter_program_in_lane(cx, top.caller_program());
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
-    complete_plain_activation_in_lane::<H, NOT_LEAF>(cx, value)
+    complete_plain_activation_in_lane::<NOT_LEAF>(cx, value)
 }
 
 /// The outermost activation of the run the innermost one completes, each returning the
@@ -297,7 +297,7 @@ fn returning_chain_outermost(mut frames: impl Iterator<Item = ActivationView>) -
 /// `complete_plain_chain_in_lane` out of line, for the returns past the common one
 /// (`return_general_in_lane`, `return_value_general_in_lane`), whose frames stay small.
 #[inline(never)]
-pub(super) fn complete_returning_chain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_returning_chain_in_lane(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
     complete_plain_chain_in_lane(cx, value)
 }
 
@@ -305,7 +305,7 @@ pub(super) fn complete_returning_chain_in_lane<H: Host>(cx: *mut LaneContext<H>,
 /// with `value`: its caller's state restored and the call's register set, as the general loop's
 /// completion of it does (`body_calls::ends_run`).
 #[inline(always)]
-pub(super) fn end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn end_body_callee(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let frame = vm.lane_stack.pop_activation()?;
     let (_, this) = restore_caller_in_lane(cx, &frame);
@@ -318,7 +318,7 @@ pub(super) fn end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Value) ->
 /// spill made a record (`LaneStack::spill_plain`). A callback still a plain header returns
 /// through its trampoline instead (`callback_trampoline_returned`), which ends the run the same way.
 #[inline(always)]
-pub(super) fn complete_native_callback_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_native_callback_in_lane(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     // The callback read where it is, then popped where it is (`LaneStack::pop_activation`): no
     // spill, and a header's pop builds no record.
@@ -337,7 +337,7 @@ pub(super) fn complete_native_callback_in_lane<H: Host>(cx: *mut LaneContext<H>,
 /// caller's memory and the returning frame's receiver (`staged::call_complete::returning_this`),
 /// which the context held while it ran.
 #[inline(always)]
-pub(super) fn restore_caller_in_lane<H: Host>(cx: *mut LaneContext<H>, frame: &ActivationView) -> (MemoryView, Value) {
+pub(super) fn restore_caller_in_lane(cx: *mut LaneContext, frame: &ActivationView) -> (MemoryView, Value) {
     let vm = unsafe { vm(cx) };
     // SAFETY: the values hold no drop glue.
     unsafe { vm.lane_stack.values.release_window(frame.window_word()) };
@@ -382,7 +382,7 @@ pub(super) fn resume_at_in_lane(frame: &ActivationView, memory: MemoryView, at: 
 /// the general path makes (`settled_then_in_lane` reads the `then` it resolves with into
 /// `then`), or a trap whose result the target's invariants refuse (`proxy_traps::trap_result_needs_general_path`).
 #[inline(always)]
-pub(super) fn caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value, then: &mut Value) -> bool {
+pub(super) fn caller_returns_in_frame(vm: &mut Vm, value: Value, then: &mut Value) -> bool {
     // The caller read where it is (no spill, one-frame-one-call.md F4).
     match vm.lane_stack.top_frame() {
         None => true,
@@ -403,7 +403,7 @@ pub(super) fn caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value, the
 /// either of which may run guest code. The frame's pending call resolves the promise as
 /// `Vm::promise_resolve_value` does.
 #[inline(always)]
-pub(super) fn settled_then_in_lane<H: Host>(vm: &mut Vm<H>, value: Value) -> Option<Value> {
+pub(super) fn settled_then_in_lane(vm: &mut Vm, value: Value) -> Option<Value> {
     if !concrete_settles_in_lane(vm.host.observes_promise_lifecycle()) {
         return None;
     }
@@ -415,7 +415,7 @@ pub(super) fn settled_then_in_lane<H: Host>(vm: &mut Vm<H>, value: Value) -> Opt
 /// `rooted`, which its side record carried (`SidePayload::Settles`), resolved with the value,
 /// which its call yields.
 #[inline(never)]
-pub(super) fn settle_promise_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value, then: Value, rooted: Option<crate::heap::RootId>) -> Value {
+pub(super) fn settle_promise_in_lane(cx: *mut LaneContext, value: Value, then: Value, rooted: Option<crate::heap::RootId>) -> Value {
     let vm = unsafe { vm(cx) };
     // Only the `await` after the call reads an unrooted promise: a primitive fulfills it, and
     // awaiting a primitive takes the one job awaiting that fulfilled promise takes.

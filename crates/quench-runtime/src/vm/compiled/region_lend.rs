@@ -12,7 +12,7 @@ use super::*;
 /// the callees' windows and frames are pushed through, and, where the lane may make their
 /// activations (`direct_calls`), the end of the frames they may nest; none is pushed. A call the
 /// region made that ran lane code (`region_call_in_lane`) may have moved the stacks' storage.
-pub(super) fn bind_stacks<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch, direct_calls: bool) {
+pub(super) fn bind_stacks(vm: &mut Vm, payload: &mut JsStepDispatch, direct_calls: bool) {
     vm.stack_words_in_lane(if direct_calls { SHADOW_FRAMES } else { 0 }).bind(payload);
 }
 
@@ -23,7 +23,7 @@ pub(super) fn bind_stacks<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch,
 /// # Safety
 /// As `Vm::run_lane_method`: the region runs on the lane's activation at the lane stack's top, and
 /// `reclaim` follows the run.
-pub(super) unsafe fn lend<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch, direct_calls: bool) -> *mut JsStepDispatch {
+pub(super) unsafe fn lend(vm: &mut Vm, payload: &mut JsStepDispatch, direct_calls: bool) -> *mut JsStepDispatch {
     bind_stacks(vm, payload, direct_calls);
     let lane = unsafe { &raw mut (*frame_in_lane()).dispatch };
     // A callee's leave inside a frame it inlined writes that frame's registers to the lane frame's

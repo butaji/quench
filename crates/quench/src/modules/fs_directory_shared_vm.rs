@@ -3,7 +3,7 @@ use super::fs_shared_vm::{self as fs, UV_DIRENT_DIR, UV_DIRENT_LINK, UV_DIRENT_U
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 pub(crate) struct Entry {
     pub(crate) name: std::ffi::OsString,
     pub(crate) kind: i32,
@@ -148,7 +148,7 @@ pub(crate) fn internal_module_stat(
         path.truncate(end);
     }
     let path = c
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .cwd

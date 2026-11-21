@@ -8,7 +8,7 @@ use super::*;
 use super::super::activation::{JobRoot, SuspendKind};
 use super::super::generator::MaterializedStop;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether `next` of `generator` runs in its caller's lane: an async generator that is
     /// neither running nor done and has no request queued, suspended at its start or a `yield`.
     pub(in crate::vm) fn requests_in_place(&mut self, generator: Value) -> bool {

@@ -6,7 +6,7 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::code_dependencies::{FuseKey, IntactFuse};
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether `fuse` holds in the current realm: its holder keeps the key as an own data
     /// property holding the realm's intrinsic.
     #[inline(always)]

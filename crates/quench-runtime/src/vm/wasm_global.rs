@@ -17,16 +17,16 @@ const CELL: u32 = 0;
 /// The environment of a running instance, as the interpreter's stage for its binding rule: the
 /// fields the heap holds in `env`. The lane's binding loads run the same rule on it
 /// (`dispatch_fast/wasm_instance.rs`).
-pub(super) struct InstanceBindings<'a, H: Host> {
-    pub(super) vm: &'a Vm<H>,
+pub(super) struct InstanceBindings<'a> {
+    pub(super) vm: &'a Vm,
     pub(super) env: Value,
 }
 
-impl<H: Host> Machine for InstanceBindings<'_, H> {
+impl Machine for InstanceBindings<'_> {
     type Word = u64;
 }
 
-impl<H: Host> MachineStage for InstanceBindings<'_, H> {
+impl MachineStage for InstanceBindings<'_> {
     type Exit = JsError;
 
     crate::staged::wasm_concrete::scalar_operators! {}
@@ -36,13 +36,13 @@ impl<H: Host> MachineStage for InstanceBindings<'_, H> {
     }
 }
 
-impl<H: Host> WasmBindings for InstanceBindings<'_, H> {
+impl WasmBindings for InstanceBindings<'_> {
     fn binding_word(&mut self, slot: u32) -> Option<u64> {
         self.vm.heap.environment_slot(self.env, slot as usize).map(|value| value.to_bits())
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// An instance-binding or global step: the register `a` takes the environment slot `imm`, the
     /// global bound in `b`, or the global bound in `b` takes `a`.
     pub(super) fn wasm_instance_step(

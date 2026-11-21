@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -15,7 +15,7 @@ fn set(
 }
 
 pub(crate) fn peer(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -56,7 +56,7 @@ pub(crate) fn peer(
 }
 
 pub(crate) fn local(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -85,7 +85,7 @@ pub(crate) fn local(
 }
 
 pub(crate) fn view(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -99,7 +99,7 @@ pub(crate) fn view(
 }
 
 pub(crate) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     constructor: RootId,
 ) -> Result<(), RootedError> {
     let prototype = get(context, constructor, "prototype")?;

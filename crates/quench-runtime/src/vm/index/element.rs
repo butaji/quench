@@ -4,7 +4,7 @@
 use super::*;
 use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The data element an array holds at `index` (present, not a hole), which a read takes with no
     /// guest code and no allocation. Accessor indices are stored as holes, so a present dense element is
     /// a data property. `None` leaves the read to the general path.

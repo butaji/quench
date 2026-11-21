@@ -300,7 +300,7 @@ pub(super) fn create_port(c: &mut Context<'_>, id: u64) -> Result<RootId, Rooted
 
 /// `async_hooks` init for a host resource.
 fn emit_init(c: &mut Context<'_>, resource: RootId, kind: &str) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = shared.borrow().async_hooks.identity.allocate_async_id();
     crate::modules::async_hooks_shared_vm::emit_init(c, resource, kind, id)
 }
@@ -757,7 +757,7 @@ fn worker_env(c: &mut Context<'_>, options: RootId) -> Result<Vec<(String, Strin
     let env = get(c, options, "env")?;
     let shared = share_env(c)?;
     let source = if is_nullish(c, env) || c.strict_equal_rooted(env, shared)? {
-        let process = c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+        let process = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
         get(c, process, "env")?
     } else if c.is_object_rooted(env)? {
         env
@@ -814,7 +814,7 @@ pub(crate) fn worker_constructor(c: &mut Context<'_>, receiver: RootId, args: &[
     put(c, record, worker::PORT, port)?;
     let yes = c.boolean(true);
     put(c, record, worker::REFERENCED, yes)?;
-    let process = c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let process = c.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     for (name, option) in [(worker::STDOUT, "stdout"), (worker::STDERR, "stderr")] {
         let stream = output_stream(c)?;
         put(c, record, name, stream)?;

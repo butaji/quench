@@ -3,7 +3,7 @@
 //! string switch and a Wasm `br_table` share.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The position among `cases`, string constants, of the first strictly equal to
     /// `value`, or `cases.len()` when none is (`StringCaseIndex`). A program's equal string
     /// constants share one cell, so the first match by identity or by text is the first case

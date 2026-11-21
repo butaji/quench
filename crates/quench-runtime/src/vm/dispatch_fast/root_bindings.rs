@@ -5,7 +5,7 @@ use super::*;
 /// A frame run's depth-0 capture slots, read when its capture walk ran: dense ones become
 /// `LaneContext::capture`; whether they are a root environment's, whose binding slots the
 /// record may read in place (`root_binding_slot_in_lane`).
-pub(super) fn frame_capture_at_root<H: Host>(cx: *mut LaneContext<H>, frame: usize) -> bool {
+pub(super) fn frame_capture_at_root(cx: *mut LaneContext, frame: usize) -> bool {
     let vm = unsafe { vm(cx) };
     match vm.current_capture_slots(frame) {
         Some((slots, None)) => {
@@ -26,7 +26,7 @@ pub(super) fn frame_capture_at_root<H: Host>(cx: *mut LaneContext<H>, frame: usi
 /// capture walk, as a root binding's records read it (`lane_load_root_binding`,
 /// `lane_store_root_binding`).
 #[inline(always)]
-pub(super) fn root_environment_in_lane<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Option<Value> {
+pub(super) fn root_environment_in_lane(cx: *mut LaneContext, depth: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let mut env = unsafe { (*cx).registers }.env();
     if env.is_deleted() {
@@ -43,7 +43,7 @@ pub(super) fn root_environment_in_lane<H: Host>(cx: *mut LaneContext<H>, depth: 
 /// layers, as its capture walk finds it (`owner_capture_env` of the frame), read from the
 /// frame's fields without the caller view's dynamic calls.
 #[inline(always)]
-fn frame_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Option<Value> {
+fn frame_root_environment(cx: *mut LaneContext, depth: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let frame = &vm.frames[unsafe { (*cx).frame() }];
     // The closure environment itself, at depth 0 of a frame that made none of its own: every
@@ -61,12 +61,12 @@ fn frame_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Optio
 /// each read and takes each store. The capture walk and the plain parent links must reach
 /// the same environment. Which slots those are is fixed per program, and a record's scope
 /// chain is fixed by its function, so the answer holds for the record.
-pub(super) fn root_binding_slot_in_lane<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> bool {
+pub(super) fn root_binding_slot_in_lane(cx: *mut LaneContext, depth: u16, slot: u16) -> bool {
     lane_root_binding_owner(cx, depth, slot).is_some()
 }
 
 /// `root_binding_slot_in_lane`, answered with the program whose root environment holds the slot.
-pub(super) fn lane_root_binding_owner<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<ProgramId> {
+pub(super) fn lane_root_binding_owner(cx: *mut LaneContext, depth: u16, slot: u16) -> Option<ProgramId> {
     // The parent links first: most captures end at a function's environment.
     let root = root_environment_in_lane(cx, depth)?;
     let vm = unsafe { vm(cx) };

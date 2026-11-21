@@ -51,7 +51,7 @@ pub(crate) struct State {
 crate::host::startup_snapshot::host_snap_state!(State { roots, deprecations, template_warned });
 
 fn roots(c: &mut Context<'_>) -> Result<Roots, RootedError> {
-    if let Some(roots) = c.host_mut().shared_state().borrow().fs_classes.roots {
+    if let Some(roots) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().fs_classes.roots {
         return Ok(roots);
     }
     build(c)
@@ -195,7 +195,7 @@ fn build(c: &mut Context<'_>) -> Result<Roots, RootedError> {
         roots.values[index] = c.retain(value)?;
         roots.prototypes[index] = c.retain(prototype)?;
     }
-    c.host_mut().shared_state().borrow_mut().fs_classes.roots = Some(roots);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().fs_classes.roots = Some(roots);
     super::file_handle::define_prototype(c, handle_prototype)?;
     Ok(roots)
 }

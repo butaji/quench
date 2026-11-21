@@ -9,7 +9,7 @@ struct ListPart {
     value: JsString,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_intl_list_format_for_realm(
         &mut self,
         intl: Value,

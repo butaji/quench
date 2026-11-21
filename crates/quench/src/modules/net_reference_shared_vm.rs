@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 fn set(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     object: RootId,
     name: &str,
     value: RootId,
@@ -14,7 +14,7 @@ fn set(
     Ok(())
 }
 pub(crate) fn reference_server(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -38,28 +38,28 @@ pub(crate) enum EndpointKind {
 }
 
 pub(crate) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     id: u64,
     server: RootId,
 ) -> Result<(), RootedError> {
     let unref = get(context, server, "_unref")?;
     let referenced = !context.truthy_rooted(unref)?;
     super::net_shared_vm::listener_reference(
-        &mut context.host_mut().shared_state().borrow_mut().tcp,
+        &mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp,
         id,
         referenced,
     );
     install_handle(context, id, server, EndpointKind::Listener)
 }
 pub(crate) fn install_socket_handle(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     id: u64,
     socket: RootId,
 ) -> Result<(), RootedError> {
     install_handle(context, id, socket, EndpointKind::Socket)
 }
 fn install_handle(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     id: u64,
     object: RootId,
     kind: EndpointKind,
@@ -71,8 +71,8 @@ fn install_handle(
     // expose a stable getAsyncId() value. Accepted handles that already got
     // initialized with their listener trigger keep that original resource.
     if matches!(kind, EndpointKind::Socket)
-        && super::net_shared_vm::socket_is_tcp(&context.host_mut().shared_state().borrow().tcp, id)
-        && super::native_async_wrap::tcp_resource(&context.host_mut().shared_state(), id).is_none()
+        && super::net_shared_vm::socket_is_tcp(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp, id)
+        && super::native_async_wrap::tcp_resource(&context.host_as::<crate::host::NodeHost>().shared_state(), id).is_none()
     {
         super::native_async_wrap::initialize_tcp(context, handle, id, false)?;
     }
@@ -81,7 +81,7 @@ fn install_handle(
 
 /// An accepted native endpoint has no Socket owner until admission succeeds.
 pub(crate) fn create_socket_handle(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -94,7 +94,7 @@ pub(crate) fn create_socket_handle(
     } else {
         super::native_async_wrap::View::NotNative
     };
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let _trigger = if let super::native_async_wrap::View::Active(parent) = parent {
         Some(super::async_hooks_shared_vm::enter_default_trigger(
             &shared,
@@ -111,7 +111,7 @@ pub(crate) fn create_socket_handle(
 }
 
 fn create_handle(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     id: u64,
     kind: EndpointKind,
     object: Option<RootId>,
@@ -137,7 +137,7 @@ fn create_handle(
     }
     let id_root = context.number(id as f64);
     if matches!(kind, EndpointKind::Socket) {
-        let shared = context.host_mut().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let first_handle = !shared
             .borrow()
             .net_handle_identities
@@ -155,13 +155,13 @@ fn create_handle(
     register_identity(context, handle, id)?;
     let tcp_listener = matches!(kind, EndpointKind::Listener)
         && super::net_shared_vm::listener_is_tcp(
-            &context.host_mut().shared_state().borrow().tcp,
+            &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp,
             id,
         );
     if tcp_listener
         || (matches!(kind, EndpointKind::Socket)
             && super::net_shared_vm::socket_is_tcp(
-                &context.host_mut().shared_state().borrow().tcp,
+                &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp,
                 id,
             ))
     {
@@ -181,7 +181,7 @@ fn create_handle(
     context.define_data_property_rooted(method, key, name, false, false, true)?;
     set(context, handle, "hasRef", method)?;
     if matches!(kind, EndpointKind::Socket)
-        && super::net_shared_vm::socket_is_tcp(&context.host_mut().shared_state().borrow().tcp, id)
+        && super::net_shared_vm::socket_is_tcp(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp, id)
     {
         for (name, operation) in [
             ("setNoDelay", "netHandleSetNoDelay"),
@@ -227,7 +227,7 @@ fn create_handle(
     Ok(handle)
 }
 fn owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
 ) -> Result<(u64, RootId, EndpointKind), RootedError> {
     let data = context.host_function_data()?;
@@ -250,12 +250,12 @@ fn owner(
     Ok((id, data, kind))
 }
 pub(crate) fn handle_has_ref(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (id, _, kind) = owner(context, receiver)?;
-    let state = context.host_mut().shared_state();
+    let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let value = match kind {
         EndpointKind::Listener => super::net_shared_vm::listener_has_ref(&state.borrow().tcp, id),
         EndpointKind::Socket => {
@@ -269,7 +269,7 @@ pub(crate) fn handle_has_ref(
 }
 
 pub(crate) fn reference_socket(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -296,7 +296,7 @@ pub(crate) fn reference_socket(
 
 /// Stream timeouts observe activity without independently keeping a socket alive.
 pub(crate) fn unref_timeout(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -310,7 +310,7 @@ pub(crate) fn unref_timeout(
 const DEFAULT_KEEPALIVE_INTERVAL_SECONDS: u32 = 1;
 const DEFAULT_KEEPALIVE_PROBE_COUNT: u32 = 10;
 fn tcp_option_owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
 ) -> Result<Option<u64>, RootedError> {
     let data = context.host_function_data()?;
@@ -324,13 +324,13 @@ fn tcp_option_owner(
         .and_then(|value| value.as_number())
         .map(|id| id as u64))
 }
-fn option_result(context: &mut NativeContext<'_, NodeHost>, result: std::io::Result<()>) -> RootId {
+fn option_result(context: &mut NativeContext<'_>, result: std::io::Result<()>) -> RootId {
     let code = result
         .err()
         .map_or(0, |error| -error.raw_os_error().unwrap_or(libc::EINVAL));
     context.number(f64::from(code))
 }
-fn unsigned_argument(context: &NativeContext<'_, NodeHost>, root: Option<RootId>) -> Option<u32> {
+fn unsigned_argument(context: &NativeContext<'_>, root: Option<RootId>) -> Option<u32> {
     root.and_then(|root| context.rooted_value(root))
         .and_then(|value| value.as_number())
         .filter(|number| {
@@ -341,7 +341,7 @@ fn unsigned_argument(context: &NativeContext<'_, NodeHost>, root: Option<RootId>
         .map(|number| number as u32)
 }
 pub(crate) fn set_no_delay(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -353,12 +353,12 @@ pub(crate) fn set_no_delay(
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_bool())
         == Some(true);
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let result = super::net_shared_vm::tcp_no_delay(&mut shared.borrow_mut().tcp, id, enabled);
     Ok(option_result(context, result))
 }
 pub(crate) fn set_keep_alive(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -387,13 +387,13 @@ pub(crate) fn set_keep_alive(
         count: unsigned_argument(context, args.get(3).copied())
             .unwrap_or(DEFAULT_KEEPALIVE_PROBE_COUNT),
     };
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let result = super::net_shared_vm::tcp_keep_alive(&mut shared.borrow_mut().tcp, id, options);
     Ok(option_result(context, result))
 }
 
 pub(crate) fn set_type_of_service(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -406,30 +406,30 @@ pub(crate) fn set_type_of_service(
         .and_then(|value| value.as_number())
         .filter(|value| value.is_finite() && value.fract() == 0.0 && (0.0..=255.0).contains(value))
         .unwrap_or(0.0) as u8;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let result =
         super::net_shared_vm::tcp_set_type_of_service(&mut shared.borrow_mut().tcp, id, tos);
     Ok(option_result(context, result))
 }
 
 pub(crate) fn get_type_of_service(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(id) = tcp_option_owner(context, receiver)? else {
         return Ok(context.number(0.0));
     };
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let value =
         super::net_shared_vm::tcp_get_type_of_service(&shared.borrow().tcp, id).unwrap_or(0);
     Ok(context.number(f64::from(value)))
 }
 
 pub(crate) fn owner_symbol(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let existing = shared.borrow().net_handle_owner_symbol;
     if let Some(symbol) = existing {
         return Ok(symbol);
@@ -441,11 +441,11 @@ pub(crate) fn owner_symbol(
 }
 
 pub(crate) fn register_identity(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     handle: RootId,
     id: u64,
 ) -> Result<(), RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().net_handle_identities);
     let mut live = Vec::with_capacity(entries.len() + 1);
     for (identity, id) in entries {
@@ -461,11 +461,11 @@ pub(crate) fn register_identity(
 }
 
 pub(crate) fn optional_handle_id(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     handle: RootId,
 ) -> Result<Option<u64>, RootedError> {
     let entries = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .net_handle_identities
@@ -480,7 +480,7 @@ pub(crate) fn optional_handle_id(
     Ok(None)
 }
 pub(crate) fn handle_id(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     handle: RootId,
 ) -> Result<u64, RootedError> {
     optional_handle_id(context, handle)?
@@ -488,21 +488,21 @@ pub(crate) fn handle_id(
 }
 
 pub(crate) fn get_sock_name(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     socket_name(context, receiver, args, false)
 }
 pub(crate) fn get_peer_name(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     socket_name(context, receiver, args, true)
 }
 fn socket_name(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
     peer: bool,
@@ -510,7 +510,7 @@ fn socket_name(
     let Some(id) = tcp_option_owner(context, receiver)? else {
         return Ok(context.number(-f64::from(libc::EBADF)));
     };
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let address = super::net_shared_vm::socket_address(&shared.borrow().tcp, id, peer);
     match address {
         Ok(address) => {
@@ -527,12 +527,12 @@ fn socket_name(
     }
 }
 pub(crate) fn close(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (id, _, _) = owner(context, receiver)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if !super::net_shared_vm::socket_is_open(&shared.borrow().tcp, id) {
         return Ok(context.undefined());
     }
@@ -553,9 +553,9 @@ pub(crate) fn close(
 }
 
 pub(crate) fn onclose_symbol(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(symbol) = shared.borrow().net_handle_onclose_symbol {
         return Ok(symbol);
     }
@@ -565,8 +565,8 @@ pub(crate) fn onclose_symbol(
     Ok(symbol)
 }
 
-fn on_connection(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
+fn on_connection(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(callback) = shared.borrow().net_server_on_connection {
         return Ok(callback);
     }
@@ -602,12 +602,12 @@ pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) {
 
 /// Resolve the original mutable callback only after physical close completes.
 pub(crate) fn close_complete(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let key = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
         .net_handle_onclose_symbol
@@ -624,7 +624,7 @@ pub(crate) fn close_complete(
     })();
     super::stream_binding::release_reader(context, id);
     let socket = context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .net_sockets
@@ -636,14 +636,14 @@ pub(crate) fn close_complete(
 }
 
 pub(crate) fn read_start(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(id) = tcp_option_owner(context, receiver)? else {
         return Ok(context.number(-f64::from(libc::EBADF)));
     };
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let result = super::net_shared_vm::start_read(&mut shared.borrow_mut().tcp, id);
     if result.is_ok() {
         super::stream_binding::retain_reader(context, id, receiver)?;
@@ -651,26 +651,26 @@ pub(crate) fn read_start(
     Ok(option_result(context, result))
 }
 pub(crate) fn read_stop(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(id) = tcp_option_owner(context, receiver)? else {
         return Ok(context.number(-f64::from(libc::EBADF)));
     };
-    super::net_shared_vm::stop_read(&mut context.host_mut().shared_state().borrow_mut().tcp, id);
+    super::net_shared_vm::stop_read(&mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp, id);
     super::stream_binding::release_reader(context, id);
     Ok(context.number(0.0))
 }
 
 pub(crate) fn has_pending_read(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let pending = tcp_option_owner(context, receiver)?.is_some_and(|id| {
         super::net_shared_vm::socket_has_pending_read(
-            &context.host_mut().shared_state().borrow().tcp,
+            &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp,
             id,
         )
     });

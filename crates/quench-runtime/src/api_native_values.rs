@@ -1,12 +1,12 @@
 //! `NativeContext` reads and writes of BigInt, Date and ArrayBuffer detach state for hosts
 //! (Node-API); none of them runs guest code.
 use super::{NativeContext, RootedError};
-use crate::{Host, RootId};
+use crate::RootId;
 
 /// What `NativeContext::detach_array_buffer_rooted` did.
 pub use crate::vm::Detach;
 
-impl<H: Host> NativeContext<'_, H> {
+impl NativeContext<'_> {
     /// A BigInt's sign (true when negative) and magnitude as little-endian 64-bit words;
     /// `None` when `value` is not a BigInt.
     pub fn bigint_words_rooted(&mut self, value: RootId) -> Result<Option<(bool, Vec<u64>)>, RootedError> {

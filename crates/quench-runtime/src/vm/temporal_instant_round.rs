@@ -35,8 +35,8 @@ pub(super) const MODES: [&str; 9] = [
     "halfEven",
 ];
 
-pub(super) fn round<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn round(
+    vm: &mut Vm,
     p: &ResidualProgram,
     this: Value,
     args: &[Value],
@@ -71,8 +71,8 @@ pub(super) struct RoundOptions {
     pub(super) smallest_unit: Option<String>,
 }
 
-pub(super) fn read_options<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn read_options(
+    vm: &mut Vm,
     p: &ResidualProgram,
     options: Value,
 ) -> Result<RoundOptions, JsError> {
@@ -96,8 +96,8 @@ pub(super) fn read_options<H: Host>(
     })
 }
 
-fn read_increment<H: Host>(
-    vm: &mut Vm<H>,
+fn read_increment(
+    vm: &mut Vm,
     p: &ResidualProgram,
     options: Value,
 ) -> Result<Option<f64>, JsError> {
@@ -109,8 +109,8 @@ fn read_increment<H: Host>(
     }
 }
 
-pub(super) fn parse_unit<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn parse_unit(
+    vm: &mut Vm,
     p: &ResidualProgram,
     unit: Option<&str>,
     domain: RoundingDomain,
@@ -128,8 +128,8 @@ pub(super) fn parse_unit<H: Host>(
     Ok(parsed)
 }
 
-pub(super) fn validate_increment<H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn validate_increment(
+    vm: &mut Vm,
     p: &ResidualProgram,
     increment: Option<f64>,
     scale: i128,
@@ -161,8 +161,8 @@ pub(super) fn validate_increment<H: Host>(
     Ok(increment as i128)
 }
 
-pub(super) fn validate_mode<'a, H: Host>(
-    vm: &mut Vm<H>,
+pub(super) fn validate_mode<'a>(
+    vm: &mut Vm,
     p: &ResidualProgram,
     mode: Option<&'a str>,
 ) -> Result<&'a str, JsError> {

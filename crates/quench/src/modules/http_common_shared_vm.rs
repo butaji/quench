@@ -11,7 +11,7 @@ const EXPRESSIONS: [(&str, &str); 2] = [
     ("continueExpression", "(?:^|\\W)100-continue(?:$|\\W)"),
 ];
 
-pub(crate) fn module(c: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:http_parser", |c| {
         let module = c.object_rooted()?;
         crate::modules::http_shared_vm::common_members(c, module)?;

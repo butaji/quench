@@ -7,7 +7,7 @@ use std::sync::Arc;
 /// The digest `name` fetches, memoized per name for the current provider configuration.
 pub(crate) fn digest_by_name(c: &mut Context<'_>, name: &str) -> Result<Arc<Digest>, DigestError> {
     let generation = crate::modules::crypto_provider_facts::fips_generation();
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     {
         let state = shared.borrow();
         let cache = &state.crypto.digests;

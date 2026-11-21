@@ -37,14 +37,14 @@ enum SetRelationResult {
 }
 
 impl SetRecord {
-    fn size<H: Host>(&self, vm: &Vm<H>) -> f64 {
+    fn size(&self, vm: &Vm) -> f64 {
         match self {
             Self::Native { set, .. } => vm.heap.set_entries(*set).map_or(0.0, |entries| entries.len() as f64),
             Self::Like { size, .. } => *size,
         }
     }
 
-    fn release<H: Host>(self, vm: &mut Vm<H>) {
+    fn release(self, vm: &mut Vm) {
         match self {
             Self::Native { root, .. } => {
                 vm.heap.release_root(root);
@@ -63,7 +63,7 @@ impl SetRecord {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn set_relation(
         &mut self,
         p: &ResidualProgram,

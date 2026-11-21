@@ -2,7 +2,7 @@
 //! collection epoch, and each closure of it takes the function's admission with its own
 //! captures.
 use super::{CallEntry, CACHE_ENTRIES, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
-use super::super::{Host, JsStepDispatch, ResidualProgram, Vm};
+use super::super::{JsStepDispatch, ResidualProgram, Vm};
 use super::super::admission::{admit_callee, refuse, CalleeUse, Refusal};
 use crate::Value;
 
@@ -13,14 +13,14 @@ use crate::Value;
 ///
 /// # Safety
 /// As `general_user_call`.
-pub(in crate::vm) unsafe extern "C" fn general_frameless_admit<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64) -> u64 {
+pub(in crate::vm) unsafe extern "C" fn general_frameless_admit(vm: u64, residual: u64, payload: u64, callee: u64) -> u64 {
     // SAFETY: as the caller promises; admission reads the heap and allocates nothing.
-    let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+    let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram),
         &*(payload as *const JsStepDispatch)) };
     admit(vm, program, dispatch, Value::from_bits(callee)).map_or(0, |entry| entry as u64)
 }
 
-fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch, callee: Value) -> Option<*const CallEntry> {
+fn admit(vm: &mut Vm, program: &ResidualProgram, dispatch: &JsStepDispatch, callee: Value) -> Option<*const CallEntry> {
     let entry = match vm.same_realm_user_target(callee).and_then(|target| admitted_function(vm, program, dispatch, target)) {
         Some(entry) => entry,
         None => admit_function(vm, program, dispatch, callee)?,
@@ -34,7 +34,7 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
 
 /// The admission of a fresh closure of a function admitted in this epoch: the function's,
 /// with the closure's captures where its environment differs.
-fn admitted_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch,
+fn admitted_function(vm: &mut Vm, program: &ResidualProgram, dispatch: &JsStepDispatch,
     (owner, function, env): (crate::vm::ProgramId, u32, Value)) -> Option<CallEntry> {
     let &(admitted, admitted_env, entry) = vm.frameless.functions.get(function as usize)?;
     if admitted != owner.raw() || owner != dispatch.program_id || entry.code == 0 || entry.epoch != vm.cache_epochs.gc {
@@ -45,7 +45,7 @@ fn admitted_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
 
 /// `entry` with the dense capture slots of a closure environment `env`, and whether they take
 /// direct writes.
-fn captures<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, owner: crate::vm::ProgramId, env: Value, entry: CallEntry) -> CallEntry {
+fn captures(vm: &mut Vm, program: &ResidualProgram, owner: crate::vm::ProgramId, env: Value, entry: CallEntry) -> CallEntry {
     let capture = vm.target_capture(program, owner, env);
     // SAFETY: a live environment's dense slots stay in place through this collection epoch.
     let (view, stores) = unsafe { super::super::dispatch_fast::capture_view(capture) };
@@ -55,7 +55,7 @@ fn captures<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, owner: crate::vm
 
 /// Admits `callee`'s function for frameless calls (`general_frameless_admit`) and records it
 /// for its later closures.
-fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch, callee: Value) -> Option<CallEntry> {
+fn admit_function(vm: &mut Vm, program: &ResidualProgram, dispatch: &JsStepDispatch, callee: Value) -> Option<CallEntry> {
     let (owner, function, env) = vm.in_loop_call_target(program, callee)?;
     if owner != dispatch.program_id { refuse(vm, Refusal::CalleeNotEligible); return None; }
     let body = program.function_get(function as usize)?;
@@ -68,7 +68,7 @@ fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: 
         code: code as u64,
         meta: u64::from(function) | (u64::from(body.registers) << META_REGISTERS) | (u64::from(body.params) << META_PARAMS),
         this,
-        constructs: u64::from(Vm::<H>::inline_constructible(body)),
+        constructs: u64::from(Vm::inline_constructible(body)),
         ..CallEntry::default()
     });
     let index = function as usize;
@@ -80,6 +80,6 @@ fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: 
 
 /// No program has a native entry of the native-graph ABI: an image's functions run their bodies on
 /// the lane runner (`Vm::install_ahead_body`).
-fn native_entry<H: Host>(_: &Vm<H>, _: crate::vm::ProgramId, _: u32) -> Option<usize> {
+fn native_entry(_: &Vm, _: crate::vm::ProgramId, _: u32) -> Option<usize> {
     None
 }

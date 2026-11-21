@@ -1,6 +1,6 @@
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn call_reflect_native(
         &mut self,
         p: &ResidualProgram,

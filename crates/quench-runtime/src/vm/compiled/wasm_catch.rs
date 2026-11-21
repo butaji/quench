@@ -4,7 +4,7 @@
 //! raised when a handler catches it, and binds its thrown value to the handler's frame local. A
 //! trap, a link failure and a termination are never caught, as `Vm::exception_handler_target` does.
 
-use super::{AnalysisState, CallContext, Emitter, Host, JsError, Kind, RAISED_STATUS, Raised, Slot, Vm};
+use super::{AnalysisState, CallContext, Emitter, JsError, Kind, RAISED_STATUS, Raised, Slot, Vm};
 use crate::bytecode::{Function, Handler, ThrownValueSlot};
 use crate::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _};
 use crate::staged::wasm::Width;
@@ -85,10 +85,10 @@ fn catches(error: &JsError) -> bool {
 /// The catch of a raised `status`: where a handler catches the error the call left raised, the error
 /// leaves the context and its thrown value goes to `out`, and the status is 0. Otherwise `status`
 /// returns unchanged and the error stays raised for the activation to leave with.
-unsafe extern "C" fn exception_catch_callout<H: Host>(context: *mut CallContext, status: i64, out: *mut u64) -> i64 {
+unsafe extern "C" fn exception_catch_callout(context: *mut CallContext, status: i64, out: *mut u64) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
     let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *context.vm.cast::<Vm>() };
     let caught = status == RAISED_STATUS && matches!(&context.raised, Some(Raised::Error(error)) if catches(error));
     if !caught {
         return status;
@@ -105,7 +105,7 @@ unsafe extern "C" fn exception_catch_callout<H: Host>(context: *mut CallContext,
     0
 }
 
-impl<H: Host> Emitter<'_, '_, H> {
+impl Emitter<'_, '_> {
     /// Leaves the activation with the raised `status` and a zero result.
     pub(super) fn leave_raised(&mut self, status: ir::Value) {
         let mut values = vec![status];
@@ -126,7 +126,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         ));
         let context = self.body.core.context;
         let out = self.slot_address(slot, 0);
-        let target = exception_catch_callout::<H> as *const () as usize;
+        let target = exception_catch_callout as *const () as usize;
         let caught = self.call_leaf(target, &[context, status, out]);
         let uncaught = self.body.core.builder.create_block();
         let handled = self.body.core.builder.create_block();

@@ -1,11 +1,11 @@
 //! The set of Wasm functions a module compile admits: the greatest fixpoint of "every
 //! known callee compiles". Each function is planned once; a function that drops sends
 //! only its known callers back to be planned again, not the whole module.
-use super::{Analysis, Host, Plan};
+use super::{Analysis, Plan};
 use crate::bitset::BitSet;
 use crate::bytecode::{FieldLayout, InstructionField};
 
-impl<H: Host> Analysis<'_, H> {
+impl Analysis<'_> {
     /// Each function's full plan from `allowed`, `None` outside the callable set, and the
     /// memory slot those plans compile against.
     pub(super) fn settle_callable(&self, allowed: &BitSet) -> (Vec<Option<Plan>>, Option<u32>) {

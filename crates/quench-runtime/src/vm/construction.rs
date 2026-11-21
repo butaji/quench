@@ -98,17 +98,50 @@ fn finished_closure_slots(
     slots
 }
 
-impl<H: Host> Vm<H> {
-    /// The creation realm of a function record: its override, else the main realm.
+impl Vm {
+    /// The creation realm of a function record: its override, else its program's realm
+    /// (`Heap::program_realms`), else the main realm.
     #[inline(always)]
     pub(super) fn record_realm(&self, record: &FunctionRecord) -> Value {
-        record.realm_override().unwrap_or(self.main_realm)
+        if let Some(realm) = record.realm_override() {
+            return realm;
+        }
+        self.default_record_realm(record)
     }
 
-    /// `record` as a function created in `realm`: only a realm other than the main one (and an
-    /// explicit `Value::NULL`) is stored, as an override.
+    /// The realm a record of `record`'s kind is created in unless it stores another: its
+    /// program's for a user function whose program has one, else the main realm.
+    #[inline(always)]
+    fn default_record_realm(&self, record: &FunctionRecord) -> Value {
+        match record.kind {
+            FunctionKind::User(program, _) => match self.heap.program_realms.get(program.raw() as usize) {
+                Some(realm) if !realm.is_undefined() => *realm,
+                _ => self.main_realm,
+            },
+            FunctionKind::Native(_) => self.main_realm,
+        }
+    }
+
+    /// `record` as a function created in `realm`: only a realm other than its default
+    /// (`default_record_realm`), and an explicit `Value::NULL`, is stored, as an override. A
+    /// program's first closure made in a realm other than the main one names its program's
+    /// realm, so every closure a context's code makes stores none: a stored override boxes
+    /// the object's extras (about 340 bytes a closure, doxbee-promise 34 of 75 MB).
     pub(super) fn in_realm_record(&mut self, mut record: FunctionRecord, realm: Value) -> FunctionRecord {
-        if realm != self.main_realm {
+        if let FunctionKind::User(program, _) = record.kind
+            && realm.is_heap()
+            && realm != self.main_realm
+        {
+            let index = program.raw() as usize;
+            let realms = &mut self.heap.program_realms;
+            if realms.len() <= index {
+                realms.resize(index + 1, Value::UNDEFINED);
+            }
+            if realms[index].is_undefined() {
+                realms[index] = realm;
+            }
+        }
+        if realm != self.default_record_realm(&record) {
             self.heap.set_function_realm_override(&mut record, realm);
         }
         record

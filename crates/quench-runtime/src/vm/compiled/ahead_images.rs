@@ -266,7 +266,7 @@ fn plain_cell(callee: &DirectCallee, registers: u16) -> bool {
     facts.registers == registers && facts.room == registers && u64::from(facts.entry) == crate::staged::call::ENTRY_ACTIVATES
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `function`'s body from the loaded images for this program, published as its lane body: its
     /// lane body linked to this VM, or where it has none (or none this VM can take) its base body
     /// where the image placed it.

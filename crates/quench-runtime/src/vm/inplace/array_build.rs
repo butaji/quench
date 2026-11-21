@@ -9,7 +9,7 @@ use std::mem::MaybeUninit;
 /// The ASCII byte that separates `join`ed elements when none is given.
 const DEFAULT_JOIN_SEPARATOR: &[u8] = b",";
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `Array.prototype.fill` in place: a dense array of this realm where every Set is the
     /// plain element store (`fill_plain_array_elements`), so holes, as in `new Array(n)`, are
     /// defined in place too. The range's bounds are relative indices that are absent,

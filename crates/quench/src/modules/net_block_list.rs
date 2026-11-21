@@ -7,7 +7,7 @@ use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
 
 const IPV4_MAPPED_PREFIX: u128 = 0xffff_0000_0000;

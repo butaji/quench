@@ -30,7 +30,7 @@ impl RegionCalls {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The calls of `function` of `program`, whose call sites reached `candidates` (by PC), that a
     /// region of it may inline or call by their entries; the callees' bodies are in demand for the
     /// calls the region keeps, as a body's are (`bind_callees`, by the view `own` of the function).

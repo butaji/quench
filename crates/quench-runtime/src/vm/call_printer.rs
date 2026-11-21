@@ -11,7 +11,7 @@ use oxc_ast_visit::Visit;
 use oxc_parser::{ParseOptions, Parser, Token, Kind, config::TokensParserConfig};
 use oxc_span::SourceType;
 
-use super::{Host, Vm};
+use super::Vm;
 use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;
@@ -41,7 +41,7 @@ enum Callee {
     Method { receiver: Value, atom: crate::bytecode::Atom },
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `error` with the callee named when it is the call paths' failure to call or construct
     /// the callee of the call at `pc` (`NOT_CALLABLE_MESSAGE`, `NOT_CONSTRUCTOR_MESSAGE`):
     /// the TypeError V8 throws there. Any other error is returned as it is.

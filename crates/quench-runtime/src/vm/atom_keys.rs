@@ -2,7 +2,7 @@ use super::wtf16::JsString;
 use super::wtf16::{str_text_hash, table_hash, Units};
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn atom_hash_units(units: Units<'_>) -> u64 {
         table_hash(units.text_hash())
     }
@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
 
 /// Programs compiled at run time extend the VM's atoms in place: their prefix ids are the
 /// VM's, read through the shared sequence instead of copied.
-impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
+impl crate::compile::AtomPrefix for Vm {
     fn len(&self) -> usize {
         self.atom_sequence.len()
     }
@@ -177,7 +177,7 @@ mod tests {
         let mut comparisons = 0;
         for index in 0..256 {
             let name = super::JsString::from_str(&format!("d{index}"));
-            let hash = super::Vm::<crate::test_host::TestHost>::atom_hash_units(name.units());
+            let hash = super::Vm::atom_hash_units(name.units());
             let found = vm.find_atom(hash, |atom| {
                 comparisons += 1;
                 vm.atom_units_equal(atom, name.units())

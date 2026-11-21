@@ -5,7 +5,7 @@ use super::*;
 /// Properties an adopted shape gathers without allocating.
 const ADOPT_INLINE_PROPERTIES: usize = 16;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `copy_plain_data_properties` for `{...source}` into an empty ordinary target. Holds when
     /// the target is an extensible ordinary object with no own property (a root shape, storage
     /// empty, not a prototype) and the source's prototype; the source is an ordinary object
@@ -41,6 +41,22 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let source_shape = source_data.shape();
+        let target_shape = target_data.shape();
+        // A source shape an earlier spread into this root adopted (`plain_copy_shapes` naming the
+        // source shape itself) is a chain of default adds, which no later change makes otherwise:
+        // its values are copied by its slot memo, without walking the chain again.
+        if self.plain_copy_shapes.get(target_shape, source_shape) == Some(source_shape)
+            && let Some(slots) = self.enumerable_keys.get(source_shape)
+        {
+            if slots.len() == 0 {
+                return true;
+            }
+            let mut values = smallvec::SmallVec::<[Value; ADOPT_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
+            if self.read_shaped_values(source_data, &slots, &mut values) {
+                self.initialize_plain_copy(target, source_shape, &values, slots.iter().map(|(atom, _)| *atom));
+                return true;
+            }
+        }
         // Walk the chain from its leaf: every transition must be a default data add of a string key.
         let mut atoms = smallvec::SmallVec::<[Atom; ADOPT_INLINE_PROPERTIES]>::new();
         let mut current = source_shape;
@@ -71,6 +87,7 @@ impl<H: Host> Vm<H> {
             values.push(value);
         }
         self.initialize_plain_copy(target, source_shape, &values, atoms.iter().copied());
+        self.plain_copy_shapes.record(target_shape, source_shape, source_shape);
         true
     }
 
@@ -84,40 +101,76 @@ impl<H: Host> Vm<H> {
     /// an exotic or frozen object on the chain, and the key `__proto__` (Object.prototype's
     /// accessor) answer `false`. Runs no guest code and cannot throw; `false`, before any effect,
     /// leaves the copy to the general path.
+    ///
+    /// A passed check is recorded in `plain_assign_shapes` under the target's shape, the source's
+    /// shape and the target's prototype, with the chain's cell (`heap::ChainCell`); while that cell
+    /// holds, the chain still intercepts none of the keys, and a hit skips the walk.
     pub(crate) fn adopt_source_shape_for_set(&mut self, target: Value, source: Value) -> bool {
         let (Some(source_data), Some(target_data)) = (self.object_data(source), self.object_data(target)) else {
             return false;
         };
         let target_proto = target_data.proto();
+        let target_shape = target_data.shape();
         let source_shape = source_data.shape();
-        // The source's keys, read from the same chain of default string-key adds that
-        // `adopt_source_shape` walks.
-        let mut atoms = smallvec::SmallVec::<[Atom; ADOPT_INLINE_PROPERTIES]>::new();
-        let mut current = source_shape;
+        let proved = self
+            .plain_assign_shapes
+            .get(target_shape, (source_shape, target_proto))
+            .is_some_and(|entry| entry.cell.holds());
+        if proved {
+            return self.adopt_source_shape(target, source, Value::UNDEFINED);
+        }
+        if !self.set_copies_clear_of_chain(target_proto, source) {
+            return false;
+        }
+        if !self.adopt_source_shape(target, source, Value::UNDEFINED) {
+            return false;
+        }
+        // The proof is recorded once the copy has taken effect, so a refused copy records nothing.
+        // The target is no prototype, so its adds changed no layout of the chain the walk read.
+        if let Some(cell) = self.chain_cell_to_end(target_proto) {
+            let entry = super::shape_memo::PlainAssignShape { shape: source_shape, cell, words: None };
+            self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), entry);
+        }
+        true
+    }
+
+    /// Whether `shape` is a chain of default data adds of string keys from the root, so the i-th
+    /// key owns slot i and the shape has no other slot. A fact of the shape alone.
+    fn plain_add_chain(&self, shape: u32) -> bool {
+        let mut adds = 0usize;
+        let mut current = shape;
         while let Some(parent) = self.shapes[current as usize].parent() {
             match self.shapes[current as usize].transition {
-                ShapeTransition::Add { key: PropertyKey::String(atom), attributes, .. }
+                ShapeTransition::Add { key: PropertyKey::String(_), attributes, .. }
                     if attributes == DEFAULT_DATA_ATTRIBUTES =>
                 {
-                    atoms.push(atom)
+                    adds += 1
                 }
                 _ => return false,
             }
             current = parent;
         }
-        for &atom in &atoms {
+        self.shapes[shape as usize].storage_len() == adds
+    }
+
+    /// Whether no key of `source`'s shape meets `__proto__`, or an accessor or a read-only data
+    /// property on the chain from `prototype`: the walk of `adopt_source_shape_for_set`. Reads
+    /// only. `false` where a link is a Proxy, exotic or frozen object, or the source's keys are
+    /// not its shape's enumerable slots.
+    fn set_copies_clear_of_chain(&self, prototype: Value, source: Value) -> bool {
+        let Some(slots) = self.shape_enumerable_slots(source) else {
+            return false;
+        };
+        for &(atom, _) in slots.iter() {
             if self.atom_units_equal_str(atom, "__proto__") {
                 return false;
             }
-            let mut holder = target_proto;
+            let mut holder = prototype;
             while !holder.is_null() {
                 let Some(data) = self.object_data(holder) else {
                     return false;
                 };
-                if !self.shape_lists_enumerable_keys(holder)
-                    || data.is_arguments_object()
-                    || data.is_frozen()
-                {
+                if !self.shape_lists_enumerable_keys(holder) || data.is_arguments_object() || data.is_frozen() {
                     return false;
                 }
                 if let Some(attributes) = self.property_attributes(holder, PropertyKey::string(atom)) {
@@ -129,6 +182,6 @@ impl<H: Host> Vm<H> {
                 holder = data.proto();
             }
         }
-        self.adopt_source_shape(target, source, Value::UNDEFINED)
+        true
     }
 }

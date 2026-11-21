@@ -4,7 +4,7 @@ use super::*;
 use crate::test_host::TestHost;
 
 /// Runs `source` (one expression) and returns its value with the VM that holds it.
-fn evaluate(source: &str) -> (Vm<TestHost>, Value) {
+fn evaluate(source: &str) -> (Vm, Value) {
     let program = crate::Engine::specialize(&format!("globalThis.result = {source};"), "storage.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.execute(&program).unwrap();

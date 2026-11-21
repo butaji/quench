@@ -174,7 +174,7 @@ pub(super) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, 
     Some(vec![compared, jump])
 }
 
-impl<H: crate::Host> crate::vm::Vm<H> {
+impl crate::vm::Vm {
     /// The constructor each `instanceof` of `code` names, by PC, where the VM can tell now: the global a by-name load
     /// just before it reads, or the entry parameter its register still holds (`parameters`, one per register from 0).
     pub(in crate::vm::compiled) fn instanceof_constructors(&mut self, program: &ResidualProgram, code: &[WideInstruction], parameters: &[Value]) -> Vec<Option<Value>> {

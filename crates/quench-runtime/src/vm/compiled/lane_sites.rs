@@ -2,7 +2,7 @@
 use super::*;
 use super::super::global_facts::{GlobalRead, GlobalReads, GlobalSlot, GlobalTable, StableCell, scalar_native};
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
     /// (`dispatch_fast::name_resolution`): in a function whose unresolved names are
     /// global and resolve statically, a name no internal binding owns; each with its constant
@@ -215,7 +215,7 @@ impl<H: Host> Vm<H> {
         if !instruction.op().is_get_field() { return None; }
         let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
         let name = self.atom_name(atom);
-        let row = crate::vm::native_rows::lane_method(name)?;
+        let Some(row) = crate::vm::native_rows::lane_method(name) else { return self.cached_method_native(instruction) };
         let native = row.native;
         let holder = match row.holder {
             crate::vm::native_rows::Holder::ArrayPrototype => self.array_proto,
@@ -225,6 +225,26 @@ impl<H: Host> Vm<H> {
         let value = self.own_plain_data(holder, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
         (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None })
+    }
+
+    /// The field read `instruction` of a method by a name some realm prototype holds as a native a loop
+    /// calls in place (`lane_region::native_calls::Inline::InPlace`): `map.get`, `set.has`. That
+    /// native is only the analysis's witness: the call checks its callee is such a native at each
+    /// run (`lane_allocations::scalar_native_in_lane`), as a name may be several prototypes' (`has`).
+    fn cached_method_native(&mut self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
+        let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
+        let row = crate::vm::native_rows::in_place_method(self.atom_name(atom))?;
+        let holder = match row.holder {
+            crate::vm::native_rows::Holder::MapPrototype => self.map_proto,
+            crate::vm::native_rows::Holder::SetPrototype => self.set_proto,
+            crate::vm::native_rows::Holder::WeakMapPrototype => self.weak_map_proto,
+            crate::vm::native_rows::Holder::WeakSetPrototype => self.weak_set_proto,
+            _ => return None,
+        };
+        let value = self.own_plain_data(holder, atom)??;
+        let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
+        (*held == row.native).then(|| self.native_holder(holder)).flatten()
+            .map(|holder| GlobalRead::NativeMember { value, native: row.native, holder, folds: false, cell: None })
     }
 
     /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the

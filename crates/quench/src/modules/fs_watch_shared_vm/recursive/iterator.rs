@@ -3,14 +3,14 @@ use super::{closed, get, method, nullish, operation, set};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-fn done(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn done(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let result = context.null_object_rooted()?;
     let yes = context.boolean(true);
     set(context, result, "done", yes)?;
     Ok(result)
 }
 pub(crate) fn iterate(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -18,7 +18,7 @@ pub(crate) fn iterate(
     operation(context, "makeIterator", undefined, args)
 }
 pub(crate) fn next(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -39,7 +39,7 @@ pub(crate) fn next(
     context.construct_rooted(promise, promise, &[executor])
 }
 pub(crate) fn finish(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -48,7 +48,7 @@ pub(crate) fn finish(
     done(context)
 }
 pub(crate) fn executor(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -75,7 +75,7 @@ pub(crate) fn executor(
         }
         let add = get(context, signal, "addEventListener")?;
         let event = context.string_rooted("abort");
-        let shared = context.host_mut().shared_state();
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let events = shared
             .borrow()
             .event_targets_api
@@ -93,7 +93,7 @@ pub(crate) fn executor(
     Ok(context.undefined())
 }
 pub(crate) fn change(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -117,7 +117,7 @@ pub(crate) fn change(
     context.call_rooted(resolve, undefined, &[result])
 }
 pub(crate) fn abort(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {

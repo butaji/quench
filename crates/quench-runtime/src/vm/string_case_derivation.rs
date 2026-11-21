@@ -70,7 +70,7 @@ impl StringCaseFilter {
 
 /// Replaces each string-case selector of `records` (decoded as `decoded`) whose constants
 /// admit a filter with the filtered selector, and returns the filters the records point into.
-pub(in super::super) fn specialize<H: Host>(
+pub(in super::super) fn specialize(
     heap: &crate::heap::Heap,
     constants: &[Value],
     decoded: &[WideInstruction],
@@ -94,7 +94,7 @@ pub(in super::super) fn specialize<H: Host>(
     let filters = filters.into_boxed_slice();
     for (pc, filter) in sites.into_iter().zip(filters.iter()) {
         records[pc].operand = LaneOperand { string_case_filter: filter };
-        records[pc].handler = generated_row!(H, crate::staged::STRING_CASE_INDEX_ROW, super::super::ACC_NONE, super::super::lane_frame::FLAG_CASE_FILTER) as *const ();
+        records[pc].handler = generated_row!(crate::staged::STRING_CASE_INDEX_ROW, super::super::ACC_NONE, super::super::lane_frame::FLAG_CASE_FILTER) as *const ();
     }
     filters
 }

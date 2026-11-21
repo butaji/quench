@@ -9,10 +9,10 @@ use super::*;
 use crate::vm::specializer::Specializer;
 
 /// The tier a Wasm function is specialized for, with the inputs that tier reads.
-pub(super) enum WasmTierChoice<'s, 'a, H: Host> {
+pub(super) enum WasmTierChoice<'s, 'a> {
     /// The u-jit: a Cranelift body and entry, compiled later (`compile_built_functions`).
     Optimizing {
-        analysis: &'s Analysis<'a, H>,
+        analysis: &'s Analysis<'a>,
         isa: &'s dyn cranelift_codegen::isa::TargetIsa,
         guarded: bool,
         fixed_base: Option<i32>,
@@ -20,7 +20,7 @@ pub(super) enum WasmTierChoice<'s, 'a, H: Host> {
     },
     /// The b-jit: the function's stitched rows, which are its entry (`stitched_entry`).
     Baseline {
-        vm: &'s Vm<H>,
+        vm: &'s Vm,
         program_id: ProgramId,
         env: Value,
         memory_slot: Option<u32>,
@@ -31,7 +31,7 @@ pub(super) enum WasmTierChoice<'s, 'a, H: Host> {
 }
 
 /// One Wasm function of one program, to be specialized for `tier`.
-pub(super) struct WasmSpecializer<'s, 'a, H: Host> {
+pub(super) struct WasmSpecializer<'s, 'a> {
     /// The function's index in the program.
     pub(super) index: usize,
     /// Every function's interface plan (`Plan::interface`), which callers read.
@@ -40,7 +40,7 @@ pub(super) struct WasmSpecializer<'s, 'a, H: Host> {
     pub(super) full_plan: &'s Plan,
     /// The function's indirect reference sites: (pc, cache site id).
     pub(super) reference_site_ids: &'a [(usize, usize)],
-    pub(super) tier: WasmTierChoice<'s, 'a, H>,
+    pub(super) tier: WasmTierChoice<'s, 'a>,
 }
 
 /// What a Wasm specialization publishes.
@@ -51,7 +51,7 @@ pub(super) enum WasmResidual {
     Rows(Vec<u8>),
 }
 
-impl<H: Host> Specializer for WasmSpecializer<'_, '_, H> {
+impl Specializer for WasmSpecializer<'_, '_> {
     type Residual = WasmResidual;
 
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {

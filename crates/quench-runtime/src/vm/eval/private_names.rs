@@ -8,7 +8,7 @@ fn is_private_name(binding: &crate::bytecode::EvalBinding) -> bool {
     binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The home object and the `(label, identity)` of each private name the running frame's direct
     /// eval sees, those its scopes declare first, else the home binding's own declarations.
     pub(super) fn direct_eval_private_names(&mut self, p: &ResidualProgram) -> Option<(Value, Vec<(String, String)>)> {

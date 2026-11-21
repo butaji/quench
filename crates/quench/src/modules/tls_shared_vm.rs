@@ -18,7 +18,7 @@ pub(crate) mod surface;
 /// Build the legacy TLS internal-module facade and emit Node's deprecation
 /// warning when the module is first loaded through CommonJS.
 pub(crate) fn deprecated_internal_module(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     process: RootId,
     module_name: &str,
 ) -> Result<RootId, RootedError> {
@@ -50,12 +50,12 @@ pub(crate) const DEFAULT_CIPHER_LIST: &str = concat!(
 
 /// The `tls` builtin the module cache keeps, so every class shares its `TLSSocket` and
 /// `Server`.
-pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::tls_module(context)
 }
 
 /// Builds the `tls` builtin (`module`).
-pub(crate) fn build_module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn build_module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let api = facade::install(context)?;
     handle::registry(context)?;
     let net = crate::host::shared_vm::commonjs::net_module(context)?;
@@ -79,8 +79,8 @@ pub(crate) fn build_module(context: &mut NativeContext<'_, NodeHost>) -> Result<
 
 /// The `DEFAULT_*` policy, with Node's CLI precedence: the lowest enabled minimum and the
 /// highest enabled maximum win.
-fn default_versions(context: &mut NativeContext<'_, NodeHost>) -> [(&'static str, String); 4] {
-    let cli_options = context.host_mut().shared_state().borrow().cli_options.clone();
+fn default_versions(context: &mut NativeContext<'_>) -> [(&'static str, String); 4] {
+    let cli_options = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cli_options.clone();
     let minimum = [
         ("--tls-min-v1.0", "TLSv1"),
         ("--tls-min-v1.1", "TLSv1.1"),
@@ -107,7 +107,7 @@ fn default_versions(context: &mut NativeContext<'_, NodeHost>) -> [(&'static str
 }
 
 fn parsed_pfx(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     raw: RootId,
     pass: RootId,
 ) -> Result<openssl::pkcs12::ParsedPkcs12_2, RootedError> {
@@ -150,7 +150,7 @@ fn parsed_pfx(
 }
 
 fn material_bytes(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     name: &str,
 ) -> Result<Vec<u8>, RootedError> {
@@ -169,7 +169,7 @@ fn material_bytes(
 }
 
 fn pfx_bytes(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
 ) -> Result<Vec<u8>, RootedError> {
     if let Some(text) = context.string_text(value)? {
@@ -181,7 +181,7 @@ fn pfx_bytes(
 }
 
 pub(crate) fn operation_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     message: &str,
 ) -> RootedError {
     match context.error_rooted(message) {
@@ -198,7 +198,7 @@ pub(crate) fn operation_error(
 }
 
 fn parser_error(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     error: openssl::error::ErrorStack,
 ) -> RootedError {
     let reason = error

@@ -39,31 +39,31 @@ macro_rules! leaf_arms {
 }
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<H, OP, ACC, { protocol_family::RETURN | parameters }>`), where `parameters` is
+/// (`protocol_row::<OP, ACC, { protocol_family::RETURN | parameters }>`), where `parameters` is
 /// `returning_code(kind, leaf)`.
-pub(in crate::vm::dispatch_fast) const fn return_miss_of<H: Host>(parameters: u8) -> Handler {
+pub(in crate::vm::dispatch_fast) const fn return_miss_of(parameters: u8) -> Handler {
     let kind = parameters / LEAF_FORMS;
     let leaf = parameters % LEAF_FORMS;
     match kind {
-        RETURN_KIND => leaf_arms!(leaf, |L| return_miss::<H, L> as Handler),
-        CONSTANT_KIND => leaf_arms!(leaf, |L| return_constant_miss::<H, L> as Handler),
-        RETURNING_FIELD => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD, L> as Handler),
-        RETURNING_FIELD_OWN => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_OWN, L> as Handler),
-        RETURNING_FIELD_POLYMORPHIC => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_POLYMORPHIC, L> as Handler),
-        RETURNING_FIELD_HOLDER => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_HOLDER, L> as Handler),
-        RETURNING_FIELD_INHERITED => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_INHERITED, L> as Handler),
-        RETURNING_FIELD_NESTED => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_NESTED, L> as Handler),
-        RETURNING_FIELD_PRIVATE => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_PRIVATE, L> as Handler),
-        RETURNING_FIELD_GETTER => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_GETTER, L> as Handler),
-        RETURNING_UNARY => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_UNARY, L> as Handler),
-        RETURNING_BINARY => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_BINARY, L> as Handler),
-        RETURNING_OBJECT => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_OBJECT, L> as Handler),
-        RETURNING_OBJECT_LITERAL => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_OBJECT_LITERAL, L> as Handler),
-        RETURNING_LITERAL => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_LITERAL, L> as Handler),
-        kind if kind >= OPERATOR_KIND => leaf_arms!(leaf, |L| match returning_operator_miss_of::<H, L>(kind - OPERATOR_KIND) {
+        RETURN_KIND => leaf_arms!(leaf, |L| return_miss::<L> as Handler),
+        CONSTANT_KIND => leaf_arms!(leaf, |L| return_constant_miss::<L> as Handler),
+        RETURNING_FIELD => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD, L> as Handler),
+        RETURNING_FIELD_OWN => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_OWN, L> as Handler),
+        RETURNING_FIELD_POLYMORPHIC => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_POLYMORPHIC, L> as Handler),
+        RETURNING_FIELD_HOLDER => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_HOLDER, L> as Handler),
+        RETURNING_FIELD_INHERITED => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_INHERITED, L> as Handler),
+        RETURNING_FIELD_NESTED => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_NESTED, L> as Handler),
+        RETURNING_FIELD_PRIVATE => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_PRIVATE, L> as Handler),
+        RETURNING_FIELD_GETTER => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_GETTER, L> as Handler),
+        RETURNING_UNARY => leaf_arms!(leaf, |L| returning_miss::<RETURNING_UNARY, L> as Handler),
+        RETURNING_BINARY => leaf_arms!(leaf, |L| returning_miss::<RETURNING_BINARY, L> as Handler),
+        RETURNING_OBJECT => leaf_arms!(leaf, |L| returning_miss::<RETURNING_OBJECT, L> as Handler),
+        RETURNING_OBJECT_LITERAL => leaf_arms!(leaf, |L| returning_miss::<RETURNING_OBJECT_LITERAL, L> as Handler),
+        RETURNING_LITERAL => leaf_arms!(leaf, |L| returning_miss::<RETURNING_LITERAL, L> as Handler),
+        kind if kind >= OPERATOR_KIND => leaf_arms!(leaf, |L| match returning_operator_miss_of::<L>(kind - OPERATOR_KIND) {
             Some(handler) => handler,
-            None => general_step_in_lane::<H>,
+            None => general_step_in_lane,
         }),
-        _ => general_step_in_lane::<H>,
+        _ => general_step_in_lane,
     }
 }

@@ -4,7 +4,7 @@ use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 use std::path::PathBuf;
 
 pub(super) fn validate(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
@@ -56,7 +56,7 @@ pub(super) fn validate(
     Ok(value)
 }
 
-fn bytes(context: &mut NativeContext<'_, NodeHost>, path: RootId) -> Result<Vec<u8>, RootedError> {
+fn bytes(context: &mut NativeContext<'_>, path: RootId) -> Result<Vec<u8>, RootedError> {
     if let Some(text) = context.string_text(path)? {
         return Ok(text.into_bytes());
     }
@@ -67,7 +67,7 @@ fn bytes(context: &mut NativeContext<'_, NodeHost>, path: RootId) -> Result<Vec<
 
 /// Snapshot after option getters, when the native operation consumes the path.
 pub(super) fn native_path(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
 ) -> Result<PathBuf, RootedError> {
     let bytes = bytes(context, value)?;
@@ -82,17 +82,17 @@ pub(super) fn native_path(
 }
 
 pub(super) fn resolve(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     value: RootId,
 ) -> Result<PathBuf, RootedError> {
     let path = native_path(context, value)?;
-    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    let cwd = context.host_as::<crate::host::NodeHost>().shared_state().borrow().cwd.clone();
     Ok(cwd.resolve_io_path(&path))
 }
 
 /// System errors display UTF-8 replacement characters without public conversion hooks.
 pub(super) fn display(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     path: RootId,
 ) -> Result<String, RootedError> {
     Ok(String::from_utf8_lossy(&bytes(context, path)?).into_owned())

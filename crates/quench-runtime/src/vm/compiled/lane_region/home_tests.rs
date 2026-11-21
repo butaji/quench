@@ -13,7 +13,7 @@ pub(super) fn lower_loop(source: &str, file: &str) -> ir::Function {
         instruction.op().control_flow_layout().jumps()
             .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
-    let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let addresses = LaneHelper::addresses();
     let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
         &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
         Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true).expect("loop region");

@@ -10,7 +10,7 @@ pub(super) const fn finalization_native_length(native: Native) -> Option<f64> {
     })
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn is_finalization_native(native: Native) -> bool {
         matches!(
             native,

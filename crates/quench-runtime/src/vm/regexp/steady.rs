@@ -4,7 +4,7 @@ use crate::code_dependencies::IntactFuse;
 use super::steady_ascii::IndexStore;
 use super::ascii::ascii_search;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
     /// nothing, so it observes no frame (`regexp_call_in_lane`): a RegExp receiver, a string
     /// subject, an own writable data `lastIndex` holding a Number (`regexp_last_index_slot`,
@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
         let Some(intrinsics) = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) else {
             return false;
         };
-        let proven = intrinsics.exec_proof.get().is_some_and(|proof| proof.shape == object.shape() && proof.cell.holds());
+        let proven = intrinsics.exec_proof.find(object.shape()).is_some();
         if object.proto() == intrinsics.prototype && proven {
             return true;
         }
@@ -165,9 +165,9 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let shape = object.shape();
-        let exec_slot = match intrinsics.exec_proof.get() {
-            Some(proof) if proof.shape == shape && proof.cell.holds() => proof.exec_slot,
-            _ => match self.prove_regexp_exec(intrinsics, shape) {
+        let exec_slot = match intrinsics.exec_proof.find(shape) {
+            Some(proof) => proof.exec_slot,
+            None => match self.prove_regexp_exec(intrinsics, shape) {
                 Some(exec_slot) => exec_slot,
                 None => return false,
             },

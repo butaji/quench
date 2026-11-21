@@ -2,7 +2,7 @@ use super::promise::{AggregateJob, AggregateMode};
 use super::property_key::PropertyKey;
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn aggregate_result(
         &mut self,
         keys: Option<Vec<Value>>,

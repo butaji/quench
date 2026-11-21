@@ -119,10 +119,10 @@ impl State {
     }
 }
 pub(crate) fn owner(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
 ) -> Result<usize, RootedError> {
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
         .tls_contexts
@@ -173,21 +173,21 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
 }
 
 pub(crate) fn register(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let object = args.first().copied().unwrap_or_else(|| context.undefined());
     let identity = context.host_weak_root(object)?;
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .tls_contexts
         .register(identity);
     Ok(context.undefined())
 }
-fn raw_version(context: &NativeContext<'_, NodeHost>, value: RootId) -> Result<i32, RootedError> {
+fn raw_version(context: &NativeContext<'_>, value: RootId) -> Result<i32, RootedError> {
     context
         .rooted_value(value)
         .and_then(|value| value.as_number())
@@ -196,7 +196,7 @@ fn raw_version(context: &NativeContext<'_, NodeHost>, value: RootId) -> Result<i
         .ok_or_else(|| RootedError::host("TLS protocol binding requires an integer"))
 }
 pub(crate) fn initialize(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -358,7 +358,7 @@ pub(crate) fn initialize(
         ));
     }
     context
-        .host_mut()
+        .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
         .tls_contexts
@@ -440,7 +440,7 @@ unsafe extern "C" {
     fn X509_STORE_up_ref(store: *mut openssl_sys::X509_STORE) -> std::ffi::c_int;
 }
 pub(crate) fn set_options(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -452,7 +452,7 @@ pub(crate) fn set_options(
     else {
         return Err(RootedError::host("TLS option binding requires a number"));
     };
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let mut state = shared.borrow_mut();
     let configuration = state.tls_contexts.configuration(index)?;
     unsafe {
@@ -461,26 +461,26 @@ pub(crate) fn set_options(
     Ok(context.undefined())
 }
 pub(crate) fn minimum(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     protocol_version(context, receiver, true)
 }
 pub(crate) fn maximum(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     protocol_version(context, receiver, false)
 }
 fn protocol_version(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_>,
     receiver: RootId,
     minimum: bool,
 ) -> Result<RootId, RootedError> {
     let index = owner(context, receiver)?;
-    let shared = context.host_mut().shared_state();
+    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let mut state = shared.borrow_mut();
     let configuration = state.tls_contexts.configuration(index)?;
     let version = unsafe {

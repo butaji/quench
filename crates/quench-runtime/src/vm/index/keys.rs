@@ -1,7 +1,7 @@
 //! Property keys that name array indices: the integer form element reads take.
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `key`, or the integer naming the same property when `key` is a flat string holding
     /// an array index in canonical decimal form (`object_static::array_index`), so the
     /// integer-keyed element reads answer `base["0"]` as they answer `base[0]`.

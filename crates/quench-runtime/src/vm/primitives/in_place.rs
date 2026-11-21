@@ -6,7 +6,7 @@ use crate::staged::{string_search, string_split};
 use crate::vm::wtf16::Units;
 use crate::vm::wtf16::split::SplitParts;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `indexOf`, `lastIndexOf`, `includes`, `startsWith` or `endsWith` of a flat string receiver
     /// searching for a flat string, from a position left out or passed as an integer: every
     /// conversion the method makes is then the value itself, so the search reads both strings'
@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `split` of a flat string receiver at a flat string separator, with the limit left
     /// out or an int32: no conversion runs guest code and nothing collects while the parts are
     /// made, so the receiver is cut in place without the general path's roots and copies. The
@@ -92,7 +92,7 @@ fn split_limit(limit: Option<&Value>) -> Option<usize> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The one body of `replace` and `replaceAll` at a string pattern: a flat string receiver,
     /// pattern and replacement (the replacement's `$` patterns are GetSubstitution with no
     /// captures, which `replacement_substitution` makes). No conversion here runs guest code, so

@@ -16,7 +16,7 @@ use crate::host::{Host, HostGlobal, ModuleLoadError, ModuleSource};
 use crate::{CapabilityId, HostFunction, NativeContext, RootedError};
 
 /// A test host's install step (`Host::initialize`).
-pub(crate) type Install = fn(&mut NativeContext<'_, TestHost>) -> Result<(), RootedError>;
+pub(crate) type Install = fn(&mut NativeContext<'_>) -> Result<(), RootedError>;
 
 /// A test host's dynamic-import resolution (`Host::resolve_dynamic_import`), by specifier.
 pub(crate) type Resolve = Rc<dyn Fn(&str) -> Result<Option<ModuleSource>, ModuleLoadError>>;
@@ -33,7 +33,7 @@ const TEST262_GLOBALS: &[HostGlobal] = &[
 pub(crate) struct TestHost {
     lines: Rc<RefCell<Vec<String>>>,
     globals: &'static [HostGlobal],
-    functions: &'static [HostFunction<TestHost>],
+    functions: &'static [HostFunction],
     install: Option<Install>,
     resolve: Option<Resolve>,
     module_source: Option<fn(&ModuleSource) -> bool>,
@@ -44,7 +44,7 @@ pub(crate) struct TestHost {
 }
 
 #[cfg(feature = "native-execution")]
-type NativeLookup = dyn Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, crate::NativeSourceError>;
+type NativeLookup = dyn Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram>, crate::NativeSourceError>;
 
 impl Default for TestHost {
     fn default() -> Self {
@@ -64,7 +64,7 @@ impl Default for TestHost {
 }
 
 impl TestHost {
-    pub(crate) fn with_native_programs(self, lookup: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, crate::NativeSourceError> + 'static) -> Self {
+    pub(crate) fn with_native_programs(self, lookup: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram>, crate::NativeSourceError> + 'static) -> Self {
         Self { native_lookup: Some(Rc::new(lookup)), ..self }
     }
 
@@ -84,7 +84,7 @@ impl TestHost {
     }
 
     /// Install `functions` as the host's natives (`Host::functions`).
-    pub(crate) fn with_natives(self, functions: &'static [HostFunction<TestHost>]) -> Self {
+    pub(crate) fn with_natives(self, functions: &'static [HostFunction]) -> Self {
         Self { functions, ..self }
     }
 
@@ -131,7 +131,7 @@ impl Host for TestHost {
         self.wasm_validation.is_some_and(|validate| validate(self, bytes, mode))
     }
     #[cfg(feature = "native-execution")]
-    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<crate::NativeJsProgram<Self>>, crate::NativeSourceError> {
+    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<crate::NativeJsProgram>, crate::NativeSourceError> {
         match &self.native_lookup {
             Some(lookup) => lookup(name, parts),
             None => Ok(None),
@@ -150,12 +150,12 @@ impl Host for TestHost {
         self.globals
     }
 
-    fn functions(&self) -> &[HostFunction<Self>] {
+    fn functions(&self) -> &[HostFunction] {
         self.functions
     }
 
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        match context.host_mut().install {
+    fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
+        match context.host_as::<Self>().install {
             Some(install) => install(context),
             None => Ok(()),
         }

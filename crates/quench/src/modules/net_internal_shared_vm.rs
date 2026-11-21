@@ -4,7 +4,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 /// The private symbols `internal/net` exports, by their exported name and description.
 const SYMBOLS: [(&str, &str); 6] = [

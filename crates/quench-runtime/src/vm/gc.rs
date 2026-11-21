@@ -309,7 +309,7 @@ fn rebuild_shape(
     parent
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(crate) fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
         self.heap.set_memory_policy(policy);
     }
@@ -371,6 +371,12 @@ impl<H: Host> Vm<H> {
         // The reclaimed programs' lane records are freed, and a later view may take their
         // addresses, which name the private-name sites' entries.
         self.private_site_homes.clear();
+        // A reclaimed program's realm is no closure's any more (`Heap::program_realms`).
+        for program in &reclaimed {
+            if let Some(realm) = self.heap.program_realms.get_mut(program.raw() as usize) {
+                *realm = Value::UNDEFINED;
+            }
+        }
         self.free_cache_layouts_of(reclaimed.iter().copied());
         let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
         self.function_values
@@ -1042,7 +1048,7 @@ impl<H: Host> Vm<H> {
             self.host.release_promise_contexts(&abandoned.promises);
         }
         self.prune_dead_promise_and_string_tables();
-        H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
+        (self.host_statics.after_collection)(&mut crate::CollectionContext::new(&mut *self.host, &mut self.heap));
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.collection_boundary(full);
@@ -1164,6 +1170,7 @@ impl<H: Host> Vm<H> {
         self.shape_attribute_memo.clear();
         self.plain_copy_shapes.clear();
         self.plain_assign_shapes.clear();
+        self.adopted_shapes.clear();
         self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.object_shapes.reset();

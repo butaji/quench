@@ -22,7 +22,7 @@ enum QueuedRun {
     Chains,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// An await's reaction: `state` is the `AwaitState` both its handlers name, and `value` what
     /// its promise settled with, a rejection when `rejected`. The activation resumes in the realm
     /// that awaited, and the generator's queued requests run once it stops.

@@ -24,42 +24,42 @@ pub(crate) struct CompiledScriptState {
 }
 
 /// An embedder's hooks for its scripted serializer (V8's `ValueSerializer::Delegate`).
-pub trait SerializerDelegate<H: Host> {
+pub trait SerializerDelegate {
     /// Write a host object's contents; its tag is already written. A returned value is
     /// written next, through the same serializer.
     fn write_host_object(
         &mut self,
-        context: &mut NativeContext<'_, H>,
+        context: &mut NativeContext<'_>,
         output: &crate::WireOutput,
         object: RootId,
     ) -> Result<Option<RootId>, RootedError>;
-    fn shared_array_buffer_id(&mut self, context: &mut NativeContext<'_, H>, buffer: RootId) -> Result<u32, RootedError>;
+    fn shared_array_buffer_id(&mut self, context: &mut NativeContext<'_>, buffer: RootId) -> Result<u32, RootedError>;
     /// The exception for a value that cannot be cloned, already thrown.
-    fn data_clone_error(&mut self, context: &mut NativeContext<'_, H>, message: &str) -> RootedError;
+    fn data_clone_error(&mut self, context: &mut NativeContext<'_>, message: &str) -> RootedError;
 }
 
 /// An embedder's hooks for its scripted deserializer (V8's `ValueDeserializer::Delegate`).
-pub trait DeserializerDelegate<H: Host> {
+pub trait DeserializerDelegate {
     fn read_host_object(
         &mut self,
-        context: &mut NativeContext<'_, H>,
+        context: &mut NativeContext<'_>,
         input: &crate::SharedWireInput,
     ) -> Result<crate::HostObjectRead<RootId>, RootedError>;
-    fn shared_array_buffer(&mut self, context: &mut NativeContext<'_, H>, id: u32) -> Result<RootId, RootedError>;
+    fn shared_array_buffer(&mut self, context: &mut NativeContext<'_>, id: u32) -> Result<RootId, RootedError>;
 }
 
 /// Embedder delegates seen as the serializer's internal hooks: each call runs in a
 /// native scope over the VM.
 struct Scripted<'d, D: ?Sized>(&'d mut D);
 
-fn hook_value<H: Host>(context: &mut NativeContext<'_, H>, result: Result<RootId, RootedError>) -> Result<Value, JsError> {
+fn hook_value(context: &mut NativeContext<'_>, result: Result<RootId, RootedError>) -> Result<Value, JsError> {
     result
         .map(|root| context.vm.root_value(root).unwrap_or(Value::UNDEFINED))
         .map_err(|error| error.error)
 }
 
-impl<H: Host, D: SerializerDelegate<H> + ?Sized> crate::vm::WriteHooks<H> for Scripted<'_, D> {
-    fn write_host_object(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, output: &crate::WireOutput, object: Value) -> Result<Option<Value>, JsError> {
+impl<D: SerializerDelegate + ?Sized> crate::vm::WriteHooks for Scripted<'_, D> {
+    fn write_host_object(&mut self, vm: &mut Vm, _: &crate::ResidualProgram, output: &crate::WireOutput, object: Value) -> Result<Option<Value>, JsError> {
         let mut context = NativeContext::new(vm);
         let object = context.scoped_value(object);
         match self.0.write_host_object(&mut context, output, object) {
@@ -69,22 +69,22 @@ impl<H: Host, D: SerializerDelegate<H> + ?Sized> crate::vm::WriteHooks<H> for Sc
         }
     }
 
-    fn shared_array_buffer_id(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, buffer: Value) -> Result<u32, JsError> {
+    fn shared_array_buffer_id(&mut self, vm: &mut Vm, _: &crate::ResidualProgram, buffer: Value) -> Result<u32, JsError> {
         let mut context = NativeContext::new(vm);
         let buffer = context.scoped_value(buffer);
         self.0.shared_array_buffer_id(&mut context, buffer).map_err(|error| error.error)
     }
 
-    fn data_clone_error(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, message: &str) -> JsError {
+    fn data_clone_error(&mut self, vm: &mut Vm, _: &crate::ResidualProgram, message: &str) -> JsError {
         let mut context = NativeContext::new(vm);
         self.0.data_clone_error(&mut context, message).error
     }
 }
 
-impl<H: Host, D: DeserializerDelegate<H> + ?Sized> crate::vm::ReadHooks<H> for Scripted<'_, D> {
+impl<D: DeserializerDelegate + ?Sized> crate::vm::ReadHooks for Scripted<'_, D> {
     fn read_host_object(
         &mut self,
-        vm: &mut Vm<H>,
+        vm: &mut Vm,
         _: &crate::ResidualProgram,
         input: &crate::SharedWireInput,
     ) -> Result<crate::HostObjectRead<Value>, JsError> {
@@ -96,7 +96,7 @@ impl<H: Host, D: DeserializerDelegate<H> + ?Sized> crate::vm::ReadHooks<H> for S
         }
     }
 
-    fn shared_array_buffer(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, id: u32) -> Result<Value, JsError> {
+    fn shared_array_buffer(&mut self, vm: &mut Vm, _: &crate::ResidualProgram, id: u32) -> Result<Value, JsError> {
         let mut context = NativeContext::new(vm);
         let result = self.0.shared_array_buffer(&mut context, id);
         hook_value(&mut context, result)
@@ -344,8 +344,8 @@ impl<T> BuiltinData<T> {
     }
 }
 
-pub type HostCallback<H> =
-    for<'a> fn(&mut NativeContext<'a, H>, RootId, &[RootId]) -> Result<RootId, RootedError>;
+pub type HostCallback =
+    for<'a> fn(&mut NativeContext<'a>, RootId, &[RootId]) -> Result<RootId, RootedError>;
 
 /// Stable operation metadata, independent of its executable callback address.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -356,11 +356,11 @@ pub struct HostFunctionDescriptor {
 }
 
 /// One authority for a native operation's descriptor and Rust implementation.
-pub struct HostFunction<H: Host> {
+pub struct HostFunction {
     pub name: &'static str,
     pub length: u16,
     pub global: Option<&'static str>,
-    pub call: HostCallback<H>,
+    pub call: HostCallback,
 }
 
 /// Declare global and module-owned native descriptors from one binding table.
@@ -374,7 +374,7 @@ macro_rules! host_functions {
         }),*]
     };
     (@callbacks; $( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
-        &[$($(#[$attribute])* { $callback as $crate::HostCallback<_> }),*]
+        &[$($(#[$attribute])* { $callback as $crate::HostCallback }),*]
     };
     ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
         &[$($(#[$attribute])* $crate::HostFunction {
@@ -391,8 +391,8 @@ macro_rules! host_functions {
 /// Borrowed shared-VM access during a Rust native call. Roots created here
 /// expire when the call returns. `retain` explicitly promotes a root for the
 /// host to release later; fresh execution invalidates promoted roots too.
-pub struct NativeContext<'a, H: Host> {
-    vm: &'a mut Vm<H>,
+pub struct NativeContext<'a> {
+    vm: &'a mut Vm,
     /// The listed roots this scope releases one by one when it ends.
     roots: Vec<RootId>,
     /// Where this scope's scoped roots (`scoped_value`) begin on the root table's stack,
@@ -410,7 +410,7 @@ pub struct RootScopeMark {
     scoped: usize,
 }
 
-impl<'a, H: Host> NativeContext<'a, H> {
+impl<'a> NativeContext<'a> {
     pub fn execution_mode(&self) -> crate::ExecutionMode { self.vm.execution_mode() } // a host's worker inherits it
     /// An owned cancellation handle for a native operation; no Vm reference escapes.
     pub fn execution_interrupt_handle(&self) -> crate::ExecutionInterrupt {
@@ -436,13 +436,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// The core string representation's maximum UTF-16 code-unit count.
     pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
 
-    pub(crate) fn new(vm: &'a mut Vm<H>) -> Self {
+    pub(crate) fn new(vm: &'a mut Vm) -> Self {
         Self::with_new_target(vm, None)
     }
 
     /// A callback's context. Its root list comes from the pool `Drop` returns lists to, so
     /// the pool stays as deep as the native calls nested at once.
-    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
+    pub(crate) fn with_new_target(vm: &'a mut Vm, new_target: Option<Value>) -> Self {
         let roots = vm.native_root_lists.pop().unwrap_or_default();
         let scoped_height = vm.scoped_root_height();
         Self {
@@ -1373,7 +1373,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
         &mut self,
         serializer: &mut crate::ValueSerializer,
         value: RootId,
-        delegate: &mut dyn SerializerDelegate<H>,
+        delegate: &mut dyn SerializerDelegate,
     ) -> Result<(), RootedError> {
         let result = self.vm.embedding_value(value).and_then(|value| {
             let program = self.vm.embedding_program()?;
@@ -1412,7 +1412,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn deserializer_read_value(
         &mut self,
         deserializer: &mut crate::ValueDeserializer,
-        delegate: &mut dyn DeserializerDelegate<H>,
+        delegate: &mut dyn DeserializerDelegate,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_program().and_then(|program| {
             self.vm.wire_read_value(&program, deserializer, &mut Scripted(delegate))
@@ -1649,8 +1649,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
-    pub fn host_mut(&mut self) -> &mut H {
-        &mut self.vm.host
+    pub fn host_mut(&mut self) -> &mut dyn Host {
+        &mut *self.vm.host
+    }
+
+    pub(crate) fn host_statics(&self) -> crate::host::HostStatics {
+        self.vm.host_statics
+    }
+
+    /// The host as its own type. The VM names no host type; a native written for one host
+    /// recovers it here (one type check, which the host's natives assume).
+    #[inline]
+    pub fn host_as<T: Host>(&mut self) -> &mut T {
+        crate::host::host_as::<T>(&mut *self.vm.host)
     }
 
     /// Emit a memory census snapshot when this build enables `profile-memory`.
@@ -2531,7 +2542,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
 /// values frees its list rather than keep that capacity alive for every later call.
 const RETAINED_NATIVE_ROOT_LIST_CAPACITY: usize = 256;
 
-impl<H: Host> Drop for NativeContext<'_, H> {
+impl Drop for NativeContext<'_> {
     fn drop(&mut self) {
         self.vm.release_root_scope(self.scoped_height);
         for root in &self.roots {
@@ -2545,7 +2556,7 @@ impl<H: Host> Drop for NativeContext<'_, H> {
     }
 }
 
-impl<H: Host> Runtime<H> {
+impl<H: crate::Host> Runtime<H> {
     /// Create a persistent native callable from this host's stable table.
     pub fn host_function(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
         match self.vm.create_host_function(id) {

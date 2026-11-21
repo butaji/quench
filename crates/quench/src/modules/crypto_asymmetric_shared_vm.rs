@@ -7,7 +7,7 @@ use super::{
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Arc;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 pub(crate) use super::crypto_key_material_shared_vm::{
     asymmetric as key, register_asymmetric as register,
 };

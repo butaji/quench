@@ -63,7 +63,7 @@ impl<T> ParsedOption<T> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn temporal_plain_year_month_difference(
         &mut self,
         p: &ResidualProgram,
@@ -318,8 +318,8 @@ impl DateDifferenceOptions {
         Self { largest: DateUnit::Year, smallest: DateUnit::Month, increment: 1.0, rounding_mode: DateRoundingMode::Trunc };
 }
 
-fn year_month_difference_settings<H: Host>(
-    vm: &mut Vm<H>,
+fn year_month_difference_settings(
+    vm: &mut Vm,
     p: &ResidualProgram,
     largest: ParsedOption<DateUnit>,
     smallest: ParsedOption<DateUnit>,
@@ -416,8 +416,8 @@ fn parse_date_rounding_mode(value: &str) -> Option<DateRoundingMode> {
     }
 }
 
-fn validate_date_difference_options<H: Host>(
-    vm: &mut Vm<H>,
+fn validate_date_difference_options(
+    vm: &mut Vm,
     p: &ResidualProgram,
     largest: ParsedOption<DateUnit>,
     smallest: ParsedOption<DateUnit>,

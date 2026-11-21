@@ -28,7 +28,7 @@ pub(in crate::vm) struct EvalCaller {
     pub(in crate::vm) record: *mut FrameRecord,
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `owner` as it stands: a window owner whose activations became frames is the innermost frame.
     fn live_owner(&self, owner: VarOwner) -> VarOwner {
         match owner {

@@ -3,7 +3,7 @@
 use super::*;
 use crate::staged::protocol_owned::OwnedVarStep;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The activation-variable (local, var binding, TDZ, argument) `step` of its operand values (`first` is the first operand register's
     /// value, `second` the second's): the value it defines, if any.
     pub(super) fn owned_var_step(&mut self, p: &ResidualProgram, site: super::call_out::CallSite, step: OwnedVarStep, first: Option<Value>, second: Option<Value>)

@@ -110,12 +110,12 @@ pub(crate) fn define_accessors<M: Members>(c: &mut Context<'_>, target: RootId, 
 /// The hidden private symbol that keys `kind`'s index, created once per process.
 fn key(c: &mut Context<'_>, kind: Kind) -> Result<RootId, RootedError> {
     let slot = kind as usize;
-    if let Some(key) = c.host_mut().shared_state().borrow().sqlite.keys[slot] {
+    if let Some(key) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().sqlite.keys[slot] {
         return Ok(key);
     }
     let symbol = c.private_symbol_rooted(Some("sqlite"));
     let key = c.retain(symbol)?;
-    c.host_mut().shared_state().borrow_mut().sqlite.keys[slot] = Some(key);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().sqlite.keys[slot] = Some(key);
     Ok(key)
 }
 
@@ -145,7 +145,7 @@ pub(crate) fn iterator_symbol(c: &mut Context<'_>) -> Result<RootId, RootedError
 
 /// Runs `f` over the process's engine state. `f` must not call into the guest.
 pub(crate) fn with_state<T>(c: &mut Context<'_>, f: impl FnOnce(&mut State) -> T) -> T {
-    let shared = c.host_mut().shared_state();
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut guard = shared.borrow_mut();
     f(&mut guard.sqlite)
 }

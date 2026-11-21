@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 
 /// One serializer: the runtime state, absent while a `writeValue` runs, and its output.
@@ -51,7 +51,7 @@ impl State {
 }
 
 fn state(c: &mut Context<'_>) -> Rc<RefCell<crate::host::SharedNodeState>> {
-    c.host_mut().shared_state()
+    c.host_as::<crate::host::NodeHost>().shared_state()
 }
 
 fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
@@ -107,7 +107,7 @@ struct ScriptedSerializer {
     receiver: RootId,
 }
 
-impl SerializerDelegate<NodeHost> for ScriptedSerializer {
+impl SerializerDelegate for ScriptedSerializer {
     fn write_host_object(&mut self, c: &mut Context<'_>, _: &WireOutput, object: RootId) -> Result<Option<RootId>, RootedError> {
         match method(c, self.receiver, "_writeHostObject")? {
             Some(write) => c.call_rooted(write, self.receiver, &[object]).map(|_| None),
@@ -151,7 +151,7 @@ struct ScriptedDeserializer {
 
 pub(crate) use quench_runtime::DESERIALIZATION_ERROR;
 
-impl DeserializerDelegate<NodeHost> for ScriptedDeserializer {
+impl DeserializerDelegate for ScriptedDeserializer {
     fn read_host_object(&mut self, c: &mut Context<'_>, _: &SharedWireInput) -> Result<HostObjectRead<RootId>, RootedError> {
         let Some(read) = method(c, self.receiver, "_readHostObject")? else {
             return Err(throw_error(c, DESERIALIZATION_ERROR));

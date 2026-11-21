@@ -3,7 +3,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 #[path = "crypto_provider_facts.rs"]
 pub(crate) mod native;
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 fn get(c: &mut Context<'_>, o: RootId, name: &str) -> Result<RootId, RootedError> {
     let name = c.string_rooted(name);
     c.get_property_rooted(o, name)

@@ -17,7 +17,7 @@ enum AggregateInput {
     Keyed { keys: Vec<RootId>, position: usize },
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn promise_aggregate(
         &mut self,
         p: &ResidualProgram,

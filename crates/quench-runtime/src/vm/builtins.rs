@@ -109,7 +109,7 @@ mod namespace_tests {
                 let mut vm = Vm::new(TestHost::default().with_test262());
                 vm.set_execution_mode(mode);
                 vm.execute(&program).unwrap();
-                assert_eq!(&*vm.host.lines(), &["object", "function", "4"]);
+                assert_eq!(&*vm.host_as::<TestHost>().lines(), &["object", "function", "4"]);
             }
         }
     }
@@ -127,7 +127,7 @@ mod namespace_tests {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     pub(super) fn install_builtins(
         &mut self,
         program: &ResidualProgram,
@@ -668,7 +668,7 @@ impl<H: Host> Vm<H> {
     fn record_array_index_atom(&mut self, name: &str, atom: Atom) {
         if let Some(index) = super::object_static::array_index(name) {
             // The first atom with a text is the one text lookup finds.
-            self.array_index_atoms.entry(index).or_insert(atom);
+            self.array_index_atoms.insert_first(index, atom);
         }
     }
 

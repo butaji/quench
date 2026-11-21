@@ -23,17 +23,17 @@ script_handler! {
 
 /// Quickens the record of the by-name read at `pc` of `view`, which `Vm::settle_name_probe`
 /// settled: a hinted global read where the name lands on the global object, else an exit.
-pub(in crate::vm) fn settle_name_record<H: Host>(view: &LaneView, pc: usize, op: Op, lands: bool) {
+pub(in crate::vm) fn settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool) {
     let handler = match (lands, crate::staged::name_load(op)) {
-        (false, _) => exit_lane::<H> as Handler,
-        (true, Some(load)) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(load),
-        (true, None) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(crate::staged::NameLoad::Typeof),
+        (false, _) => exit_lane as Handler,
+        (true, Some(load)) => name_row::<FLAG_NAME_GLOBAL_SCOPED>(load),
+        (true, None) => name_row::<FLAG_NAME_GLOBAL_SCOPED>(crate::staged::NameLoad::Typeof),
     };
     // SAFETY: `pc` is a record of the view, whose records live while its program does.
-    requicken::<H>(unsafe { view.records().add(pc) }, handler);
+    requicken(unsafe { view.records().add(pc) }, handler);
 }
 
 /// The miss arm of a by-name read of kind `KIND` at `FLAG_PROBE`: its scope is left to the general path's read.
-pub(super) const fn probe_handler<H: Host, const KIND: u8>() -> Handler {
-    name_probe_miss::<H, KIND>
+pub(super) const fn probe_handler<const KIND: u8>() -> Handler {
+    name_probe_miss::<KIND>
 }

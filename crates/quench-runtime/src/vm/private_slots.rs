@@ -7,7 +7,7 @@
 //! takes string and symbol keys only, and integrity levels change those alone.
 
 use super::property_key::PropertyKey;
-use super::{Atom, DataAttributes, FieldCache, Host, ResidualProgram, Value, Vm};
+use super::{Atom, DataAttributes, FieldCache, ResidualProgram, Value, Vm};
 use crate::heap::PrivateBrand;
 
 /// The bit of a private key's name that marks a brand-only entry (a private method or
@@ -30,7 +30,7 @@ fn private_brand_key(brand: PrivateBrand) -> PropertyKey {
     PropertyKey::private(brand.home, brand.name | BRAND_ONLY)
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The slot of `object`'s private field `brand`.
     #[inline]
     pub(super) fn private_field_slot(&self, object: Value, brand: PrivateBrand) -> Option<usize> {

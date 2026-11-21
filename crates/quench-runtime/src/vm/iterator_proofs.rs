@@ -5,7 +5,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether `iterator_absence_proof` proves that `proto`'s chain lacks `key`.
     #[inline(always)]
     pub(super) fn iterator_absence_proved(&self, proto: Value, key: PropertyKey) -> bool {

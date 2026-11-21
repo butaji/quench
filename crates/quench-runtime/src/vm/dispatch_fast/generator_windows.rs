@@ -73,7 +73,7 @@ impl LaneStack {
 
 /// Whether the running activation is a generator over its record's register file.
 #[inline(always)]
-pub(super) fn running_generator<H: Host>(vm: &Vm<H>) -> bool {
+pub(super) fn running_generator(vm: &Vm) -> bool {
     vm.lane_stack.top_frame().and_then(|frame| frame.script()).is_some_and(|script| script.completion.is_generator())
 }
 
@@ -81,8 +81,8 @@ pub(super) fn running_generator<H: Host>(vm: &Vm<H>) -> bool {
 /// activation (`resume_generator_in_lane`); `None` leaves any other step, and a step that returns
 /// its result from the frame, to the general ones.
 #[inline(never)]
-pub(super) fn resume_generator_step_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn resume_generator_step_in_lane(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
@@ -93,7 +93,7 @@ pub(super) fn resume_generator_step_in_lane<H: Host>(
     if !crate::staged::call_iteration::resumes_at_site(i.a) {
         return None;
     }
-    resume_generator_in_lane(cx, r, ip, generator, method, Value::UNDEFINED, completion)
+    resume_generator_in_lane(cx, r, ip, generator, method, Value::UNDEFINED, (completion, super::lane_frames::SidePayload::None))
 }
 
 /// A `Call` record `i` of `native`, the callee in `b` and the receiver in `c`, that is this realm's
@@ -105,8 +105,8 @@ pub(super) fn resume_generator_step_in_lane<H: Host>(
 /// that returns its result from the frame, a run that makes no script calls, or a generator with
 /// no window.
 #[inline(never)]
-pub(super) fn resume_called_generator<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn resume_called_generator(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
@@ -122,7 +122,7 @@ pub(super) fn resume_called_generator<H: Host>(
     }
     // SAFETY: the call's window is registers of the running function.
     let sent = unsafe { call_window_in_lane(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
-    resume_generator_in_lane(cx, r, ip, generator, method, sent, Completion::Steps)
+    resume_generator_in_lane(cx, r, ip, generator, method, sent, (Completion::Steps, super::lane_frames::SidePayload::None))
 }
 
 /// `frame_call_in_lane` of a generator function of the running program whose parameters run no code
@@ -131,8 +131,8 @@ pub(super) fn resume_called_generator<H: Host>(
 /// it runs no guest code, and the call completed with it (`native_complete_in_lane`). No frame is made
 /// of the caller's activations. `None`, before any effect, leaves the call to the general path.
 #[inline(never)]
-pub(super) fn start_called_generator<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn start_called_generator(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
@@ -224,7 +224,7 @@ impl WindowPlan {
 /// `environment`, runs under: its record's own while it still holds, else derived anew (the
 /// caller stores it back on the record it resumes). `None`, before any effect, where the
 /// function has no view or environment layout.
-pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord, environment: bool) -> Option<WindowPlan> {
+pub(super) fn window_plan(vm: &mut Vm, code: &ResidualProgram, frame: &FrameRecord, environment: bool) -> Option<WindowPlan> {
     let (program, function, env, captured) = (frame.program, frame.function, frame.env, frame.captured);
     let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), env, captured);
     if let Some(plan) = frame.window_plan.filter(|plan| plan.holds(key)) {
@@ -242,7 +242,7 @@ pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame
 /// (`Vm::window_layout`). Whether the record needs it stored (`store_window_plan`): only a
 /// plan it does not hold already.
 #[inline(always)]
-pub(super) fn cached_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord) -> Option<(WindowPlan, bool)> {
+pub(super) fn cached_window_plan(vm: &mut Vm, code: &ResidualProgram, frame: &FrameRecord) -> Option<(WindowPlan, bool)> {
     let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), frame.env, frame.captured);
     if let Some(plan) = frame.window_plan.filter(|plan| plan.holds(key)) {
         return Some((plan, false));
@@ -258,7 +258,7 @@ pub(super) fn cached_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram
 /// # Safety
 /// The owner keeps `frame` boxed, and nothing else accesses it, while the reference lives.
 #[inline(always)]
-pub(super) unsafe fn record_window_plan<'a, H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: *mut FrameRecord) -> Option<&'a WindowPlan> {
+pub(super) unsafe fn record_window_plan<'a>(vm: &mut Vm, code: &ResidualProgram, frame: *mut FrameRecord) -> Option<&'a WindowPlan> {
     // SAFETY: as the caller guarantees.
     let record = unsafe { &mut *frame };
     let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), record.env, record.captured);
@@ -273,7 +273,7 @@ pub(in crate::vm) const SHARED_PLANS: usize = 8;
 
 /// `cached_window_plan` of a frame whose record holds no plan under `key`.
 #[inline(never)]
-fn shared_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord, key: PlanKey) -> Option<WindowPlan> {
+fn shared_window_plan(vm: &mut Vm, code: &ResidualProgram, frame: &FrameRecord, key: PlanKey) -> Option<WindowPlan> {
     let shared = (vm.active_program, frame.function);
     let slot = frame.function as usize % SHARED_PLANS;
     if frame.program == vm.active_program
@@ -303,8 +303,8 @@ pub(super) fn store_window_plan(frame: *mut FrameRecord, (plan, fresh): (WindowP
 /// `env` is its own environment once it made one (`captured`), whose parent the activation
 /// runs under, else the closure's. `None`, before any effect, where `view` has no environment
 /// window or the environment is no cell.
-pub(super) fn window_environments<H: Host>(
-    vm: &Vm<H>,
+pub(super) fn window_environments(
+    vm: &Vm,
     view: *const LaneView,
     env: Value,
     captured: bool,
@@ -337,14 +337,14 @@ pub(super) fn window_environments<H: Host>(
 /// effect, where the lane has no room or no view for it. Inlined into each caller, a for-of
 /// step's above all (`resume_generator_step_in_lane`), so a step makes one call.
 #[inline(always)]
-pub(super) fn resume_generator_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn resume_generator_in_lane(
+    cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
     generator: Value,
     method: Value,
     sent: Value,
-    completion: Completion,
+    (completion, payload): (Completion, super::lane_frames::SidePayload),
 ) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
@@ -363,7 +363,7 @@ pub(super) fn resume_generator_in_lane<H: Host>(
     // window, laid out above, moves the registers no more.
     let (window, size) = unsafe { ((&mut (*frame).registers).as_mut_ptr(), (&(*frame).registers).len()) };
     let (this, pc, function, program) = unsafe { ((*frame).this(), (*frame).pc, (*frame).function, (*frame).program) };
-    push_generator_window(cx, vm, (r, ip, depth), GeneratorWindow { this: this.to_bits(), window: window.addr(), function, generator, completion, environment, record: frame });
+    push_generator_window(cx, vm, (r, ip, depth), GeneratorWindow { this: this.to_bits(), window: window.addr(), function, generator, completion, environment, record: frame }, payload);
     let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
     // SAFETY: the window holds the suspended registers, which nothing else writes while it runs,
     // and `pc` is where the frame resumes in its function's view.
@@ -377,7 +377,7 @@ pub(super) fn resume_generator_in_lane<H: Host>(
 /// SAFETY of the result: the generator's cell keeps its record, and the record its frame, boxed:
 /// nothing moves or frees either before the resume.
 #[inline(always)]
-fn resumable_generator_frame<H: Host>(vm: &mut Vm<H>, generator: Value)
+fn resumable_generator_frame(vm: &mut Vm, generator: Value)
     -> Option<(*mut GeneratorRecord, (*mut FrameRecord, Option<u16>))> {
     let (realm, active) = (vm.realm.globals, vm.active_program);
     let record = vm.generator_record_mut(generator)?;
@@ -393,7 +393,7 @@ fn resumable_generator_frame<H: Host>(vm: &mut Vm<H>, generator: Value)
 /// frame made already is written through the window's stores without the barrier a heap write
 /// takes, so it joins the remembered set once, as a capture store's target does
 /// (`Vm::target_capture`).
-pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut FrameRecord, locals: WindowLocals) {
+pub(super) fn open_window_locals(vm: &mut Vm, frame: *mut FrameRecord, locals: WindowLocals) {
     // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
     let frame = unsafe { &mut *frame };
     if locals.own_slots.is_some() {
@@ -418,13 +418,19 @@ struct GeneratorWindow {
 /// Pushes `window`'s activation as the lane's innermost, at `depth` below the call record at `ip` of
 /// the running function with registers `r`, and resumes the frame's loops and scope chain as its own.
 #[inline(always)]
-fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, ip, depth): (Registers, Ip, usize), window: GeneratorWindow) {
+fn push_generator_window(cx: *mut LaneContext, vm: &mut Vm, (r, ip, depth): (Registers, Ip, usize), window: GeneratorWindow,
+    payload: super::lane_frames::SidePayload) {
     let (frame, environment) = (window.record, window.environment);
     let activation = generator_activation(cx, r, ip, window);
     // SAFETY: the caller's limit check leaves room for the activation, and the frame's loops and
     // scope chain resume as the new activation's (`LaneStack::iterators`, `LaneStack::with_objects`).
     unsafe {
         vm.lane_stack.push_generator_activation(activation);
+        // A sided completion's payload rides in its side record, which goes on with the push:
+        // a walk of the stack (`record_window_owner` below) reads a side for each sided record.
+        if !matches!(payload, super::lane_frames::SidePayload::None) {
+            vm.lane_stack.attach_payload(payload);
+        }
         vm.lane_stack.restore_iterators(depth, &mut (*frame).active_iterators);
         vm.lane_stack.restore_with_objects(depth, &mut *frame);
         // Only an environment window holds an `arguments` object that rides it.
@@ -437,7 +443,7 @@ fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, i
 /// The activation of `window`'s generator for the call record at `ip`, made by the running
 /// function with registers `r`.
 #[inline(always)]
-fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, window: GeneratorWindow) -> Activation {
+fn generator_activation(cx: *mut LaneContext, r: Registers, ip: Ip, window: GeneratorWindow) -> Activation {
     // SAFETY: the running lane's context, which nothing else accesses.
     let mut activation = Activation::of_parts(
         window.function,
@@ -465,8 +471,8 @@ fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
 /// `destination`, and the activation pops. The caller resumes with the step's result: the
 /// iterator result of a yield of `value`, or `passed_on`, a delegate's own result object.
 #[inline(never)]
-pub(super) fn suspend_generator_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn suspend_generator_in_lane(
+    cx: *mut LaneContext,
     pc: usize,
     destination: crate::bytecode::Register,
     value: Value,
@@ -486,8 +492,8 @@ pub(super) fn suspend_generator_in_lane<H: Host>(
 /// The return of the generator activation (`frame`, its return words), popped with its caller
 /// restored (`memory`), with `value`: the generator completes, and its caller resumes with the
 /// step's final result.
-pub(super) fn generator_returned_in_lane<H: Host>(
-    cx: *mut LaneContext<H>,
+pub(super) fn generator_returned_in_lane(
+    cx: *mut LaneContext,
     frame: &ActivationView,
     memory: MemoryView,
     value: Value,
@@ -503,7 +509,7 @@ pub(super) fn generator_returned_in_lane<H: Host>(
 /// on past them (`Completion::StepReads`), as `iterator_step_reads_miss` makes an array's step;
 /// any other caller takes the step's result object after its call, in the call's register, or,
 /// for a delegate's step, at the `yield*` itself in its state register.
-fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, frame: &ActivationView, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {
+fn resume_generated_in_lane(vm: &mut Vm, frame: &ActivationView, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {
     let completion = frame.completion();
     let (call, caller) = (frame.call(), frame.caller_registers());
     if let (Some(Completion::StepReads(form)), None) = (completion, passed_on) {
@@ -533,11 +539,11 @@ fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, frame: &ActivationView, mem
 /// result waits in the record's state register for this record, run again
 /// (`Completion::Delegates`, `resume_generated_in_lane`). `None`, before any effect, where the
 /// delegate is no generator `method` steps, or the lane has no room or view for it.
-pub(super) fn delegate_in_place_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, (delegate, method, input): (Value, Value, Value))
+pub(super) fn delegate_in_place_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, (delegate, method, input): (Value, Value, Value))
     -> Option<Resumed> {
     if !unsafe { vm(cx) }.steps_as_generator(delegate, method) {
         return None;
     }
-    let (registers, start) = resume_generator_in_lane(cx, r, ip, delegate, method, input, Completion::Delegates)?;
+    let (registers, start) = resume_generator_in_lane(cx, r, ip, delegate, method, input, (Completion::Delegates, super::lane_frames::SidePayload::None))?;
     Some(Resumed::At(registers, start, Carried::script(cx)))
 }

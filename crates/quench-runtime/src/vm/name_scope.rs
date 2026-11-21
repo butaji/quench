@@ -66,7 +66,7 @@ impl DynamicScopeNames {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether a by-name read of `atom` in the executing activation lands on the global
     /// object, and keeps landing there until a dependency retires: no `with` object was ever
     /// entered, no scope ever declared the name dynamically (`note_dynamic_scope_name`), and
@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
             .and_then(|views| views.get(probe.function as usize))
             .and_then(super::program_store::derived_lane_view)
         {
-            dispatch_fast::settle_name_record::<H>(view, pc as usize, op, lands);
+            dispatch_fast::settle_name_record(view, pc as usize, op, lands);
         }
     }
 

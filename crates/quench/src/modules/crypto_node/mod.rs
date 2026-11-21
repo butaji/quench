@@ -24,7 +24,7 @@ use quench_runtime::{BuiltinBrand, DescriptorFields, HostWeakRoot, NativeContext
 
 pub(crate) use crate::modules::stream_shared_vm::{arg, attempt, call_method, get, inherit, is_null, is_nullish, is_undefined, put};
 
-pub(crate) type Context<'a> = NativeContext<'a, NodeHost>;
+pub(crate) type Context<'a> = NativeContext<'a>;
 pub(crate) type Outcome = Result<RootId, RootedError>;
 
 /// The module's constructors, kept so instances made natively share them.
@@ -126,7 +126,7 @@ impl State {
 }
 
 fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>> {
-    c.host_mut().shared_state()
+    c.host_as::<crate::host::NodeHost>().shared_state()
 }
 
 pub(crate) fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {

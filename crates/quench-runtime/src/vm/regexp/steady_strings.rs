@@ -4,7 +4,7 @@ use super::*;
 use super::replacement::{ReplaceResult, has_substitution};
 use super::ascii::AsciiReplace;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `String.prototype.match(regexp)` of a string under `steady_string_replace`'s proofs
     /// for `@@match`: a non-global match is the builtin exec of the string
     /// (`steady_regexp_call`), a global one `regexp_symbol_match_global_fast`.

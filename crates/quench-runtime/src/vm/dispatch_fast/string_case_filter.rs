@@ -72,7 +72,7 @@ pub(super) struct StringCaseFilter {
 
 impl StringCaseFilter {
     #[inline(always)]
-    fn select<H: Host>(&self, vm: &Vm<H>, value: Value, text: &JsString, constants: &[Value]) -> u32 {
+    fn select(&self, vm: &Vm, value: Value, text: &JsString, constants: &[Value]) -> u32 {
         let missing = constants.len() as u32;
         let length = text.len();
         if length > self.max_length || short_length_bit(length).is_some_and(|bit| self.short_lengths & bit == 0) {
@@ -120,8 +120,8 @@ impl StringCaseFilter {
 /// `cx` is the running lane's context; `filter` is null or the record's filter, which the lane's
 /// constants retain.
 #[inline(always)]
-pub(super) unsafe fn case_index_in_lane<H: Host>(cx: *mut (), filter: *const StringCaseFilter, value: Value, start: usize, count: usize) -> u32 {
-    let cx = cx.cast::<LaneContext<H>>();
+pub(super) unsafe fn case_index_in_lane(cx: *mut (), filter: *const StringCaseFilter, value: Value, start: usize, count: usize) -> u32 {
+    let cx = cx.cast::<LaneContext>();
     // SAFETY: the original selector's validated run of constants is unchanged.
     let cases = unsafe { (&*(*cx).constants).get_unchecked(start..start + count) };
     let vm = unsafe { vm(cx) };

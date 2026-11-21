@@ -10,15 +10,15 @@ use crate::wasm::gc::GcField;
 use crate::wasm::reference::{ReferenceTarget, TargetHeap};
 
 /// The VM's heap, as a stage the GC rules run on.
-pub(in crate::vm) struct HeapStage<'a, H: Host> {
-    pub(in crate::vm) vm: &'a mut Vm<H>,
+pub(in crate::vm) struct HeapStage<'a> {
+    pub(in crate::vm) vm: &'a mut Vm,
 }
 
-impl<H: Host> Machine for HeapStage<'_, H> {
+impl Machine for HeapStage<'_> {
     type Word = u64;
 }
 
-impl<H: Host> MachineStage for HeapStage<'_, H> {
+impl MachineStage for HeapStage<'_> {
     type Exit = JsError;
 
     crate::staged::wasm_concrete::scalar_operators! {}
@@ -28,7 +28,7 @@ impl<H: Host> MachineStage for HeapStage<'_, H> {
     }
 }
 
-impl<H: Host> WasmGc for HeapStage<'_, H> {
+impl WasmGc for HeapStage<'_> {
     fn is_null(&mut self, reference: u64) -> u64 {
         u64::from(Value::from_bits(reference).is_null())
     }
@@ -156,7 +156,7 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
     }
 }
 
-impl<H: Host> HeapStage<'_, H> {
+impl HeapStage<'_> {
     /// Stores the element's Wasm bits `bits` in `extent` elements of the array `reference` from
     /// `index`: the fill a tier makes with a value it already holds as bits, no box between.
     pub(in crate::vm) fn fill_field_bits(&mut self, reference: u64, index: u64, extent: u64, bits: u64) {
@@ -216,7 +216,7 @@ impl<H: Host> HeapStage<'_, H> {
     }
 }
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// `ref.test` (`cast` false) or `ref.cast` of `reference`, its Wasm bits, to `target`, under
     /// `program`'s declarations: the admit flag, or the reference the cast leaves.
     pub(in crate::vm) fn wasm_ref_test_or_cast(

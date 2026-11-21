@@ -24,7 +24,7 @@ fn resumable_site<'v>(own: &'v LaneView, pc: u32) -> Option<(&'v LoopSite, &'v s
 /// Runs the loop's published code from `pc` on the activation's registers `r`, and where the
 /// lane continues after it; `None` where no code re-enters there or its entry record cannot be
 /// built, and the caller resumes the interpreter at `pc`.
-pub(super) fn resume_loop<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView, pc: usize) -> Option<LaneBodyLeft> {
+pub(super) fn resume_loop(cx: *mut LaneContext, r: Registers, own: &LaneView, pc: usize) -> Option<LaneBodyLeft> {
     let (site, region) = resumable_site(own, pc as u32)?;
     let mut entry = super::super::compiled::LoopEntry::new();
     let views = loop_entry_in_lane(cx, r, region, &mut entry)?;

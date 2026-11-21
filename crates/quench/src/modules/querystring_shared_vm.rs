@@ -4,7 +4,7 @@ use crate::host::shared_vm::operation;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+type Context<'a> = NativeContext<'a>;
 
 pub(crate) const PERCENT: u16 = b'%' as u16;
 const PLUS: u16 = b'+' as u16;

@@ -17,7 +17,7 @@ pub(super) const STRING_INDEX_ATTRIBUTES: PropertyAttributes = PropertyAttribute
     setter: None,
 };
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// The string a String wrapper `object` boxes.
     pub(super) fn string_wrapper_primitive(&self, object: Value) -> Option<Value> {
         let primitive = self.heap.ordinary_object(object)?.boxed_primitive()?;

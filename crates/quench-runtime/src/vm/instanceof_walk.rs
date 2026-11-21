@@ -7,7 +7,7 @@ use super::finalization::instanceof_layout_index;
 use super::*;
 use crate::heap::ProtoLink;
 
-impl<H: Host> Vm<H> {
+impl Vm {
     /// Whether `value instanceof` the constructor whose `prototype` link is `target` holds, calling nothing: the words
     /// decide a direct object's chain (`instanceof_by_words`), and the walk below them any other object kind and any
     /// longer chain. `None` where a proxy's `[[GetPrototypeOf]]` may run its trap.

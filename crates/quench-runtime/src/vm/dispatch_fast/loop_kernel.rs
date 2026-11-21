@@ -130,13 +130,13 @@ impl LoopKernel {
         Some(kernel)
     }
 
-    fn original<H: Host>(&self) -> Handler {
+    fn original(&self) -> Handler {
         // SAFETY: `original` is the record's handler for this VM type (`install_loop_kernels`).
         unsafe { std::mem::transmute::<*const (), Handler>(self.original.get()) }
     }
 
     /// Gives the record at `ip` back its own handler for good.
-    fn stand_down<H: Host>(&self, ip: Ip) {
+    fn stand_down(&self, ip: Ip) {
         // SAFETY: as `requicken`; the record holds this kernel.
         unsafe { (*ip.cast_mut()).handler = self.original.get() };
     }
@@ -176,7 +176,7 @@ fn register(kernel: &LoopKernel) -> Option<u16> {
 /// Gives each loop that has a kernel its kernel record (`loop_kernel_head`) on the loop's test
 /// record. Runs after every other pass: the kernel keeps the record's final handler and
 /// leaves the record's operand to it.
-pub(super) fn install_loop_kernels<H: Host>(
+pub(super) fn install_loop_kernels(
     decoded: &[WideInstruction],
     constants: &[Value],
     function: &Function,
@@ -200,7 +200,7 @@ pub(super) fn install_loop_kernels<H: Host>(
         let Some(kernel) = LoopKernel::of(decoded, constants, function, header, backedge, records[header].handler, live) else {
             continue;
         };
-        records[header].handler = loop_kernel_head::<H> as Handler as *const ();
+        records[header].handler = loop_kernel_head as Handler as *const ();
         records[header].call_link.set(kernel.slot);
         kernels.push(kernel);
     }
@@ -214,10 +214,10 @@ pub(super) fn install_loop_kernels<H: Host>(
 /// # Safety
 /// `ip` is a live record of the running view.
 #[inline(always)]
-pub(super) unsafe fn requicken_kernel<H: Host>(ip: Ip, handler: Handler) -> bool {
+pub(super) unsafe fn requicken_kernel(ip: Ip, handler: Handler) -> bool {
     // SAFETY: the caller's contract.
     let record = unsafe { &*ip };
-    if record.handler != loop_kernel_head::<H> as Handler as *const () {
+    if record.handler != loop_kernel_head as Handler as *const () {
         return false;
     }
     // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
@@ -236,8 +236,8 @@ script_handler! {
         // head runs, then its test, which fails where the kernel ran the whole loop.
         unsafe { kernel.run(cx, r, ip) };
         if kernel.declines.get() >= KERNEL_SHORT_DECLINES {
-            kernel.stand_down::<H>(ip);
+            kernel.stand_down(ip);
         }
-        sibling!(kernel.original::<H>(), r, ip, Carried::script_in(cx, view))
+        sibling!(kernel.original(), r, ip, Carried::script_in(cx, view))
     }
 }

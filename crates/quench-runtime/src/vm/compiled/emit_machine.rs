@@ -14,7 +14,7 @@ mod scalar;
 mod vector;
 
 use super::object_slots::Emit;
-use super::{Body, Emitter, Host, RegionCore, VECTOR_IR};
+use super::{Body, Emitter, RegionCore, VECTOR_IR};
 use crate::staged::machine::{Lane, Machine};
 use cranelift_codegen::ir::{self, types};
 use cranelift_frontend::FunctionBuilder;
@@ -51,7 +51,7 @@ impl<'b> Builds<'b> for Emit<'_, 'b> {
     }
 }
 
-impl<'b, H: Host> Builds<'b> for Emitter<'_, 'b, H> {
+impl<'b> Builds<'b> for Emitter<'_, 'b> {
     fn function_builder(&mut self) -> &mut FunctionBuilder<'b> {
         &mut self.body.core.builder
     }

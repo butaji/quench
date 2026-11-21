@@ -516,17 +516,17 @@ mod tests {
     #[test]
     fn interpreter_audit_preserves_native_frame_coordination_and_shared_validation() {
         for symbol in [
-            "<quench_runtime::vm::Vm<Host>>::run_fast_lane",
+            "<quench_runtime::vm::Vm>::run_fast_lane",
             "quench_runtime::vm::dispatch_fast::derive_lane_view::<Host>",
             "quench_runtime::vm::compiled::js_step_callout::<Host>",
-            "<quench_runtime::vm::Vm<Host>>::step_wasm",
-            "<quench_runtime::vm::Vm<Host>>::js_tier_frame_entry",
+            "<quench_runtime::vm::Vm>::step_wasm",
+            "<quench_runtime::vm::Vm>::js_tier_frame_entry",
         ] {
             assert!(is_interpreter_symbol(symbol), "{symbol}");
         }
         for symbol in [
-            "<quench_runtime::vm::Vm<Host>>::run_general_loop::<false>",
-            "<quench_runtime::vm::Vm<Host>>::step_operation_74",
+            "<quench_runtime::vm::Vm>::run_general_loop::<false>",
+            "<quench_runtime::vm::Vm>::step_operation_74",
             "quench_runtime::vm::dispatch_fast::fields_fit_in_lane",
         ] {
             assert!(!is_interpreter_symbol(symbol), "{symbol}");
