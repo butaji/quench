@@ -196,6 +196,9 @@ impl NativeSupport {
             ])
             .arg("-C")
             .arg(format!("opt-level={}", self.optimization))
+            // `QUENCH_IMAGE_RUSTC_ARGS` (whitespace-separated) adds driver options, such as
+            // `-C target-feature=+crt-static`, to measure link variants of an image.
+            .args(std::env::var("QUENCH_IMAGE_RUSTC_ARGS").unwrap_or_default().split_whitespace())
             .arg(driver)
             .arg("--extern")
             .arg(format!("{}={}", self.host_crate, self.host.display()))
@@ -230,6 +233,18 @@ impl NativeSupport {
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }
+        // A self-contained image links glibc statically and position-dependent.
+        #[cfg(target_os = "linux")]
+        if inputs.is_self_contained() {
+            command.args(["-C", "target-feature=+crt-static", "-C", "relocation-model=static"]);
+            // The static C runtime's start code registers `.eh_frame` with the unwinder when
+            // these weak hooks resolve, and the first unwind then classifies every FDE (8.6M
+            // instructions in a readline REPL image). Null hooks leave the unwinder on
+            // `PT_GNU_EH_FRAME`'s sorted table, as the shipping static build does (`link_layout.rs`).
+            for hook in ["__register_frame_info", "__deregister_frame_info"] {
+                command.arg("-C").arg(format!("link-arg=-Wl,--defsym={hook}=0"));
+            }
+        }
         // Apple Silicon's macOS floor already supports chained fixups. Request
         // them explicitly: rustc's default deployment target otherwise selects
         // classic relocations, dirtying every pointer-bearing constant page at
@@ -256,6 +271,13 @@ impl NativeSupport {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         command.args(["-C", "link-arg=-Xlinker", "-C", if cfg!(target_os = "macos") { "link-arg=-map" } else { "link-arg=-Map" },
             "-C", "link-arg=-Xlinker", "-C"]).arg(format!("link-arg={}", map.display()));
+        // `QUENCH_EXTRA_LINK_ARGS` (whitespace-separated linker driver arguments, such as
+        // `-Wl,--why-live=SYMBOL`) diagnoses what keeps code in an image.
+        if let Some(extra) = std::env::var_os("QUENCH_EXTRA_LINK_ARGS") {
+            for argument in extra.to_string_lossy().split_whitespace() {
+                command.arg("-C").arg(format!("link-arg={argument}"));
+            }
+        }
         let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_output(&mut command, "native image link")?;
         let symbols = audit(inputs, executable, self.support)?;

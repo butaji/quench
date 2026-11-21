@@ -254,6 +254,13 @@ fn compile(options: Options) -> Result<(), String> {
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
     let inputs = compiled.emit(&images, &options.target)?;
+    // A program that loads no native addon and nothing at run time needs no dynamic interface.
+    let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
+        inputs
+    } else {
+        inputs.self_contained()
+    };
+    report["self_contained"] = json!(inputs.is_self_contained());
     let bootstrap = work.0.join("bootstrap.bin");
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", BOOTSTRAP_WORKER_OPTION])

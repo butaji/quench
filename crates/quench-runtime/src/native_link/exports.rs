@@ -44,6 +44,10 @@ fn required_exports(inputs: &NativeImageInputs) -> Result<BTreeSet<String>, Stri
 }
 
 pub(super) fn configure(command: &mut Command, inputs: &NativeImageInputs, executable: &Path) -> Result<ExportPlan, String> {
+    #[cfg(target_os = "linux")]
+    if inputs.is_self_contained() {
+        return Ok(ExportPlan { policy: ExportPolicy::RequiredElf, required: BTreeSet::new() });
+    }
     let required = required_exports(inputs)?;
     let mut path = executable.as_os_str().to_owned(); path.push(".exports");
     #[cfg(target_os = "macos")]
