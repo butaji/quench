@@ -125,7 +125,7 @@ fn proven_facts(function: u32, callee: &Function) -> DirectFacts {
         callee: crate::vm::aot_image::unbound_callee(), cell: 0, validity: 0,
         facts: crate::staged::call::CellFacts::of_function(callee.registers, callee.params, u16::from(crate::staged::call::FILL_ALL), true),
         call: 0, caller_base: 0, function, captures: 0, env: 0, capture: 0, global_this: this.sloppy.then_some(0), lexical: this.lexical,
-        registers: callee.registers, construction: false, held: false,
+        registers: callee.registers, construction: false, held: false, descriptor: 0,
     }
 }
 

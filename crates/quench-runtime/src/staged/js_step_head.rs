@@ -112,6 +112,10 @@ pub(crate) struct JsStepHead<V> {
     pub(crate) body_top: usize,
     /// The DirectCallee descriptor of each native frame, indexed as `body_table` (the u-jit half of F5).
     pub(crate) native_table: usize,
+    /// The return of an emitted call whose native header a nested entry spilled into a record
+    /// (`LaneStack::pop_spilled_header`): `extern "C" fn(vm, residual) -> u64`, which the b-jit direct
+    /// row calls where it finds no plain header to pop, as the u-jit's `pop_native` calls its helper.
+    pub(crate) pop_spilled_header: usize,
     /// The array records' mark blocks and their count, which a store of a reference into a direct
     /// array's elements reads as the object records' are (`RecordSpace::Array`, `Heap::store_logs`);
     /// refreshed with the other bases, as a callout may move the block list.
