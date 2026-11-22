@@ -496,6 +496,9 @@ impl Vm {
     pub(crate) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: Vec<DirectCandidates>, generic: &[LaneExit]) -> Option<LaneMethod> {
+        // A test-only compile: its unit is minted here, and its lowering takes the body's gate
+        // (`LanePlan` lowering mints `UnitKind::Body`).
+        let _unit = crate::compiled::admission::test_unit();
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
