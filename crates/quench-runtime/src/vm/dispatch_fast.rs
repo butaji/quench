@@ -2991,7 +2991,10 @@ impl LaneStack {
         // Innermost first, the frames above the records floor alone (`frames_to_spill`); each
         // record keeps its side record where its completion carries a payload (`record_sided`),
         // which a header's carries exactly then.
-        let (floor, sides_below, frames) = self.frames_to_spill();
+        // Filled in place and read by reference: a spill moves a few frames, and a frame view is
+        // large, so neither a returned nor a consumed vector is copied whole.
+        let mut frames = frame_walk::SpilledFrames::new();
+        let (floor, sides_below) = self.frames_to_spill(&mut frames);
         // SAFETY: the walk above ended; no reference into the records or side records lives.
         let (records, sides) = unsafe { (&mut *self.activation_records.get(), &mut *self.sides.get()) };
         debug_assert!(floor + frames.len() <= records.capacity(), "the activation limit counts plain activations");
@@ -2999,7 +3002,7 @@ impl LaneStack {
         // SAFETY: records hold no drop glue; the activation limit keeps every frame within the
         // capacity, so each push has its slot.
         unsafe { records.set_len(floor) };
-        for frame in frames.into_iter().rev() {
+        for frame in frames.iter().rev() {
             let activation = frame.record();
             if Self::record_sided(&activation) { sides.push(Self::record_side(&activation, frame.payload())); }
             // SAFETY: as above.
@@ -10481,11 +10484,16 @@ impl Vm {
         let stack = &mut self.lane_stack;
         let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activation_count() + 1));
         // The one spill left for emitted code (one-frame-one-call.md F5): its direct calls push
-        // native frames onto the records' top and read no header yet.
-        let frames_end = stack.activations().top_ptr().wrapping_add(frames).addr();
+        // native frames onto the records' top and read no header yet. A run admitting no frames
+        // pushes none (its bound is the top itself, so every push refuses to the helper row, which
+        // spills), so its plain frames stay where they are.
+        if frames != 0 { stack.activations(); }
+        // SAFETY: reads the records' top alone; no reference into them lives.
+        let records = unsafe { &mut *stack.activation_records.get() };
+        let frames_end = records.top_ptr().wrapping_add(frames).addr();
         // SAFETY: the values' capacity bounds the vector's own allocation.
         let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
-        let activations_top = stack.activations_mut().top_word().addr();
+        let activations_top = records.top_word().addr();
         let words = LaneStackWords {
             values_top: stack.values.top_word().addr(),
             values_end,
