@@ -1,0 +1,12 @@
+# Per-phase gap analysis of the default path (2026-11-22, after the image path was closed)
+# json-parse-inspector: row = JSON.stringify(payload) once, then JSON.parse 20x (payload 7,333,850 bytes, 846 top-level keys)
+row	phase	quench_ms	node_ms	bun_ms	quench_bytes_per_s	bun_bytes_per_s	gap_to_bun	needed_to_beat_bun_by_1.5x
+json-parse-inspector	JSON.parse	7.58	11.09	3.77	967e6	1.94e9	2.01x	3.02x
+# profile of the parse (sample, 1600 main-thread samples): parse_json_text 688, GC (mark/compact/quicksort) ~250,
+# string dedup (heap_builder::ascii_strings, hashbrown find) 124, number_parse 64, arena bookkeeping/memmove ~80
+json-parse-inspector	parse split	parse 43%	GC 16%	dedup 8%	numbers 4%	arena 5%	driver 24%
+# raytrace: row = 120 iterations x 8 scene renders
+raytrace	whole row	7273	557	359	-	-	20.2x	30.4x
+# profile (sample): interpreter generated rows (field reads) 693, planned_construct_returned_miss 136, operator_row 278,
+# construct_plan 66, protocol_row 57, returning_miss 53 -> short-lived Vector/Color objects per arithmetic op
+raytrace	cost shape	per-op object construction in the interpreter, no scalar replacement	-	-	-	-	-	-
