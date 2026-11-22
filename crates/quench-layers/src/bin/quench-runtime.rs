@@ -28,10 +28,10 @@ fn main() {
             command.status().map_err(|error| format!("Node compiler companion {}: {error}; build quench with --features aot", compiler.display()))
         });
         match result {
-            Ok(status) => std::process::exit(status.code().unwrap_or(libc::EXIT_FAILURE)),
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
             Err(error) => {
                 eprintln!("quench-runtime: {error}");
-                std::process::exit(libc::EXIT_FAILURE);
+                std::process::exit(1);
             }
         }
     }
@@ -47,7 +47,7 @@ fn main() {
         });
     if let Err(error) = result {
         eprintln!("quench-runtime: {error}");
-        std::process::exit(libc::EXIT_FAILURE);
+        std::process::exit(1);
     }
 }
 
