@@ -141,7 +141,7 @@ const EXTRA_WATCHED: [&str; 3] = ["supernodes.txt", RUSTC_FLAGS_FILE, "../quench
 
 /// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
 fn rustc_flags() -> Vec<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(RUSTC_FLAGS_FILE);
+    let path = manifest_dir().join(RUSTC_FLAGS_FILE);
     let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     text.lines().flat_map(|line| line.split('#').next().unwrap_or("").split_whitespace()).map(String::from).collect()
 }
@@ -158,18 +158,39 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     }
 }
 
+/// The `quench-bjit` crate directory, where the stencil sources and lists are. This script builds two packages:
+/// `quench-bjit` (the library's generated supernode list only) and `quench-stencils` (every stencil row and the
+/// table), so the runtime crates, which depend on `quench-bjit` alone, compile while the stencils build.
+fn manifest_dir() -> &'static Path {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let package = Path::new(env!("CARGO_MANIFEST_DIR"));
+        if package.ends_with("quench-bjit") { package.to_path_buf() } else { package.join("../quench-bjit").canonicalize().expect("the quench-bjit crate") }
+    })
+}
+
+/// Whether this run builds the stencil table (`quench-stencils`) rather than `quench-bjit`'s supernode list alone.
+fn builds_stencils() -> bool {
+    env::var("CARGO_PKG_NAME").is_ok_and(|name| name == "quench-stencils")
+}
+
 fn main() {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = manifest_dir();
+    // The stencil sources and arguments are relative to the `quench-bjit` crate.
+    env::set_current_dir(manifest).expect("enter the quench-bjit crate");
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
     println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\"))");
     for extra in EXTRA_WATCHED {
-        println!("cargo::rerun-if-changed={extra}");
+        println!("cargo::rerun-if-changed={}", manifest.join(extra).display());
     }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let listed = supernodes::load(manifest);
     let generated = out.join("supernodes.rs");
     fs::write(&generated, &listed.text).unwrap();
     println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());
+    if !builds_stencils() {
+        return;
+    }
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
         watch(&sources::watched(manifest));
@@ -438,7 +459,7 @@ fn stencil_sources(out: &Path, family: Family, shard: usize) -> Option<std::coll
     let text = fs::read_to_string(&deps).ok()?;
     // The first rule names the output and then every input, separated by spaces (a space in a path is `\ `).
     let (_, inputs) = text.lines().next()?.split_once(": ")?;
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = manifest_dir();
     let files = inputs.replace("\\ ", "\0").split_whitespace().map(|path| manifest.join(path.replace('\0', " "))).filter(|path| !path.starts_with(out)).collect();
     Some(files)
 }

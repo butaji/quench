@@ -37,6 +37,8 @@ tier-stress = ["quench-runtime/tier-stress", "quench-runtime-engine/tier-stress"
 quench-runtime = { path = "../quench-runtime", default-features = false }
 quench-runtime-intl = { path = "../quench-runtime-intl" }
 quench-runtime-engine = { path = "../quench-runtime-engine", default-features = false }
+# The BaseJIT stencil tables the engine reads (`quench_bjit::rustc`), built apart from the runtime crates.
+quench-stencils = { path = "../quench-stencils" }
 
 [lints]
 workspace = true

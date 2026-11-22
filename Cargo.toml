@@ -19,6 +19,7 @@ members = [
     "crates/quench-stack",
     "crates/quench-tier-corpus",
     "crates/quench-bjit",
+    "crates/quench-stencils",
     "crates/quench-alloc",
     "crates/quench-regexp",
     "crates/quench-intl",
