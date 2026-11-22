@@ -196,27 +196,6 @@ impl LaneView {
             && warm_clock().wrapping_sub(self.tier().warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
     }
 
-    /// Counts in place a warming entry that weighs nothing: one between `specialize_lane_body`'s
-    /// attempts (no warm-up count, doubling or recurrent look falls on it), or one inside a
-    /// compile's wait between looks (`awaits_look`). The tier prologue then skips the rest of the
-    /// entry's work (the AOT image lookup, the parameter sample, the compile work closure), about
-    /// 300 Ir an entry of a function that warms for good. Whether it counted the entry.
-    pub(super) fn counted_warm_entry(&self) -> bool {
-        // SAFETY: as `lane_body`; counting runs no lane body.
-        let body = unsafe { &mut *self.tier().tier_lane.get() };
-        match body {
-            // The first entry starts the warm clock (`specialize_lane_body`), so it takes the whole path.
-            LaneBody::Unspecialized { entries, .. } if *entries > 0 => {
-                let next = entries.saturating_add(1);
-                if self.attempts_at(next) || self.recurrent(next) { return false; }
-                *entries = next;
-                true
-            }
-            LaneBody::Compiling { .. } => awaits_look(body),
-            _ => false,
-        }
-    }
-
     /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
     /// each doubling of it, so a function that has not paid for its compile yet looks again
     /// when it has done twice the work.
@@ -238,10 +217,6 @@ impl LaneView {
         let history = self.tier().history.get();
         history.lifetimes <= self.tiers.lane_body.max_lifetimes
     }
-
-    /// Whether a body compiled a call of this function (`note_caller`): native callers want its
-    /// body whatever its length, which only the lane's own entries ask to amortize.
-    pub(crate) fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
     /// Warms again a body declined for its length alone, once a caller's compile meets a call to
     /// it: native callers want it whatever its length. Whether it is warming now.

@@ -943,7 +943,7 @@ fn find_byte(byte: u8, haystack: &[u8]) -> Option<usize> {
 const START_SCAN_BYTES: usize = 3;
 /// The most runs of consecutive ASCII start units a scan tests a block of units against at
 /// once (`StartRanges`); a set of more runs is scanned unit by unit.
-const START_SCAN_RANGES: usize = 4;
+const START_SCAN_RANGES: usize = 6;
 
 /// The scan of an ASCII subject for its next start unit (`Program::scan`).
 #[derive(Clone, Copy)]
