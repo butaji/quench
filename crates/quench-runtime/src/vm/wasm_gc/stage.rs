@@ -18,6 +18,8 @@ impl Machine for HeapStage<'_> {
     type Word = u64;
 }
 
+crate::projection!(HeapStage<'_> => Concrete);
+
 impl MachineStage for HeapStage<'_> {
     type Exit = JsError;
 

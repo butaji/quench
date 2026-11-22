@@ -38,7 +38,7 @@ pub trait Machine {
 /// The Wasm operator layer of a machine that runs integer, float and conversion operators: what a
 /// stage computes without a trap. The interpreter runs them on machine words (`ConcreteWasm`), a
 /// specializer composes them from its primitives (`Emitter`, `vm/compiled/emit_machine/scalar.rs`).
-pub trait MachineStage: Machine {
+pub trait MachineStage: Machine + crate::projection::Sealed {
     /// What a trap leaves with: the trap for the interpreter; nothing for a specializer, whose
     /// code branches to the trap's exit.
     type Exit;
