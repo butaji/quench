@@ -20,6 +20,10 @@ pub mod call;
 pub mod call_record;
 pub mod shared_words;
 pub mod stub;
+// The projection seal the shared number rows name (`vm/operations/number_rows.rs`).
+#[allow(dead_code, unused_macros)]
+#[path = "../../quench-stack/src/projection.rs"]
+mod projection;
 #[path = "../stencils/wasm_kinds.rs"]
 mod wasm_kinds;
 #[path = "../stencils/wasm_families.rs"]
