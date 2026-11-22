@@ -108,8 +108,10 @@ pub(crate) struct AotFunction {
 /// A lane body compiled ahead: its code, and what its lowering proved about the entry ABI.
 pub(crate) struct LaneImage {
     pub(crate) code: RelocatableCode,
-    /// The fault-poll offset the lowering reported (`LaneRegion::fault_poll`).
-    pub(crate) fault_poll: Option<u32>,
+    /// Whether the lowering's code polls by fault (`LaneRegion::fault_poll`): the VM enters such a
+    /// body through the resuming trampoline and binds the poll's page, as it does a lane body the
+    /// JIT compiled with a poll.
+    pub(crate) fault_poll: bool,
 }
 
 /// What a lowering of the image is for: its CPU baseline and target triple

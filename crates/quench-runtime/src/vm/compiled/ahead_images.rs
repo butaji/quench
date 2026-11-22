@@ -116,8 +116,10 @@ pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32,
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
-    if fault_poll { return Err("polls for faults"); }
-    Ok(LaneImage { code, fault_poll: None })
+    // A body that polls by fault keeps the poll's code offset: the VM enters it through the
+    // resuming trampoline and binds the page at that offset (`call_polling_body`), as it does a
+    // lane body the JIT compiled with a poll.
+    Ok(LaneImage { code, fault_poll })
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
@@ -313,7 +315,7 @@ impl Vm {
     /// `function`'s lane body from `images`, linked to this VM.
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
         let linked_live: &LiveImage = images.linked.as_ref()?;
-        let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
+        let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll;
         let refused = |why: &str| if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: image lane refused, {why}"); };
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program))) else {
             refused("no unit"); return None;

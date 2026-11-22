@@ -153,7 +153,7 @@ fn put_function(out: &mut Vec<u8>, function: &AotFunction) {
     match &function.lane {
         Some(lane) => {
             out.push(1);
-            put_option(out, lane.fault_poll);
+            out.push(u8::from(lane.fault_poll));
             put_code(out, &lane.code);
         }
         None => out.push(0),
@@ -263,7 +263,7 @@ fn read_function(words: &mut Words<'_>) -> Result<AotFunction, String> {
     let lane = match words.byte()? {
         0 => None,
         _ => {
-            let fault_poll = read_option(words)?;
+            let fault_poll = words.byte()? != 0;
             Some(LaneImage { code: read_code(words)?, fault_poll })
         }
     };
