@@ -78,7 +78,7 @@ const CONCEPTS: &[Concept] = &[
     },
     Concept {
         name: "math-imul",
-        homes: &["quench-runtime/src/staged/math.rs"],
+        homes: &["quench-runtime/src/staged/int_math.rs"],
         marks: &[Mark::Function("int_multiply"), Mark::Spelled("asi32).wrapping_mul(")],
     },
     Concept {
@@ -106,7 +106,7 @@ const CONCEPTS: &[Concept] = &[
     Concept {
         // One specializer driver over staged operations, shared by both JITs.
         name: "specializer",
-        homes: &["quench-runtime/src/vm/specializer.rs"],
+        homes: &["quench-runtime/src/vm/specializer.rs", "quench-runtime-engine/src/compiled/admission.rs"],
         marks: &[Mark::Named(&["specialize"])],
     },
     Concept {

@@ -42,7 +42,7 @@ const FINGERPRINTS: &[Fingerprint] = &[
     },
     Fingerprint {
         name: "imul",
-        home: &["quench-runtime/src/staged/math.rs"],
+        home: &["quench-runtime/src/staged/int_math.rs", "quench-runtime/src/staged/math.rs"],
         groups: &[
             &["wrapping_mul", "i32"],
             &["wrapping_mul", "int32"],
