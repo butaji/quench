@@ -289,7 +289,7 @@ fn pairwise_add(bits: u128, width: u32, sign: bool) -> u128 {
 /// Each i32 lane is the wrapping sum of two i16 products (`i32x4.dot_i16x8_s`).
 #[inline(always)]
 fn dot(left: u128, right: u128) -> u128 {
-    let product = |at: u8| (signed(lane(left, 16, at), 16) as i32).wrapping_mul(signed(lane(right, 16, at), 16) as i32);
+    let product = |at: u8| crate::staged::math::int_multiply(signed(lane(left, 16, at), 16) as i32, signed(lane(right, 16, at), 16) as i32);
     let mut result = 0;
     let mut index = 0;
     while index < 4 {
