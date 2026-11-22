@@ -160,6 +160,9 @@ pub(crate) enum UnitKind {
     WasmEager,
     /// A JavaScript function's numeric or lane compile at an entry, when the Cranelift tiers run here.
     Entry,
+    /// A Wasm program's module compile at a root (`Vm::wasm_module_unit`): the program is Wasm, and a
+    /// root-only compile names its root.
+    WasmModule,
 }
 
 /// What the gate's decisions read of the unit, computed by the entry that asks, and carried by the
@@ -178,6 +181,10 @@ pub(crate) struct UnitFacts {
     pub(crate) cranelift_allowed: bool,
     /// The runtime compiles Wasm modules whole at their first entry (`wasm_modules_compile_at_first_entry`).
     pub(crate) wasm_first_entry: bool,
+    /// The program is a Wasm program (`ProgramKind::Wasm`), for `UnitKind::WasmModule`.
+    pub(crate) wasm_program: bool,
+    /// A root-only compile names its root (`WasmModule`).
+    pub(crate) root_ok: bool,
 }
 
 /// Whether a unit of `kind` may compile at all, under the process's JIT mode and, for a loop
@@ -189,7 +196,7 @@ fn may_compile(kind: UnitKind) -> bool {
         UnitKind::Aot => true,
         UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
         UnitKind::Wasm | UnitKind::Base => true,
-        UnitKind::WasmEager | UnitKind::Entry => unreachable!("facts decide these kinds, in `specialize`"),
+        UnitKind::WasmEager | UnitKind::Entry | UnitKind::WasmModule => unreachable!("facts decide these kinds, in `specialize`"),
     }
 }
 
@@ -255,6 +262,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
     } else if match kind {
         UnitKind::WasmEager => !facts.wasm_first_entry,
         UnitKind::Entry => !facts.cranelift_allowed,
+        UnitKind::WasmModule => !(facts.wasm_program && facts.root_ok),
         _ => !may_compile(kind),
     } {
         return Decision::Declined;

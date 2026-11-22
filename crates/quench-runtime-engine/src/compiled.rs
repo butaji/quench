@@ -7598,6 +7598,14 @@ impl Vm {
         self.programs.wasm_modules_compile_at_first_entry()
     }
 
+    /// The unit of a Wasm program's module compile at `root` (`UnitKind::WasmModule`); `None` where
+    /// the program is missing, not Wasm, or a root-only compile names no root.
+    pub(crate) fn wasm_module_unit(&self, program: ProgramId, root: Option<usize>, root_only: bool) -> Option<admission::CompiledUnit> {
+        let code = self.programs.get(program)?;
+        let facts = admission::UnitFacts { wasm_program: code.kind == quench_runtime::bytecode::ProgramKind::Wasm, root_ok: !(root_only && root.is_none()), ..Default::default() };
+        admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts }).compiled()
+    }
+
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`), as
     /// `unit` (`UnitKind::WasmEager`) says.
     pub(crate) fn compile_wasm_eagerly(&mut self, unit: admission::CompiledUnit) {
@@ -8050,8 +8058,8 @@ impl Vm {
 
     /// Compile every function of `program` that has a compiled denotation,
     /// with `env` as the instance whose bindings fix global types and memory.
-    fn compile_program(&self, program: ProgramId, env: Value) -> Option<CompiledProgram> {
-        self.compile_program_with_diagnostics(program, env, jit_diagnostics_enabled())
+    fn compile_program(&self, program: ProgramId, env: Value, unit: admission::CompiledUnit) -> Option<CompiledProgram> {
+        self.compile_program_with_diagnostics(program, env, jit_diagnostics_enabled(), unit)
     }
 
     fn compile_program_with_diagnostics(
@@ -8059,9 +8067,10 @@ impl Vm {
         program: ProgramId,
         env: Value,
         diagnostics_enabled: bool,
+        unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         let root = jit_root_override().ok()?;
-        self.compile_program_with_diagnostics_and_root(program, env, diagnostics_enabled, root)
+        self.compile_program_with_diagnostics_and_root(program, env, diagnostics_enabled, root, unit)
     }
 
     fn compile_program_with_diagnostics_and_root(
@@ -8070,6 +8079,7 @@ impl Vm {
         env: Value,
         diagnostics_enabled: bool,
         root: Option<usize>,
+        unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         self.compile_program_with_diagnostics_and_root_mode(
             program,
@@ -8077,6 +8087,7 @@ impl Vm {
             diagnostics_enabled,
             root,
             false,
+            unit,
         )
     }
 
@@ -8091,14 +8102,10 @@ impl Vm {
         diagnostics_enabled: bool,
         root: Option<usize>,
         root_only: bool,
+        unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
+        let _ = unit;
         let code = self.programs.get(program)?;
-        if code.kind != quench_runtime::bytecode::ProgramKind::Wasm {
-            return None;
-        }
-        if root_only && root.is_none() {
-            return None;
-        }
         let compile_started = diagnostics_enabled.then(std::time::Instant::now);
         let compile_rejections =
             diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
@@ -8593,8 +8600,7 @@ impl Vm {
         program: ProgramId,
         env: Value,
     ) -> bool {
-        let Some(compiled) = self
-            .compile_program_with_diagnostics(program, env, true)
+        let Some(compiled) = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program_with_diagnostics(program, env, true, unit))
             .map(Rc::new)
         else {
             return false;
@@ -8610,8 +8616,7 @@ impl Vm {
         env: Value,
         root: usize,
     ) -> bool {
-        let Some(compiled) = self
-            .compile_program_with_diagnostics_and_root(program, env, true, Some(root))
+        let Some(compiled) = self.wasm_module_unit(program, Some(root), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, true, Some(root), unit))
             .map(Rc::new)
         else {
             return false;
@@ -8627,8 +8632,7 @@ impl Vm {
         env: Value,
         root: usize,
     ) -> bool {
-        let Some(compiled) = self
-            .compile_program_with_diagnostics_and_root_mode(program, env, true, Some(root), true)
+        let Some(compiled) = self.wasm_module_unit(program, Some(root), true).and_then(|unit| self.compile_program_with_diagnostics_and_root_mode(program, env, true, Some(root), true, unit))
             .map(Rc::new)
         else {
             return false;
@@ -8753,13 +8757,7 @@ impl Vm {
                     let root = jit_root_override().ok().flatten();
                     let compiled = root
                         .and_then(|root| {
-                            self.compile_program_with_diagnostics_and_root_mode(
-                                program,
-                                env,
-                                diagnose,
-                                Some(root),
-                                true,
-                            )
+                            self.wasm_module_unit(program, Some(root), true).and_then(|unit| self.compile_program_with_diagnostics_and_root_mode(program, env, diagnose, Some(root), true, unit))
                         })
                         .map(Rc::new);
                     if diagnose && compiled.is_none() {
@@ -8799,7 +8797,7 @@ impl Vm {
                             .get(program)
                             .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
                     let started = diagnose.then(std::time::Instant::now);
-                    let compiled = self.compile_program(program, env).map(Rc::new);
+                    let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
                     if diagnose && compiled.is_none() {
                         let total_functions = self
                             .programs
@@ -8840,7 +8838,7 @@ impl Vm {
                 self.private_site_homes.clear();
             }
             let started = jit_diagnostics_enabled().then(std::time::Instant::now);
-            let compiled = self.compile_program(program, env).map(Rc::new);
+            let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
             if let Some(started) = started {
                 let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
                     (0..code.functions.len())
@@ -8878,14 +8876,7 @@ impl Vm {
             && self.programs.wasm_tier_has_room()
             && self.programs.note_wasm_tier_entry(program, id)
         {
-            let tier = self
-                .compile_program_with_diagnostics_and_root(
-                    program,
-                    env,
-                    jit_diagnostics_enabled(),
-                    Some(id as usize),
-                )
-                .map(Rc::new);
+            let tier = self.wasm_module_unit(program, Some(id as usize), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
             if let Some(tier) = tier
                 && self.programs.install_wasm_tier(program, id, tier)
             {
