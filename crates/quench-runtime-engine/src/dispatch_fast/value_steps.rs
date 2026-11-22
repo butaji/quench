@@ -123,7 +123,7 @@ unsafe fn activation_field_write(cx: *mut LaneContext, call_pc: u64, instruction
 ///
 /// # Safety
 /// As `activation_value_step`.
-unsafe fn activation_literal_step(cx: *mut LaneContext, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
+unsafe fn activation_literal_step(cx: *mut LaneContext, _call_pc: u64, instruction: WideInstruction) -> Option<u64> {
     if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
     let r = unsafe { (*cx).registers };
     match instruction.op() {
