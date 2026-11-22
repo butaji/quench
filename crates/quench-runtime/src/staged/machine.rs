@@ -31,7 +31,7 @@ use crate::wasm::integer::{I64BinaryOperator as IntegerBinary, I64UnaryOperator 
 
 /// What every machine has: a word, an integer or float of some `Lane`, or a vector. A comparison's
 /// flag is a word that holds 0 or 1.
-pub trait Machine {
+pub trait Machine: crate::projection::Sealed {
     type Word: Copy;
 }
 

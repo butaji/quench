@@ -30,7 +30,8 @@ pub trait Sealed {
 
 /// Declares a type to be one of the three projections, which is the only way to make it a stage
 /// of any kind: `projection!(ConcreteWasm => Concrete)`. A generic type names its parameters in
-/// brackets: `projection!([T: Text + ?Sized] Concrete<'_, T> => Concrete)`. Any other projection
+/// brackets: `projection!([T: Text + ?Sized] Concrete<'_, T> => Concrete)`. A view over
+/// another stage is that stage's projection: `projection!([M: MachineScalar] Truthiness<'_, M> => as M)`. Any other projection
 /// name is a compile error, and so is a type that is not a `Sealed` implementor.
 #[macro_export]
 macro_rules! projection {
@@ -47,6 +48,11 @@ macro_rules! projection {
     ([$($generics:tt)*] $ty:ty => Emit) => {
         impl<$($generics)*> $crate::projection::Sealed for $ty {
             const PROJECTION: $crate::projection::Projection = $crate::projection::Projection::Emit;
+        }
+    };
+    ([$($generics:tt)*] $ty:ty => as $inner:ty) => {
+        impl<$($generics)*> $crate::projection::Sealed for $ty {
+            const PROJECTION: $crate::projection::Projection = <$inner as $crate::projection::Sealed>::PROJECTION;
         }
     };
     ([$($generics:tt)*] $ty:ty => $other:ident) => {
