@@ -197,6 +197,19 @@ impl CallOut {
     pub(crate) fn names_activation(self) -> bool {
         matches!(self, Self::LoadEnvLocal { .. } | Self::StoreEnvLocal { .. } | Self::LoadName { .. }
             | Self::GlobalTypeof { .. } | Self::GlobalWrite { .. } | Self::GlobalLexicalLoad { .. } | Self::GlobalLexicalStore { .. })
+            || self.owns_activation_variable()
+    }
+
+    /// Whether the step is an activation variable's (`Protocol::Owned`: a local, a `var` binding or a TDZ of the
+    /// running activation), which the owner of the running activation makes, as `names_activation` steps are.
+    #[cfg(not(stencil_build))]
+    fn owns_activation_variable(self) -> bool {
+        matches!(self, Self::Protocol { step: Protocol::Owned(_), .. })
+    }
+
+    #[cfg(stencil_build)]
+    fn owns_activation_variable(self) -> bool {
+        false
     }
 
     /// The registers the VM reads, in the order its operation takes them: the first operand

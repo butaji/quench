@@ -237,7 +237,6 @@ pub enum GenericStep {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnedStep {
     LoadLocal,
-    StoreVarBinding,
     StoreLocal,
     InitializeTdz,
     StoreEnvLocal,

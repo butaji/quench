@@ -22,7 +22,6 @@ impl Vm {
     pub fn owner_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
         match i.op().owned_step().expect("an owner step is a catalog `owned` row") {
             OwnedStep::LoadLocal => self.load_local_step(p, owner, i),
-            OwnedStep::StoreVarBinding => self.store_var_binding_step(p, owner, i),
             OwnedStep::StoreLocal => self.store_local_step(p, owner, i),
             OwnedStep::InitializeTdz => self.initialize_tdz_step(p, owner, i),
             OwnedStep::StoreEnvLocal => self.store_env_local_step(p, owner, i),
@@ -95,11 +94,6 @@ impl Vm {
             .owner_binding_mut(p, owner, i.local_slot())
             .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
         Ok(())
-    }
-
-    fn store_var_binding_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction) -> Result<(), JsError> {
-        let value = self.owner_register(owner, i.register_a());
-        self.store_var_binding(p, owner, i.local_slot(), value)
     }
 
     /// `StoreEnvLocal`: the environment slot's store, which also defines the optional register where it initialized the binding.
