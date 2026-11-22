@@ -314,3 +314,15 @@ pub(crate) mod ext_traits {
     pub use crate::native_program::NativeProgramVm as _;
     pub use crate::dispatch_fast::operand_feedback::OperandFeedbackVm as _;
 }
+
+/// What the executable and tools call: native object emission for AOT images, the image bundle,
+/// and the native fault handler.
+pub mod api {
+    pub use crate::native_object::{
+        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeDataAddress, NativeFunction, NativeFunctionAddress,
+        NativeJsModule, NativeReloc, emit_native_module, emit_native_module_for, emit_native_object, lower_native_js_module,
+        lower_native_js_module_for,
+    };
+    pub use crate::compiled::ahead_images::AheadImagesOps1;
+    pub use crate::compiled::fault_handler::NativeFaultHandlerOps1;
+}

@@ -4,3 +4,6 @@
 //! depends on this crate and names it (`extern crate quench_layers;`) so every layer is linked.
 extern crate quench_runtime_intl;
 extern crate quench_runtime_engine;
+
+/// The engine layer's public surface (`quench_runtime_engine::api`).
+pub use quench_runtime_engine::api as engine;

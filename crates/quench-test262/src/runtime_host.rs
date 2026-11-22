@@ -83,8 +83,8 @@ fn compile_native_unit(
     output: Option<&Path>,
 ) -> Result<quench_runtime::NativeJsProgram, String> {
     let name = format!("test262_unit_{}", compilation.units.len());
-    let module = quench_runtime::lower_native_js_module(&program, &name).map_err(|error| format!("quench AOT lowering: {error}"))?;
-    let object = quench_runtime::emit_native_module(&name, module.functions, module.data)
+    let module = quench_layers::engine::lower_native_js_module(&program, &name).map_err(|error| format!("quench AOT lowering: {error}"))?;
+    let object = quench_layers::engine::emit_native_module(&name, module.functions, module.data)
         .map_err(|error| format!("quench AOT object: {error}"))?;
     let object_bytes = object.len();
     let path = output.map(|directory| directory.join(format!("{name}.o")));
@@ -1008,8 +1008,8 @@ mod tests {
             }
             if (calculate() !== 39) throw Error('wrong region continuation');
         "#, "region-continuations.js").unwrap();
-        let module = quench_runtime::lower_native_js_module(&program, "regions").unwrap();
-        quench_runtime::emit_native_module("regions", module.functions, module.data).unwrap();
+        let module = quench_layers::engine::lower_native_js_module(&program, "regions").unwrap();
+        quench_layers::engine::emit_native_module("regions", module.functions, module.data).unwrap();
         let native = quench_runtime::NativeJsProgram::compile_eager(program).unwrap();
         let mut runtime = super::Runtime::new(Test262RuntimeHost::new(super::ExecutionMode::NativeOnly));
         runtime.set_execution_mode(super::ExecutionMode::NativeOnly);

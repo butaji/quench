@@ -34,7 +34,7 @@ pub(crate) mod intl_prelude {
     pub use quench_runtime::vm::*;
     pub use quench_runtime::vm::intl_core::Collation;
     // The names the VM core's modules import (`quench-runtime/src/vm.rs`), which its submodules saw.
-    pub use quench_runtime::vm::compiled::InstanceRecord;
+    pub use quench_runtime::vm::engine_types::InstanceRecord;
     pub use quench_runtime::vm::wasm_exception::{js_tag_cell, js_tag_type};
     pub use quench_runtime::Value;
     pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
@@ -60,7 +60,7 @@ pub(crate) mod intl_prelude {
     pub use quench_runtime::vm::pending_job::PendingJob;
     pub use quench_runtime::vm::atom_set::{AtomSet, IndexAtoms};
     pub use quench_runtime::vm::call_printer::{freeze_call_sites, freeze_source_call_sites};
-    pub use quench_runtime::vm::dispatch_fast::{copy_arguments, fill_window as fill_registers};
+    pub use quench_runtime::vm::engine_types::{copy_arguments, fill_window as fill_registers};
     pub use quench_runtime::vm::group_by::GroupByKind;
     pub use quench_runtime::vm::property_definition::PropertyDefinitionKind;
     pub use quench_runtime::vm::call_arguments::CallArguments;
@@ -78,7 +78,7 @@ pub(crate) mod intl_prelude {
     pub use quench_runtime::vm::wtf16::JsString;
     pub use quench_runtime::staged::field_cache_layout::{self, FieldCacheWords};
     pub use quench_runtime::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
-    pub use quench_runtime::vm::compiled::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
+    pub use quench_runtime::vm::engine_types::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
     pub use crate::dispatch::IntlTemporalDispatch;
     pub use crate::intl_collator;
     pub use crate::intl_datetime;
