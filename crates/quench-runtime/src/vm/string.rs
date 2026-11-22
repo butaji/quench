@@ -480,8 +480,7 @@ impl Vm {
                     native,
                     Native::StringToLocaleUpperCase | Native::StringToLocaleLowerCase
                 ) {
-                    let locale = self
-                        .canonical_locale_list(p, args.first().copied())?
+                    let locale = layer_hooks::canonical_locale_list(self, p, args.first().copied())?
                         .into_iter()
                         .next()
                         .unwrap_or_else(|| "en-US".into());
@@ -493,7 +492,8 @@ impl Vm {
             }
             Native::StringLocaleCompare => {
                 let other = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let collation = self.locale_compare_collation(
+                let collation = layer_hooks::locale_compare_collation(
+                    self,
                     p,
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),

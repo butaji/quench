@@ -2881,7 +2881,7 @@ impl Vm {
                 }
             };
             if kind == IteratorKind::IntlSegments {
-                return vm.intl_segment_iterator_next(p, this);
+                return layer_hooks::intl_segment_iterator_next(vm, p, this);
             }
             if kind == IteratorKind::Generator {
                 return vm.generator_next(p, this, args);

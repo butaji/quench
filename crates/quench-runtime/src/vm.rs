@@ -1,63 +1,63 @@
 #[cfg(feature = "native-execution")]
-mod native_operands;
-mod realm_table;
-mod register_file;
-mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
-mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
+pub mod native_operands;
+pub mod realm_table;
+pub mod register_file;
+pub mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
+pub mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
-pub(crate) mod aot_image;
-pub(crate) mod native_object;
-mod specializer;
-pub(crate) mod specialize;
+pub mod aot_image;
+pub mod native_object;
+pub mod specializer;
+pub mod specialize;
 #[cfg(feature = "native-execution")]
-pub(crate) mod native_program;
-mod compiled;
+pub mod native_program;
+pub mod compiled;
 #[cfg(unix)]
 pub use compiled::NativeFaultHandler;
 #[cfg(feature = "profile-native-ops")]
-mod native_op_profile;
-mod js_compiled;
-mod jit_backend;
+pub mod native_op_profile;
+pub mod js_compiled;
+pub mod jit_backend;
 pub use jit_backend::{IsaBaseline, NativeTarget};
-mod tier_machine; pub mod tier_events;
-mod shape_stability;
-pub(crate) mod switches;
-mod shape_transitions;
-mod snapshot;
-mod startup_intrinsics;
-mod wasm;
+pub mod tier_machine; pub mod tier_events;
+pub mod shape_stability;
+pub mod switches;
+pub mod shape_transitions;
+pub mod snapshot;
+pub mod startup_intrinsics;
+pub mod wasm;
 pub use compiled::{AheadImages, ExecutionMode};
-pub(crate) use compiled::InstanceRecord;
+pub use compiled::InstanceRecord;
 pub use date::local_timezone_changed;
-mod wasm_exception;
-mod wasm_gc;
-mod wasm_global;
-mod wasm_host;
-mod wasm_js;
-pub(crate) use wasm_exception::{js_tag_cell, js_tag_type};
-mod wasm_indirect;
-mod wasm_table;
-use crate::Value;
-use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
+pub mod wasm_exception;
+pub mod wasm_gc;
+pub mod wasm_global;
+pub mod wasm_host;
+pub mod wasm_js;
+pub use wasm_exception::{js_tag_cell, js_tag_type};
+pub mod wasm_indirect;
+pub mod wasm_table;
+pub use crate::Value;
+pub use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
-use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
+pub use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
-use crate::heap::CellKind;
-use crate::heap::{
+pub use crate::heap::CellKind;
+pub use crate::heap::{
     CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
     IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
-use crate::host::{CapabilityId, Host, HostContext};
-use crate::profile::{CallSource, Profile, TerminalCall};
-use crate::value::number_to_u32;
-use activation::{CallCompletion, CallContext, ConstructionTarget, TrapAccess, TrapCheck};
-use atomics::Test262AgentState;
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::OnceCell;
-use std::hash::{Hash, Hasher};
-use std::rc::Rc;
+pub use crate::host::{CapabilityId, Host, HostContext};
+pub use crate::profile::{CallSource, Profile, TerminalCall};
+pub use crate::value::number_to_u32;
+pub use activation::{CallCompletion, CallContext, ConstructionTarget, TrapAccess, TrapCheck};
+pub use atomics::Test262AgentState;
+pub use rustc_hash::{FxHashMap, FxHashSet};
+pub use std::cell::OnceCell;
+pub use std::hash::{Hash, Hasher};
+pub use std::rc::Rc;
 
 /// A fresh seed for `Math.random`'s xorshift state, from the process's random hash keys (which
 /// the standard library draws from the OS): each VM, like each Node process, has its own
@@ -69,8 +69,8 @@ fn fresh_random_seed() -> u64 {
     }
     std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
 }
-pub(super) use crate::units::MAX_SAFE_INTEGER;
-pub(crate) use crate::bytecode::MAX_ARRAY_LENGTH;
+pub use crate::units::MAX_SAFE_INTEGER;
+pub use crate::bytecode::MAX_ARRAY_LENGTH;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 /// The values a call roots besides its arguments: the callee and the receiver.
 const CALL_ROOTS_BESIDE_ARGUMENTS: usize = 2;
@@ -118,127 +118,118 @@ struct RuntimeAtoms {
     /// The names of a Proxy handler's traps (`proxy::ProxyTrap`).
     proxy_traps: [Atom; proxy::PROXY_TRAP_COUNT],
 }
-pub(crate) mod activation;
-mod agent;
-mod atom_set;
-mod pending_job;
-use pending_job::PendingJob;
-use atom_set::{AtomSet, IndexAtoms};
-mod arguments;
-mod array;
-pub(crate) mod array_buffer;
-mod array_builtins;
-mod array_copy;
-mod array_dense;
-mod inplace;
-mod array_flatten;
-mod array_group;
-mod array_indexed;
-mod array_view;
-mod array_modern;
-mod array_fresh;
-mod atom_keys;
-mod atomics;
-mod bigint;
-mod boolean;
-mod builtins;
-mod native_rows;
-mod call_arguments;
-mod call_printer;
-pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
-mod call_out;
-mod call_out_calls;
-mod call_out_literals;
-mod call_out_classes;
-mod call_out_values;
-mod call_out_owned;
-mod call_out_wasm;
-mod suspension;
-mod coercion;
-mod collection_intake;
-mod collections;
-mod construction;
-mod data_view;
-mod date;
-mod dispatch;
-mod dispatch_fast; mod lane_values; mod lane_activations;
-pub(crate) use dispatch_fast::{copy_arguments, fill_window as fill_registers};
-mod dispatch_frame; mod tier0_promotion;
-mod dispatch_wasm;
-mod dynamic_strings;
+pub mod activation;
+pub mod agent;
+pub mod atom_set;
+pub mod pending_job;
+pub use pending_job::PendingJob;
+pub use atom_set::{AtomSet, IndexAtoms};
+pub mod arguments;
+pub mod array;
+pub mod array_buffer;
+pub mod array_builtins;
+pub mod array_copy;
+pub mod array_dense;
+pub mod inplace;
+pub mod array_flatten;
+pub mod array_group;
+pub mod array_indexed;
+pub mod array_view;
+pub mod array_modern;
+pub mod array_fresh;
+pub mod atom_keys;
+pub mod atomics;
+pub mod bigint;
+pub mod boolean;
+pub mod builtins;
+pub mod native_rows;
+pub mod call_arguments;
+pub mod call_printer;
+pub use call_printer::{freeze_call_sites, freeze_source_call_sites};
+pub mod call_out;
+pub mod call_out_calls;
+pub mod call_out_literals;
+pub mod call_out_classes;
+pub mod call_out_values;
+pub mod call_out_owned;
+pub mod call_out_wasm;
+pub mod suspension;
+pub mod coercion;
+pub mod collection_intake;
+pub mod collections;
+pub mod construction;
+pub mod data_view;
+pub mod date;
+pub mod dispatch;
+pub mod dispatch_fast; mod lane_values; mod lane_activations;
+pub use dispatch_fast::{copy_arguments, fill_window as fill_registers};
+pub mod dispatch_frame; mod tier0_promotion;
+pub mod dispatch_wasm;
+pub mod dynamic_strings;
 #[cfg(feature = "profile-lane-exits")]
-mod lane_exits;
-mod embedding; mod embedding_values; pub use embedding_values::Detach;
-mod provenance;
-mod preshaped_receiver;
-mod inspection;
-mod caller_view;
-mod environment; mod name_scope;
-mod owner_step; mod var_owner;
-mod root_bindings;
-mod handler_entry;
-mod equality; mod error; mod eval;
-mod field_cache;
-mod field_stubs;
-mod in_presence;
-mod instanceof_walk;
-mod site_table;
-mod finalization;
-mod first_call_append; mod first_call_chunk;
-mod function;
-mod function_cache;
-mod gc;
-mod generator;
-mod global_facts;
-mod group_by;
-mod host_function;
-mod index;
-mod intl_collator;
-mod intl_datetime;
-mod intl_datetime_parts;
-mod intl_display_names;
-mod intl_duration_format;
-mod intl_list_format;
-mod intl_namespace;
-mod intl_number;
-mod intl_plural_rules;
-mod intl_relative;
-mod intl_segmenter;
-mod iterator_list;
-mod lazy_data_property;
-mod local_time;
-mod property_definition;
-use group_by::GroupByKind;
-use property_definition::PropertyDefinitionKind;
-mod intact_fuses;
-mod iterator_proofs;
-mod iterators;
-mod json;
-mod method_cache;
-mod plain_equality;
-mod module;
-mod number;
-mod number_parse;
-mod object_template;
-mod object;
-mod shape_memo;
-mod cache_epochs;
-mod symbol_write_proof;
-mod symbol_load_proof;
-mod private_site_home;
-mod private_slots;
-mod enumerable_key_memo;
-mod name_atom_memo;
-mod object_assignment;
-mod object_array;
-mod object_builtins;
-mod object_descriptors;
-mod object_get;
-mod object_integrity;
-mod object_keys;
-mod object_static;
-mod object_symbols;
-mod object_shape_adopt;
+pub mod lane_exits;
+pub mod embedding; mod embedding_values; pub use embedding_values::Detach;
+pub mod provenance;
+pub mod preshaped_receiver;
+pub mod inspection;
+pub mod caller_view;
+pub mod environment; mod name_scope;
+pub mod owner_step; mod var_owner;
+pub mod root_bindings;
+pub mod handler_entry;
+pub mod equality; mod error; mod eval;
+pub mod field_cache;
+pub mod field_stubs;
+pub mod in_presence;
+pub mod instanceof_walk;
+pub mod site_table;
+pub mod finalization;
+pub mod first_call_append; mod first_call_chunk;
+pub mod function;
+pub mod function_cache;
+pub mod gc;
+pub mod generator;
+pub mod global_facts;
+pub mod group_by;
+pub mod host_function;
+pub mod index;
+pub mod intl_core;
+pub mod layer_hooks;
+pub mod iterator_list;
+pub mod lazy_data_property;
+pub mod local_time;
+pub mod property_definition;
+pub use group_by::GroupByKind;
+pub use property_definition::PropertyDefinitionKind;
+pub mod intact_fuses;
+pub mod iterator_proofs;
+pub mod iterators;
+pub mod json;
+pub mod method_cache;
+pub mod plain_equality;
+pub mod module;
+pub mod number;
+pub mod number_parse;
+pub mod object_template;
+pub mod object;
+pub mod shape_memo;
+pub mod cache_epochs;
+pub mod symbol_write_proof;
+pub mod symbol_load_proof;
+pub mod private_site_home;
+pub mod private_slots;
+pub mod enumerable_key_memo;
+pub mod name_atom_memo;
+pub mod object_assignment;
+pub mod object_array;
+pub mod object_builtins;
+pub mod object_descriptors;
+pub mod object_get;
+pub mod object_integrity;
+pub mod object_keys;
+pub mod object_static;
+pub mod object_symbols;
+pub mod object_shape_adopt;
 #[cfg(test)] mod lane_loop_tests;
 #[cfg(test)] mod float_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;
@@ -247,72 +238,57 @@ mod object_shape_adopt;
 #[cfg(test)] mod object_tests; #[cfg(test)] mod shape_attribute_tests;
 #[cfg(test)] mod native_frame_tests;
 #[cfg(test)] mod catch_tests; #[cfg(test)] mod test_oracle; #[cfg(test)] mod shape_stability_tests;
-mod property_key;
-use call_arguments::CallArguments;
-use object::AtomClass;
-pub(crate) use json::json_literal_length;
-pub(crate) use object_static::array_index;
-pub(crate) use program_store::ProgramId;
-pub(crate) use regexp::RegExpFlags;
-use program_store::{ModuleImport, ProgramStore};
-use promise::PromiseRuntime;
-use property_key::PropertyKey;
-use root_bindings::RootBinding;
-use var_owner::{EvalCaller, VarOwner};
-pub(crate) mod operations;
+pub mod property_key;
+pub use call_arguments::CallArguments;
+pub use object::AtomClass;
+pub use json::json_literal_length;
+pub use object_static::array_index;
+pub use program_store::ProgramId;
+pub use regexp::RegExpFlags;
+pub use program_store::{ModuleImport, ProgramStore};
+pub use promise::PromiseRuntime;
+pub use property_key::PropertyKey;
+pub use root_bindings::RootBinding;
+pub use var_owner::{EvalCaller, VarOwner};
+pub mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
-mod primitive_bench;
-mod primitives;
-pub(crate) mod program_store;
-mod promise;
-mod host_frames;
-mod promise_aggregate;
-mod promise_async;
-mod promise_jobs;
-mod promise_state;
-mod proxy; use proxy::ProxyTrap;
-mod reflect;
-mod regexp; mod regexp_native;
-mod shadow_realm;
-mod sort;
-mod string;
-mod string_cache;
-mod string_extra;
-pub(crate) mod value_serializer;
-mod owned_clone_native;
-mod symbol;
-mod well_known_symbols;
-pub(crate) use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
-mod temporal;
-mod temporal_date;
-mod temporal_date_arithmetic;
-mod temporal_date_difference;
-mod temporal_date_parse;
-mod temporal_date_projection;
-mod temporal_date_time;
-mod temporal_date_time_difference;
-mod temporal_instant;
-mod temporal_instant_difference;
-mod temporal_instant_format;
-mod temporal_instant_round;
-mod temporal_plain_date_time_conversion;
-mod temporal_plain_time;
-mod temporal_zoned_date_time;
-mod type_predicates;
-mod typed_array;
-mod typed_array_access;
-mod typed_array_base64;
-mod typed_array_construct;
-mod typed_array_install;
-mod vm_init;
-pub(crate) mod wtf16;
+pub mod primitive_bench;
+pub mod primitives;
+pub mod program_store;
+pub mod promise;
+pub mod host_frames;
+pub mod promise_aggregate;
+pub mod promise_async;
+pub mod promise_jobs;
+pub mod promise_state;
+pub mod proxy; use proxy::ProxyTrap;
+pub mod reflect;
+pub mod regexp; mod regexp_native;
+pub mod shadow_realm;
+pub mod sort;
+pub mod string;
+pub mod string_cache;
+pub mod string_extra;
+pub mod value_serializer;
+pub mod owned_clone_native;
+pub mod symbol;
+pub mod well_known_symbols;
+pub use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
+pub mod type_predicates;
+pub mod typed_array;
+pub mod typed_array_access;
+pub mod typed_array_base64;
+pub mod typed_array_construct;
+pub mod typed_array_install;
+pub mod vm_init;
+pub mod wtf16;
 pub use error::{CompileFailureKind, JsError};
 pub use value_serializer::{
     write_double, write_raw_bytes, write_uint32, write_uint64, HostObjectRead, SerializedValue, SharedWireInput, ValueDeserializer,
     ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
 };
-pub(crate) use value_serializer::{ReadHooks, WriteHooks};
-use wtf16::JsString;
+pub use value_serializer::{ReadHooks, WriteHooks};
+pub use wtf16::JsString;
 #[cfg(test)] mod tests; #[cfg(test)] mod lane_semantics_tests;
 #[cfg(test)] mod closure_retention_tests;
 #[cfg(test)] mod storage_tests; #[cfg(test)] mod name_scope_tests;
@@ -813,7 +789,7 @@ const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = field_cache_layout::NO_HOLDER;
 /// The holder layout id an entry holds where no holder object was at hand (`FieldCache::holder_id`).
 const NO_FIELD_HOLDER_LAYOUT: u32 = field_cache_layout::NO_HOLDER_LAYOUT;
-use crate::staged::field_cache_layout::{self, FieldCacheWords};
+pub use crate::staged::field_cache_layout::{self, FieldCacheWords};
 /// Where an accessor field cache's holder keeps its getter (`AccessorFieldCache::slot_accessor`):
 /// in the slot itself (`ShapeAttributes::slot_getter`), in the slot's pair cell
 /// (`slot_accessor_pair`), or where its attributes say (the shape's accessor table).
@@ -888,7 +864,7 @@ const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
 /// set, as Air's `Arg` kinds do (about ten shapes reading `isStack`); a site past its ways
 /// leaves the lane at each miss and evicts an entry another shape needs next.
 const ACCESSOR_FIELD_CACHE_WAYS: usize = 16;
-use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
+pub use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 const NO_FIELD_RECEIVER: u32 = field_cache_layout::NO_RECEIVER;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
 const NO_INHERITED_FIELD: u32 = object::MRU_CHAIN_END;
@@ -930,7 +906,7 @@ impl site_table::SiteEntry for FieldCache {
 // SAFETY: four `u32` words, with no padding, and every bit pattern valid.
 unsafe impl site_table::StoredWords for FieldCacheWords {}
 /// The layout generated code reads a field cache entry by (`staged::layout_offsets`).
-pub(crate) use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
+pub use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
 
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
 /// prototype chain still has exactly the `prototype_depth` shapes interned at `chain`
@@ -2528,7 +2504,7 @@ pub(crate) struct Vm {
     private_homes: FxHashMap<PrivateHomeKey, Value>,
     /// The collation `String.prototype.localeCompare` resolves without locales or options
     /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
-    default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
+    default_collation: Option<std::rc::Rc<intl_core::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     /// The direct evals running above lane activations (`var_owner::EvalCaller`), innermost last.
@@ -4207,6 +4183,6 @@ enum StringConstantKey<'a> {
 }
 
 /// The build an image belongs to, which `native_link` checks a runtime library against.
-pub(crate) use compiled::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
+pub use compiled::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
 #[cfg(feature = "native-execution")]
 pub use compiled::{NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};

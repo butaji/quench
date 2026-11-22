@@ -201,7 +201,7 @@ impl Vm {
                 | Native::DateToLocaleDateString
                 | Native::DateToLocaleTimeString
         ) {
-            return self.date_to_locale_string(p, native, this, args);
+            return layer_hooks::date_to_locale_string(self, p, native, this, args);
         }
         if native == Native::DateToJSON {
             return self.date_to_json(p, this);
@@ -291,8 +291,8 @@ impl Vm {
                 let nanoseconds = (milliseconds.trunc() as i128)
                     .checked_mul(super::temporal_instant::INSTANT_NANOSECONDS_PER_MILLISECOND)
                     .ok_or_else(|| self.range_error(p, "Invalid time value".into()))?;
-                let constructor = self.temporal_instant_constructor(p)?;
-                self.make_temporal_instant(p, nanoseconds, constructor)
+                let constructor = layer_hooks::temporal_instant_constructor(self, p)?;
+                layer_hooks::make_temporal_instant(self, p, nanoseconds, constructor)
             }
             _ => Err(JsError("invalid Date native".into())),
         }

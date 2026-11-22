@@ -15,7 +15,8 @@
 #![feature(stmt_expr_attributes)]
 #![cfg_attr(all(test, feature = "bench-primitives"), feature(test))]
 
-mod execution_interrupt;
+#[doc(hidden)]
+pub mod execution_interrupt;
 /// Numeric facts shared by the runtime and its hosts.
 pub mod units {
     pub use quench_temporal::units::*;
@@ -45,45 +46,73 @@ pub use vm::value_serializer::DESERIALIZATION_ERROR;
 pub use execution_interrupt::ExecutionInterrupt;
 #[cfg(unix)]
 pub use vm::NativeFaultHandler;
-mod bigint;
-mod bitset;
-mod dataflow;
-mod webs;
-mod dense_map;
-mod bytecode;
-mod compile;
-mod code_dependencies;
-mod folded_roots;
-mod float_layout;
-mod heap;
+#[doc(hidden)]
+pub mod bigint;
+#[doc(hidden)]
+pub mod bitset;
+#[doc(hidden)]
+pub mod dataflow;
+#[doc(hidden)]
+pub mod webs;
+#[doc(hidden)]
+pub mod dense_map;
+#[doc(hidden)]
+pub mod bytecode;
+#[doc(hidden)]
+pub mod compile;
+#[doc(hidden)]
+pub mod code_dependencies;
+#[doc(hidden)]
+pub mod folded_roots;
+#[doc(hidden)]
+pub mod float_layout;
+#[doc(hidden)]
+pub mod heap;
 #[cfg_attr(
     not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))),
     allow(dead_code)
 )]
-mod jit_coverage;
-mod jit_mode;
+#[doc(hidden)]
+pub mod jit_coverage;
+#[doc(hidden)]
+pub mod jit_mode;
 pub use jit_mode::JitMode;
-mod host;
-mod integer_conversion;
+#[doc(hidden)]
+pub mod host;
+#[doc(hidden)]
+pub mod integer_conversion;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
-mod memory_edge;
-mod module_identity;
-mod number_to_string;
+#[doc(hidden)]
+pub mod memory_edge;
+#[doc(hidden)]
+pub mod module_identity;
+#[doc(hidden)]
+pub mod number_to_string;
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "../benches/support/number_inputs.rs"]
-mod number_inputs;
-mod profile;
+#[doc(hidden)]
+pub mod number_inputs;
+#[doc(hidden)]
+pub mod profile;
 pub mod trace;
 pub mod clock;
-mod snapshot;
-mod staged;
-mod typed_ir;
-pub(crate) use quench_stack as stack;
-mod unicode;
-mod value;
-mod value_vec;
-mod vm;
-mod wasm;
+#[doc(hidden)]
+pub mod snapshot;
+#[doc(hidden)]
+pub mod staged;
+#[doc(hidden)]
+pub mod typed_ir;
+pub use quench_stack as stack;
+#[doc(hidden)]
+pub mod unicode;
+#[doc(hidden)]
+pub mod value;
+#[doc(hidden)]
+pub mod value_vec;
+#[doc(hidden)]
+pub mod vm;
+#[doc(hidden)]
+pub mod wasm;
 pub use wasm::{
     WasmCallableType, WasmConstantExpression, WasmData, WasmDataMode, WasmElement, WasmElementItems, WasmElementMode,
     WasmCustomSection, WasmExport,
@@ -121,7 +150,8 @@ const _: fn() = || {
     sendable::<SerializedValue>();
 };
 
-mod api;
+#[doc(hidden)]
+pub mod api;
 pub use api::{
     CollectionContext,
     BufferStorage, Detach, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin,
@@ -132,19 +162,26 @@ pub use api::{
 };
 
 #[cfg(test)]
-mod host_stack_tests;
+#[doc(hidden)]
+pub mod host_stack_tests;
 #[cfg(test)]
-mod test_host;
+#[doc(hidden)]
+pub mod test_host;
 #[cfg(test)]
-mod cross_program_call_tests;
+#[doc(hidden)]
+pub mod cross_program_call_tests;
 #[cfg(test)]
-mod eval_name_scope_tests;
+#[doc(hidden)]
+pub mod eval_name_scope_tests;
 #[cfg(test)]
-mod subset_scope_tests;
+#[doc(hidden)]
+pub mod subset_scope_tests;
 #[cfg(test)]
-mod subset_tests;
+#[doc(hidden)]
+pub mod subset_tests;
 #[cfg(test)]
-mod string_parts_tests;
+#[doc(hidden)]
+pub mod string_parts_tests;
 
 pub mod owned_clone;
 
@@ -180,8 +217,20 @@ pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
 #[cfg(feature = "native-execution")]
 pub use host::NativeSourceError;
 
-mod native_image;
+#[doc(hidden)]
+pub mod native_image;
 #[cfg(feature = "native-execution")]
 pub use native_image::NativeImageSupport;
 
 pub mod native_link;
+
+// Library tests run with the layer crates compiled in as modules: a layer crate names this crate
+// `quench_runtime` and its own root `crate`, so both resolve here (`quench-layers` links the
+// layer crates into every other build).
+#[cfg(test)]
+extern crate self as quench_runtime;
+#[cfg(test)]
+#[path = "../../quench-runtime-intl/src/lib.rs"]
+mod intl_layer;
+#[cfg(test)]
+use intl_layer::*;

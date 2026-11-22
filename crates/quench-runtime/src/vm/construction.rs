@@ -1426,31 +1426,24 @@ impl Vm {
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args, Some(new_target)),
             Native::Date => self.date_construct_native(p, args, new_target),
-            Native::IntlNumberFormat => self.intl_number_format_construct(p, args, new_target),
-            Native::IntlCollator => self.intl_collator_construct(p, args, new_target),
-            Native::IntlPluralRules => self.intl_plural_rules_construct(p, args, new_target),
-            Native::IntlDateTimeFormat => self.intl_date_time_format_construct(p, args, new_target),
-            Native::IntlDisplayNames => self.intl_display_names_construct(p, args, new_target),
-            Native::IntlDurationFormat => self.intl_duration_format_construct(p, args, new_target),
-            Native::IntlListFormat => self.intl_list_format_construct(p, args, new_target),
-            Native::IntlLocale => self.intl_namespace_construct(p, native, args, new_target),
-            Native::IntlRelativeTimeFormat => {
-                self.intl_relative_time_format_construct(p, args, new_target)
-            }
-            Native::IntlSegmenter => self.intl_segmenter_construct(p, args, new_target),
-            Native::TemporalDuration => self.temporal_duration_construct(p, args),
-            Native::TemporalPlainTime => self.temporal_plain_time_construct(p, args),
-            Native::TemporalPlainDate => self.temporal_plain_date_construct(p, args, new_target),
-            Native::TemporalPlainDateTime => {
-                self.temporal_plain_date_time_construct(p, args, new_target)
-            }
-            Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => {
-                self.temporal_calendar_projection_construct(p, native, args, new_target)
-            }
-            Native::TemporalZonedDateTime => {
-                self.temporal_zoned_date_time_construct(p, args, new_target)
-            }
-            Native::TemporalInstant => self.temporal_instant_construct(p, args, new_target),
+            Native::IntlNumberFormat
+            | Native::IntlCollator
+            | Native::IntlPluralRules
+            | Native::IntlDateTimeFormat
+            | Native::IntlDisplayNames
+            | Native::IntlDurationFormat
+            | Native::IntlListFormat
+            | Native::IntlLocale
+            | Native::IntlRelativeTimeFormat
+            | Native::IntlSegmenter
+            | Native::TemporalDuration
+            | Native::TemporalPlainTime
+            | Native::TemporalPlainDate
+            | Native::TemporalPlainDateTime
+            | Native::TemporalPlainMonthDay
+            | Native::TemporalPlainYearMonth
+            | Native::TemporalZonedDateTime
+            | Native::TemporalInstant => super::layer_hooks::intl_temporal_construct(self, p, native, args, new_target),
             Native::AggregateError => self.construct_aggregate_error(p, args, new_target),
             Native::Symbol => Err(self.type_error(p, "Symbol is not a constructor".into())),
             Native::Error

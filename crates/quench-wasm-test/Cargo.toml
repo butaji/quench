@@ -16,6 +16,7 @@ aot = []
 [dependencies]
 quench-wasm = { path = "../quench-wasm" }
 quench-runtime = { path = "../quench-runtime" }
+quench-layers = { path = "../quench-layers" }
 wasmparser = "0.247"
 wast = "247"
 quench-stack = { path = "../quench-stack" }

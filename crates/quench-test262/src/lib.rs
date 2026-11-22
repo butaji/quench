@@ -735,3 +735,6 @@ mod tests {
         assert_eq!(metadata.variants(), vec![super::TestVariant::Raw]);
     }
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;

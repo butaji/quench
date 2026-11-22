@@ -21,3 +21,6 @@ fn suspended_frames_end_as_the_interpreter_does() {
     let interpreted = run(ExecutionMode::Interpreted);
     assert_eq!(interpreted, run(ExecutionMode::Compiled), "{interpreted}");
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;

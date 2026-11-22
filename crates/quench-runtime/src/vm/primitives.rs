@@ -502,7 +502,7 @@ impl Vm {
             }
             Native::NumberToLocaleString => {
                 let number = self.number_receiver_value(p, this)?;
-                self.intl_format_primitive(p, Value::number(number), args)
+                layer_hooks::intl_format_primitive(self, p, Value::number(number), args)
             }
             Native::NumberString => {
                 let number = self.number_receiver_value(p, this)?;

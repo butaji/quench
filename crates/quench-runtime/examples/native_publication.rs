@@ -109,3 +109,6 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;
