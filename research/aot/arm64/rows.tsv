@@ -1,6 +1,7 @@
 # Sweep after the body-entry binding fix (81af03145b). Default aarch64 mode is unchanged:
 # lane bodies stay off, so this verifies the rows; 36 rows produce a result.
 # a row wins at >= 1.50 on C, Node and Bun; vs_prev = previous/now.
+# The lane-body tier stays out of this mode (81fb1c045b): with it forced on the 33-row sweep is a wash (mean 0.996) and AOT images die with SIGBUS.
 row	iters	aot_ms	node_ms	bun_ms	c_ms	c_x_aot	node_x_aot	bun_x_aot	vs_prev	status
 Basic	120	4306.7	214.3	180.2	510	0.12	0.05	0.04	0.99	ok
 ML	60	38111.1	1156.1	985.9	210	0.01	0.03	0.03	1.03	ok
