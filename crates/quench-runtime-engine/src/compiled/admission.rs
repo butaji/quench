@@ -148,6 +148,8 @@ pub(crate) enum UnitKind {
     Body,
     /// A loop region, under its memory policy's loop tier.
     Region(quench_runtime::MemoryPolicy),
+    /// An eager (AOT) publication: no JIT mode or memory policy gates it.
+    Aot,
 }
 
 /// Whether a unit of `kind` may compile at all, under the process's JIT mode and, for a loop
@@ -156,6 +158,7 @@ fn may_compile(kind: UnitKind) -> bool {
     match kind {
         UnitKind::Body => quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) || quench_runtime::jit_mode::base_only(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
+        UnitKind::Aot => true,
     }
 }
 
