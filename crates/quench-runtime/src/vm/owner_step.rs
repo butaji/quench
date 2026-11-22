@@ -32,14 +32,7 @@ impl Vm {
             OwnedStep::LoadNameCall => self.load_name_call_step(p, owner, i, pc),
             OwnedStep::LoadNameTypeof => self.load_name_typeof_step(p, owner, i, pc),
             OwnedStep::StoreName => self.store_name_step(p, owner, i, pc),
-            OwnedStep::StoreGlobalLexical => self.store_global_lexical_step(p, owner, i, pc),
         }
-    }
-
-    fn store_global_lexical_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
-        let value = self.owner_register(owner, i.register_a());
-        let initializing = i.boolean_field(InstructionField::B).expect("validated initialization flag");
-        self.global_lexical_store(p, owner, (i.imm(), i.cache_site_index(), initializing), value, pc)
     }
 
     /// `LoadGlobalLexical` of `declaration` through cache `cache`, at the binding site `pc` names: the

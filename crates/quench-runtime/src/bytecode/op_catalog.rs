@@ -247,7 +247,6 @@ pub enum OwnedStep {
     LoadNameCall,
     LoadNameTypeof,
     StoreName,
-    StoreGlobalLexical,
 }
 
 /// The step an opcode makes over operand values read from registers and constants, which an
