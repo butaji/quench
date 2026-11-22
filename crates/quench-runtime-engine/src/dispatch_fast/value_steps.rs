@@ -126,12 +126,13 @@ unsafe fn activation_field_write(cx: *mut LaneContext, call_pc: u64, instruction
 unsafe fn activation_literal_step(cx: *mut LaneContext, _call_pc: u64, instruction: WideInstruction) -> Option<u64> {
     if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
     let r = unsafe { (*cx).registers };
+    // The array of holes a `MakeArray` makes: the staged allocation with no definitions after it (`Array`).
+    if let Some((_, allocation @ quench_runtime::staged::Allocation::Array { .. })) = quench_runtime::staged::Allocation::decode(instruction, &[]) {
+        let Some(value) = (unsafe { super::lane_frame::lane_allocation(cx.cast(), r, allocation) }) else { return Some(LANE_CALL_MISSED) };
+        r.set(instruction.result_register(), value);
+        return Some(LANE_CALL_COMPLETED);
+    }
     match instruction.op() {
-        quench_runtime::bytecode::Op::MakeArray => {
-            let (_, allocation) = quench_runtime::staged::Allocation::decode(instruction, &[])?;
-            let Some(value) = (unsafe { super::lane_frame::lane_allocation(cx.cast(), r, allocation) }) else { return Some(LANE_CALL_MISSED) };
-            r.set(instruction.result_register(), value);
-        }
         quench_runtime::bytecode::Op::DefineArrayElement => {
             let defined = unsafe { vm(cx) }.define_literal_element(r.get(instruction.register_b()), instruction.imm() as usize, r.get(instruction.register_a()));
             if !defined { return Some(LANE_CALL_MISSED); }
