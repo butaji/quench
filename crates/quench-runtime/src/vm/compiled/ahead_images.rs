@@ -116,10 +116,6 @@ pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32,
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
-    // A polling body's resumption needs the poll's offset, which the image does not carry. A lane
-    // body enabled without it still runs, but miscomputes: stanford-crypto-sha256's hash came out
-    // rotated by one 32-bit word on 116 of 120 iterations. The base body runs such a function.
-    if fault_poll { return Err("polls for faults"); }
     Ok(LaneImage { code, fault_poll })
 }
 
