@@ -3703,6 +3703,11 @@ script_handler! {
         };
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
+        // A Number form's refused operands (an int32 overflow, `a * k` past int32) widen to the next form
+        // below, not to the VM's binary call-out: the frame's `binary` makes `step_number` answer every
+        // refusal through the call-out inside the step (`general_operators`), before the widening runs.
+        // The `ANY` form keeps it, as it has no widening of its own.
+        if const { FORM != OPERANDS_ANY } { frame.binary = None; }
         // The int32 constant the view folded into the record's `mode` (`specialize_plain_operators`, which
         // installs this form only with it): an int32 the row knows as one, so its constant's load, bounds
         // test and tag test fold away.
