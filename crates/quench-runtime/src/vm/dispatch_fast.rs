@@ -14455,6 +14455,7 @@ fn tier_enter_in_lane(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
+        if own.counted_warm_entry() { return None; }
         // A function of a program with a loaded AOT image takes its body at its first entry, no warm-up.
         let ahead = vm.programs.ahead_images(program, code).is_some();
         if !specialize_in_lane(cx, own, function, ahead, parameters, None) {

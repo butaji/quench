@@ -251,6 +251,27 @@ impl LaneView {
             && warm_clock().wrapping_sub(self.tier().warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
     }
 
+    /// Counts in place a warming entry that weighs nothing: one between `specialize_lane_body`'s
+    /// attempts (no warm-up count, doubling or recurrent look falls on it), or one inside a
+    /// compile's wait between looks (`awaits_look`). The tier prologue then skips the rest of the
+    /// entry's work (the AOT image lookup, the parameter sample, the compile work closure), about
+    /// 300 Ir an entry of a function that warms for good. Whether it counted the entry.
+    pub(super) fn counted_warm_entry(&self) -> bool {
+        // SAFETY: as `lane_body`; counting runs no lane body.
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
+        match body {
+            // The first entry starts the warm clock (`specialize_lane_body`), so it takes the whole path.
+            LaneBody::Unspecialized { entries, .. } if *entries > 0 => {
+                let next = entries.saturating_add(1);
+                if self.attempts_at(next) || self.recurrent(next) { return false; }
+                *entries = next;
+                true
+            }
+            LaneBody::Compiling { .. } => awaits_look(body),
+            _ => false,
+        }
+    }
+
     /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
     /// each doubling of it, so a function that has not paid for its compile yet looks again
     /// when it has done twice the work.
