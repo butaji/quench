@@ -14279,8 +14279,7 @@ fn body_entry_resumed(cx: *mut LaneContext, ip: Ip, r: Registers, view: Carried,
     // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
     // The activation just pushed is this entry's: its caller runs this function's records
     // where it is a recursive call.
-    let recursive = vm.lane_stack.top_frame().is_some_and(|activation| activation.caller_base() == base);
-    if own.audit_entry(true, || recursive) {
+    if own.audit_entry(true, || vm.lane_stack.top_frame().is_some_and(|activation| activation.caller_base() == base)) {
         return Resumed::At(r, base, Carried::script_in(cx, view));
     }
     // A body a lifecycle edge retired gives its prologue back and warms again.
