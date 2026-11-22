@@ -247,7 +247,6 @@ pub enum OwnedStep {
     LoadNameCall,
     LoadNameTypeof,
     StoreName,
-    LoadGlobalLexical,
     StoreGlobalLexical,
 }
 

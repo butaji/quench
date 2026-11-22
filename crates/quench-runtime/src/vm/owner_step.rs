@@ -32,15 +32,8 @@ impl Vm {
             OwnedStep::LoadNameCall => self.load_name_call_step(p, owner, i, pc),
             OwnedStep::LoadNameTypeof => self.load_name_typeof_step(p, owner, i, pc),
             OwnedStep::StoreName => self.store_name_step(p, owner, i, pc),
-            OwnedStep::LoadGlobalLexical => self.load_global_lexical_step(p, owner, i, pc),
             OwnedStep::StoreGlobalLexical => self.store_global_lexical_step(p, owner, i, pc),
         }
-    }
-
-    fn load_global_lexical_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
-        let value = self.global_lexical_load(p, owner, (i.imm(), i.cache_site_index()), pc)?;
-        self.set_owner_register(owner, i.result_register(), value);
-        Ok(())
     }
 
     fn store_global_lexical_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {

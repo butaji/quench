@@ -910,7 +910,7 @@ opcodes!($;
     StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; class StoreName; staged Names; step Body; owned StoreName; traits NAME_OPERATION GLOBAL_NAME_ACCESS NAME_STORE BY_NAME_ACCESS ROW_HANDLER OWNER_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     // `imm` is the declaration index of a script-top-level lexical (`global_declarations.lexical`); each
     // falls back to the by-name operation of its atom when the binding is not yet initialized.
-    LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; step Body; owned LoadGlobalLexical; traits BOXED_RESULT UNIT_REWRITTEN MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits BOXED_RESULT UNIT_REWRITTEN MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; step Body; owned StoreGlobalLexical; traits MAY_ALLOCATE, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(Register, Register, BooleanFlag),
     LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
