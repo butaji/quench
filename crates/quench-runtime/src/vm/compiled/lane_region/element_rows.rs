@@ -68,7 +68,7 @@ impl Lowering<'_, '_> {
             // A base no loop array holds, read by a register key: a string's unit (`string_or_row`).
             (None, Some(index)) => {
                 let string_within = self.ranges.string_in_bounds(pc);
-                self.string_or_row(state, (destination, base, index, key), string_within, exit)
+                self.string_or_row(state, pc, (destination, base, index, key), string_within, exit)
             }
             _ => {
                 let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination })
@@ -134,7 +134,9 @@ impl Lowering<'_, '_> {
     /// (`strings::string_char_at`), joined with the element row otherwise. A string the row does
     /// not read (a rope, a wide unit, a unit with no string yet, an index outside the string)
     /// leaves at `exit`, as the row leaves for a value that is no array.
-    fn string_or_row(&mut self, state: &mut State, (destination, base, index, key): (Register, Register, Register, crate::bytecode::Operand),
+    /// The row may change a register's representation (the key's int32 view) on its own path, so
+    /// the join meets the string path's state with the row's (`join_states`).
+    fn string_or_row(&mut self, state: &mut State, pc: usize, (destination, base, index, key): (Register, Register, Register, crate::bytecode::Operand),
         within: bool, exit: ir::Block) -> ir::Value {
         let bits = self.tagged(state, base);
         let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
@@ -158,11 +160,15 @@ impl Lowering<'_, '_> {
         };
         let joined = self.builder.append_block_param(join, ir::types::I64);
         self.goto(join, &[character]);
+        let mut string_state = state.clone();
         self.builder.switch_to_block(row);
         let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination })
             else { unreachable!("an element read yields a value or leaves at its miss edge") };
         self.goto(join, &[value]);
         self.builder.switch_to_block(join);
+        // The destination is defined from `joined` after the join.
+        string_state.values[usize::from(destination)] = state.values[usize::from(destination)];
+        self.join_states(state, &string_state, pc);
         joined
     }
 
