@@ -1,30 +1,16 @@
 # Tier-ladder inversion debt (quench-gate step `ir-budget`): `op tier` where the tier runs the op in more
-# instructions than the tier before it (b-jit > no-jit, u-jit > b-jit). Shrink-only: the gate drops an entry once
+# instructions than the tier before it (b-jit > no-jit; default-mode inversions live in tier_inversions_default.txt). Shrink-only: the gate drops an entry once
 # its op is in order and fails on any inversion not listed. Never add a line by hand.
-arr_push u-jit
-arr_store_dbl u-jit
-arr_store_int u-jit
-eq_str u-jit
-field_store u-jit
 int_mod b-jit
 int_mod_var b-jit
-int_mod_var u-jit
 int_mul_ovf b-jit
 k05_field_add b-jit
-k05_field_add u-jit
 k06_list b-jit
-k06_list u-jit
 k08_escape b-jit
 k09_reduce b-jit
-k10_f64_sum u-jit
-k11_saxpy u-jit
-k12_copy u-jit
-k14_bsearch u-jit
-k15_isort u-jit
 k17_hash b-jit
 k18_math b-jit
 k_dispatch b-jit
-k_dispatch u-jit
 k_nbody_pair b-jit
 k_str_build b-jit
 k_struct_sum b-jit
