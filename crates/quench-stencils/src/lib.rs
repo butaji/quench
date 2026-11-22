@@ -3,6 +3,7 @@
 use quench_bjit::rustc::{RawLibrary, RawStencil};
 
 mod generated {
+    #[allow(unused_imports)] // QUENCH_NO_STENCILS generates empty tables with no RawStencil
     use super::{RawLibrary, RawStencil};
     include!(concat!(env!("OUT_DIR"), "/rustc_stencils.rs"));
 }
