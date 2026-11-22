@@ -8765,7 +8765,9 @@ fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
         specialize_in_lane(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
-        if own.warming() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
+        // A body the model priced with the loop's work and found unpaid gains nothing from the loop asking
+        // again: the loop retires to its plain jump, which costs no countdown per back edge (TOD-2062).
+        if own.warming() && !own.body_unpaid() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
@@ -8786,6 +8788,14 @@ fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
     // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now, with the
     // `FUSED_TARGET` record where the header's target run holds (`update_fusion`'s `target`).
     if site.backedge > site.header {
+        // A header comparison that ran while the site held its loop took its formed instance (`row_jump`),
+        // which no target run names: it goes back to its plain row (and its record's `mode` to the zero of an
+        // unfused record), as the loader's `fuse_rows` saw it, so the back edge fuses the test again.
+        // SAFETY: the header is a record of the running view, on this thread.
+        if let Some(plain) = lane_frame::unformed_compare_jump(unsafe { (*header).handler }) {
+            unsafe { (*header.cast_mut()).mode = 0 };
+            requicken(header, plain);
+        }
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
         if let Some((fused, mode)) = update_fusion(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
