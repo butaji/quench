@@ -4733,6 +4733,7 @@ impl JsStepDispatch {
                 armed_array_proofs: crate::heap::armed_proofs_address(),
                 array_chain_index_free_address: crate::heap::index_free_chain_link_address(),
                 plain_depth: 0, plain_depth_limit: 0, body_table: 0, activation_count: 0, body_top: 0, native_table: 0,
+                pop_spilled_header: pop_spilled_header_in_lane as *const () as usize,
             },
             program_id: ProgramId::MAIN, frame: usize::MAX, allow_inline_calls: false, start_pc: 0,
             #[cfg(feature = "native-execution")]

@@ -47,7 +47,7 @@ use super::super::direct_callee::DirectCallee;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
-use crate::staged::frame::{ARGC_SHIFT, BODY_FLAG, PLAIN_FLAG};
+use crate::staged::frame::{ARGC_SHIFT, NATIVE_FLAG, PLAIN_FLAG};
 use quench_bjit::call::{self, CallRow, ThisRow};
 use quench_bjit::call_record::{CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
@@ -217,6 +217,11 @@ pub(super) struct DirectFacts {
     /// The site's callee register holds this callee by a Stable fact (`Callees::stable`): the body
     /// subscribes to the fact, so its change retires the body, and the row need not check the register.
     pub(super) held: bool,
+    /// The address of the callee's `DirectCallee`, which the body owns (`Callees::owned`, moved into the
+    /// published method or region whole, so the address holds): the native header's descriptor word
+    /// (`CallRecord::descriptor`), as the u-jit's `push_native` writes it. Zero where none is known yet
+    /// (an AOT record before its binding, `aot_image::bound`), which the row refuses to the helper.
+    pub(super) descriptor: u64,
 }
 
 impl DirectFacts {
@@ -244,6 +249,7 @@ impl DirectFacts {
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
             held,
+            descriptor: std::ptr::from_ref(callee).addr() as u64,
         }
     }
 
@@ -418,8 +424,9 @@ fn argument_places(plan: &CallPlan) -> [u8; PLACED_ARGUMENTS] {
 /// The direct row and the record it reads, whose address is its hole 0. `arguments` is the place each leading
 /// argument is passed from (`argument_places`).
 fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS], proven_args: u64) -> Result<(CallPart, Box<CallRecord>), String> {
-    // The callee's plain header: a body frame (BODY) of `argc` arguments in the callee's function.
-    let packed = u64::from(facts.function) | PLAIN_FLAG | BODY_FLAG | ((shape.argc as u64) << ARGC_SHIFT);
+    // The callee's plain header: a native frame (NATIVE, as the u-jit's `push_native` writes it) of `argc`
+    // arguments in the callee's function, which `native_frames::link_header` links by its descriptor.
+    let packed = u64::from(facts.function) | PLAIN_FLAG | NATIVE_FLAG | ((shape.argc as u64) << ARGC_SHIFT);
     let record = Box::new(CallRecord {
         proven_args,
         callee: facts.callee,
@@ -435,7 +442,7 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
         args_register: shape.window,
         result_register: shape.result,
         argument_places: arguments,
-        descriptor: 0,
+        descriptor: facts.descriptor,
         env: facts.env,
         capture: facts.capture,
     });

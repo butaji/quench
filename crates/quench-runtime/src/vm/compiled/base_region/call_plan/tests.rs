@@ -5,7 +5,7 @@ const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, 
 
 fn facts(registers: u16, params: u16) -> DirectFacts {
     let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-    DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers, construction: false, held: false }
+    DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers, construction: false, held: false, descriptor: 0 }
 }
 
 /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
