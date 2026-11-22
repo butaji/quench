@@ -60,7 +60,7 @@ impl Emit<'_, '_> {
     fn widen(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::ZeroExtend(Lane::I64), a) }
 }
 
-quench_runtime::stage!(Emit<'_, '_>);
+quench_runtime::projection!(Emit<'_, '_> => Emit);
 
 impl Stage for Emit<'_, '_> {
     type Proof = super::super::EmitProof;

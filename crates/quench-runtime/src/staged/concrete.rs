@@ -40,7 +40,7 @@ impl Concrete {
     }
 }
 
-crate::stage!(Concrete);
+crate::projection!(Concrete => Concrete);
 
 impl Stage for Concrete {
     type Word = u64;

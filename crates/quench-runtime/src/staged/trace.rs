@@ -36,7 +36,7 @@ impl Trace {
     }
 }
 
-crate::stage!(Trace);
+crate::projection!(Trace => Concrete);
 
 impl Stage for Trace {
     type Word = u32;

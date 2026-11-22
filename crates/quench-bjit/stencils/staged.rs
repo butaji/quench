@@ -1,7 +1,6 @@
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/word_ops.rs"] pub(crate) mod word_ops;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use stage::{StagedRecordSpace, Stage, Table, word_bytes, word_offset, Passed};
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use stage::__sealed;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) type Concrete = crate::stage::StencilStage;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/region.rs"] pub(crate) mod region;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;

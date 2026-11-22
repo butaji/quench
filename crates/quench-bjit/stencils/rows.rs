@@ -71,6 +71,8 @@ mod places_heap;
 mod places_view;
 #[cfg(not(stencil_family = "wasm"))]
 mod places_names;
+#[path = "../../quench-stack/src/projection.rs"]
+pub(crate) mod projection;
 #[cfg(not(stencil_family = "wasm"))]
 mod stage;
 mod staged;
