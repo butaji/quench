@@ -358,6 +358,12 @@ unsafe fn lane_allocate_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
 /// `LANE_CALL_BRANCHED` where it does not (the record jumps); `None` for any other record or pair, which the
 /// general step makes.
 ///
+/// It runs before any frame is linked or made the context's (`native_frames::in_innermost_frame`), so the operands
+/// are read from the running body's own window: a native callee's frame, linked or not, where one runs on top (the
+/// context still holds the activation the lane's native code was entered in, whose registers are another call's:
+/// earley-boyer's `lst1 === null` read its caller's `lst1`), else the context's registers. A native frame's
+/// comparison over a local operand, which the context's environment would answer, is the general step's.
+///
 /// # Safety
 /// As `body_general_step`.
 unsafe fn decided_compare_jump(cx: *mut LaneContext, call_pc: u64) -> Option<u64> {
@@ -366,7 +372,14 @@ unsafe fn decided_compare_jump(cx: *mut LaneContext, call_pc: u64) -> Option<u64
     let body = unsafe { &*(*cx).code }.function(running_function_in_lane(cx) as usize);
     let instruction = body.widened(*body.code.get(call_pc as usize)?);
     if instruction.op() != crate::bytecode::Op::JumpBinaryFalse || instruction.result_flags() != 0 { return None; }
-    let r = unsafe { (*cx).registers };
+    let stack = &unsafe { vm(cx) }.lane_stack;
+    let r = if stack.top_is_native() || stack.top_native().is_some() {
+        let local = |encoded: u16| crate::bytecode::Operand(encoded).kind() == Some(crate::bytecode::OperandKind::Local);
+        if local(instruction.operand_b().0) || local(instruction.operand_c().0) { return None; }
+        Registers(stack.top_frame()?.window_ptr())
+    } else {
+        unsafe { (*cx).registers }
+    };
     let (left, right) = (operand_value_in_lane(cx, r, instruction.operand_b().0)?, operand_value_in_lane(cx, r, instruction.operand_c().0)?);
     let holds = comparison_decision(unsafe { vm(cx) }, instruction.binary_operator_field(), left, right)?;
     Some(if holds { LANE_CALL_COMPLETED } else { LANE_CALL_BRANCHED })
