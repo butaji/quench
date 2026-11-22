@@ -1188,12 +1188,18 @@ pub(super) struct LaneTier {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// The warming tick (`body_tier_in_lane::warm_ticks`) of the entry its body began warming at, which a function
-    /// entered rarely but for long (`LaneView::recurrent`) specializes by.
+    /// The warming tick (`LaneView::weigh_entry`, `ProgramStore::warming_tick`) of the entry its
+    /// body began warming at, which a function entered rarely but for long
+    /// (`LaneView::recurrent`) specializes by.
     warm_since: std::cell::Cell<u32>,
     /// Counts each specialization attempt (`LaneView::specialize_lane_body`): a loop site's refused
     /// compile is retried once this moves (`LoopSite::refuse_warming`).
     body_epoch: std::cell::Cell<u32>,
+    /// The entry count at which its body next weighs a compile (`LaneView::weigh_entry`): the
+    /// ones `attempts_at` and `recurrent` name. The lane's prologue row compares against it per
+    /// entry, so the warm-up costs a load and a compare instead of a division, a thread clock
+    /// and a body-state transition.
+    next_weigh: std::cell::Cell<u32>,
     /// Every body it published, kept until the view drops: a native frame running a body that
     /// retired recovers its leave through `Activation::body`.
     pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
@@ -1218,6 +1224,7 @@ impl Default for LaneTier {
             tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
             warm_since: std::cell::Cell::new(0),
             body_epoch: std::cell::Cell::new(0),
+            next_weigh: std::cell::Cell::new(0),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
             audit_epochs: Default::default(),
@@ -8684,7 +8691,7 @@ script_handler! {
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
-fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: bool, parameters: &[Value], looped: Option<(u64, u64)>) -> bool {
+fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: bool, parameters: &[Value], looped: Option<(u64, u64)>, tick: u32) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -8743,10 +8750,10 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     };
     let published = own.entry_published();
     let warming = if now {
-        own.specialize_lane_body_now(body_entry_row(), looped.is_some(), specialize);
+        own.specialize_lane_body_now(body_entry_row(), looped.is_some(), specialize, tick);
         own.body_view_in_lane().is_some()
     } else {
-        own.specialize_lane_body(body_entry_row(), false, specialize)
+        own.specialize_lane_body(body_entry_row(), false, specialize, tick)
     };
     // Every cell body is published here (`tier_machine::publish` from `specialized`): the
     // proved calls of the view, which skip the cell body, lose their proof.
@@ -8788,7 +8795,8 @@ fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
     if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
-        specialize_in_lane(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
+        let tick = unsafe { vm(cx) }.programs.warming_tick();
+        specialize_in_lane(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())), tick);
         if own.warming() && site.body.borrow().pending() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
@@ -14263,7 +14271,15 @@ fn tier_prologue_resumed(cx: *mut LaneContext, r: Registers, view: Carried, func
     let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
     let entered = own
         .and_then(|own| tier_direct_in_lane(vm, own, parameters))
-        .or_else(|| tier_enter_in_lane(cx, function, own, parameters));
+        .or_else(|| {
+            // A warming body counts its entries here (`LaneView::weigh_entry`): only the counts its
+            // schedule names reach the specialization.
+            if let Some(own) = own && vm.programs.js_jit_lane_methods_enabled() {
+                let tick = own.weigh_entry(&vm.programs)?;
+                return tier_enter_in_lane(cx, function, Some(own), parameters, tick);
+            }
+            tier_enter_in_lane(cx, function, own, parameters, 0)
+        });
     if let Some((pc, register, value)) = entered {
         r.set(register, value);
         // SAFETY: the tier returns a PC of the function, whose records are contiguous.
@@ -14459,6 +14475,7 @@ fn tier_enter_in_lane(
     function: u32,
     own: Option<&LaneView>,
     parameters: &[Value],
+    tick: u32,
 ) -> Option<(usize, crate::bytecode::Register, Value)> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the activation just set the context to its own function's.
@@ -14477,7 +14494,7 @@ fn tier_enter_in_lane(
         }
         // A function of a program with a loaded AOT image takes its body at its first entry, no warm-up.
         let ahead = vm.programs.ahead_images(program, code).is_some();
-        if !specialize_in_lane(cx, own, function, ahead, parameters, None) {
+        if !specialize_in_lane(cx, own, function, ahead, parameters, None, tick) {
             own.release_from_tier();
         }
         return None;

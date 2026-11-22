@@ -56,16 +56,6 @@ const RECURRENT_TICKS: u32 = 256;
 /// The most times a dropped body doubles the warm-up of the next.
 const MAX_DOUBLINGS: u8 = 7;
 
-/// The warming entries every function has counted so far: a clock of the work the program does
-/// while its functions warm, which, unlike wall time, a rerun repeats.
-fn warm_ticks() -> u32 {
-    thread_local! { static TICKS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
-    TICKS.with(|ticks| { let next = ticks.get().wrapping_add(1); ticks.set(next); next })
-}
-
-/// The reading `warm_ticks` would give next, without counting.
-fn warm_clock() -> u32 { warm_ticks().wrapping_sub(1) }
-
 /// What a body whose leaves reached the reoptimization threshold does next: it specializes
 /// again, these places generically, until `max_recompiles` bodies have; the last of them has
 /// every place any body left at generic, and is permanent. A body never retires to the lane.
@@ -199,6 +189,7 @@ impl LaneView {
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         super::super::tier_machine::withdraw(&self.entry, body_state, event);
         self.tier().retired.borrow_mut().push(method);
+        self.refresh_weigh();
     }
 
     /// Books its current body's runs to its history (`LaneBodyHistory::runs`) as the body goes.
@@ -244,9 +235,9 @@ impl LaneView {
     /// are hot) costs more than the many cheap entries the warm-up counts, and its callees'
     /// bodies run from the lane until it specializes and inlines them. Read every
     /// `RECURRENT_ENTRIES`th entry.
-    fn recurrent(&self, entries: u32) -> bool {
+    fn recurrent(&self, entries: u32, tick: u32) -> bool {
         entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.tier().history.get().lifetimes == 0
-            && warm_clock().wrapping_sub(self.tier().warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
+            && tick.wrapping_sub(1).wrapping_sub(self.tier().warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
     }
 
     /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
@@ -255,6 +246,51 @@ impl LaneView {
     fn attempts_at(&self, entries: u32) -> bool {
         let warmup = self.warmup_entries();
         entries % warmup == 0 && (entries / warmup).is_power_of_two()
+    }
+
+    /// Counts an entry of a warming body in the lane's prologue row; whether the body weighs this
+    /// one (`specialize_lane_body`). A body in any other state weighs every entry, and so does one
+    /// whose schedule names no count past this one.
+    #[inline(always)]
+    pub(in crate::vm) fn weigh_entry(&self, programs: &super::program_store::ProgramStore) -> Option<u32> {
+        // SAFETY: as `lane_body`; the view runs on the lane's thread.
+        match unsafe { &mut *self.tier().tier_lane.get() } {
+            LaneBody::Unspecialized { entries, .. } => {
+                let tick = programs.warming_tick();
+                let count = entries.saturating_add(1);
+                *entries = count;
+                // The first entry of a warm-up fixes the clock `recurrent` is measured from.
+                if count == 1 { self.tier().warm_since.set(tick); }
+                (count >= self.tier().next_weigh.get()).then_some(tick)
+            }
+            _ => Some(0),
+        }
+    }
+
+    /// Re-derives the entry count its body next weighs (`LaneTier::next_weigh`) from the state it
+    /// holds. Every state change refreshes it, so the prologue row decides an entry with one
+    /// compare instead of the warm-up's modulo, thread clock and state transition.
+    pub(super) fn refresh_weigh(&self) {
+        // SAFETY: as `lane_body`; the view runs on the lane's thread.
+        let next = match unsafe { &*self.tier().tier_lane.get() } {
+            LaneBody::Unspecialized { entries, .. } => self.next_weigh_after(*entries),
+            _ => 0,
+        };
+        self.tier().next_weigh.set(next);
+    }
+
+    /// The count after `entries` that its body weighs: the warm-up and each doubling of it
+    /// (`attempts_at`), or the next `RECURRENT_ENTRIES`th entry (`recurrent`), whichever is first.
+    fn next_weigh_after(&self, entries: u32) -> u32 {
+        let warmup = self.warmup_entries().max(1);
+        let attempts = u64::from(entries) / u64::from(warmup) + 1;
+        let scheduled = u64::from(warmup).saturating_mul(attempts.next_power_of_two()).min(u64::from(u32::MAX)) as u32;
+        let recurrent = if self.tier().history.get().lifetimes == 0 {
+            (entries / RECURRENT_ENTRIES + 1).saturating_mul(RECURRENT_ENTRIES)
+        } else {
+            u32::MAX
+        };
+        scheduled.min(recurrent)
     }
 
     /// Whether `entries`, an attempt's count, is the last the warm-up schedule can name: the
@@ -286,6 +322,7 @@ impl LaneView {
             *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
             self.reclaim_for_tier();
         }
+        self.refresh_weigh();
         self.warming()
     }
 
@@ -346,6 +383,7 @@ impl LaneView {
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         super::super::tier_machine::withdraw(&self.entry, body_state, TierEvent::Demote);
         self.tier().retired.borrow_mut().push(method);
+        self.refresh_weigh();
     }
 
     /// A compile a lifecycle edge outran counts as a dropped body: no run
@@ -370,6 +408,7 @@ impl LaneView {
         });
         super::super::tier_machine::withdraw(&self.entry, body.tier_state(), TierEvent::Demote);
         *body = LaneBody::Unspecialized { entries: 0, recompiles, stuck };
+        self.refresh_weigh();
     }
 
     /// The body a just published method makes of this view.

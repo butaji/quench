@@ -449,7 +449,10 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         return leave(start, Value::UNDEFINED)
     };
     let respecializes = own.respecializes();
-    if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, respecializes, &[], None); }
+    if respecializes || own.body_view_in_lane().is_none() {
+        let tick = unsafe { super::vm(cx) }.programs.warming_tick();
+        specialize_in_lane(cx, own, target.function, respecializes, &[], None, tick);
+    }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         if crate::trace::Channel::BodyLeave.on() {

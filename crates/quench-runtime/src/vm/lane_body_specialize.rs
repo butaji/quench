@@ -28,7 +28,15 @@ impl LaneView {
     /// the body is still warming or specialized, so its prologue stays. A specialized body is
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
-    pub(in super::super) fn specialize_lane_body(&self, entry: Handler, looped: bool, work: impl FnOnce(super::super::super::compiled::LaneBodyWork) -> super::super::super::compiled::LaneBodyOutcome) -> bool {
+    pub(in super::super) fn specialize_lane_body(&self, entry: Handler, looped: bool, work: impl FnOnce(super::super::super::compiled::LaneBodyWork) -> super::super::super::compiled::LaneBodyOutcome, tick: u32) -> bool {
+        let keeps = self.weigh_this_entry(entry, looped, work, tick);
+        self.refresh_weigh();
+        keeps
+    }
+
+    /// The body's attempt or count: what `specialize_lane_body` leaves the state as. `entries`
+    /// counts this entry already (`LaneView::weigh_entry`), and `tick` is its warming clock.
+    fn weigh_this_entry(&self, entry: Handler, looped: bool, work: impl FnOnce(super::super::super::compiled::LaneBodyWork) -> super::super::super::compiled::LaneBodyOutcome, tick: u32) -> bool {
         if self.declined_by_mode() { return false; }
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
@@ -36,21 +44,19 @@ impl LaneView {
         if awaits_look(body) { return true; }
         let (outcome, entries, recompiles, stuck, looks) = match std::mem::replace(body, LaneBody::Declined) {
             // A looping caller's trips ask for the attempt at once: its entries may not advance (a single call).
-            LaneBody::Unspecialized { entries, recompiles, stuck } if looped || self.attempts_at(entries.saturating_add(1)) || self.recurrent(entries.saturating_add(1)) => {
+            LaneBody::Unspecialized { entries, recompiles, stuck } if looped || self.attempts_at(entries) || self.recurrent(entries, tick) => {
                 if !self.affords_compile() {
                     *body = LaneBody::Unspecialized { entries, recompiles, stuck };
                     return false;
                 }
                 super::super::super::compiled::base_region::count(super::super::super::compiled::base_region::Event::BodyCompile);
-                if !self.attempts_at(entries.saturating_add(1)) { super::super::super::compiled::base_region::count(super::super::super::compiled::base_region::Event::BodyRecurrent); }
+                if !self.attempts_at(entries) { super::super::super::compiled::base_region::count(super::super::super::compiled::base_region::Event::BodyRecurrent); }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
+                (work(super::super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries).then_some(entries), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
-                let ticks = warm_ticks();
-                if entries == 0 { self.tier().warm_since.set(ticks); }
-                *body = LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck };
+                *body = LaneBody::Unspecialized { entries, recompiles, stuck };
                 return true;
             }
             LaneBody::Compiling { pending, recompiles, stuck, looks, .. } =>
@@ -111,13 +117,13 @@ impl LaneView {
                 self.note_dropped_compile();
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
-            super::super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
+            super::super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries, recompiles, stuck },
             // A b-jit body serves it better: the entry stitches that body (`Vm::base_body_work`), and the u-jit body waits.
-            super::super::super::compiled::LaneBodyOutcome::Base => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
+            super::super::super::compiled::LaneBodyOutcome::Base => LaneBody::Unspecialized { entries, recompiles, stuck },
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             super::super::super::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
-                let next = entries.saturating_add(1);
+                let next = entries;
                 // The attempts double with each warm-up; past the last one the counter can
                 // name, the model has priced every entry this function can give and refused.
                 // The lane would keep running it through its records for nothing, slower than
@@ -139,9 +145,9 @@ impl LaneView {
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
     /// its calls, so their sites have linked (`lane_loop_retire`).
-    pub(in super::super) fn specialize_lane_body_now(&self, entry: Handler, looped: bool, specialize: impl FnOnce(super::super::super::compiled::LaneBodyWork) -> super::super::super::compiled::LaneBodyOutcome) {
+    pub(in super::super) fn specialize_lane_body_now(&self, entry: Handler, looped: bool, specialize: impl FnOnce(super::super::super::compiled::LaneBodyWork) -> super::super::super::compiled::LaneBodyOutcome, tick: u32) {
         self.skip_warm_up();
-        self.specialize_lane_body(entry, looped, specialize);
+        self.specialize_lane_body(entry, looped, specialize, tick);
         // Its entries are few (the loop is what is hot): the next one compiles where this one
         // waited for its callees' bodies (`LaneBodyOutcome::Deferred`).
         self.skip_warm_up();
@@ -155,5 +161,6 @@ impl LaneView {
         {
             *entries = u32::from(self.tiers.lane_body.warmup()) - 1;
         }
+        self.refresh_weigh();
     }
 }
