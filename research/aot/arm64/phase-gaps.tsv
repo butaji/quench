@@ -27,3 +27,10 @@ micro	plain (three locals, same arithmetic)	1.36	4.23	0.74	1.9x faster than Node
 micro	ops (new Vec x2, a.add(b) x1, six field reads, a.dot(b) x1)	73.22	6.77	2.71	10.8x slower than Node, 27x slower than Bun: this is raytrace's actual pattern	-
 micro	opsMut (same, callee mutates this instead of constructing)	70.48	4.73	2.45	removing the callee's construction saves 2.7 ns of 73 (3.7%), i.e. one construction is ~2.7 ns and the pattern's three are ~11% of it	-
 micro	where the 73 ns goes	-	-	-	calls and property reads, not allocation: even with the callee construction-free the loop is 70 ns against Bun's 2.45 (29x). A prototype that only removes allocations cannot move this	-
+# Per-operation breakdown of the raytrace pattern (ns/iter, 3M iterations)
+micro	callConst (call a method returning 7)	10.37	0.42	0.43	full activation call, no inline form exists for a constant body	-
+micro	callField (call a method returning this.x)	7.82	0.44	0.43	already inlined by the Reads form (`CallEntry::Reads`), so 4.8 ns of the 7.8 is the call-site machinery itself (the read is 3.0)	call_body_forms.rs
+micro	callAdd (call returning this.x + o.x)	13.54	0.46	0.47	two field reads plus the call	-
+micro	fieldOnly (a.x)	3.00	0.46	0.33	the interpreter's per-field floor	-
+micro	newOnly (new V(i,i,i); v.x)	2.01	1.00	1.29	construction is already competitive (faster than Node and Bun here)	-
+micro	ops decomposition	73 ns = calls ~20 + 6 reads ~18 + 3 constructions ~6 + ~9 arithmetic rows ~15 + loop ~10	-	-	with a *perfect* call (0 ns) the loop is still ~53 ns against Bun's 2.71: the floor is the interpreter's ~3 ns per operation across ~20 operations, not any single fast path	-
