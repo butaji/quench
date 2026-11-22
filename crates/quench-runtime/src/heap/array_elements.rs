@@ -188,7 +188,7 @@ const MIN_GROWN_CAPACITY: usize = 4;
 
 /// Packed to four bytes: an array record (`ArrayObject`) holds it in its 4-aligned payload word.
 #[repr(C, packed(4))]
-pub(crate) struct ArrayElements {
+pub struct ArrayElements {
     header: NonNull<Header>,
 }
 
@@ -510,7 +510,7 @@ impl ArrayElements {
 
     /// The value at `index`, or `None` past the length.
     #[inline(always)]
-    pub(crate) fn get(&self, index: usize) -> Option<Value> {
+    pub fn get(&self, index: usize) -> Option<Value> {
         (index < self.len()).then(|| self.read(index))
     }
 
@@ -554,13 +554,13 @@ impl ArrayElements {
 
     /// `values_cow`.
     #[inline]
-    pub(crate) fn as_slice(&self) -> std::borrow::Cow<'_, [Value]> {
+    pub fn as_slice(&self) -> std::borrow::Cow<'_, [Value]> {
         self.values_cow()
     }
 
     /// The values as a slice: borrowed from a wide backing, decoded from a narrow one.
     #[inline]
-    pub(crate) fn values_cow(&self) -> std::borrow::Cow<'_, [Value]> {
+    pub fn values_cow(&self) -> std::borrow::Cow<'_, [Value]> {
         if self.is_encoded() {
             std::borrow::Cow::Owned(self.to_vec())
         } else {

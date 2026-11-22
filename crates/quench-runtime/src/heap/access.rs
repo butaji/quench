@@ -253,14 +253,14 @@ impl Heap {
 
     /// An iterator's record (`IteratorRecord`).
     #[inline(always)]
-    pub(crate) fn iterator(&self, value: Value) -> Option<&IteratorRecord> {
+    pub fn iterator(&self, value: Value) -> Option<&IteratorRecord> {
         let record_id = value.direct_iterator_index()?;
         // SAFETY: a direct-iterator Value names an initialized iterator record.
         Some(unsafe { self.iterator_records.get_live(record_id) })
     }
 
     /// `iterator`, mutably, past the write barrier.
-    #[inline(always)] pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
+    #[inline(always)] pub fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
         let record_id = value.direct_iterator_index()?;
         // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
         Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) })
@@ -297,7 +297,7 @@ impl Heap {
 
     /// The string `value` names, if it is one.
     #[inline(always)]
-    pub(crate) fn string(&self, value: Value) -> Option<&crate::vm::wtf16::JsString> {
+    pub fn string(&self, value: Value) -> Option<&crate::vm::wtf16::JsString> {
         let record_id = value.direct_string_index()?;
         // SAFETY: string Values come only from `alloc_string` and stay live while reachable.
         Some(unsafe { self.string_record_by_id(record_id) })
@@ -314,7 +314,7 @@ impl Heap {
 
     /// Whether `value` is a string.
     #[inline(always)]
-    pub(crate) fn is_string(&self, value: Value) -> bool {
+    pub fn is_string(&self, value: Value) -> bool {
         value.direct_string_index().is_some()
     }
 
@@ -392,7 +392,7 @@ impl Heap {
         Some(unsafe { self.function_records.get_live_mut(record_id, &self.properties) })
     }
 
-    #[inline(always)] pub(crate) fn is_function_value(&self, value: Value) -> bool {
+    #[inline(always)] pub fn is_function_value(&self, value: Value) -> bool {
         self.function(value).is_some()
     }
 
@@ -617,7 +617,7 @@ impl Heap {
 
     /// An array, in its array record (`ArrayObject`).
     #[inline]
-    pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
+    pub fn array(&self, value: Value) -> Option<&ArrayObject> {
         self.record_array(value)
     }
 
@@ -683,7 +683,7 @@ impl Heap {
     }
 
     /// An array's dense element backing, whether it lives in a record or a slot.
-    pub(crate) fn array_elements(&self, value: Value) -> Option<&super::ArrayElements> {
+    pub fn array_elements(&self, value: Value) -> Option<&super::ArrayElements> {
         self.array(value).map(ArrayObject::elements)
     }
 
@@ -778,7 +778,7 @@ impl Heap {
         }
     }
 
-    #[inline] pub(crate) fn object_record(&self, value: Value) -> Option<&Object> {
+    #[inline] pub fn object_record(&self, value: Value) -> Option<&Object> {
         let record_id = value.direct_object_index()?;
         Some(self.object_record_by_id(record_id))
     }

@@ -157,7 +157,7 @@ pub(crate) fn take_materialized_text() -> MaterializedText {
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
 /// unit is ASCII, UTF-16 otherwise. `host` is the explicit lossy Rust-text view used at
 /// host/API boundaries; an ASCII string is its own host text.
-pub(crate) struct JsString {
+pub struct JsString {
     repr: Repr,
 }
 
@@ -451,7 +451,7 @@ impl FlatUnits {
 
 /// A borrowed run of a string's code units.
 #[derive(Clone, Copy)]
-pub(crate) enum Units<'a> {
+pub enum Units<'a> {
     /// ASCII units: bytes that are UTF-8 as they stand.
     Ascii(&'a [u8]),
     /// Latin-1 units: one byte per unit, which is the unit's value, not UTF-8.
@@ -460,7 +460,7 @@ pub(crate) enum Units<'a> {
 }
 
 impl<'a> Units<'a> {
-    pub(crate) fn len(self) -> usize {
+    pub fn len(self) -> usize {
         match self {
             Self::Ascii(bytes) | Self::Latin1(bytes) => bytes.len(),
             Self::Wide(units) => units.len(),
@@ -486,7 +486,7 @@ impl<'a> Units<'a> {
         }
     }
 
-    pub(crate) fn iter(self) -> UnitsIter<'a> {
+    pub fn iter(self) -> UnitsIter<'a> {
         match self {
             Self::Ascii(bytes) => UnitsIter::Ascii(bytes.iter()),
             Self::Latin1(bytes) => UnitsIter::Latin1(bytes.iter()),
@@ -503,7 +503,7 @@ impl<'a> Units<'a> {
         }
     }
 
-    pub(crate) fn get_range(self, range: Range<usize>) -> Option<Self> {
+    pub fn get_range(self, range: Range<usize>) -> Option<Self> {
         match self {
             Self::Ascii(bytes) => bytes.get(range).map(Self::Ascii),
             Self::Latin1(bytes) => bytes.get(range).map(Self::Latin1),
@@ -624,7 +624,7 @@ impl std::fmt::Debug for Units<'_> {
 }
 
 #[derive(Clone)]
-pub(crate) enum UnitsIter<'a> {
+pub enum UnitsIter<'a> {
     Ascii(std::slice::Iter<'a, u8>),
     Latin1(std::slice::Iter<'a, u8>),
     Wide(std::slice::Iter<'a, u16>),
@@ -1004,12 +1004,12 @@ impl JsString {
         }
     }
 
-    pub(crate) fn from_units(units: &[u16]) -> Self {
+    pub fn from_units(units: &[u16]) -> Self {
         Self::from_flat(flat_units(units))
     }
 
     /// The string of `units`, sharing their storage when it is already canonical.
-    pub(crate) fn from_unit_run(units: Units<'_>) -> Self {
+    pub fn from_unit_run(units: Units<'_>) -> Self {
         match units {
             // SAFETY: `Units::Ascii` only views an ASCII `FlatUnits`, and every run of ASCII
             // bytes is UTF-8.
@@ -1052,7 +1052,7 @@ impl JsString {
         Self::from_flat(FlatUnits::ascii(unsafe { std::str::from_utf8_unchecked(&text) }))
     }
 
-    pub(crate) fn from_str(text: &str) -> Self {
+    pub fn from_str(text: &str) -> Self {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
         }
@@ -1102,7 +1102,7 @@ impl JsString {
     }
 
     #[inline]
-    pub(crate) fn units(&self) -> Units<'_> {
+    pub fn units(&self) -> Units<'_> {
         self.flat().view()
     }
 
@@ -1381,7 +1381,7 @@ impl JsString {
     }
 
     /// The string as host text: its own units when ASCII, lossy UTF-8 made once otherwise.
-    pub(crate) fn host_string(&self) -> &str {
+    pub fn host_string(&self) -> &str {
         if let Some(host) = self.unflattened_host() {
             return host;
         }

@@ -364,6 +364,14 @@ impl Vm {
             | Native::TemporalNowPlainTimeISO
             | Native::TemporalNowTimeZoneId
             | Native::TemporalNowZonedDateTimeISO => self.temporal_now_native(p, native, args),
+            Native::TemporalPlainMonthDayToString
+            | Native::TemporalPlainMonthDayToJSON
+            | Native::TemporalPlainMonthDayToLocaleString
+            | Native::TemporalPlainYearMonthToString
+            | Native::TemporalPlainYearMonthToJSON
+            | Native::TemporalPlainYearMonthToLocaleString => {
+                crate::temporal_date_projection::native(self, p, native, this, args)
+            }
             _ => unreachable!("not an Intl or Temporal native: {native:?}"),
         }
     }

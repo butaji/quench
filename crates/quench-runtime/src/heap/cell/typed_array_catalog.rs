@@ -10,7 +10,7 @@ macro_rules! typed_array_kinds {
     (@count $head:ident $($tail:ident)*) => { 1 + typed_array_kinds!(@count $($tail)*) };
     ($($name:ident => $native:literal),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum TypedArrayKind {
+        pub enum TypedArrayKind {
             $($name),+
         }
 

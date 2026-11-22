@@ -246,7 +246,7 @@ impl Vm {
         outcome
     }
 
-    pub(super) fn get_symbol_property_with_receiver(
+    pub fn get_symbol_property_with_receiver(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -307,7 +307,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn get_property(
+    pub fn get_property(
         &mut self,
         p: &ResidualProgram,
         object: Value,

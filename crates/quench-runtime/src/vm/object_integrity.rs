@@ -201,7 +201,7 @@ impl Vm {
         Ok(result)
     }
 
-    pub(super) fn object_get_prototype_of(
+    pub fn object_get_prototype_of(
         &mut self,
         p: &ResidualProgram,
         value: Value,

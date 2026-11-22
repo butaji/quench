@@ -11,7 +11,7 @@ use core::sync::atomic::AtomicBool;
 
 /// The words of an ordinary object's record (`heap::cell::Object`): its payload word and its layout id.
 #[repr(C, packed(4))]
-pub(crate) struct ObjectHead {
+pub struct ObjectHead {
     /// One word: with `ObjectExtras`, `EXTRAS_TAG` and a pointer to them; without extras, the inline values as
     /// narrow values, or the storage position (`ValueVec`'s start), or an array's element backing.
     pub(crate) payload: u64,

@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 
 const INLINE_ARGUMENT_CAPACITY: usize = 8;
 
-pub(super) struct CallArguments {
+pub struct CallArguments {
     values: SmallVec<[Value; INLINE_ARGUMENT_CAPACITY]>,
 }
 

@@ -212,7 +212,7 @@ impl Vm {
         proto.is_null() || self.iterator_absence_proved(proto, key) || self.plain_property_lookup(proto, key) == Some(None)
     }
 
-    pub(super) fn iterator_step_value(
+    pub fn iterator_step_value(
         &mut self,
         p: &ResidualProgram,
         iterator: Value,
@@ -1035,7 +1035,7 @@ impl Vm {
         Ok(iterator)
     }
 
-    pub(super) fn get_iterator(
+    pub fn get_iterator(
         &mut self,
         p: &ResidualProgram,
         source: Value,
@@ -2126,7 +2126,7 @@ impl Vm {
         Ok(values)
     }
 
-    pub(super) fn iterator_get_direct(
+    pub fn iterator_get_direct(
         &mut self,
         p: &ResidualProgram,
         iterator: Value,
@@ -3337,7 +3337,7 @@ impl Vm {
         result
     }
 
-    pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
+    pub fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
         let prototype = self.realm_object_prototype(self.realm.globals);
         // Its two slots are the inline ones, so the header of the realm's prototype and the
         // shape, derived once, makes every result (`Heap::alloc_object_from_header`).

@@ -120,7 +120,7 @@ impl Vm {
         self.heap.alloc_function(record)
     }
 
-    pub(super) fn function_realm(
+    pub fn function_realm(
         &mut self,
         p: &ResidualProgram,
         function: Value,
@@ -625,7 +625,7 @@ impl Vm {
 
     /// `realm`'s `Object.prototype`: the VM field for the active realm, which follows it
     /// (`REALM_FOLLOWING_PROTOTYPES`), and the intrinsics table for any other.
-    pub(super) fn realm_object_prototype(&self, realm: Value) -> Value {
+    pub fn realm_object_prototype(&self, realm: Value) -> Value {
         if realm == self.realm.globals {
             return self.object_proto;
         }
@@ -650,7 +650,7 @@ impl Vm {
             .unwrap_or(self.function_proto)
     }
 
-    pub(super) fn construct_value(
+    pub fn construct_value(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
@@ -1025,7 +1025,7 @@ impl Vm {
     /// `Get(constructor, "prototype")` of GetPrototypeFromConstructor: an own data property
     /// read in place (`own_function_prototype_data`), which runs no guest code, and any
     /// other through [[Get]].
-    pub(super) fn constructor_prototype_value(
+    pub fn constructor_prototype_value(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,
@@ -1127,7 +1127,7 @@ impl Vm {
     /// `realm`'s `Array.prototype`. The active realm's is the field that follows it
     /// (`Vm::realm_prototype_field`), read without the table.
     #[inline(always)]
-    pub(super) fn array_prototype_for_realm(&self, realm: Value) -> Value {
+    pub fn array_prototype_for_realm(&self, realm: Value) -> Value {
         if realm == self.realm.globals {
             return self.array_proto;
         }

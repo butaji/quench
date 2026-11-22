@@ -32,7 +32,7 @@ impl ArrayObject {
         Self { object }
     }
 
-    pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
+    pub fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
         let elements = elements.into();
         // Without extras before or after, the array form is a function of the object's layout
         // alone (its payload ends as the empty position): the last ones are kept.

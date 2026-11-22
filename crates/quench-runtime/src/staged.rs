@@ -24,7 +24,7 @@ mod concrete;
 mod word_ops;
 pub(crate) mod numeric;
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
-pub(crate) mod layout_offsets;
+pub mod layout_offsets;
 /// The head of the dispatch payload, which the runtime embeds and the stencils take offsets from.
 pub(crate) mod js_step_head;
 pub(crate) mod record_heads;
@@ -32,7 +32,7 @@ pub(crate) mod encodings;
 /// The value encoding (tags, handle bits, narrow layout), shared with the stencils.
 pub(crate) mod value_encoding;
 /// The field cache entry's stored words and complement encoding, shared with the stencils.
-pub(crate) mod field_cache_layout;
+pub mod field_cache_layout;
 /// The object, array and record words (storage forms, tags, prototype ranges, record blocks), shared with the stencils.
 pub(crate) mod object_encoding;
 /// The head of an object's extras record (inline values, arena start, element backing).
@@ -93,7 +93,7 @@ pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
 pub(crate) mod add;
-pub(crate) mod add_plan;
+pub mod add_plan;
 pub(crate) mod elements;
 pub(crate) mod double_view;
 pub(crate) mod element_rows;

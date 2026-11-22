@@ -4,7 +4,7 @@ use crate::bytecode::Atom;
 
 /// A set of atoms as one bit per atom index, so membership is a word's bit.
 #[derive(Clone, Default)]
-pub(super) struct AtomSet {
+pub struct AtomSet {
     words: Vec<u64>,
 }
 
@@ -68,7 +68,7 @@ impl crate::snapshot::Snap for AtomSet {
 /// an index-keyed lookup (`Vm::lookup_array_index_atom`) is one bounds test and one load instead of
 /// a hash probe; larger indices keep a map.
 #[derive(Clone, Default)]
-pub(super) struct IndexAtoms {
+pub struct IndexAtoms {
     dense: Vec<Atom>,
     sparse: rustc_hash::FxHashMap<u32, Atom>,
 }

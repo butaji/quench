@@ -237,7 +237,7 @@ pub(crate) struct NativeFieldCacheLayout {
 }
 
 /// The field cache entry's layout, from its `repr(C)` words and their empty values (`field_cache_layout`).
-pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
+pub const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
     entry_size: size_of::<super::field_cache_layout::FieldCacheWords>(),
     receiver_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, receiver),
     holder_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, holder),

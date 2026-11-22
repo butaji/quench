@@ -7,7 +7,7 @@ use crate::vm::wtf16::JsString;
 
 /// A program's atom names, indexed by atom id.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct AtomTable {
+pub struct AtomTable {
     names: AtomNames,
 }
 
@@ -156,7 +156,7 @@ const ATOM_SEQUENCE_CHUNK: usize = 256;
 /// and the VM's only record of the names it appends. The base never changes and appended
 /// names are never removed or replaced, so a name borrowed from the sequence stays valid as
 /// long as the sequence does.
-pub(crate) struct AtomSequence {
+pub struct AtomSequence {
     base: AtomTable,
     /// Names after `base`, in chunks of `ATOM_SEQUENCE_CHUNK`. Only `append` mutates it, and
     /// only by pushing into the last chunk below its capacity or adding a chunk, so no name

@@ -130,11 +130,11 @@ impl Object {
     }
 
     #[inline(always)]
-    pub(crate) fn proto(&self) -> Value {
+    pub fn proto(&self) -> Value {
         self.proto_link().prototype()
     }
 
-    pub(crate) fn set_proto(&mut self, proto: Value) {
+    pub fn set_proto(&mut self, proto: Value) {
         self.note_constant_write();
         self.note_prototype_layout_change();
         self.set_meta((self.meta() & !PROTO_INDEX_BITS) | Self::encode_proto(proto));

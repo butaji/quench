@@ -9,7 +9,7 @@ use super::caller_view::CallerView;
 use super::*;
 
 /// A root slot's binding where it is not the activation's own.
-pub(in crate::vm) enum RootBinding {
+pub enum RootBinding {
     /// A global lexical binding's value in the realm (`Vm::root_global_lexical_value`); `DELETED`
     /// while it is uninitialized.
     GlobalLexical(Value),

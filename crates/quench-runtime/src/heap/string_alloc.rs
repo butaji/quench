@@ -6,7 +6,7 @@ impl Heap {
     /// many records as the legacy slots do (`STRING_RECORD_CAPACITY`); exhausting it is out
     /// of memory, as exhausting the slots is.
     #[inline(always)]
-    pub(crate) fn alloc_string(&mut self, string: JsString) -> Value {
+    pub fn alloc_string(&mut self, string: JsString) -> Value {
         match string.single_ascii_unit() {
             None => self.alloc_string_record(string),
             Some(unit) => self.alloc_ascii_unit_string(string, unit),

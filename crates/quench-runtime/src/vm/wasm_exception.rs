@@ -176,7 +176,7 @@ fn tag_parameter_type(name: &str) -> Option<wasmparser::ValType> {
 
 /// `WebAssembly.JSTag`'s type: a tag whose one `externref` parameter carries a JavaScript
 /// exception through Wasm. Every realm makes the same one.
-pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
+pub fn js_tag_type() -> (crate::WasmTypes, u32) {
     let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(
         [wasmparser::ValType::EXTERNREF],
         [],
@@ -185,7 +185,7 @@ pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
 }
 
 /// `WebAssembly.JSTag`'s cell (`js_tag_type`), with its object part.
-pub(crate) fn js_tag_cell(object: Box<crate::heap::Object>) -> Cell {
+pub fn js_tag_cell(object: Box<crate::heap::Object>) -> Cell {
     let (declarations, ty) = js_tag_type();
     Cell::WasmTag { object, declarations, ty }
 }

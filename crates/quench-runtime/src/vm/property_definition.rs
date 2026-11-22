@@ -3,7 +3,7 @@ use super::property_key::PropertyKey;
 use super::*;
 
 #[derive(Clone, Copy)]
-pub(super) enum PropertyDefinitionKind {
+pub enum PropertyDefinitionKind {
     Object,
     Reflect,
 }

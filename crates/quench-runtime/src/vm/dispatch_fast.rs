@@ -951,7 +951,7 @@ const FIXED_ARGUMENT_COPIES: u16 = 4;
 /// # Safety
 /// Both ranges hold `count` values and do not overlap.
 #[inline(always)]
-pub(crate) unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u16) {
+pub unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u16) {
     /// One move of `N` values.
     #[inline(always)]
     unsafe fn copy<const N: usize>(destination: *mut Value, source: *const Value) {
@@ -993,7 +993,7 @@ const WINDOW_INLINE_FILL_LIMIT: usize = WINDOW_FILL_BLOCK * 2;
 /// # Safety
 /// `registers` has writable storage for `count` values, none of them live.
 #[inline(always)]
-pub(crate) unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
+pub unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
     if count >= WINDOW_INLINE_FILL_LIMIT {
         for index in 0..count {
             // SAFETY: each destination lies within the caller's uninitialized range.

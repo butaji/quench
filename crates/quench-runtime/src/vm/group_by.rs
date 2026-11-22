@@ -2,7 +2,7 @@ use super::collections::canonicalize_keyed_collection_key;
 use super::*;
 
 #[derive(Clone, Copy)]
-pub(super) enum GroupByKind {
+pub enum GroupByKind {
     Object,
     Map,
 }

@@ -4,7 +4,7 @@ use super::promise;
 use crate::Value;
 
 /// A queued job: a call, or a promise reaction run without a job function to dispatch through.
-pub(super) enum PendingJob {
+pub enum PendingJob {
     Call {
         callback: Value,
         this: Value,

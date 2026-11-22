@@ -191,7 +191,7 @@ pub(crate) use small_strings::{FlatText, SMALL_STRING_ID_BASE, SMALL_STRING_ID_M
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
-pub(crate) use cell::*;
+pub use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
@@ -200,7 +200,7 @@ use records::{
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
 pub use root::RootId;
-pub(crate) use root::{RootTable, WeakHandle};
+pub use root::{RootTable, WeakHandle};
 use slots::{FREE_SLOT_WORDS, FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 mod young;
 use young::YoungSlots;
@@ -285,7 +285,7 @@ enum CollectionState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GcTraceKind {
+pub enum GcTraceKind {
     Collection,
     VerifyFull,
 }
@@ -566,7 +566,7 @@ fn release_freed_allocator_memory() {
 }
 
 #[derive(Default)]
-pub(crate) struct Heap {
+pub struct Heap {
     slots: SlotArena,
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
@@ -878,7 +878,7 @@ macro_rules! cell_kinds {
     ($($(#[$meta:meta])* $kind:ident = $name:literal,)*) => {
         #[repr(usize)]
         #[derive(Clone, Copy)]
-        pub(crate) enum CellKind {
+        pub enum CellKind {
             $($(#[$meta])* $kind,)*
         }
         impl CellKind {
@@ -1287,7 +1287,7 @@ impl Heap {
     /// storage through `charge_payload_allocation`). The array space holds
     /// `ARRAY_RECORD_CAPACITY` (2^30) records, so a full space is a panic.
     #[inline(always)]
-    pub(crate) fn alloc_array(&mut self, object: ArrayObject) -> Value {
+    pub fn alloc_array(&mut self, object: ArrayObject) -> Value {
         let prototype = object.proto();
         self.admit_object_contents(&object);
         self.alloc_slotless_array_of(object, prototype)
@@ -1498,7 +1498,7 @@ impl Heap {
     /// An ordinary object's allocation: its prototype marked, its values admitted, and its record
     /// inserted by `insert_object_record`, with no dispatch on a cell's kind (there is no object cell).
     #[inline(always)]
-    pub(crate) fn alloc_object(&mut self, object: Object) -> Value {
+    pub fn alloc_object(&mut self, object: Object) -> Value {
         let prototype = object.proto();
         self.alloc_object_of(object, prototype)
     }
@@ -1800,7 +1800,7 @@ impl Heap {
     /// A new iterator record, admitted and charged as an object record is (`alloc_object_record`).
     /// The iterator space holds `ITERATOR_RECORD_CAPACITY` (2^28) records, so a full space is a
     /// panic.
-    pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
+    pub fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
         #[cfg(feature = "profile-aggregate")]
         let bytes = iterator.object.allocated_extra_bytes();
         self.admit_object_contents(&iterator.object);

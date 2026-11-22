@@ -3036,7 +3036,7 @@ fn regexp_escape_control(character: char) -> Option<&'static str> {
 /// order it was written in, so the set is the whole fact: bit `index` is the letter of
 /// accessor `index`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RegExpFlags(u8);
+pub struct RegExpFlags(u8);
 
 const _: () = assert!(REGEXP_FLAG_ACCESSORS.len() <= u8::BITS as usize);
 

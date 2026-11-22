@@ -1,7 +1,7 @@
 #![deny(warnings)]
 // The v2-merged sync left items both sides added in different places, one copy unused, and AOT items
 // named in wider interfaces than their types: allowed until the merge's dead copies are removed.
-#![allow(dead_code, private_interfaces)]
+#![allow(dead_code, private_interfaces, private_bounds)]
 #![feature(rust_preserve_none_cc)]
 // Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
 // whatever the handler body keeps on its stack (`vm::dispatch_fast`).

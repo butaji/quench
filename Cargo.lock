@@ -2134,6 +2134,7 @@ dependencies = [
  "pkg-config",
  "quench-alloc",
  "quench-js-check",
+ "quench-layers",
  "quench-runtime",
  "quench-stack",
  "quench-wasm",
@@ -2208,6 +2209,14 @@ dependencies = [
  "oxc_parser",
  "oxc_span",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "quench-layers"
+version = "0.1.0"
+dependencies = [
+ "quench-runtime",
+ "quench-runtime-intl",
 ]
 
 [[package]]
@@ -2290,6 +2299,7 @@ dependencies = [
  "quench-alloc",
  "quench-bjit",
  "quench-intl",
+ "quench-layers",
  "quench-macros",
  "quench-regexp",
  "quench-stack",
@@ -2310,6 +2320,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "quench-runtime-intl"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "libm",
+ "quench-intl",
+ "quench-macros",
+ "quench-runtime",
+ "quench-temporal",
+ "rustc-hash",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "quench-stack"
 version = "0.1.0"
 
@@ -2327,6 +2352,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "oxc_syntax",
+ "quench-layers",
  "quench-runtime",
  "serde",
  "serde_json",
@@ -2351,6 +2377,7 @@ dependencies = [
 name = "quench-wasm-test"
 version = "0.1.0"
 dependencies = [
+ "quench-layers",
  "quench-runtime",
  "quench-stack",
  "quench-wasm",

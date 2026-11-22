@@ -1,5 +1,7 @@
 #[cfg(feature = "native-execution")]
 pub mod native_operands;
+pub mod intl_core;
+pub mod layer_hooks;
 pub mod realm_table;
 pub mod register_file;
 pub mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
@@ -28,36 +30,36 @@ pub mod snapshot;
 pub mod startup_intrinsics;
 pub mod wasm;
 pub use compiled::{AheadImages, ExecutionMode};
-pub use compiled::InstanceRecord;
+pub(crate) use compiled::InstanceRecord;
 pub use date::local_timezone_changed;
 pub mod wasm_exception;
 pub mod wasm_gc;
 pub mod wasm_global;
 pub mod wasm_host;
 pub mod wasm_js;
-pub use wasm_exception::{js_tag_cell, js_tag_type};
+pub(crate) use wasm_exception::{js_tag_cell, js_tag_type};
 pub mod wasm_indirect;
 pub mod wasm_table;
-pub use crate::Value;
-pub use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
+use crate::Value;
+use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
-pub use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
+use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
-pub use crate::heap::CellKind;
-pub use crate::heap::{
+use crate::heap::CellKind;
+use crate::heap::{
     CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
     IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
-pub use crate::host::{CapabilityId, Host, HostContext};
-pub use crate::profile::{CallSource, Profile, TerminalCall};
-pub use crate::value::number_to_u32;
-pub use activation::{CallCompletion, CallContext, ConstructionTarget, TrapAccess, TrapCheck};
-pub use atomics::Test262AgentState;
-pub use rustc_hash::{FxHashMap, FxHashSet};
-pub use std::cell::OnceCell;
-pub use std::hash::{Hash, Hasher};
-pub use std::rc::Rc;
+use crate::host::{CapabilityId, Host, HostContext};
+use crate::profile::{CallSource, Profile, TerminalCall};
+use crate::value::number_to_u32;
+use activation::{CallCompletion, CallContext, ConstructionTarget, TrapAccess, TrapCheck};
+use atomics::Test262AgentState;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::OnceCell;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 
 /// A fresh seed for `Math.random`'s xorshift state, from the process's random hash keys (which
 /// the standard library draws from the OS): each VM, like each Node process, has its own
@@ -69,8 +71,8 @@ fn fresh_random_seed() -> u64 {
     }
     std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
 }
-pub use crate::units::MAX_SAFE_INTEGER;
-pub use crate::bytecode::MAX_ARRAY_LENGTH;
+pub(super) use crate::units::MAX_SAFE_INTEGER;
+pub(crate) use crate::bytecode::MAX_ARRAY_LENGTH;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 /// The values a call roots besides its arguments: the callee and the receiver.
 const CALL_ROOTS_BESIDE_ARGUMENTS: usize = 2;
@@ -80,7 +82,7 @@ const CALL_ROOTS_BESIDE_ARGUMENTS: usize = 2;
 const PREPARED_ARGUMENT_ROOTS: usize = 4;
 
 #[derive(Clone, Copy, Default)]
-struct RuntimeAtoms {
+pub struct RuntimeAtoms {
     lexical_this: Atom,
     new_target: Atom,
     /// The RegExp members the builtin fast paths check on every call.
@@ -102,7 +104,7 @@ struct RuntimeAtoms {
     /// The empty string, an anonymous function's initial name.
     empty: Atom,
     /// An iterator result's keys, in its literal order.
-    value: Atom,
+    pub value: Atom,
     done: Atom,
     /// The iterator protocol's close method.
     iterator_return: Atom,
@@ -122,8 +124,8 @@ pub mod activation;
 pub mod agent;
 pub mod atom_set;
 pub mod pending_job;
-pub use pending_job::PendingJob;
-pub use atom_set::{AtomSet, IndexAtoms};
+use pending_job::PendingJob;
+use atom_set::{AtomSet, IndexAtoms};
 pub mod arguments;
 pub mod array;
 pub mod array_buffer;
@@ -145,7 +147,7 @@ pub mod builtins;
 pub mod native_rows;
 pub mod call_arguments;
 pub mod call_printer;
-pub use call_printer::{freeze_call_sites, freeze_source_call_sites};
+pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 pub mod call_out;
 pub mod call_out_calls;
 pub mod call_out_literals;
@@ -162,7 +164,7 @@ pub mod data_view;
 pub mod date;
 pub mod dispatch;
 pub mod dispatch_fast; mod lane_values; mod lane_activations;
-pub use dispatch_fast::{copy_arguments, fill_window as fill_registers};
+pub(crate) use dispatch_fast::{copy_arguments, fill_window as fill_registers};
 pub mod dispatch_frame; mod tier0_promotion;
 pub mod dispatch_wasm;
 pub mod dynamic_strings;
@@ -193,14 +195,12 @@ pub mod global_facts;
 pub mod group_by;
 pub mod host_function;
 pub mod index;
-pub mod intl_core;
-pub mod layer_hooks;
 pub mod iterator_list;
 pub mod lazy_data_property;
 pub mod local_time;
 pub mod property_definition;
-pub use group_by::GroupByKind;
-pub use property_definition::PropertyDefinitionKind;
+use group_by::GroupByKind;
+use property_definition::PropertyDefinitionKind;
 pub mod intact_fuses;
 pub mod iterator_proofs;
 pub mod iterators;
@@ -239,17 +239,17 @@ pub mod object_shape_adopt;
 #[cfg(test)] mod native_frame_tests;
 #[cfg(test)] mod catch_tests; #[cfg(test)] mod test_oracle; #[cfg(test)] mod shape_stability_tests;
 pub mod property_key;
-pub use call_arguments::CallArguments;
-pub use object::AtomClass;
-pub use json::json_literal_length;
-pub use object_static::array_index;
-pub use program_store::ProgramId;
-pub use regexp::RegExpFlags;
-pub use program_store::{ModuleImport, ProgramStore};
-pub use promise::PromiseRuntime;
-pub use property_key::PropertyKey;
-pub use root_bindings::RootBinding;
-pub use var_owner::{EvalCaller, VarOwner};
+use call_arguments::CallArguments;
+use object::AtomClass;
+pub(crate) use json::json_literal_length;
+pub(crate) use object_static::array_index;
+pub(crate) use program_store::ProgramId;
+pub(crate) use regexp::RegExpFlags;
+use program_store::{ModuleImport, ProgramStore};
+use promise::PromiseRuntime;
+use property_key::PropertyKey;
+use root_bindings::RootBinding;
+use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
@@ -273,7 +273,7 @@ pub mod value_serializer;
 pub mod owned_clone_native;
 pub mod symbol;
 pub mod well_known_symbols;
-pub use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
+pub(crate) use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
 pub mod type_predicates;
 pub mod typed_array;
 pub mod typed_array_access;
@@ -287,8 +287,8 @@ pub use value_serializer::{
     write_double, write_raw_bytes, write_uint32, write_uint64, HostObjectRead, SerializedValue, SharedWireInput, ValueDeserializer,
     ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
 };
-pub use value_serializer::{ReadHooks, WriteHooks};
-pub use wtf16::JsString;
+pub(crate) use value_serializer::{ReadHooks, WriteHooks};
+use wtf16::JsString;
 #[cfg(test)] mod tests; #[cfg(test)] mod lane_semantics_tests;
 #[cfg(test)] mod closure_retention_tests;
 #[cfg(test)] mod storage_tests; #[cfg(test)] mod name_scope_tests;
@@ -644,8 +644,8 @@ pub(crate) struct ActiveIterator {
 /// index and name (`lane_load_root_lexical`) needs no hash.
 type GlobalLexicalBindings = indexmap::IndexMap<Atom, Value, rustc_hash::FxBuildHasher>;
 
-struct Realm {
-    globals: Value,
+pub struct Realm {
+    pub globals: Value,
     /// Every global lexical name of the realm, including every bound one
     /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one: a test every
     /// global name load makes (`name_row`).
@@ -658,7 +658,7 @@ struct Realm {
     /// The realm last switched away from, so switching back to it, which jobs and calls
     /// across two realms do on every turn, moves its state without hashing.
     parked: Option<ParkedRealm>,
-    intrinsics: RealmIntrinsics,
+    pub intrinsics: RealmIntrinsics,
     jobs: std::collections::VecDeque<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
     promise: PromiseRuntime,
@@ -682,35 +682,35 @@ impl Realm {
 }
 
 #[derive(Default)]
-struct RealmIntrinsics {
+pub struct RealmIntrinsics {
     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
     iterator_prototypes: realm_table::RealmTable<IteratorRealmPrototypes>,
-    builtin_prototypes: FxHashMap<(Value, Native), Value>,
+    pub builtin_prototypes: FxHashMap<(Value, Native), Value>,
     /// Original per-realm constructors for function factory allocations.
     function_constructors: FxHashMap<(Value, Native), Value>,
     promise_constructors: realm_table::RealmTable<Value>,
     error_intrinsics: realm_table::RealmTable<ErrorRealmIntrinsics>,
     regexp_intrinsics: realm_table::RealmTable<regexp::RegExpIntrinsics>,
-    intl_number_format_constructors: FxHashMap<Value, Value>,
-    intl_number_format_prototypes: FxHashMap<Value, Value>,
-    intl_number_format_fallback_symbols: FxHashMap<Value, Value>,
-    intl_collator_constructors: FxHashMap<Value, Value>,
-    intl_collator_prototypes: FxHashMap<Value, Value>,
-    intl_plural_rules_prototypes: FxHashMap<Value, Value>,
-    intl_datetime_format_constructors: FxHashMap<Value, Value>,
-    intl_datetime_format_prototypes: FxHashMap<Value, Value>,
-    intl_datetime_format_fallback_symbols: FxHashMap<Value, Value>,
-    intl_display_names_constructors: FxHashMap<Value, Value>,
-    intl_display_names_prototypes: FxHashMap<Value, Value>,
-    intl_duration_format_constructors: FxHashMap<Value, Value>,
-    intl_duration_format_prototypes: FxHashMap<Value, Value>,
-    intl_list_format_constructors: FxHashMap<Value, Value>,
-    intl_list_format_prototypes: FxHashMap<Value, Value>,
-    intl_relative_time_format_prototypes: FxHashMap<Value, Value>,
-    intl_segmenter_prototypes: FxHashMap<Value, Value>,
-    intl_segment_iterator_prototypes: FxHashMap<Value, Value>,
-    intl_segments_prototypes: FxHashMap<Value, Value>,
-    intl_locale_prototypes: FxHashMap<Value, Value>,
+    pub intl_number_format_constructors: FxHashMap<Value, Value>,
+    pub intl_number_format_prototypes: FxHashMap<Value, Value>,
+    pub intl_number_format_fallback_symbols: FxHashMap<Value, Value>,
+    pub intl_collator_constructors: FxHashMap<Value, Value>,
+    pub intl_collator_prototypes: FxHashMap<Value, Value>,
+    pub intl_plural_rules_prototypes: FxHashMap<Value, Value>,
+    pub intl_datetime_format_constructors: FxHashMap<Value, Value>,
+    pub intl_datetime_format_prototypes: FxHashMap<Value, Value>,
+    pub intl_datetime_format_fallback_symbols: FxHashMap<Value, Value>,
+    pub intl_display_names_constructors: FxHashMap<Value, Value>,
+    pub intl_display_names_prototypes: FxHashMap<Value, Value>,
+    pub intl_duration_format_constructors: FxHashMap<Value, Value>,
+    pub intl_duration_format_prototypes: FxHashMap<Value, Value>,
+    pub intl_list_format_constructors: FxHashMap<Value, Value>,
+    pub intl_list_format_prototypes: FxHashMap<Value, Value>,
+    pub intl_relative_time_format_prototypes: FxHashMap<Value, Value>,
+    pub intl_segmenter_prototypes: FxHashMap<Value, Value>,
+    pub intl_segment_iterator_prototypes: FxHashMap<Value, Value>,
+    pub intl_segments_prototypes: FxHashMap<Value, Value>,
+    pub intl_locale_prototypes: FxHashMap<Value, Value>,
 }
 #[derive(Clone, Copy)]
 struct ErrorRealmIntrinsics {
@@ -789,7 +789,7 @@ const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = field_cache_layout::NO_HOLDER;
 /// The holder layout id an entry holds where no holder object was at hand (`FieldCache::holder_id`).
 const NO_FIELD_HOLDER_LAYOUT: u32 = field_cache_layout::NO_HOLDER_LAYOUT;
-pub use crate::staged::field_cache_layout::{self, FieldCacheWords};
+use crate::staged::field_cache_layout::{self, FieldCacheWords};
 /// Where an accessor field cache's holder keeps its getter (`AccessorFieldCache::slot_accessor`):
 /// in the slot itself (`ShapeAttributes::slot_getter`), in the slot's pair cell
 /// (`slot_accessor_pair`), or where its attributes say (the shape's accessor table).
@@ -864,7 +864,7 @@ const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
 /// set, as Air's `Arg` kinds do (about ten shapes reading `isStack`); a site past its ways
 /// leaves the lane at each miss and evicts an entry another shape needs next.
 const ACCESSOR_FIELD_CACHE_WAYS: usize = 16;
-pub use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
+use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 const NO_FIELD_RECEIVER: u32 = field_cache_layout::NO_RECEIVER;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
 const NO_INHERITED_FIELD: u32 = object::MRU_CHAIN_END;
@@ -906,7 +906,7 @@ impl site_table::SiteEntry for FieldCache {
 // SAFETY: four `u32` words, with no padding, and every bit pattern valid.
 unsafe impl site_table::StoredWords for FieldCacheWords {}
 /// The layout generated code reads a field cache entry by (`staged::layout_offsets`).
-pub use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
+pub(crate) use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
 
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
 /// prototype chain still has exactly the `prototype_depth` shapes interned at `chain`
@@ -1989,7 +1989,7 @@ const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     target: None,
 };
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct PropertyAttributes {
+pub struct PropertyAttributes {
     pub writable: bool,
     pub enumerable: bool,
     pub configurable: bool,
@@ -2021,7 +2021,7 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     getter: None,
     setter: None,
 };
-pub(crate) struct Vm {
+pub struct Vm {
     /// Typed array views' element addresses by view (`typed_array_access::TypedViewCache`).
     typed_views: typed_array_access::TypedViewCache,
     /// VM-wide running-job admission for native microtask checkpoints.
@@ -2053,18 +2053,18 @@ pub(crate) struct Vm {
     /// (`Vm::run_promise_job`), until the await resumption it runs takes it
     /// (`Vm::resume_queued_await`).
     chainable_job: bool,
-    pub(crate) host: Box<dyn Host>,
+    pub host: Box<dyn Host>,
     /// The host type's associated functions (`HostStatics::of`), the only host calls that
     /// are not methods of `host`.
     pub(crate) host_statics: crate::host::HostStatics,
     /// `Host::runs_lane`, read once: whether bodies run in the lane (`dispatch_fast`).
     pub(crate) runs_lane: bool,
     specialized: bool,
-    heap: Heap,
-    realm: Realm,
-    object_proto: Value,
+    pub heap: Heap,
+    pub realm: Realm,
+    pub object_proto: Value,
     function_proto: Value,
-    array_proto: Value,
+    pub array_proto: Value,
     /// %String.prototype% of the current realm; primitive string property
     /// reads use it directly, so realm switches re-derive it.
     string_proto: Value,
@@ -2117,10 +2117,10 @@ pub(crate) struct Vm {
     async_generator_proto: Value,
     async_from_sync_iterator_proto: Value,
     regexp_proto: Value,
-    temporal_plain_date_proto: Value,
-    temporal_plain_time_proto: Value,
-    temporal_plain_month_day_proto: Value,
-    temporal_plain_year_month_proto: Value,
+    pub temporal_plain_date_proto: Value,
+    pub temporal_plain_time_proto: Value,
+    pub temporal_plain_month_day_proto: Value,
+    pub temporal_plain_year_month_proto: Value,
     natives: builtins::NativeTable,
     /// The first realm this VM initialized: the creation realm every function record without a
     /// realm override carries (`Vm::record_realm`). Set once and kept, rooted by the GC.
@@ -2168,7 +2168,7 @@ pub(crate) struct Vm {
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver>>,
     execution_interrupt: crate::ExecutionInterrupt,
-    active_call_roots: Vec<Value>,
+    pub active_call_roots: Vec<Value>,
     /// The frame index of each root activation this Vm's entry points are running (`call_root`,
     /// `call_eval_closure`), innermost last. Global var paths walk them rather than every frame.
     active_roots: Vec<usize>,
@@ -2338,7 +2338,7 @@ pub(crate) struct Vm {
     /// compiled body may name the table (`staged::value::typeof_string`).
     typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
-    well_known_symbols: WellKnownSymbols,
+    pub well_known_symbols: WellKnownSymbols,
     /// The slots of a bound function's target, receiver and arguments in the shape its
     /// environment object has (`Vm::bound_function_parts`): every `bind` gives its environment
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
@@ -2471,7 +2471,7 @@ pub(crate) struct Vm {
     capture_walks: Box<[CaptureWalk; CAPTURE_WALKS]>,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
-    runtime_atoms: RuntimeAtoms,
+    pub runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// `Vm::preshape_receiver` answers: the constant or declared layout a construction
@@ -2504,7 +2504,7 @@ pub(crate) struct Vm {
     private_homes: FxHashMap<PrivateHomeKey, Value>,
     /// The collation `String.prototype.localeCompare` resolves without locales or options
     /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
-    default_collation: Option<std::rc::Rc<intl_core::Collation>>,
+    pub default_collation: Option<std::rc::Rc<intl_core::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     /// The direct evals running above lane activations (`var_owner::EvalCaller`), innermost last.
@@ -2582,7 +2582,7 @@ impl Vm {
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
     #[inline]
-    pub(super) fn switch_realm_global(&mut self, global: Value) -> Value {
+    pub fn switch_realm_global(&mut self, global: Value) -> Value {
         let previous = self.realm.globals;
         if previous != global {
             self.swap_realm_global(previous, global);
@@ -3898,7 +3898,7 @@ impl Vm {
             crate::bytecode::AtomTable::shared(self.atom_sequence.clone(), program.atoms.len());
         program
     }
-    fn call_value(
+    pub fn call_value(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
@@ -4126,7 +4126,7 @@ impl Vm {
         self.heap.collection_epoch()
     }
 
-    fn with_call_roots<R>(
+    pub fn with_call_roots<R>(
         &mut self,
         values: impl IntoIterator<Item = Value>,
         call: impl FnOnce(&mut Self) -> R,
@@ -4183,6 +4183,6 @@ enum StringConstantKey<'a> {
 }
 
 /// The build an image belongs to, which `native_link` checks a runtime library against.
-pub use compiled::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
+pub(crate) use compiled::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
 #[cfg(feature = "native-execution")]
 pub use compiled::{NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};

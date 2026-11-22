@@ -5,16 +5,16 @@
 
 use crate::bytecode::{Atom, Register};
 
-pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
-pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
+pub const SET_THIS_REGISTER: Register = 1 << 14;
+pub const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-pub(crate) struct Operand(pub(crate) u16);
+pub struct Operand(pub(crate) u16);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
-pub(crate) enum OperandKind {
+pub enum OperandKind {
     Register = 0,
     Constant = 1,
     Field = 2,
@@ -77,7 +77,7 @@ impl Operand {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-pub(crate) struct FieldBase(pub(crate) u16);
+pub struct FieldBase(pub(crate) u16);
 
 impl FieldBase {
     pub(crate) const THIS: Self = Self(u16::MAX);
@@ -107,7 +107,7 @@ impl FieldBase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FieldLookup {
+pub enum FieldLookup {
     Atom {
         atom: Atom,
         base: FieldBase,
@@ -118,7 +118,7 @@ pub(crate) enum FieldLookup {
 
 /// A run of consecutive registers: a call's arguments, an object literal's values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RegisterWindow {
+pub struct RegisterWindow {
     pub(crate) base: Register,
     pub(crate) count: u16,
 }
@@ -131,7 +131,7 @@ impl RegisterWindow {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ConstructArguments {
+pub enum ConstructArguments {
     Registers(RegisterWindow),
     Array(Register),
 }

@@ -454,7 +454,7 @@ impl DynamicImportJob {
 }
 
 #[derive(Default)]
-pub(super) struct PromiseRuntime {
+pub struct PromiseRuntime {
     pub(super) rejection_notifications: VecDeque<RejectionNotification>,
     pub(super) last_rejection_id: u64,
     pub(super) finally_handler_callbacks: FxHashMap<Value, FinallyHandlerCallback>,
@@ -683,7 +683,7 @@ impl Vm {
         self.native_with_realm(kind, env, self.realm.globals)
     }
 
-    pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
+    pub fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
         let promise_resolver = !env.is_null()
             && matches!(
                 kind,

@@ -31,7 +31,7 @@ const CALL_SOURCE_GOALS: [SourceType; 2] = [SourceType::script(), SourceType::mj
 
 /// The messages the call paths give a non-callable callee before its call site is known.
 pub(super) const NOT_CALLABLE_MESSAGE: &str = "value is not callable";
-pub(super) const NOT_CONSTRUCTOR_MESSAGE: &str = "value is not a constructor";
+pub const NOT_CONSTRUCTOR_MESSAGE: &str = "value is not a constructor";
 
 /// How a call instruction names its callee.
 enum Callee {
@@ -159,7 +159,7 @@ fn call_kind(instruction: WideInstruction) -> Option<bool> {
 /// A native-only build freezes them as it compiles; a dynamic one on their first read
 /// (`frozen_call_sites`) or before writing the program, so a load that raises no error
 /// parses its source once.
-pub(crate) fn freeze_call_sites(program: &ResidualProgram) {
+pub fn freeze_call_sites(program: &ResidualProgram) {
     if let Some(source) = &program.source {
         freeze_source_call_sites(source);
     }
@@ -174,7 +174,7 @@ fn frozen_call_sites(source: &crate::bytecode::ProgramSource) -> Option<&[crate:
     source.call_sites.get().map(|sites| &sites[..])
 }
 
-pub(crate) fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) {
+pub fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) {
     source.call_sites.get_or_init(|| {
         let mut found = CallSites::new();
         for goal in CALL_SOURCE_GOALS.map(|goal| goal.with_typescript(source.typescript)) {

@@ -16,7 +16,7 @@ const WORD_FIELD_BITS: u32 = u16::BITS;
 const WORD_FIELD_MASK: u64 = u16::MAX as u64;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct WideInstruction {
+pub struct WideInstruction {
     op: Op,
     a: u16,
     b: u16,

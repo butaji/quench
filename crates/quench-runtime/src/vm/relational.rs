@@ -38,7 +38,7 @@ impl Vm {
         )
     }
 
-    pub(super) fn has_property(
+    pub fn has_property(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -605,7 +605,7 @@ impl Vm {
         self.instanceof_has_instance_link = ProtoLink::of(holder);
     }
 
-    pub(super) fn ordinary_has_instance(
+    pub fn ordinary_has_instance(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,

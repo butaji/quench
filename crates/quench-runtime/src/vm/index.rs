@@ -83,7 +83,7 @@ impl Vm {
         self.typed_array_number_element(object, index)
     }
 
-    pub(super) fn get_index(
+    pub fn get_index(
         &mut self,
         p: &ResidualProgram,
         object: Value,

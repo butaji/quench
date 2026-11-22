@@ -68,10 +68,10 @@ use crate::host::{CapabilityId, HostContext};
 use std::fmt;
 
 #[derive(Debug)]
-pub struct JsError(pub(crate) ErrorMessage);
+pub struct JsError(pub ErrorMessage);
 
 #[derive(Debug)]
-pub(crate) struct ErrorMessage {
+pub struct ErrorMessage {
     payload: Box<ErrorPayload>,
 }
 
@@ -1025,7 +1025,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn type_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
+    pub fn type_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
         let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, Native::TypeError, &[message])
@@ -1121,7 +1121,7 @@ impl Vm {
         JsError::thrown(object, crate::stack::STACK_EXHAUSTED_MESSAGE.into())
     }
 
-    pub(super) fn range_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
+    pub fn range_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
         let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, Native::RangeError, &[message])

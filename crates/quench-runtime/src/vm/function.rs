@@ -242,7 +242,7 @@ impl Vm {
         })
     }
 
-    pub(super) fn bind_function(
+    pub fn bind_function(
         &mut self,
         p: &ResidualProgram,
         target: Value,

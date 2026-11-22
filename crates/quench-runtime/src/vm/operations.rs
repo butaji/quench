@@ -1486,7 +1486,7 @@ impl Vm {
             | Native::TemporalPlainYearMonthToString
             | Native::TemporalPlainYearMonthToJSON
             | Native::TemporalPlainYearMonthToLocaleString => {
-                super::temporal_date_projection::native(self, p, native, this, args)
+                layer_hooks::intl_temporal_call(self, p, native, this, args)
             }
             Native::Object
             | Native::Array

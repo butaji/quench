@@ -14,7 +14,7 @@ use crate::value_vec::range_has_room;
 /// the add moves to `layouts[1]` (`Object::layout_with_shape`): one id compare proves the shape,
 /// the link and the integrity bits, and one id store moves the record.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Transition {
+pub struct Transition {
     pub(crate) before: u32,
     pub(crate) after: u32,
     pub(crate) slot: u16,
@@ -28,7 +28,7 @@ pub(crate) struct Transition {
 /// of that chain changes its layout (`Heap::subscribe_prototype_chain`). A define consults no chain,
 /// so it holds no link.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct AddSite {
+pub struct AddSite {
     pub(crate) transition: Transition,
     pub(crate) link: Option<u32>,
     pub(crate) depth: u8,
@@ -65,7 +65,7 @@ impl Transition {
 /// `record_id` names a live object record of `heap`, whose exact shape's storage length is the
 /// transition's slot where the shape matches (the row proves the shape before any write).
 #[inline(always)]
-pub(crate) unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
+pub unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
     let Some(form) = transition.form() else {
         return false;
     };
@@ -88,7 +88,7 @@ pub(crate) unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, tran
 /// # Safety
 /// `record_id` names a live function record of `heap`, whose exact shape the row proves before any write.
 #[inline(always)]
-pub(crate) unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32, transition: Transition, empty: u64, name: crate::Value) -> bool {
+pub unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32, transition: Transition, empty: u64, name: crate::Value) -> bool {
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_function_object(record_id) } as u64;
     let mut stage = Concrete::storing(heap);

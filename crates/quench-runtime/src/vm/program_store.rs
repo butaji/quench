@@ -750,14 +750,14 @@ enum ProgramScope {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ModuleImport {
+pub enum ModuleImport {
     Value(Value),
     Binding(ProgramId, u16, Value),
 }
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) struct ProgramId(u32);
+pub struct ProgramId(u32);
 
 impl ProgramId {
     pub(crate) const MAIN: Self = Self(0);
@@ -787,7 +787,7 @@ struct OwnedScript {
     instances: Vec<(WeakHandle, ProgramId)>,
 }
 
-pub(crate) struct ProgramStore {
+pub struct ProgramStore {
     /// Weak native-call proofs: the published bodies that call callees, whose publications root those callees.
     native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
     /// The bodies published by what they compile from (`lane_publication::LaneKey`).

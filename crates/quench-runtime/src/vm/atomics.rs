@@ -6,7 +6,7 @@ use crate::staged::typed_elements::{
 };
 use std::time::Instant;
 
-pub(super) struct Test262AgentState {
+pub struct Test262AgentState {
     /// Whether `$262.agent` is installed. Its agents run cooperatively on this runtime's
     /// heap and thread, so this scheduler, not the shared backing, owns blocking.
     pub(super) installed: bool,

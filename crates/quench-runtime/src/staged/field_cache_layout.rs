@@ -18,7 +18,7 @@ pub(crate) const NO_HOLDER_LAYOUT: u32 = 0;
 /// as empty; `holder_id` is stored as is, its empty value being zero.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FieldCacheWords {
+pub struct FieldCacheWords {
     /// The receiver shape, complemented against `EMPTY.receiver`.
     pub(crate) receiver: u32,
     /// The holder, complemented against `EMPTY.holder`.

@@ -20,7 +20,7 @@ use std::rc::Rc;
 pub(super) const ABI_NOT_DIRECT: u64 = u64::MAX;
 
 #[repr(C)]
-pub(crate) struct InstanceContext {
+pub struct InstanceContext {
     env: Value,
     /// The record itself: what a call context names the running instance by, and a mirror row
     /// names its function's.
@@ -223,7 +223,7 @@ impl InstanceContext {
 }
 
 /// A record in a heap cell: boxed, so its address stays, and a copy is a record of its own.
-pub(crate) struct InstanceRecord(Box<InstanceContext>);
+pub struct InstanceRecord(Box<InstanceContext>);
 
 impl InstanceRecord {
     pub(crate) fn new(env: Value, program: ProgramId, slots: usize) -> Self {
@@ -412,7 +412,7 @@ impl Vm {
 /// reads the buffer's base from `SLOTS` and the depth from `DEPTH`, and checks `CAPACITY` before it
 /// pushes.
 #[repr(C)]
-pub(crate) struct NativeRoots {
+pub struct NativeRoots {
     depth: u64,
     capacity: u64,
     slots: *mut Value,

@@ -4,7 +4,7 @@ use super::*;
 
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
-pub(crate) enum Cell {
+pub enum Cell {
     ArrayBuffer {
         object: Box<Object>,
         bytes: super::BufferBytes,
@@ -176,7 +176,7 @@ pub(crate) enum Cell {
 }
 
 impl Cell {
-    pub(crate) fn bigint(value: num_bigint::BigInt) -> Self {
+    pub fn bigint(value: num_bigint::BigInt) -> Self {
         Self::BigInt(crate::bigint::JsBigInt::from(&value))
     }
 

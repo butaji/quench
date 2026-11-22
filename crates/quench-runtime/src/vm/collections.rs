@@ -11,7 +11,7 @@ enum CollectionEntries {
 include!("collections_set_relations.rs");
 /// The brand of a collection or Date cell a receiver must hold (`Vm::require_brand`).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Brand {
+pub enum Brand {
     Map,
     Set,
     WeakMap,
@@ -1214,7 +1214,7 @@ impl Vm {
     }
     /// Fails with `TypeError: <subject> called on incompatible receiver` unless `receiver`
     /// holds the `brand` cell.
-    pub(super) fn require_brand(
+    pub fn require_brand(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,

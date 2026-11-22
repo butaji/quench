@@ -468,7 +468,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn array_like_length(
+    pub fn array_like_length(
         &mut self,
         p: &ResidualProgram,
         object: Value,

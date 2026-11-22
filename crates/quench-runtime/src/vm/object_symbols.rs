@@ -586,7 +586,7 @@ impl Vm {
         self.slot_data_value(data, slot)
     }
 
-    pub(super) fn set_symbol_property(
+    pub fn set_symbol_property(
         &mut self,
         object: Value,
         key: Value,

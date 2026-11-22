@@ -95,7 +95,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
-    pub(super) fn to_bigint(
+    pub fn to_bigint(
         &mut self,
         p: &ResidualProgram,
         value: Value,
@@ -164,7 +164,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn coerce_js_string(
+    pub fn coerce_js_string(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -253,7 +253,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
-    pub(super) fn to_number(
+    pub fn to_number(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -288,7 +288,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention)]
-    pub(super) fn to_string(
+    pub fn to_string(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -329,7 +329,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
-    pub(super) fn to_primitive(
+    pub fn to_primitive(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -392,7 +392,7 @@ impl Vm {
     }
 
     #[inline(always)]
-    pub(super) fn truthy(&self, v: Value) -> bool {
+    pub fn truthy(&self, v: Value) -> bool {
         v.truthiness().unwrap_or_else(|| self.heap_cell_truthy(v))
     }
 

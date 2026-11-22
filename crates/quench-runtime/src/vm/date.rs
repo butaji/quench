@@ -20,8 +20,10 @@ use crate::units::MILLISECONDS_PER_SECOND;
 const MILLISECONDS_PER_MINUTE: f64 = 60_000.0;
 const MILLISECONDS_PER_HOUR: f64 = 3_600_000.0;
 const HOURS_PER_DAY: f64 = 24.0;
+/// Nanoseconds per millisecond, the factor from a time value to a `Temporal.Instant` epoch.
+const INSTANT_NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 const MILLISECONDS_PER_DAY: f64 = MILLISECONDS_PER_HOUR * HOURS_PER_DAY;
-pub(super) use crate::staged::date_fields::DATE_TIME_CLIP_LIMIT_MS;
+pub use crate::staged::date_fields::DATE_TIME_CLIP_LIMIT_MS;
 use crate::staged::date_fields::{self, DateParts, date_parts_utc, days_from_civil};
 const LEGACY_DATE_YEAR_MIN: f64 = 0.0;
 const LEGACY_DATE_YEAR_MAX: f64 = 99.0;
@@ -289,7 +291,7 @@ impl Vm {
                     return Err(self.range_error(p, "Invalid time value".into()));
                 }
                 let nanoseconds = (milliseconds.trunc() as i128)
-                    .checked_mul(super::temporal_instant::INSTANT_NANOSECONDS_PER_MILLISECOND)
+                    .checked_mul(INSTANT_NANOSECONDS_PER_MILLISECOND)
                     .ok_or_else(|| self.range_error(p, "Invalid time value".into()))?;
                 let constructor = layer_hooks::temporal_instant_constructor(self, p)?;
                 layer_hooks::make_temporal_instant(self, p, nanoseconds, constructor)
@@ -589,7 +591,7 @@ fn date_utc(milliseconds: f64) -> Option<DateTime<Utc>> {
         .flatten()
 }
 
-pub(super) fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
+pub fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
     if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
         return None;
     }

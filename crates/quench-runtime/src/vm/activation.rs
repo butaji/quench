@@ -85,7 +85,7 @@ pub(super) enum NativeCallBoundary {
 
 /// The origin of an activation, including the identity exposed to JavaScript.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum CallContext {
+pub enum CallContext {
     Function(Value),
     DirectEval(Value),
     IndirectEval(Value),
@@ -95,7 +95,7 @@ pub(crate) enum CallContext {
 
 /// The single completion mode of a pushed call. Cross-program restoration and
 /// a caller's terminal-return flag are independent of the value this call yields.
-pub(crate) enum CallCompletion {
+pub enum CallCompletion {
     Value,
     Constructor(Value),
     /// [[Construct]] of a derived class constructor pushed in place (`Vm::try_inline_construct`,
@@ -136,7 +136,7 @@ pub(crate) enum CallCompletion {
 /// How a proxy trap's result is checked against its target: a read, a store, or a strict
 /// store, which a falsish result also rejects with a `TypeError`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TrapAccess {
+pub enum TrapAccess {
     Read,
     Store,
     StrictStore,
@@ -146,7 +146,7 @@ pub(crate) enum TrapAccess {
 /// 10.5.9): the target and key the trap was called with, whose shape the lane's pre-check
 /// found leaving the key unconstrained, which the trap's own effects may have changed.
 #[derive(Clone, Copy)]
-pub(crate) struct TrapCheck {
+pub struct TrapCheck {
     pub(super) target: Value,
     pub(super) atom: crate::bytecode::Atom,
     pub(super) access: TrapAccess,
@@ -204,7 +204,7 @@ impl CallCompletion {
 
 /// A pending constructor entry belongs only to its actual callee.
 #[derive(Clone, Copy)]
-pub(super) struct ConstructionTarget {
+pub struct ConstructionTarget {
     pub(super) callee: Value,
     pub(super) new_target: Value,
 }

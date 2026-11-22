@@ -84,7 +84,7 @@ const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
 /// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
 #[derive(Clone, Copy)]
-pub(super) struct AtomClass(u8);
+pub struct AtomClass(u8);
 
 impl AtomClass {
     const DERIVED: u8 = 1 << 0;
@@ -937,7 +937,7 @@ impl Vm {
         true
     }
 
-    pub(super) fn set_property_attributes(
+    pub fn set_property_attributes(
         &mut self,
         object: Value,
         key: PropertyKey,
@@ -1426,7 +1426,7 @@ impl Vm {
         self.heap.property_get(object, slot).filter(|value| !self.is_accessor_pair(object.shape(), *value))
     }
 
-    pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
+    pub fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
         if atom == self.length_atom
             && let Some(length) = self.own_array_length(object)
         {
@@ -1458,13 +1458,13 @@ impl Vm {
             _ => None,
         }
     }
-    pub(super) fn object_data(&self, value: Value) -> Option<&Object> {
+    pub fn object_data(&self, value: Value) -> Option<&Object> {
         self.heap.object(value)
     }
     pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
         self.heap.object_mut(value)
     }
-    #[inline] pub(super) fn is_object_like(&self, value: Value) -> bool {
+    #[inline] pub fn is_object_like(&self, value: Value) -> bool {
         self.heap.object(value).is_some()
             || matches!(self.heap.get(value), Some(Cell::Error(_)))
             || self.is_wasm_gc_object(value)
@@ -4000,7 +4000,7 @@ impl Vm {
         let holder_id = holder_layout_id(holder, holder_shape);
         Some((holder_shape, holder_id, slot, self.heap.property_get(holder, slot)?))
     }
-    pub(super) fn set_property(
+    pub fn set_property(
         &mut self,
         object: Value,
         atom: Atom,
@@ -4011,7 +4011,7 @@ impl Vm {
 
     /// `set_property`, then `set_property_attributes`: the host's way to install a property
     /// with chosen attributes. An absent data property is created with them in one shape.
-    pub(super) fn set_property_with_attributes(
+    pub fn set_property_with_attributes(
         &mut self,
         object: Value,
         atom: Atom,

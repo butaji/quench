@@ -10,8 +10,8 @@ pub(crate) use declared_types::{
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
 pub(crate) use internal_bindings::*;
-pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
-pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
+pub const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
+pub const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
 pub type Atom = u32;
 pub type Register = u16;
@@ -42,7 +42,7 @@ mod source_positions;
 pub(crate) use source_positions::{SourcePositions, SourcePositionsBuilder};
 mod function_caches;
 pub(crate) use function_caches::{FunctionCaches, LazyFlag};
-pub(crate) use atoms::{AtomSequence, AtomTable};
+pub use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
 /// `{name}{SELF_BINDING_MARKER}{function id}`.
@@ -76,7 +76,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
 }
 pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, for_each_instruction_successor, may_repeat, reachable_from};
 pub use instruction::Instr;
-pub(crate) use instruction::WideInstruction;
+pub use instruction::WideInstruction;
 pub(crate) use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
@@ -98,7 +98,7 @@ pub(crate) const UNIQUE_CACHE_SITES: u16 = SHARED_UNCACHED_SITE - NAME_SHARED_CA
 /// binding of its name there (`GlobalDeclarations::slots`).
 pub(crate) const NO_REALM_BINDING: u16 = u16::MAX;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
-pub(crate) use crate::units::MAX_ARRAY_LENGTH;
+pub use crate::units::MAX_ARRAY_LENGTH;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
 
@@ -3658,7 +3658,7 @@ pub(crate) fn private_identity_label(identity: &str) -> Option<&str> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum DispatchClass {
+pub enum DispatchClass {
     /// The class a function without a numeric body takes, and a lowering's default.
     #[default]
     General,
@@ -4811,7 +4811,7 @@ pub(crate) use flow_view::used_registers;
 mod tests;
 mod validate;
 mod operands;
-pub(crate) use operands::{ConstructArguments, FieldBase, FieldLookup, Operand, OperandKind, RegisterWindow, REGISTER_MASK, SET_THIS_REGISTER};
+pub use operands::{ConstructArguments, FieldBase, FieldLookup, Operand, OperandKind, RegisterWindow, REGISTER_MASK, SET_THIS_REGISTER};
 mod this_reads;
 pub(crate) use this_reads::activation_reads_this;
 mod written_once;
