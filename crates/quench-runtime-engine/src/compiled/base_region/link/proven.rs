@@ -2,6 +2,8 @@
 //! proved (`CallRecord::proven_args`) enters. It runs the unchecked unboxing row of each pinned guard, then jumps past the
 //! guard rows. A Mem slot guard, or a MemInt check, writes nothing, so the entry skips it.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The proven entry's rows: each pinned guard's unboxing row and holes, and the first row past the guards (`past`).

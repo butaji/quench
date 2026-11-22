@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};

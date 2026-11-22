@@ -1,5 +1,7 @@
 //! The engine's definitions of the core's calls into it (`quench_runtime::vm::engine_calls2`).
 #![allow(clippy::too_many_arguments)]
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use crate::engine_prelude::*;
 use quench_runtime::vm::engine_types::{AheadImages, LaneView, StableFacts};
 use quench_runtime::bytecode::Function;

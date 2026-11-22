@@ -8,6 +8,8 @@
 //!
 //! Owner: base tier (relocatable stencils + generic row).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{CallSite, ImageTarget, symbols::SymbolTable};
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::compile::aot_facts::AotFacts;

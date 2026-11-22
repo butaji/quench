@@ -7,6 +7,8 @@
 //! block goes on its size class's free list for the next body of that size or smaller, and a
 //! chunk whose last body is freed returns its pages to the system.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 pub(crate) mod retire;
 pub(crate) mod views;
 

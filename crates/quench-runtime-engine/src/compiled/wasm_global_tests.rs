@@ -2,6 +2,8 @@
 //! result and leaves the interpreter's global, for payloads in the tag space too, and its CLIF
 //! reads and writes the global's native slot with no callout.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use wasmparser::Operator;
 

@@ -5,6 +5,8 @@
 //! register whose tagged view is unavailable is boxed in that cold block from its unboxed
 //! view (`number_domains::box_unboxed`), which the hot path never builds for a leave.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::exit_protocol::{LiveValue, Source};
 

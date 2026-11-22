@@ -34,6 +34,8 @@
 //! context (`reload_memory`, `wasm_rows.rs`), which a callee's growth refreshes
 //! (`refresh_memory_length`), so the caller's header and pins agree with the memory.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::{CONTEXT_MEMORY_GROW, CONTEXT_MEMORY_LENGTH};
 use super::{Planned, World, codes, row, slot};
 use quench_runtime::bytecode::WideInstruction;

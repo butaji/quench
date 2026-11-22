@@ -1,6 +1,8 @@
 //! The receivers of a loop's inlined calls the loop itself writes, read right before the
 //! callee's read (`inline_region`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use std::collections::BTreeMap;
 use super::{field_path, FieldPath, FieldReceiver, FieldSite, Register, RegisterSet, WideInstruction};
 

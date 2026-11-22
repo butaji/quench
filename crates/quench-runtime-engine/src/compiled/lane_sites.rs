@@ -1,4 +1,6 @@
 //! What a lane unit's by-name loads read at compile time: the global scope's bindings.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalReads, GlobalSlot, GlobalTable, StableCell, scalar_native};
 

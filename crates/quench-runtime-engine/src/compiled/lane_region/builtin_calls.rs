@@ -4,6 +4,8 @@
 //! interpreter's own step takes, and the call leaves at its PC to run it. Each row reads what
 //! it proves once: a string record's form in place, an array's backing through its record.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::ImmediateLayout;
 use quench_runtime::staged::array_search::{DenseNeedle, scan_dense};

@@ -1,6 +1,8 @@
 //! The edges into a lane body's block leaders, from its bytecode: which edges each block's
 //! entry proofs come from, and which blocks every edge into reaches before they are lowered.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Per block leader, its forward edges (`forward_edges`), and the leaders lowering may seal

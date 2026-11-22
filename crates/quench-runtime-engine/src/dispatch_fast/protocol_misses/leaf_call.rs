@@ -4,6 +4,8 @@
 //! payload in the rest: a leaf call's payload is its leaf form (`leaf << 3`) and argument count,
 //! a builtin or Math call's is its row, a Reflect.get call's is none.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 use super::super::leaf_calls::script_call_leaf_miss;
 use super::super::native_calls::{builtin_miss_of, math_miss_of, reflect_get_miss};

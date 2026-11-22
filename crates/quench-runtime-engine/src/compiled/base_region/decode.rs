@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::global_facts::LexicalSlot;
 use quench_runtime::staged::property::StoreArm;

@@ -1,4 +1,6 @@
 //! arm64 Darwin and Linux native-entry recovery. Only owned guard/poll faults are ours.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{ACTIVE_CONTEXT, CallContext, GuardSupport, TERMINATED_STATUS, WasmEntry, trap_status};
 use std::sync::OnceLock;
 

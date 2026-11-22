@@ -17,6 +17,8 @@
 //! symbols (`Symbol::HeapValue`, `Symbol::Shape`) the loader resolves from recipes, so no
 //! address of the compiling process reaches the image.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 #[path = "aot_image/symbols.rs"]
 pub(crate) mod symbols;
 #[path = "aot_image/base.rs"]

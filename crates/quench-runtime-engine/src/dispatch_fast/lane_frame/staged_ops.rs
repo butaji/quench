@@ -1,5 +1,7 @@
 //! The staged operations the lane runs over a `LaneFrame`: each builds the frame of the running
 //! record, steps the operation on the concrete stage, and answers the edge or the written value.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 

@@ -11,6 +11,8 @@
 //! but neither mask's tag test covers it: the u-jit proves a Number set exactly (`Type::NUMBER`), and
 //! the b-jit proves it through the register's representation (`DeclaredFact::Number`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::Function;
 use quench_runtime::typed_ir::language_bit;
 use quench_runtime::ValueType;

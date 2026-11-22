@@ -3,6 +3,8 @@
 //! integer result an index is made of is computed in 64-bit words (`index_math`), any other
 //! operand takes binary64, and an operand only a tag types is taken for an int32 and tested.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::operations::NumberArithmetic;
 use quench_runtime::staged::number_machine;

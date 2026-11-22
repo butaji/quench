@@ -1,5 +1,7 @@
 //! Protocol misses of iterator and generator steps (`protocol_family::ITERATION`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// `iterator_step_miss`.

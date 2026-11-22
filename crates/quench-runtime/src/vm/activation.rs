@@ -229,7 +229,7 @@ impl CallContext {
         }
     }
 
-    pub(super) fn callee(self) -> Option<Value> {
+    pub fn callee(self) -> Option<Value> {
         match self {
             Self::Function(value)
             | Self::Constructor(value)

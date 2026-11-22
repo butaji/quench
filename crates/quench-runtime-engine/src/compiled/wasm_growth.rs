@@ -11,6 +11,8 @@
 //! growth up the call graph. A shared memory may grow in another thread at any point, so every
 //! function may grow over one.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bitset::BitSet;
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::staged::wasm_call::Call;

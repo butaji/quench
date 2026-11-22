@@ -1,5 +1,7 @@
 //! Protocol misses of returns and returning records (`protocol_family::RETURN`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// Kinds of the RETURN family's parameter codes: a returning record's kind (`RETURNING_*`, 0..=12),

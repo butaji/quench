@@ -2,6 +2,8 @@
 //! the closed world proves the site calls (`AotFacts::call_target`) fixes which entry cell it is; the
 //! closure the site resolved of that function, which the program makes as it runs, fixes its identity,
 //! captures and descriptor, as a JIT caller's direct callee holds them (`direct_callee_in_lane`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 #[quench_macros::ext(DispatchFastProvenCalleesVm)]

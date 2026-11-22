@@ -5,6 +5,8 @@
 //! An operand is a register (the recurrences, the scalars the steps read, the steps'
 //! results) or an element of the chunk's row (a column computed before the pass), so a step
 //! reads either with one select and one load.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::recur::{Code, read_later};
 use super::run::CHUNK;
 use super::shape::{Arg, Shape};

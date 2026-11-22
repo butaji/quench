@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::call_plan::DirectFacts;
 use super::declared::EntryGuard;

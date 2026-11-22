@@ -1,5 +1,7 @@
 //! Constructions native code makes in place: a lane body's planned or initialized
 //! receiver, a frameless construction's receiver and result, and an intrinsic array.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{JsStepDispatch, ResidualProgram, Vm};
 use quench_runtime::Value;
 

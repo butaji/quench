@@ -12,6 +12,8 @@
 //!
 //! Owner: one pipeline.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{AotImage, unbound_callee};
 use quench_runtime::folded_roots::{FoldedRoots, RootedCode};
 use crate::compiled::{tier_policy::POLYMORPHISM, DirectCallee};

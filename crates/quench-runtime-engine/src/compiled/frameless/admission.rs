@@ -1,6 +1,8 @@
 //! Admission of callees for frameless calls: a callee's function is admitted once per
 //! collection epoch, and each closure of it takes the function's admission with its own
 //! captures.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{CallEntry, CACHE_ENTRIES, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
 use super::super::{JsStepDispatch, ResidualProgram, Vm};
 use super::super::admission::{admit_callee, refuse, CalleeUse, Refusal};

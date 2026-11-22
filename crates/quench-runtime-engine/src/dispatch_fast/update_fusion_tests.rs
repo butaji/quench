@@ -1,6 +1,8 @@
 //! A loop site that retires without a region gives its update the fusion the interpreter's loader gives
 //! it (`update_fusion`), so a declined loop runs as many dispatches as `--no-jit`'s.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::index as opc;
 use quench_runtime::test_host::TestHost;

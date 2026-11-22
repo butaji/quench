@@ -1,6 +1,8 @@
 //! A method call whose site has prototype-held entries (`plan::chain_reads`): each entry's read of the method through the Held
 //! row, then the direct row of the callee it answers. Split from `call_plan.rs` for its size.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// One entry of a method site's chain: the read of the method through the Held row (its stencil and holes), the callee

@@ -1,4 +1,6 @@
 //! The field stores a loop region writes natively get their slots' addresses at entry.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The slot addresses of `region`'s field stores, for `entry` (`loop_entry_in_lane`).

@@ -2,6 +2,8 @@
 //! tier's `wasm_stitch` `table`: a `Ge` split takes its left half where the slot is below the middle (the JS compare
 //! branches where its relation fails), a `Ne` leaf takes its table entry where the slot equals it, and the last leaf
 //! jumps to its entry. The tree is one run of parts at the switch's PC: the root first, the rest in layout order.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Subtrees of at most this many slots are a chain of leaves rather than a split.

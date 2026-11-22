@@ -3,6 +3,8 @@
 //! (`RecordOperand`); the frame answers each from the running lane, so a handler states which
 //! operands its record holds and the staged step decides the rest.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{Operand, OperandKind};
 

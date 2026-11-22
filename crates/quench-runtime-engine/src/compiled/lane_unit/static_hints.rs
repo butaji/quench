@@ -2,6 +2,8 @@
 //! per-PC call targets (`static_call_targets`). A hint is never a proof: replacement and
 //! aliasing are handled by call-edge admission, which tries each target a site names behind
 //! its own body guard.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{Atom, Constant, ControlFlowLayout, FieldLookup, Function, PropertyDefinitionMode, WideInstruction};
 
 /// The bodies a call site's callee may name statically: a superset of the callees it meets,

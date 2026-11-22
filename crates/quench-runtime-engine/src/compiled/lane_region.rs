@@ -16,6 +16,8 @@
 //! The region leaves at the exact PC of any instruction it does not run, before any of
 //! that instruction's effects, with the register file holding the interpreter's state; the
 //! lane resumes there. Nothing in a run allocates, collects or calls guest code.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::JsDenotation;
 use crate::compiled::regions;
 use super::*;

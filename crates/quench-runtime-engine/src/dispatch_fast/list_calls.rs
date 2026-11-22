@@ -1,4 +1,6 @@
 //! Calls whose arguments come from a list: applied calls and spread calls.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// `f.apply(thisArg, list)` (`native` `FunctionApply`, `f` the receiver) or

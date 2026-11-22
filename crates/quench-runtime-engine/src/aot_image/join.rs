@@ -8,6 +8,8 @@
 //!
 //! Owner: lane/base join (and the deletion of the per-PC fallback).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{CallSite, ImageTarget, LaneImage, base::BaseImage, symbols::SymbolTable};
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::compile::aot_facts::AotFacts;

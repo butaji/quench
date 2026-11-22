@@ -4,6 +4,8 @@
 //! semantic SSA specializer that frameless JIT bodies and linked AOT regions share
 //! (`compile_js_typed_numeric_region`): an interpreter change reaches it.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{Function, LazyFlag, ProgramKind, ResidualProgram, Traits};
 
 /// Native code and its result interpretation for a JavaScript function.

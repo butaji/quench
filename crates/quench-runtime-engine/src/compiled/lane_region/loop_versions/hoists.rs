@@ -6,6 +6,8 @@
 //! the held word (`Lowering::hoisted_read`). The operation has no effect to reorder: it reads its
 //! operands, which are not written, and writes the register it is held for.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 use super::plan::{arithmetic_of, Nest};
 use super::{Bound, Decision, Hoist};

@@ -1,5 +1,7 @@
 //! Tests of the Cranelift emission of the staged operations.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::heap::{Cell, Heap, Object, PlainPropertyStorage};
 use quench_runtime::staged::ic;

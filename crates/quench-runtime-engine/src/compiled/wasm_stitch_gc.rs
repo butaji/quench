@@ -17,6 +17,8 @@
 //!
 //! A child of `wasm_stitch` (`#[path]`), so it names `wasm_stitch`'s helpers through `super`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use crate::compiled::CONTEXT_MEMORY_LENGTH;
 use crate::compiled::wasm_gc_allocate::{allocating_reads, allocating_result, pack};
 use crate::compiled::wasm_gc_callout::GcCall;

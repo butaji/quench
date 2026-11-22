@@ -1,5 +1,7 @@
 //! What a constant or immediate denotes, the one reading every tier uses.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{Constant, Operand, OperandKind};
 use quench_runtime::typed_ir::{IntRange, Type};
 use quench_runtime::value::Value;

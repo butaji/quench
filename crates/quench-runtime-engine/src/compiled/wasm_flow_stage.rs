@@ -2,6 +2,8 @@
 //! a `Flow` step (`staged::wasm_flow`), the select as the stage's primitive, and the analysis
 //! of each step's operands.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_instance_stage::value_kind;
 use super::{Analysis, AnalysisState, Emitter, Kind, Slot, eager_unreachable_admitted};
 use quench_runtime::WasmType;

@@ -10,6 +10,8 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::body_inlined_activation_in_lane`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
 use quench_runtime::bytecode::Function;
 use quench_runtime::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};

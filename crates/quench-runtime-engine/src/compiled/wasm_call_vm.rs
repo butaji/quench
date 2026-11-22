@@ -11,6 +11,8 @@
 //!
 //! A child of `compiled` (`mod wasm_call_vm;`), so it names `compiled`'s helpers through `super`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// `vm_call_callout`, the `CALL_VM` row's callout: (context, defined function index,

@@ -1,5 +1,7 @@
 //! The specializer's Cranelift stage: `quench_runtime::staged` operations emitted as IR.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::region::Mutability;
 use quench_runtime::staged::{Access, Domain, NumericStage, Stage, Table};

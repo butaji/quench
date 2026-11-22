@@ -1,5 +1,7 @@
 //! The lane body ABI: a body returns its status and result word in two registers.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::BodyReturn;

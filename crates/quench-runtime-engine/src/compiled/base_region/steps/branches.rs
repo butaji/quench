@@ -1,6 +1,8 @@
 //! The branches of a helper step's run: the jump to a PC and the landing at a target that restores
 //! the registers its destination expects.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The jump to `pc`, a part of a run whose NEXT is not where the run goes on.

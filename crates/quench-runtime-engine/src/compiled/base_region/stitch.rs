@@ -14,6 +14,8 @@
 //! outside the span (the one past its last instruction first, where its last row falls), which
 //! resumes the interpreter there, so a jump out of a region is a jump to a row like any other.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::call_plan::inline::{InlineSite, Proof};
 use quench_runtime::heap::GlobalFact;

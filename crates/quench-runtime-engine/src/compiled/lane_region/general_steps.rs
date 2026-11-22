@@ -3,6 +3,8 @@
 //! record in place (`LaneHelper::Step`, `dispatch_fast::body_general_step`) and continues, rather
 //! than leaving the body. The registers the body wrote are homed first; the registers the step
 //! writes are read back, and every heap proof retires, as after a call.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::lane_unit::Origin;
 

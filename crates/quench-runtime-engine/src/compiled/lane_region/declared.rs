@@ -2,6 +2,8 @@
 //! enters a register the tier checks it once (`conform_declared`) and then trusts the register's
 //! narrowed fact, as a declared parameter is checked at entry (`scalar::declared_entry_types`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The type a declared language set seeds where a tier checks it exactly: a Number, or a set

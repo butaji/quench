@@ -1,6 +1,8 @@
 //! The numeric instructions' rows: a Number operation or a numeric jump decoded over the frame's Number registers,
 //! and the staged operators the decode of a numeric instruction names.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it

@@ -2,6 +2,8 @@
 //! lowered `AotImage` (`aot_image::lower`), links it into the VM that loads it
 //! (`aot_image::live::install`), and reads and writes the file (`aot_image::file`). A recording
 //! bundles the images of one run into one file.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use std::collections::BTreeMap;
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;

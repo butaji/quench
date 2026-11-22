@@ -13,6 +13,8 @@
 //! (`Ending::poll`); the region reads the entry record its loop's entry made, leaves its loop by
 //! a leave row at the PC it resumes the interpreter at, and its calls that complete no activation
 //! are inlined or chained as a body's are (`Ending::Region`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::call_plan::inline::Context;
 use super::call_plan::{CallForm, CallShape, DirectFacts};

@@ -4,6 +4,8 @@
 //! that separate obligation and the complete slot range once, then use fixed
 //! displacements. Layout proofs never freeze writable property contents.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
 use quench_runtime::heap::PlainPropertyStorage;

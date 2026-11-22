@@ -1,5 +1,7 @@
 //! Protocol misses of loop headers and numeric protocol records (`protocol_family::LOOP`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// `f64_sqrt_miss::<ACC_NONE>`.

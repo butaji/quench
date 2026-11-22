@@ -13,6 +13,8 @@
 //! requested so the interpreter's safepoint runs, and an entry guard that finds a register that is
 //! no Number returns `LaneExit::Entry`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::lane_unit::{InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use quench_runtime::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};

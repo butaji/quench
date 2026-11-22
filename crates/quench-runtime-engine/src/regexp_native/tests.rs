@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::Vm;
 use quench_runtime::Engine;
 use quench_runtime::test_host::TestHost;

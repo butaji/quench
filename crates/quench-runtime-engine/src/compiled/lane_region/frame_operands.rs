@@ -1,4 +1,6 @@
 //! A staged operand's value: a register's proved one, or a constant's, statically.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;

@@ -20,6 +20,8 @@
 //!
 //! A name call's receiver, `undefined`, is a second definition of the row (`Decoded::also`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::code_dependencies::SlotDependency;
 use quench_runtime::heap::{GlobalFact, GlobalLayoutFact};

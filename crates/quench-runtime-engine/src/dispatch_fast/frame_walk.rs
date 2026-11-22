@@ -3,6 +3,8 @@
 //! pushed over plain headers seals them where they are (`PlainSegment`) instead of spilling them
 //! into records, and its pop unseals them; every reader pairs the frames with the side records
 //! innermost first, so no reader and no writer but emitted code's entry spills.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::lane_frames::{header_sided, ActivationView, Side};
 

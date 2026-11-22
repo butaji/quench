@@ -4,6 +4,8 @@
 //! The word is exact where the product is: a versioned access's entry proves the product within
 //! `IntRange::EXACT` at both ends of the counter's reach (`Lowering::check_reach`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 use super::Induction;
 

@@ -2,6 +2,8 @@
 //! by the interpreter's own element steps without the exact step: a read the array and its
 //! prototypes do not hold (`Vm::absent_array_element`) and a plain store
 //! (`Vm::store_plain_element`). Anything else takes the step at the same PC.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::Vm;
 use quench_runtime::Value;
 

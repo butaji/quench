@@ -215,7 +215,7 @@ pub(crate) struct Wasm {
     /// `promotion_entries`: a loop of this many iterations does at least the work of an entry
     /// through a short call, so a function entered rarely but looping hot promotes after
     /// `promotion_entries` such stretches.
-    pub(crate) backedges_per_entry: u32,
+    pub backedges_per_entry: u32,
     /// The size, in bytecodes, up to which a Wasm module compiles whole at its first entry
     /// rather than starting in the interpreter: compiling it costs about what
     /// `WasmModuleCompile::after` would have spent interpreting it, so waiting buys nothing.

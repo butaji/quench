@@ -4,6 +4,8 @@
 //! constructor register against the hinted identity each run, so a hint that is wrong (another path reaches the
 //! register, a name another scope binds) costs the row's fast arm and nothing else.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::in_presence::InPresence;
 

@@ -5,6 +5,8 @@
 //! row where the step helper does not make it (a guarded operator or comparison), and continues at
 //! the next record or the record's jump target, rather than leaving the body. The step's chain is laid out cold behind the row's run.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Whether the step helper makes `instruction` in place and continues: a general step or a script

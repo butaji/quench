@@ -13,6 +13,8 @@
 //! which only loses facts. The state is keyed by frame slot (the web's original register), which is what the
 //! guards check and what a write changes.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::repr::{variant_of, Variant};
 use super::*;
 use cranelift_codegen::bitset::CompoundBitSet;

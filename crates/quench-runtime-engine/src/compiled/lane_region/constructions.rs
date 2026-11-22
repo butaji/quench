@@ -1,5 +1,7 @@
 //! Constructions in a lane region: `new callee(...)` by the callee's construct plan.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
 

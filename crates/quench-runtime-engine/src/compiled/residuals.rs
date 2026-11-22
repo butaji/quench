@@ -6,6 +6,8 @@
 //! (b-jit adds `bytes=`). u-jit counts the CLIF of the loop's innermost blocks; b-jit counts the
 //! rows of the stitched loop (`base_region/residuals.rs`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::trace::Channel;
 use cranelift_codegen::{
     dominator_tree::DominatorTree, flowgraph::ControlFlowGraph, ir, loop_analysis::LoopAnalysis,

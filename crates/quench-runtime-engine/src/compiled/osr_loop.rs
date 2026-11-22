@@ -28,6 +28,8 @@
 //! Collection debt exits with live values restored before the VM can collect. Other effect
 //! boundaries exit before their effects.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{
     FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Register, WideInstruction,

@@ -1,4 +1,6 @@
 //! A forwarded or chain initializer's adds made on a receiver from the caches, without guest code.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The adds an initializing body (`ScriptCallTarget::initializes`) of `function` makes to

@@ -6,6 +6,8 @@
 //! through the shared entry ABI, so a register that holds no Number there leaves with
 //! `LaneExit::Entry` and the interpreter resumes at the PC.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_bjit::HOLES;
 use super::link::Target;

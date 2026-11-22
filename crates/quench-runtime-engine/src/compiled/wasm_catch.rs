@@ -4,6 +4,8 @@
 //! raised when a handler catches it, and binds its thrown value to the handler's frame local. A
 //! trap, a link failure and a termination are never caught, as `Vm::exception_handler_target` does.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{AnalysisState, CallContext, Emitter, JsError, Kind, RAISED_STATUS, Raised, Slot, Vm};
 use quench_runtime::bytecode::{Function, Handler, ThrownValueSlot};
 use quench_runtime::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _};

@@ -1,6 +1,8 @@
 //! Stable facts: what a lowering folds under code dependencies, and that changing one
 //! retires the code that folded it.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The lane-body compilation of the named function of `source`, after it ran.

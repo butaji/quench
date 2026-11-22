@@ -10,6 +10,8 @@
 //!
 //! Owner: one pipeline.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{AotFunction, AotImage, base::NO_ENTRY, file, symbols::{Symbol, SymbolTable}};
 use quench_runtime::bytecode::opcode_name;
 use crate::compiled::native_js_operation_signature;

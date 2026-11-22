@@ -28,6 +28,8 @@
 //! own beyond the interpreter's (the environment is young, or a resumed generator's, which joined the remembered
 //! set when its window opened). A body that runs in a frame holds storage with no slots, which every such row
 //! misses at; a loop region has no such storage and makes no such row.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{Function, InstructionField};
 

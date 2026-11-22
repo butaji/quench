@@ -1,5 +1,7 @@
 //! The run of a stencil region that needs no activation: `Crossing::Bare`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::entry_protocol::{self, EntryDescriptor, EntryKind};
 use super::{BodyEntry, CallContext, LoopEntry, RegionRun, Raised};
 

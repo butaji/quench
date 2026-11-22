@@ -4,6 +4,8 @@
 //! is (`LaneHelper::TypedArrayView`). Anything the rows leave to the VM (a range error, a detached buffer, a big-endian
 //! float, a value that is no Number, an endianness that is no Boolean) leaves at the call before it changes anything.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::ImmediateLayout;
 use quench_runtime::heap::Native;

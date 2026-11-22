@@ -11,6 +11,8 @@
 //! call that writes the result, followed by the return of that result (`return_if_tail`), as
 //! before. The b-jit's stitched tail calls still grow the native stack (`wasm_stitch_tail`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use cranelift_codegen::ir::InstBuilder;
 use super::wasm_instance_stage::value_kind;
 use super::{

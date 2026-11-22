@@ -11,6 +11,8 @@
 //! A child of `wasm_stitch` (`#[path]`), so it names `wasm_stitch`'s private helpers
 //! through `super`. The site's data comes from the artifact's analysis (`site`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::{CONTEXT_CALL_REFERENCE, CONTEXT_INSTANCE, CONTEXT_MEMORY_LENGTH, CONTEXT_TABLE_WORDS, Plan, Slot};
 use super::{IndirectSite, Planned, World, leak, row, slot};
 use quench_runtime::bytecode::WideInstruction;

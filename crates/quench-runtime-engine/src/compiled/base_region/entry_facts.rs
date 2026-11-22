@@ -1,6 +1,8 @@
 //! Where a heap row's recorded facts come from: a loop region's entry record, through which its
 //! arrays are read as dense backings or as typed elements, or nowhere (`Facts`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::heap::TypedArrayKind;
 use quench_runtime::staged::typed_elements::NativeKind;

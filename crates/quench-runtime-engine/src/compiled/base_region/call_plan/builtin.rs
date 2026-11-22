@@ -3,6 +3,8 @@
 //! as a call site names them. The array builtins (`push`, `pop`) run on their staged rows too, which
 //! miss to the helper row where the staged body leaves.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::heap::Native;
 use quench_runtime::staged::call_native::MathCall;
 use quench_runtime::vm::number::math_call;

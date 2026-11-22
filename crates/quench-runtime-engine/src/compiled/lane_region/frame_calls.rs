@@ -1,6 +1,8 @@
 //! Stage-generic callouts for a lane frame: the interrupt/collection safepoint, the
 //! element store helper and a literal allocation's completion.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::EmitFrame;
 use super::super::{emit_js_guard, emit_js_payload_word, emit_js_record_base, emit_lane_helper_call, Emit, EmitProof,
     JsStepDispatch, LaneHelper};

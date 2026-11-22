@@ -1,5 +1,7 @@
 //! Stores that meet a setter, as the lane activates it (`AccessorCall::store_setter`),
 //! against Node's output.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::test_host::printed;
 
 /// The stores `setter_stores_match_node` runs.

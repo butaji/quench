@@ -1,5 +1,7 @@
 //! Running a loop kernel: entry facts, the trip count, chunks of columns, the scalar pass
 //! over recurrences, the chunk's stores, and the registers written back.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 use super::shape::{Arg, NodeOp, Scalar, Stride};
 use super::typed;

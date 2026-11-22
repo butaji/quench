@@ -20,6 +20,8 @@
 //! and a base is an int32 or an index word of `IntRange::EXACT`, so `base + counter * scale` stays
 //! within `i64` and the entry's arithmetic is exact.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::Stage;
 

@@ -1,5 +1,7 @@
 //! Protocol misses of keyed reads and writes, deletes and named reads past their rows (`protocol_family::ELEMENT`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// `GetIndex`'s miss (`get_index_miss`).

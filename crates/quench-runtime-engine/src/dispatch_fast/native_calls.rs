@@ -1,5 +1,7 @@
 //! Calls the lane answers in place for their common case (else `native_call_miss`), and
 //! for-in's step (`fast_names_step`, the loop exit's row).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::call_complete::{concrete_returns_callee_completion, concrete_write_call_result};
 use quench_runtime::bytecode::index as opc;

@@ -6,6 +6,8 @@
 //! as constants; an image's proven callee has them in its `CallRecord` (`ProvenCall`), which the
 //! loader binds, so the code names the record by `Symbol::CallRecord` and never a JIT-time address.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;

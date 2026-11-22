@@ -1,5 +1,7 @@
 //! Lane-frame write-backs at calls: a register is stored once per definition, not once per call.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// `run` of `source`, lowered as a lane region from its first loop header.

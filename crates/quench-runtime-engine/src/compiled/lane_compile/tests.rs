@@ -1,5 +1,7 @@
 //! Lane-body compile decisions: exit words and dependency subscriptions.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::LaneDependencies;
 use quench_runtime::code_dependencies::{CodeReaders, DependentCode, PublishedCode, SlotDependency};
 use quench_runtime::heap::{Heap, Object};

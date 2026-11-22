@@ -1,5 +1,7 @@
 //! Protocol misses of private names and defined fields (`protocol_family::PRIVATE`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// `DefineField`'s miss (`define_field_miss`).

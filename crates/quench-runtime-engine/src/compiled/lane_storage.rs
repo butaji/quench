@@ -1,5 +1,7 @@
 //! What a lane run binds in the thread's lane frame: a VM's constants once, the rest per run.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 #[quench_macros::ext(JsStepDispatchOps2)]

@@ -1,4 +1,6 @@
 //! How a plain lane call enters a frameless target (`ScriptCallTarget::entry`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::CallEntry;

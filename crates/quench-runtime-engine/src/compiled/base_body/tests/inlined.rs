@@ -1,5 +1,7 @@
 //! Calls a body inlines: a callee's rows in the caller's body, its guards and its resumes.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{assert_bodies_never_leave, run_both};
 
 /// A call of a small callee runs as the callee's rows in the caller's body. A guard that fails

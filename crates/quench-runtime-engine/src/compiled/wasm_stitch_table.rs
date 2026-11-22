@@ -11,6 +11,8 @@
 //!
 //! A child of `wasm_stitch` (`#[path]`), so it names `wasm_stitch`'s helpers through `super`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use crate::compiled::CONTEXT_MEMORY_LENGTH;
 use super::{Planned, World, leak, slot};
 use quench_runtime::bytecode::WideInstruction;

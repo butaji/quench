@@ -2,6 +2,8 @@
 //! finish and cold paths): each
 //! leaves for a due collection first, and the dispatch then reads the moved arena bases again.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{JsStepDispatch, ResidualProgram, Value, Vm};
 
 /// A lane body's empty object literal, as the lane's own (the `MakeObject` row, `Allocation::Empty`);

@@ -1,5 +1,7 @@
 //! F4: a function's call target serves each of its closures, whose own facts alone are
 //! rebuilt when a call site meets a fresh one.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 #[quench_macros::ext(DispatchFastClosureTargetsVm)]

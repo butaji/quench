@@ -8,6 +8,8 @@
 //! needs no shape test. What a call does not keep is the layout: an object's storage form and
 //! arena address move without a change of shape, so they are proved again (`kept_layout`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl LocalProofs {

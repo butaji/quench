@@ -1,6 +1,8 @@
 //! The memory family of the machine: `MachineAccess` as Cranelift loads, stores and calls. An
 //! `Access` of Wasm memory is a lane, an extension and a result lane over the primitives.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Builds, of_in_lane, machine_type};
 use quench_runtime::staged::machine::{Extend, Lane, MachineAccess};
 use quench_runtime::staged::wasm_memory::Access;

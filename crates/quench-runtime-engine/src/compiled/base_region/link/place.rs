@@ -1,6 +1,8 @@
 //! Placing a linked body's rows in one code buffer: the entry thunk, the rows copied and patched
 //! (`quench_bjit::copy_patch`), the exit stubs and routines behind them, and the symbolic fields
 //! a loader fills.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::aot_image::Symbol;
 use quench_bjit::EXIT_STUB_LEN;

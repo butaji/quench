@@ -10,6 +10,8 @@
 //! until then. The other sets a tag alone decides are `EntryGuard`s, kept for parameters the
 //! function never writes, which hold the fact at every row.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::declared_checks::{entry_checks, ARRAY, BASE_TESTED, EntryCheck, OBJECT_PLAIN, STRING};
 use super::super::lane_region::scalar::parameter_register;

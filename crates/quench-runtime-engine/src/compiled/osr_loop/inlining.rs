@@ -2,6 +2,8 @@
 //! region PCs every kept instruction takes, the instructions each takes there, and the
 //! guards the frames end with.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{
     admitted_store, CalleeSource, field_base, inlined_returning, inlined_set_this, intern_field, is_move_row, object_reads, renamed,
     FieldBase, FieldLookup, FieldPath, FieldReceiver, FieldSite, FieldUse, ImmediateLayout, ImmediateRole, InlineCallee,

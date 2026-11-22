@@ -8,6 +8,8 @@
 //! step match would have returned. The memory binding needs no check here, as for `Simd::Load`: a
 //! stitched function binds only its frame's memory (`plan` rejects any other binding).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_stitch_simd::{vector_row, vector_slot};
 use super::{Planned, World, codes, slot};
 use quench_runtime::bytecode::WideInstruction;

@@ -1,5 +1,7 @@
 //! Widening a block's input types after a native body left at its edge.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::Facts;
 use quench_runtime::typed_ir::Type;
 

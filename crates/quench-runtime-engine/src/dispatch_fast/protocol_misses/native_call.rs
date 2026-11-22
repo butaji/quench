@@ -1,5 +1,7 @@
 //! Protocol misses of native, applied, spread and array calls (`protocol_family::NATIVE_CALL`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// `native_call_miss`: a `Call` record whose callee is a native.

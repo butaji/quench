@@ -1,6 +1,8 @@
 //! The module an AOT image or a Cranelift program publishes: its native functions and data, the
 //! entry table, and the already-compiled code (`NativeCode`) an image relocates by declaration.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{NativeData, NativeFunction};
 use quench_runtime::bytecode::{ProgramKind, ResidualProgram};
 use cranelift_codegen::{binemit::Reloc, ir};

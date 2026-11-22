@@ -3,6 +3,8 @@
 //! a hole and its element store. The rows decide what an element access is; this frame owns the
 //! facts it is proved under, kept in `State` beside the registers'.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};

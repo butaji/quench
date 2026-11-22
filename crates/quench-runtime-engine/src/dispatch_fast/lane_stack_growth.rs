@@ -1,5 +1,7 @@
 //! When and how a lane stack grows.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::LaneStack;
 
 /// How much a full lane stack grows by: it doubles, so its size follows the deepest window

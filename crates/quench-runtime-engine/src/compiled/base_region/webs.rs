@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// A register's webs: its definitions joined whenever one value of it is live where several

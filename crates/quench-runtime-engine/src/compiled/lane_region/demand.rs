@@ -9,6 +9,8 @@
 //! read that finds the view unavailable boxes it there from the unboxed view
 //! (`frame::register_tagged`), which costs a box and never reads garbage.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::JsDenotation;
 use super::*;
 use quench_runtime::compile::liveness::transfer;

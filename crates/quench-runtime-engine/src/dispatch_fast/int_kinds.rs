@@ -20,6 +20,8 @@
 //! which the view's own constraints give: no dynamic scope access (a direct `eval` or `with`),
 //! no superinstructions (whose nested writes the pass does not decode), and a liveness mask that
 //! names the entry-live registers precisely (not windowed).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{ImmediateRole, Op, OperandKind, WideInstruction};
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::value::Value;

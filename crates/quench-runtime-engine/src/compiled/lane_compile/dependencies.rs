@@ -1,5 +1,7 @@
 //! What a lane body's code depends on, and its subscription to the changes that retire it.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneDependencies;

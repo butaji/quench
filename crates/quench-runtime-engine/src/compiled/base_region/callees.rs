@@ -9,6 +9,8 @@
 //! retires the body (`ProgramStore::retire_dead_native_calls`), and the identity a word names is
 //! never a reused one.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::call_plan::inline::{Callee, Context, InlineSite};
 use super::call_plan::{CallForm, CallShape, DirectFacts};

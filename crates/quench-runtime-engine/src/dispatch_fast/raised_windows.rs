@@ -3,6 +3,8 @@
 //! (`settle_raised_window`): a generator completes (its record is done) and its caller, whose
 //! step raised, continues unwinding; an async function or async generator's job ends with the
 //! error (`JobEnd::Threw`), which its promise or request settles as a rejection.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::lane_roots::LaneRoot;
 use super::*;
 

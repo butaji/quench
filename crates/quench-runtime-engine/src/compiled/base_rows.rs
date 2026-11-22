@@ -9,6 +9,8 @@
 //! 0, takes the narrow upper-word table in 1 and the cache entry's byte offset in 2). Every failed proof leaves through exit 0 with nothing written, so the interpreter
 //! runs the instruction.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::staged::Form;
 use quench_bjit::numeric::{library, Place};
 use quench_bjit::Stencil;

@@ -1,4 +1,6 @@
 //! `LaneStack::note_site_callee`'s history order.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::{CallTarget, CalleeBinding};
 

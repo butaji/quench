@@ -1,6 +1,8 @@
 //! The shape of a counted typed-array sum loop region (`Coverage::Loop`): one latch carrying
 //! only what the loop writes, no join inside it, and a hot path of at most a few blocks.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::element_tests::SUM;
 use super::*;
 use cranelift_codegen::{dominator_tree::DominatorTree, flowgraph::ControlFlowGraph, loop_analysis::LoopAnalysis};

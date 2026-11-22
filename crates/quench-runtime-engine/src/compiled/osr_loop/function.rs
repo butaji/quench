@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{LoopRegion, MAX_REGION_INSTRUCTIONS, Register, Value, WideInstruction};
 use std::collections::{BTreeMap, BTreeSet};
 

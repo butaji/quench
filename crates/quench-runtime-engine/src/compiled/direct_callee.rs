@@ -1,5 +1,7 @@
 //! The callees a lane body calls by their entries, and the native frames of those calls.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::DirectCallee;

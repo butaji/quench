@@ -1,6 +1,8 @@
 //! The host protocol of the accessor and proxy call-outs a generated row makes: a read or store
 //! that meets a getter, a setter or a proxy trap answers it or runs it as an activation of the
 //! lane. The rows call these through `AccessorCall`.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::getters::set_getter_hint;
 use super::proxy_traps::{get_trap_call, keyed_trap_atom, owe_invariants, set_trap_call};

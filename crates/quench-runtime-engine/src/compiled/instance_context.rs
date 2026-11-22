@@ -6,6 +6,8 @@
 //! same copy; a mirror row names its function's instance by the record's address, which lives as
 //! long as the environment the function keeps alive.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{
     CallContext, CompiledProgram, DiagnosticReferenceCallout, MemoryArguments,
     ProgramId, ReferenceCallSiteDiagnostics, Vm, diagnostic_reference_callout, displacement_base,

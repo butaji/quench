@@ -6,6 +6,8 @@
 //! step pushed or resumed) keeps its step in the payload with `NATIVE_JS_STOPPED`, as before.
 //! `unsettle` is the inverse, for a caller that reads a run as a `JsNativeStep`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_bjit::call_record::TERMINATED_STATUS;
 

@@ -1,5 +1,7 @@
 //! By-name reads whose scope the compiler left open: the probe that asks the general path
 //! where the name lands, and the record it quickens to.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 script_handler! {

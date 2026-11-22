@@ -5,6 +5,8 @@
 //! the callee's descriptor owned by the method like a Cranelift body's `direct`), any other call
 //! takes the helper row, and an instruction with no row leaves the body at its PC.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
 use super::base_region::function::{build_body, Body, BodySpec, ClassProto};

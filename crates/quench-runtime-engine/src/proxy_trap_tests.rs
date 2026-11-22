@@ -1,5 +1,7 @@
 //! Stores to and reads of a proxy whose `get` or `set` trap the lane activates
 //! (`AccessorCall::read_get_trap`, `store_set_trap`), against Node's output.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::test_host::printed;
 
 /// The reads `proxy_get_traps_match_node` runs.

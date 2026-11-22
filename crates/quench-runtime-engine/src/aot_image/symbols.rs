@@ -10,6 +10,8 @@
 //! Owner: relocation classes C/D (heap values, shapes) and the table; base and join add their
 //! kinds through `SymbolTable::intern`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::AotImage;
 use quench_runtime::bytecode::ResidualProgram;
 use crate::compiled::RelocKind;

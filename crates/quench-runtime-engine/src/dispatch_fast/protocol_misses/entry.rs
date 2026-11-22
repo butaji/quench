@@ -1,5 +1,7 @@
 //! Protocol misses of forwarded and kept calls, tier prologues and body entries (`protocol_family::ENTRY`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// Parameter codes of the call records (`Op::Call`, `Op::CallForwardingArguments`).

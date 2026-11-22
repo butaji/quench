@@ -8,6 +8,8 @@
 //! (`Vm::settle_materialized_request`). Where the generator is running, done, has requests
 //! queued or does not resume in this realm and program, the native runs the call, as the native
 //! queues or resumes it in a run of its own (`Vm::resume_request`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Whether the innermost activation is an async generator's in-place request.

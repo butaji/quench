@@ -8,6 +8,8 @@
 //! Writers edit a frame where it is (one-frame-one-call.md F4 (3)): a header's side record
 //! (`LaneStack::recomplete_top`, `name_top_record`, `frame_walk`'s `recomplete_at` and
 //! `attach_payload`) or a record (`records_mut`). An `ActivationView` is a copy.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::ActivationView;

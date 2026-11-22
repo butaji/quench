@@ -1,4 +1,6 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
 #[path = "frame_calls.rs"] pub(crate) mod calls;

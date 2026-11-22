@@ -1,6 +1,8 @@
 //! `GetField` of a local slot (`FieldBase::local`): the generated field row (`generated_row`) reads
 //! the plain local through its staged `Property` decode, and a site whose own-field hint is unbound
 //! or misses takes `local_field_miss`, the cached read of the site's tier.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The handler a `GetField` of a local slot takes once its site's entries name a tier a single

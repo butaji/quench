@@ -1,4 +1,6 @@
 //! The helpers admitting an inlined callee bound by its function (`lane_region::bindings`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 fn function_matches_in_lane(vm: &Vm, program: u64, callee: u64, function: u64) -> bool {

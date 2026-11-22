@@ -2,6 +2,8 @@
 //! folds to the value the object held. The receiver is guarded by identity, and the code depends
 //! on the object's exact shape as a prototype's values are held (`hold_holder`), so the object's
 //! next write retires the body (`Object::note_constant_write`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_, '_> {

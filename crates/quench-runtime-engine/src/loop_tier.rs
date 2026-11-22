@@ -2,6 +2,8 @@
 //! the code generator's thread, the element views it assumes, and the values earlier code
 //! found were no `i32`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::{ElementViews, LoopEntry, LoopRegion};
 

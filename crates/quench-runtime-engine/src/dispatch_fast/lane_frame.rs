@@ -1,6 +1,8 @@
 //! The interpreter's register frame: `staged` rows over the live file, a move or constant, a
 //! jump, an allocation, a suspension (`suspends`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::lane_reads::Reads;
 use quench_runtime::bytecode::{Operand, Register};

@@ -3,6 +3,8 @@
 //! the function, numbered in insertion order, so every function declares `Region::ALL` in order
 //! (`declare_regions`, called where a function is compiled) and a region's handle is its number.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use cranelift_codegen::ir::{self, AliasRegion, AliasRegionData, MemFlagsData};
 
 use quench_runtime::staged::region::{Access, Mutability, Region};

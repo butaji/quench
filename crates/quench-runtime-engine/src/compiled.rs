@@ -23,6 +23,8 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use tier_policy::Tiers;
 use crate::dispatch_fast::{frame_word, set_frame_word, Activation};
 use quench_runtime::staged::frame::{CONTEXT_BODY, CONTEXT_THIS};

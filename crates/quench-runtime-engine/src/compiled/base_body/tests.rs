@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::{Engine, JitMode};
 use quench_runtime::test_host::TestHost;
 use quench_runtime::vm::test_oracle::{assert_tier_agrees_after, Expect, Tier};

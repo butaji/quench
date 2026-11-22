@@ -6,6 +6,8 @@
 //! the shapes of the objects alone do not decide, or that no `with` object, dynamic binding or
 //! global read past every scope (`Vm::read_past_scopes`) answers, leaves the instruction to the
 //! general path before any effect.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::window_owner::WindowScope;
 use super::with_scopes::WithChain;

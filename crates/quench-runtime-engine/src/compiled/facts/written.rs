@@ -1,4 +1,6 @@
 //! The registers a lane body's entry finds written (`Facts::written`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::Facts;
 use quench_runtime::bytecode::WideInstruction;
 use cranelift_codegen::bitset::CompoundBitSet;

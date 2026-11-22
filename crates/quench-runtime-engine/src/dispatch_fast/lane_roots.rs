@@ -3,6 +3,8 @@
 //! owner keeps (`Vm::run_lane_job`). A job's lane resumes the activation over its record's register file
 //! with no VM frame beneath it; its `await` suspends it back into the record (`await_in_lane`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan};
 use quench_runtime::vm::activation::{FrameRecord, JobResume, JobRoot};

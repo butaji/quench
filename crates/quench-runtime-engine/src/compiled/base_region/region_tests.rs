@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::tier_events::{Event, TierEvents};
 use quench_runtime::test_host::TestHost;
 use quench_runtime::{Engine, ExecutionMode, JitMode};

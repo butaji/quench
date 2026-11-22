@@ -1,6 +1,8 @@
 //! A hot loop's lane body: the function's own body planner (`Vm::body_work_in_lane`) plans a body
 //! that starts at the loop's header, inlining the loop's calls as any body does, and the loop's
 //! backward jump enters it on the activation's registers.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::tier_policy::PERCENT;
 use crate::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit, PendingLaneMethod, PublishedLaneMethod};

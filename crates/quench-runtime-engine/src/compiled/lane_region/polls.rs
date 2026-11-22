@@ -1,5 +1,7 @@
 //! Interrupt polls in a lane region: which ones no reentry reaches, and the owner specialized there.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Specializes the interrupt owner at the polls no reentry reaches (`retain_closed_polls`).

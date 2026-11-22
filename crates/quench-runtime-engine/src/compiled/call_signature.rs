@@ -1,6 +1,8 @@
 //! The Cranelift call signatures of compiled code: each callout and entry is built here from
 //! its parameter and return types under one calling convention.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use cranelift_codegen::ir::{AbiParam, Signature, Type};
 use cranelift_codegen::isa::CallConv;
 

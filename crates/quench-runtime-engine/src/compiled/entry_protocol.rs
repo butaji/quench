@@ -8,6 +8,8 @@
 //! numeric entry keeps its own status-0 convention, which is not a leave protocol, so its result
 //! is returned as the body wrote it (`numeric_result`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::lane_body_abi::enter_body;
 use super::*;
 

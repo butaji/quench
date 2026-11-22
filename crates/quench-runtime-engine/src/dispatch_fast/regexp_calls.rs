@@ -1,4 +1,6 @@
 //! `String.prototype.replace` whose result only `.length` reads.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 script_handler! {

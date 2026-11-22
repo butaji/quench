@@ -1,6 +1,8 @@
 //! A staged row's slow case on the lane frame: the VM's own operation, called in place through
 //! the lane's helper (`Frame::vm_step`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Edges, EmitFrame, FRAME};
 use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call,
     register_offset, CheckedObject, Emit, JsStepDispatch, LaneHelper, ObjectRecord, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};

@@ -1,4 +1,6 @@
 //! An ahead lane body (`ahead_images`) published in a VM and run as the interpreter would.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 #[cfg(test)]

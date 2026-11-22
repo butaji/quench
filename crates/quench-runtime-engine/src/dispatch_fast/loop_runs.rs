@@ -1,6 +1,8 @@
 //! What a loop site's entries pay back, and how long the interpreter runs it before the model
 //! weighs its compile (`compiled::loop_model`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use crate::compiled::loop_model;
 
 use crate::compiled::tier_policy::MAX_ENTRY_BACKOFF;

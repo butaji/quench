@@ -1,5 +1,7 @@
 //! The one entry word of a function's lane body, which native callers read.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::dispatch_fast::LaneRecoverySpace;
 

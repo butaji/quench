@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::typed_ir::{Representation, Type};
 use crate::dispatch_fast::operand_feedback::{OperandClass, OperandKinds};

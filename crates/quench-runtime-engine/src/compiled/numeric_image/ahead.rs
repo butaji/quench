@@ -1,5 +1,7 @@
 //! A whole lane function compiled for the target "ahead" (`LaneHelpers::Ahead`): every helper
 //! a symbol, linked by relocation into a process that did not compile it.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::lane_region::{relocs, Completion, Coverage, ElementViews, NO_ENTRY_FIELDS, lower};
 use super::*;
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;

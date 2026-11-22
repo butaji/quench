@@ -1,5 +1,7 @@
 //! Returning instructions and call forms: a body completes the activation as the interpreter does.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{assert_bodies_never_leave, run_both};
 
 /// An instruction that carries the return flag (`return a + b`, `-x`, `o.p`, `typeof v`, `a < b`,

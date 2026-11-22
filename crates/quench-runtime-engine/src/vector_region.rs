@@ -16,6 +16,8 @@
 //! `VectorConstant`, `Load`, `Store`). Every other record of the run keeps its own handler, so
 //! control arriving inside the run runs it as before.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::compile::liveness::{RegisterMasks, RegisterSet, register_in};

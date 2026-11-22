@@ -3,6 +3,8 @@
 //! edge proved once, is read and written through that view; any other access is the row itself,
 //! over the frame's proofs of the array (`frame_elements`), with the exit, the join and the
 //! views a store retires left to this lowering.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::typed_elements::{typed_read_integer, TypedView};
 use quench_runtime::staged::{Operation, Stage, Step};

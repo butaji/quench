@@ -1,4 +1,6 @@
 //! Nested construction in a forwarded initializer's plan: `this.f = new C(<constants>)`.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{ImmediateLayout, InitializerValue, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
 

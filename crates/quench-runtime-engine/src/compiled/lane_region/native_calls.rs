@@ -15,6 +15,8 @@
 //! (`builtin_calls`) runs its staged row, its result a tagged Boolean, Number or string, or an
 //! int32.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::heap::Native;
 use quench_runtime::staged::call_native::MathCall;

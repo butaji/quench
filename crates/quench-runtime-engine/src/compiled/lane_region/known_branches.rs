@@ -2,6 +2,8 @@
 //! variable to its definition: each takes its one edge, and the compile drops the blocks that
 //! lose their last edge before any analysis visits them.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use cranelift_codegen::ir::{self, InstBuilder, InstructionData, Opcode};
 
 /// The integer constant `value` names, at its type's width: (zero-extended, sign-extended).

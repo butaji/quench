@@ -1,6 +1,8 @@
 //! Derivation of a lane view's string-case filters: once per view, never per operation.
 //! Candidates group by signature in source order; each group takes one bucket of an
 //! open-addressed table within the probe budget, or the original selector stays.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Each constant's case with its signature in source order, and the lengths a query

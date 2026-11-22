@@ -1,5 +1,7 @@
 //! Protocol misses of script calls (`protocol_family::SCRIPT_CALL`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 // Parameter codes (the low byte of `protocol_family::SCRIPT_CALL | code`). The argument count of

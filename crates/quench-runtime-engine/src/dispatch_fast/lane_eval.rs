@@ -9,6 +9,8 @@
 //! lane stack are its own, the activation's parked), which the activation continues from in the lane
 //! when it returns, reading what the eval declared through the promoted environment
 //! (`scoped_names`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::scoped_names::window_scope;
 use quench_runtime::vm::activation::FrameRecord;

@@ -1,4 +1,6 @@
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 /// The numbers the stencil rows are compiled with (`quench-bjit/stencils/layout.rs`) are
 /// the runtime's own.
 use super::super::CallContext;

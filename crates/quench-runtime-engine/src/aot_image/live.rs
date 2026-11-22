@@ -8,6 +8,8 @@
 //!
 //! Owner: one pipeline.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{AotImage, base::NO_ENTRY, symbols::{self, Symbol, SymbolTable}};
 use quench_runtime::code_dependencies::Invalidation;
 use quench_runtime::folded_roots::FoldedRoots;

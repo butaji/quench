@@ -6,6 +6,8 @@
 //! decode does not take, an opcode with no staged row such as `NumericAdd`), the catalog's own
 //! trait for the opcode decides, as it did before. Nothing here matches on an opcode name.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{Op, Register, WideInstruction};
 use quench_runtime::staged::{CallOperation, Callee, Invocation, NumberOperation, Operation, Passing, Protocol, Receiver};
 use crate::compiled::{decoded, decoded_completed};

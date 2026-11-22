@@ -1,6 +1,8 @@
 //! A lane body's specialization at its function's entries and loops (`specialize_lane_body`):
 //! the attempt a view makes at its body, and the state each attempt leaves (`body_after`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 #[quench_macros::ext(LaneViewSpecializeOps)]

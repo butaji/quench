@@ -12,6 +12,8 @@
 //!
 //! A child of `wasm_stitch` (`#[path]`), so it names `wasm_stitch`'s helpers through `super`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::{CONTEXT_NATIVE_ROOTS, NativeRoots};
 use super::{Planned, Target, World, leak};
 use quench_runtime::bytecode::WideInstruction;

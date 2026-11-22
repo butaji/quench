@@ -1,5 +1,7 @@
 //! The rows of named field reads and stores through their cache sites.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The byte offset of the field cache entry of `site` in the program's table.

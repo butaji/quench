@@ -5,6 +5,8 @@
 //! arm. Nothing here is a Stable fact: the edge is an append-only shape transition and the name's
 //! string a kept program atom, so the row tests the function's shape, empty name, storage and gate.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::add_plan::Transition;
 use quench_runtime::staged::naming::name_form;

@@ -1,6 +1,8 @@
 //! The protocol miss tables (`lane_frame::protocol_miss`): per family, the body that completes a
 //! protocol record its row leaves unresolved, by the family's static parameters.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 pub(crate) mod element; pub(crate) use element::element_miss_of;
 pub(crate) mod private; pub(crate) use private::private_miss_of;
 pub(crate) mod script_call; pub(crate) use script_call::script_call_miss_of;

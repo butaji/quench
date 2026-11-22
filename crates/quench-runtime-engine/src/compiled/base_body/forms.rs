@@ -1,5 +1,7 @@
 //! The forms a whole-function body makes in place: each has its row (or its helper step), and a body
 //! that holds it runs as the interpreter does, with the interpreter's step behind a fast arm.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::tests::{run_after, run_both, run_in};
 use quench_runtime::JitMode;
 use quench_runtime::bytecode::Op as Opcode;

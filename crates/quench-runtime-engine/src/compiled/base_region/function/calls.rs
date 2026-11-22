@@ -1,6 +1,8 @@
 //! The call rows of a stitch: a call's site or its chain (`call`), a native Math or global native a row computes
 //! (`math_call`, `native_call`), and the definition a native call's callee is read from (`sole_definition`, `radix_is_ten`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The row that completes the activation with the register `register` holds.

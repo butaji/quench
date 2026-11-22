@@ -1,4 +1,6 @@
 //! Lowering a symbolic pass to a `Shape`.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_> {

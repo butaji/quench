@@ -1,6 +1,8 @@
 //! Binding one lane OSR activation: the dispatch words a loop region reads, its capture view,
 //! the activation's own registers and locals, and the entry of the region's body
 //! (`CompiledOsrRegion::run_lane`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The loop's own words: the entry's counter and the scratch a leave inside an inlined callee

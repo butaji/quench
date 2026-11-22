@@ -2,6 +2,8 @@
 //! (`Lowering::resolve`): a counter below a bound, scaled and added to a base, all of them
 //! invariant but the counter.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::JsDenotation;
 use super::super::*;
 use super::{Hoist, Induction, Reach, Term, Version};

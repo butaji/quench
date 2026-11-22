@@ -1,5 +1,7 @@
 //! Reads that meet an accessor: answered without an activation where the getter's call runs
 //! no guest code. The answers and activations are `AccessorCall`'s (`accessor_protocol.rs`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::AccessorForward;
 use quench_runtime::vm::accessor_cache::GetterEntryRead;

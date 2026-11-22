@@ -1,5 +1,7 @@
 //! Stitched functions against the interpreter: the same results and the same traps.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::{CallContext, CodeMemory};
 use quench_runtime::vm::Vm;

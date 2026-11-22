@@ -10,6 +10,8 @@
 //! runs before the frame's next call that can re-enter the VM, and that call roots the frame's
 //! references (`wasm_roots`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_instance_stage::value_kind;
 use super::{Analysis, AnalysisState, CallContext, Emitter, JsError, Kind, ProgramId, Slot, Value, Vm, finish_callout, refresh_wasm_gc_records};
 use quench_runtime::bytecode::{Function, Op, WideInstruction};

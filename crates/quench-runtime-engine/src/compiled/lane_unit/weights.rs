@@ -9,6 +9,8 @@
 //! sites are chosen greedily by weight per instruction (`select`) and the plan runs again
 //! admitting only them: a knapsack over the sites, each callee after the call that reaches it.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The calls from the caller down to a site: each call's PC in its function and its callee.

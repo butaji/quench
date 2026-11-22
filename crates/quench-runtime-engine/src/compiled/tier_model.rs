@@ -5,6 +5,8 @@
 //! instructions), not timed: what is compiled then repeats from run to run, under callgrind and
 //! the virtual clock alike (policies follow work, not wall time).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::tier_policy::{Priors, Tiers, PER_MILLE};
 
 /// What the model knows of one function at a decision point.

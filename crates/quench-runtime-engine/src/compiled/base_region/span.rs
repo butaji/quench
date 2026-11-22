@@ -1,6 +1,8 @@
 //! The rows a stitch spans and the registers live at each: a stitched program (`stitch`) of a
 //! function or of a loop region spans its rows, numbered from 0, and holds the liveness it derived
 //! for them, so webs, homes and exits are keyed by the row index.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Bits in a word of a live set.

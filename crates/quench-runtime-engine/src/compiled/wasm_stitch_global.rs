@@ -5,6 +5,8 @@
 //! the instance's global area (`wasm_rows_global.rs`), because a compiled program is shared by
 //! every instance of its module: a cell address is per instance, so it cannot be baked in.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Planned, World, leak, slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_instance::{Instance, Storage};

@@ -3,6 +3,8 @@
 //! entered, outermost first, each tagged with the activation that owns it
 //! (`LaneStack::with_objects`); a suspended frame's record keeps it while no activation runs
 //! the frame (`FrameRecord::with_objects`), and a materialized activation's frame takes it.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::WithChain;

@@ -4,6 +4,8 @@
 //! caller (`profiled_indirect_targets`): the rows say which function is where, so no per-site
 //! cache keeps a second copy of it.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{CompiledProgram, MAX_JIT_PROFILED_INDIRECT_TARGETS, ProgramId, Vm};
 use quench_runtime::Value;
 use quench_runtime::heap::{Cell, TableTarget};

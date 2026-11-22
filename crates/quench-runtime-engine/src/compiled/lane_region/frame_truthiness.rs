@@ -1,5 +1,7 @@
 //! ToBoolean of a register in specialized code: its proved representation's test, else its
 //! word's, else its cell's by the VM.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::Stage;
 

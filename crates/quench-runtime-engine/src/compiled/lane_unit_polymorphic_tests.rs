@@ -1,5 +1,7 @@
 //! A caller's call that several alternatives inline keeps its own `Call` after the last of them.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::lane_unit::{unit, CalleeBinding, CallTarget, Origin, MAX_UNIT_INLINED_INSTRUCTIONS};
 use quench_runtime::bytecode::Class;
 

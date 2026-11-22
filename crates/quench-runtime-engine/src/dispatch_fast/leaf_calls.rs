@@ -1,5 +1,7 @@
 //! A plain call of a leaf target: its records run on a window of the lane stack without an
 //! activation (`CallEntry::leaf`), and its return completes the call.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 script_handler! {

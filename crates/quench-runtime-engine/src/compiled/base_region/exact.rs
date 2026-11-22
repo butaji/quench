@@ -7,6 +7,8 @@
 //! int32 here. A function with exception handlers, a generator or async state, a dynamic scope or an
 //! aliasing `arguments` object proves none: the analysis does not model the states those reach.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::facts::{self, Observed, Seeds, Text};
 use super::super::lane_region::{leaders, writes};

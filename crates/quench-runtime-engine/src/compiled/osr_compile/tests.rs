@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// A simple numeric loop plans through `RegionSpecializer` with `Coverage::Loop`, not

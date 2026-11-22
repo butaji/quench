@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 #[test]
 fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
     use super::*;

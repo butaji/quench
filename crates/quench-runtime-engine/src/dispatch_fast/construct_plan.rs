@@ -1,4 +1,6 @@
 //! Construct plans: a constructor's receiver allocated finished, its initializer stores made at once.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::plan_fields::{field_value, FieldClass};
 pub(crate) mod nested;

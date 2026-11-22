@@ -4,6 +4,8 @@
 //! frame, or its activation's window. The interpreter's `throw` enters the same handlers in the
 //! lane, unwinding plain activations where it is (`catch_raised`), so a raise makes no frame of
 //! them unless the general loop must finish one.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::handler_entry::{HandlerHome, WindowHome};
 use quench_runtime::bytecode::ThrownValueSlot;

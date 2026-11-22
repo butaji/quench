@@ -1,6 +1,8 @@
 //! The facts a binary operator gives: a string or BigInt operand takes the interpreter's own
 //! definition, any other proves its operands Numbers or leaves.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{ranges, Flow, boolean_binary, constant_number, operand_type, prove_number, set};
 use quench_runtime::bytecode::{Constant, WideInstruction};
 use quench_runtime::typed_ir::Type;

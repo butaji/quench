@@ -7,6 +7,8 @@
 //! runs (`forget_append_rooms`), so a loop appends with one comparison past the in-place
 //! store's and calls the VM once per growth.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_, '_> {

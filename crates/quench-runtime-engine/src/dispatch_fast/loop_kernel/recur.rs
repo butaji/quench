@@ -6,6 +6,8 @@
 //! per operator (`Fold`); a longer one runs its links per iteration (`Chain`). Nodes that read
 //! the recurrence without feeding it run as columns after the pass. A loop with any other
 //! recurrence keeps its own records.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation, PartialOrderStage, int32_bitwise_bits};
 use super::run::{CHUNK, apply, arith};
 use super::shape::{Arg, NodeOp, Shape};

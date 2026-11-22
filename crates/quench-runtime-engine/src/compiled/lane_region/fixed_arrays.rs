@@ -6,6 +6,8 @@
 //! have changed it. The backing pointer an access loads from a record stays an ordinary load: it
 //! is read after the access proved its array, which a hoist to a loop's entry would precede.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{Constant, Operation};
 

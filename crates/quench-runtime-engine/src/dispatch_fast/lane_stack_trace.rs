@@ -11,6 +11,8 @@
 //! job's windowed activation as its owner's frame record, and a job's run has no root frame
 //! beneath its activations. A Wasm frame, or a lane in a state the walk does not cover,
 //! declines, and the capture materializes as before.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::activation::{FrameRecord, SuspendKind};
 use quench_runtime::vm::error::FrameSite;

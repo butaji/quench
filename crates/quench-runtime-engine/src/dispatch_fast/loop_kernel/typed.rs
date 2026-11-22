@@ -1,5 +1,7 @@
 //! A kernel's loads and stores of typed array elements: each kind's element as an f64, and
 //! an f64 stored as the kind's element, as the typed array element get and set do.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::heap::TypedArrayKind;
 use quench_runtime::staged::typed_elements::{
     element_number, store_double_element, store_number_element, NATIVE_LITTLE_ENDIAN,

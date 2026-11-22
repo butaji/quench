@@ -2,6 +2,8 @@
 //! bytecode op it lowers, or to the shared parts around them (the entry, block edges, leaves,
 //! exits), printed per lowering under `QUENCH_CLIF_CENSUS` for the CLIF-per-op budget.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use std::collections::BTreeMap;
 
 /// The parts of a lowering that no single bytecode op owns.

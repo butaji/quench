@@ -2,6 +2,8 @@
 //! recorded (`RegionCalls`), which its build stitches in or calls by their entries, and what its
 //! published code owns of them (`CallCode`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 use super::super::base_region::callees::Callees;
 use super::super::base_region::RealmProof;

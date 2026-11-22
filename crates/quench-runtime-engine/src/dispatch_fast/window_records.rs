@@ -2,6 +2,8 @@
 //! (`specialize_environment_window`): which records it takes and the handler each gets. A local
 //! record of a plain slot takes its generated row with `FLAG_WINDOW` (`lane_frame::row_frame` reads
 //! the window's locals there); any other local record takes its miss, which leaves to the general path.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 // merge: theirs window_record/window_local_handler taken whole (staged queries, op-based); HEAD's class-match helpers and window handlers are dropped with the hand fast paths. meaning_fast import dropped as unused.
 

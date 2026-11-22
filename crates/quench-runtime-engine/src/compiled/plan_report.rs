@@ -1,6 +1,8 @@
 //! The planning report of a function (`QUENCH_WASM_JIT_PLAN_MEMORY`, diagnostic runs only): the
 //! states the plan held, and the time and memory planning took.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{AnalysisState, Slot, jit_memory_snapshot};
 
 /// Reports the plan of function `index` that started at `started`: its bytecodes, registers, the

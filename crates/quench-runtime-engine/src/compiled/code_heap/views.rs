@@ -6,6 +6,8 @@
 //! while another thread may be running code on it. Darwin maps one `MAP_JIT` region and flips
 //! only the writing thread to write access for the duration of a fill.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 pub(crate) use quench_runtime::vm::engine_types::Views;
 
 #[quench_macros::ext(ViewsOps1)]

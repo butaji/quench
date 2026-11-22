@@ -5,6 +5,8 @@
 //! held record and length stay true across the loop. Its units are read from the record where a
 //! call uses them (`strings::record_units`): a record's suballocations may change when the VM runs.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{Register, WideInstruction};
 use quench_runtime::staged::{string_length, strings, Comparison, Operation};
 use super::*;

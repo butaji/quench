@@ -2,6 +2,8 @@
 //! compare-and-jump rows (`expanded`), the facts those rows decode by (`decode_facts`), and the caller's rows collected
 //! from the planned calls and the rest (`parts`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The method call `instruction` at `pc` as a `Method` chain, its callee read into the scratch register past the

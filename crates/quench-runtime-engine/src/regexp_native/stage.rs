@@ -1,6 +1,8 @@
 //! `MatchStage` on the emitter: the matcher's operations of `quench_regexp::backtrack::matcher`
 //! as Cranelift IR over an ASCII subject. A position or unit is an `i64` value, a flag an `i8`
 //! one, and a guarded operation a pair of blocks that join on the flag.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Emit, RegexpMachine};
 use quench_runtime::staged::machine::{Binary, Extend, Lane, Relation};
 use quench_regexp::backtrack::matcher::MatchStage;

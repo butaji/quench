@@ -6,6 +6,8 @@
 //! `Vm::wasm_table_op`, the operation the interpreter's arms run through `Vm::wasm_table_step`,
 //! so the two tiers share the rule (`staged::wasm_table_ops`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_instance_stage::value_kind;
 use super::{Analysis, AnalysisState, CallContext, Emitter, Kind, Slot, Vm, finish_callout};
 use quench_runtime::bytecode::{Function, WideInstruction};

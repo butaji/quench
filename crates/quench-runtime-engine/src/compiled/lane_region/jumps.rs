@@ -1,5 +1,7 @@
 //! `Jump` of `Lowering::instruction`, with its loop rotation; the conditional jumps are `compare_jumps`, and a
 //! `WasmBranchTable` with the case slot that selects its entry (`IntCaseIndex`) is here too.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_, '_> {

@@ -1,6 +1,8 @@
 //! Lane handlers of a Wasm instance's state: its memory bindings, linear memory and globals, and
 //! the heap callbacks of its vector rows. A non-memory instance binding and the SIMD operators run
 //! as their staged rows (`Decoder::WasmState`, `Decoder::WasmVector`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::wasm_instance::{Storage, binding_get, global_get, global_set};
 use quench_runtime::staged::wasm_machine::ConcreteInstance;

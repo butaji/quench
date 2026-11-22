@@ -1,6 +1,8 @@
 //! Loop-region code compiled beside the program: the loop runs in the lane while the code
 //! generator's thread compiles, and the next look publishes the code.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{
     compile_native_function, dump_native_bytes, dump_native_code, DumpSite, names_length, native_dump_directory, lane_unit, osr_loop,
     publish_body, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,

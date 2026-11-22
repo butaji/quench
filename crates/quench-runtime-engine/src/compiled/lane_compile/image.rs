@@ -1,6 +1,8 @@
 //! A lane body's code with its scalar entry beside it (`lane_region::scalar`): one executable
 //! mapping holds both, the entry after the body at the next function alignment.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The code of a lane body, and where its scalar entry and its proven entry lie in it, with the entry types the

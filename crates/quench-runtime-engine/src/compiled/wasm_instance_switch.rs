@@ -5,6 +5,8 @@
 //! table need keep it alive while it runs; the call is made natively only where the target's
 //! bodies take the arguments the caller passes (`InstanceContext::abi`) and the roots have room.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::instance_context::{InstanceContext, NativeRoots, SWITCHED};
 use super::{CONTEXT_NATIVE_ROOTS, CallContext, Emitter, Vm, invariant, refresh_memory_length};
 use quench_runtime::staged::machine::{MachineAccess, MachineFlow, MachineStage};

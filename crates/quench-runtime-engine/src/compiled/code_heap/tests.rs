@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Block, Chunk, CodeHeap, CodeMemory, Views, CHUNK_BYTES, CODE_GRANULE, REGION_CHUNKS};
 
 fn chunk(heap: &CodeHeap, block: Block) -> Chunk {

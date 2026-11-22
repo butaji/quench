@@ -3,6 +3,8 @@
 //! `Vm::exception_handler_target` does for a thrown value, so the interpreter never re-executes
 //! the `throw` to find the handler. A `throw` no handler takes this way is `steps::lowering`'s
 //! raising step.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{Function, ThrownValueSlot};
 

@@ -2,6 +2,8 @@
 //! shift above it in `dispatch_fast.rs` re-codegened ~190 s of the quench crate (rustc
 //! hashes absolute spans). Keep widely inlined hubs out of large, often edited files.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Dispatch lane records from `ip` until a handler exits; the record it exits at.

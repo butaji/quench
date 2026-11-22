@@ -1,6 +1,10 @@
 //! The engine's definitions of the core's calls into it (`quench_runtime::vm::engine_calls`).
 #![allow(clippy::too_many_arguments)]
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use crate::engine_prelude::*;
+use quench_runtime::vm::engine_types::*;
+use cranelift_codegen::ir;
 
 #[unsafe(no_mangle)]
 #[inline]
@@ -88,7 +92,7 @@ fn quench_engine_vm_runs_windows_in_lane(this: &Vm) -> bool { <Vm as DispatchFas
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_runs_windows_in_lane = quench_engine_vm_runs_windows_in_lane;
 #[unsafe(no_mangle)]
 #[inline]
-fn quench_engine_vm_wasm_table_step(this: &mut Vm, f: usize, i: WideInstruction) -> Result<(), super::JsError> { <Vm as CompiledWasmTableOpsStageVm>::wasm_table_step(this, f, i) }
+fn quench_engine_vm_wasm_table_step(this: &mut Vm, f: usize, i: WideInstruction) -> Result<(), JsError> { <Vm as CompiledWasmTableOpsStageVm>::wasm_table_step(this, f, i) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_wasm_table_step = quench_engine_vm_wasm_table_step;
 #[unsafe(no_mangle)]
 #[inline]
@@ -236,11 +240,11 @@ fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectC
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_names_dead_callee = quench_engine_fn_names_dead_callee;
 #[unsafe(no_mangle)]
 #[inline]
-fn quench_engine_fn_lane_miss_report(events: &quench_runtime::vm::tier_events::TierEvents) -> String { crate::lane_body_stats::miss_report(events) }
+fn quench_engine_fn_lane_miss_report(events: &quench_runtime::vm::tier_events::TierEvents) -> String { crate::dispatch_fast::lane_body_stats::miss_report(events) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_lane_miss_report = quench_engine_fn_lane_miss_report;
 #[unsafe(no_mangle)]
 #[inline]
-fn quench_engine_fn_lane_unlowered_report() -> String { crate::lane_body_stats::unlowered_report() }
+fn quench_engine_fn_lane_unlowered_report() -> String { crate::dispatch_fast::lane_body_stats::unlowered_report() }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_lane_unlowered_report = quench_engine_fn_lane_unlowered_report;
 #[unsafe(no_mangle)]
 #[inline]

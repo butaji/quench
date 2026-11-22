@@ -7,6 +7,8 @@
 //! other step it declines, and the row declines it before any effect, so the record exits at its
 //! exact PC for the general path to make the whole step. The handler chooses how the activation
 //! suspends (`Suspender`) before the row runs, so the frame never declines the effect itself.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{DelegationStep, Suspending, Suspension, YieldConversion};
 use quench_runtime::vm::activation::{JobRoot, SuspendKind};

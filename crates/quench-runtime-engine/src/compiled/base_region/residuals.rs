@@ -1,6 +1,8 @@
 //! The residual counts of a stitched b-jit loop (`super::super::residuals`): its rows, the
 //! frame traffic of its registers and the exits its rows can take.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::residuals::{report, Residual};
 use super::*;
 

@@ -9,6 +9,8 @@
 //! code is not resumed at a row a proof the body established reaches (`Decoded::relies`): a resume skips the
 //! access. A proof the entry seed alone reaches needs no such gate: a resume stub re-runs the declared entry rows.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// What one row runs knowing: the registers whose value was proved a direct object, by the register that

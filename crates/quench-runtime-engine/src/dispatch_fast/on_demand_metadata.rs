@@ -1,5 +1,7 @@
 //! Lane metadata made only once a reader needs it: interpreted execution keeps what the
 //! interpreter reads, not what a tier it never runs would.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 #[quench_macros::ext(DispatchFastOnDemandMetadataVm)]

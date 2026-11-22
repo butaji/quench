@@ -1,6 +1,8 @@
 //! One run of a lane body: the words an entry binds in the thread's lane frame, and the call
 //! through the body's entry word.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::dispatch_fast::LaneStackWords;
 use super::entry_protocol::{self, EntryDescriptor, EntryKind};
 use super::*;

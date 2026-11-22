@@ -1,6 +1,8 @@
 //! Wasm calls the lane enters as activations: statically known calls and reference calls. The
 //! call rules are `staged::wasm_activation`; this file is the lane's state they run on
 //! (`LaneCall`) and the lane's own steps.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::machine::{Machine, MachineStage};
 use quench_runtime::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation};

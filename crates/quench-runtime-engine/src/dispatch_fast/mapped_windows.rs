@@ -7,6 +7,8 @@
 //! (`LaneStack::window_parameter`). A captured parameter rides the window's locals until a
 //! closure makes the environment, and its slot there after (`ParameterHome`), as a captured
 //! `arguments` object does.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::ParameterHome;

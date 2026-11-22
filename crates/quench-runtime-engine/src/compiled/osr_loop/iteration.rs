@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{exits_before_effects, MethodCalls, WideInstruction};
 
 /// Whether native code can run a whole iteration: the back-edge is reachable from the header

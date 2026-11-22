@@ -2,6 +2,8 @@
 //! lowering and analysis of each `Memory` step through the staged rules, so an access traps
 //! where the interpreter's does.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{

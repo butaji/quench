@@ -1,5 +1,7 @@
 //! The element rows over a loop's hoisted array, read in the IR the lane lowers them to.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Class;
 use cranelift_codegen::{dominator_tree::DominatorTree, flowgraph::ControlFlowGraph, loop_analysis::LoopAnalysis};

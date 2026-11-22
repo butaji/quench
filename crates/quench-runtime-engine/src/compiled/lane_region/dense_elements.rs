@@ -1,5 +1,7 @@
 //! Dense element stores through a hoisted loop view in a lane region.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_, '_> {

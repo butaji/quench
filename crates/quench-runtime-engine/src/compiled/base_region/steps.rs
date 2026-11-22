@@ -52,6 +52,8 @@
 //! Which class an instruction is in follows from the opcode catalog's traits and layouts
 //! (`lowering`), never from a table of opcodes here.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
 use super::callees::name_records;

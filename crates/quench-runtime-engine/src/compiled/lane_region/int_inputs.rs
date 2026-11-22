@@ -3,6 +3,8 @@
 //! (`index_math`). No magnitude is assumed of them: the words leave only where a result really
 //! passes what a Number holds exactly (`IntRange::EXACT`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::JsDenotation;
 use super::*;
 use super::super::operations::NumberArithmetic;

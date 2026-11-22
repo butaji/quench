@@ -3,6 +3,8 @@
 //! written over the operators (traps, their order, NaN canonicalization) is the interpreter's
 //! (`staged::wasm`, `staged::wasm_float`); this file only says what one operator is on the machine.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Builds, of_in_lane, machine_type};
 use super::super::{Emitter, scalar_ir};
 use quench_runtime::staged::machine::{Binary, Lane, MachineOperator, MachineScalar, MachineStage, Order, Relation, Unary};

@@ -1,6 +1,8 @@
 //! The leave and exit machinery of a linked region: the leave rows (`Leaves`), where each exit of a row goes
 //! (`exit_targets`), and the exit stubs and their routines written behind the rows (`exit_addresses`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_bjit::{EXIT_STUB_LEN, exit_stub};
 

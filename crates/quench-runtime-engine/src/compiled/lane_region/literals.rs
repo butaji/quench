@@ -1,5 +1,7 @@
 //! Heap values a lane body names: string and BigInt constants, and the operators that take them.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
 

@@ -5,6 +5,8 @@
 //! used (`wasm_stitch_simd.rs`, `wasm_stitch_simd_more.rs`); the layouts of the context, the table
 //! and the frame are checked beside their stitcher (`wasm_stitch_indirect.rs`, `wasm_stitch.rs`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::wasm::conversion::ScalarConversionOperator;
 use quench_runtime::wasm::float::{F64BinaryOperator, F64UnaryOperator};
 use quench_runtime::wasm::integer::{I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator};

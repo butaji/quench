@@ -5,6 +5,8 @@
 //! what a read is; this frame owns the facts it is proved under, kept in `State` beside the
 //! registers'.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;

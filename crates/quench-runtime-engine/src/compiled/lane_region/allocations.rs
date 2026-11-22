@@ -2,6 +2,8 @@
 //! an array or object literal, a closure, a literal template and a string concatenation, each
 //! by the lane's own allocator (`LaneHelper::NewArray`, `NewObjectLiteral` and kin).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::ARRAY_LITERAL_WINDOW;
 use quench_runtime::staged::Allocation;

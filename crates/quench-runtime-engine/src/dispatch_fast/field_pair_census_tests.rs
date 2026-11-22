@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::{bytecode::{FieldBase, FieldLookup, FieldSite}, profile::field_primitives::Path, test_host::TestHost};
 

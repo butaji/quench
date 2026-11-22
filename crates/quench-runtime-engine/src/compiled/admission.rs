@@ -2,6 +2,8 @@
 //! body compiles, and every reason it does not, lives here. A refused compile records its
 //! `Refusal`; `QUENCH_REFUSALS=1` prints the counts at exit (`refusal_report`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::lane_unit::CalleeBinding;
 use super::tier_model::Observed;
 use super::tier_policy::Tiers;

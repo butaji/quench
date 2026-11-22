@@ -14,6 +14,8 @@
 //! step's likewise, and a move is the one step whose type comes from the u-jit's plan
 //! (`World::vector_move`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_stitch_simd_more;
 use super::{Planned, WasmCode, World, codes, leak, row, slot};
 use quench_runtime::bytecode::WideInstruction;

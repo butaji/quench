@@ -14,6 +14,8 @@
 //! The push and the restore are the staged rules (`staged::wasm_roots`), which the stencil runs
 //! over its own roots too: this file is the `WasmRoots` of the Cranelift emitter.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::instance_context::NativeRoots;
 use super::wasm_stage::infallible;
 use super::{CONTEXT_NATIVE_ROOTS, Emitter, Kind, invariant};

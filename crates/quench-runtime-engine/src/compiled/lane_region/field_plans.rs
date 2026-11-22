@@ -3,6 +3,8 @@
 //! plan borrows the op lists, shape sets and constants its link was built from, so a
 //! lowering reads them through `with_read_plan`, which owns them for the step.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::{field_load_groups, NativeFieldLoad};
 use quench_runtime::staged::ic::IcOp;

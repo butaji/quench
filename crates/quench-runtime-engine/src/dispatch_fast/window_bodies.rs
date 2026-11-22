@@ -1,6 +1,8 @@
 //! The locals a lane body's rows read, by where its function runs: the VM frame's, or the environment window
 //! of the lane activation (`activate_environment_in_lane`), whose locals follow its environment entries and whose
 //! environment-owned ones live in the storage its slots word names.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// What a body entered on a lane context reads of its function's locals.

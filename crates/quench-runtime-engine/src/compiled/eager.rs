@@ -3,6 +3,8 @@
 //! recipes are VM-specific, so it cannot link yet. It reports that instead of publishing a
 //! fallback body.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::ResidualProgram;
 
 pub(crate) fn compile_eager_native(program: ResidualProgram) -> Result<quench_runtime::NativeJsProgram, String> {

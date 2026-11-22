@@ -4,6 +4,8 @@
 //! Wasm tier's, and `Emit`, the JavaScript tier's stage) build into one `FunctionBuilder`, so each
 //! primitive body exists once, over `Builds`; one family per file: scalar, memory, flow, vector.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 #[path = "emit_machine/flow.rs"]
 pub(crate) mod flow;
 #[path = "emit_machine/memory.rs"]

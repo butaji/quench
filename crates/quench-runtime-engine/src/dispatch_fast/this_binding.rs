@@ -1,5 +1,7 @@
 //! How a lane call target binds `this`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 pub(crate) use quench_runtime::vm::engine_types::ThisBinding;
 
 #[quench_macros::ext(ThisBindingOps1)]

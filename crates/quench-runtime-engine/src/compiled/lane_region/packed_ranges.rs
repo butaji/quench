@@ -1,5 +1,7 @@
 //! Conditional numeric refinement of one admitted packed field. The loop's
 //! existing alias plan owns object identity; this analysis owns numeric bounds.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::facts::ranges::{self, Edge};
 use quench_runtime::vm::operations::NumberRelation;

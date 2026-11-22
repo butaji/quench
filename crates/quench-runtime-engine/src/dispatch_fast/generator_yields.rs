@@ -5,6 +5,8 @@
 //! (`suspend_at_in_lane`); any other `yield` or `yield*`, a materialized generator frame's, and any
 //! step the lane's frame declines take the general path, which suspends the frame back into its
 //! generator.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Class;
 use super::lane_frame::{suspension_row_in_lane, yield_star_kind, Suspender, LANE_YIELD};

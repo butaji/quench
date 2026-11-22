@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::tests::osr_run;
 
 /// A method call in a loop region calls the method its site reads, and a prototype's method replaced after the region

@@ -7,6 +7,8 @@
 //! (`HeapValueRecipe::ClosureOf`) and asks the VM whether that closure's plan holds where the
 //! construction runs (`LaneHelper::ConstructPlanHolds`), so a closure whose plan the VM has not
 //! made yet, or another closure, only leaves to the base body, whose construction makes it.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{InitializerConstant, InitializerStore, InitializerValue};
 use crate::aot_image::symbols::{

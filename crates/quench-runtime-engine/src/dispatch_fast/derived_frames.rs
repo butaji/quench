@@ -5,6 +5,8 @@
 //! made where and as the general loop makes it, so a derived construction runs in the lane from
 //! its `new` to its return, its parents' frames included. Beside frameless activations, whose
 //! `new.target` and `this` binding no frame holds, each takes the general path, as before.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 script_handler! {

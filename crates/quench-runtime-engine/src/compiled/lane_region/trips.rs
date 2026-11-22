@@ -2,6 +2,8 @@
 //! (`LoopEntry::backedge_count`, read by `LoopSite::note_run`). The hot loop only advances a
 //! register; the record is written once, where the run leaves.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_, '_> {

@@ -1,6 +1,8 @@
 //! What a lane stack keeps alive (`LaneStack::extend_roots`): the values of its windows, the
 //! objects its activations name and what they own. One walk serves the stack of the running lane
 //! and every stack a nested run parked (`Vm::lane_roots`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::program_store::ProgramStore;
 use quench_runtime::vm::activation::extend_this_env_roots;

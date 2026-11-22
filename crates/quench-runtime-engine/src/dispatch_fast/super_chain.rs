@@ -1,5 +1,7 @@
 //! Constructions of a class whose constructors, up its chain of parents, only construct the
 //! parent and initialize `this`.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{InitializerConstant, InitializerStore, InitializerValue, SuperForwarded};
 

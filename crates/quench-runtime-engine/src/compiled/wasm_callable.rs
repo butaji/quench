@@ -1,6 +1,8 @@
 //! The set of Wasm functions a module compile admits: the greatest fixpoint of "every
 //! known callee compiles". Each function is planned once; a function that drops sends
 //! only its known callers back to be planned again, not the whole module.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Analysis, Plan};
 use quench_runtime::bitset::BitSet;
 use quench_runtime::bytecode::{FieldLayout, InstructionField};

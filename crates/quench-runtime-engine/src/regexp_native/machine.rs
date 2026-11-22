@@ -2,6 +2,8 @@
 //! functions, the interpreter's own, run here with the program's operands static, so each
 //! instruction's code is derived from the semantics rather than written beside it. A flag the
 //! machine requires branches to the backtrack block; a choice branches and finishes both paths.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, RESTORE};
 use quench_runtime::staged::machine::{Binary, Relation};
 use quench_regexp::backtrack::machine::{self as m, Cursor, Machine, Step, CAPTURE_REGISTERS, UNBOUNDED};

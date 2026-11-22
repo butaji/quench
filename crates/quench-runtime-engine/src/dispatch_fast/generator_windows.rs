@@ -3,6 +3,8 @@
 //! registers, which the activation's window is, so a resume allocates no `Box<Frame>` and
 //! copies no register. A `yield` suspends the frame in place and pops the activation, and a
 //! return completes the generator.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::activation::{FrameRecord, GeneratorRecord};
 

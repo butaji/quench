@@ -1,5 +1,7 @@
 //! The flow family of the machine: `MachineFlow` as Cranelift control transfers.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Builds, machine_type};
 use quench_runtime::staged::machine::{Lane, MachineFlow, MachineVariables};
 #[cfg(feature = "jit")]

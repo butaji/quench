@@ -3,6 +3,8 @@
 //! projected. The `SetField` row decides which store a site makes; this frame owns the
 //! addresses it is proved under, bound before the run.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::emit;
 use quench_runtime::staged::Region;

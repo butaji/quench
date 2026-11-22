@@ -1,4 +1,6 @@
 //! `Unary` records answered in the lane where the conversion runs no guest code.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// A `Unary` record's value where it runs no guest code and throws nothing: logical not and

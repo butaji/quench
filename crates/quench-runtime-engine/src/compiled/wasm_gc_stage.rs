@@ -8,6 +8,8 @@
 //! Allocating operations are `wasm_gc_allocate`'s: an allocation only makes a collection due, and
 //! a callout that allocates runs no interpreter code, so it needs no roots of its own.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{Analysis, AnalysisState, CallContext, Emitter, JsError, Kind, Slot, Value, Vm, finish_callout};

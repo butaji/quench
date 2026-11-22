@@ -2,6 +2,8 @@
 //! the stack; reaching `LookSucceed` decides a positive lookahead (its choices go, the
 //! restores of its captures stay) or fails a negative one (every entry above the mark is
 //! undone), and a backtrack down to the mark decides the other way.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, FRAME_BYTES, FIRST_OPERAND, RESTORE, SECOND_OPERAND};
 use quench_runtime::staged::machine::{Binary, Lane, Relation};
 use quench_regexp::backtrack::native::NativeInst;

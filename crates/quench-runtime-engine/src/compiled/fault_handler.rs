@@ -1,5 +1,7 @@
 //! Native-fault recovery composed with a host's POSIX signal delivery.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 use super::guard_aarch64;
 use super::guard_support;

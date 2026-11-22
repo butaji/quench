@@ -10,6 +10,8 @@
 //! site that never declined holds `OperandKinds::NONE`: all int32, or never run. Readers combine
 //! it with what they sampled (`Vm::site_operand_kinds`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use oxc_ast::ast::BinaryOperator;
 
@@ -225,6 +227,7 @@ impl LaneView {
     }
 }
 
+#[quench_macros::ext(OperandFeedbackVm)]
 impl Vm {
     /// Notes that the element access at `pc` of frame `f` met `kind`, in the frame function's lane view.
     pub(crate) fn note_element_kind(&self, f: usize, pc: usize, kind: OperandKinds) {

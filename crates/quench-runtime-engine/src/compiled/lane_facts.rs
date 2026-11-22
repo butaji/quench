@@ -1,6 +1,8 @@
 //! What a lane body's plan reads of its unit alone: its leaves, direct sites, entry and the
 //! facts about its callees.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use std::collections::BTreeMap;
 

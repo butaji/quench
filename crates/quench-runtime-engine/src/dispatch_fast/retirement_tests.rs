@@ -1,5 +1,7 @@
 //! A retired shape or slot binding unlinks the native code that relied on it, and the code stays
 //! alive while a caller or recovery still holds it.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 #[cfg(test)]

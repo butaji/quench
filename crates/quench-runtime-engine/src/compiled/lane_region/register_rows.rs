@@ -1,6 +1,8 @@
 //! The staged rows over registers, locals and `this`, lowered by their definitions alone: the
 //! lane decides by the row's data (`Operation::registers`, `uses_locals`, `leaves`), not by the
 //! opcode it decoded from.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_, '_> {

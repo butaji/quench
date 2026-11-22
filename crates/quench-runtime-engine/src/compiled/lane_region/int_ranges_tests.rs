@@ -1,6 +1,8 @@
 //! The lowering of range-proved int32 arithmetic and element accesses: the proof removes the
 //! overflow exit or the bounds guard from the emitted IR, and an unproved twin keeps it.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The function `name` of `source`, lowered as a whole unit with the dense element views.

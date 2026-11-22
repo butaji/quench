@@ -2,6 +2,8 @@
 //! is cached by callee value for the collection epoch it was admitted in (`general_frameless_admit`,
 //! `admission.rs`): a lane reads an inlined callee's dense capture slots from it
 //! (`emit_admitted_captures`), and each closure of an admitted function shares the function's entry.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{emit_js_payload_word, emit_lane_helper_call, JsStepDispatch};
 use crate::compiled::regions;
 use quench_runtime::Value;

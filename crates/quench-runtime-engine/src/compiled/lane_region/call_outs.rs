@@ -1,6 +1,8 @@
 //! The staged rows whose slow case is the VM's own operation (`staged::CallOut`), lowered: the
 //! row's words decide the common case inline, and the rest is one call of the lane's helper
 //! (`dispatch_fast::vm_operation_step`) that continues in place, so no such record leaves its body.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::lane_unit::Origin;
 use quench_runtime::vm::global_facts::GlobalSlot;

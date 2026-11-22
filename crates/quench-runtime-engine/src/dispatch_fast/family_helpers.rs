@@ -6,6 +6,8 @@
 //! share their semantics. The planner admits a row only where its site's feedback makes a decline rare
 //! (`function::feedback_admits`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::LANE_CALL_COMPLETED;
 use quench_runtime::vm::field_cache::FieldCacheProbe;

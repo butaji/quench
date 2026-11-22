@@ -5,6 +5,8 @@
 //! shape transition, the name's string a kept program atom, and what varies per function (its shape,
 //! empty name, storage, the function space's store gate) the row tests.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{Stage, add::Edge, naming::{name_form, site_name}};
 

@@ -11,6 +11,8 @@
 //! a Number that is read as one costs a conversion per read, and the exit it adds is no loss where
 //! the index it computes would address no element.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::operations::NumberArithmetic;
 use quench_runtime::staged::number_machine;

@@ -1,6 +1,8 @@
 //! Run-time addresses in emitted code, each named by what it addresses. A live lowering embeds
 //! the address as it is now; a linking lowering (`LaneHelpers::Linked`, `Bound`) emits a symbol
 //! the loader patches (`aot_image::live` and `object` bind them).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::emit;
 use quench_runtime::staged::machine::{Lane, MachineScalar};

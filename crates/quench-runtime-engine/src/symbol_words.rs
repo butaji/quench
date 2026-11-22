@@ -1,5 +1,7 @@
 //! Words an ahead-of-time image builds from a relocated symbol at run time, where a live
 //! compile folds the symbol's value into the code.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use cranelift_codegen::ir::{self, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;

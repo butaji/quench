@@ -1,6 +1,8 @@
 //! The arrays a region's loops index in place (`LoopArray`), whose views each loop's
 //! entering edge proves once (`Lowering::hoist_arrays`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::facts::TypedAccess;
 

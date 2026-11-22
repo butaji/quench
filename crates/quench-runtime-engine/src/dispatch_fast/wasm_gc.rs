@@ -1,5 +1,7 @@
 //! Wasm GC operations the lane makes in place with the interpreter's own step for them
 //! (`Vm::wasm_gc_value_step`), rather than leaving for the general loop at each.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::dispatch_wasm::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance};
 use quench_runtime::vm::wasm_gc::GcFieldIndex;

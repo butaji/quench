@@ -1,4 +1,6 @@
 //! Direct calls of numeric compiled bodies from the lane.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{CompiledJsFunction, native_poll_page};
 use quench_runtime::Value;
 

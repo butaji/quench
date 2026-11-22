@@ -4,6 +4,8 @@
 //! helper first observes it: a link writes the activation its call would have made from the
 //! frames' descriptors alone, and never moves the context, so the body keeps running natively.
 //! A leave inside the frames then continues the lane in the innermost (`advance_into_frames`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::{DirectCallee, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
 use quench_runtime::staged::frame::{CONTEXT_CALL, CONTEXT_CALLER_BASE, CONTEXT_PACKED};

@@ -1,4 +1,6 @@
 //! Unit repeats, loops and the resume blocks backtracking jumps to.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, FIRST_OPERAND, SECOND_OPERAND};
 use quench_regexp::backtrack::machine as m;
 use quench_regexp::backtrack::matcher::MatchStage;

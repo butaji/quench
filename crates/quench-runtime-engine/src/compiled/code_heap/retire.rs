@@ -7,6 +7,8 @@
 //! region leave in one call, when `RETIRE_BATCH_BYTES` are waiting or the code generator
 //! idles (`flush`). Until then the written pages are counted twice, at most the batch.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::views::{page_bytes, Views};
 use std::sync::{Mutex, PoisonError};
 

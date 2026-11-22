@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 fn holds(relation: NumberRelation, x: i64, y: i64) -> bool {

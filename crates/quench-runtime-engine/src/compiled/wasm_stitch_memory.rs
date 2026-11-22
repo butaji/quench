@@ -7,6 +7,8 @@
 //! such a binding, and a binding of the frame's memory places nothing), so every memory register
 //! a bulk step names holds the frame's memory. `memory.grow` has no row: it calls the VM.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Planned, codes, row, slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_memory::Memory;

@@ -1,5 +1,7 @@
 //! Reads of a proxy whose `get` trap runs as an activation of the lane. The activations are
 //! `AccessorCall`'s (`accessor_protocol.rs`); this file decides which trap a read calls.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::object_get::ordinary_chain::ChainRead;
 

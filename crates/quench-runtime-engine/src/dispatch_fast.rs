@@ -21,6 +21,8 @@
 //! or leaves the lane where a collection is due or termination requested. A due
 //! collection zeroes the fuel, so the next safepoint jump leaves; a termination request
 //! from another thread raises the floor, read within one batch.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 /// The handler of opcode `$op`'s generated row at accumulator field `$acc` and site fact `$flag`
 /// (`lane_frame::generated_row_handler`), chosen at compile time so each use names one shard's instance.
 macro_rules! generated_row {
@@ -2601,6 +2603,7 @@ const ACC_PAIR: u8 = 4;
 /// Accumulator positions a record may read: none, A, B, C and the pair.
 const ACC_POSITIONS: usize = 5;
 
+#[quench_macros::ext(InstructionFieldOps)]
 impl InstructionField {
     const fn accumulator(self) -> u8 {
         match self {

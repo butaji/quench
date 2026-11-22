@@ -2,6 +2,8 @@
 //! install them (`fuse_rows`, `fuse_chains`). A child of `lane_frame`, so its monomorphized records
 //! land in their own codegen unit and only the lane's build instantiates them (`derive_lane_view`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The word a row's double result publishes where it may stay raw (`raw_result`): its raw bits, except a

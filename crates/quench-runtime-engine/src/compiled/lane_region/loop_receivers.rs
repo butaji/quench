@@ -8,6 +8,8 @@
 //! its entering edge, `hoist_stable`). A register whose shape is not stable, that its accesses
 //! expect no one shape of, or that the loop writes keeps the guard of each block.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// A register whose object a loop's entering edge proved of an exact shape, for the blocks

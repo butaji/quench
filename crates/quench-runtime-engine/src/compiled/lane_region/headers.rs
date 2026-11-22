@@ -2,6 +2,8 @@
 //! `State` until an effect that may change the object retires it, and the shape tests later
 //! reads fold against it. The lowering and the frame's property rows share these.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::emit;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation};

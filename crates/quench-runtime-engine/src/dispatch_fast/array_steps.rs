@@ -1,6 +1,8 @@
 //! Array callback methods (`forEach`, `map`, the finds, the reducers) run as their
 //! callbacks' activations in the calling lane, each return stepping the loop
 //! (`begin_array_iteration_in_lane`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::array_iteration::{self as step_rules, Kind};
 #[cfg(test)]

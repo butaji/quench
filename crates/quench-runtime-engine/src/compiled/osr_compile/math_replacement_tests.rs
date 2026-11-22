@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::tests::osr_run;
 
 /// The result of `run(200000)` where `Math.floor(i & 1023)` is the identity for the first 150000 iterations and a constant 1000 after:

@@ -2,6 +2,8 @@
 //! region's code at the leave's PC (`CompiledOsrRegion::can_run_from`) rather than in the
 //! interpreter: the leave's frame slots are canonical, so the region's resume stub loads the
 //! pinned registers live there, and its guards decline to the interpreter at the same PC.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The innermost loop site of `own` holding `pc` whose published code can re-enter at it, with

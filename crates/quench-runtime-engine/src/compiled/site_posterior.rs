@@ -2,6 +2,8 @@
 //! section 4). A site that fails reads in place through the VM's cache (`lane_region::field_probe`,
 //! no exit) instead of guarding its shapes and leaving.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::tier_policy::{Tiers, SPECULATION};
 
 /// What a site's record holds, with no per-execution counter: its executions are bounded below

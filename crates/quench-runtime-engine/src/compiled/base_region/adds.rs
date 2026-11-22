@@ -10,6 +10,8 @@
 //! which the row tests per receiver; a layout change of a prototype on that chain retires the code
 //! (`Add::chain`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::Form;
 use quench_runtime::staged::add_plan::AddSite;

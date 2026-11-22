@@ -1,5 +1,7 @@
 //! The slot types a lane unit's raw stores may write.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The writes the raw stores of `instructions` may make, once per physical slot (shape and

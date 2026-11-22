@@ -1,4 +1,6 @@
 //! Immutable string-case candidates, resolved once with bounded direct-table lookup.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::wtf16::{JsString, Units, MAX_STRING_UNITS};
 use super::*;
 use std::hash::Hasher;

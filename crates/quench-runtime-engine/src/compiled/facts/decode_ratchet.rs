@@ -1,5 +1,7 @@
 //! The constant decodes the Cranelift front-ends still write by hand, which only go down.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 /// Hand-written reads of a constant's immediate meaning in the Cranelift front-ends outside
 /// this module: each is a second home of `immediate` or `constant_number`. The counts only go
 /// down; a front-end reads constants through the facts.

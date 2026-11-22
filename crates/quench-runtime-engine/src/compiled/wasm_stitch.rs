@@ -9,6 +9,8 @@
 //! offset `8 * (1 + register)`. A row that traps leaves through the trap routine, which returns
 //! the status the row left; a return copies its register through the result pointer.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::{Function, WideInstruction};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_flow::Flow;

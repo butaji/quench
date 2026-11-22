@@ -11,6 +11,8 @@
 //! with nothing written but the pinned register between its rows (dead there, and shared with no
 //! web live at that PC), so the interpreter runs the covered instructions from the first.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::function::skipped;
 use super::*;
 use quench_bjit::HOLES;

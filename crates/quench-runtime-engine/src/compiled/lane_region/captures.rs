@@ -2,6 +2,8 @@
 //! (`Frame::capture_slot`, `Frame::store_capture`): dense slot loads and the VM's own lookups
 //! where they miss. The lowering decides, per read, what its slow case reaches (`CaptureSite`);
 //! the frame emits the access.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Whether a capture read may take the lane's own lookup for a root-held binding, and where it runs.

@@ -2,6 +2,8 @@
 //! activation runs in the lane, nested under the body, and its return comes back to the
 //! body's call, so the caller's specialized code keeps running (V8's and JSC's baseline
 //! callers return into compiled code whatever tier the callee ran in).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED};
 use super::body_forms::{BodyCall, Gathered};

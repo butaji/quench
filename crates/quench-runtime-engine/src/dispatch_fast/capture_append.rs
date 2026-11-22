@@ -2,6 +2,8 @@
 //! The bytecode proves the operation; ordinary capture storage and concatenation own its
 //! effects. A miss leaves the whole call to its activation before changing the binding.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 // Positions in the recognized body. The load record retains its capture immediate when

@@ -11,6 +11,8 @@
 //! The b-jit leave stubs (`base_region::link`) emit `LaneExit::Entry.word()` and so share the
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{lane_unit, LaneExit, LoopRegion};
 use quench_runtime::value::Value;
 use quench_bjit::call_record::{return_status_pc, LaneStatus};

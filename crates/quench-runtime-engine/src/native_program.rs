@@ -1,5 +1,7 @@
 //! Ownership of linked JavaScript code and its compiler-resolved program.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::{ProgramId, Vm};
 use quench_runtime::{Host, JsError, ResidualProgram, Value};
 use std::rc::Rc;

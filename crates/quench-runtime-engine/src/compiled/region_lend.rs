@@ -6,6 +6,8 @@
 //! frame's place for the run, and the dispatch of the run it interrupts (an enclosing body's or
 //! region's, which reads it again when this one returns) is put back after it.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// Binds `payload`'s lane stack words to the room the lane has now (`Vm::stack_words_in_lane`): the tops

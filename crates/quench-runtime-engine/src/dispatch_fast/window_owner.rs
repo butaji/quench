@@ -4,6 +4,8 @@
 //! environment window (`WINDOW_ENVIRONMENT`, `WINDOW_LOCALS`) holds its environment and its
 //! locals, its registers the operands, its record (`FrameRecord`) the dynamic bindings a direct
 //! eval made, and the lane stack its `with` objects (`LaneStack::with_chain`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::with_scopes::WithChain;
 use quench_runtime::vm::activation::FrameRecord;

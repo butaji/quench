@@ -1,6 +1,8 @@
 //! When a lane body compiles again, keeps its code or retires: decisions from what its runs
 //! and its predecessors' did.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::tier_machine::{TierEvent, TierState};
 use super::{Handler, LaneBody, LaneLeaves, LaneView, Tiers};
 use quench_runtime::vm::tier_policy::PERCENT;

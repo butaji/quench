@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_bjit::{EXIT_STUB_LEN, Reloc};
 

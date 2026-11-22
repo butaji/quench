@@ -2,6 +2,8 @@
 //! prototype value folded under its guard, or the read value with the int32 view a slot
 //! that has only held int32 values proves: by the code's dependency on the slot's observation
 //! (an online body), else by a tag test.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The cache site of the last read of `instruction`'s lookup, whose slots the value comes from;

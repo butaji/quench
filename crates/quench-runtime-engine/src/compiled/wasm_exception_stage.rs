@@ -13,6 +13,8 @@
 //! No frame roots anything across the construction: an allocation only makes a collection due, and
 //! a collection runs at an interpreter safepoint, which the callout does not reach.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_gc_allocate::operand_value;
 use super::wasm_instance_stage::value_kind;
 use super::{Analysis, AnalysisState, CallContext, Emitter, JsError, Kind, Slot, Value, Vm, finish_callout};

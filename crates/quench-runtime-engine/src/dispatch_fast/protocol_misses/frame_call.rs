@@ -1,5 +1,7 @@
 //! Protocol misses of frame calls and memoized script calls (`protocol_family::FRAME_CALL`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// The miss body of a record of this family with static parameters `parameters`

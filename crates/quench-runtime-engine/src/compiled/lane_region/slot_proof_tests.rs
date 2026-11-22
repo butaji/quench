@@ -1,4 +1,6 @@
 //! The tests an online body's field reads make of slots whose type its dependencies hold.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Class;
 

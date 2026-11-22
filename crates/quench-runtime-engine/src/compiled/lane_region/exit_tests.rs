@@ -3,6 +3,8 @@
 //! a register whose tagged view is unavailable is boxed by the leave that stores it, in its cold
 //! block, or by the first tagged read after (`frame::register_tagged`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::home_tests::{lower_loop, stores};
 

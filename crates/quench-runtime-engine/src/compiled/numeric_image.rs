@@ -1,5 +1,7 @@
 //! A numeric function compiled to a relocatable image and linked: the one path of the live
 //! numeric JIT and of ahead-of-time compilation.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// A function's numeric region lowered, before its code is produced: the specializer's output

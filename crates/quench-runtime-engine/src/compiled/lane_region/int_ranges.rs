@@ -9,6 +9,8 @@
 //! are rows of the same fixpoint that types every register, which widens a range that keeps
 //! growing instead of assuming one and checking it on the back edge.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::bytecode::JsDenotation;
 use super::*;
 use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};

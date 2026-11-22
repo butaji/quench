@@ -10,6 +10,8 @@
 //! plan that held at the construction still holds where the receiver is allocated, and no
 //! collection can run while only these variables name the arguments.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::super::{PlanCallee, ScalarConstructPlan, ScalarField};
 

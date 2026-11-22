@@ -3,6 +3,8 @@
 //! keeps everything the method holds but its code, so code generation may run on the code
 //! generator's thread (`jit_backend::OffThread`) while the program runs on.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::program_store::lane_publication::LaneKey;
 

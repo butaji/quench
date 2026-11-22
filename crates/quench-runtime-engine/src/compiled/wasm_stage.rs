@@ -2,6 +2,8 @@
 //! through the staged rules (`staged::wasm::integer_binary`, `staged::wasm_float`), so traps and
 //! their order are the interpreter's. The operators themselves are the machine's
 //! (`emit_machine`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{AnalysisState, Emitter, Kind, Slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::machine::MachineStage;

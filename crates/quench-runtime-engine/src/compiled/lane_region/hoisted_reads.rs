@@ -1,5 +1,7 @@
 //! Reads a loop's preheader hoisted (`Lowering::hoist_reads`): each use defines its
 //! register from the hoisted variable, with the read's facts.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_, '_> {

@@ -1,6 +1,8 @@
 //! `arguments` reads in a lane body: a keeping activation's count and the values it kept,
 //! or an unmaterialized binding's, which the lane's own handlers answer.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 impl Lowering<'_, '_> {

@@ -8,6 +8,8 @@
 //! (`wasm_instance_switch`), in another; every other target (a host function, code not
 //! compiled, a memory the call cannot be made across) goes through the VM's callout.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use cranelift_codegen::ir::InstBuilder;
 use super::wasm_stage::infallible;
 use super::wasm_call_stage::is_tail_call;

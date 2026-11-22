@@ -5,6 +5,8 @@
 //!
 //! The emitter is written over the shared machine traits (`staged::machine`) and instantiated on
 //! the bare function builder; `emit` is the only place that names the builder.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use crate::compiled::CodeMemory;
 use quench_runtime::vm::jit_backend::{compile_function, run_in_background, target_isa, NativeCompileRejection};
 use std::task::Poll;

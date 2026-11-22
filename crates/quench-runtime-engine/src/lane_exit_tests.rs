@@ -1,5 +1,7 @@
 //! Operations the lane answers in place that once left it: each runs often enough for the
 //! in-place path, and its output is what Node prints for the same source.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::dispatch_fast::super_chain::tests::printed;
 
 /// A number, boolean, bigint or symbol read of a name its prototype chain lacks is `undefined`;

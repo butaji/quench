@@ -1,4 +1,6 @@
 //! The `this` a bound run's entry proves once (`Lowering::entry_facts`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
 

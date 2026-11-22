@@ -1,5 +1,7 @@
 //! A lane view's lane-body counters, kept under `QUENCH_TRACE=js-jit`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use quench_runtime::vm::tier_events::Event;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneBodyStats;

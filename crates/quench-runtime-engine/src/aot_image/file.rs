@@ -5,6 +5,8 @@
 //!
 //! Owner: one pipeline.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{AotFunction, AotImage, CallSite, LaneImage, OperandRecord, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};

@@ -12,6 +12,8 @@
 //! of the record's opcode and `Symbol::Operands` of its (function, PC), so the row names no address
 //! of the compiling process.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use super::branches::branching;
 use crate::aot_image::Symbol;

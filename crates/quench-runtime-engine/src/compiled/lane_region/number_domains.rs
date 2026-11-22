@@ -1,6 +1,8 @@
 //! The representation a Number operation of the lane body runs in, chosen from its operands'
 //! proved facts.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The machine view a block entry keeps a register of fact type `ty` in: the unboxed view of

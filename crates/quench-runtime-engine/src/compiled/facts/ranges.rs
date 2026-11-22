@@ -3,6 +3,8 @@
 //! analysis computes it with every other fact and `lane_region::int_ranges` and `packed_ranges`
 //! read what it proves; this file is the one meaning of a range.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{immediate, operand_type, set};
 use quench_runtime::bytecode::{Constant, Operand, WideInstruction};
 use quench_runtime::typed_ir::{IntRange, Type};

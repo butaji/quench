@@ -2,6 +2,8 @@
 //! the VM's cached in-loop call target answers inline, its binding helper otherwise; in an AOT
 //! image whose closed world proves the call's target (`AotFacts::call_target`), nothing: the fact
 //! is a dependency of the image (`closed_call`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
 

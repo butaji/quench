@@ -28,6 +28,8 @@
 //! A child of `wasm_stitch` (`#[path]`), so it names `wasm_stitch`'s private items
 //! through `super`.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{Planned, World, known_call, slot};
 use quench_runtime::bytecode::{ImmediateLayout, RETURN_REGISTER, WideInstruction};
 use quench_runtime::staged::wasm_call::Call;

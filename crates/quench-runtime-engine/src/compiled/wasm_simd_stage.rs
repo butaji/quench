@@ -3,6 +3,8 @@
 //! and analysis of each `Simd` step. A vector access checks and moves through the staged memory
 //! rules (`load_vector`, `store_vector`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{

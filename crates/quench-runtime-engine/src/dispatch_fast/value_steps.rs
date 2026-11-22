@@ -1,6 +1,8 @@
 //! `Binary`, `Unary` and comparison-jump steps of an activation with no frame of its own (a native callee, a lane
 //! callee): made over the values the records name in the registers and the program's constants, as `Vm::step` makes
 //! them in a frame, so the activations stay the lane's unless guest code the step ran made them frames.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use crate::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
 use quench_runtime::bytecode::ValueStep;

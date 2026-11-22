@@ -8,6 +8,8 @@
 //! nanoseconds per IR instruction (`tier_model`) over the `ir_per_bytecode` of the span, at the
 //! wall share of its time. The iterations to come are `taken / remaining_divisor` (Lindy).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::tier_model::{compile_wall_permille, future_count, interpreted_ns, net_gain_ns};
 use super::tier_policy::{Loops, Priors, Tiers, PER_MILLE};
 

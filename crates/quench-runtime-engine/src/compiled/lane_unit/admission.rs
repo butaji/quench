@@ -1,5 +1,7 @@
 //! Which instructions of a callee the unit inlines, and which callees may restart at a miss.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Traits;
 

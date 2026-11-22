@@ -1,5 +1,7 @@
 //! Protocol misses of constructions (`protocol_family::CONSTRUCT`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::*;
 
 /// Parameter codes of the construction records (`Op::Construct`).

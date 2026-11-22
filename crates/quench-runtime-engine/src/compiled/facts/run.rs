@@ -1,6 +1,8 @@
 //! The fixpoint of `transfer` over the control-flow graph, and the replay of its rows: the one
 //! analysis, which every consumer of a type, a range or a length relation reads.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::lengths::Relations;
 use super::ranges::{self, Edge};
 use super::{hold_contracts, join_types, meet_relations, set, transfer_observed, Contract, Facts, Flow, Observed, INLINE_ANALYSIS_ITEMS};

@@ -29,6 +29,8 @@
 //! Jump targets of the rows are local to the site (`0 ..= rows.len()`, where `rows.len()` is the
 //! continuation); the stitcher adds the row index the first is placed at.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::{choose, CallShape, Choice, DirectFacts};
 use quench_runtime::bytecode::{Class, FieldBase, FieldLookup, Register, WideInstruction, REGISTER_MASK};
 use quench_runtime::compile::liveness::RegisterMasks;

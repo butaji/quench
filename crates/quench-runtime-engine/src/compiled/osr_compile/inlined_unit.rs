@@ -2,6 +2,8 @@
 //! begin with (`insert_markers`, `marker_sites`), its jump targets and static field reads in unit PCs
 //! (`localized_jumps`, `inlined_entry_fields`), and the unit they make up (`inlining_unit`).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Op;
 

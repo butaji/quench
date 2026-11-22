@@ -11,11 +11,11 @@ use smallvec::SmallVec;
 /// returned. Every value is a parameter as passed or a primitive constant, so the body runs
 /// no guest code of its own.
 pub(crate) struct SuperInitializer {
-    pub(crate) arguments: SmallVec<[InitializerValue; 4]>,
-    pub(crate) stores: SmallVec<[InitializerStore; 4]>,
+    pub arguments: SmallVec<[InitializerValue; 4]>,
+    pub stores: SmallVec<[InitializerStore; 4]>,
     /// Whether the body passes every argument it was given on to the parent
     /// (`constructor(...args) { super(...args); this.f = 1; }`), whose `arguments` are then none.
-    pub(crate) forwards: bool,
+    pub forwards: bool,
 }
 
 /// Whether `call` reads the active function's parent: the `SUPER_BASE_BINDING` intrinsic

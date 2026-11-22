@@ -1,5 +1,7 @@
 //! Lane activations' completions: what a return yields to the call it completes, by the
 //! completion its activation was made with (`Completion`).
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::call_complete::{
     concrete_admits_returning_call, concrete_plain_return_admits, concrete_returning_this, concrete_returns_callee_completion,

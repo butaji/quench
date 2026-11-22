@@ -1,5 +1,7 @@
 //! The lane's store to a capture slot.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 
 /// The lane's store of `value` to the capture at `depth` and `slot` past the running

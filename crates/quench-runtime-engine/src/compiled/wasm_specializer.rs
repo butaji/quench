@@ -5,6 +5,8 @@
 //! their order and their fallbacks: a failed specialization is an `Err`, which they read as the
 //! function running in the interpreter (or as a callee without an entry).
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::specializer::Specializer;
 

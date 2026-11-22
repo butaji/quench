@@ -1,4 +1,6 @@
 //! Stores that meet an accessor: the setter runs as an activation of the lane.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::AccessorForward;
 use quench_runtime::vm::accessor_cache::SetterForward;

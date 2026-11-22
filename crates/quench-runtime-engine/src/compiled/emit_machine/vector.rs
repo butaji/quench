@@ -1,6 +1,8 @@
 //! The vector family of the specializer's machine: `MachineVector` as Cranelift vector
 //! instructions; a vector loads and stores as `Lane::V128` (`MachineAccess`). A vector shift reduces its count modulo the lane width, as Wasm does.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
 use super::super::{Emitter, Kind, VECTOR_IR};
 use quench_runtime::WasmType;
 use quench_runtime::staged::machine::MachineVector;
