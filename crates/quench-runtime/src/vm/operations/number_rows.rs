@@ -434,6 +434,7 @@ pub(crate) mod unary_operator {
 macro_rules! number_relation_codes {
     ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         impl NumberRelation {
+            #[inline]
             pub fn binary_operator(self) -> u32 {
                 match self {
                     $(Self::$relation => [$(binary_operator::$operator),+][0],)+
@@ -459,6 +460,7 @@ macro_rules! number_arithmetic_codes {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
             /// The binary operator this arithmetic operation denotes (`from_operator`'s inverse).
+            #[inline]
             pub fn binary_operator(self) -> u32 {
                 match self {
                     $(Self::$operation => binary_operator::$operator,)+
@@ -492,6 +494,7 @@ macro_rules! number_bitwise_codes {
     ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         impl NumberBitwise {
             /// The binary operator this bitwise operation denotes (`from_operator`'s inverse).
+            #[inline]
             pub fn binary_operator(self) -> u32 {
                 match self {
                     $(Self::$operation => binary_operator::$operator,)+

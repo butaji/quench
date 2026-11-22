@@ -5224,6 +5224,7 @@ impl LaneStack {
     /// Every frame innermost first, where it is (`Walk`). The side records, seals and
     /// records change only through `&mut self` and `spill_plain`, which no walk calls: a reader
     /// calls no `activations` while it walks.
+    #[inline]
     pub fn walk_innermost(&self) -> Walk<'_> {
         // SAFETY: the walk's contract above.
         let (records, sides, segments) = unsafe { (&self.records_unspilled()[..], (&*self.sides.get()).as_slice(), (&*self.segments.get()).as_slice()) };
@@ -5640,6 +5641,7 @@ impl RootedCode for Held {
 impl Iterator for Walk<'_> {
     type Item = (ActivationView, Walked);
 
+    #[inline]
     fn next(&mut self) -> Option<(ActivationView, Walked)> {
         loop {
             if self.headers != 0 {

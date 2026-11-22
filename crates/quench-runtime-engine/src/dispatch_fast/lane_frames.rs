@@ -190,6 +190,7 @@ impl LaneStack {
     ///
     /// # Safety
     /// A plain activation runs (`plain.depth > 0`).
+    #[inline]
     pub(crate) unsafe fn pop_plain_frame(&mut self) -> ActivationView {
         debug_assert!(self.plain.depth.get() != 0, "a plain activation runs");
         let window = Registers(self.plain.registers.get());

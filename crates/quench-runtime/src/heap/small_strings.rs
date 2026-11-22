@@ -258,6 +258,7 @@ pub const fn is_small_string(record_id: u32) -> bool {
 }
 
 /// The string Value of the small string `local`.
+#[inline]
 pub(super) fn small_string_value(local: RecordId) -> Value {
     Value::direct_string(local + STRING_RECORD_HOLE as u32)
 }

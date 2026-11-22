@@ -3878,6 +3878,7 @@ impl Vm {
     pub(super) fn method_cache_index(&self, site: usize) -> usize {
         self.active_cache_layout().method_base + site
     }
+    #[inline]
     pub(super) fn object_cache_index(&self, site: usize) -> usize {
         self.active_cache_layout().object_base + site
     }

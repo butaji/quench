@@ -749,6 +749,7 @@ impl Vm {
 
     /// Whether no prototype on the chain from `first` holds an array index: answered by the
     /// held proof (`IndexFreeChainProof`), which a change to any prototype it read retires.
+    #[inline]
     pub(super) fn chain_holds_no_index(&self, first: Value) -> bool {
         self.heap.dependencies().index_free_chain().is_some_and(|proof| proof.first == first || proof.next == first)
             || self.prove_index_free_chain(first)

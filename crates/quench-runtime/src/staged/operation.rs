@@ -541,6 +541,7 @@ impl<W, P> Operation<W, P> {
     /// `decode_literal`, where `parts` are the four records of the superinstruction a
     /// `SuperConstArrayObject2` record names (the program's table entry); `None` for any other record,
     /// and for a pair whose `parts` are none.
+    #[inline]
     pub fn decode_literal_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P) -> Option<Self> {
         match instruction.op() {
             Op::DefineArrayElement => Some(Self::DefineElement {
