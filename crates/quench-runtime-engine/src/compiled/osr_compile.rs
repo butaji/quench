@@ -5,7 +5,7 @@
 use crate::ext_traits::*;
 use super::{
     compile_native_function, dump_native_bytes, dump_native_code, DumpSite, names_length, native_dump_directory, lane_unit, osr_loop,
-    publish_body, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,
+    publish_body, CompiledOsrRegion, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
 use super::base_region::function::{build_region, Body, BodySpec};
@@ -409,7 +409,7 @@ pub(crate) fn start_osr_region(
     base: bool,
     mut online: Option<OsrOnline<'_>>,
 ) -> Option<PendingOsrRegion> {
-    let isa = quench_runtime::vm::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
+    let isa = quench_runtime::vm::jit_backend::target_isa().filter(|_| super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Region(policy) }).compiled().is_some())?;
     // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
     let invalidation = Invalidation::default();
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).

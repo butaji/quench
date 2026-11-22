@@ -141,6 +141,55 @@ extern "C" fn report() {
     eprintln!("{}", refusal_report());
 }
 
+/// The kinds of unit whose tier gate `may_compile` decides.
+#[derive(Clone, Copy)]
+pub(crate) enum UnitKind {
+    /// A function's lane body: u-jit under the Cranelift tiers, or b-jit stencils under `--b-jit`.
+    Body,
+    /// A loop region, under its memory policy's loop tier.
+    Region(quench_runtime::MemoryPolicy),
+}
+
+/// Whether a unit of `kind` may compile at all, under the process's JIT mode and, for a loop
+/// region, its memory policy. Only `specialize` asks this.
+fn may_compile(kind: UnitKind) -> bool {
+    match kind {
+        UnitKind::Body => quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) || quench_runtime::jit_mode::base_only(),
+        UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
+    }
+}
+
+/// One request to specialize a unit (`specialize`).
+#[derive(Clone, Copy)]
+pub(crate) struct UnitRequest {
+    pub(crate) kind: UnitKind,
+}
+
+/// The outcome of `specialize`: a unit cleared to compile, or declined by the mode and policy.
+pub(crate) enum Decision<T> {
+    Compile(T),
+    Decline,
+}
+
+impl<T> Decision<T> {
+    /// The unit, where the decision cleared it.
+    pub(crate) fn compiled(self) -> Option<T> {
+        match self { Self::Compile(unit) => Some(unit), Self::Decline => None }
+    }
+}
+
+/// A unit cleared to compile. Its only field is private to this module, so `specialize` is the
+/// only way to obtain one.
+pub(crate) struct CompiledUnit {
+    _sealed: (),
+}
+
+/// The one specializer entry: whether the request's unit may compile, under the process's JIT
+/// mode and memory policy. Every compile entry obtains its unit here.
+pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
+    if may_compile(request.kind) { Decision::Compile(CompiledUnit { _sealed: () }) } else { Decision::Decline }
+}
+
 /// How a callee would run: inlined into a lane unit under the call's `CalleeBinding`, or called
 /// frameless.
 #[derive(Clone, Copy)]

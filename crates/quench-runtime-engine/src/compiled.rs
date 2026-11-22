@@ -3240,11 +3240,11 @@ pub(crate) fn analyze_osr_region_detailed(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls, native_call)
 }
 
-/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).
-pub(crate) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
-    tier_policy::by_policy(policy).loop_tier
-}
 
+/// Whether the loop tier compiles regions under `policy`: `admission::may_compile` for a region.
+pub(crate) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
+    admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Region(policy) }).compiled().is_some()
+}
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
