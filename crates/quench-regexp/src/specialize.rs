@@ -46,7 +46,7 @@ use super::{equal, Frame, Inst, Program, Text, UnitTest, UNSET};
 /// engine's trait cannot be named here. The native driver (`vm/regexp_native`) already emits
 /// through the engine's `staged::machine` traits, and implements this trait over them. A fold
 /// needs the matcher moved into `quench-runtime` or `staged::machine` moved below both crates.
-pub(super) trait Stage: Machine<Pos = usize, Unit = u32, Flag = bool, Test = UnitTest> {
+pub(super) trait Stage: Machine<Pos = usize, Unit = u32, Flag = bool, Test = UnitTest> + quench_stack::projection::Sealed {
     /// The start of the run of units from at least `to` up to `from` that pass `test`.
     fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize;
     fn register(&self, register: u32) -> usize;
