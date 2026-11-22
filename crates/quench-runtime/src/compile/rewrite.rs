@@ -698,7 +698,7 @@ pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
         }
         let packed = &mut function.code[producer_pc];
         if packed.is_wide() {
-            function.wide[packed.wide_index()].set_returns_from_frame();
+            crate::bytecode::wide_entry_mut(&mut function.wide, *packed).set_returns_from_frame();
         } else {
             packed.set_returns_from_frame();
         }
@@ -714,7 +714,7 @@ pub(super) fn express_strict_sets(function: &mut BcFunction) {
     let strict_op = |op: Op| STRICT_VARIANTS[op as usize];
     for packed in &mut function.code {
         if packed.is_wide() {
-            let wide = &mut function.wide[packed.wide_index()];
+            let wide = crate::bytecode::wide_entry_mut(&mut function.wide, *packed);
             if let Some(op) = strict_op(wide.op()) {
                 wide.set_op(op);
             }
@@ -1135,7 +1135,7 @@ pub(super) fn relocate(
         // A wide instruction's target lives in the wide table, which each relocation visits
         // once: packed code refers to every wide entry at most once.
         if instruction.is_wide() {
-            let entry = &mut wide[instruction.wide_index()];
+            let entry = crate::bytecode::wide_entry_mut(wide, *instruction);
             entry.set_jump_target(map[entry.jump_target() as usize] as u32);
         } else {
             let target = map[instruction.jump_target() as usize] as u32;

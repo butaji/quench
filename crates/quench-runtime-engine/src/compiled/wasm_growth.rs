@@ -18,7 +18,6 @@ use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::staged::wasm_call::Call;
 use quench_runtime::staged::wasm_memory::Memory;
 use quench_runtime::staged::wasm_step::Step;
-use crate::dispatch_fast::decoded_instruction;
 
 /// Whether a step by itself may grow the memory: a memory growth, a reference call, or a step that
 /// may reach a VM callout. A direct call's growth is its callee's (`growing_functions`).
@@ -46,7 +45,7 @@ pub(crate) fn growing_functions(code: &ResidualProgram, count: usize, shared: bo
     for index in 0..count {
         let function = code.function(index);
         for packed in &function.code {
-            let instruction = decoded_instruction(function, *packed);
+            let instruction = function.widened(*packed);
             let Some(step) = Step::of(instruction.op(), instruction.imm()) else {
                 continue;
             };

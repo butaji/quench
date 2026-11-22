@@ -37,6 +37,8 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 }
 
+quench_stack::projection!([M: RegexpMachine] Emit<'_, M> => Emit);
+
 impl<M: RegexpMachine> MatchStage for Emit<'_, M> {
     type Pos = M::Word;
     type Unit = M::Word;

@@ -3830,7 +3830,7 @@ fn row_set_index_activation(cx: *mut LaneContext, r: Registers, ip: Ip, i: &Lane
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[pc]);
+    let instruction = body.widened(body.code[pc]);
     if !quench_runtime::staged::writes_element(instruction.op()) {
         return Resumed::Exit(exit(ip));
     }
@@ -6194,22 +6194,6 @@ fn hint_private_field(vm: &Vm, ip: Ip, atom: quench_runtime::bytecode::Atom, sha
     }
 }
 
-/// A `GetField` step's private field value at site `site` (`lane_private_field_slot_at`):
-/// `None` for an object without the field, which the general path throws for, or a private
-/// method's or accessor's name, which it reads.
-#[inline(always)]
-fn lane_private_field_value(
-    cx: *mut LaneContext,
-    site: usize,
-    code: &ResidualProgram,
-    object: Value,
-    atom: quench_runtime::bytecode::Atom,
-) -> Option<Value> {
-    let slot = lane_private_field_slot_at(cx, site, code, object, atom)?;
-    let vm = unsafe { vm(cx) };
-    vm.heap.property_get(vm.object_data(object)?, slot)
-}
-
 /// One `GetField` step of `lane_field_value`: a private name's at its site, any other name's
 /// through the field caches (`lane_cached_field`).
 #[inline(always)]
@@ -7034,7 +7018,7 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     // (`install_ahead_lane_body`): no warm-up, no runtime tier.
     if vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some() {
         let published = own.entry_published();
-        let installed = own.install_ahead_lane_body(body_entry_row(), || vm.install_ahead_body(code, function, None, &[]));
+        let installed = own.install_ahead_lane_body(body_entry_row(), || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
         if !published && own.entry_published() {
             unsafe { self::vm(cx) }.unprove_view_entries(own);
         }
@@ -7051,14 +7035,16 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
         // A function of a program with a loaded AOT image takes the image's body (`install_ahead_body`) before any tier's.
         if let crate::compiled::LaneBodyWork::Start { generic, .. } = &work
-            && let Some(published) = vm.install_ahead_body(code, function, None, generic)
+            && let Some(unit) = crate::compiled::admission::ahead_unit(function)
+            && let Some(published) = vm.install_ahead_body(unit, code, function, None, generic)
         {
             return crate::compiled::LaneBodyOutcome::Published(published);
         }
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         if quench_runtime::jit_mode::base_only() {
             let crate::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
-            return vm.base_body_work(code, function, generic, parameters, own, &direct);
+            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
+            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
         }
         if matches!(work, crate::compiled::LaneBodyWork::Start { .. })
             && let Some(outcome) = body_tier_in_lane::start_gate(vm, own, code.function_get(function as usize))
@@ -7070,7 +7056,8 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
         // b-jit, so a function it would not beat takes the stencil body, stitched at once.
         if let (crate::compiled::LaneBodyOutcome::Base, Some(generic)) = (&outcome, &started) {
-            return vm.base_body_work(code, function, generic, parameters, own, &direct);
+            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
+            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
         }
         if diagnostics && let crate::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }
@@ -7352,7 +7339,7 @@ fn loop_trace_exit_in_lane(cx: *mut LaneContext, r: Registers, site: &LoopSite, 
             // native execution has returned and restored the canonical registers.
             let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
             if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
-                let instruction = decoded_instruction(body, packed);
+                let instruction = body.widened(packed);
                 if quench_runtime::staged::writes_element(instruction.op()) {
                     let key = r.get(instruction.register_c());
                     let base = r.get(instruction.register_b());
@@ -8629,7 +8616,7 @@ impl Vm {
                 && body
                     .code
                     .iter()
-                    .any(|packed| quench_runtime::staged::constructs(decoded_instruction(body, *packed).op()))
+                    .any(|packed| quench_runtime::staged::constructs(body.widened(*packed).op()))
         {
             None
         } else {
@@ -9071,11 +9058,13 @@ script_handler! {
         if argc > FIXED_ARGUMENT_COPIES || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
-        // A callee whose cell holds a body is proved too: the plain activation tests the cell
-        // on every call, proved or not (`lane_plain_activation!`), and enters the body through
-        // it (`enter_cell_body_in_lane`) or, for a call completing its caller, through the
-        // activation's `BodyEntry` record. Only a leaf entry's proved form skips the cell, and
-        // this proves no leaf entry (`CallEntry::Activates` above).
+        // A callee whose cell holds a body is never proved: its calls run the unproved activation
+        // from here, which enters the body (`enter_cell_body_in_lane`). Candidate revert of
+        // cca72f571 for the typescript-lib default-mode regression (unverified; see report).
+        // SAFETY: the target's view lives with its program.
+        if unsafe { (*target.view).entry_published() } {
+            lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN)
+        }
         // The proof (`Admission::UNPROVEN`): the entry, which the link names, now admits proved
         // calls from every site whose arguments it takes (`script_call_miss`'s compare).
         let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
@@ -12946,7 +12935,7 @@ impl Vm {
 fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, body: &quench_runtime::bytecode::Function) -> Vec<crate::compiled::DirectCandidates> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
     body.code.iter().enumerate().map(|(pc, packed)| {
-        let instruction = decoded_instruction(body, *packed);
+        let instruction = body.widened(*packed);
         let direct = quench_runtime::staged::calls(instruction.op()) && !instruction.direct_eval() && !instruction.parameter_eval()
             && !(tail_calls && instruction.returns_from_frame());
         let mut callees = crate::compiled::DirectCandidates::new();
@@ -15872,7 +15861,7 @@ fn frame_entry_census(vm: &Vm, program: ProgramId, function: u32) -> Option<Stri
             body.is_generator, body.local_registers.len(), body.locals, body.simple_parameters, body.selective_capture_slots.is_some(),
             body.self_binding_slot.is_some(), plan.plain, plan.in_loop, plan.legacy_reflection, plan.live_parameters,
             plan.addresses_locals, body.initial_register,
-            body.code.iter().map(|packed| decoded_instruction(body, *packed)).filter(|instruction|
+            body.code.iter().map(|packed| body.widened(*packed)).filter(|instruction|
                 quench_runtime::staged::names_binding(instruction.op()))
                 .map(|instruction| format!("{:?}:{}", instruction.op(), { let atom = instruction.atom_index() as usize; if atom < callee_code.atoms.len() { callee_code.atoms[atom].replace('\0', "~") } else { "?".into() } }))
                 .collect::<Vec<_>>(),
@@ -18442,7 +18431,7 @@ fn specialize_returning_operator(instruction: WideInstruction, constants: &[Valu
 /// backward jump, or a branch table, whose entries may jump back.
 fn may_loop(function: &Function) -> bool {
     function.code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = decoded_instruction(function, *packed);
+        let instruction = function.widened(*packed);
         quench_runtime::staged::wasm_branch_table(instruction.op())
             || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
                 && instruction.imm() as usize <= pc)
@@ -18577,17 +18566,6 @@ fn entered_records(instructions: &[WideInstruction], parameter_end_pc: u32) -> I
         targets.insert(parameter_end_pc as usize);
     }
     targets
-}
-
-pub(crate) fn decoded_instruction(
-    function: &Function,
-    packed: quench_runtime::bytecode::Instr,
-) -> WideInstruction {
-    if packed.is_wide() {
-        function.wide[packed.wide_index()]
-    } else {
-        packed.as_wide()
-    }
 }
 
 #[quench_macros::ext(DispatchFastVm6)]

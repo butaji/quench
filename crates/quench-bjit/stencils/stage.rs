@@ -110,6 +110,8 @@ pub(crate) fn stage_site(stage: &mut StencilStage) -> u64 {
     stage.site(0)
 }
 
+crate::projection!(StencilStage => StencilStage);
+
 impl Stage for StencilStage {
     type Word = u64;
     type Proof = ();

@@ -26,6 +26,8 @@ impl Machine for InstanceBindings<'_> {
     type Word = u64;
 }
 
+crate::projection!(InstanceBindings<'_> => Concrete);
+
 impl MachineStage for InstanceBindings<'_> {
     type Exit = JsError;
 

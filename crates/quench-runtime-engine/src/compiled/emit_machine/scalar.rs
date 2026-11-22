@@ -358,6 +358,8 @@ impl Emitter<'_, '_> {
     }
 }
 
+quench_runtime::projection!(Emitter<'_, '_> => Emit);
+
 impl MachineStage for Emitter<'_, '_> {
     type Exit = Infallible;
 

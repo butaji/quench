@@ -97,7 +97,7 @@ impl Lowering<'_, '_> {
             Some(number) => {
                 continues(data_view::data_view_write(&mut stage, view, index, call.element, little, number, exit));
                 drop(stage);
-                let undefined = self.builder.ins().iconst(ir::types::I64, Value::UNDEFINED.to_bits() as i64);
+                let undefined = self.raw_const(Lane::I64, Value::UNDEFINED.to_bits() as i64);
                 self.set_tagged(state, result, undefined);
             }
         }

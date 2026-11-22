@@ -58,6 +58,7 @@ mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
 pub mod division;
 pub mod math;
+pub(crate) mod int_math;
 mod names;
 pub mod protocol_literals;
 pub mod protocol_classes;

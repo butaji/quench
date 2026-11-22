@@ -3,12 +3,12 @@
 /// file: each is a second home of a rule `staged` owns (AGENTS.md, manifesto 4). The counts
 /// only go down; a new decode belongs in `staged` as an operation every tier runs.
 const LAYOUT_DECODES: &[(&str, &str, usize)] = &[
-    ("vm/compiled.rs", include_str!("../vm/compiled.rs"), 0),
-    ("vm/compiled/lane_region.rs", include_str!("../vm/compiled/lane_region.rs"), 0),
-    ("vm/compiled/osr_loop.rs", include_str!("../vm/compiled/osr_loop.rs"), 0),
-    ("vm/compiled/object_slots.rs", include_str!("../vm/compiled/object_slots.rs"), 0),
-    ("vm/js_compiled.rs", include_str!("../vm/js_compiled.rs"), 0),
-    ("vm/dispatch_fast.rs", include_str!("../vm/dispatch_fast.rs"), 0),
+    ("compiled.rs", include_str!("../../../quench-runtime-engine/src/compiled.rs"), 0),
+    ("compiled/lane_region.rs", include_str!("../../../quench-runtime-engine/src/compiled/lane_region.rs"), 0),
+    ("compiled/osr_loop.rs", include_str!("../../../quench-runtime-engine/src/compiled/osr_loop.rs"), 0),
+    ("compiled/object_slots.rs", include_str!("../../../quench-runtime-engine/src/compiled/object_slots.rs"), 0),
+    ("js_compiled.rs", include_str!("../../../quench-runtime-engine/src/js_compiled.rs"), 0),
+    ("dispatch_fast.rs", include_str!("../../../quench-runtime-engine/src/dispatch_fast.rs"), 0),
 ];
 
 /// The layout facts whose use is a decode: the bits a reader tests to learn a storage form or
@@ -51,15 +51,28 @@ fn staged_coverage_layout_decodes_outside_staged_only_shrink() {
 // file and token; it may only shrink. `QUENCH_DEBT_WRITE=1` rewrites it after a shrink.
 // ---------------------------------------------------------------------------------------------
 
-/// Every directory whose code executes, lowers, profiles or links opcodes, the interpreters
-/// included: their handlers are to be generated from the rows too.
-const DEBT_DIRECTORIES: &[&str] = &["vm", "profile", "typed_ir", "native_link", "memory_edge", "../../quench-bjit/src",
-    "../../quench-bjit/stencils", "wasm"];
+/// The trees whose code may execute, lower, profile or link opcodes, relative to `src`: this crate's
+/// whole source, the engine crate that holds the lane and compiled tiers, and the b-jit crate. The
+/// scan covers each tree whole, so a tier in any file of them is debt; a directory list would miss
+/// a tier that a crate split moved out of it.
+const DEBT_ROOTS: &[&str] = &["", "../../quench-runtime-engine/src", "../../quench-bjit/src", "../../quench-bjit/stencils"];
 
-/// Single files outside those directories that single out opcodes: the peephole rewriter, the
-/// validator and the Wasm front module. The catalog files that define the vocabulary
-/// (`bytecode.rs`, `bytecode/op_catalog.rs`, `bytecode/op_classes.rs`) are its source, not debt.
-const DEBT_FILES: &[&str] = &["compile/rewrite.rs", "compile/deferred_rewrite.rs", "bytecode/validate.rs", "wasm.rs"];
+/// Directories of this crate's source the scan leaves out: `staged/` holds the rows, `bytecode/` is
+/// the catalog that defines the vocabulary, and `compile/` emits opcodes.
+const DEBT_EXEMPT_DIRECTORIES: &[&str] = &["staged", "bytecode", "compile"];
+
+/// Files of this crate's source the scan leaves out: the module roots of `staged` and `bytecode`.
+const DEBT_EXEMPT_FILES: &[&str] = &["staged.rs", "bytecode.rs"];
+
+/// Files inside the exempt directories that single out opcodes: the peephole rewriters and the
+/// validator. They are scanned on their own.
+const DEBT_FILES: &[&str] = &["compile/rewrite.rs", "compile/deferred_rewrite.rs", "bytecode/validate.rs"];
+
+/// Whether `file` (relative to `src`, or `../` for another crate) is left out of the walk.
+fn debt_exempt(file: &str) -> bool {
+    !file.starts_with("../") && (DEBT_EXEMPT_FILES.contains(&file)
+        || DEBT_EXEMPT_DIRECTORIES.iter().any(|directory| file.starts_with(&format!("{directory}/"))))
+}
 
 /// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
 fn is_test_file(file: &str) -> bool {
@@ -194,33 +207,36 @@ fn function_bodies(code: &str) -> Vec<&str> {
 fn derivation_debt() -> std::collections::BTreeMap<(String, String), usize> {
     let root = src_root();
     let words = vocabulary();
-    let mut pending: Vec<std::path::PathBuf> = DEBT_DIRECTORIES.iter().map(|directory| root.join(directory)).collect();
-    let mut debt = std::collections::BTreeMap::new();
-    let mut files: Vec<std::path::PathBuf> = DEBT_FILES.iter().map(|file| root.join(file)).collect();
+    let mut pending: Vec<std::path::PathBuf> = DEBT_ROOTS.iter().map(|directory| root.join(directory)).collect();
+    // Keyed by path relative to `src`, so a file both walked and listed in `DEBT_FILES` counts once.
+    let mut files: std::collections::BTreeSet<String> = DEBT_FILES.iter().map(|file| file.to_string()).collect();
     while let Some(directory) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else { continue };
+        // A missing root is a moved tree: the scan must fail there, not read nothing.
+        let entries = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("derivation debt root {}: {error}", directory.display()));
         for entry in entries.map(Result::unwrap) {
             let path = entry.path();
             if path.is_dir() { pending.push(path); continue; }
-            files.push(path);
+            let file = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+            if !debt_exempt(&file) { files.insert(file); }
         }
     }
-    for path in files {
-        {
-            let file = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
-            if !file.ends_with(".rs") || is_test_file(&file) { continue; }
-            let source = std::fs::read_to_string(&path).unwrap();
-            // Any inline test module closes the production code; its fixtures name opcodes freely.
-            let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap();
-            let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
-            count_decisions(code, &file, &words, &mut debt);
-        }
+    let mut debt = std::collections::BTreeMap::new();
+    for file in files {
+        if !file.ends_with(".rs") || is_test_file(&file) { continue; }
+        let source = std::fs::read_to_string(root.join(&file)).unwrap();
+        // Any inline test module closes the production code; its fixtures name opcodes freely.
+        let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap();
+        let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
+        count_decisions(code, &file, &words, &mut debt);
     }
     // Opcodes with no staged row: a JS opcode the catalog gives no staged decoder, a Wasm opcode
-    // no `wasm_step::Step` describes.
+    // no `wasm_step::Step` describes. An op the catalog marks `NO_STEP` has no meaning to derive:
+    // the wide prefix (`Wide`) is never dispatched, and `Nop` does nothing.
     for index in 0..crate::bytecode::Op::COUNT {
         let op = crate::bytecode::Op::from_index(index).unwrap();
-        let staged = op.staged().is_some() || (0..1024).any(|tag| super::wasm_step::Step::of(op, tag).is_some());
+        let staged = op.staged().is_some() || op.traits().has(crate::bytecode::Traits::NO_STEP)
+            || (0..1024).any(|tag| super::wasm_step::Step::of(op, tag).is_some());
         if !staged { debt.insert(("<catalog>".to_owned(), format!("unstaged:{}", crate::bytecode::Op::NAMES[index])), 1); }
     }
     debt

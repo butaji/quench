@@ -432,7 +432,7 @@ pub(crate) fn use_raw_forms(function: &mut Function, constant_neutral: &dyn Fn(u
         let op = function.instruction_at(pc).op();
         let Some(raw_op) = raw_form(op) else { continue };
         if packed.is_wide() {
-            function.wide[packed.wide_index()].set_op(raw_op);
+            crate::bytecode::wide_entry_mut(&mut function.wide, packed).set_op(raw_op);
         } else {
             function.code[pc].set_op(raw_op);
         }

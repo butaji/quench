@@ -8,7 +8,7 @@ pub const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
 
 /// A stage supplies the machine operation for each semantic Number relation.
 /// The relation table below is shared by interpreter values and native emitters.
-pub trait NumberRelationStage<T> {
+pub trait NumberRelationStage<T>: crate::projection::Sealed {
     type Output;
 
     fn equal(&mut self, left: T, right: T) -> Self::Output;
@@ -70,7 +70,7 @@ number_relation_rows!(number_relations);
 
 /// The four IEEE Number arithmetic operations have one operator-to-method
 /// mapping. Interpreter values and native Cranelift values supply the stage.
-pub trait NumberArithmeticStage<T> {
+pub trait NumberArithmeticStage<T>: crate::projection::Sealed {
     type Output;
 
     fn add(&mut self, left: T, right: T) -> Self::Output;
@@ -89,6 +89,7 @@ macro_rules! number_arithmetic {
             $(#[inline(always)]
             fn $stage_method(&mut self, left: f64, right: f64) -> f64 { left $symbol right })+
         }
+        crate::projection!(CheckedInt32Stage => Concrete);
         pub(crate) struct CheckedInt32Stage;
         impl NumberArithmeticStage<i32> for CheckedInt32Stage {
             type Output = Option<i32>;
@@ -133,7 +134,7 @@ macro_rules! number_arithmetic_rows {
 pub(crate) use number_arithmetic_rows;
 number_arithmetic_rows!(number_arithmetic);
 
-pub trait NumberUnaryStage<T> {
+pub trait NumberUnaryStage<T>: crate::projection::Sealed {
     type Output;
 
     fn plus(&mut self, value: T) -> Self::Output;
@@ -173,7 +174,7 @@ self::number_unary_rows!(number_unary);
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
 /// and native emitters share the same signed/unsigned shift decisions.
-pub trait NumberBitwiseStage<T> {
+pub trait NumberBitwiseStage<T>: crate::projection::Sealed {
     type Output;
 
     fn and(&mut self, left: T, right: T) -> Self::Output;
@@ -222,6 +223,8 @@ pub(crate) use number_bitwise_rows;
 number_bitwise_rows!(number_bitwise);
 
 pub(crate) struct I32BitwiseStage;
+
+crate::projection!(I32BitwiseStage => Concrete);
 
 impl NumberBitwiseStage<i32> for I32BitwiseStage {
     type Output = i32;
@@ -275,6 +278,8 @@ pub(crate) fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, rig
 
 pub struct NumberF64Stage;
 
+crate::projection!(NumberF64Stage => Concrete);
+
 impl NumberUnaryStage<f64> for NumberF64Stage {
     type Output = f64;
 
@@ -291,7 +296,7 @@ impl NumberUnaryStage<f64> for NumberF64Stage {
 
 /// A stage supplies predicate operations for the shared JavaScript Number ToBoolean
 /// denotation. Interpreter, stencil and codegen stages use the same nonzero-and-not-NaN formula.
-pub trait NumberTruthinessStage<T> {
+pub trait NumberTruthinessStage<T>: crate::projection::Sealed {
     type Predicate;
 
     fn zero(&mut self) -> T;
@@ -336,6 +341,8 @@ impl NumberTruthinessStage<f64> for NumberF64Stage {
 }
 
 pub struct PartialOrderStage;
+
+crate::projection!(PartialOrderStage => Concrete);
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     type Output = bool;

@@ -9,6 +9,8 @@ fn int32(word: u64) -> i32 { word as u32 as i32 }
 /// The interpreter's wrapping int32 result, from the same rows as every arithmetic stage.
 struct WrappingInt32Stage;
 
+crate::projection!(WrappingInt32Stage => Concrete);
+
 macro_rules! wrapping_int32_arithmetic {
     ($($operation:ident => $operator:ident, $method:ident, $instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmeticStage<i32> for WrappingInt32Stage {

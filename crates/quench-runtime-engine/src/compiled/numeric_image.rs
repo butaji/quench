@@ -14,12 +14,12 @@ struct NumericLowering {
 }
 
 /// Lowers `function_id` as a numeric region through the shared semantic SSA specializer.
-fn lower_numeric_region(program: &ResidualProgram, function_id: u32) -> Option<NumericLowering> {
+fn lower_numeric_region(program: &ResidualProgram, function_id: u32, admitted: crate::compiled::admission::CompiledUnit) -> Option<NumericLowering> {
     use quench_runtime::vm::specializer::Specializer;
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = quench_runtime::vm::jit_backend::target_isa()?;
-    let region = lane_region::RegionSpecializer { function_id, unit: &unit,
+    let region = lane_region::RegionSpecializer { function_id, unit: &unit, admitted,
         helpers: LaneHelpers::Numeric, fields: &[],
         global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
@@ -51,17 +51,17 @@ impl NumericImage {
     /// this build cannot make.
     #[cfg(test)]
     pub(crate) fn compile(program: &ResidualProgram, function_id: u32) -> Option<Self> {
-        Self::build(lower_numeric_region(program, function_id)?, function_id)
+        Self::build(lower_numeric_region(program, function_id, crate::compiled::admission::test_unit())?, function_id)
     }
 
     /// Lowers and compiles `function_id` on the code generator's thread, from a copy of its
     /// program that shares nothing with it (`ResidualProgram::detached`): the lowering reads
     /// only the program, so the program's thread does no more than copy the function. The image
     /// arrives when the work is done, `None` where the region does not lower or compile.
-    pub(crate) fn start(program: &ResidualProgram, function_id: u32) -> Option<quench_runtime::vm::jit_backend::OffThread<Option<Self>>> {
+    pub(crate) fn start(program: &ResidualProgram, function_id: u32, unit: crate::compiled::admission::CompiledUnit) -> Option<quench_runtime::vm::jit_backend::OffThread<Option<Self>>> {
         program.function_get(function_id as usize)?;
         let detached = program.detached(&[function_id]);
-        Some(quench_runtime::vm::jit_backend::OffThread::start((detached, function_id), |(detached, function_id)| Self::build(lower_numeric_region(&detached, function_id)?, function_id)))
+        Some(quench_runtime::vm::jit_backend::OffThread::start((detached, function_id, unit), |(detached, function_id, unit)| Self::build(lower_numeric_region(&detached, function_id, unit)?, function_id)))
     }
 
     fn build(lowering: NumericLowering, function_id: u32) -> Option<Self> {

@@ -170,6 +170,8 @@ impl Machine for ConcreteWasm {
     type Word = u64;
 }
 
+crate::projection!(ConcreteWasm => Concrete);
+
 impl MachineStage for ConcreteWasm {
     type Exit = WasmTrap;
 
@@ -315,10 +317,12 @@ pub(crate) use scalar_operators;
 /// The scalar primitives of a stage over machine state: `scalar_operators`, with `trap_when` as
 /// `ConcreteWasm` makes it.
 macro_rules! scalar_stage {
-    ($($stage:ty),+) => {$(
+    ($projection:ident => $($stage:ty),+) => {$(
         impl $crate::staged::machine::Machine for $stage {
             type Word = u64;
         }
+
+        $crate::projection!($stage => $projection);
 
         impl $crate::staged::machine::MachineStage for $stage {
             type Exit = $crate::WasmTrap;

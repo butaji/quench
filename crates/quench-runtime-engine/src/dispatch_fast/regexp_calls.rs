@@ -68,7 +68,7 @@ pub(crate) fn length_read(cx: *mut LaneContext, ip: Ip, i: &LaneInstruction) -> 
     let Some(packed) = body.code.get(read) else {
         return false;
     };
-    let field = decoded_instruction(body, *packed);
+    let field = body.widened(*packed);
     let result = i.a & quench_runtime::bytecode::REGISTER_MASK;
     let reads_length = match field.field_lookup() {
         Some(quench_runtime::bytecode::FieldLookup::Atom { atom, base, .. }) => atom == vm.length_atom && base.register_index() == Some(result),

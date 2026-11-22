@@ -52,7 +52,7 @@ pub(crate) struct ConcreteTable<'a> {
     pub(crate) related: &'a mut dyn FnMut(Value) -> bool,
 }
 
-scalar_stage!(
+scalar_stage!(Concrete =>
     ConcreteInstance<'_>,
     ConcreteTable<'_>,
     ConcreteBytes<'_>,
@@ -228,7 +228,7 @@ readable_memory!(ConcreteBytes<'_>, ConcreteMemory<'_>, ConcreteInstance<'_>);
 writable_memory!(ConcreteMemory<'_>, ConcreteInstance<'_>);
 
 #[cfg(not(stencil_build))]
-scalar_stage!(ConcretePair<'_>);
+scalar_stage!(Concrete => ConcretePair<'_>);
 
 #[cfg(not(stencil_build))]
 impl WasmMemoryPair for ConcretePair<'_> {

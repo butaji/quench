@@ -244,7 +244,7 @@ impl Lowering<'_, '_> {
         self.hold_specialized(state, exit);
         self.hold_stable(state, exit);
         self.stable.atoms.insert(atom);
-        Some(self.builder.ins().iconst(types::I8, 1))
+        Some(self.raw_const(Lane::I8, 1))
     }
 
     /// The run's stores proved specialized (`stores_specialized`) where no block proof of it holds
@@ -275,7 +275,7 @@ impl Lowering<'_, '_> {
         if self.vm.online.is_some() || self.native_calls || self.helpers.links() { return None; }
         self.vm.held_atoms.filter(|held| !held.names.contains(atom as usize))?;
         self.stable.atoms.insert(atom);
-        Some(self.builder.ins().iconst(types::I8, 1))
+        Some(self.raw_const(Lane::I8, 1))
     }
 
     /// `loop_held_atom` in a run that calls: a call may have named the atom, which sets the
@@ -286,7 +286,7 @@ impl Lowering<'_, '_> {
         let held = self.vm.held_atoms.filter(|held| !held.names.contains(atom as usize))?;
         self.stable.atoms.insert(atom);
         self.read_region_invalidation(state, held, exit);
-        Some(self.builder.ins().iconst(types::I8, 1))
+        Some(self.raw_const(Lane::I8, 1))
     }
 
     /// Reads offline code's invalidation word (`HeldAtoms::invalidation`) once per block after

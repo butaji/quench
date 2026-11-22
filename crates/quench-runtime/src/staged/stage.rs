@@ -73,8 +73,8 @@ pub enum StagedRecordSpace {
 }
 
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
-/// a failed guard goes. A 32-bit load zero-extends.
-pub trait Stage {
+/// a failed guard goes. A 32-bit load zero-extends. Sealed: see `crate::projection`.
+pub trait Stage: crate::projection::Sealed {
     type Word: Copy;
     /// The layout proof a field operation carries (a projection for Emit, `()` for Concrete).
     type Proof: Copy;

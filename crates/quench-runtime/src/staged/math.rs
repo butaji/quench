@@ -215,11 +215,8 @@ pub(crate) fn float_extreme(maximum: bool, left: f64, right: f64) -> f64 {
     if maximum { left.max(right) } else { left.min(right) }
 }
 
-/// `Math.imul`: the wrapping product of two int32 values.
-#[inline(always)]
-pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
-    left.wrapping_mul(right)
-}
+/// `Math.imul`: the one wrapping int32 product every family shares (`int_math`).
+pub(crate) use super::int_math::int_multiply;
 
 /// `Math.hypot` of Numbers: infinite if any is (even beside a NaN), NaN if any is, else the
 /// root of the sum of squares, scaled by the largest magnitude so the squares do not overflow.

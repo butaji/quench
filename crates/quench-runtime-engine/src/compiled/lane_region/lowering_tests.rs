@@ -286,7 +286,7 @@ fn loop_coverage_lowers_only_the_loop() {
             .then(|| (instruction.jump_target() as usize, pc))
     }).expect("the function has a loop");
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let region = RegionSpecializer { function_id: id, unit: &unit,
+    let region = RegionSpecializer { function_id: id, unit: &unit, admitted: crate::compiled::admission::test_unit(),
         helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
         fields: &[], global_reads: &Default::default(), facts: VmFacts::STATIC,
         generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,

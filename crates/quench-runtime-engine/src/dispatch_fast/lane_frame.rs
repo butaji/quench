@@ -2601,11 +2601,6 @@ pub(crate) fn row_near<const OP: u16>(handler: *const ()) -> Option<Handler> {
         .then_some(generated_row!(OP, ACC_NONE, FLAG_SET) as Handler)
 }
 
-/// Whether opcode `op`'s row has a `FLAG_REGISTERS` form: a two-operand arithmetic row.
-pub(crate) const fn register_operands_row(op: Op) -> bool {
-    matches!(op, Op::Binary | Op::NumericAdd | Op::NumericMultiply)
-}
-
 /// Whether both operand fields of record `i` are registers (their tags are the register tag, 0).
 #[inline(always)]
 pub(crate) fn register_operands(i: &LaneInstruction) -> bool {

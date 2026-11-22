@@ -83,7 +83,7 @@ pub(crate) unsafe extern "C" fn body_string_concat(_vm: u64, _residual: u64, con
     };
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[call_pc as usize]);
+    let instruction = body.widened(body.code[call_pc as usize]);
     let [Some(left), Some(right)] = [instruction.operand_b(), instruction.operand_c()].map(|operand| operand.register_index().map(|register| r.get(register))) else { return LANE_CALL_MISSED };
     match concat_value(cx, left, right) {
         Some(value) => {

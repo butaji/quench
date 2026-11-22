@@ -55,6 +55,8 @@ impl Machine for LaneCall<'_> {
     type Word = u64;
 }
 
+quench_runtime::projection!(LaneCall<'_> => Concrete);
+
 impl MachineStage for LaneCall<'_> {
     type Exit = JsError;
 
