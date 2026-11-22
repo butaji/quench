@@ -10,3 +10,8 @@ raytrace	whole row	7273	557	359	-	-	20.2x	30.4x
 # profile (sample): interpreter generated rows (field reads) 693, planned_construct_returned_miss 136, operator_row 278,
 # construct_plan 66, protocol_row 57, returning_miss 53 -> short-lived Vector/Color objects per arithmetic op
 raytrace	cost shape	per-op object construction in the interpreter, no scalar replacement	-	-	-	-	-	-
+# Cheap-lever tests on JSON.parse (json-only.js, 7,333,850-byte payload, 20 parses)
+json-parse-inspector	dedup removed	8.46 ms (was 7.79)	-8.6% (a loss)	the string cache is a net win: it reuses every string after the first parse, so dropping it allocates thousands of strings per parse	reverted
+json-parse-inspector	property-arena sort	25 of 1600 samples	1.6%	`compact_property_arenas`'s quicksort is not worth removing (and compaction keeps shapes tight)	not attempted
+json-parse-inspector	measurement hygiene	-	-	a per-string `std::env::var_os` in the string path cost 5.9 ms/parse (7.8 -> 13.7): a per-string library call is not free, and the dedup experiment had to move its switch to a `OnceLock` before its numbers meant anything	-
+json-parse-inspector	verdict	0% of the 2.01x recovered	-	neither cheap lever helps; the remaining costs are the scalar `parse_json_text` (43%) and allocation/GC (16%+), which need a structural/SIMD parser and allocation-free building, not a tuning change	-
