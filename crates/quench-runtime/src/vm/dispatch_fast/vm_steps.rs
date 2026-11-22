@@ -368,6 +368,12 @@ unsafe fn lane_allocate_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
 /// As `body_general_step`.
 unsafe fn decided_compare_jump(cx: *mut LaneContext, call_pc: u64) -> Option<u64> {
     use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED};
+    // A body entered as a frameless leaf (`enter_cell_body_in_lane`) runs before its activation is made: the
+    // running function is still its caller's, whose record at `call_pc` is another instruction
+    // (typescript-lib's `(e,t)=>processRootFile(...)` skipped its `LoadCapture` as its caller's comparison).
+    // The general step materializes the leaf first.
+    // SAFETY: the running lane's context.
+    if !unsafe { (*cx).leaf.call }.is_null() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(running_function_in_lane(cx) as usize);
     let instruction = body.widened(*body.code.get(call_pc as usize)?);
