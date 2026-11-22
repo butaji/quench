@@ -2920,6 +2920,7 @@ miss_reasons! {
     CallReturningNotAdmitted => "call:returning-not-admitted",
     Receiver => "receiver",
     Callee => "callee",
+    CalleeDeclined => "callee:declined",
     EntryNotActivation => "entry-not-activation",
     NoActivationRoom => "no-activation-room",
     CallReadAnswer => "call:read-answer",

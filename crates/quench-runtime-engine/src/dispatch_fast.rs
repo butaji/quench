@@ -618,6 +618,12 @@ impl LaneView {
         }
     }
 
+    /// Whether the view's body is retired to `Declined` (`LaneBody::Declined`): a call of the view has no body to enter.
+    fn declined_in_lane(&self) -> bool {
+        // SAFETY: as `body_view_in_lane`; read only.
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Declined)
+    }
+
     /// The published closed body a direct caller pins (`compiled::DirectCallee::method`, `body`), which a
     /// caller of the function itself, or of one with none, leaves to the entry cell it calls through
     /// (the stub enters nothing).
