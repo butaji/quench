@@ -6194,22 +6194,6 @@ fn hint_private_field(vm: &Vm, ip: Ip, atom: quench_runtime::bytecode::Atom, sha
     }
 }
 
-/// A `GetField` step's private field value at site `site` (`lane_private_field_slot_at`):
-/// `None` for an object without the field, which the general path throws for, or a private
-/// method's or accessor's name, which it reads.
-#[inline(always)]
-fn lane_private_field_value(
-    cx: *mut LaneContext,
-    site: usize,
-    code: &ResidualProgram,
-    object: Value,
-    atom: quench_runtime::bytecode::Atom,
-) -> Option<Value> {
-    let slot = lane_private_field_slot_at(cx, site, code, object, atom)?;
-    let vm = unsafe { vm(cx) };
-    vm.heap.property_get(vm.object_data(object)?, slot)
-}
-
 /// One `GetField` step of `lane_field_value`: a private name's at its site, any other name's
 /// through the field caches (`lane_cached_field`).
 #[inline(always)]
