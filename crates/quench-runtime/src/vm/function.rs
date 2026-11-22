@@ -530,6 +530,7 @@ pub(super) trait ForwardedArgs {
 }
 
 impl ForwardedArgs for &[Value] {
+    #[inline]
     fn shift(&mut self) -> Value {
         let first = self.first().copied().unwrap_or(Value::UNDEFINED);
         *self = self.get(1..).unwrap_or_default();

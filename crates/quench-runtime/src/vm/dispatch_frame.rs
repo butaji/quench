@@ -1450,6 +1450,7 @@ impl Vm {
     /// Empties a finished frame's appendable buffers and drops its callee for reuse, bounding
     /// what the buffers retain. Every activation sets legacy argument reflection and
     /// `fixed_this` itself.
+    #[inline]
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
         frame.js_jit_interpreter_started = None;

@@ -45,6 +45,7 @@ pub(crate) const SHARED_LENGTH_OFFSET: i32 = SHARED_POINTER_OFFSET + size_of::<u
 /// How far into that allocation the units start: `Rc`'s allocation is `#[repr(C)] RcInner { strong,
 /// weak, value }`, so units of an alignment no larger than a word start two words in. A test probes
 /// the compiler's own `Rc` against it (`vm::wtf16::native_string`).
+#[inline]
 pub(crate) const fn shared_units_offset() -> u64 {
     2 * size_of::<usize>() as u64
 }

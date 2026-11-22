@@ -626,6 +626,7 @@ impl ImmediateLayout {
     /// direct-eval bit; a callee whose result is unobservable may skip building it.
     pub const LANE_CALL_RESULT_UNUSED_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
 
+    #[inline]
     pub const fn call_result_used_in_lane(imm: u32) -> bool {
         imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
     }
@@ -2169,6 +2170,7 @@ pub(crate) fn dynamic_scope_access_in(
         || scanned.any(WideInstruction::resolves_dynamic_scope)
 }
 
+#[inline]
 pub(crate) fn widen(packed: Instr, wide: &[WideInstruction]) -> WideInstruction {
     if packed.is_wide() { wide[packed.wide_index()] } else { packed.as_wide() }
 }

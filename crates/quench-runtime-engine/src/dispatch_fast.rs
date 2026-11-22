@@ -1632,12 +1632,16 @@ impl LaneStack {
     #[inline(always)]
     fn header_flags(activation: &Activation, window: *mut Value) -> Option<u64> {
         let ActivationKind::Script(script) = activation.kind() else { return None };
-        (script.record.is_null()
+        if script.record.is_null()
             && activation.callee.is_null()
             && activation.body == 0
             && activation.this == 0
-            && window.addr() & lane_values::HEAP_WINDOW == 0)
-            .then(|| lane_frames::Side::flags_of(script))
+            && window.addr() & lane_values::HEAP_WINDOW == 0
+        {
+            Some(lane_frames::Side::flags_of(script))
+        } else {
+            None
+        }
     }
 
     /// Push a native's callback of `header` over the window at `window` as a plain activation

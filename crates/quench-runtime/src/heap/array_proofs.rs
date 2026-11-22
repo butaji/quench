@@ -333,6 +333,7 @@ fn retire_armed(proofs: *mut ArrayStorageProofs) {
 pub struct LaneProofScope(());
 
 impl LaneProofScope {
+    #[inline]
     pub fn enter() -> Self {
         retire_array_storage_proofs();
         Self(())
@@ -340,6 +341,7 @@ impl LaneProofScope {
 }
 
 impl Drop for LaneProofScope {
+    #[inline]
     fn drop(&mut self) {
         retire_array_storage_proofs();
     }

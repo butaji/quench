@@ -929,6 +929,7 @@ impl ProgramStore {
         self.programs.get(id.index())?.as_deref()
     }
 
+    #[inline]
     fn entry_in_lane(&self, id: ProgramId) -> Option<&ProgramEntry> {
         self.entry(id)
     }

@@ -221,6 +221,7 @@ impl CallContext {
         matches!(self, Self::Constructor(_))
     }
 
+    #[inline]
     pub fn user_function(id: u32, callable: Value) -> Self {
         if id == super::ROOT_FUNCTION_ID {
             Self::Internal
