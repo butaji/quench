@@ -170,6 +170,14 @@ pub(crate) trait Stage {
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
     fn store_gate(&mut self, space: StagedRecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    /// `store_gate` of a store whose value the slot's type already holds (a store arm's proof,
+    /// `property_write::arm_store`): it widens no slot representation, so slot observation has
+    /// nothing to see and only the barrier's log is asked. A stage that cannot tell the two
+    /// apart answers `store_gate`.
+    #[inline(always)]
+    fn held_store_gate(&mut self, space: StagedRecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond {
+        self.store_gate(space, record_id, value)
+    }
     /// Whether a store of a value the frame proved immediate needs no barrier log: such a store
     /// skips `store_gate`, which is right unless old records keep reference counts, where
     /// overwriting a reference with any value deletes an edge (`RecordSpace::store_logs`). The

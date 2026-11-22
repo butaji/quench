@@ -205,7 +205,7 @@ fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::W
         None => fact,
     };
     let id = stage.and_imm(object, u64::from(u32::MAX));
-    super::slot_store::gate_open(stage, id, (value, fact), miss)?;
+    super::slot_store::held_gate_open(stage, id, (value, fact), miss)?;
     let offset = stage.site(u64::from(arm.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64);
     let address = stage.add_imm(base, offset);
     super::slot_store::store_word(stage, address, value, crate::typed_ir::Representation::Tagged);
