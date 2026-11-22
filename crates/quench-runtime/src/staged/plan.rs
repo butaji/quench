@@ -66,7 +66,7 @@ impl Identity {
 /// so a plan stays plain data the frame owns the words of.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct WordList {
-    pub(crate) start: u32,
+    pub start: u32,
     pub count: u16,
 }
 
@@ -83,25 +83,25 @@ impl WordList {
 /// the arguments that precede the call's own. Both are constants of the plan.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Bound {
-    pub(crate) this: u64,
-    pub(crate) arguments: WordList,
+    pub this: u64,
+    pub arguments: WordList,
 }
 
 /// What a frame knows of a site's callee at the time it is compiled: for a bound function, its
 /// target's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct DirectPlan {
-    pub(crate) kind: CalleeKind,
+    pub kind: CalleeKind,
     /// The identity of the callee the site names, which the site was bound to.
-    pub(crate) identity: Identity,
+    pub identity: Identity,
     /// The global object a sloppy callee binds for `undefined` and `null`; `None` for a strict one.
-    pub(crate) sloppy: Option<u64>,
+    pub sloppy: Option<u64>,
     /// The registers of the callee's window.
-    pub(crate) registers: u16,
+    pub registers: u16,
     /// The status word of a callee that returned.
-    pub(crate) returned: u32,
+    pub returned: u32,
     /// The `this` and arguments of the bound function the site names, where it names one.
-    pub(crate) bound: Option<Bound>,
+    pub bound: Option<Bound>,
 }
 
 /// How a call reaches its callee.
@@ -119,10 +119,10 @@ pub enum CallEntry {
 #[cfg(not(stencil_build))]
 #[derive(Clone, Copy, Debug)]
 pub struct Resolved {
-    pub(crate) plan: DirectPlan,
-    pub(crate) binding: BindingTime,
+    pub plan: DirectPlan,
+    pub binding: BindingTime,
     /// The instructions of the callee's body where a script body is known to the frame.
-    pub(crate) body: Option<usize>,
+    pub body: Option<usize>,
 }
 
 #[cfg(not(stencil_build))]

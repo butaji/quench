@@ -91,11 +91,11 @@ pub struct JsStepHead<V> {
     /// The address of the thread's armed array proofs word (`heap::array_proofs::armed_proofs_address`).
     /// Its word is nonzero while a lane run's proofs are armed, which a row that shrinks an array's
     /// backing must miss on: it cannot retire them. Read at every use, so never stale.
-    pub(crate) armed_array_proofs: usize,
+    pub armed_array_proofs: usize,
     /// The address of the thread's index-free chain link word (`heap::index_free_chain_link_address`):
     /// its word is the encoded link of `Array.prototype` while the held index-free chain proof covers
     /// its chain, else zero. Read at every use, so never stale.
-    pub(crate) array_chain_index_free_address: usize,
+    pub array_chain_index_free_address: usize,
     /// The address of the lane run's plain-frame depth word (`PlainFrames`, `frame::PLAIN_DEPTH_AT`); its
     /// registers word is `frame::PLAIN_REGISTERS_AT` past it. Emitted calls bump the depth and set the registers.
     /// (reconciled with u-jit F5 on merge)
@@ -115,7 +115,7 @@ pub struct JsStepHead<V> {
     /// The return of an emitted call whose native header a nested entry spilled into a record
     /// (`LaneStack::pop_spilled_header`): `extern "C" fn(vm, residual) -> u64`, which the b-jit direct
     /// row calls where it finds no plain header to pop, as the u-jit's `pop_native` calls its helper.
-    pub(crate) pop_spilled_header: usize,
+    pub pop_spilled_header: usize,
     /// The array records' mark blocks and their count, which a store of a reference into a direct
     /// array's elements reads as the object records' are (`RecordSpace::Array`, `Heap::store_logs`);
     /// refreshed with the other bases, as a callout may move the block list.

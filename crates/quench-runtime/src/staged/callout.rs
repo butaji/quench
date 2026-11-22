@@ -133,7 +133,7 @@ pub enum CallOut {
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
 /// passes (`Arguments`), which a handle names without copying it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Operands {
+pub struct Operands {
     /// The fixed operands: a register or a program constant (`Operand`).
     pub fixed: [Option<Operand>; 2],
     pub(crate) list: Option<Arguments>,

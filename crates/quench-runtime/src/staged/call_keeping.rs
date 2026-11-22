@@ -34,10 +34,10 @@ const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
 /// parameter gathers the rest (`gathers`, `CallEntry::Gathers`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct KeepingWindow {
-    pub(crate) registers: u16,
-    pub(crate) params: u16,
-    pub(crate) keeps: bool,
-    pub(crate) gathers: bool,
+    pub registers: u16,
+    pub params: u16,
+    pub keeps: bool,
+    pub gathers: bool,
 }
 
 /// The words a keeping window covers past its context: its registers, then the `argc` kept

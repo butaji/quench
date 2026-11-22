@@ -39,13 +39,13 @@ impl LaneActivations {
     pub(super) fn room(&self) -> usize { Self::distance(self.top, self.end) }
     /// The address the next activation is written at.
     #[inline(always)]
-    pub(super) fn top_ptr(&self) -> *mut Activation { self.top }
+    pub fn top_ptr(&self) -> *mut Activation { self.top }
     #[inline(always)]
     pub(super) fn is_empty(&self) -> bool { self.top == self.base }
 
     /// The address of the top word, which emitted code bumps through a pointer as the lane does.
     #[inline(always)]
-    pub(super) fn top_word(&mut self) -> *mut *mut Activation { &raw mut self.top }
+    pub fn top_word(&mut self) -> *mut *mut Activation { &raw mut self.top }
 
     /// The tag of the kind of `slot`'s activation, read without a reference to the activation:
     /// a native frame has written only its prefix and this tag.
@@ -84,7 +84,7 @@ impl LaneActivations {
     /// Ends the native body of the frames below depth `above` that still name one, from the
     /// innermost out: the lane continues in them, so the context, not their descriptor, holds
     /// their state from now on.
-    pub(super) fn retire_bodies(&mut self, above: usize) {
+    pub fn retire_bodies(&mut self, above: usize) {
         for depth in (0..above).rev() {
             let slot = self.slot(depth);
             // SAFETY: each slot below `top` holds at least its prefix.
@@ -97,7 +97,7 @@ impl LaneActivations {
     /// The slot of the activation `depth` above the base, which holds at least its prefix
     /// below `top`: written whole once linked.
     #[inline(always)]
-    pub(super) fn slot(&mut self, depth: usize) -> *mut Activation { self.base.wrapping_add(depth) }
+    pub fn slot(&mut self, depth: usize) -> *mut Activation { self.base.wrapping_add(depth) }
 
     /// The innermost activation, read from the top address: no length is derived.
     #[inline(always)]
@@ -118,7 +118,7 @@ impl LaneActivations {
     /// # Safety
     /// The region is not empty.
     #[inline(always)]
-    pub(super) unsafe fn discard_top(&mut self) {
+    pub unsafe fn discard_top(&mut self) {
         // SAFETY: a non-empty region has an activation below `top`.
         self.top = unsafe { self.top.sub(1) };
     }
@@ -137,18 +137,18 @@ impl LaneActivations {
     }
 
     #[inline(always)]
-    pub(super) fn pop(&mut self) -> Option<Activation> {
+    pub fn pop(&mut self) -> Option<Activation> {
         if self.top == self.base { return None; }
         // SAFETY: the activation below `top` is initialized.
         unsafe { self.top = self.top.sub(1); Some(self.top.read()) }
     }
 
-    pub(super) fn truncate(&mut self, len: usize) {
+    pub fn truncate(&mut self, len: usize) {
         if len < self.len() { self.top = self.base.wrapping_add(len); }
     }
 
     /// Makes room for `additional` more activations; whether they moved.
-    pub(super) fn reserve(&mut self, additional: usize) -> bool {
+    pub fn reserve(&mut self, additional: usize) -> bool {
         if self.room() >= additional { return false; }
         let len = self.len();
         let mut grown = Vec::<Activation>::with_capacity(len + additional);

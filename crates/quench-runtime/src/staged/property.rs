@@ -41,11 +41,11 @@ impl Owner {
 /// read from the record the shapes already matched.
 #[derive(Clone, Copy)]
 pub struct Arm<'a> {
-    pub(crate) shapes: &'a [u32],
-    pub(crate) ops: &'a [IcOp<'a>],
+    pub shapes: &'a [u32],
+    pub ops: &'a [IcOp<'a>],
     /// The exact shape of the prototypes whose values `ops` fold as constants, which a code
     /// dependency holds (`PropertyFrame::hold_prototype`).
-    pub(crate) holds: Option<u32>,
+    pub holds: Option<u32>,
 }
 
 /// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the

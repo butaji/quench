@@ -32,7 +32,7 @@ use super::super::wasm_gc::stage::HeapStage;
 
 /// A field access's operands (`Vm::wasm_field_operands`): the object, the field or element, its
 /// storage and access, and the value a write stores.
-pub(in crate::vm) struct FieldOperands {
+pub struct FieldOperands {
     pub reference: Value,
     pub location: GcFieldIndex,
     pub field: GcField,
@@ -49,7 +49,7 @@ pub(in crate::vm) struct FieldOperands {
 /// The operands of a bulk array step (`array.fill`, `array.copy`), decoded from the registers: the
 /// destination and source references, the element count, and the output and input indices (`input`
 /// is only read by a copy).
-pub(in crate::vm) struct ArrayBulkOperands {
+pub struct ArrayBulkOperands {
     pub destination: Value,
     pub source: Value,
     pub count: u64,

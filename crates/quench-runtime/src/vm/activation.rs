@@ -68,7 +68,7 @@ impl JobResume {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct NativeActivation {
+pub struct NativeActivation {
     pub callable: Value,
     /// What the activation runs on and keeps alive besides its callable: a windowed
     /// generator step's generator (`Vm::resume_generator_window`), `undefined` for others.
@@ -206,7 +206,7 @@ impl CallCompletion {
 #[derive(Clone, Copy)]
 pub struct ConstructionTarget {
     pub callee: Value,
-    pub(super) new_target: Value,
+    pub new_target: Value,
 }
 
 impl CallContext {
@@ -251,7 +251,7 @@ impl CallContext {
 /// and what its resumer reads. Suspending moves the frame's state into the record and
 /// resuming moves it back out (`FrameRecord::into_frame`), so neither copies it nor gives up its storage.
 #[derive(Clone)]
-pub(crate) struct Continuation {
+pub struct Continuation {
     pub frame: Box<FrameRecord>,
     pub completion: Completion,
     pub resume_register: Option<u16>,

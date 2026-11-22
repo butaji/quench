@@ -7,7 +7,7 @@ use std::ops::{Deref, DerefMut};
 
 /// A collection's entries: `None` until written.
 #[derive(Clone, Debug)]
-pub(crate) struct Entries<T>(Option<Box<CollectionEntries<T>>>);
+pub struct Entries<T>(Option<Box<CollectionEntries<T>>>);
 
 impl<T> Default for Entries<T> {
     fn default() -> Self {

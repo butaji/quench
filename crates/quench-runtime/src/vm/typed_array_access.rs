@@ -1212,7 +1212,7 @@ impl Vm {
 
 /// A loop kernel's view of a typed array's elements (`Vm::typed_array_span`).
 #[derive(Clone, Copy)]
-pub(crate) struct TypedSpan {
+pub struct TypedSpan {
     /// The first element's byte.
     pub first: *mut u8,
     pub kind: TypedArrayKind,

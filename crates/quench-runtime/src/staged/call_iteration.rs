@@ -28,8 +28,8 @@ use crate::Value;
 /// (`Vm::runtime_atoms`), as raw words a tier compares the reads' operands against.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StepAtoms {
-    pub(crate) done: u64,
-    pub(crate) value: u64,
+    pub done: u64,
+    pub value: u64,
 }
 
 /// The registers a delivered step writes: the one its `done` read writes, the one its `value`
@@ -37,9 +37,9 @@ pub struct StepAtoms {
 /// record after the `done` read moves it to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StepReads {
-    pub(crate) done: Register,
-    pub(crate) value: Register,
-    pub(crate) flag: Option<Register>,
+    pub done: Register,
+    pub value: Register,
+    pub flag: Option<Register>,
 }
 
 /// Whether a step whose result goes to register `result` (the call record's A operand) may

@@ -16,17 +16,17 @@ use crate::heap::{TypedArrayKind, NATIVE_TYPED_ARRAY_LAYOUT as VIEW};
 /// count, and the address of the count.
 #[derive(Clone, Copy)]
 pub struct TypedRecords<W> {
-    pub(crate) directory: W,
-    pub(crate) pages: W,
-    pub(crate) relocations: W,
+    pub directory: W,
+    pub pages: W,
+    pub relocations: W,
 }
 
 /// What an access asks of a view: the kind its site observed, `None` where any kind serves and
 /// the access dispatches on the record's, and whether it stores.
 #[derive(Clone, Copy)]
 pub struct ViewAccess {
-    pub(crate) kind: Option<NativeKind>,
-    pub(crate) writable: bool,
+    pub kind: Option<NativeKind>,
+    pub writable: bool,
 }
 
 impl ViewAccess {

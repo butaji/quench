@@ -10,7 +10,7 @@ use std::task::Poll;
 type Work = Box<dyn FnOnce() + Send>;
 
 /// Work handed to the code generator's thread, whose result arrives later.
-pub(in crate::vm) struct Pending<T> {
+pub struct Pending<T> {
     result: Receiver<T>,
 }
 

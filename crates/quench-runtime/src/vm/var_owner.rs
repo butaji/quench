@@ -23,9 +23,9 @@ pub enum VarOwner {
 /// variable environment, and the depth of the frame stack the eval's code runs above
 /// (`Vm::eval_callers`).
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct EvalCaller {
-    pub(in crate::vm) frames: usize,
-    pub(in crate::vm) record: *mut FrameRecord,
+pub struct EvalCaller {
+    pub frames: usize,
+    pub record: *mut FrameRecord,
 }
 
 impl Vm {

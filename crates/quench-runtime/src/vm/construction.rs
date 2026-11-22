@@ -23,7 +23,7 @@ pub(super) struct ClosureShapes {
 /// function and environment, the `new.target` it constructs with, the `this` its frame starts
 /// with (the receiver made from `new.target` for a base parent, `undefined` for a derived one,
 /// which binds its own), and the completion of its pending call.
-pub(super) struct SuperConstruction {
+pub struct SuperConstruction {
     pub target: (ProgramId, u32, Value),
     pub new_target: Value,
     pub this: Value,
@@ -35,7 +35,7 @@ pub(super) struct SuperConstruction {
 /// named shape, its `[[Prototype]]`, its kind, and for a constructor its prototype object's
 /// parent and the shape `constructor` gives it.
 #[derive(Clone, Copy)]
-pub(super) struct ClosureTemplate {
+pub struct ClosureTemplate {
     program: ProgramId,
     function: u32,
     realm: Value,

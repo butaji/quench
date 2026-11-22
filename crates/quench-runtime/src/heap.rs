@@ -147,8 +147,9 @@ pub use array_proofs::{
 };
 mod cell;
 mod dependencies;
+pub use dependencies::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 pub(crate) use dependencies::{
-    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, InternedChains,
+    Dependencies, IndexFreeChainProof, InternedChains,
     NO_PROVED_LAYOUT, ProofKind, FactStore, ChainCell};
 mod cell_access;
 mod buffer_bytes;

@@ -381,8 +381,6 @@ impl CodeMemory {
 
 
 
-/// Retires the writable-view pages of code published since the last flush (`retire`).
-pub(crate) use retire::flush as flush_retired_writers;
 
 #[cfg(test)]
 pub(crate) mod tests;

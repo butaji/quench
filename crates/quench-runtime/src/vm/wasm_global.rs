@@ -18,8 +18,8 @@ const CELL: u32 = 0;
 /// fields the heap holds in `env`. The lane's binding loads run the same rule on it
 /// (`dispatch_fast/wasm_instance.rs`).
 pub struct InstanceBindings<'a> {
-    pub(super) vm: &'a Vm,
-    pub(super) env: Value,
+    pub vm: &'a Vm,
+    pub env: Value,
 }
 
 impl Machine for InstanceBindings<'_> {

@@ -206,7 +206,7 @@ impl Vm {
 
 /// What one walk of a read site's accessor entries gives (`Vm::getter_entry_read`).
 #[derive(Clone, Copy)]
-pub(super) enum GetterEntryRead {
+pub enum GetterEntryRead {
     /// The forwarded value, and the getter whose call it stands for.
     Answer(Value, Value),
     /// The getter to call: the entry holds no forward for it, or its forward's field entry
@@ -218,7 +218,7 @@ pub(super) enum GetterEntryRead {
 
 /// What a store site's accessor entry knows of a setter (`Vm::setter_entry_forward`).
 #[derive(Clone, Copy)]
-pub(super) enum SetterForward {
+pub enum SetterForward {
     /// The setter's body stores its argument to this own field entry of the receiver, of this name.
     Store(FieldCache, Atom),
     /// The setter's body is no forward store: the call runs.

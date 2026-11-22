@@ -182,7 +182,7 @@ impl std::ops::DerefMut for LinearBytes {
 unsafe impl Send for LinearBytes {}
 unsafe impl Sync for LinearBytes {}
 
-pub(crate) enum MemoryGuard<'a> {
+pub enum MemoryGuard<'a> {
     Unshared(std::cell::RefMut<'a, LinearBytes>),
     Shared(std::sync::MutexGuard<'a, crate::shared_backing::State>),
 }
@@ -270,7 +270,7 @@ impl SharedMemory {
 }
 
 /// Immutable data segments and locked linear memory share a byte-read view.
-pub(crate) enum MemoryRead<'a> {
+pub enum MemoryRead<'a> {
     Buffer(crate::heap::BufferRead<'a>),
     Memory(MemoryGuard<'a>),
 }

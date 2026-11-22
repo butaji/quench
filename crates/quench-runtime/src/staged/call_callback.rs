@@ -28,18 +28,18 @@ use super::{word_bytes, word_offset, Passed, Stage};
 /// from register `registers` on (a forwarded `arguments`, a sloppy body's legacy reflection).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CallbackWindow {
-    pub(crate) registers: u16,
-    pub(crate) passed: u16,
-    pub(crate) argc: u16,
-    pub(crate) keeps: bool,
+    pub registers: u16,
+    pub passed: u16,
+    pub argc: u16,
+    pub keeps: bool,
 }
 
 /// The context words a callback's callee runs with, written below its window's register 0.
 #[derive(Clone, Copy)]
 pub struct CallbackContext<W> {
-    pub(crate) this: W,
-    pub(crate) env: W,
-    pub(crate) capture: W,
+    pub this: W,
+    pub env: W,
+    pub capture: W,
 }
 
 /// The byte offset of context word `word` below a window's register 0.

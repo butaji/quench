@@ -9,11 +9,11 @@ use crate::bytecode::{MethodSite, Op, Register, ResidualProgram, WideInstruction
 /// names (whose argument registers the call's own record holds).
 #[derive(Clone, Copy)]
 pub struct DecodeContext<'a> {
-    pub(crate) constants: &'a [Constant],
+    pub constants: &'a [Constant],
     /// The constant at an index `constants` does not hold, as the tier types it (a region's Number
     /// table, the compiling VM's values): `None` where `constants` is the whole table.
-    pub(crate) constant_at: Option<&'a dyn Fn(usize) -> Option<Constant>>,
-    pub(crate) method_sites: &'a [MethodSite],
+    pub constant_at: Option<&'a dyn Fn(usize) -> Option<Constant>>,
+    pub method_sites: &'a [MethodSite],
 }
 
 impl DecodeContext<'static> {

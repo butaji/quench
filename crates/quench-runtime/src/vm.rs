@@ -87,41 +87,41 @@ const PREPARED_ARGUMENT_ROOTS: usize = 4;
 #[derive(Clone, Copy, Default)]
 pub struct RuntimeAtoms {
     pub lexical_this: Atom,
-    new_target: Atom,
+    pub new_target: Atom,
     /// The RegExp members the builtin fast paths check on every call.
-    regexp_exec: Atom,
-    regexp_flags: Atom,
-    last_index: Atom,
+    pub regexp_exec: Atom,
+    pub regexp_flags: Atom,
+    pub last_index: Atom,
     /// `regexp::REGEXP_FLAG_ACCESSORS` names, in that order.
-    regexp_flag_accessors: [Atom; regexp::REGEXP_FLAG_ACCESSORS.len()],
+    pub regexp_flag_accessors: [Atom; regexp::REGEXP_FLAG_ACCESSORS.len()],
     /// Read by every promise resolution and species lookup.
     pub then: Atom,
-    constructor: Atom,
+    pub constructor: Atom,
     /// The ToPrimitive methods, read by every ToNumber and ToString of an object.
-    value_of: Atom,
-    to_string: Atom,
+    pub value_of: Atom,
+    pub to_string: Atom,
     /// The iterator protocol's step method.
-    next: Atom,
+    pub next: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
-    name: Atom,
+    pub name: Atom,
     /// The empty string, an anonymous function's initial name.
-    empty: Atom,
+    pub empty: Atom,
     /// An iterator result's keys, in its literal order.
     pub value: Atom,
     pub done: Atom,
     /// The iterator protocol's close method.
-    iterator_return: Atom,
+    pub iterator_return: Atom,
     /// A property descriptor object's other keys (`value` above), which
     /// `Object.getOwnPropertyDescriptor` writes on every call.
-    writable: Atom, enumerable: Atom, configurable: Atom,
-    pub get: Atom, set: Atom,
+    pub writable: Atom, enumerable: Atom, configurable: Atom,
+    pub get: Atom, pub set: Atom,
     /// The internal keys a bound function's environment holds its parts under
     /// (`Vm::bound_function_parts`).
-    bound_target: Atom,
-    bound_this: Atom,
-    bound_args: Atom,
+    pub bound_target: Atom,
+    pub bound_this: Atom,
+    pub bound_args: Atom,
     /// The names of a Proxy handler's traps (`proxy::ProxyTrap`).
-    proxy_traps: [Atom; proxy::PROXY_TRAP_COUNT],
+    pub proxy_traps: [Atom; proxy::PROXY_TRAP_COUNT],
 }
 pub mod activation;
 pub mod agent;
@@ -639,8 +639,8 @@ impl Frame {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActiveIterator {
-    pub(crate) iterator: u16,
-    pub(crate) done: u16,
+    pub iterator: u16,
+    pub done: u16,
 }
 /// A realm's global lexical bindings in insertion order. A binding is never removed while its
 /// realm is active, so its index names it until the realm switches, and a read that holds the
@@ -1129,7 +1129,7 @@ struct MethodCacheSet {
 /// something they come from changed (`ProgramStore::context_epoch`), so a switch between
 /// programs, as a cross-program call and its return make, looks nothing up and copies no
 /// layout. Boxed per program (`Vm::program_contexts`), so its address holds.
-pub(crate) struct ProgramContext {
+pub struct ProgramContext {
     /// The `ProgramStore::context_epoch` it was derived at.
     epoch: u64,
     /// The program's residual; null for a program the store does not hold.
@@ -1304,9 +1304,9 @@ struct ShapeAttributes {
 /// shape.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct DataAttributes {
-    writable: bool,
-    enumerable: bool,
-    configurable: bool,
+    pub writable: bool,
+    pub enumerable: bool,
+    pub configurable: bool,
 }
 impl Hash for DataAttributes {
     fn hash<H: Hasher>(&self, state: &mut H) {

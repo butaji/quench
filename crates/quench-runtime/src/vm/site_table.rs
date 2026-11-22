@@ -7,7 +7,7 @@
 
 /// An entry kind a `CacheSiteTable` holds: its value is stored as `Stored`, and its empty value
 /// stores as zero words.
-pub(super) trait SiteEntry: Copy {
+pub trait SiteEntry: Copy {
     /// The stored form: plain `u32` words, so every byte is initialized.
     type Stored: StoredWords;
     fn store(self) -> Self::Stored;
@@ -108,7 +108,7 @@ fn page_size() -> usize {
 
 /// One entry per cache site. Entries at and past `len` are zero bits, so growth only
 /// moves the length.
-pub(super) struct CacheSiteTable<T: SiteEntry> {
+pub struct CacheSiteTable<T: SiteEntry> {
     base: std::ptr::NonNull<T::Stored>,
     len: usize,
     /// Entries the mapping holds; zero while there is no mapping.

@@ -100,10 +100,10 @@ pub struct DenseView<W> {
     /// Whether a read needs no hole test of its own: the access consumes the element through a
     /// proof that rejects a hole's bits (a Number read, whose proof sees a NaN pattern and
     /// leaves). A fact of the proof, known before any run, so the read compiles without the test.
-    pub(crate) packed: bool,
+    pub packed: bool,
     /// Whether the access's index is proved below `length` (a range proof,
     /// `lane_region::int_ranges`), so only the hole test remains.
-    pub(crate) within: bool,
+    pub within: bool,
     /// The backing's double flag (`heap::DOUBLE_LEN` of its length word), nonzero for a double
     /// backing, where the view's proof admitted one (`prove_view`): each access then takes the
     /// backing's form. `None` where the proof admitted a wide backing alone (a loop's hoisted
@@ -113,7 +113,7 @@ pub struct DenseView<W> {
     /// writable view holds it: `emit_dense_array_uncounted`), so a store through it writes the
     /// element alone (`replace_uncounted_element`). A view proved by a store's own check keeps the
     /// count, `false`.
-    pub(crate) uncounted: bool,
+    pub uncounted: bool,
 }
 
 /// The view of the direct array `base` among the array records at `records`, writable where
@@ -219,8 +219,8 @@ fn replace_double<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::W
 pub struct Backing<W> {
     pub(crate) record: W,
     pub(crate) header: W,
-    pub(crate) values: W,
-    pub(crate) length: W,
+    pub values: W,
+    pub length: W,
 }
 
 /// The backing of the direct array `base` among the array records at `record_base`: `None`

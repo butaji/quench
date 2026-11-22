@@ -45,7 +45,7 @@ pub(crate) enum PackedAccess {
 
 /// Packed narrow values: the record that holds them.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Packed<W> {
+pub enum Packed<W> {
     Record(W),
 }
 

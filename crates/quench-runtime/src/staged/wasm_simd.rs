@@ -88,9 +88,10 @@ impl Simd {
 
 // The interpreter's vector records as a staged operation (`Decoder::WasmVector`): runtime only.
 #[cfg(not(stencil_build))]
-pub(crate) use operation::{VectorOperation, step};
+#[allow(unused_imports)]
+pub use operation::{VectorOperation, step};
 #[cfg(not(stencil_build))]
-mod operation {
+pub mod operation {
 use crate::staged::register_frame::WasmRep;
 use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
 use crate::staged::{Concrete, Constant, DecodeContext, Fields, Frame, Operation, Step};
@@ -103,7 +104,7 @@ use crate::{WasmType, WasmValue};
 /// A Wasm vector operation on the lane's registers: a SIMD operator on its operands, or a byte
 /// shuffle of two vectors by a constant's lane indices.
 #[derive(Clone, Copy)]
-pub(crate) enum VectorOperation {
+pub enum VectorOperation {
     /// `destination = operator(left, right)`, the operator and its lane immediate `selector`
     /// (`WasmSimd`); `right` is read only where the operator takes two operands.
     Operator { destination: Register, left: Register, right: Register, selector: u32 },
@@ -147,7 +148,7 @@ impl<W, P> Operation<W, P> {
 /// result (an extract, a bitmask) and an operand of another representation are left to the
 /// general step, which computes or raises them.
 #[inline(always)]
-pub(crate) fn step<F: Frame<Concrete>>(
+pub fn step<F: Frame<Concrete>>(
     stage: &mut Concrete,
     frame: &mut F,
     operation: VectorOperation,

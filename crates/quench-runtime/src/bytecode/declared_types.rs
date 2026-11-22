@@ -92,7 +92,7 @@ pub(crate) struct DeclaredLayout {
 /// A function's declared signature beyond its parameters (`Function::declared_parameters`).
 /// Each set is a language set (`typed_ir::language_bit`), `DECLARED_ANY` where unknown.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct DeclaredSignature {
+pub struct DeclaredSignature {
     /// The function's source span start: the start its bytecode `FunctionHeader::source_span`
     /// begins at (a class constructor's is `class.span.start`, a method's the start after its
     /// `static` modifier).
@@ -150,7 +150,7 @@ pub(crate) struct DeclaredLocalMember {
 /// A parameter whose annotation names a class declared at the top level of the program: the
 /// parameter is an instance of that class, whose declared fields (`DeclaredField`) describe it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DeclaredParameterClass {
+pub struct DeclaredParameterClass {
     /// The function's source span start (as `DeclaredSignature::start`).
     pub function: u32,
     /// The parameter's index.
@@ -193,7 +193,7 @@ pub(crate) struct SavedTypeName {
 const TOP_LEVEL: u32 = u32::MAX;
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct DeclaredTypes {
+pub struct DeclaredTypes {
     pub(crate) declared: Vec<Declared>,
     /// `(enum, member, value)` for each member that folds, in declaration order.
     pub(crate) enum_constants: Vec<(Box<str>, Box<str>, EnumConstant)>,

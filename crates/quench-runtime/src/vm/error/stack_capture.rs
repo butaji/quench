@@ -8,14 +8,14 @@ use super::*;
 /// read of a VM frame (`FrameSite::of`), or of a lane activation as the frame its
 /// materialization would push (`Vm::lane_stack_sites`).
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct FrameSite {
-    pub(in crate::vm) program: ProgramId,
-    pub(in crate::vm) function: u32,
-    pub(in crate::vm) context: CallContext,
-    pub(in crate::vm) this: Value,
+pub struct FrameSite {
+    pub program: ProgramId,
+    pub function: u32,
+    pub context: CallContext,
+    pub this: Value,
     /// The pc of the instruction it is paused at (`Frame::source_instruction_pc`).
-    pub(in crate::vm) pc: usize,
-    pub(in crate::vm) source_field: Option<(usize, crate::bytecode::FieldPart)>,
+    pub pc: usize,
+    pub source_field: Option<(usize, crate::bytecode::FieldPart)>,
 }
 
 impl FrameSite {

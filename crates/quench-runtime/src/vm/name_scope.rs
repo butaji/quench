@@ -39,16 +39,16 @@ pub(super) enum DynamicSlot {
 /// The by-name read a lane record handed to the general path to settle
 /// (`Vm::settle_name_probe`): where it is, in the running activation's frame.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct NameProbe {
-    pub(super) program: ProgramId,
-    pub(super) function: u32,
-    pub(super) pc: u32,
+pub struct NameProbe {
+    pub program: ProgramId,
+    pub function: u32,
+    pub pc: u32,
 }
 
 /// What lane records that read a name from the global object past a scope that could have
 /// declared it rely on.
 #[derive(Default)]
-pub(super) struct DynamicScopeNames {
+pub struct DynamicScopeNames {
     /// The names a scope declared dynamically at any time (`Vm::note_dynamic_scope_name`).
     declared: BitSet,
     /// The names whose by-name reads landed on the global object past such a scope

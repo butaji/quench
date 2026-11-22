@@ -243,7 +243,7 @@ impl Lowering<'_, '_> {
         self.branch_if(both_short, (words, &[]), (compare, &[]));
         self.builder.switch_to_block(words);
         let mut differ = self.raw_const(Lane::I64, 0);
-        for word in 0..quench_runtime::vm::wtf16::native_string::RECORD_SIZE / size_of::<u64>() {
+        for word in 0..quench_runtime::staged::string_form::RECORD_SIZE / size_of::<u64>() {
             let offset = (word * size_of::<u64>()) as i32;
             let (a, b) = (self.raw_load(Lane::I64, meta, left_record, offset), self.raw_load(Lane::I64, meta, right_record, offset));
             let mismatch = self.raw_binary(Binary::Xor, a, b);

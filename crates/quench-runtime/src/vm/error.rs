@@ -2,7 +2,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 pub(crate) mod stack_capture;
-pub(in crate::vm) use stack_capture::FrameSite;
+pub use stack_capture::FrameSite;
 
 const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;
 const ERROR_OPTIONS_ARGUMENT: usize = 1;

@@ -170,7 +170,7 @@ pub enum ImmediateLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ResultLayout {
+pub enum ResultLayout {
     Register,
     RegisterReadWrite,
     Returnable,
@@ -723,7 +723,7 @@ macro_rules! opcodes {
         /// The catalog's opcode indices, generated here so tiers never spell an opcode name.
         #[allow(non_upper_case_globals, dead_code)]
         pub mod index {
-            $(pub(crate) const $name: u16 = super::Op::$name as u16;)+
+            $(pub const $name: u16 = super::Op::$name as u16;)+
         }
 
 
@@ -1609,7 +1609,7 @@ const _: () = assert!(size_of::<Function>() <= 384);
 /// enclosing activation that asks whether a closure it makes is an arrow. A projection of
 /// the compiled record (`FunctionHeader::of`), so a slot answers them without its body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FunctionHeader {
+pub struct FunctionHeader {
     pub(crate) parent: Option<u32>,
     pub name: Option<Atom>,
     pub inferred_name: Option<Atom>,
@@ -2043,7 +2043,7 @@ pub(crate) enum FieldConstant {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LocalRegister {
+pub struct LocalRegister {
     pub local: u16,
     pub register: Register,
 }
@@ -2075,7 +2075,7 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 /// (`osr_loop::LoopRegion::live`) rather than copying a function's masks for each loop.
 /// Nothing here is serialized: a decoded program derives each on its first use.
 #[derive(Clone, Debug)]
-pub(crate) struct RegisterRoots {
+pub struct RegisterRoots {
     covered: bool,
     /// The registers below which every register live at entry lies (`entry_fill`), or
     /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound. Filled where the lowering had the live
@@ -3569,7 +3569,7 @@ impl Function {
 
 /// Scoped binding projections at an instruction resume PC.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BindingSite {
+pub struct BindingSite {
     pub(crate) resume_pc: u32,
     pub(crate) bindings: Vec<EvalBinding>,
 }
@@ -3669,7 +3669,7 @@ pub enum DispatchClass {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct MethodSite {
+pub struct MethodSite {
     pub atom: Atom,
     pub cache: u16,
     pub argument_start: u32,
@@ -3718,7 +3718,7 @@ pub(crate) struct RegExpLiteralSite {
 /// operand of every part). Its parts are never wide references, which `new` checks. The packed
 /// form of the same parts was a second copy of them, and nothing reads it.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Superinstruction {
+pub struct Superinstruction {
     pub wide: [WideInstruction; 4],
 }
 
@@ -3767,7 +3767,7 @@ pub struct ForwardedThisMethod {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FieldPart {
+pub enum FieldPart {
     First,
     Second,
     Sink,
@@ -4008,7 +4008,7 @@ impl std::ops::Deref for SourceText {
 
 /// The callee a failed call at a source byte offset names in its error.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CallSiteDescription {
+pub struct CallSiteDescription {
     pub(crate) offset: u32,
     pub(crate) construct: bool,
     pub(crate) callee: String,
@@ -4090,7 +4090,7 @@ fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
 
 /// Compiler source snapshot and wrapper origin, retained for diagnostics.
 #[derive(Clone, Debug)]
-pub(crate) struct ProgramSource {
+pub struct ProgramSource {
     pub(crate) text: SourceText,
     pub(crate) typescript: bool,
     /// Bytes of compiled source before `text` that the program keeps no copy of: a host

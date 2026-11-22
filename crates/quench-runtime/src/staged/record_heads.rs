@@ -75,7 +75,7 @@ pub struct NativeViewHead {
 #[repr(C)]
 pub struct FunctionRecord<O, K, V> {
     /// The function's own ordinary object (its properties); first, so its words are at offset 0.
-    pub(crate) object: O,
+    pub object: O,
     /// Beside the object, whose 12 bytes it fills to the words after: after them, its 12
     /// bytes and two of padding made the record 48 bytes (jsdom-d3: 114K records at its peak).
     pub kind: K,

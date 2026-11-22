@@ -145,8 +145,9 @@ fn emit(plan: &NativePlan, isa: &dyn TargetIsa) -> ir::Function {
         emit.instruction(pc as u32, inst);
     }
     emit.finish();
-    let mut builder = emit.into_machine();
-    builder.seal_all();
+    let mut raw = emit.into_machine();
+    raw.seal_all();
+    let builder = raw.0;
     builder.finalize(isa.frontend_config());
     quench_runtime::vm::jit_backend::builder::keep_context(context);
     function

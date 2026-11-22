@@ -12,8 +12,8 @@ use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 /// block table pointer and of its block count.
 #[derive(Clone, Copy)]
 pub struct MarkList {
-    pub(crate) blocks: usize,
-    pub(crate) count: usize,
+    pub blocks: usize,
+    pub count: usize,
 }
 
 /// Continues where the record `record_id` is unmarked: its block lies below the count `list` names

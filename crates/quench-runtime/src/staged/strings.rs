@@ -19,9 +19,9 @@ use crate::vm::wtf16::Units;
 /// are, and whether each is two bytes (one) or one (zero).
 #[derive(Clone, Copy)]
 pub struct FlatString<W> {
-    pub(crate) units: W,
-    pub(crate) length: W,
-    pub(crate) wide: W,
+    pub units: W,
+    pub length: W,
+    pub wide: W,
 }
 
 /// The flat string `value` names among the string records at `record_base`: its units, length

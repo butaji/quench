@@ -32,7 +32,7 @@ pub fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
 /// The immediate operations a tag test is written in. A `Stage` is one (its words and conditions);
 /// a `MachineScalar` is one through `MachineTags`, whose comparisons are 0-or-1 flag words. Each tag
 /// test is written once over this, so a layout change is one definition for every stage and machine.
-pub(crate) trait TagOps {
+pub trait TagOps {
     type Word: Copy;
     /// A comparison's result: a condition at a stage, a flag word at a machine.
     type Flag: Copy;

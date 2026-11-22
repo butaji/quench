@@ -27,7 +27,7 @@ const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as
 
 #[derive(Clone, Copy)]
 #[repr(usize)]
-pub(crate) enum BinaryValuePath {
+pub enum BinaryValuePath {
     Fallback,
     IntegerFastPath,
     NumberFastPath,

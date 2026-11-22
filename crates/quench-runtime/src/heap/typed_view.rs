@@ -153,16 +153,16 @@ impl TypedViewTable {
 /// record's kind, that its `stamp` is the current `buffer_relocations` and that it is not
 /// `detached`, and reads `data` and `length`; a store also requires the bytes `unshared`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTypedArrayLayout {
-    pub(crate) entry_size: usize,
-    pub(crate) page_shift: u32,
-    pub(crate) page_mask: usize,
-    pub(crate) kind_offset: usize,
-    pub(crate) detached_offset: usize,
-    pub(crate) unshared_offset: usize,
-    pub(crate) data_offset: usize,
-    pub(crate) length_offset: usize,
-    pub(crate) stamp_offset: usize,
+pub struct NativeTypedArrayLayout {
+    pub entry_size: usize,
+    pub page_shift: u32,
+    pub page_mask: usize,
+    pub kind_offset: usize,
+    pub detached_offset: usize,
+    pub unshared_offset: usize,
+    pub data_offset: usize,
+    pub length_offset: usize,
+    pub stamp_offset: usize,
 }
 
 /// Layout facts for code generators which read a typed array's elements in place.

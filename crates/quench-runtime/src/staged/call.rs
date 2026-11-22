@@ -50,7 +50,7 @@ pub(crate) struct EntryCellLayoutWords {
 }
 
 /// The entry cell's word offsets in the designed layout (`EntryCellLayoutWords`).
-pub(crate) struct CellLayout {
+pub struct CellLayout {
     pub entry_offset: i32,
     pub body_offset: i32,
     pub validity_offset: i32,

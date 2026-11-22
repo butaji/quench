@@ -110,7 +110,7 @@ pub struct SlotDependency {
 /// retires the code, and a change to a prototype off the chain leaves it standing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PrototypeChain {
-    pub(crate) link: u32,
+    pub link: u32,
     pub depth: u8,
 }
 

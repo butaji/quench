@@ -23,7 +23,7 @@ pub struct TypedView<W> {
     /// Whether the access's index is proved below `length` (a range proof, or its loop's entry
     /// comparing its bound with the length once: `lane_region::loop_versions`), so no test of it
     /// remains.
-    pub(crate) within: bool,
+    pub within: bool,
 }
 
 /// The kind of a proved view: the kind the proof compared the record's with, or the record's

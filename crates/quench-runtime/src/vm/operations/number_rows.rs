@@ -8,7 +8,7 @@ pub const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
 
 /// A stage supplies the machine operation for each semantic Number relation.
 /// The relation table below is shared by interpreter values and native emitters.
-pub(crate) trait NumberRelationStage<T> {
+pub trait NumberRelationStage<T> {
     type Output;
 
     fn equal(&mut self, left: T, right: T) -> Self::Output;
@@ -70,7 +70,7 @@ number_relation_rows!(number_relations);
 
 /// The four IEEE Number arithmetic operations have one operator-to-method
 /// mapping. Interpreter values and native Cranelift values supply the stage.
-pub(crate) trait NumberArithmeticStage<T> {
+pub trait NumberArithmeticStage<T> {
     type Output;
 
     fn add(&mut self, left: T, right: T) -> Self::Output;
@@ -133,7 +133,7 @@ macro_rules! number_arithmetic_rows {
 pub(crate) use number_arithmetic_rows;
 number_arithmetic_rows!(number_arithmetic);
 
-pub(crate) trait NumberUnaryStage<T> {
+pub trait NumberUnaryStage<T> {
     type Output;
 
     fn plus(&mut self, value: T) -> Self::Output;
@@ -173,7 +173,7 @@ self::number_unary_rows!(number_unary);
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
 /// and native emitters share the same signed/unsigned shift decisions.
-pub(crate) trait NumberBitwiseStage<T> {
+pub trait NumberBitwiseStage<T> {
     type Output;
 
     fn and(&mut self, left: T, right: T) -> Self::Output;
@@ -291,7 +291,7 @@ impl NumberUnaryStage<f64> for NumberF64Stage {
 
 /// A stage supplies predicate operations for the shared JavaScript Number ToBoolean
 /// denotation. Interpreter, stencil and codegen stages use the same nonzero-and-not-NaN formula.
-pub(crate) trait NumberTruthinessStage<T> {
+pub trait NumberTruthinessStage<T> {
     type Predicate;
 
     fn zero(&mut self) -> T;

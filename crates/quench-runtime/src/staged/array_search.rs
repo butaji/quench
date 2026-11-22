@@ -126,11 +126,11 @@ fn number_kind(number: f64, mode: Match) -> Kind {
 #[derive(Clone, Copy)]
 pub struct DenseNeedle<'a, W> {
     /// Elements whose word is one of these.
-    pub(crate) words: &'a [W],
+    pub words: &'a [W],
     /// Elements that are doubles float-equal to this binary64 word (`NumericStage::float_eq`).
-    pub(crate) number: Option<W>,
+    pub number: Option<W>,
     /// The hole word: a hole stops the scan too, so its caller settles it.
-    pub(crate) hole: Option<W>,
+    pub hole: Option<W>,
 }
 
 /// The index in `from..to` of the first element of the dense backing at `base` (element 0's address) that

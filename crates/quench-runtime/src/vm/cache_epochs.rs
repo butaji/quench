@@ -31,7 +31,7 @@
 
 /// The invalidation counters of one VM.
 #[derive(Default)]
-pub(crate) struct CacheEpochs {
+pub struct CacheEpochs {
     /// Counts the stop-the-world collections that finished in this VM (`bump_gc`).
     pub gc: u64,
     /// Counts moves of the field cache table: its growth or replacement (`bump_field_entries`).

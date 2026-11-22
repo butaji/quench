@@ -10,7 +10,6 @@ use crate::compiled::LaneExit;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneBodyHistory;
 
-use quench_runtime::vm::lane_body_audit as audit;
 
 #[path = "lane_body_specialize.rs"]
 pub(crate) mod specialize;

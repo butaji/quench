@@ -71,15 +71,15 @@ pub enum IcOp<'a> {
 /// loading again. A prototype the read reaches starts with none.
 #[derive(Clone, Copy)]
 pub struct Reached<W, C> {
-    pub(crate) record: W,
-    pub(crate) shape: Option<W>,
-    pub(crate) inline: Option<C>,
+    pub record: W,
+    pub shape: Option<W>,
+    pub inline: Option<C>,
     /// The record's layout id, where the caller loaded it.
-    pub(crate) word: Option<W>,
+    pub word: Option<W>,
     /// The storage-form bits a `GuardLayout` proved: a static input of the slot's layout.
-    pub(crate) formed: Option<u32>,
+    pub formed: Option<u32>,
     /// The record's auxiliary word (exact shape and storage-form bits), where the caller loaded it.
-    pub(crate) auxiliary: Option<W>,
+    pub auxiliary: Option<W>,
 }
 
 impl<W, C> Reached<W, C> {

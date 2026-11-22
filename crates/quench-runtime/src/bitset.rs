@@ -176,7 +176,7 @@ impl BitSet {
 }
 
 /// One equal-width row of bits per point, in one flat buffer.
-pub(crate) struct BitRows {
+pub struct BitRows {
     words: usize,
     bits: Vec<u64>,
 }

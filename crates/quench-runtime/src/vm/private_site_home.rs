@@ -68,7 +68,7 @@ pub enum PrivateElement {
 }
 
 #[derive(Default)]
-pub(super) struct PrivateSiteHomes {
+pub struct PrivateSiteHomes {
     entries: super::shape_memo::DirectMappedTable<SiteHome, PRIVATE_SITE_HOME_ENTRIES>,
 }
 
@@ -264,7 +264,7 @@ const SHARED_NAME: u32 = u32::MAX;
 /// class's home registers it, or eval code can name it: then it is shared for good, and only
 /// the sites of that name stop answering from shapes alone.
 #[derive(Default)]
-pub(super) struct PrivateClasses {
+pub struct PrivateClasses {
     /// The dense id of each class constructor a closure was made of (`UNTRACKED_CLASS` past
     /// `u32` ids), by program and function. A program id that a freed program's reuses finds
     /// its classes evaluated already: a false second evaluation, which shares their names.

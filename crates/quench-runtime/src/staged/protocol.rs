@@ -215,7 +215,7 @@ impl PlainHeader<u64> {
 /// What a plain activation's return reads of its header: the caller's call record, registers
 /// and records.
 #[derive(Clone, Copy)]
-pub(crate) struct PlainCaller<W> {
+pub struct PlainCaller<W> {
     pub call: W,
     pub registers: W,
     pub base: W,

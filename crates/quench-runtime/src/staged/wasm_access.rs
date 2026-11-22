@@ -17,7 +17,7 @@ use crate::WasmType;
 
 /// A Wasm memory access, with the operands its record names.
 #[derive(Clone, Copy)]
-pub(crate) enum WasmAccessOperation {
+pub enum WasmAccessOperation {
     /// `destination = load[address + offset]` of the function's memory (a direct op): the address
     /// is the 32-bit register `address` plus the record's constant `offset`.
     Load { access: Access, destination: Register, address: Register, offset: u32 },

@@ -14,7 +14,7 @@ pub const FRAME_CONTEXT: usize = crate::staged::frame::CONTEXT_WORDS;
 const SPARE_WORDS: usize = 32 + crate::vm::engine_types::INLINED_WINDOW_ROOM;
 
 #[derive(Clone)]
-pub(in crate::vm) struct RegisterFile {
+pub struct RegisterFile {
     /// The context words, then the registers.
     words: Vec<Value>,
 }

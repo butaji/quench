@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 /// parameters take, in order, then the stores the body makes to the receiver the parent
 /// returned. Every value is a parameter as passed or a primitive constant, so the body runs
 /// no guest code of its own.
-pub(crate) struct SuperInitializer {
+pub struct SuperInitializer {
     pub arguments: SmallVec<[InitializerValue; 4]>,
     pub stores: SmallVec<[InitializerStore; 4]>,
     /// Whether the body passes every argument it was given on to the parent

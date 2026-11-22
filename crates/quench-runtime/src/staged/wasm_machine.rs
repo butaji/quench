@@ -40,8 +40,8 @@ pub(crate) struct ConcretePair<'a> {
 /// A stage over an instance: the native slots of its globals by environment slot and its
 /// linear memory.
 pub struct ConcreteInstance<'a> {
-    pub(crate) globals: &'a mut [u64],
-    pub(crate) memory: &'a mut [u8],
+    pub globals: &'a mut [u64],
+    pub memory: &'a mut [u8],
 }
 
 /// A stage over a table of function references and the row of each (`TableTarget`); `related` says

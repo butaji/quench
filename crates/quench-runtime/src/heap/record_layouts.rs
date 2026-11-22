@@ -14,30 +14,30 @@ use crate::value_vec::INLINE_PROPERTY_COUNT;
 /// copy-on-write array mutation can replace and free its backing. The read itself must not
 /// call into the VM or permit collection while the borrowed raw pointers are in use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeArrayLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
+pub struct NativeArrayLayout {
+    pub record_capacity: usize,
+    pub record_size: usize,
+    pub record_align: usize,
     /// Where an array record keeps its backing's header pointer without extras: its
     /// object's payload word. With extras, that word points at them (`NATIVE_OBJECT_LAYOUT`'s
     /// extras tag), and they keep the pointer at `extras_elements_offset`.
-    pub(crate) elements_offset: usize,
-    pub(crate) extras_elements_offset: usize,
-    pub(crate) elements_header_offset: usize,
-    pub(crate) header_length_offset: usize,
-    pub(crate) header_values_offset: usize,
+    pub elements_offset: usize,
+    pub extras_elements_offset: usize,
+    pub elements_header_offset: usize,
+    pub header_length_offset: usize,
+    pub header_values_offset: usize,
     /// The backing's owner count, one where no other array shares it.
-    pub(crate) header_owners_offset: usize,
+    pub header_owners_offset: usize,
     /// The backing's capacity word: the values it has room for, under `capacity_mask`.
-    pub(crate) header_capacity_offset: usize,
-    pub(crate) capacity_mask: u32,
+    pub header_capacity_offset: usize,
+    pub capacity_mask: u32,
     /// The record's object part, whose meta and payload words `NATIVE_OBJECT_LAYOUT` names.
-    pub(crate) object_offset: usize,
+    pub object_offset: usize,
     /// The meta bit of a frozen array.
-    pub(crate) frozen_mask: u32,
+    pub frozen_mask: u32,
     /// The meta bits of an array whose elements may not all be added or removed: frozen, or
     /// not extensible.
-    pub(crate) integrity_mask: u32,
+    pub integrity_mask: u32,
 }
 
 /// The native reader's view of a function record: its own properties are the `Object` at
@@ -45,9 +45,9 @@ pub(crate) struct NativeArrayLayout {
 /// is the declaration's. Generated code reads and, through the function space's barrier
 /// (`StagedRecordSpace::Function`, `emit_unlogged_property_store_guard`), stores them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeFunctionLayout {
-    pub(crate) record_size: usize,
-    pub(crate) object_offset: usize,
+pub struct NativeFunctionLayout {
+    pub record_size: usize,
+    pub object_offset: usize,
 }
 
 pub const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
@@ -81,9 +81,9 @@ pub const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
 /// `retire_cursor` at each collection frees the unallocated rest. Its words are `u32`s.
 /// Generated code reads only the two offsets; the cursor's size is pinned below.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeRecordCursorLayout {
-    pub(crate) next_offset: usize,
-    pub(crate) limit_offset: usize,
+pub struct NativeRecordCursorLayout {
+    pub next_offset: usize,
+    pub limit_offset: usize,
 }
 
 pub const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
@@ -113,43 +113,43 @@ pub enum PropertyStoreLayout {
 /// finish before any safepoint or property-arena mutation. `properties` pointers are scoped
 /// to one synchronous no-safepoint execution because growth and compaction can move the arena.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeObjectLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
+pub struct NativeObjectLayout {
+    pub record_capacity: usize,
+    pub record_size: usize,
+    pub record_align: usize,
     /// Where a record keeps its layout id (`heap::layouts`).
-    pub(crate) layout_offset: usize,
+    pub layout_offset: usize,
     /// Where a layout's table entry keeps the `meta` and auxiliary words.
-    pub(crate) meta_offset: usize,
-    pub(crate) auxiliary_offset: usize,
-    pub(crate) payload_offset: usize,
-    pub(crate) extras_arena_start_offset: usize,
-    pub(crate) extras_inline_values_offset: usize,
-    pub(crate) inline_storage_mask: u32,
-    pub(crate) array_mask: u32,
-    pub(crate) storage_start_mask: u32,
-    pub(crate) dictionary_mask: u32,
+    pub meta_offset: usize,
+    pub auxiliary_offset: usize,
+    pub payload_offset: usize,
+    pub extras_arena_start_offset: usize,
+    pub extras_inline_values_offset: usize,
+    pub inline_storage_mask: u32,
+    pub array_mask: u32,
+    pub storage_start_mask: u32,
+    pub dictionary_mask: u32,
     /// The auxiliary word's storage-form bits (`value_vec::INLINE_FORM`, `EXTRAS_FORM`,
     /// `NARROW_FORM`), which a recorded shape leaves out: a guard of a recorded shape masks
     /// them off the word.
-    pub(crate) inline_form: u32,
-    pub(crate) extras_form: u32,
-    pub(crate) narrow_form: u32,
-    pub(crate) narrow_run_tag: u64,
+    pub inline_form: u32,
+    pub extras_form: u32,
+    pub narrow_form: u32,
+    pub narrow_run_tag: u64,
     /// The meta bits of an object that is not extensible or is frozen (`VALUE_VEC_INTEGRITY_BITS`).
-    pub(crate) integrity_mask: u32,
-    pub(crate) inline_property_count: usize,
-    pub(crate) extras_tag: u64,
-    pub(crate) extras_tag_mask: u64,
-    pub(crate) proto_mask: u32,
-    pub(crate) proto_record_base: u32,
-    pub(crate) proto_record_end: u32,
-    pub(crate) mark_records_per_block: usize,
-    pub(crate) mark_word_bits: usize,
-    pub(crate) mark_block_size: usize,
-    pub(crate) mark_offset: usize,
-    pub(crate) property_value_size: usize,
-    pub(crate) property_value_align: usize,
+    pub integrity_mask: u32,
+    pub inline_property_count: usize,
+    pub extras_tag: u64,
+    pub extras_tag_mask: u64,
+    pub proto_mask: u32,
+    pub proto_record_base: u32,
+    pub proto_record_end: u32,
+    pub mark_records_per_block: usize,
+    pub mark_word_bits: usize,
+    pub mark_block_size: usize,
+    pub mark_offset: usize,
+    pub property_value_size: usize,
+    pub property_value_align: usize,
 }
 
 /// Layout facts for code generators which emit read-only ordinary-object field accesses.
@@ -191,14 +191,14 @@ pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
 /// header; the header's top bit marks a sparse storage and the rest is the length; the
 /// slots follow the header, one `Value` word each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeEnvironmentLayout {
+pub struct NativeEnvironmentLayout {
     /// Offset in the storage word of the header pointer.
-    pub(crate) header_pointer_offset: i32,
+    pub header_pointer_offset: i32,
     /// Header bit set on a sparse storage; the length is the other bits.
-    pub(crate) sparse_mark: u64,
+    pub sparse_mark: u64,
     /// Offset from the header to the first slot.
-    pub(crate) slots_offset: u64,
-    pub(crate) slot_size: u64,
+    pub slots_offset: u64,
+    pub slot_size: u64,
 }
 
 pub const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {

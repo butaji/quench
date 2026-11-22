@@ -178,7 +178,7 @@ const _: () = assert!(size_of::<JsString>() == size_of::<FlatUnits>());
 /// longer ASCII text is `Ascii`, or an `AsciiSlice` of another string's `Ascii` storage.
 #[derive(Clone)]
 #[repr(u8)]
-pub(crate) enum FlatUnits {
+pub enum FlatUnits {
     /// ASCII text held in the string's own allocation: most property names and tokens fit,
     /// and need no second allocation.
     Short(ShortAscii) = native_string::TAG_SHORT,

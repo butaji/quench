@@ -136,7 +136,7 @@ pub struct Loops {
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
-pub(crate) struct LaneBody {
+pub struct LaneBody {
     /// The entries a function makes before its lane body specializes: enough that its call
     /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
     /// only a function called repeatedly pays for compiling one.
@@ -206,7 +206,7 @@ pub(crate) struct JsFunction {
 }
 
 /// The Wasm function and module tiers.
-pub(crate) struct Wasm {
+pub struct Wasm {
     /// Promote a Wasm function only after repeated interpreter entries, or the loop work of as
     /// many (`backedges_per_entry`). Wasm signatures and bytecode are fixed, so this is a
     /// hotness gate.
@@ -241,7 +241,7 @@ pub const POLYMORPHISM: usize = 4;
 /// in-place generic read (`field_probe`) pays `probe_read_ns` either way. Speculation wins when
 /// `p (probe - guard) > (1 - p) (exit - probe)`, so the break-even rate is
 /// `(exit - probe) / (exit - guard)`.
-pub(crate) struct Speculation {
+pub struct Speculation {
     pub guard_read_ns: u32,
     pub probe_read_ns: u32,
     pub guard_exit_ns: u32,
@@ -421,7 +421,7 @@ pub(crate) const fn tiers_enter(stops: bool) -> bool {
 }
 
 /// What a memory policy lets the tiers compile.
-pub(crate) struct PolicyTiers {
+pub struct PolicyTiers {
     /// The Cranelift opt level loop regions compile at, or `None` where no loop region
     /// compiles. Region compilation is the largest transient allocation of a `--jit` run:
     /// regalloc2's state and the code pages of the compiler and of the region.

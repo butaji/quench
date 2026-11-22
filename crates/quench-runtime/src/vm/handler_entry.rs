@@ -20,10 +20,10 @@ pub enum HandlerHome {
 /// (`activate_environment_in_lane`).
 #[derive(Clone, Copy)]
 pub struct WindowHome {
-    pub(in crate::vm) depth: usize,
-    pub(in crate::vm) program: ProgramId,
-    pub(in crate::vm) function: u32,
-    pub(in crate::vm) window: *mut Value,
+    pub depth: usize,
+    pub program: ProgramId,
+    pub function: u32,
+    pub window: *mut Value,
 }
 
 impl Vm {

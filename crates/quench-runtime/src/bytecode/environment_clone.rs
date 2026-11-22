@@ -131,7 +131,7 @@ impl std::ops::DerefMut for EnvironmentClones {
 
 /// The slots one clone resets: of `owned`, those neither `fresh` nor `kept`; all sorted.
 #[derive(Clone, Copy)]
-pub(crate) struct Resets<'a> {
+pub struct Resets<'a> {
     owned: &'a [u16],
     fresh: &'a [u16],
     kept: &'a [u16],

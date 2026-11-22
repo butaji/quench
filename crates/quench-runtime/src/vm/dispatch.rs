@@ -663,7 +663,7 @@ impl Vm {
 
     #[quench_macros::operation_semantics(resolve_step_operation)]
     #[inline(always)]
-    pub(super) fn step(
+    pub fn step(
         &mut self,
         p: &ResidualProgram,
         f: usize,

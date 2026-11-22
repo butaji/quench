@@ -36,7 +36,7 @@ pub enum Kind {
 
 /// What a callback's result does to its iteration's result.
 #[derive(Clone, Copy)]
-pub(crate) enum Effect {
+pub enum Effect {
     /// The step leaves the result as it is.
     Nothing,
     /// Store `value` at `slot` of the result: a map's element at its index, a filter's kept

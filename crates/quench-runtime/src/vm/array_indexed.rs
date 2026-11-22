@@ -592,7 +592,7 @@ impl ArrayIteration {
 /// (`CallCompletion::ArrayStep`): the loop's state, the element and index that callback was
 /// passed, and roots for the values the iteration reads once its frame returns, which only
 /// the iteration holds.
-pub(crate) struct ArrayStepCall {
+pub struct ArrayStepCall {
     iteration: ArrayIteration,
     element: Value,
     index: usize,

@@ -105,7 +105,7 @@ impl super::Heap {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CollectionEntries<T> {
+pub struct CollectionEntries<T> {
     /// The slots and, per slot, its key's folded hash (`folded_hash`); a hole keeps its key's.
     table: table::Table<T>,
     live: u32,

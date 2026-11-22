@@ -396,7 +396,7 @@ impl WasmType {
 }
 
 #[derive(Clone)]
-pub(crate) struct CallableImport {
+pub struct CallableImport {
     pub name: super::WasmImportName,
     pub(crate) exact: bool,
 }

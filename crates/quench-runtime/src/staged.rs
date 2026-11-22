@@ -40,7 +40,7 @@ pub(crate) mod object_extras;
 /// The head of a property buffer (base pointer and length), embedded first by `PropertyBuffer`.
 pub(crate) mod property_buffer;
 /// The flat string forms' heads and offsets, shared with the stencils (`vm::wtf16::native_string`).
-pub(crate) mod string_form;
+pub mod string_form;
 /// The typed-array kinds, one file for the runtime and the stencils (`heap/cell/typed_array_catalog.rs`).
 #[path = "heap/cell/typed_array_catalog.rs"]
 pub(crate) mod typed_array_catalog;

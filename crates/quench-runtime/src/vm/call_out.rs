@@ -40,9 +40,9 @@ pub(super) enum Loaded {
 /// after its instruction, which the binding rules of a name read for their error site.
 #[derive(Clone, Copy)]
 pub struct CallSite {
-    pub(super) owner: VarOwner,
-    pub(super) function: u32,
-    pub(super) resume: usize,
+    pub owner: VarOwner,
+    pub function: u32,
+    pub resume: usize,
 }
 
 impl Vm {

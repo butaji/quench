@@ -114,7 +114,7 @@ const CELL_READERS_PRUNE: usize = 8;
 /// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances, and the
 /// Babel parser's methods up to a dozen (its parser classes and plugin mixins); deeper chains
 /// stay uncached.
-pub(crate) const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
+pub const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 /// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
 /// still has exactly the `depth` prototype shapes interned at `chain`
 /// (`Dependencies::inherited_chain`), and `answer` says what that chain holds.
@@ -125,36 +125,36 @@ pub(crate) const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 /// (24), receiver, atom, chain, proved prototype, proved layout and next (24), answer (4),
 /// depth, function links and proved (3), padded.
 #[derive(Clone)]
-pub(crate) struct InheritedFieldCache {
-    pub(crate) receiver: u32,
-    pub(crate) atom: crate::bytecode::Atom,
+pub struct InheritedFieldCache {
+    pub receiver: u32,
+    pub atom: crate::bytecode::Atom,
     /// Where the chain's prototype shapes start in the interned chains
     /// (`Dependencies::intern_inherited_chain`).
-    pub(crate) chain: u32,
-    pub(crate) depth: u8,
+    pub chain: u32,
+    pub depth: u8,
     /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
-    pub(crate) function_links: bool,
-    pub(crate) answer: InheritedFieldAnswer,
+    pub function_links: bool,
+    pub answer: InheritedFieldAnswer,
     /// Whether a walk proved the chain from `proved_prototype` up to `proved_holder`, its
     /// last recorded prototype: the table clears it when any prototype the walk read
     /// changes or dies (`Dependencies::prove_inherited`), so it never outlives the record
     /// it names, and a use needs no walk while it holds.
-    pub(crate) proved: bool,
+    pub proved: bool,
     /// The receiver's prototype link the proof holds for, compared undecoded.
-    pub(crate) proved_prototype: super::ProtoLink,
+    pub proved_prototype: super::ProtoLink,
     /// The layout id (`heap::layouts`) of a receiver the proof last answered, or
     /// `NO_PROVED_LAYOUT`: its header word holds the receiver shape and the prototype link,
     /// so a receiver of that layout matches both on one compare. Reset with each new proof.
-    pub(crate) proved_layout: u32,
-    pub(crate) proved_holder: Value,
+    pub proved_layout: u32,
+    pub proved_holder: Value,
     /// The value a `Slot` answer read under the current proof, held while `constant_watch`
     /// is published (`heap::watch_prototype_values` of the holder): a use then reads it
     /// without the holder. `None` before a read and once a walk proves the chain again.
-    pub(crate) constant: Value,
-    pub(crate) constant_watch: Option<crate::heap::PrototypeValueWatch>,
+    pub constant: Value,
+    pub constant_watch: Option<crate::heap::PrototypeValueWatch>,
     /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
-    pub(crate) next: u32,
+    pub next: u32,
 }
 /// Shape chains interned once each, by content: a cache entry names its chain by the
 /// offset of its first shape, and keeps its length itself. Stored as each chain's length,
@@ -223,7 +223,7 @@ impl InternedChains {
 pub(crate) const NO_PROVED_LAYOUT: u32 = u32::MAX;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InheritedFieldAnswer {
+pub enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.
     Slot(u16),
     /// No recorded shape has the name and the last prototype's prototype is null: the load

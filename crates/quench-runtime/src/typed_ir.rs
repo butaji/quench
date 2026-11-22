@@ -76,9 +76,9 @@ pub enum Projection {
 pub struct Fact {
     pub ty: Type,
     pub representation: Representation,
-    pub(crate) binding: BindingTime,
-    pub(crate) proof: Proof,
-    pub(crate) projection: Projection,
+    pub binding: BindingTime,
+    pub proof: Proof,
+    pub projection: Projection,
 }
 
 /// Immutable, consistent semantic type and representation evidence. Entry guards

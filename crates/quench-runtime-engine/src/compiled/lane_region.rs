@@ -154,7 +154,7 @@ pub(crate) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct RegisterFact {
+pub(crate) struct RegisterFact {
     value: VerifiedFact,
     tagged: TaggedView,
 }
@@ -3587,7 +3587,7 @@ impl Lowering<'_, '_> {
             let small = self.raw_binary_imm(Binary::And, index, i64::from(quench_runtime::heap::SMALL_STRING_ID_MASK));
             let recorded = self.raw_compare_imm(Relation::NotEqual, small, i64::from(quench_runtime::heap::SMALL_STRING_ID_BASE));
             decided = self.raw_binary(Binary::And, decided, recorded);
-            let offset = self.raw_binary_imm(Binary::Mul, index, quench_runtime::vm::wtf16::native_string::RECORD_SIZE as i64);
+            let offset = self.raw_binary_imm(Binary::Mul, index, quench_runtime::staged::string_form::RECORD_SIZE as i64);
             *address = self.raw_binary(Binary::Add, base, offset);
         }
         let shorts = self.builder.create_block();
@@ -3600,7 +3600,7 @@ impl Lowering<'_, '_> {
         self.branch_if(both_short, (short, &[]), (compare, &[]));
         self.builder.switch_to_block(short);
         let mut differ = self.raw_const(Lane::I64, 0);
-        for word in 0..quench_runtime::vm::wtf16::native_string::RECORD_SIZE / 8 {
+        for word in 0..quench_runtime::staged::string_form::RECORD_SIZE / 8 {
             let [a, b] = addresses.map(|address| self.raw_load(Lane::I64, meta, address, (word * 8) as i32));
             let bits = self.raw_binary(Binary::Xor, a, b);
             differ = self.raw_binary(Binary::Or, differ, bits);

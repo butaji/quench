@@ -97,7 +97,7 @@ pub(super) enum Length {
 
 /// A builtin function as its holder installs it.
 #[derive(Clone, Copy)]
-pub(super) struct NativeRow {
+pub struct NativeRow {
     pub holder: Holder,
     /// The property name, and the function's `name`.
     pub(super) name: &'static str,

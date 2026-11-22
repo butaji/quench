@@ -180,16 +180,16 @@ impl ValueLayout {
     /// Tag shared by TDZ and internal environment-slot markers.
     pub const INTERNAL_TAG: u64 = TAG_DELETED;
     /// The tag of every heap reference (`Value::heap_index`).
-    pub(crate) const HEAP_TAG: u64 = TAG_HEAP;
+    pub const HEAP_TAG: u64 = TAG_HEAP;
     pub const DIRECT_ARRAY_TAG: u64 = DIRECT_ARRAY_TAG;
     pub const DIRECT_OBJECT_TAG: u64 = DIRECT_OBJECT_TAG;
     pub(crate) const DIRECT_FUNCTION_TAG: u64 = DIRECT_FUNCTION_TAG;
     pub(crate) const DIRECT_PROMISE_TAG: u64 = DIRECT_PROMISE_TAG;
     pub(crate) const DIRECT_ITERATOR_TAG: u64 = DIRECT_ITERATOR_TAG;
     pub(crate) const DIRECT_COLLECTION_TAG: u64 = DIRECT_COLLECTION_TAG;
-    pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
+    pub const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
     pub(crate) const DIRECT_STRING_TAG: u64 = DIRECT_STRING_TAG;
-    pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
+    pub const CANONICAL_NAN: u64 = CANONICAL_NAN;
     /// A tag field is the bits at and above this shift.
     pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;
     /// The first tag's field; a value is tagged when its field less this is at most the span.

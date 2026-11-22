@@ -34,7 +34,7 @@ pub(crate) type SharedFormWords = SharedFormHead<[usize; 2]>;
 pub(crate) type ShortFormWords = ShortFormHead<ShortAsciiHead<u8>>;
 
 /// Bytes a string record occupies: the largest form, a tag word, then a pointer and a length.
-pub(crate) const RECORD_SIZE: usize = size_of::<SharedFormWords>();
+pub const RECORD_SIZE: usize = size_of::<SharedFormWords>();
 /// Where a `Short` record keeps its unit count, and its units.
 pub(crate) const SHORT_LENGTH_OFFSET: i32 = (offset_of!(ShortFormWords, text) + offset_of!(ShortAsciiHead<u8>, length)) as i32;
 pub(crate) const SHORT_UNITS_OFFSET: u64 = (offset_of!(ShortFormWords, text) + offset_of!(ShortAsciiHead<u8>, bytes)) as u64;

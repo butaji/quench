@@ -512,13 +512,13 @@ fn native_function_source(name: &str) -> String {
 /// The call a forwarding call makes (`Vm::forwarded_call`), with the facts the walk read on
 /// the way, so no caller reads them again.
 pub struct Forwarded<A> {
-    pub(super) callee: Value,
-    pub(super) receiver: Value,
-    pub(super) args: A,
+    pub callee: Value,
+    pub receiver: Value,
+    pub args: A,
     /// The callee's kind; `None` for a callee that is no function.
-    pub(super) kind: Option<FunctionKind>,
+    pub kind: Option<FunctionKind>,
     /// Whether the outermost layer was `Function.prototype.call`.
-    pub(super) through_call: bool,
+    pub through_call: bool,
 }
 
 /// The arguments a forwarded call passes on (`Vm::forwarded_call`).

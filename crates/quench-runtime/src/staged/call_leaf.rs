@@ -69,25 +69,25 @@ const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
 #[derive(Clone, Copy)]
 pub struct LeafEntry<W> {
     /// The caller's call record.
-    pub(crate) call: W,
-    pub(crate) caller_registers: W,
+    pub call: W,
+    pub caller_registers: W,
     /// The caller's records (the lane context's `base`).
-    pub(crate) caller_base: W,
+    pub caller_base: W,
     /// The resolved target, which stays cached while the leaf runs.
-    pub(crate) target: W,
+    pub target: W,
     /// The values the call passed.
-    pub(crate) argc: W,
+    pub argc: W,
     /// The form the call runs as, a per-site constant.
-    pub(crate) form: LeafForm,
+    pub form: LeafForm,
 }
 
 /// The context words of the callee's window a leaf call may write: its bound receiver and its
 /// environment and captures (the target's).
 #[derive(Clone, Copy)]
 pub struct LeafContext<W> {
-    pub(crate) this: W,
-    pub(crate) env: W,
-    pub(crate) capture: W,
+    pub this: W,
+    pub env: W,
+    pub capture: W,
 }
 
 /// What a leaf's return reads of its record: the caller's call record, registers and records.

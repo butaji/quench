@@ -25,7 +25,7 @@ use super::object_encoding::{
 use super::object_extras::ObjectExtrasWords;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeObjectLayout {
+pub struct NativeObjectLayout {
     pub record_capacity: usize,
     pub record_size: usize,
     pub record_align: usize,
@@ -108,7 +108,7 @@ pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLa
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeArrayLayout {
+pub struct NativeArrayLayout {
     pub record_capacity: usize,
     pub record_size: usize,
     pub record_align: usize,
@@ -145,7 +145,7 @@ pub const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
 /// A hot record space's allocation cursor (`heap::records::RecordCursor`): two `u32` words, `next` then
 /// `limit`, which the empty-allocation rows bump (`heap_rows::empty_row`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeRecordCursorLayout {
+pub struct NativeRecordCursorLayout {
     pub next_offset: usize,
     pub limit_offset: usize,
 }
@@ -156,7 +156,7 @@ pub const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCu
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTypedArrayLayout {
+pub struct NativeTypedArrayLayout {
     pub entry_size: usize,
     pub page_shift: u32,
     pub page_mask: usize,
@@ -191,7 +191,7 @@ pub(crate) const LOOP_ENTRY_ARRAY_COUNT_AT: u64 = size_of::<u64>() as u64;
 pub(crate) use super::typed_array_catalog::TypedArrayKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeEnvironmentLayout {
+pub struct NativeEnvironmentLayout {
     pub header_pointer_offset: i32,
     pub sparse_mark: u64,
     pub slots_offset: u64,
@@ -209,7 +209,7 @@ pub const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironment
 /// index sit, so compiled code reads a field's slot inline. The record's stride is the record space's
 /// element size (`WasmGcRecord`, which the head starts), not the head's, so it is not named here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeWasmGcLayout {
+pub struct NativeWasmGcLayout {
     pub record_capacity: usize,
     pub payload_offset: usize,
     pub length_offset: usize,
@@ -224,7 +224,7 @@ pub const NATIVE_WASM_GC_LAYOUT: NativeWasmGcLayout = NativeWasmGcLayout {
 };
 
 #[derive(Debug)]
-pub(crate) struct NativeFieldCacheLayout {
+pub struct NativeFieldCacheLayout {
     pub entry_size: usize,
     pub receiver_offset: usize,
     pub holder_offset: usize,

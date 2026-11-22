@@ -23,7 +23,7 @@ pub type FunctionId = u16;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RegisterList {
     pub start: u32,
-    pub(crate) count: u16,
+    pub count: u16,
 }
 
 impl RegisterList {
@@ -114,10 +114,10 @@ pub struct Invocation {
 /// window (a known function, a method site).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CallFacts {
-    pub(crate) registers: u16,
-    pub(crate) activates: bool,
-    pub(crate) forwarding: bool,
-    pub(crate) forms: bool,
+    pub registers: u16,
+    pub activates: bool,
+    pub forwarding: bool,
+    pub forms: bool,
 }
 
 impl CallFacts {

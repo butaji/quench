@@ -211,7 +211,7 @@ pub fn concrete_write_side_flags(window: u64, flags: u64) {
 /// popped frame's packed word: the caller's program entered again (`crosses`); keeping and
 /// environment frames need nothing past the window's release.
 #[derive(Clone, Copy)]
-pub(crate) struct SideCompletion<C> {
+pub struct SideCompletion<C> {
     pub sided: C,
     pub crosses: C,
 }

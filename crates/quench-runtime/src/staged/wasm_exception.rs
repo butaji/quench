@@ -74,7 +74,7 @@ impl PayloadType {
     }
 
     /// The numeric Wasm type of a numeric payload; `None` for a reference.
-    pub(crate) fn numeric(self) -> Option<crate::WasmType> {
+    pub fn numeric(self) -> Option<crate::WasmType> {
         Some(match self {
             Self::I32 => crate::WasmType::I32,
             Self::I64 => crate::WasmType::I64,

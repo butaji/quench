@@ -41,7 +41,7 @@ mod tests {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct GeneralCodeCursor {
+pub struct GeneralCodeCursor {
     program: ProgramId,
     pub(super) function: u32,
     code: *const Instr,
@@ -80,7 +80,7 @@ pub struct PendingGeneralCall {
     /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
     /// decoding, once built, never moves; a cold caller simply keeps reading packed code.
     /// Lane calls leave it to the general loop, which derives it only if it resumes the caller.
-    pub(super) caller_cursor: Option<GeneralCodeCursor>,
+    pub caller_cursor: Option<GeneralCodeCursor>,
     pub call_pc: u32,
     pub destination: Register,
     /// Constructor substitution, promise settlement or generator resumption;
@@ -99,7 +99,7 @@ pub struct PendingGeneralCall {
 }
 
 /// Already materialized calls, adopted by the ordinary return/unwind loop before resuming.
-pub(crate) struct RecoveredCalls {
+pub struct RecoveredCalls {
     pub(super) calls: Vec<PendingGeneralCall>,
     pub(super) failure: Option<(u32, JsError)>,
 }
@@ -108,8 +108,8 @@ pub(crate) struct RecoveredCalls {
 /// the program the innermost executes and the error a call the lane made raised there, which
 /// the general loop resumes with as it does after its own lane run.
 pub struct LaneExit {
-    pub(super) executing: ExecutingProgram,
-    pub(super) raised: Option<JsError>,
+    pub executing: ExecutingProgram,
+    pub raised: Option<JsError>,
 }
 
 /// Where a general loop resumes its entry frame other than at its PC: after a lane run

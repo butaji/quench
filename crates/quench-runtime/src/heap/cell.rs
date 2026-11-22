@@ -668,7 +668,7 @@ pub(crate) struct WasmGlobalHeader {
 
 /// A memory's cold facts, boxed with its object part so the cell stays compact.
 #[derive(Clone, Debug)]
-pub(crate) struct WasmMemoryHeader {
+pub struct WasmMemoryHeader {
     pub(crate) object: Object,
     pub ty: wasmparser::MemoryType,
 }
@@ -1462,10 +1462,10 @@ impl EnvironmentSlot {
 /// its function and its scope. A record of its own family (`Value::direct_environment`).
 #[derive(Debug)]
 pub struct EnvironmentRecord {
-    pub(crate) parent: Value,
-    pub(crate) function: u32,
-    pub(crate) slots: EnvironmentSlots,
-    pub(crate) scope: EnvironmentScopeRef,
+    pub parent: Value,
+    pub function: u32,
+    pub slots: EnvironmentSlots,
+    pub scope: EnvironmentScopeRef,
 }
 
 // Size pins. The record is 32 bytes: parent, slots and scope are one word each, and the u32
@@ -1481,13 +1481,13 @@ const _: () = assert!(std::mem::size_of::<EnvironmentScopeRef>() == std::mem::si
 /// name resolution, while slot reads only need `parent`, `function` and `slots`.
 #[derive(Debug, Clone)]
 pub struct EnvironmentScope {
-    pub(crate) program: Option<u32>,
-    pub(crate) root_eval_scope: bool,
+    pub program: Option<u32>,
+    pub root_eval_scope: bool,
     // A captured lexical scope selects its names from the owning function's
     // binding-site table; slot values remain shared with that activation.
-    pub(crate) binding_site_pc: Option<u32>,
-    pub(crate) dynamic_bindings: EnvironmentBindings,
-    pub(crate) with_objects: Box<[Value]>,
+    pub binding_site_pc: Option<u32>,
+    pub dynamic_bindings: EnvironmentBindings,
+    pub with_objects: Box<[Value]>,
 }
 
 impl EnvironmentScope {
@@ -1659,7 +1659,7 @@ const SPARSE_ENTRIES_START: usize = 2;
 const SPARSE_ENTRY_WORDS: usize = 2;
 
 #[derive(Clone, Debug)]
-pub(crate) enum EnvironmentBindings {
+pub enum EnvironmentBindings {
     Owned(Vec<(Atom, Value)>),
     Shared(Value),
 }

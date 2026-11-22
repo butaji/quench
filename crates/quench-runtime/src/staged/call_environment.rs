@@ -122,23 +122,23 @@ pub(crate) fn bind_context<S: Stage>(stage: &mut S, registers: S::Word, context:
 /// The frame context a callee runs with: its receiver, its closure's environment and captures.
 #[derive(Clone, Copy)]
 pub struct WindowContext<W> {
-    pub(crate) this: W,
-    pub(crate) env: W,
+    pub this: W,
+    pub env: W,
     /// The captures' address (`ScriptCallTarget::capture`), as a word.
-    pub(crate) capture: W,
+    pub capture: W,
 }
 
 /// The shape of an environment window, from the target and its view (`EnvironmentWindow`).
 #[derive(Clone, Copy)]
 pub struct EnvironmentShape {
     /// The callee's registers (`ScriptCallTarget::registers`), after which the entries start.
-    pub(crate) registers: u16,
+    pub registers: u16,
     /// The registers live at entry, which start `undefined` (`ScriptCallTarget::entry_registers`).
-    pub(crate) live: u16,
+    pub live: u16,
     /// The environment's slots, the window's locals (`EnvironmentWindow::locals`).
-    pub(crate) locals: u16,
+    pub locals: u16,
     /// The slots the environment owns once made (`EnvironmentWindow::captured`).
-    pub(crate) captured: u64,
+    pub captured: u64,
 }
 
 impl EnvironmentShape {
@@ -154,18 +154,18 @@ impl EnvironmentShape {
 /// parameter's local and the callee at a named function expression's own local.
 #[derive(Clone, Copy)]
 pub struct EnvironmentPassed<W> {
-    pub(crate) arguments: W,
-    pub(crate) count: u16,
-    pub(crate) bound: u16,
+    pub arguments: W,
+    pub count: u16,
+    pub bound: u16,
     /// How many of the first values go to registers `0..in_registers` rather than to their
     /// parameters' locals: the parameters the compiler promoted in place, register `k` holding
     /// parameter `k` (`EnvironmentWindow::parameter_registers`, at most `bound`). A function that
     /// makes closures keeps those none of them names in registers (`CallPlan::environment_activation`).
-    pub(crate) in_registers: u16,
+    pub in_registers: u16,
     /// The rest parameter's local and the array the tier gathered for it.
-    pub(crate) rest: Option<(u16, W)>,
+    pub rest: Option<(u16, W)>,
     /// The self binding's local and the callee.
-    pub(crate) self_binding: Option<(u16, W)>,
+    pub self_binding: Option<(u16, W)>,
 }
 
 /// Enters an environment callee's window at `registers` (register 0), past its admission
