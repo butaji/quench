@@ -8765,7 +8765,9 @@ fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
         specialize_in_lane(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
-        if own.warming() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
+        // A body the model priced with the loop's work and found unpaid gains nothing from the loop asking
+        // again: the loop retires to its plain jump, which costs no countdown per back edge (TOD-2062).
+        if own.warming() && !own.body_unpaid() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
@@ -8786,6 +8788,14 @@ fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
     // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now, with the
     // `FUSED_TARGET` record where the header's target run holds (`update_fusion`'s `target`).
     if site.backedge > site.header {
+        // A header comparison that ran while the site held its loop took its formed instance (`row_jump`),
+        // which no target run names: it goes back to its plain row (and its record's `mode` to the zero of an
+        // unfused record), as the loader's `fuse_rows` saw it, so the back edge fuses the test again.
+        // SAFETY: the header is a record of the running view, on this thread.
+        if let Some(plain) = lane_frame::unformed_compare_jump(unsafe { (*header).handler }) {
+            unsafe { (*header.cast_mut()).mode = 0 };
+            requicken(header, plain);
+        }
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
         if let Some((fused, mode)) = update_fusion(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
@@ -12985,23 +12995,7 @@ fn call_native_out_in_lane(
     if vm.lane_stack.has_frames()
         && (vm.runs_beside_activations(native, callee) || vm.steps_beside_activations(native, receiver))
     {
-        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-        let result = call(vm, unsafe { &*(*cx).code });
-        note_allocation(vm);
-        vm.lane_stack.refresh_activation_limit();
-        let unobserved = vm.lane_deferred.take().is_some();
-        return match result {
-            Ok(value) => Some(value),
-            Err(error) => {
-                // The general path raises it from the frames its activations become.
-                if unobserved {
-                    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-                    vm.materialize_deferred_lane();
-                }
-                vm.lane_completion.raise(error);
-                None
-            }
-        };
+        return call_deferred_native_in_lane(cx, call_pc, call);
     }
     #[cfg(feature = "profile-lane-exits")]
     if vm.lane_stack.has_frames() {
@@ -13011,6 +13005,36 @@ fn call_native_out_in_lane(
         });
     }
     call_from_frame_in_lane(cx, ip, call)
+}
+
+/// Runs a native call beside the lane's activations as a deferred call (`DeferredLaneCall`),
+/// whose frames the first observer makes; an error is raised for the general path as the
+/// call's own frames would raise it.
+#[cold]
+#[inline(never)]
+fn call_deferred_native_in_lane(
+    cx: *mut LaneContext,
+    call_pc: usize,
+    call: impl FnOnce(&mut Vm, &ResidualProgram) -> Result<Value, JsError>,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+    let result = call(vm, unsafe { &*(*cx).code });
+    note_allocation(vm);
+    vm.lane_stack.refresh_activation_limit();
+    let unobserved = vm.lane_deferred.take().is_some();
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            // The general path raises it from the frames its activations become.
+            if unobserved {
+                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+                vm.materialize_deferred_lane();
+            }
+            vm.lane_completion.raise(error);
+            None
+        }
+    }
 }
 
 /// Whether `args` lie in the running function's registers, as its call record's window does:

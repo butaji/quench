@@ -90,6 +90,9 @@ pub(crate) struct PlannedPlaces<'a, const N: usize> {
     pub(crate) lexical: Option<u64>,
     /// The prototype-held read the row folds (`HELD_ROW`), whose receiver is `field_this`.
     pub(crate) held: Option<HeldRead>,
+    /// The receiver word register `LEFT` reads, where the row's holes name it elsewhere than hole 1: an IC
+    /// get's receiver sits above the destination in hole 0 (`site_object`), and hole 1 is the upper-word table.
+    pub(crate) receiver: Option<u64>,
 }
 
 impl<'a, const N: usize> Frame<Concrete> for PlannedPlaces<'a, N> {
@@ -100,10 +103,20 @@ impl<'a, const N: usize> Frame<Concrete> for PlannedPlaces<'a, N> {
     fn fact(&self, register: Register) -> Representation { self.places.fact(register) }
 
     #[inline(always)]
-    fn read(&mut self, stage: &mut Concrete, register: Register) -> u64 { self.places.read(stage, register) }
+    fn read(&mut self, stage: &mut Concrete, register: Register) -> u64 {
+        match self.receiver {
+            Some(receiver) if register == LEFT => receiver,
+            _ => self.places.read(stage, register),
+        }
+    }
 
     #[inline(always)]
-    fn tagged(&mut self, stage: &mut Concrete, register: Register) -> u64 { self.places.tagged(stage, register) }
+    fn tagged(&mut self, stage: &mut Concrete, register: Register) -> u64 {
+        match self.receiver {
+            Some(receiver) if register == LEFT => receiver,
+            _ => self.places.tagged(stage, register),
+        }
+    }
 
     #[inline(always)]
     fn write(&mut self, stage: &mut Concrete, register: Register, value: u64, fact: Representation) {
@@ -280,7 +293,7 @@ impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
 #[inline(always)]
 pub(crate) fn planned_frame<'a, const N: usize>(places: &'a mut Places,
     ops: [IcOp<'static>; N], callout: Callout) -> PlannedPlaces<'a, N> {
-    PlannedPlaces { places, ops, callout, lexical: None, held: None }
+    PlannedPlaces { places, ops, callout, lexical: None, held: None, receiver: None }
 }
 
 /// The staged global-name operation `operation` (`LoadName` or `GlobalWrite`) run over `places` where
@@ -288,7 +301,7 @@ pub(crate) fn planned_frame<'a, const N: usize>(places: &'a mut Places,
 #[inline(always)]
 pub(crate) fn run_lexical<const KIND: u16>(stage: &mut Concrete,
     places: &mut Places, address: u64, operation: Operation<u64, ()>) -> Step<u64, ()> {
-    let mut frame = PlannedPlaces { places, ops: [], callout: Callout::Plan, lexical: Some(address), held: None };
+    let mut frame = PlannedPlaces { places, ops: [], callout: Callout::Plan, lexical: Some(address), held: None, receiver: None };
     step_names_of::<KIND, _, _>(stage, &mut frame, operation)
 }
 

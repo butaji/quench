@@ -84,7 +84,7 @@ fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
     let held = HeldRead { object, shape: receiver as u32, link, constant: [(link, hole64::<HOLE_B>())] };
     let mut stage = StencilStage::from_hole(HOLE_B);
     let mut places = Places::new::<D, MEM, MEM>(s);
-    let mut frame = PlannedPlaces { places: &mut places, ops: [], callout: Callout::Plan, lexical: None, held: Some(held) };
+    let mut frame = PlannedPlaces { places: &mut places, ops: [], callout: Callout::Plan, lexical: None, held: Some(held), receiver: None };
     let read = Operation::GetField { base: FieldBase::THIS, lookup: FieldLookup::Site(0), destination: DEST };
     let word = match step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut frame, read) {
         Step::Value(word) => Some(word),

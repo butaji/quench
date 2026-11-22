@@ -147,6 +147,10 @@ impl LaneView {
         self.skip_warm_up();
     }
 
+    /// Whether the tier model priced a compile of its body and found it would not pay
+    /// (`LaneBodyOutcome::Unpaid`): its entries alone decide when it looks again.
+    pub(in super::super) fn body_unpaid(&self) -> bool { self.tier().history.get().unpaid }
+
     /// A function whose bodies lifecycle edges discarded warms as any entry does.
     fn skip_warm_up(&self) {
         // SAFETY: as `lane_body`; no lane body runs here.

@@ -1708,7 +1708,7 @@ impl Vm {
 
     /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active
     /// program and realm around it; from a `resume`, it continues where that left.
-    #[inline(always)]
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     fn run_general_loop<const STOPS: bool>(
         &mut self,
@@ -1749,7 +1749,7 @@ impl Vm {
             .saturating_mul(std::mem::size_of::<Value>());
             Some(
                 crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
-                    .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?,
+                    .map_err(|crate::stack::StackExhausted| Self::wasm_call_stack_exhausted())?,
             )
         } else {
             None
@@ -1848,11 +1848,7 @@ impl Vm {
             if native_step.is_none() && !self.execution_mode.allows_dynamic_execution()
                 && !(STOPS && stop_pc == Some(pc))
             {
-                self.record_native_execution_rejection();
-                return Err(JsError::validation(format!(
-                    "native guest code required: {} function {} at {}",
-                    p.source_name, self.frames[frame].function, pc,
-                )));
+                return Err(self.native_execution_rejected(p, frame, pc));
             }
             if super::compiled::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed && pc == 0
                 && let Some(return_pc) = self.js_tier_frame_entry(p, frame)
@@ -2100,8 +2096,7 @@ impl Vm {
             let step = if let Some(step) = native_step {
                 step.result
             } else if !crate::DYNAMIC_EXECUTION_ENABLED {
-                self.record_native_execution_rejection();
-                return Err(JsError::validation("native guest code required: interpreter dispatch is unavailable".into()));
+                return Err(self.interpreter_unavailable());
             } else {
             #[cfg(feature = "profile-memory")]
             self.heap.set_memory_allocation_site(
@@ -2534,9 +2529,7 @@ impl Vm {
                     let caller_program = if callee_program == executing_program {
                         None
                     } else {
-                        let retained = self.programs.get(callee_program).ok_or_else(|| {
-                            JsError::validation("missing callee program".into())
-                        })?;
+                        let retained = self.programs.get(callee_program).ok_or_else(Self::missing_callee_program)?;
                         let saved = SavedProgram {
                             id: executing_program,
                             retained: current_program.replace(retained),
@@ -2588,9 +2581,7 @@ impl Vm {
                     if replacement_program != executing_program {
                         self.set_active_program(replacement_program);
                         current_program =
-                            Some(self.programs.get(replacement_program).ok_or_else(|| {
-                                JsError::validation("missing tail-call program".into())
-                            })?);
+                            Some(self.programs.get(replacement_program).ok_or_else(Self::missing_tail_call_program)?);
                     }
                     executing_program = replacement_program;
                     executing_residual = current_program.as_deref().unwrap_or(entry_program);
@@ -2668,6 +2659,47 @@ impl Vm {
                 Err(error) => unwind_at!(instruction_pc as u32, error),
             }
         }
+    }
+
+    /// The error for a Wasm call whose stack-frame storage exceeds the guest stack limit.
+    #[cold]
+    #[inline(never)]
+    fn wasm_call_stack_exhausted() -> JsError {
+        JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted)
+    }
+
+    /// Records a rejected native execution and builds the error for guest code at `pc` that native tiers may not run.
+    #[cold]
+    #[inline(never)]
+    fn native_execution_rejected(&mut self, p: &ResidualProgram, frame: usize, pc: usize) -> JsError {
+        self.record_native_execution_rejection();
+        JsError::validation(format!(
+            "native guest code required: {} function {} at {}",
+            p.source_name, self.frames[frame].function, pc,
+        ))
+    }
+
+    /// Records a rejected native execution and builds the error for a dispatch step that needs
+    /// the interpreter in a build without dynamic execution.
+    #[cold]
+    #[inline(never)]
+    fn interpreter_unavailable(&mut self) -> JsError {
+        self.record_native_execution_rejection();
+        JsError::validation("native guest code required: interpreter dispatch is unavailable".into())
+    }
+
+    /// The error for a callee whose residual program the VM no longer holds.
+    #[cold]
+    #[inline(never)]
+    fn missing_callee_program() -> JsError {
+        JsError::validation("missing callee program".into())
+    }
+
+    /// The error for a tail call whose residual program the VM no longer holds.
+    #[cold]
+    #[inline(never)]
+    fn missing_tail_call_program() -> JsError {
+        JsError::validation("missing tail-call program".into())
     }
 
     /// Finds the handler for `error` thrown at `throwing_pc`, popping in-loop activations

@@ -222,7 +222,7 @@ const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>
 fn dense_storage_fits(present: usize, length: usize) -> bool {
     present.saturating_mul(SPARSE_ENTRY_SLOTS) >= length
 }
-pub use pacing::MemoryPolicy;
+pub use pacing::{MemoryPolicy, memory_mix_has};
 pub(crate) use pacing::PromotionAge;
 /// The prototypes `Heap::mark_prototype` remembers: an ordinary object's and an array's,
 /// whose allocations alternate (array literals and objects in one request handler), so one
@@ -3817,8 +3817,9 @@ impl Heap {
     }
 
     /// Marks `value` when it is a heap value not marked yet, pushing the values it keeps
-    /// alive onto `work`: the serial mark's visit of one value.
-    #[inline(always)]
+    /// alive onto `work`: the serial mark's visit of one value. Objects, arrays, functions and
+    /// strings are visited here; the rarer kinds are visited by `mark_rare_value`.
+    #[inline]
     fn mark_value<R>(&mut self, value: Value, ctx: &mut MarkCtx<'_, '_, R>)
     where
         R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
@@ -3832,19 +3833,11 @@ impl Heap {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
             }
-            // SAFETY: the direct handle is live and its mark bit was newly set.
-            let object = unsafe { self.object_records.get_live(record_id) };
             if self.rc_marking && self.object_records.is_aged(record_id) {
-                // A survivor (or a re-marked candidate) counts what its snapshot names
-                // (`SatbSnapshot`), pushed here. Its shape's edges are pinned or this
-                // collection's roots, and its owned roots are roots (`Vm::collect_inner`).
-                let first = ctx.work.len();
-                Self::object_children(value, object, &self.properties, ctx.work, &mut |_, _, _, _, _| {}, ctx.trace_kind, &mut PushedProtos::default());
-                for &child in &ctx.work[first..] {
-                    self.rc_increment(child);
-                }
-                self.rc_counted += 1;
+                self.push_aged_object_children(value, record_id, ctx.work, ctx.trace_kind);
             } else {
+                // SAFETY: the direct handle is live and its mark bit was newly set.
+                let object = unsafe { self.object_records.get_live(record_id) };
                 Self::object_children(
                     value,
                     object,
@@ -3855,7 +3848,7 @@ impl Heap {
                     &mut ctx.last_proto,
                 );
             }
-            ephemeron_tail!(self, ctx, value, None);
+            self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
         } else if let Some(record_id) = value.direct_array_index() {
             if !self.array_records.mark(record_id) {
                 return;
@@ -3865,17 +3858,11 @@ impl Heap {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[CellKind::Array as usize] += 1;
             }
-            // SAFETY: a direct Array Value names an initialized record.
-            let array = unsafe { self.array_records.get_live(record_id) };
             if self.rc_marking && self.array_records.is_aged(record_id) {
-                // As for an object: the snapshot's values are counted as they are pushed.
-                let first = ctx.work.len();
-                Self::array_children(value, array, &self.properties, |_| false, ctx.work, &mut |_, _, _, _, _| {}, ctx.trace_kind, &mut PushedProtos::default());
-                for &child in &ctx.work[first..] {
-                    self.rc_increment(child);
-                }
-                self.rc_counted += 1;
+                self.push_aged_array_children(value, record_id, ctx.work, ctx.trace_kind);
             } else {
+                // SAFETY: a direct Array Value names an initialized record.
+                let array = unsafe { self.array_records.get_live(record_id) };
                 let string_records = &mut self.string_records;
                 Self::array_children(
                     value,
@@ -3893,7 +3880,7 @@ impl Heap {
             {
                 ctx.work.extend(elements.values.values().copied());
             }
-            ephemeron_tail!(self, ctx, value, None);
+            self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
         } else if let Some(record_id) = value.direct_function_index() {
             if !self.function_records.mark(record_id) {
                 return;
@@ -3915,8 +3902,38 @@ impl Heap {
                 &mut ctx.last_proto,
             );
             ctx.environments.closure(function.env, &function.kind, ctx.work);
-            ephemeron_tail!(self, ctx, value, None);
-        } else if let Some(record_id) = value.direct_iterator_index() {
+            self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
+        } else if let Some(record_id) = value.direct_string_index() {
+            if let Some(local) = small_strings::small_string_local(record_id) {
+                self.mark_small_string(local, ctx.work);
+                return;
+            }
+            // A string holds no edges but its parts': marking it and tracing them is the visit.
+            if self.string_records.mark(record_id) {
+                string_parts::trace_parts(&mut self.string_records, record_id, ctx.work);
+                if self.rc_marking && self.string_records.is_aged(record_id) {
+                    self.count_flat_string_parts(record_id);
+                }
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
+                }
+            }
+        } else {
+            self.mark_rare_value(value, ctx);
+        }
+    }
+
+    /// Marks a value of a kind `mark_value` does not visit inline (iterators, collections,
+    /// vectors, environments, Wasm GC objects, symbols, awaits, promises and legacy cells),
+    /// with the same visit. Out of line, so the common visit stays small.
+    #[inline(never)]
+    fn mark_rare_value<R>(&mut self, value: Value, ctx: &mut MarkCtx<'_, '_, R>)
+    where
+        R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+    {
+        if let Some(record_id) = value.direct_iterator_index() {
             if !self.iterator_records.mark(record_id) {
                 return;
             }
@@ -3937,7 +3954,7 @@ impl Heap {
                 &mut ctx.last_proto,
             );
             Self::iterator_edges(iterator, ctx.work);
-            ephemeron_tail!(self, ctx, value, None);
+            self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
         } else if let Some(record_id) = value.direct_collection_index() {
             if !self.collection_records.mark(record_id) {
                 return;
@@ -3963,44 +3980,7 @@ impl Heap {
                 &mut ctx.last_proto,
             );
             Self::collection_edges(&collection.entries, ctx.work);
-            ephemeron_tail!(self, ctx, value, None);
-        } else if let Some(record_id) = value.direct_string_index() {
-            if let Some(local) = small_strings::small_string_local(record_id) {
-                if self.small_strings.mark(local) {
-                    small_strings::trace_small(&self.small_strings, &mut self.string_records, local, ctx.work);
-                    if self.rc_marking && self.small_strings.is_aged(local) {
-                        // A survivor counts its parts as it marks them (`Heap::rc_epoch`).
-                        // SAFETY: just marked, so occupied.
-                        unsafe { self.small_strings.get_live(local) }
-                            .for_each_text(|part| self.rc_increment(Value::direct_string(part)));
-                        self.rc_counted += 1;
-                    }
-                    #[cfg(feature = "profile-aggregate")]
-                    {
-                        self.gc_profile.marked += 1;
-                        self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
-                    }
-                }
-                return;
-            }
-            // A string holds no edges but its parts': marking it and tracing them is the visit.
-            if self.string_records.mark(record_id) {
-                string_parts::trace_parts(&mut self.string_records, record_id, ctx.work);
-                if self.rc_marking && self.string_records.is_aged(record_id) {
-                    // As for a small string; a flat one, marked in place wherever its holder
-                    // is traced, has no parts to count.
-                    // SAFETY: just marked, so occupied.
-                    if let Some(parts) = unsafe { self.string_records.get_live(record_id) }.parts() {
-                        parts.for_each_text(|part| self.rc_increment(Value::direct_string(part)));
-                    }
-                    self.rc_counted += 1;
-                }
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.marked += 1;
-                    self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
-                }
-            }
+            self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
         } else if let Some(record_id) = value.direct_v128_index() {
             // A vector holds no heap edges: marking it is the whole visit.
             if self.v128_records.mark(record_id) {
@@ -4039,7 +4019,7 @@ impl Heap {
                 unsafe { self.wasm_gc_records.get_live(record_id) }.trace_children(ctx.work);
                 // A Wasm GC object may key a weak map (a JS cache of its wrapper): the value that
                 // waits on it is told that it is marked.
-                ephemeron_tail!(self, ctx, value, None);
+                self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
             }
         } else if let Some(record_id) = value.direct_symbol_index() {
             // A symbol holds no edges: marking it is the whole visit, and a weak key's ephemeron
@@ -4050,7 +4030,7 @@ impl Heap {
                     self.gc_profile.marked += 1;
                     self.gc_profile.marked_kinds[CellKind::Symbol as usize] += 1;
                 }
-                ephemeron_tail!(self, ctx, value, None);
+                self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
             }
         } else if let Some(record_id) = value.direct_await_index() {
             if !self.await_records.mark(record_id) {
@@ -4084,7 +4064,7 @@ impl Heap {
                 &mut ctx.last_proto,
             );
             promise.record.append_roots(ctx.work);
-            ephemeron_tail!(self, ctx, value, None);
+            self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
         } else {
             let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
                 return;
@@ -4115,6 +4095,71 @@ impl Heap {
             );
             ephemeron_tail!(self, ctx, value, Some(cell));
         }
+    }
+
+    /// Traces the parts of a small string and counts them when the string survives.
+    #[inline(never)]
+    fn mark_small_string(&mut self, local: RecordId, work: &mut Vec<Value>) {
+        if self.small_strings.mark(local) {
+            small_strings::trace_small(&self.small_strings, &mut self.string_records, local, work);
+            if self.rc_marking && self.small_strings.is_aged(local) {
+                // A survivor counts its parts as it marks them (`Heap::rc_epoch`).
+                // SAFETY: just marked, so occupied.
+                unsafe { self.small_strings.get_live(local) }
+                    .for_each_text(|part| self.rc_increment(Value::direct_string(part)));
+                self.rc_counted += 1;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
+            }
+        }
+    }
+
+    /// Pushes the children of an aged object (a survivor or re-marked candidate) and counts each.
+    #[inline(never)]
+    fn push_aged_object_children(&mut self, value: Value, record_id: RecordId, work: &mut Vec<Value>, trace_kind: GcTraceKind) {
+        // A survivor's snapshot names its children (`SatbSnapshot`); its shape's edges are pinned
+        // or this collection's roots, and its owned roots are roots (`Vm::collect_inner`).
+        // SAFETY: the direct handle is live and its mark bit was newly set.
+        let object = unsafe { self.object_records.get_live(record_id) };
+        let first = work.len();
+        Self::object_children(value, object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
+        for &child in &work[first..] {
+            self.rc_increment(child);
+        }
+        self.rc_counted += 1;
+    }
+
+    /// Pushes the children of an aged array and counts each (as `push_aged_object_children`).
+    #[inline(never)]
+    fn push_aged_array_children(&mut self, value: Value, record_id: RecordId, work: &mut Vec<Value>, trace_kind: GcTraceKind) {
+        // SAFETY: a direct Array Value names an initialized record.
+        let array = unsafe { self.array_records.get_live(record_id) };
+        let first = work.len();
+        Self::array_children(value, array, &self.properties, |_| false, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
+        for &child in &work[first..] {
+            self.rc_increment(child);
+        }
+        self.rc_counted += 1;
+    }
+
+    /// Counts the parts of a surviving flat string (`mark_value`'s string arm).
+    #[inline(never)]
+    fn count_flat_string_parts(&mut self, record_id: RecordId) {
+        // SAFETY: just marked, so occupied.
+        if let Some(parts) = unsafe { self.string_records.get_live(record_id) }.parts() {
+            parts.for_each_text(|part| self.rc_increment(Value::direct_string(part)));
+        }
+        self.rc_counted += 1;
+    }
+
+    /// Tells the weak map values waiting on a newly marked `value` (`EphemeronWork::newly_marked`).
+    #[inline(never)]
+    fn notify_ephemerons_marked(&self, value: Value, cell: Option<&Cell>, ephemerons: &mut weak::EphemeronWork, work: &mut Vec<Value>) {
+        let mark_bits = mark_bits!(self);
+        ephemerons.newly_marked(value, cell, |target| mark_bits.is_marked(target), work);
     }
 
     #[inline(always)]

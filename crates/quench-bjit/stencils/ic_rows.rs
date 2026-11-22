@@ -71,21 +71,30 @@ fn receiver<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Opt
 
 
 
-/// A get: `GetField` of the receiver (hole 1) through the entry's ops, the own slot (`GuardShape`,
+/// A get: `GetField` of the receiver (above the destination in hole 0) through the entry's ops, the own slot (`GuardShape`,
 /// `LoadSlot`) or the prototype's (`Prototype`, then the holder's shape and its arena slot); the
 /// word goes to the destination `D`.
 #[inline(always)]
 fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    // The receiver is the word above the destination's offset in hole 0, not hole 1's (`GET_RECEIVER`).
+    let receiver = site_object(&s);
     let mut places = Places::new::<D, MEM, MEM>(s);
     let step = if HOLDER {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
-        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
+        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut received(planned_frame(&mut places, ops, Callout::Plan), receiver), receiver_read())
     } else {
         let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: Representation::Tagged }];
-        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, ops, Callout::Plan), receiver_read())
+        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut received(planned_frame(&mut places, ops, Callout::Plan), receiver), receiver_read())
     };
     finish_chained::<CHAINED>(places.s, step, |s, word| deliver::<D>(s, word))
+}
+
+/// `frame` with register `LEFT` reading `receiver`.
+#[inline(always)]
+fn received<const N: usize>(mut frame: crate::places_property::PlannedPlaces<'_, N>, receiver: u64) -> crate::places_property::PlannedPlaces<'_, N> {
+    frame.receiver = Some(receiver);
+    frame
 }
 
 /// A set: `SetField` of the value (`A`, hole 1) into the receiver (hole 0), through the entry's

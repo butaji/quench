@@ -393,6 +393,19 @@ impl CodeMemory {
 
 impl Drop for CodeMemory {
     fn drop(&mut self) {
+        if crate::trace::Dev::PoisonFreedCode.on() {
+            // The block stays allocated and traps from now on: a run that enters or returns into
+            // freed code stops at once, at the address it reached (TOD-2060).
+            let views = heap().regions[self.block.region as usize].views;
+            let offset = self.block.offset as usize;
+            // SAFETY: the block's `length` bytes of the writable view, still owned by this memory.
+            let code = unsafe { std::slice::from_raw_parts_mut(views.writer(offset), self.length) };
+            let _ = Views::writing(|| { code.fill(0xcc); Ok::<(), String>(()) });
+            retire::retire(views, offset, self.length);
+            views::flush_icache(self.pointer, self.length);
+            eprintln!("QUENCH_CODE_POISONED address={:p} bytes={}", self.pointer, self.length);
+            return;
+        }
         heap().free(self.block, self.length);
     }
 }
