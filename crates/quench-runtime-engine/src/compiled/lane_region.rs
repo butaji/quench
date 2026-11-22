@@ -1753,6 +1753,8 @@ pub(crate) struct RegionSpecializer<'p> {
     /// The capture slots that held int32s at compilation (`Observation::int_captures`).
     pub(crate) int_captures: &'p [u16],
     pub(crate) plan: RegionPlan,
+    /// The gate's proof that this region's compile may run (minted by `specialize`).
+    pub(crate) admitted: super::admission::CompiledUnit,
 }
 
 impl Specializer for RegionSpecializer<'_> {
@@ -1793,12 +1795,13 @@ pub(crate) fn lower_body(
     direct: &DirectSites,
     frame_captures: &[(usize, usize)], entry: Option<usize>,
     number_reads: &[super::facts::ObservedRead],
+    admitted: super::admission::CompiledUnit,
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     DECLINED.with(|declined| declined.set(None));
     UNLOWERED.with(|unlowered| unlowered.borrow_mut().clear());
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], admitted,
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views: ElementViews::Dense } };
     // The scalar entry lowers first: the body calls it only where it exists.

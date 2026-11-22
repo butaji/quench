@@ -1527,8 +1527,9 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize))?;
+    let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Aot, facts: Default::default() }).compiled()?;
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
-        fields: &[], global_reads, facts, generic: &[],
+        fields: &[], global_reads, facts, generic: &[], admitted,
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
         entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,

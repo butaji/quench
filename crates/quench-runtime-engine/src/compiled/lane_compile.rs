@@ -211,8 +211,9 @@ impl LoweringJob<'_> {
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
             names: Some(&names), own_constant: &own_constant, root_constant: &root_constant }), construct_plans: Some(&construct_plans), ..self.facts };
+        let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Body, facts: Default::default() }).compiled()?;
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
-            &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads)
+            &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads, admitted)
     }
 }
 

@@ -19,7 +19,9 @@ fn lower_numeric_region(program: &ResidualProgram, function_id: u32) -> Option<N
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = quench_runtime::vm::jit_backend::target_isa()?;
-    let region = lane_region::RegionSpecializer { function_id, unit: &unit,
+    let facts = super::admission::UnitFacts { cranelift_allowed: quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT), ..Default::default() };
+    let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Entry, facts }).compiled()?;
+    let region = lane_region::RegionSpecializer { function_id, unit: &unit, admitted,
         helpers: LaneHelpers::Numeric, fields: &[],
         global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,

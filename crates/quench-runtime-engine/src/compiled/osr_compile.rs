@@ -115,6 +115,8 @@ struct LoopFacts {
 /// Everything a loop region's lowering reads, owned: it reads nothing of the VM, so it runs on
 /// the code generator's thread (`ResidualProgram::detached` for the program).
 struct LoopJob {
+    /// The gate's proof that this loop's region may compile (minted by the caller of `start_osr_region`).
+    admitted: super::admission::CompiledUnit,
     program: quench_runtime::bytecode::DetachedProgram,
     plans: Vec<LoopInput>,
     fields: Vec<Option<Vec<NativeFieldLoad>>>,
@@ -158,6 +160,7 @@ impl LoopJob {
                 method_cache_atoms: atoms, invalidation: *invalidation, constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
                 names: Some(&names), own_constant: &own_constant, root_constant: &root_constant });
             super::lane_region::RegionSpecializer {
+                admitted: self.admitted,
                 number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers, string_entries: &self.facts.string_registers,
                 typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures,
                 function_id: self.function_id, unit: &plan.unit, helpers: self.helpers, fields: &self.fields,
@@ -399,7 +402,7 @@ fn loop_inputs(program: &ResidualProgram, region: &LoopRegion, function_id: u32,
 pub(crate) fn start_osr_region(
     region: &LoopRegion, views: super::ElementViews,
     observation: &Observation<'_>,
-    (policy, tiers): (quench_runtime::MemoryPolicy, &'static Tiers),
+    tiers: &'static Tiers,
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
@@ -407,9 +410,10 @@ pub(crate) fn start_osr_region(
     (widened, stores): (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
     mut calls: RegionCalls,
     base: bool,
+    admitted: super::admission::CompiledUnit,
     mut online: Option<OsrOnline<'_>>,
 ) -> Option<PendingOsrRegion> {
-    let isa = quench_runtime::vm::jit_backend::target_isa().filter(|_| super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Region(policy), facts: Default::default() }).compiled().is_some())?;
+    let isa = quench_runtime::vm::jit_backend::target_isa()?;
     // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
     let invalidation = Invalidation::default();
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
@@ -450,7 +454,7 @@ pub(crate) fn start_osr_region(
     let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: number_entries, string_registers: observation.string_entries.to_vec(),
         typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(),
         frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds, construct_plans };
-    let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers,
+    let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers, admitted,
         held: stores.map(|names| (names.clone(), invalidation.address())),
         online: online.map(|online| (online.atoms, online.constants, invalidation.address())) };
     // The job reads the plans' direct callees by pointer (`directs`), which the pending region keeps: guarded.
