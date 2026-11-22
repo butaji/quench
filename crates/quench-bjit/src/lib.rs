@@ -289,27 +289,38 @@ pub fn symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> V
 }
 
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
+// The library tests read the stencil tables, which `quench-stencils` defines.
+#[cfg(test)]
+extern crate quench_stencils;
+
 pub mod rustc {
     use super::{class, trailing_jump, Imm32, Reloc, Stencil, NEXT};
 
     /// A stencil as `build.rs` read it from the object: relocations as (offset, class, index, addend).
-    pub(crate) struct RawStencil {
-        pub(crate) name: &'static str,
-        pub(crate) code: &'static [u8],
-        pub(crate) hot_len: usize,
-        pub(crate) relocs: &'static [(u16, u8, u8, i32)],
+    #[doc(hidden)]
+    pub struct RawStencil {
+        pub name: &'static str,
+        pub code: &'static [u8],
+        pub hot_len: usize,
+        pub relocs: &'static [(u16, u8, u8, i32)],
     }
 
     /// One CPU variant's stencils, and what `build.rs` counted over them (`build/checks.rs`).
-    pub(crate) struct RawLibrary {
+    #[doc(hidden)]
+    pub struct RawLibrary {
         /// Rows that adjust or use the stack, where a pinned register would spill.
-        pub(crate) stencils_with_stack_frame: usize,
+        pub stencils_with_stack_frame: usize,
         /// Rows whose hot path does not end with the continuation jump the stitcher drops.
-        pub(crate) stencils_not_ending_in_continuation: usize,
-        pub(crate) rows: &'static [RawStencil],
+        pub stencils_not_ending_in_continuation: usize,
+        pub rows: &'static [RawStencil],
     }
 
-    include!(concat!(env!("OUT_DIR"), "/rustc_stencils.rs"));
+    // The tables are the `quench-stencils` crate's (its build compiles every row), linked into the binary by
+    // `quench-layers`: the runtime crates depend on this crate alone, so they compile while the stencils build.
+    unsafe extern "Rust" {
+        safe static QUENCH_STENCILS_BASELINE: &'static RawLibrary;
+        safe static QUENCH_STENCILS_V3: &'static RawLibrary;
+    }
 
     /// Whether this CPU runs the x86-64-v3 build: its AVX2 and BMI2 baseline with the rest of the
     /// level (AVX, BMI1, F16C, FMA, LZCNT, MOVBE). Other targets have only the baseline table.
@@ -328,7 +339,7 @@ pub mod rustc {
     /// The library this process's stencils come from, chosen once at first use.
     fn library() -> &'static RawLibrary {
         static CHOSEN: std::sync::OnceLock<&'static RawLibrary> = std::sync::OnceLock::new();
-        CHOSEN.get_or_init(|| if runs_v3() { &V3 } else { &BASELINE })
+        CHOSEN.get_or_init(|| if runs_v3() { QUENCH_STENCILS_V3 } else { QUENCH_STENCILS_BASELINE })
     }
 
     /// Rows of the chosen library that keep a stack frame.

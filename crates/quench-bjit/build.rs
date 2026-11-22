@@ -144,7 +144,7 @@ const EXTRA_WATCHED: [&str; 3] = ["supernodes.txt", RUSTC_FLAGS_FILE, "../quench
 
 /// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
 fn rustc_flags() -> Vec<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(RUSTC_FLAGS_FILE);
+    let path = manifest_dir().join(RUSTC_FLAGS_FILE);
     let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     text.lines().flat_map(|line| line.split('#').next().unwrap_or("").split_whitespace()).map(String::from).collect()
 }
@@ -161,18 +161,39 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     }
 }
 
+/// The `quench-bjit` crate directory, where the stencil sources and lists are. This script builds two packages:
+/// `quench-bjit` (the library's generated supernode list only) and `quench-stencils` (every stencil row and the
+/// table), so the runtime crates, which depend on `quench-bjit` alone, compile while the stencils build.
+fn manifest_dir() -> &'static Path {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let package = Path::new(env!("CARGO_MANIFEST_DIR"));
+        if package.ends_with("quench-bjit") { package.to_path_buf() } else { package.join("../quench-bjit").canonicalize().expect("the quench-bjit crate") }
+    })
+}
+
+/// Whether this run builds the stencil table (`quench-stencils`) rather than `quench-bjit`'s supernode list alone.
+fn builds_stencils() -> bool {
+    env::var("CARGO_PKG_NAME").is_ok_and(|name| name == "quench-stencils")
+}
+
 fn main() {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = manifest_dir();
+    // The stencil sources and arguments are relative to the `quench-bjit` crate.
+    env::set_current_dir(manifest).expect("enter the quench-bjit crate");
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
     println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\"))");
     for extra in EXTRA_WATCHED {
-        println!("cargo::rerun-if-changed={extra}");
+        println!("cargo::rerun-if-changed={}", manifest.join(extra).display());
     }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let listed = supernodes::load(manifest);
     let generated = out.join("supernodes.rs");
     fs::write(&generated, &listed.text).unwrap();
     println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());
+    if !builds_stencils() {
+        return;
+    }
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
         watch(&sources::watched(manifest));
@@ -441,7 +462,7 @@ fn stencil_sources(out: &Path, family: Family, shard: usize) -> Option<std::coll
     let text = fs::read_to_string(&deps).ok()?;
     // The first rule names the output and then every input, separated by spaces (a space in a path is `\ `).
     let (_, inputs) = text.lines().next()?.split_once(": ")?;
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = manifest_dir();
     let files = inputs.replace("\\ ", "\0").split_whitespace().map(|path| manifest.join(path.replace('\0', " "))).filter(|path| !path.starts_with(out)).collect();
     Some(files)
 }
@@ -524,8 +545,13 @@ fn compile(job: &Shard, shard: usize) {
     // The same rustc lists the shard's mono items (`-Z print-mono-items`, on stdout), which name every function a
     // row can reach: the reach file comes from this compile rather than a second, unoptimized one (`write_reach`).
     // The flag is outside `job.args`, so it is in no key.
-    let run = || Command::new(rustc()).args(&job.args).args(["-Z", "print-mono-items=yes"])
-        .envs(job.envs.iter().map(|(name, path)| (*name, path))).stderr(std::process::Stdio::inherit()).output().expect("run rustc");
+    let run = || {
+        let child = shard_command().args(&job.args).args(["-Z", "print-mono-items=yes"])
+            .envs(job.envs.iter().map(|(name, path)| (*name, path))).stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit()).spawn().expect("run rustc");
+        yield_to_oom_killer(child.id());
+        child.wait_with_output().expect("run rustc")
+    };
     let mut output = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
     if killed(&output.status) {
         println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again alone");
@@ -552,6 +578,27 @@ fn publish(object: &Path, shared: &Path) {
         let _ = fs::rename(&partial, shared);
     }
     let _ = fs::remove_file(&partial);
+}
+
+/// The command a shard's rustc runs under: at the lowest CPU priority where `nice` is on the path (Unix), so the
+/// runtime crates, which compile beside the stencils and are the build's critical path, take the cores first and the
+/// shards fill the cores they leave idle.
+fn shard_command() -> Command {
+    let nice = Path::new("/usr/bin/nice");
+    if cfg!(unix) && nice.is_file() {
+        let mut command = Command::new(nice);
+        command.arg("-n19").arg(rustc());
+        command
+    } else {
+        Command::new(rustc())
+    }
+}
+
+/// Makes shard rustc `pid` the kernel's first out-of-memory victim (`oom_score_adj` 1000). The stencils build beside
+/// the runtime crates (`quench-stencils`): a shard killed for memory is compiled again alone (`compile`), where a
+/// killed runtime crate would fail the build.
+fn yield_to_oom_killer(pid: u32) {
+    let _ = fs::write(format!("/proc/{pid}/oom_score_adj"), "1000");
 }
 
 /// Held for reading by every shard compile, and for writing by the rerun of one the kernel killed.

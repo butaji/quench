@@ -4088,7 +4088,7 @@ fn concat_value_in_lane(cx: *mut LaneContext, r: Registers, window: RegisterWind
 pub(crate) fn staged_delete(cx: *mut LaneContext, r: Registers, [destination, base, key]: [u16; 3], strict: bool) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::hosted(r, Carried::script(cx), cx);
-    matches!(quench_runtime::staged::step(&mut stage, &mut frame, Operation::Delete { destination, base, key, strict }), Step::Value(_))
+    matches!(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::DELETE }, _, _>(&mut stage, &mut frame, Operation::Delete { destination, base, key, strict }), Step::Value(_))
 }
 
 // The fusion handlers and their install passes (`fuse_rows`, `fuse_chains`), in their own module.

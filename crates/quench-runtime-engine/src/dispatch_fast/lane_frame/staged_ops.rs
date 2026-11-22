@@ -22,7 +22,7 @@ fn jump_edge(step: Step<u64, LaneControl>) -> Option<Edge> {
 pub(crate) fn staged_typeof_index(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match quench_runtime::staged::step(&mut stage, &mut frame, Operation::TypeofIndex { destination, source }) {
+    match quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::TYPEOF_INDEX }, _, _>(&mut stage, &mut frame, Operation::TypeofIndex { destination, source }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
         Step::Control(_) => unreachable!("a typeof transfers no control"),
@@ -35,7 +35,7 @@ pub(crate) fn staged_typeof_index(r: Registers, view: Carried, destination: u16,
 pub(crate) fn staged_require_object_coercible(r: Registers, view: Carried, register: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match quench_runtime::staged::step(&mut stage, &mut frame, Operation::RequireObjectCoercible { register }) {
+    match quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::REQUIRE_OBJECT_COERCIBLE }, _, _>(&mut stage, &mut frame, Operation::RequireObjectCoercible { register }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
         Step::Control(_) => unreachable!("a coercibility test transfers no control"),
@@ -48,7 +48,7 @@ pub(crate) fn staged_require_object_coercible(r: Registers, view: Carried, regis
 pub(crate) fn staged_require_iterator_result(r: Registers, view: Carried, register: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(quench_runtime::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
+    matches!(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::REQUIRE_ITERATOR_RESULT }, _, _>(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
 }
 
 /// ToNumeric of a Number register `source` into `destination`, by the staged operation;
@@ -57,7 +57,7 @@ pub(crate) fn staged_require_iterator_result(r: Registers, view: Carried, regist
 pub(crate) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match quench_runtime::staged::step(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination, source })) {
+    match quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::NUMBER }, _, _>(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination, source })) {
         Step::Value(_) => true,
         Step::Unresolved => false,
         Step::Control(_) => unreachable!("a conversion transfers no control"),
@@ -70,7 +70,7 @@ pub(crate) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, s
 pub(crate) fn staged_property_key(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(quench_runtime::staged::step(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
+    matches!(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::PROPERTY_KEY }, _, _>(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
 }
 
 /// The activation's `this` into `destination` by the staged LoadThis; false, writing
@@ -80,7 +80,7 @@ pub(crate) fn staged_load_this(r: Registers, view: Carried, this: Value, destina
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.this = this;
-    match quench_runtime::staged::step(&mut stage, &mut frame, Operation::LoadThis { destination }) {
+    match quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::LOAD_THIS }, _, _>(&mut stage, &mut frame, Operation::LoadThis { destination }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
         Step::Control(_) => unreachable!("a load transfers no control"),
@@ -97,7 +97,7 @@ pub(crate) fn staged_load_local_plain<const ACC: u8>(cx: *mut LaneContext,
     let (locals, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);
-    matches!(quench_runtime::staged::step(&mut stage, &mut frame,
+    matches!(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::LOAD_LOCAL_PLAIN }, _, _>(&mut stage, &mut frame,
         Operation::LoadLocalPlain { destination, slot }), Step::Value(_))
 }
 
@@ -111,7 +111,7 @@ pub(crate) fn staged_store_local_plain<const ACC: u8>(cx: *mut LaneContext,
     let (locals, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);
-    matches!(quench_runtime::staged::step(&mut stage, &mut frame,
+    matches!(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::STORE_LOCAL_PLAIN }, _, _>(&mut stage, &mut frame,
         Operation::StoreLocalPlain { source, slot, result }), Step::Value(_))
 }
 
@@ -124,7 +124,7 @@ pub(crate) fn staged_store_capture(cx: *mut LaneContext, r: Registers, view: Car
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.captures = Some(CaptureStores::of(cx));
-    matches!(quench_runtime::staged::step(&mut stage, &mut frame, Operation::StoreCapture { source, depth, slot }), Step::Value(_))
+    matches!(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::STORE_CAPTURE }, _, _>(&mut stage, &mut frame, Operation::StoreCapture { source, depth, slot }), Step::Value(_))
 }
 
 /// The edge the staged comparison jump of registers `left` and `right` takes, or `None` where the
@@ -167,7 +167,7 @@ pub(crate) fn staged_comparison_jump(cx: *mut LaneContext, r: Registers, view: C
     let ([left, right], reads) = RecordOperand::staged_pair(cx, operands);
     frame.reads = reads;
     let operation = Operation::CompareJump { comparison, left, right, negate: true };
-    jump_edge(quench_runtime::staged::step(&mut stage, &mut frame, operation))
+    jump_edge(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::COMPARE_JUMP }, _, _>(&mut stage, &mut frame, operation))
 }
 
 /// `LoadCapture` of the capture at `depth` and `slot` into `destination` (of the root's projected
@@ -200,7 +200,7 @@ fn load_capture_with(cx: *mut LaneContext, r: Registers, view: Carried,
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.capture_slots = Some(capture_reads(unsafe { (*cx).registers }.capture()));
     frame.reads = reads;
-    matches!(quench_runtime::staged::step(&mut stage, &mut frame, Operation::LoadCapture { destination, depth, slot, root }), Step::Value(_))
+    matches!(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::LOAD_CAPTURE }, _, _>(&mut stage, &mut frame, Operation::LoadCapture { destination, depth, slot, root }), Step::Value(_))
 }
 
 /// What the staged `await` conversion (`staged::await_source`) asks the lane context, erased of

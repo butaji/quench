@@ -1,0 +1,23 @@
+[package]
+name = "quench-stencils"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "BaseJIT stencil tables: every row compiled by rustc (quench-bjit/build.rs), apart from the runtime crates"
+
+# quench-bjit's build script: under this package it compiles every stencil row into the table, while the runtime
+# crates, which depend on quench-bjit alone, compile beside it.
+build = "../quench-bjit/build.rs"
+
+[lib]
+doctest = false
+
+[dependencies]
+quench-bjit = { path = "../quench-bjit" }
+
+[build-dependencies]
+iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "block_encoder", "instr_info"] }
+object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
+
+[lints]
+workspace = true

@@ -2176,6 +2176,7 @@ dependencies = [
  "iced-x86",
  "libc",
  "object 0.39.1",
+ "quench-stencils",
 ]
 
 [[package]]
@@ -2218,6 +2219,7 @@ dependencies = [
  "quench-runtime",
  "quench-runtime-engine",
  "quench-runtime-intl",
+ "quench-stencils",
 ]
 
 [[package]]
@@ -2362,6 +2364,15 @@ dependencies = [
 [[package]]
 name = "quench-stack"
 version = "0.1.0"
+
+[[package]]
+name = "quench-stencils"
+version = "0.1.0"
+dependencies = [
+ "iced-x86",
+ "object 0.39.1",
+ "quench-bjit",
+]
 
 [[package]]
 name = "quench-symbols"
