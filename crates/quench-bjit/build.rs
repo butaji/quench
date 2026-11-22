@@ -542,8 +542,13 @@ fn compile(job: &Shard, shard: usize) {
     // The same rustc lists the shard's mono items (`-Z print-mono-items`, on stdout), which name every function a
     // row can reach: the reach file comes from this compile rather than a second, unoptimized one (`write_reach`).
     // The flag is outside `job.args`, so it is in no key.
-    let run = || Command::new(rustc()).args(&job.args).args(["-Z", "print-mono-items=yes"])
-        .envs(job.envs.iter().map(|(name, path)| (*name, path))).stderr(std::process::Stdio::inherit()).output().expect("run rustc");
+    let run = || {
+        let child = Command::new(rustc()).args(&job.args).args(["-Z", "print-mono-items=yes"])
+            .envs(job.envs.iter().map(|(name, path)| (*name, path))).stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit()).spawn().expect("run rustc");
+        yield_to_oom_killer(child.id());
+        child.wait_with_output().expect("run rustc")
+    };
     let mut output = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
     if killed(&output.status) {
         println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again alone");
@@ -570,6 +575,13 @@ fn publish(object: &Path, shared: &Path) {
         let _ = fs::rename(&partial, shared);
     }
     let _ = fs::remove_file(&partial);
+}
+
+/// Makes shard rustc `pid` the kernel's first out-of-memory victim (`oom_score_adj` 1000). The stencils build beside
+/// the runtime crates (`quench-stencils`): a shard killed for memory is compiled again alone (`compile`), where a
+/// killed runtime crate would fail the build.
+fn yield_to_oom_killer(pid: u32) {
+    let _ = fs::write(format!("/proc/{pid}/oom_score_adj"), "1000");
 }
 
 /// Held for reading by every shard compile, and for writing by the rerun of one the kernel killed.
