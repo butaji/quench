@@ -50,6 +50,7 @@ pub(crate) unsafe fn activation_value_step(cx: *mut LaneContext, call_pc: u64, r
     if let Some(status) = unsafe { activation_field_read(cx, call_pc, instruction) } { return Some(status); }
     if let Some(status) = unsafe { activation_field_write(cx, call_pc, instruction) } { return Some(status); }
     if let Some(status) = unsafe { activation_element_step(cx, call_pc, instruction) } { return Some(status); }
+    if let Some(status) = unsafe { activation_literal_step(cx, call_pc, instruction) } { return Some(status); }
     let step = instruction.op().value_step().filter(|_| instruction.result_flags() == 0)?;
     let r = unsafe { (*cx).registers };
     let Some(values) = operand_values(cx, r, step, instruction) else { return Some(LANE_CALL_MISSED) };
@@ -111,6 +112,33 @@ unsafe fn activation_field_write(cx: *mut LaneContext, call_pc: u64, instruction
     if after.0 == r.0 { return Some(LANE_CALL_COMPLETED); }
     unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
     Some(LANE_CALL_LEFT)
+}
+
+/// The array literal record `instruction` at `call_pc` of the innermost activation, made over its registers as the
+/// lane's own allocator and definer make it (`lane_allocation`, `define_element_in_lane`): a `MakeArray` of holes
+/// (`Allocation::decode` with no definitions, the definitions after it being records of their own) and a
+/// `DefineArrayElement` into it. Neither runs guest code, so the activations stay the lane's: `LANE_CALL_COMPLETED`
+/// with the value written, `LANE_CALL_MISSED` where the definer declines (the array register holds the array the
+/// general path defines into); `None` for any other record.
+///
+/// # Safety
+/// As `activation_value_step`.
+unsafe fn activation_literal_step(cx: *mut LaneContext, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
+    if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
+    let r = unsafe { (*cx).registers };
+    match instruction.op() {
+        quench_runtime::bytecode::Op::MakeArray => {
+            let (_, allocation) = quench_runtime::staged::Allocation::decode(instruction, &[])?;
+            let Some(value) = (unsafe { super::lane_frame::lane_allocation(cx.cast(), r, allocation) }) else { return Some(LANE_CALL_MISSED) };
+            r.set(instruction.result_register(), value);
+        }
+        quench_runtime::bytecode::Op::DefineArrayElement => {
+            let defined = unsafe { vm(cx) }.define_literal_element(r.get(instruction.register_b()), instruction.imm() as usize, r.get(instruction.register_a()));
+            if !defined { return Some(LANE_CALL_MISSED); }
+        }
+        _ => return None,
+    }
+    Some(LANE_CALL_COMPLETED)
 }
 
 /// The element read or store `instruction` at `call_pc` of the innermost activation (`GetIndex`, `SetIndex`:
