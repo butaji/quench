@@ -111,7 +111,7 @@ pub struct SlotDependency {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PrototypeChain {
     pub(crate) link: u32,
-    pub(crate) depth: u8,
+    pub depth: u8,
 }
 
 /// What an `instanceof` of one constructor depends on when its code takes the constructor's

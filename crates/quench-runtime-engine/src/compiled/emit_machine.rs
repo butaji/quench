@@ -21,6 +21,21 @@ use quench_runtime::staged::machine::{Lane, Machine};
 use cranelift_codegen::ir::{self, types};
 use cranelift_frontend::FunctionBuilder;
 
+/// Implements a machine trait for every backend (`Builds`): the one body, over each builder type;
+/// a blanket impl over `Builds` is not allowed for the core's machine traits.
+macro_rules! for_each_builder {
+    ($tr:path { $($body:tt)* }) => {
+        impl<'b> $tr for cranelift_frontend::FunctionBuilder<'b> { $($body)* }
+        impl<'b> $tr for crate::compiled::RegionCore<'b> { $($body)* }
+        impl<'b> $tr for crate::compiled::Body<'b> { $($body)* }
+        impl<'a, 'b> $tr for crate::compiled::object_slots::Emit<'a, 'b> { $($body)* }
+        impl<'a, 'b> $tr for crate::compiled::Emitter<'a, 'b> { $($body)* }
+        impl<'a, 'b> $tr for crate::compiled::lane_region::Lowering<'a, 'b> { $($body)* }
+    };
+}
+pub(crate) use for_each_builder;
+
+
 /// A backend that builds into one Cranelift function: the accessor the primitive bodies are
 /// written over.
 pub(crate) trait Builds<'b> {
@@ -59,9 +74,9 @@ impl<'b> Builds<'b> for Emitter<'_, 'b> {
     }
 }
 
-impl<'b, B: Builds<'b>> Machine for B {
+crate::compiled::emit_machine::for_each_builder!(Machine {
     type Word = ir::Value;
-}
+});
 
 /// The Cranelift type of a lane.
 fn machine_type(lane: Lane) -> ir::Type {

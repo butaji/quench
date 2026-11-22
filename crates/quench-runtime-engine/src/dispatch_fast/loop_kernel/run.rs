@@ -13,14 +13,40 @@ pub(crate) const CHUNK: usize = 256;
 use crate::compiled::tier_policy::KERNEL_MIN_TRIP;
 /// The shortest chunk a load/store distance may impose.
 const MIN_CHUNK: usize = 16;
-use quench_runtime::vm::engine_types::MAX_BASES;
-use quench_runtime::vm::engine_types::SLOTS;
+/// Most distinct base arrays a kernel reads or writes.
+const MAX_BASES: usize = 8;
+/// Slots of scalars, affine values and recurrences a run keeps on the stack.
+const SLOTS: usize = 32;
 
-use quench_runtime::vm::engine_types::Span;
+/// A base array's storage for the run (`Heap::array_storage_span`).
+#[derive(Clone, Copy)]
+struct Span {
+    pub base: Value,
+    /// The first element: a `Value` of a record array, or of a typed array's kind.
+    pub values: *mut Value,
+    pub readable: usize,
+    pub writable: usize,
+    /// A typed array's element kind, and its buffer's bytes (which other views may share).
+    pub typed: Option<(TypedArrayKind, (usize, usize))>,
+}
 
 const NO_SPAN: Span = Span { base: Value::UNDEFINED, values: std::ptr::null_mut(), readable: 0, writable: 0, typed: None };
 
-pub(crate) use quench_runtime::vm::engine_types::State;
+/// A run's state: the entry facts and the recurrences' current values.
+pub(crate) struct State {
+    pub scalars: [f64; SLOTS],
+    /// Each affine value's index at the run's first iteration.
+    pub firsts: [i64; SLOTS],
+    /// Each affine value's step per iteration.
+    pub steps: [i64; SLOTS],
+    pub spans: [Span; MAX_BASES],
+    pub phis: [f64; SLOTS],
+    /// The written registers' values at the last committed iteration: recurrences, then temps.
+    pub finals: [f64; 2 * SLOTS],
+    pub trip: u64,
+    pub limit: u64,
+    pub chunk: usize,
+}
 
 #[quench_macros::ext(StateOps1)]
 impl State {

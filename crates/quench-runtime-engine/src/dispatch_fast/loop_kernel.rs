@@ -37,10 +37,28 @@ pub(crate) mod shape;
 
 pub(crate) use shape::Shape;
 
-use quench_runtime::vm::engine_types::KERNELS;
+/// Live kernels by slot: a kernel's test record names its slot in `call_link`, which a test
+/// record holds no call link in.
+#[thread_local]
+static KERNELS: std::cell::UnsafeCell<Vec<*const LoopKernel>> = std::cell::UnsafeCell::new(Vec::new());
 
 use crate::compiled::tier_policy::KERNEL_SHORT_DECLINES;
-pub(crate) use quench_runtime::vm::engine_types::LoopKernel;
+/// A loop's kernel: its shape, the test record's own handler, and its run state.
+pub(crate) struct LoopKernel {
+    pub shape: Shape,
+    pub recurrence: Recurrence,
+    pub slot: u16,
+    /// The test record's handler before the kernel took it, which runs where the kernel runs
+    /// nothing.
+    pub original: std::cell::Cell<*const ()>,
+    pub declines: std::cell::Cell<u32>,
+    /// The run's columns (`run`), kept between runs.
+    pub scratch: std::cell::UnsafeCell<Vec<f64>>,
+    /// The run's entry facts and recurrences (`State`), kept between runs: an entry
+    /// writes the slots its shape uses and copies nothing. Made by the first run (`LoopKernel::run`):
+    /// a kernel that never runs keeps none of its roughly 2 KB.
+    pub state: std::cell::UnsafeCell<Option<Box<State>>>,
+}
 
 /// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
 /// that interprets its recurrences per iteration is not under `--b-jit`: the loop's stencils run
@@ -251,5 +269,23 @@ script_handler! {
             kernel.stand_down(ip);
         }
         sibling!(kernel.original(), r, ip, Carried::script_in(cx, view))
+    }
+}
+
+impl Drop for LoopKernel {
+    fn drop(&mut self) {
+        // SAFETY: the registry is this thread's, and no kernel runs while its view drops.
+        let kernels = unsafe { &mut *KERNELS.get() };
+        if let Some(entry) = kernels.get_mut(usize::from(self.slot)) {
+            *entry = std::ptr::null();
+        }
+        // Trailing free slots name no kernel, so the registry gives them back: it keeps only
+        // as many slots as its live kernels reach, not the peak of every view ever derived.
+        while kernels.last().is_some_and(|entry| entry.is_null()) {
+            kernels.pop();
+        }
+        if kernels.capacity() > 4 * kernels.len().max(8) {
+            kernels.shrink_to_fit();
+        }
     }
 }

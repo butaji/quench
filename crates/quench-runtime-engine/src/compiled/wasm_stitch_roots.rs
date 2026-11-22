@@ -14,7 +14,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::vm::{CONTEXT_NATIVE_ROOTS, NativeRoots};
+use crate::compiled::{CONTEXT_NATIVE_ROOTS, NativeRoots};
 use super::{Planned, Target, World, leak};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_step::Step;

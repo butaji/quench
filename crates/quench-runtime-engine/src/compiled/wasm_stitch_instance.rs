@@ -36,7 +36,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::vm::{CONTEXT_MEMORY_GROW, CONTEXT_MEMORY_LENGTH};
+use crate::compiled::{CONTEXT_MEMORY_GROW, CONTEXT_MEMORY_LENGTH};
 use super::{Planned, World, codes, row, slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_memory::Memory;

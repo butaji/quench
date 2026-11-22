@@ -37,7 +37,7 @@ fn block_args(values: &[ir::Value]) -> Vec<ir::BlockArg> {
     values.iter().copied().map(ir::BlockArg::Value).collect()
 }
 
-impl<'b, B: Builds<'b>> MachineFlow for B {
+crate::compiled::emit_machine::for_each_builder!(MachineFlow {
     type Block = ir::Block;
     type Table = ir::JumpTable;
 
@@ -103,9 +103,9 @@ impl<'b, B: Builds<'b>> MachineFlow for B {
         }
         builder.ins().brif(flag, then.0, &taken, otherwise.0, &other);
     }
-}
+});
 
-impl<'b, B: Builds<'b>> MachineVariables for B {
+crate::compiled::emit_machine::for_each_builder!(MachineVariables {
     type Variable = cranelift_frontend::Variable;
 
     fn declare_variable(&mut self, lane: Lane) -> cranelift_frontend::Variable {
@@ -129,10 +129,10 @@ impl<'b, B: Builds<'b>> MachineVariables for B {
             _ => None,
         }
     }
-}
+});
 
 #[cfg(feature = "jit")]
-impl<'b, B: Builds<'b>> MachineTail for B {
+crate::compiled::emit_machine::for_each_builder!(MachineTail {
     fn tail_call(&mut self, target: ir::FuncRef, arguments: &[ir::Value]) {
         self.function_builder().ins().return_call(target, arguments);
     }
@@ -140,4 +140,4 @@ impl<'b, B: Builds<'b>> MachineTail for B {
     fn tail_call_indirect(&mut self, signature: ir::SigRef, target: ir::Value, arguments: &[ir::Value]) {
         self.function_builder().ins().return_call_indirect(signature, target, arguments);
     }
-}
+});

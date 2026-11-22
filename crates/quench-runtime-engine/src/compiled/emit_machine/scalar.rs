@@ -265,7 +265,7 @@ fn float_unary(builder: &mut FunctionBuilder<'_>, operation: Unary, a: ir::Value
     }
 }
 
-impl<'b, B: Builds<'b>> MachineScalar for B {
+crate::compiled::emit_machine::for_each_builder!(MachineScalar {
     fn raw_lane(&mut self, value: ir::Value) -> Lane {
         of_in_lane(self.function_builder().func.dfg.value_type(value))
     }
@@ -288,7 +288,7 @@ impl<'b, B: Builds<'b>> MachineScalar for B {
     fn raw_unary(&mut self, operation: Unary, a: ir::Value) -> ir::Value {
         unary(self.function_builder(), operation, a)
     }
-}
+});
 
 /// The row of a conversion between a Wasm integer and float, to the lane `result`; a trapping
 /// truncation's input is in range, so it converts as the saturating one does.

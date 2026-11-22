@@ -113,7 +113,7 @@ pub(crate) mod exit_protocol;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitTable, RegionRun};
-pub(crate) mod osr_compile; mod osr_lane; pub(crate) mod base_region; mod base_body; pub(crate) use base_body::image_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
 pub(crate) use osr_compile::{start_osr_region, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
@@ -4658,7 +4658,7 @@ unsafe fn js_semantic_callout<const SINGLE_OPERATION: bool, const OPCODE: usize>
 /// `js_semantic_callout`'s body, with the operation its opcode resolved (`None` for the dynamic entry).
 #[cfg(feature = "native-execution")]
 #[inline(never)]
-unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
+pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
     operation: Option<StaticJsOperation>,
     context: *mut CallContext,
     function: u64,
@@ -6017,7 +6017,7 @@ fn native_interrupt_pointer(builder: &mut FunctionBuilder<'_>, context: ir::Valu
 
 /// The common native region core: builder, call context, interrupt check and its
 /// termination block. Frontends keep their own state representation and exit semantics.
-struct RegionCore<'b> {
+pub(crate) struct RegionCore<'b> {
     builder: FunctionBuilder<'b>,
     context: ir::Value,
     /// The VM's poll page when every entry runs through the fault-resuming trampoline.
@@ -6098,7 +6098,7 @@ impl<'b> DerefMut for RegionCore<'b> {
 /// own view and the other view of the same bits (`counterpart`); a view nothing reads costs
 /// nothing, since its conversion is dead. A Wasm value is its scalar; a JavaScript Number a
 /// region holds unboxed is an `i32` or an `f64` view.
-struct Body<'b> {
+pub(crate) struct Body<'b> {
     core: RegionCore<'b>,
     /// Per register, its views, declared on first use.
     variables: Vec<Option<[Variable; VIEW_TYPES.len()]>>,
@@ -6216,7 +6216,7 @@ impl<'b> DerefMut for Body<'b> {
     }
 }
 
-struct Emitter<'a, 'b> {
+pub(crate) struct Emitter<'a, 'b> {
     guarded: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],

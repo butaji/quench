@@ -531,7 +531,7 @@ struct StepWith<'a> {
     site: Option<call_frames::Site<'a>>,
 }
 
-struct Lowering<'a, 'f> {
+pub(crate) struct Lowering<'a, 'f> {
     builder: FunctionBuilder<'f>,
     program: &'a ResidualProgram,
     unit: &'a super::lane_unit::Unit,

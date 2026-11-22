@@ -27,7 +27,7 @@ impl LaneDependencies {
 /// facts; `false` where a reader table is full. The chains come first: their walk marks a link that was
 /// no prototype yet (`Heap::chain_subjects`), a note a dependency subscribed before it would take for a
 /// change.
-fn subscribe_stable(stable: &lane_region::StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>,
+pub fn subscribe_stable(stable: &lane_region::StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>,
     heap: &mut quench_runtime::heap::Heap, method_atoms: &mut quench_runtime::code_dependencies::CodeReaders) -> bool {
     stable.chains.iter().chain(stable.instanceofs.iter().map(|fact| &fact.chain)).all(|chain| heap.subscribe_prototype_chain(*chain, code))
         && stable.holders.iter().all(|holder| quench_runtime::heap::subscribe_prototype_values(*holder, code))

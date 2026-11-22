@@ -41,7 +41,7 @@ pub(crate) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
 /// length (`string_length::flat_truth`), else its cell's by the VM (`truthy_in_lane`), so a rope
 /// or a function a condition tests keeps the body running.
 fn cell_truthiness(builder: &mut FunctionBuilder<'_>, payload: ir::Value, helpers: LaneHelpers, bits: ir::Value) -> ir::Value {
-    let records = crate::compiled::emit_js_payload_word(builder, payload, std::mem::offset_of!(quench_runtime::vm::JsStepDispatch, head.string_record_base));
+    let records = crate::compiled::emit_js_payload_word(builder, payload, std::mem::offset_of!(quench_runtime::vm::engine_types::JsStepDispatch, head.string_record_base));
     let mut stage = crate::compiled::object_slots::emit(builder);
     let (undecided, truthy) = quench_runtime::staged::value::tagged_truthiness(&mut stage, bits);
     let word = stage.choose_cold(undecided, |stage| {

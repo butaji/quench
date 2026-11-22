@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 use crate::engine_prelude::*;
 use quench_runtime::vm::engine_types::*;
 use cranelift_codegen::ir;
+use quench_runtime::vm::engine_types::CallContext;
 
 #[unsafe(no_mangle)]
 #[inline]

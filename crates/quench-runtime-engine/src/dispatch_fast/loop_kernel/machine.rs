@@ -62,7 +62,13 @@ fn kind(code: Code, a: u32, b: u32) -> Kind {
     Kind(op * ARITH_FORMS + forms)
 }
 
-pub(crate) use quench_runtime::vm::engine_types::Machine;
+pub(crate) struct Machine {
+    pub steps: Vec<Step>,
+    /// (register, scalar slot) for each scalar a step reads.
+    pub scalars: Vec<(u8, u8)>,
+    /// Each recurrence's value at the iteration's end.
+    pub finals: Vec<u32>,
+}
 
 #[quench_macros::ext(MachineOps1)]
 impl Machine {

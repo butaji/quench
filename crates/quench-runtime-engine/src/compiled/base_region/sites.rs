@@ -6,6 +6,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
+use quench_runtime::vm::Vm;
 use super::*;
 use quench_runtime::vm::in_presence::InPresence;
 

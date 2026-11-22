@@ -12,7 +12,25 @@ use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRela
 use super::run::{CHUNK, apply, arith};
 use super::shape::{Arg, NodeOp, Shape};
 
-pub(crate) use quench_runtime::vm::engine_types::Fold;
+/// One recurrence folded by one arithmetic operator, maybe truncated to int32 after
+/// (`(s op x) | 0`): `s = op(s, x[k])`, or `op(x[k], s)` when the recurrence is the right operand.
+pub(crate) struct Fold {
+    pub op: NumberArithmetic,
+    pub left: bool,
+    pub operand: Arg,
+    pub int32: bool,
+    /// The columns the chain's nodes write, where a store or a side node reads them.
+    pub outs: [Option<u16>; 2],
+    /// The nodes only a written register's final value reads: their last value only.
+    pub lasts: [Option<u16>; 2],
+    /// For `(s + i) | 0` and `(s - i) | 0` with `i` an induction (an iota node no other reader
+    /// needs as a column): the iota's affine slot and node. The fold then runs on int32 words,
+    /// the induction stepped in a register, and the iota's column is never written.
+    pub words: Option<(u8, u16)>,
+    /// For `s + x` and `s - x` (no truncation) with `x` an induction or a word DAG only the
+    /// fold reads: their words, summed on integers where binary64 is exact (`run_exact`).
+    pub exact: Option<Words>,
+}
 
 /// The inductions of a chunk: each affine slot's value at iteration 0 and its step, and the
 /// chunk's first iteration.
@@ -26,9 +44,27 @@ pub(crate) struct Iotas<'a> {
 /// The longest chain a kernel runs.
 const MAX_LINKS: usize = 24;
 
-use quench_runtime::vm::engine_types::Link;
+/// One link of a chain: `v = code(v, x)` with `x` the column (or broadcast scalar) at element
+/// offset `operand` of the scratch, the result written at offset `out` (a dump column when no
+/// later reader needs it).
+#[derive(Clone, Copy)]
+struct Link {
+    pub code: Code,
+    pub operand: u32,
+    pub out: u32,
+}
 
-pub(crate) use quench_runtime::vm::engine_types::Code;
+/// A link's operator with its operand order: `v op x`, or `x op v` for the reversed forms.
+#[derive(Clone, Copy)]
+pub(crate) enum Code {
+    Add,
+    Multiply,
+    Subtract,
+    SubtractFrom,
+    Divide,
+    DivideInto,
+    Bits { op: NumberBitwise, reversed: bool },
+}
 
 #[quench_macros::ext(CodeOps1)]
 impl Code {
@@ -60,11 +96,43 @@ impl Code {
     }
 }
 
-pub(crate) use quench_runtime::vm::engine_types::Chain;
+/// A single recurrence whose cycle is a chain of operators, each reading the previous one's
+/// value and one column or scalar.
+pub(crate) struct Chain {
+    pub links: Vec<Link>,
+    /// Scalars the links read, each broadcast to its column after the nodes' and the dump's:
+    /// (scalar slot, element offset).
+    pub broadcasts: Vec<(u8, u32)>,
+    /// Whether every link is an int32 bitwise operator (all but the zero-fill shift): the
+    /// recurrence's value is then an int32 after its first link, whatever its operands, and the
+    /// chain runs on int32 words (`run_int32`).
+    pub int32: bool,
+    /// Whether every link is `& | ^` and only the last one's result column is read: the chain
+    /// is then one `v = (v & A) ^ B` per iteration, its masks computed column by column
+    /// (`run_masks`).
+    pub masks: bool,
+    /// Whether the chain is integer arithmetic ending in an int32 bitwise link (`(a * 3 + i) | 0`):
+    /// it then runs on int32 words where binary64 is exact (`run_wrap`).
+    pub wrap: bool,
+    /// The column nodes only the chain reads, whose words it computes itself.
+    pub fusion: Fusion,
+    /// The dump column's element offset.
+    pub dump: u32,
+}
 
-use quench_runtime::vm::engine_types::Pass;
+enum Pass {
+    None,
+    Fold(Fold),
+    Chain(Chain),
+    Machine(Machine),
+}
 
-pub(crate) use quench_runtime::vm::engine_types::Recurrence;
+/// A kernel's recurrence pass, and the nodes that read the recurrence without feeding it
+/// (`side`, in body order), which run as columns after the pass.
+pub(crate) struct Recurrence {
+    pub pass: Pass,
+    pub side: Vec<u16>,
+}
 
 /// Whether node `id`'s whole column is read: by a store or a side node.
 fn read_as_column(shape: &Shape, side: &[u16], id: u16) -> bool {
@@ -925,7 +993,13 @@ fn sequence<const WRITE: bool>(mut value: i32, len: usize, a: impl Fn(usize) -> 
     value
 }
 
-pub(crate) use quench_runtime::vm::engine_types::Fusion;
+/// Column nodes only one pass reads, whose int32 words it computes itself (`eval`): iotas from
+/// their inductions (`iotas`: node, affine slot), and bitwise nodes over scalars and columns in
+/// node order (`fused`). Their binary64 columns are written only where the pass falls back.
+pub(crate) struct Fusion {
+    pub iotas: Vec<(u16, u8)>,
+    pub fused: Vec<(u16, NumberBitwise, Arg, Arg)>,
+}
 
 #[quench_macros::ext(FusionOps1)]
 impl Fusion {
@@ -1049,7 +1123,14 @@ fn int32_word(x: f64) -> i32 {
 /// The most nodes a fold's word DAG computes (`Words`).
 const MAX_WORDS: usize = 16;
 
-use quench_runtime::vm::engine_types::WordOp;
+/// What a word node computes.
+#[derive(Clone, Copy, PartialEq)]
+enum WordOp {
+    Iota(u8),
+    Bits(NumberBitwise),
+    Cmp(NumberRelation),
+    Arith(NumberArithmetic),
+}
 
 use quench_runtime::vm::engine_types::WordSource as Source;
 
@@ -1068,9 +1149,28 @@ fn within_int32((lo, hi): Range) -> bool {
     lo >= INT32.0 && hi <= INT32.1
 }
 
-use quench_runtime::vm::engine_types::WordNode;
+/// One word node: the node, its operation, its operands as words and as the shape's arguments.
+#[derive(Clone, Copy)]
+struct WordNode {
+    pub id: u16,
+    pub op: WordOp,
+    pub a: WordSource,
+    pub b: WordSource,
+    pub args: (Arg, Arg),
+}
 
-pub(crate) use quench_runtime::vm::engine_types::Words;
+/// The column nodes a fold `s += x` / `s -= x` reads through `x` and nothing else reads: iotas,
+/// bitwise, relational and `+ - *` nodes over each other, scalars and columns, computed as
+/// int32 words in node order (a DAG: a node may have several readers in the set). A chunk runs
+/// on the words only where its value ranges prove every relational and arithmetic word the
+/// exact Number the staged row computes (`word_range`), so no binary64 column is written;
+/// otherwise the pass writes the columns (`materialize`) and folds them.
+pub(crate) struct Words {
+    pub nodes: Vec<WordNode>,
+    /// Each node's words over a chunk, then two operand conversions: written before read, kept
+    /// across chunks so no chunk clears them.
+    pub store: std::cell::RefCell<Box<[i32]>>,
+}
 
 #[quench_macros::ext(WordsOps1)]
 impl Words {

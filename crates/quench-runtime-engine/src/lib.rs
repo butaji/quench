@@ -68,7 +68,7 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::vm::program_store::{ModuleImport, ProgramStore};
     pub use quench_runtime::vm::promise::PromiseRuntime;
     pub use quench_runtime::vm::property_key::PropertyKey;
-    pub use crate::dispatch_fast::root_bindings::RootBinding;
+    pub use quench_runtime::vm::root_bindings::RootBinding;
     pub use quench_runtime::vm::var_owner::{EvalCaller, VarOwner};
     pub use quench_runtime::vm::well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
     pub use quench_runtime::vm::error::{CompileFailureKind, JsError};
@@ -79,6 +79,11 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
     pub use quench_runtime::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
     pub use quench_runtime::vm::engine_types::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
+    pub use quench_runtime::vm::activation::{JobResume, JobRoot, TrapAccess, TrapCheck};
+    pub use quench_runtime::vm::activation::frame_record::FrameRecord;
+    pub use quench_runtime::vm::dispatch_frame::PendingGeneralCall;
+    pub use quench_runtime::vm::lane_completion::LaneCompletion;
+    pub use quench_runtime::vm::proxy::ProxyTrap;
     pub use crate::dispatch_fast;
     pub use crate::compiled;
     pub use crate::js_compiled;

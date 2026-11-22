@@ -57,7 +57,7 @@ fn extended_load(
     }
 }
 
-impl<'b, B: Builds<'b>> MachineAccess for B {
+crate::compiled::emit_machine::for_each_builder!(MachineAccess {
     type Flags = MemFlagsData;
     type Function = ir::FuncRef;
     type Signature = ir::SigRef;
@@ -145,4 +145,4 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
         let call = builder.ins().call_indirect(signature, target, arguments);
         builder.inst_results(call).to_vec()
     }
-}
+});

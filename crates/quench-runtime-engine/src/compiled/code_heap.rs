@@ -389,7 +389,7 @@ pub(crate) mod tests;
 
 #[unsafe(no_mangle)]
 fn quench_engine_drop_code_memory(memory: &mut CodeMemory) {
-        if crate::trace::Dev::PoisonFreedCode.on() {
+        if quench_runtime::trace::Dev::PoisonFreedCode.on() {
             // The block stays allocated and traps from now on: a run that enters or returns into
             // freed code stops at once, at the address it reached (TOD-2060).
             let views = heap().regions[memory.block.region as usize].views;

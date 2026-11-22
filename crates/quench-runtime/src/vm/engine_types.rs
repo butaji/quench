@@ -1,5 +1,6 @@
 //! The types the VM core holds for its engine layer (`quench-runtime-engine`: lane handlers
 //! and compiled tiers). Their behaviour stays in the engine, as extension traits on them.
+#![allow(unused_imports)]
 use super::*;
 use std::cell::{RefCell, UnsafeCell};
 use std::ops::{Deref, DerefMut};
@@ -309,7 +310,7 @@ pub struct LaneView {
     #[cfg_attr(not(test), allow(dead_code))]
     pub vector_regions: Box<[VectorRegion]>,
     /// The loop kernels whose test records name them (`loop_kernel`).
-    pub _loop_kernels: Box<[Box<LoopKernel>]>,
+    pub _loop_kernels: Box<[Box<dyn std::any::Any>]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
     /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
     pub start: std::cell::Cell<Ip>,
@@ -625,22 +626,6 @@ pub enum Kind {
     Tagged,
 }
 
-/// A loop's kernel: its shape, the test record's own handler, and its run state.
-pub struct LoopKernel {
-    pub shape: Shape,
-    pub recurrence: Recurrence,
-    pub slot: u16,
-    /// The test record's handler before the kernel took it, which runs where the kernel runs
-    /// nothing.
-    pub original: std::cell::Cell<*const ()>,
-    pub declines: std::cell::Cell<u32>,
-    /// The run's columns (`run`), kept between runs.
-    pub scratch: std::cell::UnsafeCell<Vec<f64>>,
-    /// The run's entry facts and recurrences (`State`), kept between runs: an entry
-    /// writes the slots its shape uses and copies nothing. Made by the first run (`LoopKernel::run`):
-    /// a kernel that never runs keeps none of its roughly 2 KB.
-    pub state: std::cell::UnsafeCell<Option<Box<State>>>,
-}
 
 /// What a function's native callers read to enter its lane body: the entry (the stub where no
 /// body is published or it retired) and the body's own recovery space, which it is stored in
@@ -1328,12 +1313,6 @@ pub struct RowEntries {
     pub uses_this: bool,
 }
 
-/// A kernel's recurrence pass, and the nodes that read the recurrence without feeding it
-/// (`side`, in body order), which run as columns after the pass.
-pub struct Recurrence {
-    pub pass: Pass,
-    pub side: Vec<u16>,
-}
 
 /// What a lane body's code relies on beyond its guards, its direct callees' included, once
 /// each. A receiver's shape is guarded at each field use (and proved again after any call,
@@ -1464,21 +1443,6 @@ pub struct TypeSummary {
 }
 
 
-/// A run's state: the entry facts and the recurrences' current values.
-pub struct State {
-    pub scalars: [f64; SLOTS],
-    /// Each affine value's index at the run's first iteration.
-    pub firsts: [i64; SLOTS],
-    /// Each affine value's step per iteration.
-    pub steps: [i64; SLOTS],
-    pub spans: [Span; MAX_BASES],
-    pub phis: [f64; SLOTS],
-    /// The written registers' values at the last committed iteration: recurrences, then temps.
-    pub finals: [f64; 2 * SLOTS],
-    pub trip: u64,
-    pub limit: u64,
-    pub chunk: usize,
-}
 
 /// What a lane body returns in two registers: its status and its result word.
 #[repr(C)]
@@ -2073,17 +2037,6 @@ pub struct Leave {
     pub end: u32,
 }
 
-/// A base array's storage for the run (`Heap::array_storage_span`).
-#[derive(Clone, Copy)]
-pub struct Span {
-    pub base: Value,
-    /// The first element: a `Value` of a record array, or of a typed array's kind.
-    pub values: *mut Value,
-    pub readable: usize,
-    pub writable: usize,
-    /// A typed array's element kind, and its buffer's bytes (which other views may share).
-    pub typed: Option<(TypedArrayKind, (usize, usize))>,
-}
 
 /// An array a region indexes, by its register; `written` when the region stores into it.
 /// The array is the register's value at entry, or, with `field`, the value of that cached
@@ -2226,8 +2179,6 @@ pub enum LaneLeaves {
     Scattered,
 }
 
-/// Most distinct base arrays a kernel reads or writes.
-pub const MAX_BASES: usize = 8;
 
 /// A read a call site's memo makes (`MemoRead`): its field steps as copies of the field
 /// cache entries that answered them (`Vm::record_field_entry_hit`), so a step is one shape
@@ -2244,12 +2195,6 @@ pub enum MemoLeaf {
     Nested { base: u16, field: crate::vm::FieldCache, second: crate::vm::FieldCache },
 }
 
-pub enum Pass {
-    None,
-    Fold(Fold),
-    Chain(Chain),
-    Machine(Machine),
-}
 
 
 
@@ -2276,8 +2221,6 @@ pub struct ReferenceCallTargetCounts {
     pub same_artifact_native: u64,
 }
 
-/// Slots of scalars, affine values and recurrences a run keeps on the stack.
-pub const SLOTS: usize = 32;
 
 
 /// Where a region's code can be re-entered: the resume thunk and, sorted by PC, each stub.
@@ -2304,29 +2247,6 @@ pub struct CallCode {
     pub invalidation: Invalidation,
 }
 
-/// A single recurrence whose cycle is a chain of operators, each reading the previous one's
-/// value and one column or scalar.
-pub struct Chain {
-    pub links: Vec<Link>,
-    /// Scalars the links read, each broadcast to its column after the nodes' and the dump's:
-    /// (scalar slot, element offset).
-    pub broadcasts: Vec<(u8, u32)>,
-    /// Whether every link is an int32 bitwise operator (all but the zero-fill shift): the
-    /// recurrence's value is then an int32 after its first link, whatever its operands, and the
-    /// chain runs on int32 words (`run_int32`).
-    pub int32: bool,
-    /// Whether every link is `& | ^` and only the last one's result column is read: the chain
-    /// is then one `v = (v & A) ^ B` per iteration, its masks computed column by column
-    /// (`run_masks`).
-    pub masks: bool,
-    /// Whether the chain is integer arithmetic ending in an int32 bitwise link (`(a * 3 + i) | 0`):
-    /// it then runs on int32 words where binary64 is exact (`run_wrap`).
-    pub wrap: bool,
-    /// The column nodes only the chain reads, whose words it computes itself.
-    pub fusion: Fusion,
-    /// The dump column's element offset.
-    pub dump: u32,
-}
 
 /// What a run of a region builds around its code.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2520,13 +2440,6 @@ pub struct OsrFacts {
     pub calls: LaneDependencies,
 }
 
-/// Column nodes only one pass reads, whose int32 words it computes itself (`eval`): iotas from
-/// their inductions (`iotas`: node, affine slot), and bitwise nodes over scalars and columns in
-/// node order (`fused`). Their binary64 columns are written only where the pass falls back.
-pub struct Fusion {
-    pub iotas: Vec<(u16, u8)>,
-    pub fused: Vec<(u16, NumberBitwise, Arg, Arg)>,
-}
 
 /// A call an inlining region runs in place (`inline_region`): the callee's instructions in
 /// the caller's region, its registers above the caller's from `base`, its numeric
@@ -2555,15 +2468,6 @@ pub struct JsNativeStep {
     pub result: Result<crate::vm::StepResult, JsError>,
 }
 
-/// One link of a chain: `v = code(v, x)` with `x` the column (or broadcast scalar) at element
-/// offset `operand` of the scratch, the result written at offset `out` (a dump column when no
-/// later reader needs it).
-#[derive(Clone, Copy)]
-pub struct Link {
-    pub code: Code,
-    pub operand: u32,
-    pub out: u32,
-}
 
 /// The parameters an inlined callee may have, each bound or numeric (`InlineFrame::bound`).
 pub const MAX_INLINE_PARAMS: usize = 8;
@@ -2581,30 +2485,7 @@ pub const MAX_INLINE_PARAMS: usize = 8;
 /// one, in discriminant order, so a native that gains an in-place body gains its row.
 pub const MAX_IN_PLACE_ROWS: usize = 256;
 
-/// An operand as one iteration of the kernel reads it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Arg {
-    /// An operation's result: its column.
-    Col(u16),
-    /// A recurrence's value at the iteration's start.
-    Phi(u8),
-    /// A Number the whole run reads: a constant or an unwritten register.
-    Scalar(u8),
-    /// An affine value (`Affine`).
-    Affine(u8),
-}
 
-/// A link's operator with its operand order: `v op x`, or `x op v` for the reversed forms.
-#[derive(Clone, Copy)]
-pub enum Code {
-    Add,
-    Multiply,
-    Subtract,
-    SubtractFrom,
-    Divide,
-    DivideInto,
-    Bits { op: NumberBitwise, reversed: bool },
-}
 
 /// Where an inlining region's PC comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2617,38 +2498,7 @@ pub enum Origin {
     Leave(u32),
 }
 
-/// One recurrence folded by one arithmetic operator, maybe truncated to int32 after
-/// (`(s op x) | 0`): `s = op(s, x[k])`, or `op(x[k], s)` when the recurrence is the right operand.
-pub struct Fold {
-    pub op: NumberArithmetic,
-    pub left: bool,
-    pub operand: Arg,
-    pub int32: bool,
-    /// The columns the chain's nodes write, where a store or a side node reads them.
-    pub outs: [Option<u16>; 2],
-    /// The nodes only a written register's final value reads: their last value only.
-    pub lasts: [Option<u16>; 2],
-    /// For `(s + i) | 0` and `(s - i) | 0` with `i` an induction (an iota node no other reader
-    /// needs as a column): the iota's affine slot and node. The fold then runs on int32 words,
-    /// the induction stepped in a register, and the iota's column is never written.
-    pub words: Option<(u8, u16)>,
-    /// For `s + x` and `s - x` (no truncation) with `x` an induction or a word DAG only the
-    /// fold reads: their words, summed on integers where binary64 is exact (`run_exact`).
-    pub exact: Option<Words>,
-}
 
-/// The column nodes a fold `s += x` / `s -= x` reads through `x` and nothing else reads: iotas,
-/// bitwise, relational and `+ - *` nodes over each other, scalars and columns, computed as
-/// int32 words in node order (a DAG: a node may have several readers in the set). A chunk runs
-/// on the words only where its value ranges prove every relational and arithmetic word the
-/// exact Number the staged row computes (`word_range`), so no binary64 column is written;
-/// otherwise the pass writes the columns (`materialize`) and folds them.
-pub struct Words {
-    pub nodes: Vec<WordNode>,
-    /// Each node's words over a chunk, then two operand conversions: written before read, kept
-    /// across chunks so no chunk clears them.
-    pub store: std::cell::RefCell<Box<[i32]>>,
-}
 
 impl RegionDecline {
 
@@ -2689,32 +2539,8 @@ impl RegionDecline {
     }
 }
 
-pub struct Machine {
-    pub steps: Vec<Step>,
-    /// (register, scalar slot) for each scalar a step reads.
-    pub scalars: Vec<(u8, u8)>,
-    /// Each recurrence's value at the iteration's end.
-    pub finals: Vec<u32>,
-}
 
-/// One word node: the node, its operation, its operands as words and as the shape's arguments.
-#[derive(Clone, Copy)]
-pub struct WordNode {
-    pub id: u16,
-    pub op: WordOp,
-    pub a: WordSource,
-    pub b: WordSource,
-    pub args: (Arg, Arg),
-}
 
-/// What a word node computes.
-#[derive(Clone, Copy, PartialEq)]
-pub enum WordOp {
-    Iota(u8),
-    Bits(NumberBitwise),
-    Cmp(NumberRelation),
-    Arith(NumberArithmetic),
-}
 
 /// One operand of a word node: an earlier word node's words (its position), a scalar, or a
 /// column another operation wrote.
@@ -5808,23 +5634,7 @@ impl RootedCode for Held {
     fn extend_roots(&self, roots: &mut Vec<crate::Value>) { self.callees.borrow().extend_roots(roots) }
 }
 
-impl Drop for LoopKernel {
-    fn drop(&mut self) {
-        // SAFETY: the registry is this thread's, and no kernel runs while its view drops.
-        let kernels = unsafe { &mut *KERNELS.get() };
-        if let Some(entry) = kernels.get_mut(usize::from(self.slot)) {
-            *entry = std::ptr::null();
-        }
-        // Trailing free slots name no kernel, so the registry gives them back: it keeps only
-        // as many slots as its live kernels reach, not the peak of every view ever derived.
-        while kernels.last().is_some_and(|entry| entry.is_null()) {
-            kernels.pop();
-        }
-        if kernels.capacity() > 4 * kernels.len().max(8) {
-            kernels.shrink_to_fit();
-        }
-    }
-}
+
 
 impl Iterator for Walk<'_> {
     type Item = (ActivationView, Walked);
@@ -5885,10 +5695,6 @@ impl LoopTier {
 
 pub const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 
-/// Live kernels by slot: a kernel's test record names its slot in `call_link`, which a test
-/// record holds no call link in.
-#[thread_local]
-pub static KERNELS: std::cell::UnsafeCell<Vec<*const LoopKernel>> = std::cell::UnsafeCell::new(Vec::new());
 
 /// Where a walked frame is, for a writer that edits it there (`LaneStack::recomplete_at`).
 #[derive(Clone, Copy)]

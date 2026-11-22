@@ -418,7 +418,7 @@ use quench_runtime::vm::lane_activations::LaneActivations;
 pub(crate) mod this_binding;
 use this_binding::ThisBinding;
 pub(crate) mod loop_fields; use loop_fields::loop_field_stores;
-pub(crate) mod construct_plan; mod super_chain; use super_chain::super_construction; mod setters; mod proxy_traps; mod accessor_protocol; mod completions; use completions::*;
+pub(crate) mod construct_plan; pub(crate) mod super_chain; use super_chain::super_construction; pub(crate) mod setters; pub(crate) mod proxy_traps; pub(crate) mod accessor_protocol; pub(crate) mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, planned_inline_quick_in_lane, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, scalar_construct_plan, construct_plan_holds};
 use accessor_protocol::AccessorCall;
@@ -10913,14 +10913,14 @@ pub(crate) mod in_place_natives;
 pub(crate) const fn in_place_in_loop(native: Native) -> bool { in_place_natives::in_place_in_loop(native) }
 pub(crate) mod root_bindings;
 use root_bindings::frame_capture_at_root;
-pub(crate) mod native_calls; mod regexp_calls; mod getters; mod generator_yields;
+pub mod native_calls; pub(crate) mod regexp_calls; pub(crate) mod getters; pub(crate) mod generator_yields;
 pub(crate) mod lane_roots;
 pub(crate) mod lane_trace;
 pub(crate) mod lane_stack_trace;
 pub(crate) mod lane_frames; use lane_frames::{ActivationView, SidePayload};
 pub(crate) mod frame_walk;
 pub(crate) mod with_scopes;
-pub(crate) mod scoped_names; mod window_owner; pub(crate) use window_owner::WindowScope;
+pub mod scoped_names; pub(crate) mod window_owner; pub(crate) use window_owner::WindowScope;
 pub(crate) mod lane_eval;
 use lane_roots::{LaneRoot, LaneStart};
 pub(crate) use lane_roots::{JobEnd, ParkedLane};
@@ -17408,7 +17408,7 @@ fn derive_lane_view<'live>(
         loops,
         loop_at_backedge: loop_at_backedge.into_boxed_slice(),
         vector_regions,
-        _loop_kernels: loop_kernels,
+        _loop_kernels: loop_kernels.into_iter().map(|kernel| kernel as Box<dyn std::any::Any>).collect(),
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
             handler: std::ptr::null(),
