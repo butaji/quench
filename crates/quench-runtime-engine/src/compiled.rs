@@ -7841,7 +7841,10 @@ impl Vm {
         program: &ResidualProgram,
         entry: &TierEntry,
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
-        if !self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT) || program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
+        // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
+        let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
+            facts: admission::UnitFacts { cranelift_allowed: self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+        if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
         let (program_id, function_id) = (entry.program, entry.function);
@@ -7883,7 +7886,7 @@ impl Vm {
                 if !self.programs.note_js_function_entry(program_id, function_id, numeric, numeric) || !numeric {
                     return None;
                 }
-                self.js_tier_compile(program_id, function_id)?
+                self.js_tier_compile(unit, program_id, function_id)?
             }
         };
         if compiled.params() != params {
@@ -7899,11 +7902,11 @@ impl Vm {
 
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
     /// the specializer declines it or the tier does not install it.
-    fn js_tier_compile(&mut self, program_id: ProgramId, function_id: u32) -> Option<Rc<CompiledJsFunction>> {
+    fn js_tier_compile(&mut self, unit: admission::CompiledUnit, program_id: ProgramId, function_id: u32) -> Option<Rc<CompiledJsFunction>> {
         let residual = self.programs.get(program_id)?;
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
-        let pending = self.js_tier_pending.remove(&key).or_else(|| crate::js_compiled::start(&residual, function_id));
+        let pending = self.js_tier_pending.remove(&key).or_else(|| crate::js_compiled::start(&residual, function_id, unit));
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
             Some((std::task::Poll::Pending, pending)) => {
                 self.js_tier_pending.insert(key, pending);
