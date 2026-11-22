@@ -9,16 +9,11 @@ use quench_runtime::Value;
 use quench_runtime::heap::{Cell, TableTarget};
 use std::cell::RefCell;
 
-/// A target function and how often the callout resolved it at a site.
-#[derive(Clone, Copy)]
-struct TargetHits {
-    function: u32,
-    hits: u64,
-}
+use quench_runtime::vm::engine_types::TargetHits;
 
-/// Per call site, the targets resolved there, ordered by function index.
-pub(super) struct SiteHits(RefCell<Vec<Vec<TargetHits>>>);
+pub(super) use quench_runtime::vm::engine_types::SiteHits;
 
+#[quench_macros::ext(SiteHitsOps1)]
 impl SiteHits {
     pub(super) fn new(sites: usize) -> Self {
         Self(RefCell::new(vec![Vec::new(); sites]))

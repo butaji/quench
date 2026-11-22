@@ -10,7 +10,7 @@ use super::suspension_live::SuspensionLive;
 use crate::compile::liveness::RegisterSet;
 use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::heap::EnvironmentSlots;
-use crate::vm::dispatch_fast::{WINDOW_ENVIRONMENT, WINDOW_LOCALS};
+use crate::vm::engine_types::{WINDOW_ENVIRONMENT, WINDOW_LOCALS};
 use crate::vm::program_store::ProgramId;
 use crate::vm::register_file::RegisterFile;
 use crate::vm::{ActiveIterator, CaptureCache, Frame};
@@ -50,7 +50,7 @@ pub(crate) struct FrameRecord {
     /// (`Vm::park_frame`, `suspend_registers`).
     suspension_live: Option<SuspensionLive>,
     /// What its windowed resumes derive once (`generator_windows::window_plan`).
-    pub(in crate::vm) window_plan: Option<crate::vm::dispatch_fast::WindowPlan>,
+    pub(in crate::vm) window_plan: Option<crate::vm::engine_types::WindowPlan>,
     /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
     pub(in crate::vm) js_jit_skip_entry_once: bool,
     /// An environment window follows the registers in the file's spare capacity while a lane
@@ -110,7 +110,7 @@ impl FrameRecord {
     /// capacity, so a frame that never ran in a lane carries none of them.
     pub(in crate::vm) fn open_environment_window(&mut self, captured: u64, own_slots: Option<*const EnvironmentSlots>) {
         let count = self.registers.len();
-        self.registers.reserve(usize::from(WINDOW_LOCALS) + self.locals.len() + crate::vm::dispatch_fast::INLINED_WINDOW_ROOM);
+        self.registers.reserve(usize::from(WINDOW_LOCALS) + self.locals.len() + crate::vm::engine_types::INLINED_WINDOW_ROOM);
         // SAFETY: the capacity holds the entries and the locals after the registers, which
         // nothing else reads or writes while a window runs the frame.
         unsafe {

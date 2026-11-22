@@ -1,7 +1,7 @@
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
-mod stack_capture;
+pub(crate) mod stack_capture;
 pub(in crate::vm) use stack_capture::FrameSite;
 
 const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;

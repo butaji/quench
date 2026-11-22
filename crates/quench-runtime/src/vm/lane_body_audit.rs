@@ -13,7 +13,7 @@
 //! deciding it. Per function this holds the invariant that compiled code is never slower than
 //! the interpreter, from the one statistic it is about.
 
-use super::{LaneBody, LaneView};
+use super::engine_types::{LaneBody, LaneView};
 use crate::vm::tier_policy::PER_MILLE;
 
 /// The CPU time the calling thread has run, in nanoseconds (`CLOCK_THREAD_CPUTIME_ID`); where

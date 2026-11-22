@@ -1386,15 +1386,7 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) root_constant: &'a dyn Fn(usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)>,
 }
 
-/// An own member a constant-marked object holds (`Vm::own_constant_of`): the object a lane body
-/// guards by identity, the exact shape it depends on (whose write retires the body), and the
-/// value the member holds while the object is marked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OwnConstant {
-    pub(super) object: Value,
-    pub(super) shape: u32,
-    pub(super) value: Value,
-}
+pub(super) use quench_runtime::vm::engine_types::OwnConstant;
 
 /// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
 /// callee, its receiver's exact shape and, per field in slot order, the field's name and where
@@ -1553,34 +1545,9 @@ pub(super) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: 
         .map(|region| (region.function, region.stable.atoms))
 }
 
-/// How the shared VM executes guest functions. The dynamic modes share the
-/// interpreter/JIT; NativeOnly requires linked code. All use the same heap,
-/// frames and host APIs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ExecutionMode {
-    /// The shared interpreter: general loop and fast lane.
-    #[default]
-    Interpreted,
-    /// Hot supported JavaScript functions and Wasm functions run as native code.
-    Compiled,
-    /// Require linked guest code at every entry; reject interpreter/JIT fallback.
-    /// This execution check does not itself remove compiler code from the binary.
-    #[cfg(feature = "native-execution")]
-    NativeOnly,
-}
+pub use quench_runtime::vm::engine_types::ExecutionMode;
 
-impl ExecutionMode {
-    // Expose the build capability to callers in host crates, so unavailable
-    // fallback branches cannot retain an interpreter or source compiler.
-    #[inline(always)]
-    pub(super) fn allows_dynamic_execution(self) -> bool {
-        quench_runtime::DYNAMIC_EXECUTION_ENABLED && match self {
-            Self::Interpreted | Self::Compiled => true,
-            #[cfg(feature = "native-execution")]
-            Self::NativeOnly => false,
-        }
-    }
-}
+
 
 /// A value's width inside compiled code. Each register has an integer and a
 /// float view per width (`View`); a write defines both, so the analysis
@@ -1816,7 +1783,7 @@ impl AnalysisState {
 /// normal return.
 use quench_runtime::wasm::trap::COMPILED_TRAPS as TRAPS;
 
-const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
+use quench_runtime::vm::engine_types::JIT_NATIVE_ENTRY_SAMPLE_INTERVAL;
 use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, MAX_JIT_PROFILED_INDIRECT_TARGETS, MAX_JIT_TIER_BYTECODES_PER_FUNCTION, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
@@ -1976,21 +1943,11 @@ const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 
 pub(super) use quench_runtime::vm::engine_types::CallContext;
 
-/// The ABI prefix of a call context, with the runtime's own field types (`staged::record_heads`).
-type CallContextFields = CallContextHead<Value, CompiledProgram, quench_runtime::heap::TableWords, ReferenceCallSiteDiagnostics, ProgramId, Option<Raised>>;
+use quench_runtime::vm::engine_types::CallContextFields;
 
-impl std::ops::Deref for CallContext {
-    type Target = CallContextFields;
-    fn deref(&self) -> &CallContextFields {
-        &self.head
-    }
-}
 
-impl std::ops::DerefMut for CallContext {
-    fn deref_mut(&mut self) -> &mut CallContextFields {
-        &mut self.head
-    }
-}
+
+
 
 #[quench_macros::ext(CallContextOps1)]
 impl CallContext {
@@ -2154,11 +2111,7 @@ impl CallContext {
     }
 }
 
-/// An error, or a panic to resume once compiled frames are gone.
-pub(super) enum Raised {
-    Error(JsError),
-    Panic(Box<dyn std::any::Any + Send>),
-}
+pub(super) use quench_runtime::vm::engine_types::Raised;
 
 const CONTEXT_INTERRUPT: i32 = std::mem::offset_of!(CallContext, head.interrupt) as i32;
 const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, head.stack_limit) as i32;
@@ -2264,74 +2217,15 @@ unsafe fn note_import_callout_target(
     counter.set(counter.get().saturating_add(1));
 }
 
-fn json_string(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\u{08}' => escaped.push_str("\\b"),
-            '\u{0C}' => escaped.push_str("\\f"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            character if character <= '\u{1F}' => {
-                use std::fmt::Write;
-                write!(escaped, "\\u{:04x}", character as u32)
-                    .expect("writing to a String cannot fail");
-            }
-            character => escaped.push(character),
-        }
-    }
-    escaped.push('"');
-    escaped
-}
+use quench_runtime::vm::engine_types::json_string;
 
-fn format_import_callout_targets(
-    names: &[(u32, u32, String, String)],
-    counters: &[std::cell::Cell<u64>],
-) -> String {
-    debug_assert_eq!(names.len(), counters.len());
-    names
-        .iter()
-        .zip(counters)
-        .filter_map(|((function, import_index, module, name), count)| {
-            let count = count.get();
-            (count > 0).then(|| {
-                format!(
-                    "{{\"function\":{function},\"import_index\":{import_index},\"module\":{},\"name\":{},\"count\":{count}}}",
-                    json_string(module),
-                    json_string(name)
-                )
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
+use quench_runtime::vm::engine_types::format_import_callout_targets;
 
-#[derive(Clone, Copy, Default)]
-struct ReferenceCallSiteCounts {
-    total: u64,
-    native: u64,
-    fallback: u64,
-    same_artifact_direct: u64,
-}
+use quench_runtime::vm::engine_types::ReferenceCallSiteCounts;
 
-#[derive(Clone, Copy, Default)]
-struct ReferenceCallTargetCounts {
-    function: usize,
-    total: u64,
-    native: u64,
-    same_artifact_native: u64,
-}
+use quench_runtime::vm::engine_types::ReferenceCallTargetCounts;
 
-pub(super) struct ReferenceCallSiteDiagnostics {
-    function: usize,
-    pc: usize,
-    counts: std::cell::Cell<ReferenceCallSiteCounts>,
-    targets: std::cell::RefCell<Vec<ReferenceCallTargetCounts>>,
-}
+pub(super) use quench_runtime::vm::engine_types::ReferenceCallSiteDiagnostics;
 
 fn note_reference_call_site(
     context: &CallContext,
@@ -2783,9 +2677,7 @@ unsafe extern "C" fn import_callout(
     finish_callout(context, called)
 }
 
-/// A compiled Wasm function's entry: (context, memory base, memory length,
-/// arguments, result) -> status.
-type WasmEntry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
+use quench_runtime::vm::engine_types::WasmEntry;
 
 /// The native-entry ABI of compiled Wasm functions: (context, memory base or locals, memory
 /// length or local count, arguments or registers, result word) -> status.
@@ -2796,9 +2688,7 @@ pub(super) fn native_entry_signature(
     call_signature::typed_signature(call_conv, &[pointer, types::I64, types::I64, pointer, pointer], &[types::I32])
 }
 
-/// The verified Number result's machine view in the common native result word.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum NativeNumberResult { Int32, Float64 }
+pub(super) use quench_runtime::vm::engine_types::NativeNumberResult;
 
 enum CompiledArgs<'a> {
     Values(&'a [Value]),
@@ -2908,15 +2798,7 @@ fn stitched_entry(_: &Vm, _: ProgramId, _: &quench_runtime::bytecode::ResidualPr
 /// The `CompiledProgram::positions` entry of a function an artifact does not hold.
 const NOT_COMPILED: u32 = u32::MAX;
 
-pub(super) struct CompiledFunction {
-    entry: WasmEntry,
-    params: Vec<quench_runtime::WasmType>,
-    result: Option<quench_runtime::WasmType>,
-    #[cfg(test)]
-    native_entries: std::cell::Cell<u64>,
-    #[cfg(test)]
-    direct_reference_entries: std::cell::Cell<u64>,
-}
+pub(super) use quench_runtime::vm::engine_types::CompiledFunction;
 
 type DirectReferenceEntry = (
     Rc<CompiledProgram>,
@@ -2996,142 +2878,9 @@ fn compiled_reference_target(
 
 pub(super) use quench_runtime::vm::engine_types::CompiledProgram;
 
-/// Counters allocated only for opt-in benchmark diagnostics. These runs are
-/// intended to explain coverage; their timings are not qualification scores.
-struct WasmJitDiagnostics {
-    program: u32,
-    total_functions: usize,
-    compiled_functions: usize,
-    code_bytes: usize,
-    mapped_bytes: usize,
-    compile_ns: u128,
-    native_entry_requests: Vec<std::cell::Cell<u64>>,
-    /// Deterministic 1-in-256 samples of inclusive native-entry wall time.
-    native_entry_samples: Vec<std::cell::Cell<u64>>,
-    /// Sum of sampled elapsed nanoseconds; nested native calls may overlap.
-    native_entry_sampled_ns: Vec<std::cell::Cell<u64>>,
-    interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
-    compiled_to_vm_callouts: std::cell::Cell<u64>,
-    compiled_import_callouts: std::cell::Cell<u64>,
-    compiled_known_callouts: std::cell::Cell<u64>,
-    compiled_reference_callouts: std::cell::Cell<u64>,
-    emscripten_memcpy_fast_path_hits: std::cell::Cell<u64>,
-    import_callout_names: Vec<(u32, u32, String, String)>,
-    import_callout_counts: Vec<std::cell::Cell<u64>>,
-    reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
-}
+use quench_runtime::vm::engine_types::WasmJitDiagnostics;
 
-impl Drop for CompiledProgram {
-    fn drop(&mut self) {
-        let Some(stats) = &self.diagnostics else {
-            return;
-        };
-        let entries = stats
-            .native_entry_requests
-            .iter()
-            .enumerate()
-            .filter_map(|(function, count)| {
-                let count = count.get();
-                (count > 0).then(|| format!("[{function},{count}]"))
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let native_entry_samples = stats
-            .native_entry_samples
-            .iter()
-            .zip(&stats.native_entry_sampled_ns)
-            .enumerate()
-            .filter_map(|(function, (samples, elapsed_ns))| {
-                let samples = samples.get();
-                let elapsed_ns = elapsed_ns.get();
-                (samples > 0).then(|| format!("[{function},{samples},{elapsed_ns}]"))
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let fallbacks = stats
-            .interpreter_fallback_entries
-            .iter()
-            .enumerate()
-            .filter_map(|(function, count)| {
-                let count = count.get();
-                (count > 0).then(|| format!("[{function},{count}]"))
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let reference_sites = stats
-            .reference_call_sites
-            .iter()
-            .filter_map(|site| {
-                let counts = site.counts.get();
-                (counts.total > 0).then(|| {
-                    format!(
-                        "[{},{},{},{},{}]",
-                        site.function, site.pc, counts.total, counts.native, counts.fallback
-                    )
-                })
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let mut reference_targets = Vec::new();
-        for site in &stats.reference_call_sites {
-            for target in site.targets.borrow().iter() {
-                if target.total > 0 {
-                    reference_targets.push(format!(
-                        "[{},{},{},{},{},{}]",
-                        site.function,
-                        site.pc,
-                        target.function,
-                        target.total,
-                        target.native,
-                        target.same_artifact_native
-                    ));
-                }
-            }
-        }
-        let reference_targets = reference_targets.join(",");
-        let import_callout_targets = format_import_callout_targets(
-            &stats.import_callout_names,
-            &stats.import_callout_counts,
-        );
-        let attributed_import_callouts = stats
-            .import_callout_counts
-            .iter()
-            .map(std::cell::Cell::get)
-            .fold(0u64, u64::saturating_add);
-        debug_assert_eq!(
-            attributed_import_callouts,
-            stats.compiled_import_callouts.get(),
-            "per-import attribution must account for every compiled import callout"
-        );
-        let same_artifact_direct_hits = stats
-            .reference_call_sites
-            .iter()
-            .map(|site| site.counts.get().same_artifact_direct)
-            .fold(0u64, u64::saturating_add);
-        eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"native_entry_sampling_interval\":{},\"native_entry_samples\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
-            stats.program,
-            stats.compiled_functions,
-            stats.total_functions,
-            stats.code_bytes,
-            stats.mapped_bytes,
-            stats.compile_ns,
-            entries,
-            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL,
-            native_entry_samples,
-            fallbacks,
-            stats.compiled_to_vm_callouts.get(),
-            stats.compiled_import_callouts.get(),
-            stats.compiled_known_callouts.get(),
-            stats.compiled_reference_callouts.get(),
-            import_callout_targets,
-            stats.emscripten_memcpy_fast_path_hits.get(),
-            reference_sites,
-            same_artifact_direct_hits,
-            reference_targets,
-        );
-    }
-}
+
 
 fn jit_diagnostics_enabled() -> bool {
     quench_runtime::trace::Channel::WasmJit.on()
@@ -3190,18 +2939,6 @@ impl CompiledProgram {
         let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         samples.set(samples.get().saturating_add(1));
         sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
-    }
-
-    /// Module function `index`'s compiled code, if this artifact holds it.
-    fn function(&self, index: usize) -> Option<&CompiledFunction> {
-        self.functions.get(*self.positions.get(index)? as usize)
-    }
-    pub(super) fn has_function(&self, function: usize) -> bool { self.function(function).is_some() }
-    /// The functions it holds code for.
-    pub(super) fn held_functions(&self) -> impl Iterator<Item = usize> + '_ { (0..self.positions.len()).filter(|&function| self.has_function(function)) }
-
-    pub(super) fn mapped_bytes(&self) -> usize {
-        self._code.length()
     }
 
     #[cfg(test)]
@@ -3266,17 +3003,6 @@ impl CompiledProgram {
         )
     }
 
-    pub(super) fn has_function_or_note_fallback(&self, function: usize) -> bool {
-        let available = self.has_function(function);
-        if !available
-            && let Some(stats) = &self.diagnostics
-            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(function)
-        {
-            fallbacks.set(fallbacks.get().saturating_add(1));
-        }
-        available
-    }
-
     #[cfg(test)]
     pub(super) fn native_entries(&self, function: usize) -> Option<u64> {
         self.function(function).map(|function| function.native_entries.get())
@@ -3317,62 +3043,11 @@ fn note_osr_run(events: &quench_runtime::vm::tier_events::TierEvents, run: &Regi
     }
 }
 
-/// A native OSR region published by the shared compiler. Its lowerer is private to this
-/// module; lanes only ask the region to run and inspect its exact-PC widening result.
-pub(super) struct CompiledOsrRegion {
-    code: CodeMemory,
-    entry: BodyEntry,
-    pub(super) facts: OsrFacts,
-    crossing: Crossing,
-    /// Where a run may re-enter the code mid-region (stencil regions only).
-    resumes: base_region::ResumeTable,
-    /// What its code owns of its calls: the callees it runs as their own rows, whose registers
-    /// follow the activation's (`CallCode`).
-    pub(super) calls: CallCode,
-    /// The dispatch the region's runs reuse (`Crossing::General`): its last run's, put back as the
-    /// run returns, so an entry rebinds the words that change between runs instead of building
-    /// the dispatch again (`JsStepDispatch::rebind_region`). A run entered while another of the
-    /// region runs finds none here and builds its own.
-    parked: std::cell::Cell<Option<Box<JsStepDispatch>>>,
-    /// Whether the region has parked its dispatch (`parked`).
-    made: std::cell::Cell<bool>,
-    /// Whether the region's instructions call, which decides how its captures bind
-    /// (`osr_lane::bind_captures`): found at its first run, not rescanned at each.
-    region_calls: std::cell::OnceCell<bool>,
-    /// The dense capture copy a run of a region that reads its captures from the entry points
-    /// the dispatch at (`osr_lane::bind_captures`), kept between runs so an entry fills it in
-    /// place instead of allocating it. A run entered while another runs takes an empty one.
-    dense: std::cell::Cell<Vec<quench_runtime::Value>>,
-    /// What the parked dispatch was last fully bound for (`EntryStamp`): an entry that finds
-    /// the same rebinds only the words a run changes (`JsStepDispatch::rewarm_region`).
-    stamp: std::cell::Cell<Option<EntryStamp>>,
-}
+pub(super) use quench_runtime::vm::engine_types::CompiledOsrRegion;
 
-/// The activation a region's parked dispatch was bound for: its VM, program and function,
-/// its VM frame (by index and by the frame's own address, which a pop and push at the same
-/// index changes), the lane context and register file, and whether the program runs
-/// specialized. An entry of the same activation (a loop entered again by an outer loop of
-/// the same frame, the case region entry costs most in) finds its frame, register and local
-/// words, `this` slot and capture view as they were: the run binds only what changes between
-/// runs, about a tenth of a full rebind.
-#[derive(Clone, Copy)]
-pub(super) struct EntryStamp {
-    vm: usize,
-    program: ProgramId,
-    function: u32,
-    frame: usize,
-    frame_record: usize,
-    /// The frame's locals' storage, which a frame's locals keep while the frame lives.
-    locals: usize,
-    lane_context: usize,
-    registers: usize,
-    /// Whether the program runs specialized (fixed for a program).
-    specialized: bool,
-    /// The capture view the window's captures word was last bound to (`captures_key`): an entry
-    /// rebinds it only where this changed. Not part of the activation's identity (`binds`).
-    captures: (usize, u64),
-}
+pub(super) use quench_runtime::vm::engine_types::EntryStamp;
 
+#[quench_macros::ext(EntryStampOps1)]
 impl EntryStamp {
     /// The stamp of the activation an entry runs, its capture view not yet bound (`captures`).
     fn of(vm: &Vm, (program, function, frame): (ProgramId, u32, usize), lane_context: usize, registers: *mut Value,
@@ -3402,6 +3077,7 @@ fn captures_key(vm: &Vm, frame: usize) -> (usize, u64) {
 }
 
 
+#[quench_macros::ext(CompiledOsrRegionOps1)]
 impl CompiledOsrRegion {
     /// Whether a run can begin at `pc`: the region's header, or a PC with a resume stub.
     pub(super) fn can_run_from(&self, region: &LoopRegion, pc: u32) -> bool {
@@ -3678,145 +3354,16 @@ fn compile_native_function<T>(
 
 pub(super) use quench_runtime::vm::engine_types::CompiledJsFunction;
 
-/// The instruction transition that returns from native code to the ordinary frame loop. Its `StepResult` is already executed,
-/// so the dispatcher consumes it instead of replaying the bytecode.
-pub(super) struct JsNativeStep {
-    pub(super) instruction_pc: usize,
-    #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
-    pub(super) next_pc: usize,
-    pub(super) result: Result<quench_runtime::vm::StepResult, JsError>,
-}
+pub(super) use quench_runtime::vm::engine_types::JsNativeStep;
 
-/// Generated code reads this payload by field offset, and an image's code is compiled by a
-/// different build than the runtime it links: the layout is declared, not left to the compiler.
-#[repr(C)]
-struct JsStepDispatch {
-    /// The word-sized fields generated code reads by offset (`staged::js_step_head`); the stencils take
-    /// their `JS_STEP_*` offsets from the same struct, and it is first so its offsets are the payload's.
-    head: JsStepHead<Value>,
-    program_id: ProgramId,
-    frame: usize,
-    allow_inline_calls: bool,
-    start_pc: usize,
-    native_registers: *mut Value,
-    register_count: usize,
-    /// Canonical receiver slot when `this` has already been initialized. Callouts
-    /// may move frames or initialize a derived constructor, so refresh this before
-    /// returning to generated code. Direct field reads do not cross a safepoint.
-    fixed_this_slot: *const Value,
-    /// Immutable function admitted with `residual` by `JsStepDispatch::with_function`.
-    body: *const quench_runtime::bytecode::Function,
-    /// A lane body's scratch window (`BodyRunContext::scratch`), where a leave inside an inlined
-    /// callee writes the callee's registers.
-    inlined: usize,
-    /// The lowering line of the guard a lane body last left at, where its code was compiled
-    /// for diagnostics (`VmFacts::diagnostics`); zero otherwise.
-    exit_line: u64,
-    /// The element read past a present dense element (`general_elements`).
-    element_get: usize,
-    /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
-    /// `epoch`, and the admission a site whose entry misses asks.
-    call_cache: usize,
-    layout_seen: u64, // `Heap::native_layout_epoch` at the last reread of the bases (`refresh_object_bases`); `u64::MAX`: never
-    frameless: usize,
-    /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
-    /// binding probes before its helper; an empty table where an eval binds no callee.
-    call_targets: usize,
-    /// Whether the host makes a strict function's terminal calls proper tail calls
-    /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
-    proper_tail_calls: u64,
-    /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
-    /// refreshed with the other record bases, and the address of the process's buffer-relocation count
-    /// (`buffer_relocations_address`): what a typed array's view proof reads
-    /// (`staged::typed_view::TypedRecords`).
-    typed_view_directory: usize,
-    typed_view_pages: usize,
-    buffer_relocations: usize,
-    outcome: Option<JsNativeStep>,
-    /// Past every word generated code reads: a feature's field leaves their offsets as they are.
-    #[cfg(feature = "native-execution")]
-    stop_pc: usize,
-}
+use quench_runtime::vm::engine_types::JsStepDispatch;
 
-/// Reads and writes of the head's fields go through the head (`JsStepDispatch::head`).
-impl Deref for JsStepDispatch {
-    type Target = JsStepHead<Value>;
-    fn deref(&self) -> &JsStepHead<Value> { &self.head }
-}
-impl DerefMut for JsStepDispatch {
-    fn deref_mut(&mut self) -> &mut JsStepHead<Value> { &mut self.head }
-}
 
-pub(super) struct LaneMethod {
-    /// The slot observations and holder shapes its code relies on (`LaneDependencies`).
-    pub(super) dependencies: lane_compile::LaneDependencies,
-    /// The Stable facts its code folded, each a dependency its publication takes.
-    pub(super) stable: lane_region::StableFacts,
-    /// The word its code reads at its invalidation points, set when it retires.
-    pub(super) invalidation: quench_runtime::code_dependencies::Invalidation,
-    /// Its code, none for a body the system linker placed in the executable (`of_linked_base`).
-    _code: Option<CodeMemory>,
-    entry: BodyEntry,
-    /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
-    /// that proves its numeric arguments calls by the entry cell's `scalar` word.
-    scalar: Option<usize>,
-    /// Where its proven entry lies in the same code, with the entry types of the parameters it skips the guards of
-    /// (`lane_region::LoweredRegion::entry_types`): a direct caller that proves each argument has its type calls it
-    /// (`EntryCell::proven_entry`).
-    proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>,
-    /// Where its row entries lie in the same code (`entry_rows` and its proven-arguments copy, a b-jit body's), which a
-    /// b-jit direct call calls by the entry cell's `rows` and `proven` words; none for a Cranelift body.
-    rows: Option<entry_cell::RowEntries>,
-    recovery_space: crate::dispatch_fast::LaneRecoverySpace,
-    /// The lowering requires an owned, resumable poll-page capability.
-    fault_poll: bool,
-    /// Whether its code names shape ids as constants, which a shape compaction renumbers:
-    /// the compaction unlinks it (`LaneView::invalidate_shape_bindings`), so no entry checks them.
-    pub(super) names_shapes: bool,
-    /// The calls it runs inlined (`lane_unit::unit`), by frame.
-    pub(super) inlined: Vec<InlinedCall>,
-    /// Its leaves, by place (`ExitTable`).
-    pub(super) exits: ExitTable,
-    /// The scratch registers a leave inside an inlined call fills (`BodyRunContext::scratch`): one
-    /// per register of the inlined callees, the unit's past the caller's.
-    scratch_width: usize,
-    /// Whether its inlined frames' registers live in the activation's register file past the
-    /// caller's (a stitched body's) and not in the scratch window its code fills: a leave inside
-    /// one adopts them from the file (`Vm::adopt_window_in_lane`).
-    framed: bool,
-    caller_registers: u16,
-    /// The frame slots past `caller_registers` the code writes in the activation's own storage (a b-jit
-    /// body's scratch and inlined windows, past the environment window); 0 where it writes none there.
-    frame_reach: usize,
-    /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
-    amortizes: bool,
-    /// The callees it calls by their compiled entries, which its code names.
-    pub(crate) direct: Box<[DirectCallee]>,
-    /// Whether every call of it that has run is inlined or direct: under a direct caller's native
-    /// frames the lane's helper call misses (`dispatch_fast::body_call_helper`), so only such
-    /// a body is called directly.
-    closed: bool,
-    /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
-    _records: Vec<Box<quench_bjit::call_record::CallRecord>>,
-    /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
-    /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
-    pub(super) constructors: Box<[Value]>,
-    /// Whether it runs only in the realm it was compiled in: its entry proves that realm active
-    /// (`Heap::Realm`) and every callee it names is that realm's, so a switch to another realm
-    /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
-    pub(crate) realm_bound: bool,
-    /// Its entry types and its activation's result type (`lane_region::TypeSummary`), where it is a
-    /// whole function's body: a direct caller types the call's result with it (`DirectCallee::summary`).
-    /// Read through `summary()`, which a withdrawal ends.
-    summary: Option<lane_region::TypeSummary>,
-    /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
-    /// types no call, so its summary is not read.
-    withdrawn: std::cell::Cell<bool>,
-    /// Whether it is an ahead image's body (`Vm::install_ahead_body`): nothing replaces it, so no leave
-    /// retires it (`LaneView::note_lane_body_end`).
-    pub(crate) ahead: bool,
-}
 
+
+pub(super) use quench_runtime::vm::engine_types::LaneMethod;
+
+#[quench_macros::ext(LaneMethodOps1)]
 impl LaneMethod {
     pub(super) fn frame_reach(&self) -> usize { self.frame_reach }
     #[inline]
@@ -3832,27 +3379,9 @@ impl LaneMethod {
         self.framed
     }
 
-    /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
-    pub(super) fn entry_address(&self) -> usize {
-        self.entry as usize
-    }
-
     /// Its type summary, if its lowering made one and its entry cell has not withdrawn it (`lane_region::TypeSummary`).
     pub(crate) fn summary(&self) -> Option<&lane_region::TypeSummary> {
         if self.withdrawn.get() { None } else { self.summary.as_ref() }
-    }
-
-    /// Ends its summary, as its entry cell withdraws it (`EntryCell::withdraw`).
-    pub(super) fn withdraw(&self) { self.withdrawn.set(true) }
-
-    /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
-    pub(super) fn scalar_address(&self) -> Option<usize> {
-        self.scalar
-    }
-
-    /// The address of its proven entry, if it has one (`EntryCell::proven_entry`).
-    pub(super) fn proven_address(&self) -> Option<usize> {
-        self.proven.as_ref().map(|(address, _)| *address)
     }
 
     /// The entry types its proven entry takes its parameters at, the types a direct caller proves its arguments have
@@ -3860,11 +3389,6 @@ impl LaneMethod {
     /// body's parameter types (`TypeSummary`) may come to back.
     pub(super) fn entry_param_types(&self) -> Option<&[quench_runtime::typed_ir::Type]> {
         self.proven.as_ref().map(|(_, params)| &params[..])
-    }
-
-    /// Its row entries, if it has them (`EntryCell::rows`, `proven`, `numbers`, `uses_this`).
-    pub(super) fn row_entries(&self) -> Option<entry_cell::RowEntries> {
-        self.rows
     }
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
@@ -3878,48 +3402,11 @@ impl LaneMethod {
     pub(super) fn calls_only_natively(&self) -> bool {
         self.closed
     }
-
-    /// Sizes this thread's scratch window for it (`BodyRunContext::scratch`): the one event that
-    /// grows the window, so a run never checks it. Its publication does it
-    /// (`ProgramStore::publish_lane_method`), on the thread that runs it.
-    pub(super) fn reserve_scratch(&self) {
-        entry_cell::reserve_lane_scratch(self.scratch_width);
-    }
-
-    /// Releases the capacity its vectors hold past their length, as its publication keeps them for
-    /// as long as the body is published (`ProgramStore::publish_lane_method`).
-    pub(super) fn trim_published(&mut self) {
-        self.dependencies.trim();
-        self.inlined.shrink_to_fit();
-        self._records.shrink_to_fit();
-    }
 }
 
 pub(super) use quench_runtime::vm::engine_types::PublishedLaneMethod;
 
-/// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
-/// whose activation the lane then makes (`Vm::body_inlined_activation_in_lane`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LaneExit {
-    At(usize),
-    Inlined { frame: usize, pc: u32 },
-    Terminated,
-    /// A native call made its callee's activation and the lane continues in it
-    /// (`dispatch_fast::body_call_helper`).
-    Callee,
-    /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
-    Returned { pc: usize, value: Value },
-    /// The activation ends by the exception in `Vm::lane_raised`, raised at the record `pc`,
-    /// which no native handler of its function took: the lane unwinds from there.
-    Threw { pc: usize },
-    /// The entry's proof of its inputs failed before any instruction ran: the activation
-    /// resumes at its first record, and a plan again proves no input contract.
-    Entry,
-    /// The call went through an entry cell that held the stub, so no body ran: the caller
-    /// takes its general path at its own first record (`LANE_BODY_NOT_ENTERED`). Not a leave of
-    /// any body: a loop or OSR root, whose entry proves its own inputs, never reads it as one.
-    Stub,
-}
+pub(super) use quench_runtime::vm::engine_types::LaneExit;
 
 /// The status of a lane body whose activation completes: its result word holds the value,
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
@@ -3938,6 +3425,7 @@ pub(super) use quench_bjit::call_record::{
     LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED,
 };
 
+#[quench_macros::ext(LaneExitOps1)]
 impl LaneExit {
     /// The caller PC a leave or completion is at, with a completion's value written to the
     /// register its record names, where a test reads a `Return`'s result.
@@ -4651,6 +4139,7 @@ fn frame_in_lane() -> *mut BodyRunContext {
 }
 
 
+#[quench_macros::ext(JsStepDispatchOps1)]
 impl JsStepDispatch {
     /// Construct and consume one owned activation in the entry's scope. The
     /// large dispatch does not cross an optional aggregate-return boundary.
@@ -4957,18 +4446,9 @@ unsafe extern "C" fn js_step_callout(
     unsafe { js_semantic_callout::<false, DYNAMIC_JS_OPCODE>(context, function, arguments, result) }
 }
 
-#[cfg(feature = "native-execution")]
-struct StaticJsOperation {
-    opcode: Op,
-    execute: fn(&mut Vm, &ResidualProgram, usize, WideInstruction, &mut usize, bool)
-        -> Result<StepResult, JsError>,
-}
+use quench_runtime::vm::engine_types::StaticJsOperation;
 
-/// A statically selected semantic helper's C ABI. Operands use `NativeJsOperands`.
-#[cfg(feature = "native-execution")]
-pub type NativeJsOperationEntry = unsafe extern "C" fn(
-    *mut std::ffi::c_void, u64, *const u64, *mut u64,
-) -> i64;
+pub use quench_runtime::vm::engine_types::NativeJsOperationEntry;
 
 /// Resolve a compiler opcode identity to its derived semantic helper. The opcode
 /// inventory generates this mapping; linked entries never dispatch an opcode.
@@ -5642,10 +5122,6 @@ impl CompiledJsFunction {
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn native_entries(&self) -> u64 {
         self.native_entries.get()
-    }
-
-    pub(super) fn mapped_bytes(&self) -> usize {
-        self.mapped_bytes
     }
 }
 
@@ -9687,18 +9163,9 @@ pub(super) fn pays_native_entry(body: &quench_runtime::bytecode::Function) -> bo
     body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
 }
 
-/// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
-/// artifact, held weakly so that the tier retiring it ends the direct run,
-/// and the `Return` its result completes. The artifact owns the input signature.
-pub(super) struct DirectTierEntry {
-    compiled: std::rc::Weak<CompiledJsFunction>,
-    return_pc: usize,
-    return_register: quench_runtime::bytecode::Register,
-    /// The function the entry runs, whose entries the diagnostics report counts.
-    function: (ProgramId, u32),
-    params: u16,
-}
+pub(super) use quench_runtime::vm::engine_types::DirectTierEntry;
 
+#[quench_macros::ext(DirectTierEntryOps1)]
 impl DirectTierEntry {
     /// Whether the tier retired the artifact.
     pub(super) fn retired(&self) -> bool {

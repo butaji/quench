@@ -5,9 +5,8 @@
 //! the frame (`FrameRecord::with_objects`), and a materialized activation's frame takes it.
 use super::*;
 
-/// The objects of one activation's `with` chain, kept inline up to the nesting a function usually has.
-pub(super) type WithChain = SmallVec<[Value; WITH_CHAIN_INLINE_OBJECTS]>;
-const WITH_CHAIN_INLINE_OBJECTS: usize = 2;
+pub(super) use quench_runtime::vm::engine_types::WithChain;
+use quench_runtime::vm::engine_types::WITH_CHAIN_INLINE_OBJECTS;
 
 #[quench_macros::ext(LaneStackOps7)]
 impl LaneStack {
@@ -22,26 +21,9 @@ impl LaneStack {
         }
     }
 
-    /// The chain of the activation at `depth`, the innermost, moved off the stack to the end
-    /// of `record`'s, the suspending frame's (`FrameRecord::with_objects`); usually none.
-    #[inline(always)]
-    pub(crate) fn take_with_objects(&mut self, depth: usize, record: &mut quench_runtime::vm::activation::FrameRecord) {
-        if self.with_objects.last().is_some_and(|(owner, _)| *owner >= depth) {
-            let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
-            record.with_objects_mut().extend(self.with_objects.drain(first..).map(|(_, object)| object));
-        }
-    }
-
     /// The chain of the activation at `depth`, outermost first.
     pub(crate) fn with_chain(&self, depth: usize) -> impl Iterator<Item = Value> + '_ {
         self.with_objects.iter().filter(move |(owner, _)| *owner == depth).map(|(_, object)| *object)
-    }
-
-    /// Leaves the `with` scopes of the activation at `depth`, the innermost, past the first
-    /// `entered` of its chain: what a handler's entry unwinds (`Vm::unwind_handler_scopes`).
-    pub(crate) fn unwind_with_objects(&mut self, depth: usize, entered: usize) {
-        let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
-        self.with_objects.truncate(first + entered);
     }
 
     /// Drops the objects of the activations from index `depth` on, which returned from inside a
@@ -57,11 +39,6 @@ impl LaneStack {
     #[inline(never)]
     fn drop_with_objects_held_from(&mut self, depth: usize) {
         self.with_objects.retain(|(owner, _)| *owner < depth);
-    }
-
-    /// Every object a chain holds, which the collector keeps alive.
-    pub(crate) fn with_object_roots(&self) -> impl Iterator<Item = Value> + '_ {
-        self.with_objects.iter().map(|(_, object)| *object)
     }
 }
 

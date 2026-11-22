@@ -24,12 +24,11 @@ mod control_flow;
 pub(crate) mod initialization;
 mod initializer_stores;
 mod super_initializer;
-pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
+pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue, NESTED_ARGUMENTS, NESTED_CHAIN};
 mod environment_clone;
 pub use environment_clone::{EnvironmentClone, EnvironmentClones};
 pub(crate) use environment_clone::Resets;
 mod field_store;
-pub(crate) use field_store::{FieldStore, StoreReceiver};
 mod call_plan;
 pub(crate) use call_plan::{CALL_PLAN_FLAG_COUNT, CallPlan};
 mod instruction;
@@ -74,7 +73,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
     name.starts_with(HOME_BINDING_PREFIX)
         || (local_name_requires_environment(name) && declared_in_environment())
 }
-pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, for_each_instruction_successor, may_repeat, reachable_from};
+pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor, may_repeat};
 pub use instruction::Instr;
 pub use instruction::WideInstruction;
 pub(crate) use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
@@ -4793,7 +4792,6 @@ impl ResidualProgram {
 mod binary;
 mod tier0;
 mod detached;
-pub(crate) use detached::DetachedProgram;
 #[cfg(feature = "native-execution")]
 mod native_metadata;
 #[cfg(feature = "native-execution")]
@@ -4813,7 +4811,6 @@ mod validate;
 mod operands;
 pub use operands::{ConstructArguments, FieldBase, FieldLookup, Operand, OperandKind, RegisterWindow, REGISTER_MASK, SET_THIS_REGISTER};
 mod this_reads;
-pub(crate) use this_reads::activation_reads_this;
 mod written_once;
 
 /// Whether function `id` of `code`, an arrow, or an arrow it makes through arrows alone,

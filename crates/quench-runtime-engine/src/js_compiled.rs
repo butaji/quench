@@ -123,16 +123,4 @@ fn activation_is_irrelevant(function: &Function) -> bool {
 
 pub(super) use quench_runtime::vm::engine_types::JsEntryFacts;
 
-#[quench_macros::ext(JsEntryFactsOps1)]
-impl JsEntryFacts {
-    /// Whether every fact is unset (`Self::default`).
-    pub(super) const fn is_unset(&self) -> bool {
-        !self.candidate
-    }
 
-    pub(super) fn of(program: &ResidualProgram, function: &Function, priced: bool) -> Self {
-        let has_calls = function.instructions().any(|instruction|
-            instruction.op().control_flow_layout() == quench_runtime::bytecode::ControlFlowLayout::Call);
-        Self { candidate: function_candidate(function, program) && (!priced || has_calls || crate::compiled::pays_native_entry(function)) }
-    }
-}

@@ -16,7 +16,7 @@ pub(crate) use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit}
 pub(crate) use representation::Representation;
 mod slot_type;
 pub(crate) use slot_type::SlotType;
-pub(crate) use int_range::{IntRange, WIDENING_ROUNDS};
+pub(crate) use int_range::IntRange;
 
 /// An element index is below its array's length, which every layout stores in 32 bits: it
 /// lies within `IntRange::EXACT`, so an index word and the Number it came from agree on it.

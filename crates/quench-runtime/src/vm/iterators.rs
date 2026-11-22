@@ -34,7 +34,6 @@ pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 mod collection_steps;
 #[path = "iterator_in_place.rs"]
 mod iterator_in_place;
-pub(super) use iterator_in_place::InPlaceStep;
 
 /// The stores `Vm::intact_iteration_kind` proves iterate by their own contents.
 #[derive(Clone, Copy, PartialEq, Eq)]

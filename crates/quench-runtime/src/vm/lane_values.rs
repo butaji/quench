@@ -11,12 +11,12 @@ pub(super) const CONTEXT: usize = super::register_file::FRAME_CONTEXT;
 /// The low bit of an activation's `WINDOW` word when its window is not the lane stack's: a
 /// suspended frame's register file (a generator's, `FrameRecord`), which a return leaves
 /// alone. A `Value` is word aligned, so the bit is free in an address.
-pub(super) const HEAP_WINDOW: usize = 1;
+pub(crate) const HEAP_WINDOW: usize = 1;
 const _: () = assert!(std::mem::align_of::<Value>() > HEAP_WINDOW);
 
 /// The values of a lane stack's windows, `base..top`, in an allocation of room up to `end`.
 /// They hold no drop glue, so truncation and growth only move words.
-pub(super) struct LaneValues {
+pub struct LaneValues {
     base: *mut Value,
     top: *mut Value,
     end: *mut Value,

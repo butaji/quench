@@ -3,7 +3,7 @@
 //! dies, the realm or heap is replaced).
 use super::*;
 use crate::code_dependencies::PublishedCode;
-use crate::vm::compiled::{CompiledOsrRegion, LaneMethod, PublishedLaneMethod};
+use crate::vm::engine_types::{CompiledOsrRegion, LaneMethod, PublishedLaneMethod};
 use crate::vm::tier_events::Event;
 
 /// Code that names callees by identity: a published body, or a body's plan whose code still
@@ -34,7 +34,7 @@ impl NativeCallBinding {
     /// retirement still uses this inventory for every binding kind.
     fn stands(&self, live: &impl Fn(Value) -> bool) -> bool {
         match self {
-            Self::Published(method) => stands(method.upgrade(), |method| crate::vm::compiled::names_dead_callee(&method.inlined, &method.direct, live) || method.constructors.iter().any(|constructor| !live(*constructor))),
+            Self::Published(method) => stands(method.upgrade(), |method| crate::vm::engine_calls::names_dead_callee(&method.inlined, &method.direct, live) || method.constructors.iter().any(|constructor| !live(*constructor))),
             Self::Region(region) => stands(region.upgrade(), |region| region.calls.names_dead(live)),
             Self::Pending { watch, callees } => stands(watch.upgrade().filter(|watch| watch.is_published()), |_| callees.iter().any(|callee| !live(*callee))),
         }
@@ -59,7 +59,7 @@ impl ProgramStore {
     }
 
     /// Whether the image the system linker placed at `table` is loaded (`Vm::load_linked_image`).
-    pub(in crate::vm) fn has_linked_image(&self, table: &crate::vm::aot_image::live::LinkedTable) -> bool {
+    pub(in crate::vm) fn has_linked_image(&self, table: &crate::vm::engine_types::LinkedTable) -> bool {
         self.ahead.borrow().iter().any(|images| images.is_linked_at(table))
     }
 

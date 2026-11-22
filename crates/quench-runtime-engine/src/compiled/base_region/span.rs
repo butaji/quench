@@ -6,12 +6,9 @@ use super::*;
 /// Bits in a word of a live set.
 pub(super) const WORD: usize = u64::BITS as usize;
 
-/// The registers the interpreter may read resuming at each row, one set per row, flat.
-pub(super) struct Live {
-    words: usize,
-    bits: Vec<u64>,
-}
+pub(super) use quench_runtime::vm::engine_types::Live;
 
+#[quench_macros::ext(LiveOps1)]
 impl Live {
     /// An empty table over `registers` registers.
     pub(super) fn new(registers: usize) -> Self {
@@ -35,12 +32,13 @@ impl Live {
 
 /// The rows of a stitched program, numbered from 0, and what is live at each.
 pub(super) struct Span<'a> {
-    region: &'a LoopRegion,
-    pub(super) header: u32,
-    pub(super) backedge: u32,
-    live: &'a Live,
+    pub region: &'a LoopRegion,
+    pub header: u32,
+    pub backedge: u32,
+    pub live: &'a Live,
 }
 
+#[quench_macros::ext(SpanOps1)]
 impl<'a> Span<'a> {
     /// The span of a stitched program of `rows` rows over the span `region` holds of its function.
     pub(super) fn of(region: &'a LoopRegion, rows: usize, live: &'a Live) -> Self {

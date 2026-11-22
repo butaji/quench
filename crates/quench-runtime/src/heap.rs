@@ -141,7 +141,7 @@ pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VAL
 pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
 pub(crate) use array_proofs::{
-    ArrayStorageProofs, LaneProofScope, NO_INDEX_FREE_CHAIN_LINK, armed_proofs_address, index_free_chain_link_address,
+    ArrayStorageProofs, NO_INDEX_FREE_CHAIN_LINK,
     retire_array_storage_proofs, set_index_free_chain_link,
 };
 mod cell;
@@ -182,8 +182,8 @@ mod string_atoms;
 mod native_layout;
 mod record_layouts;
 pub(crate) use record_layouts::{
-    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
-    PropertyStoreLayout, absent_environment_storage,
+    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT,
+    PropertyStoreLayout,
 };
 mod string_parts;
 mod small_strings;

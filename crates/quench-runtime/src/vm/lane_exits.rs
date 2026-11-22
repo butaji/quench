@@ -409,7 +409,7 @@ extern "C" fn report_functions() {
         for (sum, lane, general, label) in rows.into_iter().take(REPORTED_FUNCTIONS) {
             eprintln!("  {sum:>12} lane={lane:>11} general={general:>10} {label}");
         }
-        let record_size = std::mem::size_of::<super::dispatch_fast::LaneInstruction>();
+        let record_size = std::mem::size_of::<crate::vm::engine_types::LaneInstruction>();
         let mut records: Vec<_> = census.records.iter().map(|(address, count)| (*count, *address)).collect();
         records.sort_unstable_by(|a, b| b.cmp(a));
         eprintln!("record census:");

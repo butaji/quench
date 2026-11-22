@@ -11,12 +11,9 @@ use super::lane_unit::Origin;
 use quench_runtime::vm::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self, LiveImage}};
 #[path = "ahead_images/constructions.rs"] mod constructions;
 
-/// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
-pub const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
+pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID;
 
-/// The text that names the build in a library's bytes, followed by `QUENCH_BUILD_ID` in 16 hex
-/// digits (`AHEAD_BUILD_ID_MARK`).
-pub const AHEAD_BUILD_ID_PREFIX: &[u8; 16] = b"QUENCH_BUILD_ID=";
+pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID_PREFIX;
 
 /// `AHEAD_BUILD_ID_PREFIX` and the build ID, kept in every object of this crate's library so
 /// `quench compile` can read which build a runtime library is before it links an image against
@@ -152,41 +149,14 @@ fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 
 pub use quench_runtime::vm::engine_types::AheadImages;
 
-/// The images of each program stored while recording (`start_recording`); the entry may run
-/// on a worker thread, so this is process-wide. It holds the lowered images alone: a linked
-/// image belongs to the VM (and thread) that loaded it.
-static RECORDED: std::sync::Mutex<Option<Vec<AotImage>>> = std::sync::Mutex::new(None);
+use quench_runtime::vm::engine_types::RECORDED;
 
-fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AotImage>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+use quench_runtime::vm::engine_types::recorded;
 
 #[quench_macros::ext(AheadImagesOps1)]
 impl AheadImages {
-    /// The image of `program`, lowered under its closed-world facts for the baseline ISA.
-    pub fn compile(program: &ResidualProgram) -> Result<Self, String> {
-        let facts = quench_runtime::compile::aot_facts::analyze(program);
-        let image = aot_image::lower(program, &facts, &ImageTarget::default())?;
-        Ok(Self { facts: std::cell::OnceCell::from(facts), ..Self::of(image) })
-    }
-
-    fn of(image: AotImage) -> Self {
-        Self { image, known: Default::default(), linked: None, placed: None, facts: std::cell::OnceCell::new() }
-    }
-
-    /// Whether this is the image of `program`, the program numbered `id`; each program is
-    /// fingerprinted once.
-    pub(crate) fn is_of(&self, id: u32, program: &ResidualProgram) -> bool {
-        let mut known = self.known.borrow_mut();
-        if let Some((_, of)) = known.iter().find(|(known, _)| *known == id) { return *of; }
-        let of = ahead_program_fingerprint(program) == self.image.fingerprint;
-        known.push((id, of));
-        of
-    }
-
     /// How many functions the image has.
     pub fn len(&self) -> usize { self.image.functions.len() }
-
-    /// Whether the image has no functions.
-    pub fn is_empty(&self) -> bool { self.image.functions.is_empty() }
 
     /// The file of this image (`from_bytes` reads it back).
     pub fn to_bytes(&self) -> Vec<u8> { aot_image::file::to_bytes(&self.image) }
@@ -199,23 +169,11 @@ impl AheadImages {
         Ok(Self { linked: Some(linked), placed: Some(table.entries.as_ptr().addr()), ..Self::of(image) })
     }
 
-    /// Whether this is the image the system linker placed at `table`'s entries.
-    pub(crate) fn is_linked_at(&self, table: &live::LinkedTable) -> bool {
-        self.placed == Some(table.entries.as_ptr().addr())
-    }
-
     /// The image `to_bytes` wrote; an error names what the file lacks.
     pub fn from_bytes(file: &[u8]) -> Result<Self, String> { Ok(Self::of(aot_image::file::from_bytes(file)?)) }
 
     /// Starts collecting the images of every program this thread stores (`finish_recording`).
     pub fn start_recording() { *recorded() = Some(Vec::new()); }
-
-    /// Adds `program`'s image while recording; a program that does not lower adds none.
-    pub(crate) fn record(program: &ResidualProgram) {
-        if recorded().is_none() { return; }
-        let Ok(images) = Self::compile(program) else { return };
-        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.image); } }
-    }
 
     /// What was recorded since `start_recording`, which stops.
     pub fn finish_recording() -> Vec<AheadImages> { recorded().take().unwrap_or_default().into_iter().map(Self::of).collect() }

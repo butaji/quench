@@ -2,7 +2,7 @@
 //! the interpreter's unwinding (`Vm::exception_handler_target`) and a compiled body's or loop
 //! region's native catch (`dispatch_fast::handler_edge`), in a VM frame or in the
 //! environment window of a lane activation (`HandlerHome`): one implementation of each step.
-use super::dispatch_fast::{WINDOW_ENVIRONMENT, WINDOW_LOCALS, WINDOW_SLOTS};
+use crate::vm::engine_types::{WINDOW_ENVIRONMENT, WINDOW_LOCALS, WINDOW_SLOTS};
 use super::*;
 use crate::bytecode::{Handler, ThrownValueSlot};
 

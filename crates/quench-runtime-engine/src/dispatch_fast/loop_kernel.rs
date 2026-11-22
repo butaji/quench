@@ -35,28 +35,10 @@ mod shape;
 
 pub(super) use shape::Shape;
 
-/// Live kernels by slot: a kernel's test record names its slot in `call_link`, which a test
-/// record holds no call link in.
-#[thread_local]
-static KERNELS: std::cell::UnsafeCell<Vec<*const LoopKernel>> = std::cell::UnsafeCell::new(Vec::new());
+use quench_runtime::vm::engine_types::KERNELS;
 
 use crate::compiled::tier_policy::KERNEL_SHORT_DECLINES;
-/// A loop's kernel: its shape, the test record's own handler, and its run state.
-pub(super) struct LoopKernel {
-    shape: Shape,
-    recurrence: recur::Recurrence,
-    slot: u16,
-    /// The test record's handler before the kernel took it, which runs where the kernel runs
-    /// nothing.
-    original: std::cell::Cell<*const ()>,
-    declines: std::cell::Cell<u32>,
-    /// The run's columns (`run`), kept between runs.
-    scratch: std::cell::UnsafeCell<Vec<f64>>,
-    /// The run's entry facts and recurrences (`run::State`), kept between runs: an entry
-    /// writes the slots its shape uses and copies nothing. Made by the first run (`LoopKernel::run`):
-    /// a kernel that never runs keeps none of its roughly 2 KB.
-    state: std::cell::UnsafeCell<Option<Box<run::State>>>,
-}
+pub(super) use quench_runtime::vm::engine_types::LoopKernel;
 
 /// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
 /// that interprets its recurrences per iteration is not under `--b-jit`: the loop's stencils run
@@ -117,6 +99,7 @@ fn never_number_scalar(shape: &Shape, decoded: &[WideInstruction], constants: &[
     })
 }
 
+#[quench_macros::ext(LoopKernelOps1)]
 impl LoopKernel {
     /// Whether the loop `header..=backedge` has a kernel: `--b-jit` leaves such a loop to it, as
     /// its stencils run it slower (`install_loop_sites`).
@@ -185,23 +168,7 @@ impl LoopKernel {
     }
 }
 
-impl Drop for LoopKernel {
-    fn drop(&mut self) {
-        // SAFETY: the registry is this thread's, and no kernel runs while its view drops.
-        let kernels = unsafe { &mut *KERNELS.get() };
-        if let Some(entry) = kernels.get_mut(usize::from(self.slot)) {
-            *entry = std::ptr::null();
-        }
-        // Trailing free slots name no kernel, so the registry gives them back: it keeps only
-        // as many slots as its live kernels reach, not the peak of every view ever derived.
-        while kernels.last().is_some_and(|entry| entry.is_null()) {
-            kernels.pop();
-        }
-        if kernels.capacity() > 4 * kernels.len().max(8) {
-            kernels.shrink_to_fit();
-        }
-    }
-}
+
 
 /// Registers `kernel`, whose box keeps its address, in a free slot.
 fn register(kernel: &LoopKernel) -> Option<u16> {

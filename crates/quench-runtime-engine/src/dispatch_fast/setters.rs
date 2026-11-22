@@ -3,12 +3,7 @@ use super::*;
 use quench_runtime::vm::AccessorForward;
 use quench_runtime::vm::accessor_cache::SetterForward;
 
-/// The store sites a general store has called a setter at, one bit each by the site's cache
-/// index modulo the set's width: the lane looks for a setter only at such a site, so a store
-/// that meets none pays no lookup. Sites sharing a bit only make that lookup.
-/// The set is the lane stack's own (`LaneStack::setter_sites`): a plain load per store, no
-/// thread-local access or borrow.
-const SETTER_SITE_BITS: usize = 1 << 16;
+use quench_runtime::vm::engine_types::SETTER_SITE_BITS;
 
 /// `LaneStack::setter_sites`' word and bit of the site at cache index `site`.
 #[inline(always)]

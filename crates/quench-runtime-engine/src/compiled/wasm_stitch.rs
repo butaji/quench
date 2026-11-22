@@ -404,70 +404,9 @@ const ENTRY_ZEROED: [&str; 5] = ["entry_wasm_p0", "entry_wasm_p1", "entry_wasm_p
 /// The same, for an entry with no registers after its arguments.
 const ENTRY_UNZEROED: [&str; 5] = ["entry_wasm_p0_nz", "entry_wasm_p1_nz", "entry_wasm_p2_nz", "entry_wasm_p3_nz", "entry_wasm_p4_nz"];
 
-/// The code of `function`: the entry, the trap routine, then the rows, every successor patched;
-/// `None` where an instruction has no rows yet. The code is position independent: it calls and
-/// jumps only within itself.
-/// What the rows of a module's functions name outside the function: its constants' frame words
-/// (`None` for one a row cannot hold, a vector), the instance binding of the memory the entry
-/// passes (`WasmEntry`'s base and length), whose binding instruction then places nothing, and
-/// the address of the cell holding a function's entry, which its direct calls call through
-/// (`None` for a function that is not stitched: its direct calls then go through `vm_call`).
-pub(super) struct World<'a> {
-    pub(super) constant: &'a dyn Fn(usize) -> Option<u64>,
-    pub(super) memory_slot: Option<u32>,
-    /// Whether the frame's memory keeps its base when it grows (a reservation, or no memory):
-    /// rows that can run a growth (`memory.grow`, an indirect call's VM callout) reload only
-    /// the length, so over a movable memory they have none.
-    pub(super) memory_stable: bool,
-    pub(super) callee: &'a dyn Fn(usize) -> Option<u64>,
-    /// The defined functions that may grow the memory (`wasm_growth`): a direct call of one that
-    /// may not plans `CALL_KEEP`. A function past the set's bound counts as growing.
-    pub(super) grows_memory: &'a quench_runtime::bitset::BitSet,
-    /// The VM callout a `CALL_VM` row makes for a direct call of an unstitched function, as an
-    /// address (`wasm_call_vm.rs`'s `vm_call_callout`).
-    pub(super) vm_call: u64,
-    /// The global a global access at `pc` binds: its environment slot and its storage; `None`
-    /// where the plan did not admit the access.
-    pub(super) global: &'a dyn Fn(usize) -> Option<(u32, Storage)>,
-    /// The byte offset of the context's `globals` pointer (`CONTEXT_GLOBALS`).
-    pub(super) globals_offset: u64,
-    /// The indirect site of a `Call::Reference` at `pc` (`indirect::site`).
-    pub(super) indirect: &'a dyn Fn(usize) -> Option<IndirectSite>,
-    /// The table or segment operation's callout, `table_op_callout` as an address: the
-    /// stitched code is the program's own, so it names its Host type's callout.
-    pub(super) table_callout: u64,
-    /// The GC operations' callout, `wasm_gc_callout` as an address (`wasm_gc_callout.rs`):
-    /// the stitched code names its Host type's callout, as `table_callout` does.
-    pub(super) gc_callout: u64,
-    /// The allocating GC steps' callout, `allocate_frame` as an address (`wasm_gc_allocate.rs`).
-    pub(super) allocate_callout: u64,
-    /// The reference registers a pc's calls hold (`Plan::references`), which the native roots hold
-    /// across them (`wasm_stitch_roots.rs`).
-    pub(super) references: &'a dyn Fn(usize) -> Vec<u16>,
-    /// The operand registers of an allocating GC step at a pc, each with its kind's code
-    /// (`Plan::gc_reads`, the kind as `Kind as u64`), in the order `allocating_reads` gives them.
-    pub(super) gc_reads: &'a dyn Fn(usize) -> Vec<(u16, u64)>,
-    /// The environment slots a table or segment operation at `pc` binds (`TableOp::bindings`:
-    /// the first, then the second), from the function's full plan; `None` where the plan did not
-    /// reach `pc` or names no first binding.
-    pub(super) table_bindings: &'a dyn Fn(usize) -> Option<(Option<u32>, Option<u32>)>,
-    /// The function's register count: the scalar frame's, which places the vector area.
-    pub(super) registers: u16,
-    /// A v128 constant's bytes, `None` for a constant that is not a vector.
-    pub(super) vector_constant: &'a dyn Fn(usize) -> Option<[u8; quench_runtime::wasm::V128_BYTES]>,
-    /// Whether the move at `pc` moves a vector (the u-jit's slot of the move is `Slot::Vector`).
-    pub(super) vector_move: &'a dyn Fn(usize) -> bool,
-}
+pub(super) use quench_runtime::vm::engine_types::World;
 
-/// The indirect site of a `Call::Reference` (`indirect::site`): its table binding, its type
-/// index, that type's canonical word and the artifact's site id.
-#[derive(Clone, Copy)]
-pub(super) struct IndirectSite {
-    pub(super) table: u32,
-    pub(super) signature: u32,
-    pub(super) canonical: u32,
-    pub(super) site: u32,
-}
+pub(super) use quench_runtime::vm::engine_types::IndirectSite;
 
 pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
     let instructions: Vec<WideInstruction> =

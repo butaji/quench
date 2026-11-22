@@ -3,8 +3,6 @@
 
 use super::{Concrete, Stage};
 use super::region::Region;
-#[cfg(not(stencil_build))]
-pub(crate) use super::double_view::{double_view, reloaded_double_view};
 
 /// Element `index` of the dense backing of `length` values at `values`, with its address:
 /// `None` (leaving at `miss`) past the backing or at a hole (`Value::DELETED`), which the

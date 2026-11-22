@@ -15,6 +15,7 @@ const MAX_REASK_WAIT: u32 = 1 << 16;
 /// The epoch no body state carries: a site with no refusal holds it.
 pub(super) const NO_REFUSAL: u32 = u32::MAX;
 
+#[quench_macros::ext(LoopSiteRunsOps)]
 impl super::LoopSite {
     /// The bytecodes of one iteration, from the header to the backward jump.
     pub(super) fn span(&self) -> u64 {
@@ -132,11 +133,6 @@ impl super::LoopSite {
         if required <= taken { return false; }
         self.needed.set(required);
         true
-    }
-
-    /// Whether the model has admitted the compile.
-    pub(super) fn is_hot(&self) -> bool {
-        self.taken.get() > self.needed.get()
     }
 
     /// Refuses the site's compile while its function's body state is `epoch`: its back edges

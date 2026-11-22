@@ -2,7 +2,7 @@
 //! and operand registers. The operator semantics are `wasm_simd_rules`, re-exported here for the
 //! tiers' lowering.
 
-pub(crate) use super::wasm_simd_rules::{Lanes, Native, NativeOp, WasmSimd, simd, simd_scalar};
+pub(crate) use super::wasm_simd_rules::{Lanes, Native, WasmSimd};
 
 // The vector steps' classes and operands read bytecode and the Wasm kernels: runtime only.
 #[cfg(not(stencil_build))]

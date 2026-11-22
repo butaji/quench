@@ -2,28 +2,9 @@
 use super::*;
 use quench_runtime::bytecode::{ImmediateLayout, InitializerValue, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
 
-/// A field of a plan that takes a fresh object of `constructor`, constructed from the
-/// constants `arguments` by its own plan (`InitializerValue::Construct`). The plan's
-/// dependency covers the objects the constructor was read through (`held`, the first `depth`),
-/// so the constructor holds while the plan does.
-#[derive(Clone, Copy)]
-pub(in super::super) struct NestedField {
-    pub(in super::super) field: u8,
-    pub(in super::super) constructor: Value,
-    pub(in super::super) arguments: [Value; NESTED_ARGUMENTS],
-    /// Where its chain starts: the capture (a `LoadCapture` immediate) of the initializer's
-    /// closure environment `env`, holding `root` (`nested_root_holds`).
-    pub(in super::super) env: Value,
-    pub(in super::super) capture: u32,
-    pub(in super::super) root: Value,
-    pub(in super::super) held: [Value; NESTED_CHAIN],
-    pub(in super::super) depth: u8,
-    /// Whether the field takes a fresh object of `constructor`; else it takes `constructor`
-    /// itself, the value its chain read (`NestedConstruct::constructs`), which the plan keeps
-    /// as the field's constant.
-    pub(in super::super) constructs: bool,
-}
+pub(in super::super) use quench_runtime::vm::engine_types::NestedField;
 
+#[quench_macros::ext(NestedFieldOps1)]
 impl NestedField {
     /// The objects the constructor was read through, which the plan depends on.
     pub(in super::super) fn held(&self) -> &[Value] {
@@ -103,6 +84,7 @@ pub(in super::super) fn finish_forwarded_in_lane(
     applied.then_some(fields)
 }
 
+#[quench_macros::ext(ConstructPlanOps2)]
 impl ConstructPlan {
     /// This plan extended by a field `nested` gives a fresh object, or the value its chain
     /// read as a constant, `None` once it names all it can or already has such a field.

@@ -1812,7 +1812,7 @@ impl Vm {
     /// The primary holderless shape and slot the field cache proves for this bytecode site,
     /// which generated code reads from inline or arena storage without a VM helper.
     #[inline(always)]
-    pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<super::compiled::NativeFieldLoad> {
+    pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
         let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
@@ -1821,7 +1821,7 @@ impl Vm {
         let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
             .filter(|object| object.exact_shape() == cache.receiver)
             .and_then(Object::plain_property_storage);
-        Some(super::compiled::NativeFieldLoad {
+        Some(crate::vm::engine_types::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage, ty,
             inherited: None, function_shape: false, raw_double, formed: None, holder_id: None,
         })
@@ -1830,7 +1830,7 @@ impl Vm {
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
     /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
     /// they stay inline (`tier_policy::POLYMORPHISM`); none for a megamorphic site.
-    pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+    pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<crate::vm::engine_types::NativeFieldLoad> {
         self.native_field_descriptors(site, false)
     }
 
@@ -1841,7 +1841,7 @@ impl Vm {
     /// receivers of one shape whose prototypes differ (sibling classes whose instances have the
     /// same fields) share one load, its constant selecting each prototype's value
     /// (`InheritedConstant::joined`).
-    pub(super) fn native_field_read_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+    pub(super) fn native_field_read_descriptors(&self, site: u16) -> Vec<crate::vm::engine_types::NativeFieldLoad> {
         let mut loads = self.native_field_descriptors(site, true);
         for load in self.inherited_native_loads(site) {
             match loads.iter_mut().find(|known| known.shape == load.shape) {
@@ -1860,7 +1860,7 @@ impl Vm {
     /// the value stays (`heap::subscribe_prototype_values`) and so do the `depth` prototypes the
     /// proof read (`Heap::subscribe_prototype_chain`), reads what the proved holder held when the
     /// code was compiled, `undefined` for an absent name.
-    fn inherited_native_loads(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+    fn inherited_native_loads(&self, site: u16) -> Vec<crate::vm::engine_types::NativeFieldLoad> {
         let mut loads = Vec::new();
         let mut index = self.inherited_field_indices.get(self.field_cache_index(site));
         while index != NO_INHERITED_FIELD {
@@ -1877,21 +1877,21 @@ impl Vm {
                 },
                 InheritedFieldAnswer::Absent => (0, Value::UNDEFINED),
             };
-            loads.push(super::compiled::NativeFieldLoad {
+            loads.push(crate::vm::engine_types::NativeFieldLoad {
                 shape: cache.receiver,
                 holder: Some(holder.exact_shape()),
                 slot,
                 storage_len: usize::from(slot) + 1,
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
-                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value, cache.depth)]), function_shape: false,
+                inherited: crate::vm::engine_types::InheritedConstant::of([(cache.proved_prototype.bits(), value, cache.depth)]), function_shape: false,
                 raw_double: false, formed: None, holder_id: None,
             });
         }
         loads
     }
 
-    fn native_field_descriptors(&self, site: u16, holders: bool) -> Vec<super::compiled::NativeFieldLoad> {
+    fn native_field_descriptors(&self, site: u16, holders: bool) -> Vec<crate::vm::engine_types::NativeFieldLoad> {
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
@@ -1919,19 +1919,19 @@ impl Vm {
     /// them and no value changes (`NativeFieldLoad::inherited`). A shape does not name one prototype: sibling
     /// prototypes holding the same names share it. Each is the receiver's own prototype, the one
     /// link of its chain.
-    fn inherited_constant(&self, holder: u32, slot: u16) -> Option<super::compiled::InheritedConstant> {
+    fn inherited_constant(&self, holder: u32, slot: u16) -> Option<crate::vm::engine_types::InheritedConstant> {
         let mut holders = Vec::new();
         for prototype in self.heap.prototypes_of_shape(holder) {
             let value = self.heap.property_get(self.heap.object(prototype)?, usize::from(slot))?;
             if value.is_deleted() { return None; }
             holders.push((crate::heap::ProtoLink::of(prototype).bits(), value, 1));
         }
-        super::compiled::InheritedConstant::of(holders)
+        crate::vm::engine_types::InheritedConstant::of(holders)
     }
 
     /// The descriptor of one cache entry: its receiver's shape, its holder's where it names
     /// one, and the slot, which the shape that holds it must cover.
-    fn native_field_entry(&self, entry: FieldCache) -> Option<super::compiled::NativeFieldLoad> {
+    fn native_field_entry(&self, entry: FieldCache) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
@@ -1940,7 +1940,7 @@ impl Vm {
         // The holder's layout id, where the entry kept one (`FieldCache::holder_id`); the plan
         // checks it names the holder's shape before a read guards by it.
         let holder_id = (holder.is_some() && entry.holder_id != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_id);
-        Some(super::compiled::NativeFieldLoad {
+        Some(crate::vm::engine_types::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None, ty,
             inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false,
             raw_double, formed: None, holder_id,
@@ -2595,8 +2595,8 @@ impl Vm {
     /// test it: an accessor, the megamorphic entries, a prototype holder, then an inherited
     /// entry, else the primary own entry. The site's cache index is derived once, so each
     /// table is read at the same index without re-deriving the active cache layout.
-    pub(super) fn field_site_tier(&self, site: u16) -> super::dispatch_fast::FieldSiteTier {
-        use super::dispatch_fast::FieldSiteTier;
+    pub(super) fn field_site_tier(&self, site: u16) -> crate::vm::engine_types::FieldSiteTier {
+        use crate::vm::engine_types::FieldSiteTier;
         let index = self.field_cache_index(site);
         if self.accessor_field_indices.get(index) != NO_ACCESSOR_FIELD {
             FieldSiteTier::Getter

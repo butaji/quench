@@ -13,38 +13,9 @@ fn array_callback_argument_count(native: Native) -> usize {
     ELEMENT_INDEX_ARRAY + usize::from(step_rules::takes_accumulator(Kind::of(native)))
 }
 
-/// An array callback method's iteration a lane runs (`begin_array_iteration_in_lane`), one
-/// entry per `Completion::ArrayStep` activation, innermost last: the loop's state and what
-/// entering its callback's activation again for the next element reads.
-#[derive(Clone, Copy)]
-pub(super) struct LaneArrayStep {
-    pub(super) iteration: quench_runtime::vm::array_indexed::ArrayIteration,
-    /// The element the running callback was passed, at `index`: a filter keeps it, a find
-    /// answers it.
-    pub(super) element: Value,
-    pub(super) index: usize,
-    pub(super) entry: PreparedEntry,
-    /// Whether the iteration is a lane body's call (`body_array_iteration_in_lane`), whose
-    /// completion ends the nested run the body made (`array_complete_in_lane`) instead of
-    /// continuing the lane at the next record.
-    pub(super) to_body: bool,
-    /// Where the step's callback is a plain activation (`push_array_step_in_lane`): its header,
-    /// whose call record is the array steps' trampoline record (`CallbackTrampoline::step_call`)
-    /// and whose caller base word is this entry's index in `LaneStack::steps`, with the
-    /// callback's own call record and caller registers. `None` for a step whose callback is
-    /// its record (a keeping callback, a lane body's iteration). A spill makes the header the
-    /// record either way would push (`LaneStack::plain_frame`).
-    pub(super) header: Option<CallbackHeader>,
-    /// The caller's records base, which the header's caller base word does not hold.
-    pub(super) caller_base: Ip,
-}
+pub(super) use quench_runtime::vm::engine_types::LaneArrayStep;
 
-impl LaneArrayStep {
-    /// The values the step keeps alive: its iteration's and the entry's environment and receiver.
-    pub(super) fn roots(&self) -> impl Iterator<Item = Value> {
-        self.iteration.values(self.element).into_iter().chain([self.entry.env, self.entry.this])
-    }
-}
+
 
 /// An array callback method's callback and `thisArg` among the values it was passed; a
 /// reducer's second value is its initial accumulator, and its callback's `thisArg` is

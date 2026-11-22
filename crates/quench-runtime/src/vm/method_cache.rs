@@ -2,7 +2,7 @@ use super::*;
 mod atoms;
 mod table;
 pub(super) use table::MethodCacheTable;
-pub(super) use atoms::{AtomBits, MethodCacheAtoms};
+pub(super) use atoms::MethodCacheAtoms;
 
 /// Entries of a call site's inline method cache, most recent first; a site that sees more
 /// moves to a megamorphic set.

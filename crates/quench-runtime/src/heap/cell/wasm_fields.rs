@@ -251,7 +251,7 @@ impl TableTarget {
 /// written by the events that move the rows (`WasmTableElements::resize`).
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
-pub(crate) struct TableWords {
+pub struct TableWords {
     base: usize,
     length: u64,
 }

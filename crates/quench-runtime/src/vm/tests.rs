@@ -3116,7 +3116,7 @@ fn young_runs_of_survivors_keep_their_values_across_collections() {
 
 #[cfg(not(quench_profiled))]
 /// The OSR diagnostics of the lane view of function `function` of `vm`'s main program.
-fn main_osr(vm: &Vm, function: usize) -> super::dispatch_fast::OsrDiagnostics {
+fn main_osr(vm: &Vm, function: usize) -> crate::vm::engine_types::OsrDiagnostics {
     let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).expect("main program lane views");
     views.get(function).and_then(super::program_store::derived_lane_view).expect("hot caller loop lane view").osr_diagnostics()
 }
@@ -14635,7 +14635,7 @@ fn shared_osr_gives_a_loop_storing_a_captured_binding_each_iteration_to_the_lane
     let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view").osr_diagnostics();
     let [site] = osr.sites.as_slice() else { panic!("one source loop, one OSR site: {osr:?}") };
     assert!(!site.admitted && site.native_region_runs == 0, "every iteration leaves at the store: {site:?}");
-    assert_eq!(site.analysis_rejection, Some(super::compiled::RegionRejection::UnsupportedInstruction(crate::bytecode::Op::StoreEnvLocal as u16)));
+    assert_eq!(site.analysis_rejection, Some(crate::vm::engine_types::RegionRejection::UnsupportedInstruction(crate::bytecode::Op::StoreEnvLocal as u16)));
 }
 
 #[test]
@@ -20937,7 +20937,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         let callee_body = program.function(callee_id as usize);
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
         let mut targets = vec![None; body.code.len()];
-        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
+        targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(callee), function: callee_id });
         let callee_captures = vm.callee_capture_slots(callee);
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| callee_captures, Vec::new(), &[])
             .expect("legacy-observable inlined unit");
@@ -20950,7 +20950,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         let exit = vm.run_lane_method(&method, false, super::program_store::ProgramId::MAIN,
             &program, registers.as_mut_ptr(), receiver, slots, std::ptr::null_mut());
         assert_eq!(registers[usize::from(parameter)], Value::number(6.0), "suspended caller retains its reflected parameter");
-        let super::compiled::LaneExit::Inlined { frame, pc } = exit else { panic!("expected exact callee exit, got {exit:?}") };
+        let crate::vm::engine_types::LaneExit::Inlined { frame, pc } = exit else { panic!("expected exact callee exit, got {exit:?}") };
         assert_eq!(frame, 0);
         assert_eq!(callee_body.instructions().nth(pc as usize).unwrap().op(), crate::bytecode::Op::GetField);
         let parameter = callee_body.parameter_registers.or_else(|| callee_body.promoted_register(0)).unwrap();
@@ -20991,10 +20991,10 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         let mut targets = vec![None; body.code.len()];
         let other = method_of(&mut vm, "other");
         let crate::heap::FunctionKind::User(_, other_id) = vm.heap.function(other).unwrap().kind else { panic!("other") };
-        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: other_id });
+        targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(callee), function: other_id });
         assert!(vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), &[]).is_none(),
             "publication must reject a callee paired with the wrong function body");
-        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
+        targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(callee), function: callee_id });
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), &[]).unwrap();
         assert_eq!(method.inlined.len(), 1);
         let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
@@ -21005,7 +21005,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
                 // A second publication names a function nothing else reaches: its code
                 // roots the callee, so a full collection keeps the locator its guard compares.
                 let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
-                targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(orphan), function: callee_id });
+                targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(orphan), function: callee_id });
                 let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), &[]).unwrap();
                 let rooted = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
                 vm.collect_now(&program);
@@ -21102,7 +21102,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let body = program.function(caller_id as usize);
         let mut targets = vec![None; body.code.len()];
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
-        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
+        targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(callee), function: callee_id });
         let callee_captures = vm.callee_capture_slots(callee);
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| callee_captures, Vec::new(), &[])
             .expect("closure capture unit compiles");
@@ -21742,7 +21742,7 @@ fn lane_bodies_allocate_literals() {
 /// The osr diagnostics of function `name` after `source` runs compiled under every memory
 /// policy that compiles loops, with the printed output each policy must give.
 fn compiled_loop_diagnostics(source: &str, file: &str, name: &str, expected: &[&str])
-    -> Vec<(crate::MemoryPolicy, super::dispatch_fast::OsrDiagnostics)> {
+    -> Vec<(crate::MemoryPolicy, crate::vm::engine_types::OsrDiagnostics)> {
     let program = Engine::specialize(source, file).unwrap();
     let function_id = program.functions.iter()
         .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
@@ -22918,7 +22918,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
             let function = global(&mut vm, name);
-            let run = |vm: &mut Vm, body: &crate::bytecode::Function, method: &super::compiled::LaneMethod, object, value| {
+            let run = |vm: &mut Vm, body: &crate::bytecode::Function, method: &crate::vm::engine_types::LaneMethod, object, value| {
                 let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
                 for (index, value) in [object, value].into_iter().enumerate() {
                     let register = body.parameter_registers.map(|base| base + index as u16)

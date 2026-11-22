@@ -118,7 +118,7 @@ pub(super) struct LaneExit {
 pub(super) enum GeneralResume {
     Lane(LaneExit),
     #[cfg(feature = "native-execution")]
-    Native(super::compiled::JsNativeStep),
+    Native(crate::vm::engine_types::JsNativeStep),
 }
 
 /// The general loop's executing program: its id and the residual keeping it alive (`None`
@@ -1499,7 +1499,7 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-        entered: super::compiled::JsNativeStep,
+        entered: crate::vm::engine_types::JsNativeStep,
     ) -> Result<FrameOutcome, JsError> {
         self.run_frame_general_until::<false>(p, frame, None, None, Some(GeneralResume::Native(entered)))
     }
@@ -1837,7 +1837,7 @@ impl Vm {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            let mut native_step: Option<super::compiled::JsNativeStep> = None;
+            let mut native_step: Option<crate::vm::engine_types::JsNativeStep> = None;
             let entering_after_lane_exit = std::mem::replace(&mut after_lane_exit, resumes_lane_exit);
             let resumed = std::mem::take(&mut resumes_lane_exit);
             #[cfg(feature = "native-execution")]

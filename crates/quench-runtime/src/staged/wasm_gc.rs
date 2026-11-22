@@ -382,7 +382,6 @@ macro_rules! wasm_gc_table {
         }
     };
 }
-pub(crate) use wasm_gc_table;
 
 /// Projects `wasm_gc_table!`'s entries to the match of `GcStep::of`, over the opcode `$op`.
 macro_rules! wasm_gc_step_of {
@@ -408,15 +407,16 @@ macro_rules! wasm_gc_op_of {
 pub(crate) use wasm_gc_op_of;
 
 /// Projects `wasm_gc_table!`'s entries to the bare opcode names, applying `$then!` to them.
+#[allow(unused_macros)]
 macro_rules! wasm_gc_names {
     ($then:ident ; $($name:ident => $group:expr,)*) => {
         $then!($($name)*)
     };
 }
-pub(crate) use wasm_gc_names;
 
 /// Applies `$then!` to the names of every Wasm GC value opcode: the one list (`wasm_gc_table!`)
 /// that `GcOp::of` and the lane's handlers both derive from.
+#[allow(unused_macros)]
 macro_rules! wasm_gc_value_ops {
     ($then:ident) => {
         $crate::staged::wasm_gc::wasm_gc_table!(wasm_gc_names $then)

@@ -89,18 +89,7 @@ const fn math_row_call(row: u8) -> quench_runtime::staged::call_native::MathCall
     }
 }
 
-/// The natives a `Call` site calls through the lean native row (`lane_call_in_place`), one
-/// instantiation per row: the native is a constant of the handler, so the site's whole protocol is
-/// the identity compare, the native's in-place body reading the call's window where it lies, and
-/// the store of its value. No `native_call_miss` dispatch on the callee's record, no
-/// `native_value_in_lane` match, no activation, root or stack guard: an in-place body runs no guest
-/// code, raises nothing and observes no frame (`Vm::in_place_native_value`). Any other callee or
-/// case takes `native_call_miss`, which makes the same in-place attempt first.
-///
-/// The rows are derived from the catalog, not listed: every native with an in-place family
-/// (`in_place_natives::runs_no_guest_code`, the fact `IN_PLACE_FAMILIES` keeps per native) gets
-/// one, in discriminant order, so a native that gains an in-place body gains its row.
-const MAX_IN_PLACE_ROWS: usize = 256;
+use quench_runtime::vm::engine_types::MAX_IN_PLACE_ROWS;
 
 /// No row (`IN_PLACE_ROW_OF`).
 const NO_IN_PLACE_ROW: u16 = u16::MAX;
@@ -413,9 +402,8 @@ fn in_place_handler(native: Native) -> Option<Handler> {
         })
 }
 
-/// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
-/// then one per lean row.
-const IDENTITY_SLOTS: usize = BUILTIN_ROWS + MATH_ROWS + IN_PLACE_ROWS;
+use quench_runtime::vm::engine_types::IDENTITY_SLOTS;
+const _: () = assert!(BUILTIN_ROWS + MATH_ROWS + IN_PLACE_ROWS <= IDENTITY_SLOTS, "raise engine_types::IDENTITY_SLOTS");
 
 /// The identity slot of lean row `row`. A row past the derived ones (`in_place_row_native`),
 /// never installed, reads the first slot, so its handler stays in bounds.
@@ -428,26 +416,11 @@ const fn math_slot(row: u8) -> usize {
     BUILTIN_ROWS + row as usize
 }
 
-/// A slot no callee matches: the direct function word of an id no record has (record ids lie
-/// below the record space's capacity, 2^24).
-const UNPROVEN: u64 = quench_runtime::value::ValueLayout::DIRECT_FUNCTION_TAG | u32::MAX as u64;
+use quench_runtime::vm::engine_types::UNPROVEN;
 
-/// The callee word each in-place native row admits (`staged::call_native::admit_identity`), one
-/// slot per row: the function the lane proved, from its record, to be the row's native, `UNPROVEN`
-/// before. The proof is a dependency of the lane's generation: a new one (a collection, which may
-/// free a function and reuse its id, or another realm: `LaneStack::enter_generation`) forgets
-/// every identity, as it retires the script targets, and the next call proves it again.
-pub(super) struct NativeIdentities([u64; IDENTITY_SLOTS]);
+pub(super) use quench_runtime::vm::engine_types::NativeIdentities;
 
-impl NativeIdentities {
-    pub(super) const fn new() -> Self {
-        Self([UNPROVEN; IDENTITY_SLOTS])
-    }
 
-    pub(super) fn forget(&mut self) {
-        self.0 = [UNPROVEN; IDENTITY_SLOTS];
-    }
-}
 
 /// Whether `callee` is `native`, the native of identity slot `slot`: the row's admission, one
 /// compare of the callee word against the identity the lane proved

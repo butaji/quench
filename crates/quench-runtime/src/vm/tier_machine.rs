@@ -22,7 +22,7 @@
 //! (`LaneBody::tier_state`), and loop sites (`LoopBody` Idle/Compiling/Ready/Declined) the same way, and `JsTierState` (`js_tier_state`): Hot, PromotionPending and GeneralPromotionPending are
 //! Warming, GeneralCompileDue is Compiling, Compiled is UJit, Rejected is Retired, Unsupported
 //! is Declined. BaseJIT regions are BJit.
-use super::compiled::entry_cell::EntryCell;
+use super::engine_types::EntryCell;
 use crate::vm::engine_types::PublishedLaneMethod;
 use super::program_store::JsTierState;
 use crate::jit_mode::{quick_only, tiers_allowed, Tier};

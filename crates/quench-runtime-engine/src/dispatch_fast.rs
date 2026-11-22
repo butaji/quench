@@ -122,12 +122,7 @@ macro_rules! arithmetic_all {
     };
 }
 
-/// What a leaf's records read of the context its call runs them in (`leaf_body`), which is
-/// what the call makes its own and its return restores: the forms of its call
-/// (`script_call_leaf_miss`), its entry (`CallEntry::leaf`) and its return records
-/// (`LaneView::specialize_leaf_returns`). `NOT_LEAF` is a record of no leaf's records.
-/// The forms are the staged leaf row's (`staged::call_leaf`), the one definition every tier reads.
-type LeafForm = quench_runtime::staged::call_leaf::LeafForm;
+use quench_runtime::vm::engine_types::LeafForm;
 const NOT_LEAF: LeafForm = quench_runtime::staged::call_leaf::NOT_LEAF;
 /// Neither its receiver nor its captures (`CallEntry::Leaf`): it runs in its caller's context.
 const PLAIN_LEAF: LeafForm = quench_runtime::staged::call_leaf::PLAIN_LEAF;
@@ -147,32 +142,10 @@ const fn leaf_binds_this(form: LeafForm) -> bool {
     quench_runtime::staged::call_leaf::binds_this(form)
 }
 
-/// One instruction of a lane view. The first 16 bytes hold what every dispatch reads: the handler
-/// and the three register fields, with the call link filling the word. Two records share a 64-byte
-/// cache line. The operand and the fused `mode` word follow.
-#[repr(C)]
-pub(super) struct LaneInstruction {
-    /// The opcode's [`Handler`] for the VM that built the view.
-    handler: *const (),
-    a: u16,
-    b: u16,
-    c: u16,
-    /// A call record's hint of the script call target cache entry that answered it last
-    /// (`Vm::linked_script_call_entry`), which the record's next call tests first; `NO_CALL_LINK`
-    /// for none. It fills the record's word, so every record keeps its size.
-    call_link: std::cell::Cell<u16>,
-    operand: LaneOperand,
-    /// The runtime settings of a fused record (`staged::MODE_DEAD_FIRST`, `MODE_BACKWARD`, and the raw
-    /// mask from `staged::RAW_SHIFT`), written by the fusion passes with its handler and read by the
-    /// handler at run time. Zero for every other record, whose handlers ignore it.
-    mode: u64,
-}
+pub(super) use quench_runtime::vm::engine_types::LaneInstruction;
 
-/// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
-/// polymorphic), so one keeps an entry at 32 bytes instead of 112.
-const INLINE_SITE_TARGETS: usize = 1;
-/// `LaneStack::noted` entries.
-const NOTED_SITE_CALLEES: usize = 64;
+use quench_runtime::vm::engine_types::INLINE_SITE_TARGETS;
+use quench_runtime::vm::engine_types::NOTED_SITE_CALLEES;
 
 /// The `LaneStack::noted` entry of a link address and callee function.
 #[inline(always)]
@@ -180,8 +153,7 @@ fn noted_slot(address: usize, function: u32) -> usize {
     ((address >> 1) ^ (function as usize).wrapping_mul(0x9E37)) & (NOTED_SITE_CALLEES - 1)
 }
 
-/// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
-const NO_CALL_LINK: u16 = u16::MAX;
+use quench_runtime::vm::engine_types::NO_CALL_LINK;
 /// The bit of a call link the plain call proved (`script_call_prove_miss`): its target activates
 /// plainly and takes the site's argument count, so `script_call_miss` tests only the callee's
 /// identity. The index is the link without it (`link_index`); a link without the bit is out of
@@ -195,47 +167,11 @@ fn link_index(link: u16) -> usize { usize::from(link & !PLAIN_LINK) }
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 4 * std::mem::size_of::<u64>());
 const _: () = assert!(std::mem::offset_of!(LaneInstruction, a) == 8 && std::mem::offset_of!(LaneInstruction, call_link) + 2 <= 16);
 
-/// The immediate, resolved by its role: a jump target becomes the byte
-/// distance from the record, a constant index becomes the constant.
-#[derive(Clone, Copy)]
-union LaneOperand {
-    imm: u32,
-    /// Immutable candidates for a string selector, owned by the lane view.
-    string_case_filter: *const string_case_filter::StringCaseFilter,
-    /// A `GetField` record's immediate and the receiver shape of its own-field hint
-    /// (`LaneInstruction::field_hint`).
-    field: FieldOperand,
-    /// A call record's immediate and its read memo's slot (`CallOperand::memo`).
-    call: CallOperand,
-    jump: isize,
-    constant: Value,
-    /// The first record of a vector region: the region, which the view owns.
-    region: *const vector_region::VectorRegion,
-}
+use quench_runtime::vm::engine_types::LaneOperand;
 
-/// A `GetField` record's operand: its immediate, and the exact receiver shape its own-field
-/// hint names, `NO_FIELD_RECEIVER` for none. The hint's slot is the record's `call_link`,
-/// which no field record reads otherwise (`holds_no_call_link`). An inherited read's record
-/// hints the inherited entry that last answered it instead (`set_inherited_hint`): its shape
-/// is then `INHERITED_HINT` and its `call_link` that entry's index; a polymorphic read's, the
-/// prototype-held read that last answered it (`set_holder_hint`), `HOLDER_HINT` and its index.
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct FieldOperand {
-    imm: u32,
-    shape: u32,
-}
+use quench_runtime::vm::engine_types::FieldOperand;
 
-/// A call record's operand: its immediate, and the slot of `LaneStack::read_memos` its read
-/// memo was made in (`memoize_read_in_lane`), `NO_READ_MEMO` before its first. The slot is the
-/// site's alone until the table refills (`READ_MEMOS`), so which sites keep a memo does not
-/// depend on where their records lie.
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct CallOperand {
-    imm: u32,
-    memo: u32,
-}
+use quench_runtime::vm::engine_types::CallOperand;
 
 /// A `CallOperand::memo` that names no slot: no table holds this many.
 const NO_READ_MEMO: u32 = u32::MAX;
@@ -253,6 +189,7 @@ const HOLDER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 2;
 /// (`Vm::own_constant_operands`), as `INHERITED_HINT` no object's exact shape.
 const OWN_CONSTANT_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 3;
 
+#[quench_macros::ext(LaneInstructionOps1)]
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
     /// slot of its own data field, as the site's primary entry proved it
@@ -315,88 +252,11 @@ impl LaneInstruction {
     }
 }
 
-/// Why a loop site's compiled region was not entered at its header on one attempt. Each decline is
-/// counted on its site (`LoopSite::declines`) and reported under `QUENCH_TRACE=js-jit`, the first of
-/// each reason as a trace line. An entry-contract decline also feeds back as a leave at the header
-/// (`lane_loop_run`), so the next compile widens the contract that failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RegionDecline {
-    /// The region's code is still awaited: its compile is under way and its poll waits (`LoopTier::awaits_code`).
-    Awaiting,
-    /// This attempt started the region's compile, so the interpreter runs the header meanwhile.
-    Compiling,
-    /// An inlined callee's capture has no environment or no value (`loop_entry_checked_in_lane`).
-    CalleeCapture,
-    /// A capture the region reads has no initialized value at entry.
-    Capture,
-    /// A field the region reads has no cached value for its receiver, or is a private name.
-    Field,
-    /// A dynamic field's entry value is not a Number its representation holds.
-    FieldNumber,
-    /// The entry record has no room left for a field value.
-    EntryFull,
-    /// The arrays do not match the region: a non-dense or prototype-indexed written array, a
-    /// typed array through a field, mixed views, or no record (`loop_tier::lane_loop_arrays`).
-    Array,
-    /// A field store's slot address is not admitted (`lane_loop_field_stores`).
-    FieldStore,
-    /// An inlined call's callee is not activated in place now (`lane_inlined_target`).
-    Inlined,
-    /// The entry's element views differ from the compiled code's, and no compilation remains (`LoopTier::select`).
-    Views,
-    /// The site may not compile here: its compilations ran out, or the memory policy compiles no loop regions (`LoopTier::may_run`).
-    NoCompile,
-    /// The region needs a VM frame the frameless lane lacks (`CompiledOsrRegion::needs_frame`).
-    Frame,
-    /// The lane has no room for the activations the region's calls would make; it grows for the next entry.
-    Room,
-    /// The activation keeps its locals in the window past its registers (`lane_context_locals_in_window`).
-    Locals,
-    /// The code left at its header before any iteration: an entry contract, the entry bounds, the
-    /// call budget or the fault guard failed. Fed back as a leave at the header.
-    EntryContract,
-    /// The region's entry cell held its stub, so its code did not run.
-    Stub,
-}
+pub(super) use quench_runtime::vm::engine_types::RegionDecline;
 
-impl RegionDecline {
-    /// Every decline, in the order the report lists them.
-    pub(super) const ALL: [Self; 17] = [
-        Self::Awaiting, Self::Compiling, Self::CalleeCapture, Self::Capture, Self::Field, Self::FieldNumber,
-        Self::EntryFull, Self::Array, Self::FieldStore, Self::Inlined, Self::Views, Self::NoCompile,
-        Self::Frame, Self::Room, Self::Locals, Self::EntryContract, Self::Stub,
-    ];
-    /// The number of declines.
-    pub(super) const COUNT: usize = Self::ALL.len();
 
-    fn index(self) -> usize {
-        self as usize
-    }
 
-    /// The name the report and the trace give this decline.
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            Self::Awaiting => "awaiting",
-            Self::Compiling => "compiling",
-            Self::CalleeCapture => "callee-capture",
-            Self::Capture => "capture",
-            Self::Field => "field",
-            Self::FieldNumber => "field-number",
-            Self::EntryFull => "entry-full",
-            Self::Array => "array",
-            Self::FieldStore => "field-store",
-            Self::Inlined => "inlined",
-            Self::Views => "views",
-            Self::NoCompile => "no-compile",
-            Self::Frame => "frame",
-            Self::Room => "room",
-            Self::Locals => "locals",
-            Self::EntryContract => "entry-contract",
-            Self::Stub => "stub",
-        }
-    }
-}
-
+#[quench_macros::ext(LoopSiteOps1)]
 impl LoopSite {
     /// Counts an attempt that entered nothing for `reason`. Under `QUENCH_TRACE=js-jit` the first
     /// of each reason on the site is printed.
@@ -415,99 +275,11 @@ impl LoopSite {
     }
 }
 
-/// A loop the shared compiler may run natively: the region its backward jump
-/// closes, the jump's distance to the header record, and the tier's state for it.
-pub(super) struct LoopSite {
-    /// The bytecode function whose lane view owns this site. A lane activation may be
-    /// frameless, so the VM frame's function is not necessarily the one taking this edge.
-    function: u32,
-    /// Observe backedge work for the JS function tier when OSR rejected this loop. These
-    /// sites never attempt native loop code; the shared function compiler owns promotion.
-    promotion_only: bool,
-    /// First analysis failure, when admission did not produce a region.
-    analysis_failure: Option<crate::compiled::RegionAnalysisFailure>,
-    /// Static effectful calls that leave native code at their exact PC.
-    call_boundary_pcs: Box<[u32]>,
-    /// The admitted region; a loop whose calls run inlined makes its region once it is hot
-    /// (`inlining_region_in_lane`), when its callees are known.
-    region: std::cell::OnceCell<crate::compiled::LoopRegion>,
-    /// One guarded-inline attempt for an admitted call-boundary region, before compiling.
-    /// Failure retains the original exact-PC effect boundary.
-    inline_region: std::cell::OnceCell<Option<Box<crate::compiled::LoopRegion>>>,
-    /// The loop's header and backward jump PCs.
-    header: u32,
-    backedge: u32,
-    jump: isize,
-    /// The header record's own handler while the site holds that record
-    /// (`loop_header_miss`), which enters the loop's native code wherever control arrives at
-    /// the header; null otherwise.
-    header_handler: std::cell::Cell<*const ()>,
-    /// Whether the site may hold its header record (`loop_hold_header_in_lane`): one that is
-    /// no call record, whose `call_link` names a call target, and the header of no other
-    /// site. The record's `call_link` then names the site.
-    hookable: bool,
-    /// Backward jumps taken in the interpreter, counted up to `needed`, and one past it once the
-    /// tier model has admitted the compile (`LoopSite::interprets`).
-    taken: std::cell::Cell<u32>,
-    /// The backward jumps the interpreter takes before the model weighs the compile: the warm-up
-    /// first, then what the model finds the compile needs (`loop_model::admission_taken`).
-    needed: std::cell::Cell<u32>,
-    /// Whether the site still enters native code: until its runs and declined entries cost more
-    /// than their iterations save (`LoopSite::note_run`).
-    entering: std::cell::Cell<bool>,
-    /// The sites of the function whose loops enclose this one (`install_loop_sites`), set once the
-    /// sites are boxed: the same storage the records name the sites by, which lives as long as the lane view.
-    enclosing: std::cell::OnceCell<Box<[*const LoopSite]>>,
-    /// Entries declined in a row since the last native run, and the entries still to pass to the
-    /// interpreter before the next attempt (`LoopSite::note_decline`): a decline whose cause
-    /// persists costs attempts logarithmic in the iterations, not one per iteration.
-    declines_in_row: std::cell::Cell<u8>,
-    /// The attempts that entered nothing, by reason (`count_decline`, `RegionDecline`).
-    declines: [std::cell::Cell<u64>; RegionDecline::COUNT],
-    skipped_entries: std::cell::Cell<u32>,
-    /// Whether this VM requested OSR diagnostics when its lane view was derived.
-    diagnostics: bool,
-    /// The thresholds its VM's tier controllers read.
-    tiers: &'static Tiers,
-    lane_backedge_count: std::cell::Cell<u64>,
-    native_entry_attempts: std::cell::Cell<u64>,
-    native_region_runs: std::cell::Cell<u64>,
-    /// Bodies published for this loop (`plan_loop_body`) and runs of them (`run_loop_body`).
-    tier_ups: std::cell::Cell<u64>,
-    body_runs: std::cell::Cell<u64>,
-    entry_guard_misses: std::cell::Cell<u64>,
-    native_exits: std::cell::Cell<u64>,
-    widenings: std::cell::Cell<u64>,
-    compile_attempts: std::cell::Cell<u64>,
-    compile_successes: std::cell::Cell<u64>,
-    tier: std::cell::RefCell<LoopTier>,
-    /// The function's lane body planned to start at this loop's header (`run_loop_body`).
-    body: std::cell::RefCell<LoopBody>,
-    /// The header dispatches that found the body idle (`plan_loop_body`), each an iteration
-    /// of the interpreter's or a region's entry, and the iterations the loop takes before its
-    /// body is planned again (`loop_model::body_taken`, at the size its last plan had).
-    body_seen: std::cell::Cell<u64>,
-    /// The header dispatches an idle body still waits for before its plan (`LoopSite::body_waits`).
-    body_wait: std::cell::Cell<u64>,
-    /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
-    body_offered: std::cell::Cell<bool>,
-    /// The body epoch (`LaneView::body_epoch`) a refused compile was refused under, and the back
-    /// edges still plain under it, and the wait that last refusal set (`LoopSite::refuse_warming`).
-    refused_epoch: std::cell::Cell<u32>,
-    /// The view that refused it: the site lies in that view, so its epoch is read through this pointer.
-    refused_view: std::cell::Cell<*const LaneView>,
-    refused_wait: std::cell::Cell<u32>,
-    refused_span: std::cell::Cell<u32>,
-    /// Whether an enclosing admitted loop still enters (`LoopSite::inside_admitted_loop`); false once none does.
-    enclosed: std::cell::Cell<bool>,
-}
+pub(super) use quench_runtime::vm::engine_types::LoopSite;
 
+#[quench_macros::ext(LoopSiteOps2)]
 impl LoopSite {
     pub(super) fn function(&self) -> u32 { self.function }
-
-    fn active_region(&self) -> Option<&crate::compiled::LoopRegion> {
-        self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
-    }
 
     /// Whether native code may still run the loop: its runs have paid for their entries, its
     /// entries are not declining, and it has code or may compile it. A site without it
@@ -525,84 +297,24 @@ impl LoopSite {
     pub(super) fn runs_region(&self) -> bool {
         self.call_boundary_pcs.is_empty() && self.active_region().is_some() && self.enters() && self.tier.borrow().runs() > 0
     }
-
-    fn is_admitted(&self) -> bool {
-        !self.promotion_only
-            && self.analysis_failure.is_none_or(|failure| failure.is_call_boundary())
-    }
 }
 
-type Ip = *const LaneInstruction;
+use quench_runtime::vm::engine_types::Ip;
 
-/// The row of the last indirect target the lane made: the record after the target, the register
-/// and reference it wrote, and the row's entry and instance (`TableTarget`). A reference call
-/// that is that record, reading that register and reference, takes its callee from the row.
-#[derive(Clone, Copy)]
-struct IndirectSlot {
-    next: Ip,
-    register: u16,
-    reference: u64,
-    entry: u32,
-    instance: u64,
-}
+use quench_runtime::vm::engine_types::IndirectSlot;
 
+#[quench_macros::ext(IndirectSlotOps1)]
 impl IndirectSlot {
     const NONE: Self = Self { next: std::ptr::null(), register: 0, reference: 0, entry: 0, instance: 0 };
 }
 
 pub(super) use quench_runtime::vm::engine_types::LaneView;
 
-#[derive(Debug, Default)]
-pub(super) struct OsrDiagnostics {
-    pub(super) plain_backward_jump_sites: usize,
-    pub(super) admitted_sites: usize,
-    pub(super) promotion_only_sites: usize,
-    pub(super) compile_attempts: u64,
-    pub(super) compile_successes: u64,
-    pub(super) currently_compiled_sites: usize,
-    pub(super) native_entry_attempts: u64,
-    pub(super) native_region_runs: u64,
-    pub(super) tier_ups: u64,
-    pub(super) body_runs: u64,
-    pub(super) entry_guard_misses: u64,
-    pub(super) exits: u64,
-    pub(super) widenings: u64,
-    /// The attempts that entered no region code, by why, over all sites.
-    pub(super) declines: [u64; RegionDecline::COUNT],
-    pub(super) analysis_rejections: Vec<(crate::compiled::RegionRejection, usize)>,
-    pub(super) sites: Vec<OsrSiteDiagnostics>,
-}
+pub(super) use quench_runtime::vm::engine_types::OsrDiagnostics;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OsrSiteStatus {
-    Admitted,
-    CallBoundary,
-    PromotionOnly,
-    Rejected,
-}
+pub(super) use quench_runtime::vm::engine_types::OsrSiteStatus;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct OsrSiteDiagnostics {
-    pub(super) header_pc: u32,
-    pub(super) backedge_pc: u32,
-    pub(super) status: OsrSiteStatus,
-    pub(super) failure: Option<crate::compiled::RegionAnalysisFailure>,
-    pub(super) admitted: bool,
-    pub(super) deferred_call: bool,
-    pub(super) tier_threshold_reached: bool,
-    pub(super) lane_backedge_count: u64,
-    pub(super) analysis_rejection: Option<crate::compiled::RegionRejection>,
-    pub(super) call_boundary_pcs: Vec<u32>,
-    pub(super) compile_attempts: u64,
-    pub(super) compile_successes: u64,
-    pub(super) native_entry_attempts: u64,
-    pub(super) native_region_runs: u64,
-    pub(super) entry_guard_misses: u64,
-    pub(super) exits: u64,
-    pub(super) widenings: u64,
-    /// The attempts that entered no region code, by why.
-    pub(super) declines: [u64; RegionDecline::COUNT],
-}
+pub(super) use quench_runtime::vm::engine_types::OsrSiteDiagnostics;
 
 #[quench_macros::ext(LaneViewOps1)]
 impl LaneView {
@@ -672,119 +384,18 @@ impl LaneView {
             }
         }
     }
-
-    /// OSR tier coverage and outcomes, for opt-in JIT diagnostics.
-    pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
-        let mut sites = self.loops.iter().map(|site| {
-            let call_boundary_pcs = site.active_region().map_or_else(
-                || site.call_boundary_pcs.to_vec(),
-                crate::compiled::LoopRegion::call_boundary_pcs,
-            );
-            let deferred_call = !call_boundary_pcs.is_empty();
-            OsrSiteDiagnostics {
-                header_pc: site.header,
-                backedge_pc: site.backedge,
-                status: if site.promotion_only {
-                    OsrSiteStatus::PromotionOnly
-                } else if site.analysis_failure.is_some_and(|failure| failure.is_call_boundary()) {
-                    OsrSiteStatus::CallBoundary
-                } else if site.analysis_failure.is_some() {
-                    OsrSiteStatus::Rejected
-                } else {
-                    OsrSiteStatus::Admitted
-                },
-                failure: site.analysis_failure,
-                call_boundary_pcs,
-                admitted: site.is_admitted(),
-                deferred_call,
-                tier_threshold_reached: site.is_hot(),
-                lane_backedge_count: site.lane_backedge_count.get(),
-                analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
-                compile_attempts: site.compile_attempts.get(),
-                compile_successes: site.compile_successes.get(),
-                native_entry_attempts: site.native_entry_attempts.get(),
-                native_region_runs: site.native_region_runs.get(),
-                entry_guard_misses: site.entry_guard_misses.get(),
-                exits: site.native_exits.get(),
-                widenings: site.widenings.get(),
-                declines: std::array::from_fn(|index| site.declines[index].get()),
-            }
-        }).collect::<Vec<_>>();
-        sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
-        OsrDiagnostics {
-            plain_backward_jump_sites: self.plain_backward_jump_sites,
-            admitted_sites: self.loops.iter().filter(|site| site.is_admitted()).count(),
-            promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
-            compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
-            compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
-            currently_compiled_sites: self.loops.iter().filter(|site| site.tier.borrow().is_published()).count(),
-            native_entry_attempts: self.loops.iter().map(|site| site.native_entry_attempts.get()).sum(),
-            native_region_runs: self.loops.iter().map(|site| site.native_region_runs.get()).sum(),
-            entry_guard_misses: self.loops.iter().map(|site| site.entry_guard_misses.get()).sum(),
-            tier_ups: self.loops.iter().map(|site| site.tier_ups.get()).sum(),
-            body_runs: self.loops.iter().map(|site| site.body_runs.get()).sum(),
-            exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
-            widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
-            declines: std::array::from_fn(|index| self.loops.iter().map(|site| site.declines[index].get()).sum()),
-            analysis_rejections: self
-                .osr_rejections
-                .as_deref()
-                .unwrap_or_default()
-                .to_vec(),
-            sites,
-        }
-    }
 }
 
-/// An environment activation's window past its registers (`activate_environment_in_lane`):
-/// its environment, a pointer to the environment's slot storage (`WINDOW_SLOTS`), then its
-/// `locals`; bit `k` of `captured` is set when local `k` lives in the environment
-/// (`Function::local_slot_uses_environment`).
-#[derive(Clone, Copy)]
-struct EnvironmentWindow {
-    locals: u16,
-    captured: u64,
-    /// Whether the function has a rest parameter (`Function::rest`).
-    rest: bool,
-    /// The local of a named function expression's own name (`Function::self_binding_slot`),
-    /// which holds the callee.
-    self_binding: Option<u16>,
-    /// The leading parameters the compiler promoted in place (`Function::parameters_promoted_in_place`):
-    /// parameter `k` below this lives in register `k`, which its call fills
-    /// (`call_environment::EnvironmentPassed::in_registers`), and its local stays `undefined`.
-    parameter_registers: u16,
-}
+use quench_runtime::vm::engine_types::EnvironmentWindow;
 
-/// An environment window's entries after its registers: its environment, `DELETED` until
-/// one is made (`window_environment`); the address of the environment's slot storage, which
-/// never moves while it lives, held in a `Value`'s bits; the `EnvironmentWindow::captured`
-/// mask, likewise; the words of the slot storage the window holds in place
-/// (`staged::call_environment::lay_out_entries`) over its locals, which follow. Until a closure or a
-/// frame needs the environment, every slot lives among the locals and the storage address
-/// names that in-place storage, so a captured slot reads the same way before and after.
-pub(super) const WINDOW_ENVIRONMENT: u16 = 0;
-pub(super) const WINDOW_SLOTS: u16 = 1;
+pub(super) use quench_runtime::vm::engine_types::WINDOW_ENVIRONMENT;
+pub(super) use quench_runtime::vm::engine_types::WINDOW_SLOTS;
 pub(super) const WINDOW_CAPTURED: u16 = 2;
-pub(super) const WINDOW_STORAGE: u16 = 3;
-pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + quench_runtime::heap::IN_PLACE_SLOTS_WORDS as u16;
-/// The words a VM frame's register file keeps spare past its environment window for the windows of the
-/// callees a loop region inlines (`base_region::function::inline_base`), which start past that window:
-/// the stitch policy's window and the context words around it.
-pub(crate) const INLINED_WINDOW_ROOM: usize = 64;
+pub(super) use quench_runtime::vm::engine_types::WINDOW_STORAGE;
+pub(super) use quench_runtime::vm::engine_types::WINDOW_LOCALS;
+pub(crate) use quench_runtime::vm::engine_types::INLINED_WINDOW_ROOM;
 
-/// What a function's body fixes about a frameless call target of it
-/// (`Vm::frameless_call_target`): its entry apart from a kept `arguments`, and whether `new`
-/// may activate it or run it as its stores alone.
-#[derive(Clone, Copy)]
-struct TargetBody {
-    entry: CallEntry,
-    constructs: bool,
-    initializes: bool,
-    /// Whether an `Activates` body runs as a leaf (`leaf_body`), and what its records then read
-    /// of the context: only where the tier could not claim it at the first resolution, which
-    /// specialized its returns for good.
-    leaf: Option<LeafForm>,
-}
+use quench_runtime::vm::engine_types::TargetBody;
 
 /// Conservative admission granule retained from block initialization. Padding stays
 /// spare capacity; logical register counts own initialization and materialization.
@@ -817,23 +428,23 @@ use unary_values::{unary_value, unary_values};
 use list_calls::{apply_activation_in_lane, list_activation_in_lane, spread_native_call_in_lane};
 
 #[cfg(all(test, feature = "bench-primitives"))]
-#[path = "primitive_bench/windows.rs"]
+#[path = "../../quench-runtime/src/vm/primitive_bench/windows.rs"]
 mod window_primitives;
 
 #[cfg(test)]
-#[path = "primitive_bench/activations.rs"]
+#[path = "../../quench-runtime/src/vm/primitive_bench/activations.rs"]
 mod activation_primitives;
 
 #[cfg(test)]
-#[path = "primitive_bench/commutative_reads.rs"]
+#[path = "../../quench-runtime/src/vm/primitive_bench/commutative_reads.rs"]
 mod commutative_read_primitives;
 
 #[cfg(test)]
-#[path = "primitive_bench/indexed_forwarding.rs"]
+#[path = "../../quench-runtime/src/vm/primitive_bench/indexed_forwarding.rs"]
 mod indexed_forwarding_primitives;
 
 #[cfg(all(test, feature = "bench-primitives"))]
-#[path = "primitive_bench/indexed_compositions.rs"]
+#[path = "../../quench-runtime/src/vm/primitive_bench/indexed_compositions.rs"]
 mod indexed_compositions;
 
 #[path = "lane_body_stats.rs"]
@@ -864,107 +475,16 @@ const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
     if room < BLOCK { BLOCK } else { room }
 }
 
-/// The values of a call window to copy as one fixed-size move each; a longer window copies
-/// value by value.
-const FIXED_ARGUMENT_COPIES: u16 = 4;
+use quench_runtime::vm::engine_types::FIXED_ARGUMENT_COPIES;
 
-/// Copies the `count` values at `source` to `destination`: a window of at most
-/// `FIXED_ARGUMENT_COPIES` values as one move of its size, which needs no loop.
-///
-/// # Safety
-/// Both ranges hold `count` values and do not overlap.
-#[inline(always)]
-pub unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u16) {
-    /// One move of `N` values.
-    #[inline(always)]
-    unsafe fn copy<const N: usize>(destination: *mut Value, source: *const Value) {
-        // SAFETY: the caller's contract, for `N` values.
-        unsafe { destination.cast::<[Value; N]>().write_unaligned(source.cast::<[Value; N]>().read_unaligned()) }
-    }
-    const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-    // SAFETY: the function's contract.
-    unsafe {
-        // Compares, not a table, so the common windows of a value or two take a branch each.
-        if count <= 2 {
-            if count == 2 {
-                copy::<2>(destination, source);
-            } else if count == 1 {
-                copy::<1>(destination, source);
-            }
-        } else if count <= FIXED_ARGUMENT_COPIES {
-            if count == FIXED_ARGUMENT_COPIES {
-                copy::<4>(destination, source);
-            } else {
-                copy::<3>(destination, source);
-            }
-        } else {
-            std::ptr::copy_nonoverlapping(source, destination, usize::from(count));
-        }
-    }
-}
+pub use quench_runtime::vm::engine_types::copy_arguments;
 
-const WINDOW_FILL_PAIR: usize = 2;
-const WINDOW_FILL_HALF: usize = WINDOW_FILL_PAIR * 2;
-const WINDOW_FILL_BLOCK: usize = WINDOW_FILL_HALF * 2;
-// Bound inline work to one complete block and its binary tail. Splitting longer
-// ranges between inline stores and a library fill costs more than one direct fill.
-const WINDOW_INLINE_FILL_LIMIT: usize = WINDOW_FILL_BLOCK * 2;
+use quench_runtime::vm::engine_types::WINDOW_FILL_PAIR;
+use quench_runtime::vm::engine_types::WINDOW_FILL_HALF;
+use quench_runtime::vm::engine_types::WINDOW_FILL_BLOCK;
+use quench_runtime::vm::engine_types::WINDOW_INLINE_FILL_LIMIT;
 
-/// Initializes exactly the live register range. Admission may reserve a larger room,
-/// but padding is not part of the activation's values or materialized frame.
-///
-/// # Safety
-/// `registers` has writable storage for `count` values, none of them live.
-#[inline(always)]
-pub unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
-    if count >= WINDOW_INLINE_FILL_LIMIT {
-        for index in 0..count {
-            // SAFETY: each destination lies within the caller's uninitialized range.
-            unsafe { registers.add(index).write_unaligned(initial) };
-        }
-        return;
-    }
-    #[inline(always)]
-    unsafe fn pair(destination: *mut Value, initial: Value) {
-        // SAFETY: the caller provides both uninitialized values. Individual stores
-        // avoid aggregate-array temporaries in the production call handlers.
-        unsafe {
-            destination.write_unaligned(initial);
-            destination.add(1).write_unaligned(initial);
-        }
-    }
-    #[inline(always)]
-    unsafe fn half(destination: *mut Value, initial: Value) {
-        // SAFETY: the caller provides a complete half block.
-        unsafe {
-            pair(destination, initial);
-            pair(destination.add(WINDOW_FILL_PAIR), initial);
-        }
-    }
-    let mut tail = 0;
-    if count >= WINDOW_FILL_BLOCK {
-        // SAFETY: the logical range contains one complete block.
-        unsafe {
-            half(registers, initial);
-            half(registers.add(WINDOW_FILL_HALF), initial);
-        }
-        tail = WINDOW_FILL_BLOCK;
-    }
-    if count & WINDOW_FILL_HALF != 0 {
-        // SAFETY: this bit proves that a half block remains in the exact tail.
-        unsafe { half(registers.add(tail), initial) };
-        tail += WINDOW_FILL_HALF;
-    }
-    if count & WINDOW_FILL_PAIR != 0 {
-        // SAFETY: this bit proves that a pair remains after the half block.
-        unsafe { pair(registers.add(tail), initial) };
-        tail += WINDOW_FILL_PAIR;
-    }
-    if !count.is_multiple_of(WINDOW_FILL_PAIR) {
-        // SAFETY: the odd final value is within the logical range.
-        unsafe { registers.add(tail).write_unaligned(initial) };
-    }
-}
+pub use quench_runtime::vm::engine_types::fill_window;
 
 /// The start of a plain activation of `count` registers, whose admission reserved whole
 /// `SCRIPT_FILL_BLOCK`s past them (`ScriptCallTarget::room`), every one of the first `fill`
@@ -989,19 +509,9 @@ unsafe fn fill_admitted_window(registers: *mut Value, fill: usize, count: usize)
     }
 }
 
-/// A function's register window as a lane activation starts it: its initial value in the first
-/// `fill` registers, then the parameters at their base.
-#[derive(Clone, Copy)]
-struct ActivationShape {
-    registers: u16,
-    parameters: u16,
-    params: u16,
-    initial: Value,
-    /// The registers initialized: the prefix an entry may read before writing
-    /// (`RegisterRoots::entry_fill`), or all of them where a collection scans the window whole.
-    fill: u16,
-}
+use quench_runtime::vm::engine_types::ActivationShape;
 
+#[quench_macros::ext(ActivationShapeOps1)]
 impl ActivationShape {
     /// The window of `function`, when its parameters have registers and it keeps no locals.
     fn of(function: &Function) -> Option<Self> {
@@ -1035,14 +545,9 @@ fn entry_fill_known(function: &Function) -> u16 {
     }
 }
 
-/// Storage and guest-call allowance proved before an inlined body runs.
-#[derive(Clone, Copy, Default)]
-#[repr(C)]
-pub(super) struct LaneRecoverySpace {
-    pub(super) values: usize,
-    pub(super) activations: usize,
-}
+pub(super) use quench_runtime::vm::engine_types::LaneRecoverySpace;
 
+#[quench_macros::ext(LaneRecoverySpaceOps1)]
 impl LaneRecoverySpace {
     /// Frames follow their parents. Take independent maxima: the deepest
     /// chain and the largest register window need not be the same chain. Each frame's window
@@ -1068,116 +573,15 @@ impl LaneRecoverySpace {
     }
 }
 
-/// A lane view's frameless body (`LaneView::tier_lane`). Shape compaction
-/// moves a body that names shape IDs back to `Unspecialized`.
-enum LaneBody {
-    /// Counting its entries toward specialization; `recompiles` bodies before it left too
-    /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
-    /// `stuck`, at those few leaves only.
-    Unspecialized { entries: u32, recompiles: u8, stuck: LaneLeaves },
-    /// Its body's code compiling on the code generator's thread; the function runs in the
-    /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
-    /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
-    /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
-    /// one pays few looks. `wait` counts the entries left before the next.
-    Compiling { pending: Box<crate::compiled::PendingLaneMethod>, wait: std::cell::Cell<u16>, looks: u8, recompiles: u8, stuck: LaneLeaves },
-    /// The body its prologue record enters directly (`body_entry_in_lane`); `tier_prologue` is
-    /// the handler that record had, which it takes back when the body retires. Its
-    /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
-    /// which the next entry settles (`LaneView::settle_retired_body`).
-    Specialized {
-        method: std::rc::Rc<crate::compiled::PublishedLaneMethod>,
-        tier_prologue: *const (),
-        /// Its leaves' places (`LaneLeaves`); the counts of its leaves and completed runs since
-        /// it specialized live in its entry cell (`EntryCell::evidence`), toward
-        /// `TIERS.lane_body.reoptimize_exits` and `TIERS.lane_body.reoptimize_share`.
-        leaves_at: std::cell::Cell<LaneLeaves>,
-        /// Whether a run of it completed, natively called ones included.
-        completed: std::cell::Cell<bool>,
-        recompiles: u8,
-        /// Its predecessor's few leaves, where it left only there.
-        stuck: LaneLeaves,
-    },
-    Declined,
-}
+use quench_runtime::vm::engine_types::LaneBody;
 
 
-/// The lane-body tier's per-function state (`LaneView::tier`).
-pub(super) struct LaneTier {
-    /// The frameless body the prologue runs once the JavaScript tier declined the
-    /// function (`Vm::compile_lane_method`).
-    tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// The warming tick (`body_tier_in_lane::warm_ticks`) of the entry its body began warming at, which a function
-    /// entered rarely but for long (`LaneView::recurrent`) specializes by.
-    warm_since: std::cell::Cell<u32>,
-    /// Counts each specialization attempt (`LaneView::specialize_lane_body`): a loop site's refused
-    /// compile is retried once this moves (`LoopSite::refuse_warming`).
-    body_epoch: std::cell::Cell<u32>,
-    /// Every body it published, kept until the view drops: a native frame running a body that
-    /// retired recovers its leave through `Activation::body`.
-    pinned: std::cell::RefCell<Vec<std::rc::Rc<crate::compiled::LaneMethod>>>,
-    /// What its bodies cost and earned so far (`LaneBodyHistory`).
-    history: std::cell::Cell<LaneBodyHistory>,
-    /// The epochs of its body's audit (`lane_body_audit`).
-    audit_epochs: std::cell::Cell<body_tier_in_lane::Epochs>,
-    /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
-    pub(super) body_stats: LaneBodyStats,
-    /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
-    /// direct callers that name them still run until they retire with them at a shape
-    /// compaction.
-    retired: std::cell::RefCell<Vec<std::rc::Rc<crate::compiled::PublishedLaneMethod>>>,
-    /// The views whose bodies compiled a call of this function (`LaneView::note_caller`):
-    /// they specialize again when its body publishes, to call it by its entry.
-    callers: std::cell::RefCell<Vec<*const LaneView>>,
-}
+pub(super) use quench_runtime::vm::engine_types::LaneTier;
 
-impl Default for LaneTier {
-    fn default() -> Self {
-        Self {
-            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
-            warm_since: std::cell::Cell::new(0),
-            body_epoch: std::cell::Cell::new(0),
-            pinned: std::cell::RefCell::default(),
-            history: Default::default(),
-            audit_epochs: Default::default(),
-            body_stats: LaneBodyStats::default(),
-            retired: std::cell::RefCell::default(),
-            callers: std::cell::RefCell::default(),
-        }
-    }
-}
+
 
 #[quench_macros::ext(LaneViewOps2)]
 impl LaneView {
-    /// Its lane-body tier state, made on first use.
-    #[inline]
-    pub(super) fn tier(&self) -> &LaneTier {
-        self.tier.get_or_init(Box::default)
-    }
-
-    /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
-    pub(super) fn body_state_in_lane(&self) -> &'static str {
-        // SAFETY: as `lane_body`.
-        match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized { .. } => "unspecialized",
-            LaneBody::Compiling { .. } => "compiling",
-            LaneBody::Specialized { .. } => "specialized",
-            LaneBody::Declined => "declined",
-        }
-    }
-
-    /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
-    /// is still warming, for the diagnostics report of a view that never compiled
-    /// (`QUENCH_LANE_STATE`).
-    pub(super) fn body_detail_in_lane(&self) -> (&'static str, Option<u32>, bool, bool) {
-        // SAFETY: as `lane_body`.
-        let entries = match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized { entries, .. } => Some(*entries),
-            _ => None,
-        };
-        (self.body_state_in_lane(), entries, self.start.get() == self.prologue.get().cast_const(), self.warming())
-    }
-
     /// The specialized frameless body, if there is one.
     #[inline]
     fn body_view_in_lane(&self) -> Option<std::rc::Rc<crate::compiled::LaneMethod>> {
@@ -1268,48 +672,12 @@ impl LaneView {
         }
     }
 
-    /// Whether it has no body yet and counts entries toward one, its first or a next.
-    fn warming(&self) -> bool {
-        // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { .. }) || self.compiling()
-    }
-
 
     /// Whether its body left too often and specializes again at its next entry.
     #[inline]
     fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
         matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
-    }
-
-
-    /// Retires field hints and native bodies (and plans) that name shape IDs when compaction renumbers them.
-    pub(super) fn invalidate_shape_bindings(&self) {
-        // SAFETY: no lane body runs during a collection.
-        let body = unsafe { &mut *self.tier().tier_lane.get() };
-        if let LaneBody::Compiling { pending, .. } = body { pending.retire_named_shapes(); }
-        if let LaneBody::Specialized { method, tier_prologue, .. } = body
-            && method.lease().is_some_and(|method| method.names_shapes)
-        {
-            // SAFETY: as `claim_for_tier`; no lane body or handler runs during a collection,
-            // and no method borrower is held.
-            unsafe {
-                (*self.prologue.get()).handler = *tier_prologue;
-                method.retire();
-            }
-            self.drop_body(body);
-        }
-        self.tier().retired.borrow_mut().clear();
-        self.clear_hints(&self.field_records);
-        self.clear_name_hints();
-        for site in &self.loops {
-            let tier = site.tier.borrow();
-            tier.retire_named_shapes();
-            if let Some(publication) = &tier.code
-                && publication.lease().is_some_and(|code| !code.facts.shape_dependencies.is_empty()) {
-                publication.retire();
-            }
-        }
     }
 
     /// The own-field hint of the field record at `pc`, as the layout id (`Object::hint_shape`)
@@ -1322,46 +690,6 @@ impl LaneView {
         // SAFETY: each listed record's operand is `field` (`holds_field_hint`).
         let shape = unsafe { (*self.records[pc as usize].get()).operand.field.shape };
         (shape < HOLDER_HINT).then_some(shape)
-    }
-
-    /// Clears the global-object hints of its by-name loads and stores: a global
-    /// lexical name was declared (`Vm::note_global_lexical_names`).
-    pub(super) fn clear_name_hints(&self) {
-        self.clear_hints(&self.name_records);
-    }
-
-    /// Gives every operator record that reads a speculative int32 register its checked form
-    /// (`int_kinds`): an update overflowed such a register, so it may hold a double from now on.
-    /// A record whose handler changed since (`operator_row` widened it) already runs a checked one;
-    /// a loop header's handler is held by its site.
-    pub(super) fn retire_int_speculation(&self) {
-        for &(pc, proven, checked) in &self.int_speculating {
-            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
-            // SAFETY: the lane runs on the view's thread, and no reference to a handler field is
-            // live while the VM's increment runs.
-            unsafe {
-                if (*record).handler == proven {
-                    (*record).handler = checked;
-                }
-            }
-            for site in &self.loops {
-                if site.header == pc && site.header_handler.get() == proven {
-                    site.header_handler.set(checked);
-                }
-            }
-        }
-    }
-
-    fn clear_hints(&self, pcs: &[u32]) {
-        for &pc in pcs {
-            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
-            // SAFETY: each listed record's operand is `field`, and it is no loop's header
-            // (`holds_field_hint`); its handler reads the hint whole, between runs that write it.
-            unsafe {
-                (*record).operand.field.shape = quench_runtime::vm::NO_FIELD_RECEIVER;
-                (*record).call_link.set(NO_CALL_LINK);
-            }
-        }
     }
 
     /// How many of its records hold an own-field hint. Profiled builds derive no lane views,
@@ -1390,10 +718,6 @@ impl LaneView {
     pub(super) fn record_range(&self) -> (usize, usize) {
         let start = self.records().addr();
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
-    }
-
-    #[inline] pub(super) fn records(&self) -> Ip {
-        self.records.base()
     }
 
     /// The record a frameless activation starts at: the first, or the tier prologue.
@@ -1438,11 +762,6 @@ impl LaneView {
         // SAFETY: as `claim_for_tier`.
         if unsafe { (*self.prologue.get()).handler }.is_null() { return; }
         self.start.set(self.prologue.get().cast_const());
-    }
-
-    /// Starts activations at the first record again, once the tier declines the function.
-    fn release_from_tier(&self) {
-        self.start.set(self.records());
     }
 }
 
@@ -1495,33 +814,14 @@ pub(crate) unsafe fn set_frame_word(registers: *mut Value, index: usize, word: u
 /// `CONTEXT_PACKED`'s flag of a plain frame.
 pub(crate) const PLAIN_FRAME_FLAG: u64 = quench_runtime::staged::frame::PLAIN_FLAG;
 
-/// The active frame's registers. Lane instructions never resize registers or
-/// change the frame stack, so the base stays valid for the whole lane run.
-#[derive(Clone, Copy)]
-#[repr(transparent)]
-struct Registers(*mut Value);
+use quench_runtime::vm::engine_types::Registers;
 
+#[quench_macros::ext(RegistersOps1)]
 impl Registers {
-    /// The frame's receiver, the context word just below register 0 (`FRAME_CONTEXT`): every
-    /// register file (`RegisterFile`) and lane window (`LaneValues`) has it there.
-    #[inline(always)]
-    fn this(self) -> Value {
-        // SAFETY: every frame's registers follow its context words.
-        unsafe { *self.0.sub(CONTEXT_THIS) }
-    }
-
     #[inline(always)]
     fn set_this(self, this: Value) {
         // SAFETY: as for `this`.
         unsafe { *self.0.sub(CONTEXT_THIS) = this }
-    }
-
-    /// The frame's environment, the context word below its receiver: a lane activation's
-    /// closure environment, `DELETED` for a VM frame, whose environment its frame holds.
-    #[inline(always)]
-    fn env(self) -> Value {
-        // SAFETY: as for `this`.
-        unsafe { *self.0.sub(CONTEXT_ENV) }
     }
 
     #[inline(always)]
@@ -1542,19 +842,6 @@ impl Registers {
     fn set_capture(self, capture: *const usize) {
         // SAFETY: as for `capture`.
         unsafe { *self.0.sub(CONTEXT_CAPTURE).cast::<*const usize>() = capture }
-    }
-
-    /// The plain header's call record, caller registers and caller records.
-    #[inline(always)]
-    fn plain_caller(self) -> (Ip, Registers, Ip) {
-        // SAFETY: the window's header was written at its push (`write_plain_header`).
-        unsafe {
-            (
-                *self.0.sub(CONTEXT_CALL).cast::<Ip>(),
-                *self.0.sub(CONTEXT_CALLER_REGISTERS).cast::<Registers>(),
-                *self.0.sub(CONTEXT_CALLER_BASE).cast::<Ip>(),
-            )
-        }
     }
 
     /// Write the plain header's call record, caller registers and caller records: a trampoline's
@@ -1584,19 +871,6 @@ impl Registers {
         }
     }
 
-    #[inline(always)]
-    fn get(self, register: u16) -> Value {
-        // SAFETY: the view admits only register fields below
-        // Function.registers, and frame setup sizes the register file to it.
-        unsafe { *self.0.add(usize::from(register)) }
-    }
-
-    #[inline(always)]
-    fn set(self, register: u16, value: Value) {
-        // SAFETY: as for `get`; no reference into the register file is live.
-        unsafe { *self.0.add(usize::from(register)) = value }
-    }
-
     /// The register's int32, read as two dwords: the tag half compared in memory
     /// (`cmp dword [..+4], imm; jne`) and the value half loaded as it is, where a whole-word
     /// read pays a copy, a shift and a compare for the tag (V8-v7 Crypto's integer records).
@@ -1616,22 +890,9 @@ impl Registers {
     }
 }
 
-/// The direct memory bytes behind the active function's memory register.
-/// The view is resolved whenever that register can change under the lane:
-/// at lane entry, when a lane call or return switches functions, and when
-/// the binding instruction loads the register; no other lane instruction
-/// writes it (see `LaneView`). The lane never collects, calls out or grows
-/// memory, so the bytes stay alive, unborrowed and unresized at a stable
-/// address. A memory the lane cannot borrow resolves to the empty view, on
-/// which every access leaves the lane.
-/// A carried value a record may leave unset: the accumulator after a record that produces
-/// none, which only the record a producer falls through to reads, and a JavaScript view's
-/// memory reach, which no JavaScript record reads. An unset slot costs its dispatch no
-/// instruction; a reader gets one only where the view proves it was set.
-#[derive(Clone, Copy)]
-#[repr(transparent)]
-struct Slot<T: Copy>(std::mem::MaybeUninit<T>);
+use quench_runtime::vm::engine_types::Slot;
 
+#[quench_macros::ext(SlotOps1)]
 impl<T: Copy> Slot<T> {
     #[inline(always)]
     const fn of(value: T) -> Self {
@@ -1650,19 +911,12 @@ impl<T: Copy> Slot<T> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct MemoryView {
-    bytes: *mut u8,
-    /// The memory's length less the widest direct access: an access
-    /// starting at or below it is in bounds whatever its width, so the hot
-    /// path compares the address alone. Negative when the memory is
-    /// narrower than that access. Unset in a JavaScript view (`MemoryView::script`).
-    reach: Slot<isize>,
-}
+use quench_runtime::vm::engine_types::MemoryView;
 
 /// The widest access a lane record makes directly.
 const WIDEST_DIRECT_ACCESS: usize = size_of::<u64>();
 
+#[quench_macros::ext(MemoryViewOps1)]
 impl MemoryView {
     const NONE: Self = Self::new(std::ptr::null_mut(), 0);
 
@@ -1765,42 +1019,15 @@ impl Carried {
     }
 }
 
-/// The capacity the lane stack reserves once (virtual until touched): values and activations
-/// keep their addresses below it.
-const LANE_STACK_VALUES: usize = 1 << 20;
-const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
+use quench_runtime::vm::engine_types::LANE_STACK_VALUES;
+use quench_runtime::vm::engine_types::LANE_STACK_ACTIVATIONS;
 
-/// An activation a lane call made without a VM frame. Its registers are
-/// a window of the lane stack; it returns to the record after `call` in its
-/// caller, whose registers, view and memory it keeps for the return.
-#[derive(Clone, Copy)]
-#[repr(C, align(128))]
-pub(crate) struct Activation {
-    /// The frame prefix (`staged::frame`'s CALLEE, THIS, BODY, WINDOW words): the callee's
-    /// descriptor, receiver, body and window, which emitted code writes for a direct call's frame
-    /// (`ActivationKind::Native`) and which stays through its link (`NativeFrames`); only
-    /// `window` for an activation the lane made. The callee is null for a frame the lane made.
-    pub(crate) callee: *const crate::compiled::DirectCallee,
-    pub(crate) this: u64,
-    pub(crate) body: usize,
-    /// The address of its window of registers.
-    pub(crate) window: usize,
-    function: u32,
-    call: Ip,
-    caller_base: Ip,
-    caller_registers: Registers,
-    /// The program its caller runs, which its return makes the lane's again
-    /// (`enter_program_in_lane`); its own is the next activation's caller program, or the
-    /// lane's for the innermost.
-    caller_program: ProgramId,
-    kind: ActivationKind,
-}
+pub(crate) use quench_runtime::vm::engine_types::Activation;
 
 /// The tags of `ActivationKind`: the discriminants, which emitted code writes as the first
 /// word of the kind (`NATIVE_TAG`) and the lane reads to tell a native frame from an activation.
 pub(crate) use quench_bjit::shared_words::KIND_NATIVE;
-/// Where the kind's tag lies in an activation.
-pub(crate) const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
+pub(crate) use quench_runtime::vm::engine_types::KIND_OFFSET;
 const _: () = assert!(KIND_OFFSET == quench_runtime::staged::frame::ACTIVATION_KIND_OFFSET && KIND_NATIVE == quench_runtime::staged::frame::KIND_NATIVE);
 const _: () = assert!(std::mem::size_of::<Activation>() == quench_runtime::staged::frame::ACTIVATION_BYTES);
 const _: () = {
@@ -1812,47 +1039,17 @@ const _: () = {
     assert!(frame::WINDOW + std::mem::size_of::<usize>() == frame::PREFIX_BYTES);
     assert!(std::mem::size_of::<Activation>().is_power_of_two());
 };
-const KIND_SCRIPT: u8 = 1;
-const KIND_WASM: u8 = 2;
+use quench_runtime::vm::engine_types::KIND_SCRIPT;
+use quench_runtime::vm::engine_types::KIND_WASM;
 
-/// What an activation keeps beyond its registers, by the kind of function it runs.
-#[derive(Clone, Copy)]
-#[repr(C, u8)]
-enum ActivationKind {
-    /// A native direct call's frame as emitted code wrote it: only the prefix words
-    /// (`Activation::native`, the callee's descriptor, receiver, body and window) and this
-    /// tag, no link state. `NativeFrames::link` makes it a `Script` activation when the lane
-    /// first observes it; the prefix stays, as the descriptor of the frame above it.
-    Native = KIND_NATIVE,
-    Script(ScriptActivation) = KIND_SCRIPT,
-    /// A Wasm activation keeps its caller's memory for the return and its requested
-    /// register payload for guest-stack accounting, excluding admission padding. `program` is
-    /// the function's own program, and `pc` the record its lane last left it at for a callout
-    /// that may collect (`LaneStack::note_wasm_pc`): the collector reads its live registers
-    /// there while no activation sits above it.
-    Wasm { memory: MemoryView, frame_storage_bytes: usize, program: ProgramId, pc: u32 } = KIND_WASM,
-    /// A Wasm activation a JavaScript call of an exported function made
-    /// (`lane_wasm_export_frame`): it runs over `instance`, the export's instance environment
-    /// (`LaneContext::instance`), and its return gives its caller, JavaScript, the result's
-    /// JavaScript form (`CallCompletion::WasmExport`). The caller's receiver and environments
-    /// stay in the context while it runs: no Wasm record reads or writes them.
-    WasmEntry { instance: Value, result: Option<quench_runtime::WasmType>, frame_storage_bytes: usize, program: ProgramId, pc: u32 },
-}
+use quench_runtime::vm::engine_types::ActivationKind;
 
 const _: () = {
     assert!(KIND_OFFSET % std::mem::size_of::<u64>() == 0);
 };
 
+#[quench_macros::ext(ActivationOps1)]
 impl Activation {
-    /// The frame state of a JavaScript activation; `None` for Wasm and for a native frame
-    /// the lane has not linked (`NativeFrames`), which no lane code observes.
-    #[inline] fn script(&self) -> Option<&ScriptActivation> {
-        match &self.kind {
-            ActivationKind::Script(script) => Some(script),
-            ActivationKind::Native | ActivationKind::Wasm { .. } | ActivationKind::WasmEntry { .. } => None,
-        }
-    }
-
     /// The pc of the call record this activation was entered from, in its caller's body
     /// (`caller_base`); `None` for a native frame, which keeps no link state.
     fn caller_pc(&self) -> Option<usize> {
@@ -1886,38 +1083,13 @@ impl Activation {
     }
 }
 
-/// What a JavaScript activation's frame would hold beyond its registers
-/// (`Vm::activate_plain_frame`), and the caller's lane state its return restores. Its own
-/// receiver and environment live in the context while it runs (`LaneContext::this`, `env`)
-/// and in the next script activation's caller state beneath that (`ActivationState::of`):
-/// one fact, held once.
-#[derive(Clone, Copy)]
-struct ScriptActivation {
-    callee: Value,
-    /// Arguments passed, all in parameter registers.
-    argc: u16,
-    /// What its return yields to the call.
-    completion: Completion,
-    /// The `argc` values passed follow the registers in the window, for a forwarded
-    /// `arguments` (`ScriptCallTarget::forwards`), for the construction a skipped
-    /// forwarding constructor passed on (`Completion::Forwarder`), or for values passed past
-    /// the parameters.
-    forwards: bool,
-    /// The register past its registers that holds the first value it kept (`forwards`), its
-    /// function's register count, so a read of them looks up no function; 0 when it keeps none.
-    kept: u16,
-    /// Its environment and frame locals follow its registers (`CallEntry::Environment`).
-    environment: bool,
-    /// The record of the suspended frame a windowed activation runs over (`generator_windows`,
-    /// `lane_roots`), which the lane's name lookups read the dynamic bindings of; null for any
-    /// other activation.
-    record: *mut quench_runtime::vm::activation::FrameRecord,
-}
+use quench_runtime::vm::engine_types::ScriptActivation;
 
 /// The activation record's one access path (call protocol v2 step 3,
 /// `/mnt/project-files/calls-frames/call-protocol-v2.md`): every reader and writer outside
 /// this block goes through these methods, so the record's layout (and, next, where a plain
 /// activation's header lives: the value stack) changes here alone.
+#[quench_macros::ext(ActivationOps2)]
 impl Activation {
     /// An activation of `kind` with no frame prefix: no callee, receiver or body, and no window yet.
     #[inline(always)]
@@ -1925,18 +1097,6 @@ impl Activation {
         caller_registers: Registers, caller_program: ProgramId, kind: ActivationKind) -> Self {
         Self { callee: std::ptr::null(), this: 0, body: 0, window: 0, function, call, caller_base, caller_registers, caller_program, kind }
     }
-    /// The function it runs.
-    #[inline(always)] fn function(&self) -> u32 { self.function }
-    /// The caller's call record, which its return completes.
-    #[inline(always)] fn call(&self) -> Ip { self.call }
-    /// The caller's records base, which its return makes the lane's again.
-    #[inline(always)] fn caller_base(&self) -> Ip { self.caller_base }
-    /// The caller's registers, which its return makes the lane's again.
-    #[inline(always)] fn caller_registers(&self) -> Registers { self.caller_registers }
-    /// The program its caller runs (`caller_program` field).
-    #[inline(always)] fn caller_program(&self) -> ProgramId { self.caller_program }
-    /// What kind of activation it is.
-    #[inline(always)] fn kind(&self) -> &ActivationKind { &self.kind }
     #[inline(always)] fn kind_mut(&mut self) -> &mut ActivationKind { &mut self.kind }
 }
 
@@ -1950,6 +1110,7 @@ struct ActivationState {
     program: ProgramId,
 }
 
+#[quench_macros::ext(ActivationOps3)]
 impl Activation {
     /// The address of this activation's first register: its prefix's WINDOW word without its
     /// mark (`HEAP_WINDOW`), which names the lane stack's values by default and any other
@@ -2004,128 +1165,18 @@ impl ActivationState {
     }
 }
 
-/// What a JavaScript activation's return yields to its call: one byte, so a plain return
-/// tests it once.
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum Completion {
-    /// The returned value.
-    Plain,
-    /// The returned value, from an activation of another program than its caller's, whose
-    /// return makes the caller's program the lane's again (`enter_program_in_lane`).
-    Cross,
-    /// A `new` made it: `this` unless it returns an object.
-    Constructs,
-    /// A `new` of another program's constructor: `Constructs`, whose return makes the
-    /// caller's program the lane's again as `Cross` does.
-    CrossConstructs,
-    /// It runs the method a forwarding constructor's body would have called
-    /// (`ScriptCallTarget::forwarded_method`), whose frame its side record names
-    /// (`SidePayload::Forwarder`): the construction yields `this`, the receiver, whatever it returns.
-    Forwarder,
-    /// A native's call of JavaScript run frameless from the lane that called the native
-    /// (`Vm::native_callback_in_lane`): its return ends that run with the value, which the
-    /// native receives. Made a frame, it is the entry frame of the general loop that finishes
-    /// it, which no pending call names.
-    ReturnsToNative,
-    /// `Generates` of a for-of step whose `done` and `value` reads its records make
-    /// (`iterator_step_reads_miss`): a yield or return writes them to those reads' registers and
-    /// the caller goes on past them, the result object unmade. Made a frame, it is `Generates`.
-    StepReads(ForOfTest),
-    /// A plain call of a non-suspending async function of the caller's program
-    /// (`CallEntry::Settles`): its return resolves the promise the call made, which its side
-    /// record keeps (`SidePayload::Settles`), and the call yields that promise. Made a frame, its
-    /// pending call settles it (`PendingGeneralCall::completion`).
-    SettlesPromise,
-    /// A store's setter (`AccessorCall::store_setter`): the assignment yields the value
-    /// stored, which its record's register still holds, whatever the setter returns. Made a
-    /// frame, its pending call yields it the same way (`CallCompletion::Assigned`).
-    Assigns,
-    /// A proxy `get` trap (`AccessorCall::read_get_trap`): the read's value, once the
-    /// target's invariants have checked it (`SidePayload::Trapped`); a read the target's
-    /// changed shape now constrains returns from the trap's frame, whose pending call checks
-    /// it in full (`CallCompletion::Trapped`).
-    ReadsTrapped,
-    /// A proxy `set` trap (`AccessorCall::store_set_trap`): `Assigns` for a trap whose
-    /// result the target and a strict store accept, checked as `ReadsTrapped` is.
-    AssignsTrapped,
-    /// An array callback method's callback the lane runs for one element
-    /// (`begin_array_iteration_in_lane`): its return steps the iteration `LaneStack::steps`
-    /// keeps (`step_array_iteration_in_lane`). Made a frame, its pending call finishes the
-    /// iteration on the native's path (`CallCompletion::ArrayStep`).
-    ArrayStep,
-    /// A plain call a lane body made of a callee that runs in the lane (`body_calls`): its
-    /// return ends that nested run with the value, which the body's call takes. Made a
-    /// frame, it is a plain call's.
-    ReturnsToBody,
-    /// `ReturnsToBody` of a body's `new`. Made a frame, it is a construction's.
-    ConstructsToBody,
-    /// A Wasm call of a JavaScript-backed import (`wasm_calls::lane_activate_js_import`), of
-    /// another program than its Wasm caller's: its return gives the caller the value's Wasm
-    /// form and runs the caller's program and instance again, as its side record keeps them
-    /// (`SidePayload::ToWasm`, `lane_complete_to_wasm`). Made a frame, its pending call converts the value
-    /// (`CallCompletion::ToWasm`).
-    ToWasm,
-    /// A generator the lane resumed over its suspended frame's register file
-    /// (`generator_windows`): its `yield` suspends it back into the record and its return
-    /// completes it, the call yielding the step's iterator result, which only a step's
-    /// `done` and `value` reads observe (`Vm::reused_iterator_result`). The activation's
-    /// callee is the generator. Made a frame, its pending call completes the step
-    /// (`CallCompletion::Generator`).
-    Generates,
-    /// `Generates` for a `yield*` step of a delegate generator: the step's fresh result goes to
-    /// the delegating record's state register, which that record, made again, reads
-    /// (`yield_star_in_lane`).
-    Delegates,
-    /// The async function or async generator a promise job resumed over its suspended frame's
-    /// register file, the root of its lane run (`LaneRoot::Job`, `Vm::run_lane_job`): its
-    /// `await` suspends it back into its owner (`await_in_lane`) and its return ends the run with
-    /// the value, which the job delivers. No call record is its caller's. Made a frame, it is
-    /// the entry frame of the general loop that finishes it, which no pending call names. The
-    /// activation's callee is its owner.
-    ResumesJob,
-    /// `Generates` for a `Call` of a generator's `next` (`generator_windows::resume_called_generator`):
-    /// the step's fresh iterator result goes to the call's register, as the native's call returns it.
-    /// Made a frame, its pending call completes the step with a fresh result
-    /// (`CallCompletion::Generator`).
-    Steps,
-    /// An async generator a `next` call resumed over its record's register file
-    /// (`async_requests`): its `await` or `yield` suspends it back into its record, which
-    /// awaits, and its return completes it; the call yields the request's promise, which
-    /// `LaneStack::settling` keeps. The activation's callee is the generator. Made a frame, its
-    /// pending call settles the request (`CallCompletion::AsyncRequest`).
-    AsyncRequest,
-}
+use quench_runtime::vm::engine_types::Completion;
 
-/// A JavaScript-backed import's call facts, fixed by its wrapper (`Cell::WasmHostFunction`):
-/// the wrapper and its realm, the JavaScript callee, the scalar kind of each parameter
-/// (`JS_IMPORT_I32`, `_F32`, `_F64`) and the result type.
-#[derive(Clone, Copy)]
-pub(super) struct JsImportPlan {
-    pub(super) wrapper: Value,
-    pub(super) realm: Value,
-    pub(super) callee: Value,
-    pub(super) argc: u8,
-    pub(super) kinds: [u8; JS_IMPORT_ARGUMENTS],
-    pub(super) result: Option<quench_runtime::WasmType>,
-}
+pub(super) use quench_runtime::vm::engine_types::JsImportPlan;
 
-/// The most parameters an activated import passes (`JsImportPlan`).
-pub(super) const JS_IMPORT_ARGUMENTS: usize = 8;
+pub(super) use quench_runtime::vm::engine_types::JS_IMPORT_ARGUMENTS;
 pub(super) const JS_IMPORT_I32: u8 = 0;
 pub(super) const JS_IMPORT_F32: u8 = 1;
 pub(super) const JS_IMPORT_F64: u8 = 2;
 
-/// What a `Completion::ToWasm` activation's return restores of its Wasm caller: the instance
-/// it ran over (`LaneContext::instance`), the memory binding its view was of, read again on
-/// return since the callee may grow the memory, and the import's result type.
-#[derive(Clone, Copy)]
-pub(super) struct ToWasmCall {
-    pub(super) instance: Value,
-    pub(super) memory: Option<Value>,
-    pub(super) result: Option<quench_runtime::WasmType>,
-}
+pub(super) use quench_runtime::vm::engine_types::ToWasmCall;
 
+#[quench_macros::ext(CompletionOps1)]
 impl Completion {
     /// The completion of an activation a `new` made or not, of the caller's program or not,
     /// of a target whose return settles its call's promise or not. Only a plain call of the
@@ -2177,16 +1228,7 @@ impl Completion {
     }
 }
 
-/// A forwarding constructor whose activation a construction skipped
-/// (`forwarded_construction_in_lane`): what its frame holds when activations become frames,
-/// pending at its forwarding call.
-#[derive(Clone, Copy)]
-pub(crate) struct SkippedForwarder {
-    pub(crate) function: u32,
-    pub(crate) callee: Value,
-    pub(crate) env: Value,
-    pub(crate) method: quench_runtime::bytecode::ForwardedThisMethod,
-}
+pub(crate) use quench_runtime::vm::engine_types::SkippedForwarder;
 
 /// Where a lane activation's arguments come from: a window of the caller's registers, or
 /// values a forwarding activation or frame kept (`f.apply(this, arguments)`).
@@ -2196,50 +1238,7 @@ enum ActivationArguments {
     Kept(*const Value, usize),
 }
 
-/// A user function a lane `Call` may activate without a frame, valid as the general loop's
-/// `InLoopCallTarget` is: for `callee` while the collection epoch and realm it was resolved
-/// under hold, which its `generation` names. A target serves calls from `program`, the
-/// callee's own, or, held apart (`LaneStack::cross_targets`), from any other program, whose
-/// calls it only activates, switching the lane to its program (`enter_program_in_lane`).
-#[derive(Clone, Copy)]
-pub(super) struct ScriptCallTarget {
-    callee: Value,
-    /// The generation it was resolved in and the program it serves (`Admission`).
-    admission: Admission,
-    pub(super) function: u32,
-    env: Value,
-    pub(super) view: *const LaneView,
-    registers: u16,
-    /// The lane-stack room its plain activation reserves (`fill_room::<SCRIPT_FILL_BLOCK>` of
-    /// `registers`), derived once.
-    room: u16,
-    params: u16,
-    /// How a call binds its `this` (`ThisBinding`).
-    this_binding: ThisBinding,
-    /// The `this` a plain call (an `undefined` receiver) binds: an arrow's own
-    /// (`ThisBinding::Lexical`), found in its environment when it was resolved, the realm's
-    /// global object for a sloppy function, `undefined` for any other binding. A plain call
-    /// reads it in one load (`lane_plain_activation`).
-    lexical_this: Value,
-    /// `TARGET_CONSTRUCTS` where `new` may activate it too (`Vm::inline_constructible`), and
-    /// `TARGET_INITIALIZES` where `new` may run its body as the stores alone
-    /// (`Function::only_initializes_this_fields`).
-    forms: u8,
-    /// The registers its plain activation starts `undefined` (`ResidualProgram::entry_fill`),
-    /// at most `u8::MAX`: past one `WINDOW_FILL_BLOCK` it starts every register so.
-    fill: u8,
-    /// How a plain call enters it.
-    entry: CallEntry,
-    /// The dense storage header its depth-0 captures read (`LaneContext::capture`), or null where the walk
-    /// does not end at a function environment or its storage is sparse. The storage of a live environment never
-    /// moves, and the generation retires the target at the next collection.
-    capture: *const usize,
-    /// The `LaneStack::forwarded_methods` index of a constructor body forwarding to a method
-    /// of `this` (`Function::forwarded_this_method`), which a construction may activate
-    /// directly, or `NO_FORWARDED_METHOD`. An index, not the record, keeps every target's
-    /// cache entry its size.
-    forwarded_method: u16,
-}
+pub(super) use quench_runtime::vm::engine_types::ScriptCallTarget;
 
 mod call_entry;
 use call_entry::CallEntry;
@@ -2270,6 +1269,7 @@ const TARGET_READS_IMPLICIT: u8 = 16;
 /// closures ride the window (`CallPlan::suspended_environment`).
 const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 
+#[quench_macros::ext(ScriptCallTargetOps1)]
 impl ScriptCallTarget {
     /// The closure environment and captures pointer its activation's window holds
     /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CallRecord::env`, `capture`).
@@ -2325,56 +1325,12 @@ impl ScriptCallTarget {
     }
 }
 
-/// A lane run's generation (`LaneStack::generation`), narrow so a cache entry stays one
-/// line; its wrap clears every entry, so no stale one can match a reused number.
-type ScriptGeneration = u32;
+use quench_runtime::vm::engine_types::ScriptGeneration;
 
-/// A generation and a program in one word, so admitting a cached target or memo against the
-/// running lane (`LaneStack::admission`) is one compare.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Admission(u64);
+use quench_runtime::vm::engine_types::Admission;
 
+#[quench_macros::ext(AdmissionOps1)]
 impl Admission {
-    /// Where the program sits in the word: above the generation.
-    const PROGRAM_SHIFT: u32 = ScriptGeneration::BITS;
-
-    #[inline(always)]
-    const fn new(generation: ScriptGeneration, program: ProgramId) -> Self {
-        debug_assert!(program.raw() as u64 <= Self::PROGRAM_MASK, "a program id below the flag bits");
-        Self(generation as u64 | (program.raw() as u64) << Self::PROGRAM_SHIFT)
-    }
-
-    /// A bit no target's or memo's admission has: the lane's carries it while a condition
-    /// no cached call may run under holds (`LaneStack::refuse_cached_calls`), so every
-    /// admission fails, and the paths that resolve again decide.
-    const REFUSED: u64 = 1 << 63;
-    /// A bit the lane's admission carries while its run calls no script functions
-    /// (`LaneContext::script_calls`, `LaneStack::set_script_calls`): every cached call misses, so
-    /// the plain call's handler need not test the flag.
-    const NO_SCRIPT_CALLS: u64 = 1 << 62;
-    /// Every bit only the lane's admission carries.
-    const CONDITIONS: u64 = Self::REFUSED | Self::NO_SCRIPT_CALLS;
-    /// A bit a script call cache entry's admission carries until a plain call's link proves it
-    /// (`script_call_prove_miss`, link-proofs.md), or a leaf call's link proves a leaf entry
-    /// (`script_call_leaf_prove_miss`, leaf-keeping-c.md): its entry activates as its
-    /// registers alone (`CallEntry::activates`), the leaf call form's entry checked too, and its
-    /// cell body unpublished. Every entry is remembered with it (`ScriptTargets::remember`), and
-    /// publishing a body sets it again on every entry of the view (`Vm::unprove_view_entries`).
-    /// The lane's admission never carries it, so the proved call's one admission compare
-    /// (`script_call_miss`) also tests the proof; every other test of an entry ignores it
-    /// (`Admission::admits`).
-    const UNPROVEN: u64 = 1 << 61;
-    /// A bit the lane's admission carries while the tier's diagnostics count every entry
-    /// (`LaneStack::set_diagnosed`), which a proved call does not: no entry proved before they
-    /// were enabled admits a proved call, and none is proved while they are. Unlike the
-    /// conditions, targets and memos made under them carry it too (`current_admission`), so
-    /// the unproved paths still hit.
-    const DIAGNOSED: u64 = 1 << 60;
-    /// The bits the lane's admission takes from `LaneStack::refused`.
-    const LANE_BITS: u64 = Self::CONDITIONS | Self::DIAGNOSED;
-    /// The program's bits above `PROGRAM_SHIFT`, below the flag bits.
-    const PROGRAM_MASK: u64 = (1 << (Self::DIAGNOSED.trailing_zeros() - Self::PROGRAM_SHIFT)) - 1;
-
     #[inline(always)]
     const fn generation(self) -> ScriptGeneration {
         self.0 as u32
@@ -2405,11 +1361,6 @@ impl Admission {
         self.generation() == lane.generation()
     }
 
-    #[inline(always)]
-    const fn program(self) -> ProgramId {
-        ProgramId::from_raw(((self.0 >> Self::PROGRAM_SHIFT) & Self::PROGRAM_MASK) as u32)
-    }
-
     /// Whether an entry made under `self` admits a call under the lane's `lane`, proved or
     /// not: every unproved path's test (`Vm::script_call_holds`, the relinks). The proved
     /// call compares the words whole.
@@ -2419,6 +1370,7 @@ impl Admission {
     }
 }
 
+#[quench_macros::ext(ScriptCallTargetOps2)]
 impl ScriptCallTarget {
     #[inline(always)]
     fn generation(&self) -> ScriptGeneration {
@@ -2438,28 +1390,9 @@ const GATHERED_INLINE_VALUES: usize = 8;
 const SCRIPT_CALL_TARGET_BYTES: usize = 64;
 const _: () = assert!(std::mem::size_of::<ScriptCallTarget>() <= SCRIPT_CALL_TARGET_BYTES);
 
-/// A `ScriptCallTarget::forwarded_method` that names no record. A program with more distinct
-/// forwarding bodies than the index spans leaves the rest unrecorded.
-const NO_FORWARDED_METHOD: u16 = u16::MAX;
+use quench_runtime::vm::engine_types::NO_FORWARDED_METHOD;
 
-const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
-    callee: Value::UNDEFINED,
-    // Never proved, so no proved call's compare can match it (`Admission::UNPROVEN`).
-    admission: Admission(Admission::new(NO_SCRIPT_GENERATION, ProgramId::MAIN).0 | Admission::UNPROVEN),
-    function: 0,
-    env: Value::UNDEFINED,
-    view: std::ptr::null(),
-    registers: 0,
-    room: 0,
-    params: 0,
-    this_binding: ThisBinding::Sloppy,
-    lexical_this: Value::UNDEFINED,
-    forms: 0,
-    fill: 0,
-    entry: CallEntry::Activates,
-    capture: std::ptr::null(),
-    forwarded_method: NO_FORWARDED_METHOD,
-};
+use quench_runtime::vm::engine_types::EMPTY_SCRIPT_CALL_TARGET;
 
 /// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
 /// callee's heap index picks (`ScriptTargets::set`), at most, under each memory policy
@@ -2476,11 +1409,7 @@ const SCRIPT_CALL_TARGETS: [usize; quench_runtime::MemoryPolicy::ALL.len()] = [4
 fn script_call_targets(policy: quench_runtime::MemoryPolicy) -> usize {
     SCRIPT_CALL_TARGETS[policy as usize]
 }
-/// Entries a script call cache starts with: a program that calls few distinct callees keeps
-/// 16 KiB per table resident instead of 64 (V8-v7 max RSS, both tables: about 100 KiB per
-/// fixture). A cache grows to `SCRIPT_CALL_TARGETS` by this factor each time it has
-/// displaced more live targets than it holds.
-const SCRIPT_CALL_TARGETS_INITIAL: usize = 256;
+use quench_runtime::vm::engine_types::SCRIPT_CALL_TARGETS_INITIAL;
 const SCRIPT_CALL_TARGETS_GROWTH: usize = 4;
 const _: () = {
     assert!(SCRIPT_CALL_TARGETS_INITIAL.is_power_of_two() && SCRIPT_CALL_TARGETS_GROWTH.is_power_of_two());
@@ -2491,32 +1420,13 @@ const _: () = {
         policy += 1;
     }
 };
-/// Entries per set: the one most recently resolved first, then the one before it, so two
-/// callees whose indices share a set both stay resolved.
-const SCRIPT_TARGET_WAYS: usize = 2;
+use quench_runtime::vm::engine_types::SCRIPT_TARGET_WAYS;
 const _: () = assert!(SCRIPT_TARGET_WAYS == 2);
 
-/// A script call cache (`LaneStack::script_targets`, `cross_targets`): sets of
-/// `SCRIPT_TARGET_WAYS` entries, growing from `SCRIPT_CALL_TARGETS_INITIAL` entries.
-/// Entry pointers (`Vm::script_call_entry`) are not held across a resolution, which is
-/// where it grows.
-struct ScriptTargets {
-    entries: Box<[ScriptCallTarget]>,
-    /// Live targets displaced from their set since it last grew.
-    displaced: usize,
-    /// The hash shift of its sets (`shape_memo::direct_mapped_shift`), derived with its size.
-    set_shift: u32,
-}
+use quench_runtime::vm::engine_types::ScriptTargets;
 
+#[quench_macros::ext(ScriptTargetsOps1)]
 impl ScriptTargets {
-    fn with_len(len: usize) -> Self {
-        Self {
-            entries: vec![EMPTY_SCRIPT_CALL_TARGET; len].into_boxed_slice(),
-            displaced: 0,
-            set_shift: quench_runtime::vm::shape_memo::direct_mapped_shift(len / SCRIPT_TARGET_WAYS),
-        }
-    }
-
     /// The first entry of `callee`'s set, when it names a heap cell; the set's other entry
     /// follows it (`| 1`). The set is the shared direct-mapped index of the heap index
     /// (`shape_memo::direct_mapped_index`): a family's closures take indices at a fixed
@@ -2547,53 +1457,22 @@ impl ScriptTargets {
             self.remember(target, most);
         }
     }
-
-    fn clear(&mut self) {
-        self.entries.fill(EMPTY_SCRIPT_CALL_TARGET);
-        self.displaced = 0;
-    }
 }
 
-impl std::ops::Index<usize> for ScriptTargets {
-    type Output = ScriptCallTarget;
-    #[inline(always)]
-    fn index(&self, index: usize) -> &ScriptCallTarget {
-        &self.entries[index]
-    }
-}
 
-/// Entries of the function target memo (`LaneStack::function_targets`), one per function
-/// id modulo the count: a closure first called finds its function's target derived when a
-/// closure of the same function was resolved before, as each call of a closure-making
-/// function makes a new one. A conflict overwrites the entry, which only costs the next
-/// closure of the displaced function a full resolution.
-const FUNCTION_TARGETS: usize = 64;
+
+use quench_runtime::vm::engine_types::FUNCTION_TARGETS;
 const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
 
-/// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
-/// a construct plan (`ConstructPlan::forwarded`). The plan's dependency covers the plan's
-/// prototype (the method's slot value), the method (its shape and prototype, which could
-/// shadow `apply`) and the holder of `apply`, so while the plan holds `method` is what the
-/// forwarding reads and `apply` is the intrinsic: a use reads them from here.
-#[derive(Clone, Copy)]
-struct ForwardedResolution {
-    method: Value,
-    apply_holder: Value,
-    /// The forwarded method's function whose initializer stores the plan's fields record
-    /// (`record_forwarded_fields_in_lane`), when it has fields: the method this resolution
-    /// reads must still be of it.
-    initializer: Option<(ProgramId, u32)>,
-}
+use quench_runtime::vm::engine_types::ForwardedResolution;
 
-/// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
-pub(crate) const CONSTRUCT_PLAN_FIELDS: usize = 8;
+pub(crate) use quench_runtime::vm::engine_types::CONSTRUCT_PLAN_FIELDS;
 // A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
 const _: () = assert!(INLINE_PROPERTY_COUNT <= CONSTRUCT_PLAN_FIELDS);
 // `ConstructPlan::defaulted` holds a bit per field.
 const _: () = assert!(CONSTRUCT_PLAN_FIELDS <= u8::BITS as usize);
 
-/// Entries of the construct plan cache, indexed by the callee's heap index.
-const CONSTRUCT_PLANS: usize = 64;
+use quench_runtime::vm::engine_types::CONSTRUCT_PLANS;
 const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 
 /// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
@@ -2611,36 +1490,7 @@ fn drop_owned_entries<T>(held: &mut Vec<(usize, T)>, depth: usize) {
     }
 }
 
-/// The plain activations (call protocol v2 stage C): each keeps its frame header in the
-/// context words below its window (`Registers::write_plain_header`) and pushes no record.
-/// They are always the innermost activations; `LaneStack::activations` makes them records
-/// before anything reads the records. Emitted code reads these words at fixed offsets.
-#[repr(C)]
-pub(crate) struct PlainFrames {
-    /// How many plain activations sit above the innermost record (offset 0).
-    depth: std::cell::Cell<usize>,
-    /// The innermost plain activation's registers (offset 8).
-    registers: std::cell::Cell<*mut Value>,
-    /// The program the innermost plain activation's caller runs (offset 16), which each push
-    /// writes. A header without a side record never crosses, so it runs that program too; a
-    /// crossing one's side record keeps its own caller program, which its pop writes back
-    /// (`lane_frames::pop_plain_frame`; one-frame-one-call.md F4).
-    program: std::cell::Cell<ProgramId>,
-    /// The activation limit and the values' end as one address (offset 24): a proved call
-    /// admits one more plain activation where its window's room ends at or below it
-    /// (`LaneStack::plain_room`), one compare for both stacks. With `floor` the values' top at
-    /// the first plain activation's push over the records and `allowed = activation_limit -
-    /// records`, it is `min(values end, floor + (allowed - 1) * CONTEXT words)`, or 0 where
-    /// `allowed` is 0 or nothing refreshed it since the records changed. Each plain window
-    /// takes at least `CONTEXT` words above `floor` (`fill_window_in_lane`), so
-    /// `depth * CONTEXT <= top - floor`, and `top + room <= bound` gives `depth < allowed`:
-    /// never past the limit, though it may refuse below it, where the exact test decides
-    /// (`plain_room_exact`). Any change of the records or a move of the values clears it
-    /// (`activations_mut`, `spill_plain`), as a change of the limit does
-    /// (`refresh_activation_limit`, a due collection); a push at depth 0 refreshes it
-    /// (`refresh_plain_bound`). See link-proofs.md.
-    bound: std::cell::Cell<usize>,
-}
+pub(crate) use quench_runtime::vm::engine_types::PlainFrames;
 pub(crate) const PLAIN_DEPTH_OFFSET: usize = std::mem::offset_of!(PlainFrames, depth);
 pub(crate) const PLAIN_REGISTERS_OFFSET: usize = std::mem::offset_of!(PlainFrames, registers);
 const _: () = {
@@ -2694,20 +1544,6 @@ impl LaneStack {
         // bound (`PlainFrames::bound`) names neither any more.
         self.plain.bound.set(0);
         self.activation_records.get_mut()
-    }
-
-    /// Every activation, the plain ones counted without making them records: what the
-    /// activation limit bounds.
-    #[inline(always)]
-    pub(crate) fn activation_count(&self) -> usize {
-        self.frames_below_plain() + self.plain.depth.get()
-    }
-
-    /// The frames below the innermost plain headers: the records and the headers they sealed.
-    #[inline(always)]
-    fn frames_below_plain(&self) -> usize {
-        // SAFETY: reads the length alone.
-        unsafe { (*self.activation_records.get()).len() + self.sealed.get() }
     }
 
     /// Whether any frame is a plain header, innermost or sealed below a record.
@@ -2878,64 +1714,9 @@ impl LaneStack {
     }
 }
 
-/// A generation no lane runs under: an empty target entry never matches.
-const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
+use quench_runtime::vm::engine_types::NO_SCRIPT_GENERATION;
 
-impl Default for LaneStack {
-    fn default() -> Self {
-        Self {
-            values: LaneValues::with_capacity(LANE_STACK_VALUES),
-            activation_records: std::cell::UnsafeCell::new(LaneActivations::with_capacity(LANE_STACK_ACTIVATIONS)),
-            plain: PlainFrames {
-                depth: std::cell::Cell::new(0),
-                registers: std::cell::Cell::new(std::ptr::null_mut()),
-                program: std::cell::Cell::new(ProgramId::MAIN),
-                bound: std::cell::Cell::new(0),
-            },
-            sides: std::cell::UnsafeCell::new(Vec::new()),
-            segments: std::cell::UnsafeCell::new(Vec::new()),
-            sealed: std::cell::Cell::new(0),
-            plain_depth_limit: Box::new(std::cell::Cell::new(0)),
-            frames_below: Box::new(std::cell::Cell::new(0)),
-            body_top: Box::new(std::cell::Cell::new(0)),
-            body_table: vec![0; LANE_STACK_ACTIVATIONS],
-            native_table: vec![0; LANE_STACK_ACTIVATIONS],
-            callback_return: Box::new(CallbackTrampoline::new()),
-            wasm_storage_bytes: 0,
-            call_sites: std::cell::RefCell::default(),
-            noted: Box::new([const { std::cell::Cell::new(None) }; NOTED_SITE_CALLEES]),
-            linked: Box::new([const { std::cell::Cell::new((0, Value::UNDEFINED)) }; NOTED_SITE_CALLEES]),
-            script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
-            cross_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
-            function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
-            cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
-            construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
-            construct_watches: Box::new([const { None }; CONSTRUCT_PLANS]),
-            read_memos: Vec::new(),
-            setter_sites: Vec::new(),
-            native_identities: native_calls::NativeIdentities::new(),
-            native_stack: quench_runtime::stack::StackLimit::CLOSED,
-            steps: Vec::new(),
-            iterators: Vec::new(),
-            js_import: None,
-            bound_call: None,
-            with_objects: Vec::new(),
-            records: Vec::new(),
-            forwarded_methods: Vec::new(),
-            activation_limit: std::cell::Cell::new(0),
-            generation: NO_SCRIPT_GENERATION,
-            admission: Admission::new(NO_SCRIPT_GENERATION, ProgramId::MAIN),
-            refused: 0,
-            generation_key: (0, Value::UNDEFINED),
-            native_boundary: None,
-            body_boundary: None,
-            boundary_frames: None,
-            wasm_export: None,
-            last_window_plan: [None; generator_windows::SHARED_PLANS],
-            last_generator: [(Value::UNDEFINED, u64::MAX, std::ptr::null_mut()); 2],
-        }
-    }
-}
+
 
 #[quench_macros::ext(LaneStackOps2)]
 impl LaneStack {
@@ -2948,15 +1729,6 @@ impl LaneStack {
     /// `remember_script_target` of another program's callee (`cross_targets`).
     fn remember_cross_target(&mut self, target: ScriptCallTarget, policy: quench_runtime::MemoryPolicy) {
         self.cross_targets.remember(target, script_call_targets(policy));
-    }
-
-    /// Forget resolved call targets, as the general loop's call target cache is reset.
-    pub(super) fn clear_script_targets(&mut self) {
-        self.script_targets.clear();
-        self.cross_targets.clear();
-        *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
-        *self.cross_function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
-        self.read_memos.clear();
     }
 
     /// The target `function_targets` holds for a closure of `function` of `program` in this
@@ -3165,45 +1937,6 @@ impl LaneStack {
         noted.set(Some((address, target)));
     }
 
-    fn forget_noted(&self) {
-        self.noted.iter().for_each(|noted| noted.set(None));
-        self.linked.iter().for_each(|linked| linked.set((0, Value::UNDEFINED)));
-    }
-
-    /// Drops the callees a collection swept from the sites' records before any allocation
-    /// reuses their records: a body inlining one would take another function for it.
-    pub(super) fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
-        self.wasm_export = None;
-        self.js_import = None;
-        self.bound_call = None;
-        self.forget_noted();
-        self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
-    }
-
-    /// Retires everything this stack resolved before the collection that ended under `key`
-    /// (the new epoch and the realm): call targets, function targets and read memos name
-    /// callees, environments and storages the collection may have swept, whose heap indices
-    /// the next allocations reuse. The collector calls it, so a lane run that continues past
-    /// any call out that collected (a native such as `gc()`, a host callback, an allocation
-    /// that made a collection due) never admits a target of a swept closure whose index a
-    /// new closure took: its depth-0 captures would read the dead closure's storage.
-    pub(super) fn retire_after_collection(&mut self, key: (u64, Value)) {
-        self.enter_generation(key);
-    }
-
-    /// Notes the program the lane now runs (`Vm::activate_program`).
-    #[inline(always)]
-    pub(super) fn enter_program(&mut self, program: ProgramId) {
-        self.admission = Admission(Admission::new(self.generation, program).0 | self.refused);
-    }
-
-    /// Whether no cached target or memo admits a call (`Admission::REFUSED`): while a
-    /// construction's callee is pending (`Vm::construct_target`), under which a lane call leaves
-    /// the lane, so the cached paths need not test it (`Vm::refresh_call_refusal`).
-    pub(super) fn set_refused(&mut self, refused: bool) {
-        self.set_condition(Admission::REFUSED, refused);
-    }
-
     /// Notes whether the running lane run calls script functions (`LaneContext::script_calls`):
     /// while it does not, every cached call misses (`Admission::NO_SCRIPT_CALLS`).
     #[inline(always)]
@@ -3230,12 +1963,6 @@ impl LaneStack {
     #[inline(always)]
     fn refuses_any(&self) -> bool {
         self.refused & Admission::CONDITIONS != 0
-    }
-
-    #[inline(always)]
-    fn set_condition(&mut self, bit: u64, holds: bool) {
-        self.refused = self.refused & !bit | if holds { bit } else { 0 };
-        self.admission = Admission(self.admission.0 & !Admission::LANE_BITS | self.refused);
     }
 
     /// Notes whether the tier's diagnostics count every entry (`Admission::DIAGNOSED`), which
@@ -3279,33 +2006,11 @@ impl LaneStack {
 
 pub(super) use quench_runtime::vm::engine_types::DeferredLaneCall;
 
-/// The activations below a callback a deferred native runs in the lane
-/// (`Vm::deferred_callback_in_lane`): they are the native's caller's, whose pending calls and
-/// executing program are the lane's outer ones, not the callback's.
-#[derive(Clone, Copy)]
-struct NativeBoundary {
-    /// The callback's activation: those before it are the caller's.
-    activation: usize,
-    pending: *mut Vec<PendingGeneralCall>,
-    executing: *mut quench_runtime::vm::dispatch_frame::ExecutingProgram,
-    deferred: DeferredLaneCall,
-    /// The promise natives running when the callback began (`active_native`): the native
-    /// caller's, which its activations' frames move; those the callback starts keep theirs.
-    natives: usize,
-}
+use quench_runtime::vm::engine_types::NativeBoundary;
 
 pub(super) use quench_runtime::vm::engine_types::LaneNativeCall;
 
-/// A lane's immutable record-range binding and its owning Host's resume operation.
-/// Every context starts with this prefix, so nested runs can resume a different Host safely.
-#[repr(C)]
-struct LaneBinding {
-    resume: unsafe fn(*mut ()),
-    /// Drops what the context resolved under the collection epoch before
-    /// (`retire_lane_binding`), for its owning Host.
-    retire: unsafe fn(*mut ()),
-    object_base: *const Object,
-}
+use quench_runtime::vm::engine_types::LaneBinding;
 
 /// Drops the storage pointers a lane context resolved before a collection, as
 /// `after_nested_collection_in_lane` does after an in-place operation collected: the run's
@@ -3346,157 +2051,9 @@ unsafe fn resume_lane_binding(context: *mut ()) {
     unsafe { (*cx).binding.object_base = base };
 }
 
-/// Lane state that handlers read rarely; the hot state travels in handler
-/// arguments so it stays in machine registers across dispatches. Its fields keep their
-/// declared order: a plain call saves and restores `this`, `env` and `capture` together
-/// (`push_passed_in_lane`), so they stay adjacent, and the Wasm tier's rarely read counters
-/// come last.
-#[repr(C)]
-struct LaneContext {
-    binding: LaneBinding,
-    vm: *mut Vm,
-    /// The executing program, which every inline call stays within.
-    code: *const ResidualProgram,
-    program: ProgramId,
-    /// What the run starts from: the VM frame it runs, or a job's frame in its record
-    /// (`LaneRoot`). The registers and the view of the function the lane runs follow.
-    root: LaneRoot,
-    registers: Registers,
-    base: Ip,
-    /// The general loop's pending inline calls, which lane calls extend and
-    /// lane returns complete exactly as the general loop would.
-    pending: *mut Vec<PendingGeneralCall>,
-    /// The general loop's executing program, which a materialized call into another
-    /// program sets aside in its pending call as the loop's own push does.
-    executing: *mut quench_runtime::vm::dispatch_frame::ExecutingProgram,
-    /// The program's lane views by function, which a call reads when its
-    /// callee's view is derived.
-    views: *const [quench_runtime::vm::program_store::LaneViewCell],
-    /// The program's constants, which constant operands index. A program's lane views are
-    /// derived from its constants and replaced with them, so they hold for the run.
-    constants: *const [Value],
-    /// Lane calls and returns manage activations: the interpreter runs a
-    /// Wasm program in a loop that allows inline calls. A compiled callee
-    /// runs from the general path, which raises its traps.
-    inline_calls: bool,
-    /// The view handlers start from when the lane loop dispatches.
-    memory: MemoryView,
-    /// The last memory binding resolved in this lane run and its view. No
-    /// lane instruction grows memory or runs host code, so a binding's view
-    /// holds for the whole run; calls and returns within one instance reuse
-    /// it instead of resolving the binding again.
-    resolved: (Value, MemoryView),
-    /// JavaScript calls may activate their callees without frames: the general loop
-    /// would push them in place (`Vm::try_inline_user_call`).
-    script_calls: bool,
-    /// `new` may activate its callee without a frame too: the run's frame is an ordinary
-    /// body, from which the general loop pushes constructions (`Vm::inline_construct_target`).
-    script_constructs: bool,
-    /// Whether a compiled tier may run (`Vm::tier_may_run`), decided once when the run starts: the
-    /// execution mode, memory policy and JIT mode hold for the whole run, so a call reads this
-    /// instead of asking the policy again.
-    tiers_run: bool,
-    /// Whether a return completes a script frame the run entered from a Wasm export
-    /// (`lane_return_script_frame`): script calls on and inline calls off, kept by
-    /// `lane_set_script_calls`, which every switch of the two makes after setting
-    /// `inline_calls`. A return reads this one flag.
-    returns_script_frame: bool,
-    /// The running activation's `this`, or `DELETED` when the frame's binding decides
-    /// it (`Vm::current_this`).
-    /// The instance environment of the Wasm activations above a JavaScript call of an export
-    /// (`ActivationKind::WasmEntry`), or `DELETED` where the frame's environment is the
-    /// instance's (`instance_env_in_lane`).
-    instance: Value,
-    /// The last outer capture walk an activation read through (`Reads::of_captures`).
-    /// One walk measured better than one per depth parity on closure-heavy code.
-    outer: OuterWalk,
-    /// The last walk a root binding read took (`lane_root_slots`): from the running
-    /// activation's environment word, or its frame's, out to the root environment's slots.
-    root_walk: OuterWalk,
-    /// The storage of the environment a frame run's captured locals live in, once a local
-    /// access found it (`frame_storage_in_lane`).
-    frame_storage: FrameStorage,
-    /// The instance environment the run's Wasm bindings last read and its dense slot storage
-    /// (`wasm_instance_slot`), found this run as `frame_storage` is.
-    instance_slots: (Value, *const usize),
-    /// The row of the last indirect target the lane made (`IndirectSlot`), which the reference
-    /// call right after it reads its callee from.
-    indirect: IndirectSlot,
-    /// The running instance's record address, cached for the environment (its bits) and program
-    /// it was found for (`lane_instance_address`); 0 where the environment has no record.
-    instance_address: (u64, ProgramId, usize),
-    /// The running program's Wasm signature pool, shared with the program, for the program it is
-    /// held for (`lane_signatures`): an indirect target reads its expected canonical from it.
-    signatures: (ProgramId, Option<std::rc::Rc<quench_runtime::wasm::WasmSignatures>>),
-    /// Backward jumps left before the running Wasm function is credited with an
-    /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
-    /// when this run's code earns none (`Vm::credits_backedges_in_lane`). A crediting run keeps
-    /// its floor raised, so every backward jump reaches `safepoint_at`, which counts: the
-    /// handlers stay as they are.
-    backedges_left: Option<u32>,
-    /// The accumulator the lane loop dispatches its next record with: the one a safepoint
-    /// jump carried to its target (`safepoint_at`), else none.
-    resumed_acc: Slot<Value>,
-    /// The record a lane body's native call left the lane to continue at, one of the callee's
-    /// records in the activation it made (`body_call_helper`), and the accumulator that record reads.
-    callee_resume: Ip,
-    callee_acc: Value,
-    /// The call a lane body's helper decoded last (`BodyCall::at`): its program, function, record and
-    /// form, which the run's code fixes, so a loop's repeated call or construction decodes
-    /// its instruction once per run.
-    body_site: Option<(*const ResidualProgram, u32, u64, quench_runtime::staged::Invocation)>,
-    /// The call record whose caller's late calls last counted past the threshold
-    /// (`lane_note_late_call`), which counts nothing more for it in this run.
-    late_settled: Ip,
-    /// What this run proved about the storage of the arrays its loops index
-    /// (`ArrayStorageProofs`), which the proved element records read
-    /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify
-    /// one; a nested run retires them on entry, and they end with the run.
-    proofs: quench_runtime::heap::ArrayStorageProofs,
-    /// The run's floor cell (`lane_floor`), which a JavaScript safepoint reads from here
-    /// (`script_below_floor`).
-    floor: *const std::sync::atomic::AtomicUsize,
-    /// Backward jumps left before one reaches `safepoint_at` (`script_fuel_out`), which
-    /// credits the work clock and refills it; zero while the floor is raised at entry or a
-    /// collection is due (`note_allocation`), so every backward jump reaches it.
-    fuel: u32,
-    /// Whether that callee left the lane because it has no body yet and is still warming
-    /// toward one (`body_activate_in_lane`): its caller's leave says nothing of the caller's own
-    /// specialization (`leave_counts_in_lane`).
-    callee_warming: bool,
-    /// The leaf call whose records run (`script_call_leaf_miss`), which holds what its
-    /// activation would until its return or materialization; `NO_LEAF_CALL` for none.
-    leaf: LeafCall,
-    /// The dispatch payload of the native loop region running on this activation, zero for none
-    /// (`region_payload_in_lane`): the heap bases a call it makes may move are reloaded there too
-    /// (`region_call_in_lane`).
-    region_payload: usize,
-}
+use quench_runtime::vm::engine_types::LaneContext;
 
-/// A running leaf call (`CallEntry::Leaf`): what its activation would hold that the context
-/// does not. The context's registers and records are the callee's; what its form makes its
-/// own (`LeafForm`) of the receiver and environment is the callee's, the rest the caller's.
-/// Laid out as the staged leaf row's record (`staged::call_leaf::LEAF_*_AT`), which writes
-/// it at the call (`enter_leaf`) and reads it at the return (`complete_leaf`).
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct LeafCall {
-    /// The call record, null while no leaf runs.
-    call: Ip,
-    caller_registers: Registers,
-    caller_base: Ip,
-    /// The target the call resolved, which stays in its cache while the leaf runs: nothing
-    /// in a leaf resolves a target.
-    target: *const ScriptCallTarget,
-    /// The values the call passed, which its activation records.
-    argc: u16,
-    /// The form the call ran as, which decides what its activation takes from the caller
-    /// (`materialize_leaf_in_lane`): a published body's entry (`enter_cell_body_in_lane`) runs as `CONTEXT_LEAF`.
-    form: LeafForm,
-    /// The caller's program, for a leaf of another program (`cross_leaf_call_in_lane`), which
-    /// its return enters again; `None` for one of the caller's own.
-    caller_program: Option<ProgramId>,
-}
+use quench_runtime::vm::engine_types::LeafCall;
 
 const _: () = {
     use quench_runtime::staged::call_leaf::{LEAF_ARGC_AT, LEAF_CALLER_BASE_AT, LEAF_CALLER_REGISTERS_AT, LEAF_CALL_AT, LEAF_FORM_AT, LEAF_TARGET_AT};
@@ -3518,15 +2075,7 @@ const NO_LEAF_CALL: LeafCall = LeafCall {
     caller_program: None,
 };
 
-/// The slot storage of environment `env`, which frame `frame` held when a lane local access
-/// looked it up; null for none. A live environment's storage never moves, and no
-/// collection runs in the lane, so it holds while that frame runs with that environment.
-#[derive(Clone, Copy)]
-struct FrameStorage {
-    frame: usize,
-    env: Value,
-    slots: *mut quench_runtime::heap::EnvironmentSlots,
-}
+use quench_runtime::vm::engine_types::FrameStorage;
 
 const NO_FRAME_STORAGE: FrameStorage =
     FrameStorage { frame: usize::MAX, env: Value::DELETED, slots: std::ptr::null_mut() };
@@ -3569,16 +2118,7 @@ fn find_frame_storage_in_lane(
     slots
 }
 
-/// A walk from environment `env`, `DELETED` for none, `depth` layers out to the dense slots
-/// `slots`. An environment's chain is fixed and its storage stays put while no collection
-/// runs, so the walk holds while the running activation's environment is `env`; a re-entry
-/// after the general path, which may collect, forgets it.
-#[derive(Clone, Copy)]
-struct OuterWalk {
-    env: Value,
-    depth: u16,
-    slots: *const quench_runtime::heap::EnvironmentSlots,
-}
+use quench_runtime::vm::engine_types::OuterWalk;
 
 const NO_OUTER_WALK: OuterWalk = OuterWalk { env: Value::DELETED, depth: 0, slots: std::ptr::null() };
 
@@ -6877,26 +5417,7 @@ fn length_read(vm: &mut Vm, receiver: Value) -> Option<Value> {
         .or_else(|| vm.typed_array_geometry_read_inline(receiver, atom))
 }
 
-/// The cache tier a single-read `GetField` site's entries call for, to which a miss of its
-/// single-entry handler moves the record (`row_get_field_miss`, `row_returning_field_miss`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum FieldSiteTier {
-    /// A nested read whose steps hit primary own entries, or an array's own `length`
-    /// (`lane_nested_value`).
-    Nested,
-    /// A nested read with another step, which only the general cached read makes.
-    General,
-    /// A read that met an accessor the site cached (`Vm::field_site_getter`).
-    Getter,
-    /// Past one shape (`Vm::field_site_polymorphic`).
-    Polymorphic,
-    /// A primary entry naming a prototype holder (`Vm::field_site_holder`).
-    Holder,
-    /// An entry beyond the immediate prototype (`Vm::field_site_inherited`).
-    Inherited,
-    /// The primary own entry, which the record already reads.
-    Own,
-}
+pub(super) use quench_runtime::vm::engine_types::FieldSiteTier;
 
 fn field_site_tier_in_lane(
     vm: &Vm,
@@ -16481,20 +15002,7 @@ impl ForwardRead {
     }
 }
 
-/// A read a call site's memo makes (`MemoRead`): its field steps as copies of the field
-/// cache entries that answered them (`Vm::record_field_entry_hit`), so a step is one shape
-/// test. A read of a polymorphic or inherited entry, which probes further, has no memo.
-#[derive(Clone, Copy)]
-enum MemoLeaf {
-    /// The field of the object `base` names (`read_base_in_lane`).
-    Field { base: u16, field: quench_runtime::vm::FieldCache },
-    /// That field's array, then its dense element the parameter `index` names.
-    Element { base: u16, field: quench_runtime::vm::FieldCache, index: u16 },
-    /// That field's array, then its `length` (`Vm::array_length_field`).
-    Length { base: u16, field: quench_runtime::vm::FieldCache },
-    /// That field's object, then its own field `second`.
-    Nested { base: u16, field: quench_runtime::vm::FieldCache, second: quench_runtime::vm::FieldCache },
-}
+use quench_runtime::vm::engine_types::MemoLeaf;
 
 /// The memo shapes `script_call_memo_miss` takes as its parameter: a leaf's step
 /// (`MemoLeaf::shape`), with `MEMO_FORWARD` set for a leaf a forwarding body reaches
@@ -16505,6 +15013,7 @@ const MEMO_LENGTH: u8 = 2;
 const MEMO_NESTED: u8 = 3;
 const MEMO_FORWARD: u8 = 4;
 
+#[quench_macros::ext(MemoLeafOps1)]
 impl MemoLeaf {
     /// Its step's memo shape.
     fn shape(&self) -> u8 {
@@ -16619,26 +15128,9 @@ fn memo_first_step(
     }
 }
 
-/// What a call site's read target answered with (`script_call_memo_miss`), so the site's
-/// next call of the same callee makes the hits alone: the target's read, or a forwarding
-/// body's field and method reads and the read of the method they found. Every part depends
-/// on the callee alone, whose body is fixed, and on the shapes its steps name.
-#[derive(Clone, Copy)]
-enum MemoRead {
-    Leaf(MemoLeaf),
-    Forward {
-        /// The forwarding body's field read: the object `base` names, then its method.
-        base: u16,
-        field: quench_runtime::vm::FieldCache,
-        method_field: quench_runtime::vm::FieldCache,
-        /// The forwarding body's parameters, which it passes on in order.
-        params: u16,
-        /// The method the reads found, a `CallEntry::reads` target, whose `this` is not lexical.
-        method: Value,
-        read: MemoLeaf,
-    },
-}
+use quench_runtime::vm::engine_types::MemoRead;
 
+#[quench_macros::ext(MemoReadOps1)]
 impl MemoRead {
     /// Its memo shape (`MEMO_FIELD` .. `MEMO_FORWARD`).
     fn shape(&self) -> u8 {
@@ -16672,17 +15164,7 @@ fn script_call_memo_handler(shape: u8) -> Handler {
     )
 }
 
-/// A call site's memo of its read (`MemoRead`), valid for `callee` in the generation and
-/// program it was made in, as `ScriptCallTarget` is.
-#[derive(Clone, Copy)]
-struct ReadMemo {
-    /// The call record that made it, whose slot (`CallOperand::memo`) it is.
-    site: Ip,
-    callee: Value,
-    admission: Admission,
-    this_binding: ThisBinding,
-    read: MemoRead,
-}
+use quench_runtime::vm::engine_types::ReadMemo;
 
 /// Slots of the read memo table (`LaneStack::read_memos`): it bounds the table's memory, and a
 /// table that fills starts again empty, so the sites that read since make their memos again.
@@ -18263,14 +16745,9 @@ const FOR_OF_DONE_TEST: usize = 3;
 const STEP_READS_EMITTED: u8 = 1;
 const STEP_READS_THREADED: u8 = 2;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ForOfTest {
-    /// `JumpFalse` to the `value` read, past a `Jump` out of the loop.
-    Emitted,
-    /// `JumpTrue` out of the loop, the `value` read after it.
-    Threaded,
-}
+use quench_runtime::vm::engine_types::ForOfTest;
 
+#[quench_macros::ext(ForOfTestOps1)]
 impl ForOfTest {
     /// The offset of the record that leaves the loop: the `Jump` after the test, or the
     /// threaded test itself.
@@ -20445,54 +18922,11 @@ unsafe fn restore_context_in_lane(cx: *mut LaneContext, saved: LaneContext) {
     }
 }
 
-/// What a native's loop of calls of one callee with one receiver from the lane that called
-/// it proves once (`Vm::prepare_lane_callback`), as JSC's `CachedCall` links its callee once
-/// per loop: the lane, the native's site in it and the context its caller resumes with, the
-/// callee's frameless target and the `this` it binds, resolved under `epoch`, the native
-/// stack the calls run on and the pending calls their frames would take. Each call
-/// (`Vm::call_prepared_lane`) tests only what the native's own steps between calls can
-/// change, and leaves any other call to `Vm::call_value`.
-pub(super) struct PreparedLaneCallback {
-    cx: *mut LaneContext,
-    site: LaneNativeCall,
-    receiver: Value,
-    target: ScriptCallTarget,
-    this: Value,
-    /// The collection epoch `target` was resolved under; a collection retires it.
-    epoch: u64,
-    /// The lane's context as the native's caller left it, which a callback that leaves the
-    /// lane restores (`restore_context_in_lane`). It holds no drop glue.
-    caller: LaneContext,
-    /// The activation calls passing its argument count push, made once (`PreparedShape`).
-    shape: Option<PreparedShape>,
-    pending: Vec<PendingGeneralCall>,
-    /// The executing program the calls' frames would take, which the context names with
-    /// `pending` from the first call to the loop's end (`Vm::call_prepared_lane`).
-    executing: quench_runtime::vm::dispatch_frame::ExecutingProgram,
-    _stack: quench_runtime::stack::StackGuard,
-}
+pub(super) use quench_runtime::vm::engine_types::PreparedLaneCallback;
 
-/// The activation of a native's callback for calls passing `argc` values (`push_callback_in_lane`),
-/// made once per prepared loop: every field but its window, which each call takes from the
-/// lane stack, and the window's layout: its `registers`, the `passed` values its parameters
-/// bind, whether it `keeps` every value passed after its registers (where a forwarded
-/// `arguments` or a sloppy function's legacy reflection can observe those past its
-/// parameters), its whole `size` and the `room` its admission needs.
-#[derive(Clone, Copy)]
-struct PreparedShape {
-    argc: usize,
-    activation: Activation,
-    /// The plain header a callback that keeps nothing pushes instead of `activation`
-    /// (`push_prepared_in_lane`); `None` for one that keeps its values. An array step's names the
-    /// array steps' trampoline record instead (`array_steps::push_array_step_in_lane`).
-    header: Option<CallbackHeader>,
-    registers: usize,
-    passed: usize,
-    keeps: bool,
-    size: usize,
-    room: usize,
-}
+use quench_runtime::vm::engine_types::PreparedShape;
 
+#[quench_macros::ext(PreparedShapeOps1)]
 impl PreparedShape {
     /// The shape of `target`'s activations from the native whose caller's context is
     /// `caller`, for calls passing `argc` values; `None` for a gathering target, whose rest
@@ -20537,65 +18971,14 @@ impl PreparedShape {
     }
 }
 
-/// A `PreparedShape`'s callback pushed as a plain activation (`LaneStack::push_callback_header`),
-/// made once per shape: the header `push_plain` writes, whose call record and caller registers
-/// are the return trampoline's (`CallbackTrampoline::bind`), its program, and the callback's
-/// own call record and caller registers, which the trampoline takes at each push.
-#[derive(Clone, Copy)]
-struct CallbackHeader {
-    plain: quench_runtime::staged::protocol::PlainHeader<u64>,
-    program: u64,
-    call: Ip,
-    caller_registers: Registers,
-}
+use quench_runtime::vm::engine_types::CallbackHeader;
 
-/// The register of the trampoline's window (`CallbackTrampoline::result`) a callback's return
-/// writes: its call record's `a`, a result register (no `RETURN_REGISTER`), so the plain return
-/// takes it as any call's.
-const CALLBACK_RESULT: u16 = 0;
+use quench_runtime::vm::engine_types::CALLBACK_RESULT;
 
-/// The return trampoline of the native callbacks pushed as plain activations
-/// (`LaneStack::push_callback_header`), as JSC and V8 return into native code through a return
-/// thunk. A callback's header names `records[0]` as its call record and `result` as its
-/// caller's registers, so the plain return (`return_from_in_lane`) writes the value into `result`
-/// and resumes at `records[1]`, whose handler (`callback_trampoline_returned`) ends the run: the
-/// plain return makes no test of its own for a callback. `call` and `caller_registers` are the
-/// innermost callback's own, which that handler and a spill (`LaneStack::spill_plain`) read.
-#[repr(C)]
-struct CallbackTrampoline {
-    records: [LaneInstruction; 2],
-    /// The array steps' pair (`array_steps::array_step_returned`): an in-lane array step's
-    /// callback header names `steps[0]` as its call record and `result` as its caller's
-    /// registers, so its plain return resumes at `steps[1]`, which steps the innermost
-    /// iteration. Steps nest over plain activations, so their own call record, caller
-    /// registers and base live in their entries (`LaneArrayStep`), not here.
-    steps: [LaneInstruction; 2],
-    result: std::cell::Cell<Value>,
-    call: std::cell::Cell<Ip>,
-    caller_registers: std::cell::Cell<Registers>,
-}
+use quench_runtime::vm::engine_types::CallbackTrampoline;
 
+#[quench_macros::ext(CallbackTrampolineOps1)]
 impl CallbackTrampoline {
-    /// A trampoline no handler is bound to yet (`bind`), which no header names.
-    fn new() -> Self {
-        let record = || LaneInstruction {
-            handler: std::ptr::null(),
-            operand: LaneOperand { imm: 0 },
-            a: CALLBACK_RESULT,
-            b: 0,
-            c: 0,
-            mode: 0,
-            call_link: std::cell::Cell::new(NO_CALL_LINK),
-        };
-        Self {
-            records: [record(), record()],
-            steps: [record(), record()],
-            result: std::cell::Cell::new(Value::UNDEFINED),
-            call: std::cell::Cell::new(std::ptr::null()),
-            caller_registers: std::cell::Cell::new(Registers(std::ptr::null_mut())),
-        }
-    }
-
     /// Binds the handler of the VM `H` (`callback_trampoline_returned`) to its records, and answers
     /// the words a callback's header names: its call record and its result window. The call
     /// record is never dispatched; it holds the handler too.
@@ -20613,25 +18996,11 @@ impl CallbackTrampoline {
         (self.records.as_ptr().expose_provenance() as u64, self.result.as_ptr().expose_provenance() as u64)
     }
 
-    /// The callback's own call record and caller registers where `call`, a plain header's, is
-    /// the trampoline's call record; `None` for any other plain activation.
-    #[inline(always)]
-    fn returns(&self, call: Ip) -> Option<(Ip, Registers)> {
-        std::ptr::eq(call, self.records.as_ptr()).then(|| (self.call.get(), self.caller_registers.get()))
-    }
-
     /// The call record word an array step's header names (`steps[0]`), whose `following` is the
     /// stepping record. Bound once `bind` ran for a shape, which every step's shape did.
     #[inline(always)]
     fn step_call(&self) -> u64 {
         self.steps.as_ptr().expose_provenance() as u64
-    }
-
-    /// Whether `call`, a plain header's, is the array steps' call record: the header is an
-    /// array step's callback, whose caller base word is its step's index (`LaneArrayStep`).
-    #[inline(always)]
-    fn steps_return(&self, call: Ip) -> bool {
-        std::ptr::eq(call, self.steps.as_ptr())
     }
 }
 
@@ -20655,24 +19024,9 @@ script_handler! {
     }
 }
 
-/// What entering an activation of a `PreparedShape` for one receiver reads
-/// (`enter_prepared_in_lane`): the shape's window layout and the target's view, environment and
-/// captures.
-#[derive(Clone, Copy)]
-struct PreparedEntry {
-    view: *const LaneView,
-    env: Value,
-    capture: *const usize,
-    this: Value,
-    registers: usize,
-    passed: u16,
-    argc: u16,
-    keeps: bool,
-    size: usize,
-    program: ProgramId,
-    function: u32,
-}
+use quench_runtime::vm::engine_types::PreparedEntry;
 
+#[quench_macros::ext(PreparedEntryOps1)]
 impl PreparedEntry {
     /// The window layout the callback family's rows fill (`staged::call_callback::CallbackWindow`).
     #[inline(always)]
@@ -20691,6 +19045,7 @@ impl PreparedEntry {
     }
 }
 
+#[quench_macros::ext(PreparedShapeOps2)]
 impl PreparedShape {
     /// The entry of its activations of `target` with `this`.
     #[inline(always)]

@@ -114,7 +114,7 @@ impl Vm {
             .and_then(|views| views.get(probe.function as usize))
             .and_then(super::program_store::derived_lane_view)
         {
-            dispatch_fast::settle_name_record(view, pc as usize, op, lands);
+            crate::vm::engine_calls::settle_name_record(view, pc as usize, op, lands);
         }
     }
 

@@ -6,7 +6,7 @@
 //! does an async call's first run (`Vm::settle_async_call`).
 use super::*;
 use super::super::activation::{JobRoot, SuspendKind};
-use super::super::dispatch_fast::JobEnd;
+use crate::vm::engine_types::JobEnd;
 use super::super::generator::GeneratorStep;
 
 /// Whose stop a suspended activation's run ends at, by its kind: a sync generator's, whose

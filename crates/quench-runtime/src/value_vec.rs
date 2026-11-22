@@ -8,7 +8,6 @@ use rustc_hash::FxHashMap;
 mod buffer; mod plan_values;
 mod subscribe;
 use buffer::PropertyBuffer;
-pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
 
 /// The word of an arena slot that holds `value`, where the slot's owner has type `owner`: the one
 /// place a stored word is encoded. A slot of `Representation::Float64` holds its Number as the IEEE double (an

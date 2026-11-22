@@ -29,7 +29,7 @@ pub(crate) const ENTRY_CAPTURED: u16 = 2;
 pub(crate) const ENTRY_STORAGE: u16 = 3;
 /// The in-place storage's words: the storage word, then the header word (`ThinBoxSlice::IN_PLACE_WORDS`).
 pub(crate) const STORAGE_WORDS: u16 = 2;
-/// Where the locals start, counted from the first entry (`dispatch_fast::WINDOW_LOCALS`).
+/// Where the locals start, counted from the first entry (`crate::vm::engine_types::WINDOW_LOCALS`).
 pub(crate) const ENTRY_WORDS: u16 = ENTRY_STORAGE + STORAGE_WORDS;
 
 /// The byte offset of word `index` from a base, for indices past `u16` (locals plus values).

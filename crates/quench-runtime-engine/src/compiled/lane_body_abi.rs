@@ -2,15 +2,9 @@
 
 use super::*;
 
-/// What a lane body returns in two registers: its status and its result word.
-#[repr(C)]
-pub(crate) struct BodyReturn {
-    pub(super) status: u32,
-    pub(super) value: u64,
-}
+pub(crate) use quench_runtime::vm::engine_types::BodyReturn;
 
-/// A lane body's entry: (context, receiver, capture word, registers) -> (status, result word).
-pub(crate) type BodyEntry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64) -> BodyReturn;
+pub(crate) use quench_runtime::vm::engine_types::BodyEntry;
 
 /// The lane body ABI: the shared native-entry ABI without the result pointer, whose word the
 /// body returns beside its status (`BodyReturn`).

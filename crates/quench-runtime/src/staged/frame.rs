@@ -1,6 +1,6 @@
 //! The one frame's layout: the words of a call in progress that emitted code reads and
 //! writes at fixed offsets. Everything else (return linkage, kind) belongs to the lane, which
-//! asserts these against the record it lays out (`vm::dispatch_fast::Activation`).
+//! asserts these against the record it lays out (`crate::vm::engine_types::Activation`).
 
 use core::mem::{offset_of, size_of};
 

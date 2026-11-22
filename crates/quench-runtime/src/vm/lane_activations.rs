@@ -1,11 +1,12 @@
 //! The lane stack's activations: one allocation whose top is an address, as the values' top
 //! is (`LaneValues`), so a push or a pop moves one word and no length becomes a division.
 
-use super::dispatch_fast::{Activation, KIND_NATIVE, KIND_OFFSET};
+use super::engine_types::{Activation, KIND_OFFSET};
+use quench_bjit::shared_words::KIND_NATIVE;
 
 /// The activations of a lane stack, `base..top`, in an allocation of room up to `end`. An
 /// activation holds no drop glue, so truncation only moves the top.
-pub(super) struct LaneActivations {
+pub struct LaneActivations {
     base: *mut Activation,
     top: *mut Activation,
     end: *mut Activation,

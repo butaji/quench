@@ -41,6 +41,7 @@ fn widened(generic: &[LaneExit]) -> Vec<usize> {
     generic.iter().filter_map(|exit| match exit { LaneExit::At(pc) => Some(*pc), _ => None }).collect()
 }
 
+#[quench_macros::ext(LaneMethodOps2)]
 impl LaneMethod {
     /// The lane body `body`'s code makes of `function`, published to executable memory. It names
     /// no slots, and shapes only in its inline-cache rows, which a compaction retires
@@ -70,6 +71,7 @@ impl LaneMethod {
     }
 }
 
+#[quench_macros::ext(LaneMethodOps3)]
 impl LaneMethod {
     /// The base body of an AOT image the system linker placed at `entry` (`aot_image::object`), of
     /// the lane body ABI as a b-jit body's (`base_region::function`), for a function of `registers`

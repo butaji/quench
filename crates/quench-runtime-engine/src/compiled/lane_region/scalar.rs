@@ -89,6 +89,7 @@ impl ScalarAbi {
     }
 }
 
+#[quench_macros::ext(CompletionOps3)]
 impl Completion {
     /// Whether a run returns a Number by its status and a result word (a numeric region, or a scalar entry).
     pub(super) fn numeric(self) -> bool { self != Self::Body }

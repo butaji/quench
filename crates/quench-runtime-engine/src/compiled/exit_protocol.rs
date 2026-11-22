@@ -16,20 +16,9 @@ use quench_runtime::value::Value;
 use quench_bjit::call_record::{return_status_pc, LaneStatus};
 use std::collections::HashMap;
 
-/// What a leave is, which a leave word holds in its top two bits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u64)]
-pub(super) enum ExitKind {
-    /// At a caller PC.
-    At,
-    /// At a PC of an inlined frame's callee.
-    Inlined,
-    /// Into a native call's callee activation.
-    Callee,
-    /// At the body's entry, whose proof of its inputs failed.
-    Entry,
-}
+pub(super) use quench_runtime::vm::engine_types::ExitKind;
 
+#[quench_macros::ext(ExitKindOps1)]
 impl ExitKind {
     const KINDS: [Self; 4] = [Self::At, Self::Inlined, Self::Callee, Self::Entry];
     const SHIFT: u32 = u64::BITS - Self::KINDS.len().trailing_zeros();
@@ -51,6 +40,7 @@ impl ExitKind {
 // The b-jit's callee leave word is this protocol's: one encoding, two crates.
 const _: () = assert!(ExitKind::Callee.word(0) == quench_bjit::call_record::CALLEE_EXIT);
 
+#[quench_macros::ext(LaneExitOps2)]
 impl LaneExit {
     /// Whether the run ended the activation, by its return or by an exception, rather than
     /// leaving it to the lane.
@@ -145,6 +135,7 @@ impl RegionRun {
     }
 }
 
+#[quench_macros::ext(LoopRegionOps3)]
 impl LoopRegion {
     /// Whether `exit` is a leave at one of the loop's own PCs: a guard's exit, which the general
     /// path executes, rather than the jump past the loop the lane resumes at. An inlining
@@ -155,50 +146,17 @@ impl LoopRegion {
     }
 }
 
-/// Where a live value is when its leave happens.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Source {
-    /// An inlined callee's register, which the leave stores to this slot of the entry's
-    /// scratch window (`BodyRunContext::scratch`).
-    Scratch(u16),
-}
+pub(super) use quench_runtime::vm::engine_types::Source;
 
-/// A value a leave stores: its unit register and where the leave stores it. Every stored
-/// value is stored tagged, so no representation is recorded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) struct LiveValue {
-    pub(super) slot: u16,
-    pub(super) source: Source,
-}
+pub(super) use quench_runtime::vm::engine_types::LiveValue;
 
-/// What a leave is and the values it stores (`Lowering::inlined_stores`, the emitter's own
-/// query, which a leave inside an inlined frame stores and no other).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct ExitSig {
-    pub(super) kind: ExitKind,
-    pub(super) live: Box<[LiveValue]>,
-}
+pub(super) use quench_runtime::vm::engine_types::ExitSig;
 
-/// One leave of a unit: its sig, its place, its dense site id, and the first unit PC that
-/// leaves there.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ExitSite {
-    /// The leave's word (`LaneExit::word`), which `LaneExit::decode` reads back; the table's key.
-    /// Kept as a word, not a `LaneExit`, which holds a `Value` and is three words wide.
-    word: u64,
-    pub(super) sig: u32,
-    pub(super) id: u32,
-    pub(super) unit_pc: u32,
-}
+pub(super) use quench_runtime::vm::engine_types::ExitSite;
 
-/// A unit's leaves, each place once, ordered by leave word, over its interned sigs. Built once per
-/// compile and kept by the body it publishes, so its tables hold no capacity past their length.
-#[derive(Default)]
-pub(crate) struct ExitTable {
-    sigs: Vec<ExitSig>,
-    sites: Vec<ExitSite>,
-}
+pub(crate) use quench_runtime::vm::engine_types::ExitTable;
 
+#[quench_macros::ext(ExitTableOps1)]
 impl ExitTable {
     /// The table of the places `unit`'s PCs leave at. `stored` is the emitter's store set of a
     /// leave at an inlined PC (`unit_pc`, its `frame`), so the table records what the leave writes.

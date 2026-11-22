@@ -191,17 +191,10 @@ pub mod shared_backing;
 pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_LANE_HELPERS_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS_OPERATION_PREFIX, NativeProgramNamespace};
 #[cfg(feature = "native-execution")]
 pub use vm::{
-    NativeJsOperands, NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
-    native_program::{NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
+    NativeJsOperands, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
+    engine_types::{NativeJsOperationEntry, NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
 };
-pub use vm::{
-    IsaBaseline, NativeTarget,
-    native_object::{
-        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeDataAddress, NativeFunction, NativeFunctionAddress,
-        NativeJsModule, NativeReloc, emit_native_module, emit_native_module_for, emit_native_object, lower_native_js_module,
-        lower_native_js_module_for,
-    },
-};
+pub use vm::{IsaBaseline, NativeTarget};
 
 pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};

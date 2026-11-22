@@ -165,5 +165,5 @@ fn serve(jobs: &Receiver<Work>) {
 fn release_compile_scratch() {
     quench_alloc::release_empty_pages();
     quench_alloc::release_scratch();
-    crate::vm::compiled::flush_retired_writers();
+    crate::vm::engine_calls::flush_retired_writers();
 }

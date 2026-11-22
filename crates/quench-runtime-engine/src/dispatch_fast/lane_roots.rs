@@ -12,16 +12,9 @@ use quench_runtime::vm::dispatch_frame::{ExecutingProgram, LaneExit};
 /// a job's lane excludes while its activations run.
 const NO_FRAME: usize = usize::MAX;
 
-/// What a lane run starts from.
-#[derive(Clone, Copy)]
-pub(super) enum LaneRoot {
-    /// The VM frame the run continues, the innermost when it starts.
-    Frame(usize),
-    /// The activation of a promise job or a native generator step, which the lane runs
-    /// frameless over its owner's record.
-    Job(JobRoot),
-}
+pub(super) use quench_runtime::vm::engine_types::LaneRoot;
 
+#[quench_macros::ext(LaneRootOps1)]
 impl LaneRoot {
     /// The VM frame the run continues, if it has one: a job's has none until its activations
     /// become frames.
@@ -42,6 +35,7 @@ impl LaneRoot {
     }
 }
 
+#[quench_macros::ext(LaneContextOps1)]
 impl LaneContext {
     /// The VM frame the lane runs, for the code a frame's run reads; `NO_FRAME` where a job's
     /// activations run.
@@ -57,8 +51,7 @@ impl LaneContext {
     }
 }
 
-/// The words of an innermost activation's state that a parked lane keeps: its receiver and its environment.
-const INNERMOST_STATE_LEN: usize = 2;
+use quench_runtime::vm::engine_types::INNERMOST_STATE_LEN;
 
 /// Everything a lane run's context starts from (`Vm::context_for_start`).
 pub(super) struct LaneStart<'a> {
@@ -97,37 +90,11 @@ fn job_start<'a>(code: &'a ResidualProgram, job: JobRoot, window: &JobWindow, (p
     }
 }
 
-/// How a job's lane run ended (`Vm::run_lane_job`).
-pub(crate) enum JobEnd {
-    /// The activation returned the value: its owner is finished.
-    Returned(Value),
-    /// The activation awaited the value in the lane, its owner holding the frame and the
-    /// await's reactions the job's to attach, or a sync generator's root yielded it, its record
-    /// suspended.
-    Suspended(Value),
-    /// An async generator's root yielded the value in the lane: its frame parked in its record,
-    /// the yield awaits the value before it settles the request (`Vm::async_generator_yield`).
-    Yielded(Value),
-    /// The activation raised an exception no handler of it covers, which ended it in its owner
-    /// (`raised_windows`): the promise or request the job settles rejects with the error.
-    Threw(JsError),
-    /// The lane left the activation to the general path, or did not lay its function out as a
-    /// window (`Vm::run_job`), which ran the VM frame the activation became: the bottom one
-    /// stays on the frame stack, with this outcome.
-    Frames(Result<FrameOutcome, JsError>),
-}
+pub(crate) use quench_runtime::vm::engine_types::JobEnd;
 
 pub(crate) use quench_runtime::vm::engine_types::ParkedLane;
 
-#[quench_macros::ext(ParkedLaneOps1)]
-impl ParkedLane {
-    /// Appends to `out` every value the parked run holds.
-    pub(crate) fn extend_roots(&self, programs: &quench_runtime::vm::program_store::ProgramStore, out: &mut Vec<Value>) {
-        self.stack.extend_roots(programs, out);
-        let [this, env] = self.innermost;
-        quench_runtime::vm::activation::extend_this_env_roots(out, this, env);
-    }
-}
+
 
 #[quench_macros::ext(DispatchFastLaneRootsVm)]
 impl Vm {

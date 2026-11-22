@@ -186,13 +186,13 @@ impl RegisterFact {
 }
 
 struct Registers {
-    tagged: Vec<Variable>,
+    pub tagged: Vec<Variable>,
     /// Each register's int32, 64-bit integer and float64 views, declared at their first use: most
     /// registers never take one, and the SSA builder's tables grow with variables times blocks. A
     /// view read before any definition reads zero, as only a state that defined it reads it.
-    int: Vec<Option<Variable>>,
-    long: Vec<Option<Variable>>,
-    float: Vec<Option<Variable>>,
+    pub int: Vec<Option<Variable>>,
+    pub long: Vec<Option<Variable>>,
+    pub float: Vec<Option<Variable>>,
 }
 
 /// The compile-time state of the instruction being lowered.
@@ -482,30 +482,23 @@ struct LoopStore {
 }
 
 pub(super) struct LoweredRegion {
-    pub(super) number_result: Option<NativeNumberResult>,
-    pub(super) function: ir::Function,
-    pub(super) native: usize,
-    pub(super) fault_poll: bool,
+    pub number_result: Option<NativeNumberResult>,
+    pub function: ir::Function,
+    pub native: usize,
+    pub fault_poll: bool,
     /// Whether a loop of the region hoists an array view, so a typed variant may differ.
-    pub(super) hoists_arrays: bool,
-    pub(super) stable: StableFacts,
+    pub hoists_arrays: bool,
+    pub stable: StableFacts,
     /// The entry types of the function's parameters, as a proven entry's lowering holds them (`VmFacts::proven_entry`):
     /// the types its entry guards test, which a caller must prove each argument has. Empty elsewhere.
-    pub(super) entry_types: Box<[Type]>,
+    pub entry_types: Box<[Type]>,
     /// The body's type summary (`TypeSummary`), where it is a whole function's body.
-    pub(super) summary: Option<TypeSummary>,
+    pub summary: Option<TypeSummary>,
     /// The leaves the code takes, with the values each stores (`ExitTable::of_unit`, the emitter's own store sets).
-    pub(super) exits: ExitTable,
+    pub exits: ExitTable,
 }
 
-/// What a published lane body's activation returns natively, so a direct caller types the call's
-/// result with it (`call_results`): the join of the types its own activation returns, from the facts
-/// at each return. A value a leave returns to the caller is not in the result: the caller guards the
-/// result at its completion.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct TypeSummary {
-    pub(crate) result: Type,
-}
+pub(crate) use quench_runtime::vm::engine_types::TypeSummary;
 
 impl Default for LoweredRegion {
     /// A region that lowered nothing (`LoweredLane`'s default): an empty function.
@@ -795,27 +788,9 @@ impl Completion {
     pub(super) fn status_and_pc(self) -> bool { self == Self::Body }
 }
 
-/// Which arrays a region's loops index in place (`LoopArray`): dense arrays' elements, or
-/// typed arrays' (`Vm::typed_array_elements_in_lane`). A region assumes one, proved on each
-/// loop's entering edge, so no access chooses between them; a static image publishes a
-/// typed variant beside the dense one, which its dispatcher tries next at the header, and a
-/// loop site compiles the one its entry found (`LoopTier::views`). A typed view carries the
-/// kind the site observed, which the proof compares once and the accesses fold; `None` where
-/// the entries showed several kinds (or none was observed), the accesses dispatching on the
-/// record's.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum ElementViews {
-    #[default]
-    Dense,
-    Typed(Option<quench_runtime::heap::TypedArrayKind>),
-    /// Record arrays whose backings are double (`heap::DOUBLE_LEN`) and hold no hole, each read
-    /// and written in place as the raw doubles a `Float64Array` holds (`elements::double_view`):
-    /// an element read is a bounds test and one 8-byte load into a Float64 register, a Number
-    /// store one 8-byte store. A helper that may change a backing reads it again
-    /// (`reload_dense_arrays`), and one no longer double reads as empty.
-    Double,
-}
+pub(crate) use quench_runtime::vm::engine_types::ElementViews;
 
+#[quench_macros::ext(ElementViewsOps1)]
 impl ElementViews {
     /// The views of arrays viewed both as `self` and as `other`: the same dense views, or typed
     /// views of the kind both name and of no kind where they differ; `None` for a mix.

@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[quench_macros::ext(JsStepDispatchOps2)]
 impl JsStepDispatch {
     /// What a VM may change between native entries: the call targets its eval state admits.
     #[inline(always)]

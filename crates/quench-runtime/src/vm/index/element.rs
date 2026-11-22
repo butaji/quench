@@ -2,7 +2,7 @@
 //! trap, a typed array, a string or an accessor index before the named-key walk.
 
 use super::*;
-use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
+use crate::vm::engine_types::OperandKinds;
 
 impl Vm {
     /// The data element an array holds at `index` (present, not a hole), which a read takes with no

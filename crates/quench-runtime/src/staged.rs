@@ -72,7 +72,6 @@ mod operation;
 pub(crate) use operation::Operation;
 pub(crate) use operation::kind as op_kind;
 mod binary_class;
-pub(crate) use binary_class::BinaryClass;
 mod edge;
 pub(crate) use edge::Edge;
 
@@ -83,14 +82,14 @@ mod captures;
 pub(crate) mod compare;
 pub(crate) mod meaning_dispatch;
 pub(crate) mod frame_arm;
-pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
+pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
 pub(crate) use decode::{DecodeContext, Fields};
-pub(crate) use compare::{nullish_of, Comparison};
+pub(crate) use compare::Comparison;
 pub(crate) use concrete::Concrete;
-pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
+pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
 pub(crate) mod add;
 pub mod add_plan;
@@ -147,23 +146,21 @@ pub(crate) mod call_body;
 pub(crate) mod call_native;
 pub(crate) mod call_complete;
 pub(crate) mod call_iteration;
-pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
+pub(crate) use forms::{Arguments, CallFacts, Callee, Invocation, Receiver, RegisterList};
 pub(crate) use protocol::CallOperation;
 pub(crate) mod invoke;
 pub(crate) mod prologue;
-pub(crate) use prologue::{step_entry, PrologueFrame};
 pub(crate) mod plan;
 mod native_call;
-pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, Resolved};
 #[cfg(test)]
 pub(crate) use plan::Bound;
-pub(crate) use invoke::{CallFrame, Entered, Room};
+pub(crate) use invoke::CallFrame;
 mod suspend;
-pub(crate) use suspend::{await_source, suspend as suspension_step, SuspendEffect, Suspending, Suspension, YieldConversion};
+pub(crate) use suspend::{SuspendEffect, Suspending, Suspension};
 mod delegation;
 pub(crate) use delegation::DelegationStep;
 mod allocation;
-pub(crate) use allocation::{Allocation, InlineEmpty};
+pub(crate) use allocation::Allocation;
 pub(crate) mod plan_fields;
 pub(crate) mod property;
 mod property_write;
@@ -174,7 +171,7 @@ mod guard;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, step_of, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+pub(crate) use steps::step;
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub(crate) mod region;
@@ -214,14 +211,14 @@ pub(crate) mod trace;
 pub(crate) use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub(crate) use region::Access;
-pub(crate) use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
-pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
+pub(crate) use ic::{HINTED_FORM, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
+pub(crate) use object::{Form, concrete_own_read};
 
 mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
 /// capture access whose scopes the frame does not hold, the walk over the scopes from the

@@ -25,13 +25,7 @@ use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::value::Value;
 use quench_runtime::vm::operations::binary_operator as code;
 
-/// A register's kind, ordered by the join: a larger kind admits more values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Kind {
-    Int32,
-    Speculative,
-    Tagged,
-}
+pub(super) use quench_runtime::vm::engine_types::Kind;
 
 /// The kinds of a function's registers below the width the analysis covered.
 pub(super) struct IntKinds {

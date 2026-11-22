@@ -12,10 +12,19 @@
 pub mod dispatch_fast;
 pub mod compiled;
 pub mod js_compiled;
+pub mod aot_image;
+pub mod native_program;
+pub mod native_object;
+pub mod regexp_native;
+mod engine_calls;
+mod engine_calls2;
+mod lifted;
+mod symbol_words;
 
 /// What every layer module sees: the VM core, the layer's modules and its extension traits.
 #[allow(unused_imports)]
 pub(crate) mod engine_prelude {
+    pub use crate::lifted::*;
     pub use quench_runtime::vm::*;
     // The names the VM core's modules import (`quench-runtime/src/vm.rs`), which its submodules saw.
     pub use quench_runtime::vm::compiled::InstanceRecord;
@@ -25,6 +34,11 @@ pub(crate) mod engine_prelude {
     pub use crate::dispatch_fast;
     pub use crate::compiled;
     pub use crate::js_compiled;
+    pub use crate::aot_image;
+    pub use crate::native_program;
+    pub use crate::native_object;
+    pub use crate::regexp_native;
+    pub use crate::native_program::NativeProgramVm;
     pub use crate::dispatch_fast::DispatchFastVm;
     pub use crate::dispatch_fast::DispatchFastVm2;
     pub use crate::dispatch_fast::DispatchFastVm3;

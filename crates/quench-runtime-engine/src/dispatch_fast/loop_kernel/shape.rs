@@ -9,18 +9,7 @@ const MAX_NODES: usize = 96;
 /// Most recurrences, scalars and affine values a kernel keeps.
 const MAX_SLOTS: usize = 32;
 
-/// An operand as one iteration of the kernel reads it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Arg {
-    /// An operation's result: its column.
-    Col(u16),
-    /// A recurrence's value at the iteration's start.
-    Phi(u8),
-    /// A Number the whole run reads: a constant or an unwritten register.
-    Scalar(u8),
-    /// An affine value (`Affine`).
-    Affine(u8),
-}
+pub(super) use quench_runtime::vm::engine_types::Arg;
 
 /// `register + offset + step * k` at iteration `k`, `register` an induction (with its step)
 /// or an unwritten register (step 0); the register holds an int32 at entry.

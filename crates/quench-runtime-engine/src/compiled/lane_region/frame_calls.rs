@@ -264,7 +264,7 @@ pub(in super::super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut 
 fn atom_site_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, site: u16) -> ir::Value {
     if !frame.helpers.links() { return stage.raw_const(Lane::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64); }
     let atom = atom_word(frame, stage, atom);
-    quench_runtime::vm::jit_backend::symbol_words::atom_site_word(stage.builder, atom, site)
+    crate::symbol_words::atom_site_word(stage.builder, atom, site)
 }
 
 /// The VM's cached read of `atom` of `object` through `site` (`LaneHelper::FieldGet`): a

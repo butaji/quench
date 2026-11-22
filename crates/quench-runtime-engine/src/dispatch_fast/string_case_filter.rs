@@ -50,26 +50,13 @@ fn bucket_index(key: u64, mask: usize) -> usize {
     hash.finish() as usize & mask
 }
 
-#[derive(Clone, Copy, Default)]
-struct Bucket {
-    key: u64,
-    first: u32,
-    count: u16,
-}
+use quench_runtime::vm::engine_types::Bucket;
 
-#[derive(Clone, Copy)]
-struct Case {
-    index: u16,
-    record: u32,
-}
+use quench_runtime::vm::engine_types::Case;
 
-pub(super) struct StringCaseFilter {
-    short_lengths: u64,
-    max_length: usize,
-    buckets: Box<[Bucket]>,
-    cases: Box<[Case]>,
-}
+pub(super) use quench_runtime::vm::engine_types::StringCaseFilter;
 
+#[quench_macros::ext(StringCaseFilterOps1)]
 impl StringCaseFilter {
     #[inline(always)]
     fn select(&self, vm: &Vm, value: Value, text: &JsString, constants: &[Value]) -> u32 {

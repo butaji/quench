@@ -7,35 +7,7 @@ use quench_runtime::staged::machine::{Lane, MachineScalar, Relation};
 use quench_runtime::staged::property::StoreJoin;
 use quench_runtime::staged::{Region, Stage};
 
-/// The Stable facts a region's code folded (`typed_ir::BindingTime::Stable`), each the subject
-/// of a code dependency its publication takes (`ProgramStore::publish_lane_method`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct StableFacts {
-    /// Exact shapes of prototypes whose values it holds (`heap::subscribe_prototype_values`).
-    pub(crate) holders: Box<[u32]>,
-    /// The chains it read those values through, whose prototypes' layouts it holds
-    /// (`Heap::subscribe_prototype_chain`).
-    pub(crate) chains: Box<[quench_runtime::code_dependencies::PrototypeChain]>,
-    /// Atoms it stores without a method-cache test (`MethodCacheAtoms::readers`).
-    pub(crate) atoms: Box<[Atom]>,
-    /// Global cells whose values it holds (`heap::subscribe_global_value`).
-    pub(crate) globals: Box<[quench_runtime::heap::GlobalFact]>,
-    /// The heap identities its code names (`Lowering::is_identity`), which its publication keeps alive.
-    pub(crate) roots: quench_runtime::folded_roots::FoldedRoots,
-    /// Global objects whose layout it holds (`heap::subscribe_global_layout`).
-    pub(crate) layouts: Box<[quench_runtime::heap::GlobalLayoutFact]>,
-    /// Global slots it stores to, or reads the `typeof` of, by the slot's observed type
-    /// (`Heap::subscribe_slot_observation`).
-    pub(crate) slots: Box<[quench_runtime::code_dependencies::SlotDependency]>,
-    /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
-    pub(crate) instanceofs: Box<[quench_runtime::code_dependencies::InstanceofFact]>,
-    /// Exact shapes of objects whose layout it holds past a call (`Vm::shape_is_stable`): the
-    /// first object to leave one retires it (`Heap::subscribe_shape`).
-    pub(crate) shapes: Box<[u32]>,
-    /// The program whose root constant the code folds (`Lowering::root_constant_read`): its
-    /// publication subscribes the program's second root run (`ProgramStore::subscribe_root_constants`).
-    pub(crate) root_program: Option<quench_runtime::vm::program_store::ProgramId>,
-}
+pub(crate) use quench_runtime::vm::engine_types::StableFacts;
 
 /// The Stable facts a lowering folded so far.
 #[derive(Default)]
@@ -124,7 +96,7 @@ const LINKED_WORD: usize = 0;
 /// (`live`) for a live lowering, a symbol the loader resolves for a linking one.
 fn invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, live: usize) -> ir::Value {
     let address = if helpers.links() {
-        quench_runtime::vm::jit_backend::symbol_address(builder, RelocKind::Invalidation as u32, 0)
+        crate::symbol_words::symbol_address(builder, RelocKind::Invalidation as u32, 0)
     } else {
         emit(builder).raw_const(Lane::I64, live as i64)
     };

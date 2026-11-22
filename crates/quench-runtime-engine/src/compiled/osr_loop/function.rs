@@ -1,6 +1,7 @@
 use super::{LoopRegion, MAX_REGION_INSTRUCTIONS, Register, Value, WideInstruction};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[quench_macros::ext(LoopRegionOps4)]
 impl LoopRegion {
     /// The span of a whole function, for the rows of its BaseJIT body: every instruction, from PC 0
     /// to the last, with the Number constants of the pool and the function's liveness. It names no

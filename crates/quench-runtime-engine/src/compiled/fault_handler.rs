@@ -6,16 +6,14 @@ use super::guard_support;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 use super::resume_guard_fault;
 
-/// Compose a host's POSIX signal delivery with owned native-fault recovery.
-/// Prepare before installing the host observer, then let recovery consume its
-/// owned faults before enqueuing ordinary host signal notifications.
-pub struct NativeFaultHandler;
+pub use quench_runtime::vm::engine_types::NativeFaultHandler;
 
 /// Whether a signal can be a fault on a guard page that native code owns.
 fn is_guard_fault(signal: i32) -> bool {
     matches!(signal, libc::SIGSEGV | libc::SIGBUS)
 }
 
+#[quench_macros::ext(NativeFaultHandlerOps1)]
 impl NativeFaultHandler {
     pub fn prepare(signal: i32) {
         if is_guard_fault(signal) { let _ = guard_support(); }

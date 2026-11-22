@@ -7,16 +7,7 @@ use super::{BodyEntry, CallContext, LoopEntry, RegionRun, Raised};
 /// A bare run's payload is the entry record's address alone, where the dispatch holds it.
 const _: () = assert!(std::mem::offset_of!(super::JsStepDispatch, head.loop_entry) == 0);
 
-/// What a run of a region builds around its code.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Crossing {
-    /// A loop region's activation, dispatch and views.
-    General,
-    /// A stencil region that reads the heap: the activation and dispatch, without the views.
-    Lean,
-    /// A stencil region that reads no heap row: a payload of the entry record's address only (`run_bare`).
-    Bare,
-}
+pub(super) use quench_runtime::vm::engine_types::Crossing;
 
 /// Runs a `Crossing::Bare` region on the register file in place: no activation, dispatch or
 /// view is built, the payload is the entry record's address.

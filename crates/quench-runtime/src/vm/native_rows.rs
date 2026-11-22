@@ -238,9 +238,9 @@ pub(super) fn lane_method(name: &str) -> Option<NativeRow> {
 }
 
 /// The first row named `name` of a collection prototype that installs a native a compiled loop calls in
-/// place (`dispatch_fast::in_place_in_loop`).
+/// place (`crate::vm::engine_calls::in_place_in_loop`).
 pub(super) fn in_place_method(name: &str) -> Option<NativeRow> {
-    NATIVE_ROWS.iter().copied().find(|row| row.name == name && super::dispatch_fast::in_place_in_loop(row.native)
+    NATIVE_ROWS.iter().copied().find(|row| row.name == name && crate::vm::engine_calls::in_place_in_loop(row.native)
         && matches!(row.holder, Holder::MapPrototype | Holder::SetPrototype | Holder::WeakMapPrototype | Holder::WeakSetPrototype))
 }
 

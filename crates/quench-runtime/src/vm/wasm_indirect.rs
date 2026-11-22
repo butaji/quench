@@ -7,7 +7,7 @@ use crate::staged::wasm_call::indirect_target;
 use super::wasm_table::table_index_type;
 use crate::staged::wasm_machine::ConcreteTable;
 use crate::heap::{TableTarget, WasmTableElements};
-use super::compiled::InstanceContext;
+use crate::vm::engine_types::InstanceContext;
 
 impl Vm {
     /// What a table element holding `value` presents to an indirect call (`TableTarget`): the

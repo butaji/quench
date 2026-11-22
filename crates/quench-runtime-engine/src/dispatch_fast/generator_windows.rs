@@ -6,6 +6,7 @@
 use super::*;
 use quench_runtime::vm::activation::{FrameRecord, GeneratorRecord};
 
+#[quench_macros::ext(ActivationOps4)]
 impl Activation {
     /// What its caller's frame resumes with when the activation becomes a frame, as the register
     /// that takes its result and the pc: after the call record into the record's result register.
@@ -23,6 +24,7 @@ impl Activation {
     }
 }
 
+#[quench_macros::ext(ActivationViewOps2)]
 impl ActivationView {
     /// The dynamic bindings its record holds (implicit ones, a direct eval's), which the
     /// environment its window makes for its first closure takes over, as a frame's promotion
@@ -58,16 +60,6 @@ impl LaneStack {
     pub(super) fn restore_iterators(&mut self, depth: usize, open: &mut Vec<quench_runtime::vm::ActiveIterator>) {
         if !open.is_empty() {
             self.iterators.extend(open.drain(..).map(|iterator| (depth, iterator)));
-        }
-    }
-
-    /// The iterators the activation at `depth`, the innermost, pushed (its entries, the last),
-    /// moved to the end of `open`, the suspending frame's (`FrameRecord::active_iterators`).
-    #[inline(always)]
-    pub(crate) fn take_iterators(&mut self, depth: usize, open: &mut Vec<quench_runtime::vm::ActiveIterator>) {
-        if self.iterators.last().is_some_and(|(owner, _)| *owner >= depth) {
-            let first = self.iterators.partition_point(|(owner, _)| *owner < depth);
-            open.extend(self.iterators.drain(first..).map(|(_, iterator)| iterator));
         }
     }
 }
@@ -173,30 +165,11 @@ pub(super) struct WindowLocals {
 /// view) and environment, made or not, a `WindowPlan` holds under.
 type PlanKey = (u64, u64, Value, bool);
 
-/// What a suspended frame's windowed resumes derive from its function and environment alone,
-/// kept on its record (`FrameRecord::window_plan`) while its key holds (`PlanKey`). Each resume
-/// of a generator or async body re-derived them. The key and the locals lie flat, their flags
-/// together: as a tuple and an option they took each record 88 bytes, flat 72.
-#[derive(Clone, Copy)]
-pub(crate) struct WindowPlan {
-    collection_epoch: u64,
-    context_epoch: u64,
-    key_env: Value,
-    pub(super) view: *const LaneView,
-    pub(super) parent: Value,
-    pub(super) capture: *const usize,
-    /// The window's locals (`locals`): their captured-slot mask and own slot storage.
-    locals_captured: u64,
-    own_slots: *const quench_runtime::heap::EnvironmentSlots,
-    key_captured: bool,
-    has_locals: bool,
-    has_own_slots: bool,
-    /// Whether the window carries an environment after the registers (`Vm::window_layout`).
-    pub(super) environment: bool,
-}
+pub(crate) use quench_runtime::vm::engine_types::WindowPlan;
 
 const _: () = assert!(size_of::<Option<WindowPlan>>() <= 72);
 
+#[quench_macros::ext(WindowPlanOps1)]
 impl WindowPlan {
     fn new(key: PlanKey, view: *const LaneView, parent: Value, locals: Option<WindowLocals>, capture: *const usize, environment: bool) -> Self {
         let (collection_epoch, context_epoch, key_env, key_captured) = key;
@@ -269,8 +242,7 @@ pub(super) unsafe fn record_window_plan<'a>(vm: &mut Vm, code: &ResidualProgram,
     record.window_plan.as_ref()
 }
 
-/// Plans `shared_window_plan` keeps, one slot per function index modulo this.
-pub(crate) const SHARED_PLANS: usize = 8;
+pub(crate) use quench_runtime::vm::engine_types::SHARED_PLANS;
 
 /// `cached_window_plan` of a frame whose record holds no plan under `key`.
 #[inline(never)]

@@ -91,7 +91,7 @@ pub(crate) struct FunctionRecord<O, K, V> {
 /// The runtime instantiates them with its own types; `layout_offsets` instantiates them with words of the same
 /// size and alignment, and `base_rows` checks each of those sizes against the runtime type.
 #[repr(C)]
-pub(crate) struct CallContextHead<E, C, T, D, P, R> {
+pub struct CallContextHead<E, C, T, D, P, R> {
     /// The lowest stack address compiled code may use before a call traps as exhausted.
     pub(crate) stack_limit: usize,
     /// The attention flag the code polls (`ExecutionInterrupt::attention_flag`).

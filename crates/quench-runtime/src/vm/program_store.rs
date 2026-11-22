@@ -1,3 +1,4 @@
+use crate::vm::EngineLaneView;
 use crate::vm::tier_policy::{TierRows, Tiers};
 use super::wtf16::JsString;
 use crate::Value;
@@ -182,7 +183,7 @@ impl WasmModuleCompile {
 }
 
 /// The least an artifact holds in the code zone.
-const JIT_MIN_ARTIFACT_BYTES: usize = super::compiled::CODE_GRANULE;
+const JIT_MIN_ARTIFACT_BYTES: usize = crate::vm::engine_types::CODE_GRANULE;
 
 #[derive(Clone, Copy)]
 enum JitArtifactKind {
@@ -883,7 +884,7 @@ impl Default for ProgramStore {
             jit_code_cache: JitCodeCacheBudget::default(),
             // TOD-191's correctness oracle may force hot candidates past the payback model so
             // guarded exits can be tested independently of profitability (diagnostic only).
-            wasm_module_compile: if super::compiled::jit_wasm_selective_enabled() {
+            wasm_module_compile: if crate::vm::engine_calls::jit_wasm_selective_enabled() {
                 WasmModuleCompile::NEVER
             } else {
                 WasmModuleCompile::ADAPTIVE
@@ -2148,7 +2149,7 @@ impl ProgramStore {
         let reported = match rejected {
             Some(rejection) => Some(rejection),
             None if self.js_tier_ref(id, function).is_none() => {
-                let reason = super::js_compiled::candidate_rejection_reason(program, function);
+                let reason = crate::vm::engine_calls::candidate_rejection_reason(program, function);
                 self.reject_js_function(id, function, reason).map(|entries| (entries, reason))
             }
             None => None,

@@ -383,7 +383,7 @@ mod tests {
             assert_eq!(convert(&mut function), 1);
             cranelift_codegen::verify_function(&function, &*isa).unwrap();
             let memory = super::super::compile_function(function, &*isa, None, |compiled, _|
-                Ok(crate::vm::compiled::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))).unwrap();
+                Ok(crate::vm::engine_types::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))).unwrap();
             // SAFETY: the owned code is pure, bounded and has exactly this C signature.
             let run: unsafe extern "C" fn(u64, i32, i32) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
             for condition in [0, 1, 2, u64::MAX] {
@@ -471,7 +471,7 @@ mod tests {
             cranelift_codegen::verify_function(&function, &*isa).unwrap();
             let memory = super::super::compile_function(function, &*isa, None, |compiled, function| {
                 cranelift_codegen::verify_function(function, &*isa).unwrap();
-                Ok(crate::vm::compiled::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
+                Ok(crate::vm::engine_types::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
             }).unwrap();
             // SAFETY: the owned, pure, bounded function has exactly this C signature.
             let run: unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
@@ -570,7 +570,7 @@ mod tests {
                     let function = complement_select_fixture(&*isa, ty, cc, mismatched);
                     let memory = super::super::compile_function(function, &*isa, None, |compiled, function| {
                         cranelift_codegen::verify_function(function, &*isa).unwrap();
-                        Ok(crate::vm::compiled::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
+                        Ok(crate::vm::engine_types::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
                     }).unwrap();
                     // SAFETY: the owned pure, bounded function has exactly this C signature.
                     let run: unsafe extern "C" fn(u64, u64, u64, u64) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
@@ -654,7 +654,7 @@ mod tests {
                         .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
                         .filter(|word| word & CSINC_OPCODE_MASK == CSINC_OPCODE).count();
                     assert_eq!(increments, 1, "{ty}, swapped={swapped}, {case:?}: {function}");
-                    Ok(crate::vm::compiled::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
+                    Ok(crate::vm::engine_types::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
                 }).unwrap();
                 // SAFETY: this owned, pure, bounded function has exactly this C signature.
                 let run: unsafe extern "C" fn(u64, u64, u64) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };

@@ -6,7 +6,7 @@
 //! the run (`Vm::run_job`).
 use super::*;
 use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
-use super::super::dispatch_fast::JobEnd;
+use crate::vm::engine_types::JobEnd;
 use crate::heap::AwaitState;
 
 impl Vm {

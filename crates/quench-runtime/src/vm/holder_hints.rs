@@ -213,7 +213,7 @@ impl Vm {
     /// under an identity guard on the object, so a hint for another object only costs the guard.
     /// Every atom's answer from `own_constant_of` that holds now, by atom: what a lowering off
     /// the program's thread may fold (`FactTables`).
-    pub(super) fn own_constants(&self) -> std::collections::BTreeMap<Atom, super::compiled::OwnConstant> {
+    pub(super) fn own_constants(&self) -> std::collections::BTreeMap<Atom, crate::vm::engine_types::OwnConstant> {
         let mut constants = std::collections::BTreeMap::new();
         for hint in self.holder_hints.own.iter().filter(|hint| hint.watch.is_published()) {
             if !constants.contains_key(&hint.atom) && let Some(constant) = self.own_constant_of(hint.atom) {
@@ -223,10 +223,10 @@ impl Vm {
         constants
     }
 
-    pub(super) fn own_constant_of(&self, atom: Atom) -> Option<super::compiled::OwnConstant> {
+    pub(super) fn own_constant_of(&self, atom: Atom) -> Option<crate::vm::engine_types::OwnConstant> {
         let hint = self.holder_hints.own.iter().find(|hint| hint.atom == atom && hint.watch.is_published())?;
         let shape = self.heap.object(hint.holder)?.exact_shape();
-        Some(super::compiled::OwnConstant { object: hint.holder, shape, value: hint.value })
+        Some(crate::vm::engine_types::OwnConstant { object: hint.holder, shape, value: hint.value })
     }
 }
 

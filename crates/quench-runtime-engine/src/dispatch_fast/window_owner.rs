@@ -13,76 +13,9 @@ use quench_runtime::bytecode::Atom;
 
 pub(crate) use quench_runtime::vm::engine_types::WindowScope;
 
-#[quench_macros::ext(WindowScopeOps1)]
-impl WindowScope {
-    /// The dynamic bindings the activation's record holds, until a closure's environment takes
-    /// them over (`captured`); none for an activation without a record.
-    pub(crate) fn record_bindings(&self) -> Option<&mut Vec<(Atom, Value)>> {
-        // SAFETY: the record is the running activation's own, which nothing else accesses.
-        (!self.captured && !self.record.is_null()).then(|| unsafe { (*self.record).dynamic_bindings_mut() })
-    }
 
-    /// The window's locals.
-    pub(crate) fn locals(&self) -> &[Value] {
-        // SAFETY: the window holds `Function::locals` locals after its entries, which nothing
-        // else accesses while a step of the activation runs.
-        unsafe { std::slice::from_raw_parts(self.locals, self.local_count) }
-    }
 
-    /// The window's locals, to write.
-    pub(crate) fn locals_mut(&mut self) -> &mut [Value] {
-        // SAFETY: as `locals`.
-        unsafe { std::slice::from_raw_parts_mut(self.locals, self.local_count) }
-    }
 
-    /// The register file's `register`.
-    pub(crate) fn register(&self, register: u16) -> Value {
-        self.registers.get(register)
-    }
-
-    pub(crate) fn set_register(&self, register: u16, value: Value) {
-        self.registers.set(register, value);
-    }
-
-    /// Replaces the binding site the activation's accesses are at, which `site` names.
-    pub(crate) fn replace_site(&mut self, site: Option<u32>) -> Option<u32> {
-        std::mem::replace(&mut self.site, site)
-    }
-}
-
-impl CallerView for WindowScope {
-    fn program(&self) -> ProgramId {
-        self.program
-    }
-
-    fn function(&self) -> u32 {
-        self.function
-    }
-
-    fn this(&self) -> Value {
-        self.this
-    }
-
-    fn environment(&self) -> Value {
-        self.env
-    }
-
-    fn owns_environment(&self) -> bool {
-        self.captured
-    }
-
-    fn binding_site(&self) -> Option<u32> {
-        self.site
-    }
-
-    fn held_bindings(&self) -> &[(Atom, Value)] {
-        self.record_bindings().map_or(&[], |bindings| bindings.as_slice())
-    }
-
-    fn scope_chain<'a>(&'a self, _entered: &'a [Value]) -> &'a [Value] {
-        &self.chain
-    }
-}
 
 #[quench_macros::ext(DispatchFastWindowOwnerVm)]
 impl Vm {

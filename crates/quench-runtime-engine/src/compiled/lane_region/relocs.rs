@@ -48,12 +48,12 @@ pub(in crate::compiled) fn atom_key(namespace: u32, key: u32) -> Option<u32> {
 
 /// The symbol of the atom numbered `atom`, which an ahead image's loader resolves to that atom in its VM.
 pub(in crate::compiled) fn atom_symbol(builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
-    quench_runtime::vm::jit_backend::symbol_address(builder, RelocKind::Atom as u32, atom)
+    crate::symbol_words::symbol_address(builder, RelocKind::Atom as u32, atom)
 }
 
 /// The address of `helper` as the symbol a frameless Number region's loader resolves.
 pub(in crate::compiled) fn helper_symbol(builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
-    quench_runtime::vm::jit_backend::symbol_address(builder, RelocKind::Helper as u32, helper as u32)
+    crate::symbol_words::symbol_address(builder, RelocKind::Helper as u32, helper as u32)
 }
 
 impl Lowering<'_, '_> {
@@ -68,7 +68,7 @@ impl Lowering<'_, '_> {
         let words = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.method_cache_atoms));
         let length = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.method_cache_atom_words));
         let atom = self.atom_word(atom);
-        quench_runtime::vm::jit_backend::symbol_words::atom_unnamed(&mut self.builder, (words, length), atom)
+        crate::symbol_words::atom_unnamed(&mut self.builder, (words, length), atom)
     }
 
 
@@ -84,5 +84,5 @@ pub(super) fn address(helpers: LaneHelpers, builder: &mut FunctionBuilder<'_>, k
     if !helpers.links() {
         return emit(builder).raw_const(Lane::I64, live as i64);
     }
-    quench_runtime::vm::jit_backend::symbol_address(builder, kind as u32, key)
+    crate::symbol_words::symbol_address(builder, kind as u32, key)
 }

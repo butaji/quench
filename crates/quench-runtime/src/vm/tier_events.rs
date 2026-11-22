@@ -2,8 +2,8 @@
 //! incremented on the paths that already do the work. Observation reads this record; nothing
 //! here (or behind a diagnostics switch) decides what the tiers run.
 
-use super::compiled::LaneExit;
-use super::dispatch_fast::lane_body_stats::Miss;
+use crate::vm::engine_types::LaneExit;
+use crate::vm::engine_types::Miss;
 use std::cell::Cell;
 
 /// One kind of tier event. The ends of a lane body's run are contiguous, `Completed` first

@@ -21,6 +21,7 @@ impl LocalProofs {
     }
 }
 
+#[quench_macros::ext(StateOps2)]
 impl State {
     /// The exact shape `register`'s object has: its type's, or the one it had before a call.
     fn shape_of(&self, register: Register) -> Option<u32> {

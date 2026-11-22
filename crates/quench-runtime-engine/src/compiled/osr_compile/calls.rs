@@ -43,23 +43,9 @@ impl Vm {
     }
 }
 
-/// What a region's published code owns of its calls: those it runs as their callees' rows (the
-/// frames a leave inside one recovers, over registers past its function's own, and the room that
-/// recovery needs), the callees it calls by their entries and the records its direct rows read,
-/// which its code must not outlive, and the invalidation word its rows read where a call may have
-/// changed a fact they fold. A collection that frees a callee it names retires the code
-/// (`ProgramStore::retire_dead_native_calls`).
-#[derive(Default)]
-pub(crate) struct CallCode {
-    pub(crate) inlined: Vec<InlinedCall>,
-    pub(crate) direct: Box<[DirectCallee]>,
-    records: Vec<Box<CallRecord>>,
-    /// The registers of the function the region belongs to: its inlined callees' follow them.
-    caller_registers: u16,
-    recovery: LaneRecoverySpace,
-    pub(crate) invalidation: Invalidation,
-}
+pub(crate) use quench_runtime::vm::engine_types::CallCode;
 
+#[quench_macros::ext(CallCodeOps1)]
 impl CallCode {
     /// The calls of a region that inlines and enters none, whose code reads `invalidation`
     /// (`VmFacts::held_atoms`), which its publication sets when a fact it holds changes.
@@ -74,12 +60,6 @@ impl CallCode {
         // the room covers that reach as well as the activations a leave inside a callee pushes.
         let recovery = LaneRecoverySpace::inlined(&inlined).reaching(window_width(&inlined, caller_registers));
         Self { inlined, direct, records, caller_registers, recovery, invalidation }
-    }
-
-    /// Releases the capacity its vectors hold past their length (`LaneDependencies::trim`).
-    pub(crate) fn trim(&mut self) {
-        self.inlined.shrink_to_fit();
-        self.records.shrink_to_fit();
     }
 
     /// Whether its code calls a callee by its entry (a b-jit direct row, whose record it owns, or a
@@ -102,11 +82,6 @@ impl CallCode {
 
     pub(crate) fn caller_registers(&self) -> u16 {
         self.caller_registers
-    }
-
-    /// Whether the code names a callee `live` says died.
-    pub(crate) fn names_dead(&self, live: impl Fn(Value) -> bool) -> bool {
-        names_dead_callee(&self.inlined, &self.direct, live)
     }
 
     /// The callees its calls name by identity, which a collection that frees one retires it over

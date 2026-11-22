@@ -11,12 +11,11 @@ use std::sync::{Mutex, OnceLock};
 
 mod select;
 pub(super) mod relocatable_code;
-pub(super) mod symbol_words;
 mod worker;
 mod isa;
 pub use isa::{IsaBaseline, NativeTarget};
 pub(super) mod builder;
-pub(super) use worker::{OffThread, run_in_background};
+pub(super) use worker::OffThread;
 
 type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 
@@ -98,7 +97,7 @@ const JS_JIT_OPT_LEVEL: &str = "speed";
 
 /// Declares the symbol `(namespace, key)` in `function`, a relocation the loader patches: the
 /// one form every position-independent constant takes (stencil holes, `lane_region::relocs`).
-pub(super) fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
+pub fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
     use cranelift_codegen::ir;
     let name = function.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
     function.create_global_value(ir::GlobalValueData::Symbol {
@@ -117,13 +116,6 @@ pub(super) fn signature_ref(function: &mut cranelift_codegen::ir::Function, sign
         Some((reference, _)) => reference,
         None => function.import_signature(signature),
     }
-}
-
-/// The address of symbol `(namespace, key)`, as a 64-bit value built at `builder`.
-pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
-    use crate::staged::machine::MachineAccess;
-    let symbol = declare_symbol(builder.func, namespace, key);
-    builder.symbol_address(symbol)
 }
 
 /// The address of symbol `(namespace, key)` as a 64-bit value built at `cursor`.
@@ -284,7 +276,7 @@ pub(super) fn compile_function<T>(
         &cranelift_codegen::ir::Function,
     ) -> Result<T, NativeCompileRejection>,
 ) -> Result<T, NativeCompileRejection> {
-    super::compiled::regions::declare_regions(&mut function);
+    crate::vm::engine_calls::declare_regions(&mut function);
     select::convert(&mut function);
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
     context.clear();

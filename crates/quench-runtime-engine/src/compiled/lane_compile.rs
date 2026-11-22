@@ -224,17 +224,17 @@ pub(crate) struct PendingLaneMethod {
     /// Its lowering and code, on the code generator's thread; a drop waits for the lowering,
     /// which reads the plan's direct callees by pointer (`LoweringJob::direct_sites`). First,
     /// so it drops before the plan.
-    code: super::jit_backend::OffThread<Lowered>,
-    plan: LanePlan,
+    pub code: super::jit_backend::OffThread<Lowered>,
+    pub plan: LanePlan,
     /// The leaves it was planned from (`LaneBodyWork::Start`), which a plan again reuses.
-    generic: Vec<LaneExit>,
-    watch: Rc<quench_runtime::code_dependencies::PublishedCode<()>>,
+    pub generic: Vec<LaneExit>,
+    pub watch: Rc<quench_runtime::code_dependencies::PublishedCode<()>>,
     /// What it compiles from (`LanePlan::key`).
-    key: LaneKey,
+    pub key: LaneKey,
     /// The site its planned size is noted for (`ProgramStore::note_planned_lane_ir`).
-    site: (u32, u32, Option<u32>),
+    pub site: (u32, u32, Option<u32>),
     /// What the plan took from the VM, which must still hold when its code arrives.
-    taken: Box<TakenFacts>,
+    pub taken: Box<TakenFacts>,
 }
 
 
@@ -745,6 +745,7 @@ impl Vm {
     }
 }
 
+#[quench_macros::ext(PendingLaneMethodOps1)]
 impl PendingLaneMethod {
     /// Makes it stale where its code names shape ids, which a compaction renumbers.
     pub(crate) fn retire_named_shapes(&self) {
@@ -822,6 +823,7 @@ impl LanePlan {
     }
 }
 
+#[quench_macros::ext(LaneMethodOps4)]
 impl LaneMethod {
     /// A leave as the next body's feedback (`LaneLeaves`): one at an inlined call whose
     /// callee was none of the alternatives it inlined is the leave of the caller's call that

@@ -180,5 +180,5 @@ fn a_method_site_reads_its_callee_before_the_direct_row() {
 
 /// The stencils' layout numbers, mounted as the stencil crate mounts them (`call_protocol_matches_the_runtime`).
 #[allow(dead_code)]
-#[path = "../../../../../../quench-bjit/stencils/layout.rs"]
+#[path = "../../../../../quench-bjit/stencils/layout.rs"]
 mod stencil_layout;

@@ -3,6 +3,7 @@
 
 use super::{LaneRecoverySpace, LaneView, Vm};
 
+#[quench_macros::ext(LaneRecoverySpaceOps2)]
 impl LaneRecoverySpace {
     fn max(self, other: Self) -> Self {
         Self { values: self.values.max(other.values), activations: self.activations.max(other.activations) }

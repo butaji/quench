@@ -15,46 +15,9 @@ use quench_runtime::heap::{Cell, TableWords};
 use cranelift_codegen::ir::{self, types};
 use std::rc::Rc;
 
-/// The `abi` of a record whose artifact cannot be called natively by another instance's code: its
-/// memory can change length under a caller that does not pass the current one.
-pub(super) const ABI_NOT_DIRECT: u64 = u64::MAX;
+pub(super) use quench_runtime::vm::engine_types::ABI_NOT_DIRECT;
 
-#[repr(C)]
-pub struct InstanceContext {
-    env: Value,
-    /// The record itself: what a call context names the running instance by, and a mirror row
-    /// names its function's.
-    instance: *const InstanceContext,
-    /// Per environment slot, the address of the native slot of the global bound there (null for
-    /// any other binding): the global area. A global is shared by every instance that imports
-    /// it, so the area holds its address, which its cell keeps.
-    globals: *const *mut u64,
-    /// Per environment slot, the words that publish the table bound there (null for any other).
-    table_words: *const *const TableWords,
-    /// The code table of the artifact last published (`publish`): per function, its body or null.
-    table: *const usize,
-    compiled: *const CompiledProgram,
-    program: ProgramId,
-    memory: Value,
-    memory_length: u64,
-    guard_start: usize,
-    guard_end: usize,
-    call_reference_diagnostic: usize,
-    reference_call_sites: *const ReferenceCallSiteDiagnostics,
-    reference_call_site_count: usize,
-    import_callout_counts: *const std::cell::Cell<u64>,
-    import_callout_count: usize,
-    /// The base of the memory, which a callee that takes one is passed.
-    memory_base: u64,
-    /// The memory arguments of the artifact's bodies (`MemoryArguments::word`), or
-    /// `ABI_NOT_DIRECT`.
-    abi: u64,
-    global_area: Box<[*mut u64]>,
-    table_area: Box<[*const TableWords]>,
-    /// Every artifact published, kept until the instance dies: a body another instance's code
-    /// is running may not be freed by a later publication.
-    retained: Vec<Rc<CompiledProgram>>,
-}
+pub use quench_runtime::vm::engine_types::InstanceContext;
 
 /// The memory an artifact is entered with in an instance: its binding, base, current length and
 /// guard reservation.
@@ -117,65 +80,16 @@ switched! {
     tail: { instance: types::I64 },
 }
 
+#[quench_macros::ext(InstanceContextOps1)]
 impl InstanceContext {
     pub(super) const MEMORY_BASE: i32 = std::mem::offset_of!(Self, memory_base) as i32;
     pub(super) const ABI: i32 = std::mem::offset_of!(Self, abi) as i32;
     pub(super) const TABLE: i32 = std::mem::offset_of!(Self, table) as i32;
     pub(super) const ENV: i32 = std::mem::offset_of!(Self, env) as i32;
 
-    /// The record of the instance of `program` whose environment is `env` and which binds
-    /// `slots` things; nothing is published yet.
-    pub(crate) fn new(env: Value, program: ProgramId, slots: usize) -> Box<Self> {
-        let mut record = Box::new(Self {
-            env,
-            instance: std::ptr::null(),
-            globals: std::ptr::null(),
-            table_words: std::ptr::null(),
-            table: std::ptr::null(),
-            compiled: std::ptr::null(),
-            program,
-            memory: Value::UNDEFINED,
-            memory_length: 0,
-            guard_start: 0,
-            guard_end: 0,
-            call_reference_diagnostic: 0,
-            reference_call_sites: std::ptr::null(),
-            reference_call_site_count: 0,
-            import_callout_counts: std::ptr::null(),
-            import_callout_count: 0,
-            memory_base: 0,
-            abi: ABI_NOT_DIRECT,
-            global_area: vec![std::ptr::null_mut(); slots].into(),
-            table_area: vec![std::ptr::null(); slots].into(),
-            retained: Vec::new(),
-        });
-        let address: *const Self = &*record;
-        record.instance = address;
-        record.globals = record.global_area.as_ptr();
-        record.table_words = record.table_area.as_ptr();
-        record
-    }
-
     /// The address a mirror row names the instance by.
     pub(crate) fn address(&self) -> usize {
         self.instance as usize
-    }
-
-    /// The body the record at `address` publishes for function `entry`, or 0 when it publishes
-    /// none for it, or `entry` is `NO_ENTRY`. A table row's `body` is this value (`TableTarget`).
-    pub(crate) fn published_body(address: usize, entry: u32) -> usize {
-        if address == 0 || entry == u32::MAX {
-            return 0;
-        }
-        // SAFETY: a row names a record its function keeps alive (the function's environment holds
-        // the record's cell), so the address is a live record.
-        let record = unsafe { &*(address as *const InstanceContext) };
-        // SAFETY: `compiled` is null or the artifact `publish` retained, which lives as long as
-        // the record (`retained`).
-        let Some(compiled) = (unsafe { record.compiled.as_ref() }) else {
-            return 0;
-        };
-        compiled.table.get(entry as usize).copied().unwrap_or(0)
     }
 
     /// Fills the areas from the bindings of the environment, by slot.
@@ -223,46 +137,22 @@ impl InstanceContext {
     }
 }
 
-/// A record in a heap cell: boxed, so its address stays, and a copy is a record of its own.
-pub struct InstanceRecord(Box<InstanceContext>);
+pub use quench_runtime::vm::engine_types::InstanceRecord;
 
+#[quench_macros::ext(InstanceRecordOps1)]
 impl InstanceRecord {
     pub(crate) fn new(env: Value, program: ProgramId, slots: usize) -> Self {
         Self(InstanceContext::new(env, program, slots))
     }
 }
 
-impl std::ops::Deref for InstanceRecord {
-    type Target = InstanceContext;
-    fn deref(&self) -> &InstanceContext {
-        &self.0
-    }
-}
 
-impl std::ops::DerefMut for InstanceRecord {
-    fn deref_mut(&mut self) -> &mut InstanceContext {
-        &mut self.0
-    }
-}
 
-impl Clone for InstanceRecord {
-    fn clone(&self) -> Self {
-        let mut copy = InstanceContext::new(self.env, self.program, self.global_area.len());
-        copy.global_area.copy_from_slice(&self.global_area);
-        copy.table_area.copy_from_slice(&self.table_area);
-        copy.table = self.table;
-        copy.compiled = self.compiled;
-        copy.abi = self.abi;
-        copy.retained.clone_from(&self.retained);
-        Self(copy)
-    }
-}
 
-impl std::fmt::Debug for InstanceRecord {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("InstanceRecord")
-    }
-}
+
+
+
+
 
 impl MemoryArguments {
     const BASE: u64 = 1;
@@ -411,11 +301,8 @@ pub use quench_runtime::vm::engine_types::NativeRoots;
 
 // SAFETY: the record owns its buffer outright and no other holder reads or writes it, so moving the
 // record to another thread moves the buffer with it.
-unsafe impl Send for NativeRoots {}
 
-/// How many roots native code may hold at once. A push past it traps `CallStackExhausted` (for a
-/// compiled frame) or leaves through the VM (for an instance switch), which roots its own.
-pub(super) const NATIVE_ROOT_CAPACITY: usize = 65536;
+pub(super) use quench_runtime::vm::engine_types::NATIVE_ROOT_CAPACITY;
 
 #[quench_macros::ext(NativeRootsOps1)]
 impl NativeRoots {
@@ -423,26 +310,6 @@ impl NativeRoots {
     pub(super) const CAPACITY: i32 = std::mem::offset_of!(Self, capacity) as i32;
     /// The base address of the buffer: root `k` is `size_of::<Value>()` bytes past it, `k` times.
     pub(super) const SLOTS: i32 = std::mem::offset_of!(Self, slots) as i32;
-
-    pub(crate) fn new() -> Box<Self> {
-        // Zeroed words, not `Value::UNDEFINED`: the allocator hands back untouched zero pages, so
-        // the buffer costs memory only as deep as roots are ever pushed. Only `..depth` is read,
-        // and every slot there was written first.
-        const _: () = assert!(size_of::<Value>() == size_of::<u64>() && align_of::<Value>() == align_of::<u64>());
-        let slots = vec![0_u64; NATIVE_ROOT_CAPACITY].into_boxed_slice();
-        Box::new(Self {
-            depth: 0,
-            capacity: NATIVE_ROOT_CAPACITY as u64,
-            slots: Box::into_raw(slots).cast::<Value>(),
-        })
-    }
-
-    /// The environments held now: the roots of a collection.
-    pub(crate) fn live(&self) -> &[Value] {
-        // SAFETY: `slots` is the buffer `new` leaked, of `capacity` values, and every push keeps
-        // `depth` within it (`CAPACITY` checks).
-        unsafe { std::slice::from_raw_parts(self.slots, self.depth as usize) }
-    }
 
     /// The depth an entry restores when it ends, whatever left native frames unreturned.
     pub(super) fn depth(&self) -> u64 {
@@ -454,13 +321,7 @@ impl NativeRoots {
     }
 }
 
-impl Drop for NativeRoots {
-    fn drop(&mut self) {
-        // SAFETY: `slots` is the boxed slice `new` leaked, of `capacity` values, and nothing else
-        // owns it.
-        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.slots.cast::<u64>(), self.capacity as usize)) });
-    }
-}
+
 
 #[cfg(test)]
 mod tests {

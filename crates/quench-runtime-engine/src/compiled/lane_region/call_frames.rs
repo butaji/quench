@@ -160,7 +160,7 @@ impl EmitFrame<'_> {
 
     /// The word at `offset` of a proven call's record: the record's address is its symbol's.
     fn record_word(&self, stage: &mut Emit<'_, '_>, call: ProvenCall, offset: usize) -> ir::Value {
-        let record = quench_runtime::vm::jit_backend::symbol_address(stage.builder, call.record.0, call.record.1);
+        let record = crate::symbol_words::symbol_address(stage.builder, call.record.0, call.record.1);
         stage.load_u64(CALL_RECORD, record, field(offset))
     }
 

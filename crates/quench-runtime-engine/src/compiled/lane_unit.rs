@@ -23,32 +23,14 @@ use super::admission::{admit_callee, CalleeUse};
 #[cfg(test)] #[path = "lane_unit/static_hints.rs"] mod static_hints;
 #[cfg(test)] pub(crate) use static_hints::static_call_targets;
 
-/// Binding time of a callee: a published closure, whose identity the call compares, or a
-/// static body whose actual closure and environment are admitted at the call. Function
-/// bindings are accepted for verified plain bodies with explicit restart or exact-state
-/// recovery. A forwarded binding is a closure the site called through a native that
-/// forwards its receiver as the callee (`Function.prototype.call`, `Vm::forwarded_call`):
-/// the call guards the native's identity too.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CalleeBinding { Identity(Value), Function, Forwarded { through: Value, callee: Value } }
+pub(crate) use quench_runtime::vm::engine_types::CalleeBinding;
 
-/// How a leave inside a function-bound frame recovers: restart the call, which ran no
-/// effect yet, or materialize the callee's exact activation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CallRecovery { RestartCall, Materialize }
+pub(crate) use quench_runtime::vm::engine_types::CallRecovery;
 
-/// The script target a call site links, as the unit inlines it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CallTarget {
-    pub(crate) callee: CalleeBinding,
-    pub(crate) function: u32,
-}
+pub(crate) use quench_runtime::vm::engine_types::CallTarget;
 
+#[quench_macros::ext(CallTargetOps1)]
 impl CallTarget {
-    pub(crate) fn identity(self) -> Option<Value> {
-        match self.callee { CalleeBinding::Identity(value) | CalleeBinding::Forwarded { callee: value, .. } => Some(value), _ => None }
-    }
-
     /// The forwarding native this site called the target through.
     pub(crate) fn through(self) -> Option<Value> {
         match self.callee { CalleeBinding::Forwarded { through, .. } => Some(through), _ => None }
@@ -64,42 +46,9 @@ pub(crate) enum Origin {
     Inlined { frame: usize, pc: u32 },
 }
 
-/// An inlined call. Its registers are the unit's: the caller's are its first, and each
-/// callee's start at its `base`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct InlinedCall {
-    pub(crate) recovery: CallRecovery,
-    /// The frame whose function makes the call; `None` for the caller's.
-    pub(crate) parent: Option<usize>,
-    /// The PC of the call in its parent's function.
-    pub(crate) call: u32,
-    pub(crate) target: CallTarget,
-    /// The register holding the callee, guarded at the call.
-    pub(crate) callee_register: Register,
-    /// An OSR region's entry word holding the callee, which the region resolved at compile
-    /// time and dropped the caller's read for; the marker reads it there instead of the
-    /// register, which the loop may reuse.
-    pub(crate) callee_entry_word: Option<u32>,
-    /// The register holding the call's receiver, the callee's `this`.
-    pub(crate) receiver: Register,
-    /// The call's first argument register.
-    pub(crate) window: Register,
-    pub(crate) arguments: u16,
-    /// The register the call's completion writes in its parent, dead until then; `None` for a returning call.
-    pub(crate) result: Option<Register>,
-    /// The callee's register 0.
-    pub(crate) base: Register,
-    pub(crate) registers: u16,
-    /// The unit PC of the call's next alternative's marker, where a callee other than this
-    /// frame's goes; `None` for the last, which leaves at the call.
-    pub(crate) alternative: Option<usize>,
-    /// For a call through a forwarding native (`CalleeBinding::Forwarded`), the register
-    /// holding the native and its identity, which the call guards too; the callee register
-    /// then holds the function it calls, the receiver is the first argument and the window
-    /// the rest (`Planner::through_call`).
-    pub(crate) function_call: Option<(Register, Value)>,
-}
+pub(crate) use quench_runtime::vm::engine_types::InlinedCall;
 
+#[quench_macros::ext(InlinedCallOps1)]
 impl InlinedCall {
     /// The physical parameter homes initialized by the passed arguments.
     pub(crate) fn passed_registers(self, callee: &Function) -> impl Iterator<Item = (Register, Register)> + '_ {

@@ -1,7 +1,7 @@
 //! The state an activation lends the lookups that read its scope: by-name resolution, `with`
 //! scopes, `new.target` and `this` bindings, and the direct eval its code makes. One trait over
 //! where that state lives, a VM frame or the window of a lane activation
-//! (`dispatch_fast::scoped_names::WindowScope`), so each lookup reads the same facts of either
+//! (`crate::vm::engine_types::WindowScope`), so each lookup reads the same facts of either
 //! and no lookup needs a frame fabricated for an activation that has none.
 use super::*;
 use super::activation::FrameRecord;

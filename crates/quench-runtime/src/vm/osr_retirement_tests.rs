@@ -50,7 +50,7 @@ fn depart(vm: &mut Vm, anchor: Value, shape: u32, round: i32) -> u32 {
 
 /// The OSR site of `function_id`'s outermost loop: the first header's, closed by its last
 /// backward jump.
-fn osr_site(vm: &Vm, function_id: usize) -> crate::vm::dispatch_fast::OsrSiteDiagnostics {
+fn osr_site(vm: &Vm, function_id: usize) -> crate::vm::engine_types::OsrSiteDiagnostics {
     let osr = vm
         .programs
         .views_in_lane(crate::vm::program_store::ProgramId::MAIN)

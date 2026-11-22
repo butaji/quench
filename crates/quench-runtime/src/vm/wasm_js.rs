@@ -1468,7 +1468,7 @@ impl Vm {
             _ => return false,
         };
         let Some((base, memory_length)) =
-            super::dispatch_fast::direct_memory(self, current_memory)
+            crate::vm::engine_calls::direct_memory(self, current_memory)
         else {
             return false;
         };

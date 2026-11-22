@@ -94,7 +94,7 @@ fn forwarded_frames(spelling: &str) -> usize {
     let id = |value| match vm.heap.function(value).unwrap().kind { crate::heap::FunctionKind::User(_, id) => id, _ => panic!("script") };
     let (add_id, step_id) = (id(add), id(step));
     let site = program.function(step_id as usize).instructions().position(|instruction| instruction.op() == Op::Call).unwrap() as u32;
-    let target = compiled::CallTarget { callee: compiled::CalleeBinding::Forwarded { through, callee: add }, function: add_id };
+    let target = crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Forwarded { through, callee: add }, function: add_id };
     vm.compile_lane_method(&program, step_id, &|function, pc| if (function, pc) == (step_id, site) { vec![target] } else { Vec::new() },
         &|_| (0, 0), Vec::new(), &[]).expect("the forwarding caller compiles").inlined.len()
 }

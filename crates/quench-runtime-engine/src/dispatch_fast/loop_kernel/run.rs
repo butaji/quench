@@ -11,41 +11,16 @@ pub(super) const CHUNK: usize = 256;
 use crate::compiled::tier_policy::KERNEL_MIN_TRIP;
 /// The shortest chunk a load/store distance may impose.
 const MIN_CHUNK: usize = 16;
-/// Most distinct base arrays a kernel reads or writes.
-const MAX_BASES: usize = 8;
-/// Slots of scalars, affine values and recurrences a run keeps on the stack.
-const SLOTS: usize = 32;
+use quench_runtime::vm::engine_types::MAX_BASES;
+use quench_runtime::vm::engine_types::SLOTS;
 
-/// A base array's storage for the run (`Heap::array_storage_span`).
-#[derive(Clone, Copy)]
-struct Span {
-    base: Value,
-    /// The first element: a `Value` of a record array, or of a typed array's kind.
-    values: *mut Value,
-    readable: usize,
-    writable: usize,
-    /// A typed array's element kind, and its buffer's bytes (which other views may share).
-    typed: Option<(TypedArrayKind, (usize, usize))>,
-}
+use quench_runtime::vm::engine_types::Span;
 
 const NO_SPAN: Span = Span { base: Value::UNDEFINED, values: std::ptr::null_mut(), readable: 0, writable: 0, typed: None };
 
-/// A run's state: the entry facts and the recurrences' current values.
-pub(super) struct State {
-    scalars: [f64; SLOTS],
-    /// Each affine value's index at the run's first iteration.
-    firsts: [i64; SLOTS],
-    /// Each affine value's step per iteration.
-    steps: [i64; SLOTS],
-    spans: [Span; MAX_BASES],
-    phis: [f64; SLOTS],
-    /// The written registers' values at the last committed iteration: recurrences, then temps.
-    finals: [f64; 2 * SLOTS],
-    trip: u64,
-    limit: u64,
-    chunk: usize,
-}
+pub(super) use quench_runtime::vm::engine_types::State;
 
+#[quench_macros::ext(StateOps1)]
 impl State {
     pub(super) const EMPTY: Self = Self {
         scalars: [0.0; SLOTS],
@@ -294,6 +269,7 @@ const DECLINE_COUNTED: usize = usize::MAX;
 /// Work-clock units (typical-host nanoseconds) charged per kernel iteration.
 const WORK_PER_ITERATION: u64 = 4;
 
+#[quench_macros::ext(LoopKernelOps2)]
 impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
     pub(super) unsafe fn run(&self, cx: *mut LaneContext, r: Registers, ip: Ip) {

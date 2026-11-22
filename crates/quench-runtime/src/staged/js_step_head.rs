@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 #[repr(C)]
-pub(crate) struct JsStepHead<V> {
+pub struct JsStepHead<V> {
     /// The loop entry record whose counter a region's backward edges bump; first, as a `Crossing::Bare` payload is this word alone.
     pub(crate) loop_entry: usize,
     /// Stable base of this VM's direct-array record reservation. The field is

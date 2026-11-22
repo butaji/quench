@@ -21,51 +21,9 @@ use quench_runtime::vm::specializer::Specializer;
 use super::{DirectCallee, DirectCandidates};
 use std::rc::Rc;
 
-/// What a region's code relies on beyond its entry guards: the exits that widen a value,
-/// and the facts its own-field descriptors embed, which retire it when they change.
-pub(crate) struct OsrFacts {
-    /// Shape IDs the code embeds, the receiver's included. Shape compaction retires this code
-    /// through its lane view before execution can resume with remapped IDs.
-    pub(crate) shape_dependencies: Vec<u32>,
-    /// Holder shapes: their layout is read without the receiver-shape guard, so their
-    /// departure discards the compile.
-    departure_shapes: Vec<u32>,
-    slot_dependencies: Vec<quench_runtime::code_dependencies::SlotDependency>,
-    /// The heap identities the code names (a call's callee), which its publication keeps alive.
-    pub(crate) roots: quench_runtime::folded_roots::FoldedRoots,
-    /// The Stable facts a BaseJIT region folded: atoms its stores run in place for, which no method
-    /// cache names (a cache naming one retires it, `MethodCacheAtoms::name`), and the global cells
-    /// that hold the callees it inlines.
-    stable: StableFacts,
-    /// What the callees its calls name depend on (`LaneDependencies::of`).
-    calls: LaneDependencies,
-}
+pub(crate) use quench_runtime::vm::engine_types::OsrFacts;
 
-impl OsrFacts {
-    /// Releases the capacity its vectors hold past their length, before the region is published.
-    pub(crate) fn trim(&mut self) {
-        self.shape_dependencies.shrink_to_fit();
-        self.departure_shapes.shrink_to_fit();
-        self.slot_dependencies.shrink_to_fit();
-        self.calls.trim();
-    }
 
-    /// Subscribes `code` to the facts; whether all hold. A receiver shape is guarded at each
-    /// field use, so only a holder shape's departure discards it; a receiver shape ID still
-    /// retires it at compaction (`shape_dependencies`).
-    pub(crate) fn subscribe(&self, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>, heap: &mut quench_runtime::heap::Heap,
-        method_atoms: &mut quench_runtime::code_dependencies::CodeReaders) -> bool {
-        self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
-            && self.slot_dependencies.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
-            && self.calls.subscribe(&self.stable, code, heap, method_atoms)
-    }
-
-    /// The programs whose root constants the region's calls fold (`LaneDependencies::root_programs`),
-    /// which its code subscribes to (`ProgramStore::subscribe_root_constants`).
-    pub(crate) fn root_programs(&self) -> Vec<quench_runtime::vm::program_store::ProgramId> {
-        self.calls.root_programs(&self.stable)
-    }
-}
 
 /// A loop region whose code compiles on the code generator's thread, as V8 compiles OSR code
 /// concurrently: compiling on the loop's own thread stalled it 2 ms a region (Box2D --jit:
@@ -74,25 +32,25 @@ impl OsrFacts {
 pub(crate) struct PendingOsrRegion {
     /// Its lowering and code on the code generator's thread; a drop waits for the lowering,
     /// which reads `directs` by pointer. First, so it drops before them.
-    code: quench_runtime::vm::jit_backend::OffThread<Option<LoopLowered>>,
-    watch: Rc<quench_runtime::code_dependencies::PublishedCode<()>>,
-    header: u32,
-    facts: OsrFacts,
+    pub code: quench_runtime::vm::jit_backend::OffThread<Option<LoopLowered>>,
+    pub watch: Rc<quench_runtime::code_dependencies::PublishedCode<()>>,
+    pub header: u32,
+    pub facts: OsrFacts,
     /// What a run of the code builds around it.
-    crossing: super::Crossing,
+    pub crossing: super::Crossing,
     /// Where a run may re-enter the code mid-region.
-    resumes: super::base_region::ResumeTable,
+    pub resumes: super::base_region::ResumeTable,
     /// What its code owns of its calls (`CallCode`): known at the start for a b-jit region, made
     /// from the plan the lowering took (`directs`) for a Cranelift one.
-    calls: Option<CallCode>,
+    pub calls: Option<CallCode>,
     /// Per plan the lowering may take (`LoopInput`), its direct callees, which its code names.
-    directs: Vec<Box<[DirectCallee]>>,
+    pub directs: Vec<Box<[DirectCallee]>>,
     /// The caller's registers and invalidation word, which a Cranelift region's `CallCode` takes.
-    call_frame: (u16, Invalidation),
+    pub call_frame: (u16, Invalidation),
     /// Per plan, where its lowering folded Stable facts (`OsrOnline`): its unit, global reads and
     /// the VM's answers it took, which must still hold where the code publishes (`poll`).
-    taken: Vec<Option<TakenPlan>>,
-    function: u32,
+    pub taken: Vec<Option<TakenPlan>>,
+    pub function: u32,
 }
 
 /// What a plan whose lowering folded Stable facts took from the VM (`PendingOsrRegion::taken`).
@@ -322,6 +280,7 @@ fn stored_after_reads(instructions: &[quench_runtime::bytecode::WideInstruction]
     }
 }
 
+#[quench_macros::ext(OsrFactsOps2)]
 impl OsrFacts {
     /// The facts the observation's field descriptors embed in code compiled from it.
     fn observed(observation: &Observation<'_>) -> Self {
@@ -500,6 +459,7 @@ pub(crate) fn start_osr_region(
         resumes: super::base_region::ResumeTable::empty(), calls: None, directs, call_frame, taken, function: function_id })
 }
 
+#[quench_macros::ext(PendingOsrRegionOps1)]
 impl PendingOsrRegion {
 
     /// Subscribes its watch to the facts its code names; whether they hold.

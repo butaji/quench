@@ -14,8 +14,7 @@ use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use views::Views;
 
-/// Every body starts on a cache line, which also satisfies each target's function alignment.
-pub(crate) const CODE_GRANULE: usize = 64;
+pub(crate) use quench_runtime::vm::engine_types::CODE_GRANULE;
 /// The unit pages are committed and returned in: a multiple of every supported page size.
 const CHUNK_BYTES: usize = 64 * 1024;
 /// A region's chunks: 64 MiB of address space, reserved without committing.
@@ -24,13 +23,9 @@ const SMALL_CLASSES: usize = CHUNK_BYTES / CODE_GRANULE;
 const CLASS_WORD_BITS: usize = u64::BITS as usize;
 const CLASS_WORDS: usize = SMALL_CLASSES.div_ceil(CLASS_WORD_BITS);
 
-/// Where a body lives: its region and its byte offset there.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Block {
-    region: u32,
-    offset: u32,
-}
+use quench_runtime::vm::engine_types::Block;
 
+#[quench_macros::ext(BlockOps1)]
 impl Block {
     fn chunk(self) -> usize {
         self.offset as usize / CHUNK_BYTES
@@ -331,22 +326,13 @@ fn record_publication(pointer: *mut u8, length: usize, site: &std::panic::Locati
     let _ = std::fs::write(format!("/tmp/quench-jit-{}-{:x}.bin", std::process::id(), pointer as usize), bytes);
 }
 
-/// A compiled body's executable memory in the code zone.
-pub(crate) struct CodeMemory {
-    pointer: *mut u8,
-    length: usize,
-    block: Block,
-}
+pub(crate) use quench_runtime::vm::engine_types::CodeMemory;
 
+#[quench_macros::ext(CodeMemoryOps1)]
 impl CodeMemory {
     /// The body's first executable byte.
     pub(crate) fn pointer(&self) -> *mut u8 {
         self.pointer
-    }
-
-    /// The bytes the zone holds for the body: its length rounded to the zone's granule.
-    pub(crate) fn length(&self) -> usize {
-        self.length
     }
 
     #[track_caller]
@@ -391,27 +377,29 @@ impl CodeMemory {
     }
 }
 
-impl Drop for CodeMemory {
-    fn drop(&mut self) {
-        if quench_runtime::trace::Dev::PoisonFreedCode.on() {
-            // The block stays allocated and traps from now on: a run that enters or returns into
-            // freed code stops at once, at the address it reached (TOD-2060).
-            let views = heap().regions[self.block.region as usize].views;
-            let offset = self.block.offset as usize;
-            // SAFETY: the block's `length` bytes of the writable view, still owned by this memory.
-            let code = unsafe { std::slice::from_raw_parts_mut(views.writer(offset), self.length) };
-            let _ = Views::writing(|| { code.fill(0xcc); Ok::<(), String>(()) });
-            retire::retire(views, offset, self.length);
-            views::flush_icache(self.pointer, self.length);
-            eprintln!("QUENCH_CODE_POISONED address={:p} bytes={}", self.pointer, self.length);
-            return;
-        }
-        heap().free(self.block, self.length);
-    }
-}
+
 
 /// Retires the writable-view pages of code published since the last flush (`retire`).
 pub(crate) use retire::flush as flush_retired_writers;
 
 #[cfg(test)]
 mod tests;
+
+#[unsafe(no_mangle)]
+fn quench_engine_drop_code_memory(memory: &mut CodeMemory) {
+        if crate::trace::Dev::PoisonFreedCode.on() {
+            // The block stays allocated and traps from now on: a run that enters or returns into
+            // freed code stops at once, at the address it reached (TOD-2060).
+            let views = heap().regions[memory.block.region as usize].views;
+            let offset = memory.block.offset as usize;
+            // SAFETY: the block's `length` bytes of the writable view, still owned by this memory.
+            let code = unsafe { std::slice::from_raw_parts_mut(views.writer(offset), memory.length) };
+            let _ = Views::writing(|| { code.fill(0xcc); Ok::<(), String>(()) });
+            retire::retire(views, offset, memory.length);
+            views::flush_icache(memory.pointer, memory.length);
+            eprintln!("QUENCH_CODE_POISONED address={:p} bytes={}", memory.pointer, memory.length);
+            return;
+        }
+        heap().free(memory.block, memory.length);
+    }
+const _: fn(&mut CodeMemory) = quench_engine_drop_code_memory;

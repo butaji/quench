@@ -5,21 +5,10 @@ use super::*;
 use crate::compiled::tier_policy::PERCENT;
 use crate::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit, PendingLaneMethod, PublishedLaneMethod};
 
-/// What a loop site has of its body.
-pub(super) enum LoopBody {
-    /// Not yet compiled: where its earlier bodies' leaves went (`stuck`) is the next one's
-    /// feedback, over `attempts` bodies.
-    Idle { stuck: LaneLeaves, attempts: u8 },
-    /// Its code compiling on the code generator's thread; `wait` counts the backedges left
-    /// before the next look.
-    Compiling { pending: Box<PendingLaneMethod>, wait: u16, stuck: LaneLeaves, attempts: u8 },
-    /// `exits` counts its runs that left inside the loop, and `leaves` says where they went.
-    /// `runs` counts its runs, those that left inside the loop among them.
-    Ready { method: std::rc::Rc<PublishedLaneMethod>, runs: u32, exits: u16, leaves: LaneLeaves, stuck: LaneLeaves, attempts: u8 },
-    Declined,
-}
+pub(super) use quench_runtime::vm::engine_types::LoopBody;
 
 use crate::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOOP_BODY_KEEP_SHARE, LOOP_BODY_POLL};
+#[quench_macros::ext(LoopBodyOps1)]
 impl LoopBody {
     pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
@@ -76,6 +65,7 @@ impl LoopBody {
     }
 }
 
+#[quench_macros::ext(LoopSiteOps3)]
 impl LoopSite {
     /// The iterations the loop has taken, as far as the lane sees them: the interpreter's
     /// warm-up, its regions' iterations, and the idle body's header dispatches since.
@@ -84,6 +74,7 @@ impl LoopSite {
     }
 }
 
+#[quench_macros::ext(LoopBodyOps2)]
 impl LoopBody {
     /// Whether the loop may still run a body of its own: one planning, compiling or running.
     pub(super) fn pending(&self) -> bool { !matches!(self, Self::Declined) }

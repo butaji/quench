@@ -10,18 +10,14 @@ use super::*;
 use quench_bjit::HOLES;
 use super::link::Target;
 
-/// Where a region's code can be re-entered: the resume thunk and, sorted by PC, each stub.
-pub(crate) struct ResumeTable {
-    thunk: u32,
-    pcs: Box<[u32]>,
-    offsets: Box<[u32]>,
-}
+pub(crate) use quench_runtime::vm::engine_types::ResumeTable;
 
 /// A code offset as the table keeps it.
 fn offset_word(offset: usize) -> Result<u32, String> {
     u32::try_from(offset).map_err(|_| format!("code offset {offset} past the table's reach"))
 }
 
+#[quench_macros::ext(ResumeTableOps1)]
 impl ResumeTable {
     /// The table of `stubs`, whose first rows `jumps` name, over the code `offsets` of the rows.
     pub(super) fn of(thunk: usize, stubs: &[Stub], jumps: &[Jump], offsets: &[usize]) -> Result<Self, String> {

@@ -3,6 +3,13 @@ pub mod native_operands;
 pub mod jit_backend;
 pub mod tier_policy;
 pub mod engine_types;
+pub mod engine_calls;
+pub(crate) use engine_calls::EngineVm;
+pub mod engine_calls2;
+pub(crate) use engine_calls2::*;
+#[cfg(feature = "native-execution")]
+pub use engine_calls::{define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
+pub mod lane_body_audit;
 pub mod intl_core;
 pub mod layer_hooks;
 pub mod realm_table;
@@ -11,14 +18,10 @@ pub mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
 pub mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
-pub mod aot_image;
-pub mod native_object;
 pub mod specializer;
 pub mod specialize;
-#[cfg(feature = "native-execution")]
-pub mod native_program;
 #[cfg(unix)]
-pub use compiled::NativeFaultHandler;
+pub use engine_types::NativeFaultHandler;
 #[cfg(feature = "profile-native-ops")]
 pub mod native_op_profile;
 pub use jit_backend::{IsaBaseline, NativeTarget};
@@ -29,8 +32,8 @@ pub mod shape_transitions;
 pub mod snapshot;
 pub mod startup_intrinsics;
 pub mod wasm;
-pub use compiled::{AheadImages, ExecutionMode};
-pub(crate) use compiled::InstanceRecord;
+pub use engine_types::{AheadImages, ExecutionMode};
+pub(crate) use engine_types::InstanceRecord;
 pub use date::local_timezone_changed;
 pub mod wasm_exception;
 pub mod wasm_gc;
@@ -54,7 +57,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::{CallSource, Profile, TerminalCall};
 use crate::value::number_to_u32;
-use activation::{CallCompletion, CallContext, ConstructionTarget, TrapAccess, TrapCheck};
+use activation::{CallCompletion, CallContext, ConstructionTarget};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -164,7 +167,7 @@ pub mod data_view;
 pub mod date;
 pub mod dispatch;
 pub mod lane_values; mod lane_activations;
-pub(crate) use dispatch_fast::{copy_arguments, fill_window as fill_registers};
+pub(crate) use engine_types::{copy_arguments, fill_window as fill_registers};
 pub mod dispatch_frame; mod tier0_promotion;
 pub mod dispatch_wasm;
 pub mod dynamic_strings;
@@ -263,7 +266,7 @@ pub mod promise_jobs;
 pub mod promise_state;
 pub mod proxy; use proxy::ProxyTrap;
 pub mod reflect;
-pub mod regexp; mod regexp_native;
+pub mod regexp;
 pub mod shadow_realm;
 pub mod sort;
 pub mod string;
@@ -312,7 +315,7 @@ enum CallbackProof {
     Second,
     /// The lane proof, and the call roots from `roots` on that keep the callee, the receiver
     /// and, in the `PREPARED_ARGUMENT_ROOTS` after them, each call's arguments.
-    Lane { roots: usize, lane: dispatch_fast::PreparedLaneCallback },
+    Lane { roots: usize, lane: engine_types::PreparedLaneCallback },
     General,
 }
 
@@ -497,7 +500,7 @@ impl Frame {
     fn reserve_suspension_window(&mut self, function: &crate::bytecode::Function) {
         if function.is_generator || function.is_async {
             self.registers.clear();
-            self.registers.reserve(usize::from(function.registers) + usize::from(dispatch_fast::WINDOW_LOCALS) + usize::from(function.locals));
+            self.registers.reserve(usize::from(function.registers) + usize::from(engine_types::WINDOW_LOCALS) + usize::from(function.locals));
         }
     }
 
@@ -2166,7 +2169,7 @@ pub struct Vm {
     /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
     js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<crate::vm::engine_types::NumericImage>>>,
     #[cfg(feature = "native-execution")]
-    native_program_resolver: Option<Box<native_program::NativeProgramResolver>>,
+    native_program_resolver: Option<Box<engine_types::NativeProgramResolver>>,
     execution_interrupt: crate::ExecutionInterrupt,
     pub active_call_roots: Vec<Value>,
     /// The frame index of each root activation this Vm's entry points are running (`call_root`,
@@ -4183,6 +4186,4 @@ enum StringConstantKey<'a> {
 }
 
 /// The build an image belongs to, which `native_link` checks a runtime library against.
-pub(crate) use compiled::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
-#[cfg(feature = "native-execution")]
-pub use compiled::{NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
+pub(crate) use engine_types::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};

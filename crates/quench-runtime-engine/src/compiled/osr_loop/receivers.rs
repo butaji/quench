@@ -47,5 +47,6 @@ pub(super) fn captured(instructions: &[WideInstruction], header_live: RegisterSe
         .collect()
 }
 
+#[quench_macros::ext(FieldReceiverOps1)]
 impl FieldReceiver {
 }

@@ -6,67 +6,11 @@ mod adds;
 pub(super) use adds::{add_initializer_fields_in_lane, add_stores_in_lane};
 pub(super) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds, NestedField};
 
-/// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
-/// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
-/// that prototype alone determine, ends at `shape`, its fields the arguments for
-/// `parameters[..fields]` in order, a defaulted one's fallback in place of a falsy argument.
-/// While the plan's dependency holds (`watch_construct_plan`: the values and layouts of the
-/// objects it read and of the chains above them), those adds would hit again with the same
-/// transitions, so the object can be allocated finished.
-#[derive(Clone, Copy)]
-pub(super) struct ConstructPlan {
-    pub(super) callee: Value,
-    /// The callee's own layout that fixes where its `prototype` lives
-    /// (`Vm::function_prototype_layout`), which a construct reads it through.
-    pub(super) callee_layout: (u32, usize),
-    pub(super) prototype: Value,
-    pub(super) shape: u32,
-    /// The receiver's header (`ConstructPlan::derive_header`): of inline storage when its
-    /// fields fit the inline slots, else of an arena run.
-    pub(super) header: InlineObjectHeader,
-    pub(super) kind: ConstructPlanKind,
-    pub(super) fields: u8,
-    pub(super) parameters: [u16; CONSTRUCT_PLAN_FIELDS],
-    /// Fields whose store defaults a falsy argument (`InitializerStore::fallback`), one bit
-    /// per field index, each taking `fallbacks` at its index then.
-    pub(super) defaulted: u8,
-    /// Fields whose store writes a constant (`InitializerValue::Constant`), one bit per field
-    /// index, each taking `fallbacks` at its index whatever is passed.
-    pub(super) constant: u8,
-    /// Fields whose store computes a Number from its parameter (`InitializerValue::Numeric`),
-    /// one bit per field index, each with `operators` and the constant in `fallbacks` at it.
-    pub(super) computed: u8,
-    /// Each field's class, derived from the masks with the header (`derive_header`), so a
-    /// construction walks one dense array.
-    pub(super) classes: [FieldClass; CONSTRUCT_PLAN_FIELDS],
-    pub(super) operators: [u8; CONSTRUCT_PLAN_FIELDS],
-    pub(super) fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
-    /// For a forwarding constructor's plan, where its body's reads resolved
-    /// (`forwarded_construction_in_lane`), which the plan's own proof keeps. Its fields, if any, are
-    /// those its forwarded initializer stores (`record_forwarded_fields_in_lane`).
-    pub(super) forwarded: Option<ForwardedResolution>,
-    /// The field a nested construction gives a fresh object each time (`NestedField`).
-    pub(super) nested: Option<NestedField>,
-    /// For a class whose constructor only constructs its parent (`super_construction`),
-    /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
-    /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
-    pub(super) super_parent: Value,
-}
+pub(super) use quench_runtime::vm::engine_types::ConstructPlan;
 
-/// Which constructions allocate from a `ConstructPlan`, and how they compute its fields.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ConstructPlanKind {
-    /// An initializer constructor's plan (`initialize_fields_in_lane`) whose fields are the
-    /// arguments as passed.
-    Passed,
-    /// An initializer constructor's plan with defaulted or computed fields
-    /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`).
-    Defaulted,
-    /// A forwarding constructor's plan (`planned_receiver_in_lane`), which holds only with its
-    /// forwarding (`forwarded_fields_in_lane`).
-    Forwarding,
-}
+pub(super) use quench_runtime::vm::engine_types::ConstructPlanKind;
 
+#[quench_macros::ext(ConstructPlanOps1)]
 impl ConstructPlan {
     /// This plan, with its receiver header derived from its prototype and shape; it holds
     /// under the dependency `watch_construct_plan` then gives it.
@@ -213,25 +157,7 @@ impl ConstructPlan {
     }
 }
 
-pub(super) const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
-    callee: Value::UNDEFINED,
-    callee_layout: (0, 0),
-    prototype: Value::UNDEFINED,
-    shape: 0,
-    header: InlineObjectHeader::EMPTY,
-    kind: ConstructPlanKind::Passed,
-    fields: 0,
-    parameters: [0; CONSTRUCT_PLAN_FIELDS],
-    defaulted: 0,
-    constant: 0,
-    computed: 0,
-    classes: [FieldClass::Passed; CONSTRUCT_PLAN_FIELDS],
-    operators: [0; CONSTRUCT_PLAN_FIELDS],
-    fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
-    forwarded: None,
-    nested: None,
-    super_parent: Value::UNDEFINED,
-};
+pub(super) use quench_runtime::vm::engine_types::EMPTY_CONSTRUCT_PLAN;
 
 /// The Number a computed initializer store (`InitializerValue::Numeric`) gives its field:
 /// `operator` of the parameter's `passed` value and `constant`, as the body's `Binary`

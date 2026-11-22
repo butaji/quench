@@ -6,13 +6,9 @@
 //! while another thread may be running code on it. Darwin maps one `MAP_JIT` region and flips
 //! only the writing thread to write access for the duration of a fill.
 
-/// One reserved region: where code runs from and where the compiler writes it.
-#[derive(Clone, Copy)]
-pub(super) struct Views {
-    pub(super) exec: *mut u8,
-    pub(super) write: *mut u8,
-}
+pub(super) use quench_runtime::vm::engine_types::Views;
 
+#[quench_macros::ext(ViewsOps1)]
 impl Views {
     /// The writable address of `exec + offset`.
     pub(super) fn writer(&self, offset: usize) -> *mut u8 {
@@ -21,6 +17,7 @@ impl Views {
 }
 
 #[cfg(target_os = "linux")]
+#[quench_macros::ext(ViewsOps2)]
 impl Views {
     /// Reserves `bytes` (a multiple of the page size) as two views of one shared region.
     /// Pages are committed by first touch and charged nothing before it.
@@ -108,6 +105,7 @@ impl Views {
 }
 
 #[cfg(target_vendor = "apple")]
+#[quench_macros::ext(ViewsOps3)]
 impl Views {
     /// Reserves `bytes` as one `MAP_JIT` region; each thread sees it executable until it
     /// opens a write window.

@@ -19,7 +19,7 @@ use super::*;
 use super::settle::Stop;
 use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
 use super::super::promise::PromiseJob;
-use super::super::dispatch_fast::JobEnd;
+use crate::vm::engine_types::JobEnd;
 use super::super::dispatch_frame::PendingGeneralCall;
 
 /// The most jobs one chain runs, the first included, before the queue's loop takes the next job

@@ -10,25 +10,7 @@ use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRela
 use super::run::{CHUNK, apply, arith};
 use super::shape::{Arg, NodeOp, Shape};
 
-/// One recurrence folded by one arithmetic operator, maybe truncated to int32 after
-/// (`(s op x) | 0`): `s = op(s, x[k])`, or `op(x[k], s)` when the recurrence is the right operand.
-pub(super) struct Fold {
-    op: NumberArithmetic,
-    left: bool,
-    operand: Arg,
-    int32: bool,
-    /// The columns the chain's nodes write, where a store or a side node reads them.
-    outs: [Option<u16>; 2],
-    /// The nodes only a written register's final value reads: their last value only.
-    lasts: [Option<u16>; 2],
-    /// For `(s + i) | 0` and `(s - i) | 0` with `i` an induction (an iota node no other reader
-    /// needs as a column): the iota's affine slot and node. The fold then runs on int32 words,
-    /// the induction stepped in a register, and the iota's column is never written.
-    words: Option<(u8, u16)>,
-    /// For `s + x` and `s - x` (no truncation) with `x` an induction or a word DAG only the
-    /// fold reads: their words, summed on integers where binary64 is exact (`run_exact`).
-    exact: Option<Words>,
-}
+pub(super) use quench_runtime::vm::engine_types::Fold;
 
 /// The inductions of a chunk: each affine slot's value at iteration 0 and its step, and the
 /// chunk's first iteration.
@@ -42,28 +24,11 @@ pub(super) struct Iotas<'a> {
 /// The longest chain a kernel runs.
 const MAX_LINKS: usize = 24;
 
-/// One link of a chain: `v = code(v, x)` with `x` the column (or broadcast scalar) at element
-/// offset `operand` of the scratch, the result written at offset `out` (a dump column when no
-/// later reader needs it).
-#[derive(Clone, Copy)]
-struct Link {
-    code: Code,
-    operand: u32,
-    out: u32,
-}
+use quench_runtime::vm::engine_types::Link;
 
-/// A link's operator with its operand order: `v op x`, or `x op v` for the reversed forms.
-#[derive(Clone, Copy)]
-pub(super) enum Code {
-    Add,
-    Multiply,
-    Subtract,
-    SubtractFrom,
-    Divide,
-    DivideInto,
-    Bits { op: NumberBitwise, reversed: bool },
-}
+pub(super) use quench_runtime::vm::engine_types::Code;
 
+#[quench_macros::ext(CodeOps1)]
 impl Code {
     pub(super) fn of(op: NodeOp, left: bool) -> Self {
         match (op, left) {
@@ -93,43 +58,11 @@ impl Code {
     }
 }
 
-/// A single recurrence whose cycle is a chain of operators, each reading the previous one's
-/// value and one column or scalar.
-pub(super) struct Chain {
-    links: Vec<Link>,
-    /// Scalars the links read, each broadcast to its column after the nodes' and the dump's:
-    /// (scalar slot, element offset).
-    broadcasts: Vec<(u8, u32)>,
-    /// Whether every link is an int32 bitwise operator (all but the zero-fill shift): the
-    /// recurrence's value is then an int32 after its first link, whatever its operands, and the
-    /// chain runs on int32 words (`run_int32`).
-    int32: bool,
-    /// Whether every link is `& | ^` and only the last one's result column is read: the chain
-    /// is then one `v = (v & A) ^ B` per iteration, its masks computed column by column
-    /// (`run_masks`).
-    masks: bool,
-    /// Whether the chain is integer arithmetic ending in an int32 bitwise link (`(a * 3 + i) | 0`):
-    /// it then runs on int32 words where binary64 is exact (`run_wrap`).
-    wrap: bool,
-    /// The column nodes only the chain reads, whose words it computes itself.
-    fusion: Fusion,
-    /// The dump column's element offset.
-    dump: u32,
-}
+pub(super) use quench_runtime::vm::engine_types::Chain;
 
-enum Pass {
-    None,
-    Fold(Fold),
-    Chain(Chain),
-    Machine(super::machine::Machine),
-}
+use quench_runtime::vm::engine_types::Pass;
 
-/// A kernel's recurrence pass, and the nodes that read the recurrence without feeding it
-/// (`side`, in body order), which run as columns after the pass.
-pub(super) struct Recurrence {
-    pass: Pass,
-    side: Vec<u16>,
-}
+pub(super) use quench_runtime::vm::engine_types::Recurrence;
 
 /// Whether node `id`'s whole column is read: by a store or a side node.
 fn read_as_column(shape: &Shape, side: &[u16], id: u16) -> bool {
@@ -180,6 +113,7 @@ fn recurrent(shape: &Shape, arg: Arg) -> bool {
     }
 }
 
+#[quench_macros::ext(RecurrenceOps1)]
 impl Recurrence {
     pub(super) fn of(shape: &Shape) -> Option<Self> {
         if shape.phis.is_empty() {
@@ -393,6 +327,7 @@ fn is_int32_truncation(shape: &Shape, first: u16, last: u16) -> bool {
         && ((node.a == Arg::Col(first) && zero(node.b)) || (node.b == Arg::Col(first) && zero(node.a)))
 }
 
+#[quench_macros::ext(FoldOps1)]
 impl Fold {
     /// `run` on int32 words with the induction in a register; `false` (nothing done) where the
     /// recurrence is no int32 at entry or the induction leaves int32 in this chunk.
@@ -607,6 +542,7 @@ impl Fold {
     }
 }
 
+#[quench_macros::ext(ChainOps1)]
 impl Chain {
     fn of(shape: &Shape, cycle: &[u16], side: &[u16]) -> Option<Self> {
         let column = |n: usize| u32::try_from(n * CHUNK).ok();
@@ -987,14 +923,9 @@ fn sequence<const WRITE: bool>(mut value: i32, len: usize, a: impl Fn(usize) -> 
     value
 }
 
-/// Column nodes only one pass reads, whose int32 words it computes itself (`eval`): iotas from
-/// their inductions (`iotas`: node, affine slot), and bitwise nodes over scalars and columns in
-/// node order (`fused`). Their binary64 columns are written only where the pass falls back.
-pub(super) struct Fusion {
-    iotas: Vec<(u16, u8)>,
-    fused: Vec<(u16, NumberBitwise, Arg, Arg)>,
-}
+pub(super) use quench_runtime::vm::engine_types::Fusion;
 
+#[quench_macros::ext(FusionOps1)]
 impl Fusion {
     fn contains(&self, id: usize) -> bool {
         self.iotas.iter().any(|&(n, _)| usize::from(n) == id) || self.fused.iter().any(|&(n, ..)| usize::from(n) == id)
@@ -1116,23 +1047,9 @@ fn int32_word(x: f64) -> i32 {
 /// The most nodes a fold's word DAG computes (`Words`).
 const MAX_WORDS: usize = 16;
 
-/// What a word node computes.
-#[derive(Clone, Copy, PartialEq)]
-enum WordOp {
-    Iota(u8),
-    Bits(NumberBitwise),
-    Cmp(NumberRelation),
-    Arith(NumberArithmetic),
-}
+use quench_runtime::vm::engine_types::WordOp;
 
-/// One operand of a word node: an earlier word node's words (its position), a scalar, or a
-/// column another operation wrote.
-#[derive(Clone, Copy)]
-enum Source {
-    Word(usize),
-    Scalar(u8),
-    Column(u16),
-}
+use quench_runtime::vm::engine_types::WordSource as Source;
 
 /// The int32 words of an operand over a chunk: a column, or one broadcast word.
 #[derive(Clone, Copy)]
@@ -1149,29 +1066,11 @@ fn within_int32((lo, hi): Range) -> bool {
     lo >= INT32.0 && hi <= INT32.1
 }
 
-/// One word node: the node, its operation, its operands as words and as the shape's arguments.
-#[derive(Clone, Copy)]
-struct WordNode {
-    id: u16,
-    op: WordOp,
-    a: Source,
-    b: Source,
-    args: (Arg, Arg),
-}
+use quench_runtime::vm::engine_types::WordNode;
 
-/// The column nodes a fold `s += x` / `s -= x` reads through `x` and nothing else reads: iotas,
-/// bitwise, relational and `+ - *` nodes over each other, scalars and columns, computed as
-/// int32 words in node order (a DAG: a node may have several readers in the set). A chunk runs
-/// on the words only where its value ranges prove every relational and arithmetic word the
-/// exact Number the staged row computes (`word_range`), so no binary64 column is written;
-/// otherwise the pass writes the columns (`materialize`) and folds them.
-pub(super) struct Words {
-    nodes: Vec<WordNode>,
-    /// Each node's words over a chunk, then two operand conversions: written before read, kept
-    /// across chunks so no chunk clears them.
-    store: std::cell::RefCell<Box<[i32]>>,
-}
+pub(super) use quench_runtime::vm::engine_types::Words;
 
+#[quench_macros::ext(WordsOps1)]
 impl Words {
     /// The word DAG under the fold's operand `root` (`None` where `root` is no word node).
     fn of(shape: &Shape, side: &[u16], fold: u16, root: u16) -> Option<Self> {

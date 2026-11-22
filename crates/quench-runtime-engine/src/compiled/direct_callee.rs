@@ -2,45 +2,9 @@
 
 use super::*;
 
-/// A callee a lane body calls by its compiled entry (`lane_region`'s direct call): the
-/// target the lane would activate, fixed by the callee's identity, which the call guards,
-/// and its specialized body. The caller's body owns it.
-#[derive(Clone)]
-pub(crate) struct DirectCallee {
-    pub(crate) target: super::dispatch_fast::ScriptCallTarget,
-    /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
-    /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
-    /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
-    /// `None` where the call runs what the callee's `cell` holds then, as a call of the function itself.
-    pub(crate) method: Option<Rc<PublishedLaneMethod>>,
-    /// Pins the exact entry embedded by the caller, including recovery after retirement.
-    pub(crate) body: Option<Rc<LaneMethod>>,
-    /// The caller's call record, which the callee's activation returns to.
-    pub(crate) call: usize,
-    /// The caller's base instruction pointer (its view's records), which the callee's header saves for the return.
-    pub(crate) caller_base: usize,
-    pub(crate) cell: usize,
-    pub(crate) callee: Value,
-    pub(crate) registers: u16,
-    /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
-    /// binds a direct object itself (`receiver_this_in_lane`); `None` for a strict callee, which
-    /// takes any receiver as it is.
-    pub(crate) sloppy: Option<Value>,
-    /// An arrow, which binds no receiver: its body reads its environment's `this`, so a call
-    /// passes the deleted marker (`body_call_helper`). Only BaseJIT's direct rows call one.
-    pub(crate) lexical: bool,
-    /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
-    pub(crate) capture_values: *const Value,
-    pub(crate) capture_len: usize,
-    /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`).
-    pub(crate) capture_stores: bool,
-    /// For a construction site, the forwarding constructor whose activation the call skips:
-    /// `callee` is that constructor, which the call guards, and `target` its forwarded
-    /// initializer, which runs with the receiver the constructor's plan allocates and
-    /// whose result the construction ignores (`construct_keeping_activation_in_lane`).
-    pub(crate) forwarder: Option<crate::dispatch_fast::SkippedForwarder>,
-}
+pub(crate) use quench_runtime::vm::engine_types::DirectCallee;
 
+#[quench_macros::ext(DirectCalleeOps1)]
 impl DirectCallee {
     /// The type summary of the callee's published body (`lane_region::TypeSummary`): its entry
     /// parameter types, which the call's arguments must hold for its proven entry, and its result,

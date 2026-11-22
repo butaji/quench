@@ -23,24 +23,7 @@ const META_PARAMS: u32 = META_REGISTERS + u16::BITS;
 const THIS_RECEIVER: u64 = 0;
 const THIS_NONE: u64 = 1;
 
-/// An admitted callee, by its value, in the collection epoch it was admitted in: its native
-/// entry, its closure's dense capture slots and whether they take direct writes, its function
-/// (low 32 bits), register count and parameter count (the next 16 bits each), and
-/// how it binds `this`.
-#[derive(Clone, Copy, Default)]
-#[repr(C)]
-struct CallEntry {
-    callee: u64,
-    epoch: u64,
-    code: u64,
-    capture_values: u64,
-    capture_len: u64,
-    capture_stores: u64,
-    meta: u64,
-    this: u64,
-    /// Whether `new` may construct with it in place (`Vm::inline_constructible`).
-    constructs: u64,
-}
+use quench_runtime::vm::engine_types::FramelessCallEntry as CallEntry;
 
 pub(crate) use quench_runtime::vm::engine_types::CalleeAdmissions;
 
@@ -79,14 +62,6 @@ impl CalleeAdmissions {
     /// Binds a general entry's payload to the call cache its native code reads admissions from.
     pub(super) fn bind(&self, dispatch: &mut JsStepDispatch) {
         dispatch.call_cache = self.cache().as_ptr() as usize;
-    }
-
-    /// Forgets every admission (`Vm::clear_call_targets`).
-    pub(crate) fn clear(&mut self) {
-        if let Some(cache) = self.cache.get_mut() {
-            cache.fill(CallEntry::default());
-        }
-        self.functions.clear();
     }
 }
 

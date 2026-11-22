@@ -15,16 +15,7 @@ use super::*;
 use quench_runtime::vm::activation::{FrameRecord, SuspendKind};
 use quench_runtime::vm::error::FrameSite;
 
-/// The frames a stack capture reads beside a lane's activations (`Vm::lane_stack_sites`).
-pub(crate) struct LaneSites {
-    /// The source pc of the lane's root frame, the innermost VM frame: its call of the outermost
-    /// activation, or the deferred call where no activation is (`Vm::resume_caller_frame`,
-    /// `Vm::resume_deferred_caller`). `None` for a job's run, which has no root frame: its bottom
-    /// activation becomes the general loop's entry frame above the VM frames as they are.
-    pub(crate) root_pc: Option<usize>,
-    /// The activations outermost first, each as the frames its materialization pushes.
-    pub(crate) sites: Vec<FrameSite>,
-}
+pub(crate) use quench_runtime::vm::engine_types::LaneSites;
 
 /// The source pc of the frame an activation's caller becomes, paused at the call of `above`
 /// (`ActivationView::caller_pc`): `resume_caller_frame` resumes it at `caller_resume`'s pc, after the call

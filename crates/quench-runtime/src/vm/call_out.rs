@@ -197,7 +197,7 @@ impl Vm {
     #[cold]
     #[inline(never)]
     pub(super) fn retire_int_speculation(&self) {
-        if super::dispatch_fast::note_int_speculation_retired() {
+        if crate::vm::engine_calls::note_int_speculation_retired() {
             self.programs.retire_int_speculation();
         }
     }

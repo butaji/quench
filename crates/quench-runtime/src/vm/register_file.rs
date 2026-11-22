@@ -10,8 +10,8 @@ use crate::value::Value;
 /// The words in front of register 0: captures, environment, receiver (`r[-3]`, `r[-2]`, `r[-1]`).
 pub(in crate::vm) const FRAME_CONTEXT: usize = crate::staged::frame::CONTEXT_WORDS;
 /// The words a new file holds room for past its context: a typical frame's registers and window plus
-/// `dispatch_fast::INLINED_WINDOW_ROOM`.
-const SPARE_WORDS: usize = 32 + crate::vm::dispatch_fast::INLINED_WINDOW_ROOM;
+/// `crate::vm::engine_types::INLINED_WINDOW_ROOM`.
+const SPARE_WORDS: usize = 32 + crate::vm::engine_types::INLINED_WINDOW_ROOM;
 
 #[derive(Clone)]
 pub(in crate::vm) struct RegisterFile {

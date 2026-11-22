@@ -60,14 +60,9 @@ fn kind(code: Code, a: u32, b: u32) -> Kind {
     Kind(op * ARITH_FORMS + forms)
 }
 
-pub(super) struct Machine {
-    steps: Vec<Step>,
-    /// (register, scalar slot) for each scalar a step reads.
-    scalars: Vec<(u8, u8)>,
-    /// Each recurrence's value at the iteration's end.
-    finals: Vec<u32>,
-}
+pub(super) use quench_runtime::vm::engine_types::Machine;
 
+#[quench_macros::ext(MachineOps1)]
 impl Machine {
     /// The machine running the scalar pass's nodes but `side`'s.
     pub(super) fn of(shape: &Shape, side: &[u16]) -> Option<Self> {

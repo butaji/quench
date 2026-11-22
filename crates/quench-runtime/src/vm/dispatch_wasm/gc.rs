@@ -12,7 +12,6 @@ use super::super::wasm_gc::stage::HeapStage;
 
 /// The one list of the GC value opcodes (`staged::wasm_gc::wasm_gc_table!`), which the lane's
 /// handler of each opcode derives from.
-pub(in crate::vm) use crate::staged::wasm_gc::wasm_gc_value_ops;
 
 /// Whether the GC value opcode `op` can allocate a heap cell, which can make a collection due:
 /// its step's group's `allocates`. A call target has no step and is taken to allocate, as before.

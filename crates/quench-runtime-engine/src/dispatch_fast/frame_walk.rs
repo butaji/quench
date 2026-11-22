@@ -6,126 +6,20 @@
 use super::*;
 use super::lane_frames::{header_sided, ActivationView, Side};
 
-/// The plain headers a record was pushed over (`LaneStack::seal_plain`): the `PlainFrames` words
-/// as they stood, which come back when the records count `records` again (`unseal_plain`).
-#[derive(Clone, Copy)]
-pub(super) struct PlainSegment {
-    /// The records below the headers: they lie between record `records - 1` and record `records`.
-    records: usize,
-    depth: usize,
-    registers: *mut Value,
-    program: ProgramId,
-}
+pub(super) use quench_runtime::vm::engine_types::PlainSegment;
 
-/// Where a walked frame is, for a writer that edits it there (`LaneStack::recomplete_at`).
-#[derive(Clone, Copy)]
-pub(super) enum Walked {
-    /// A plain header below `window`, whose caller runs `program` where it has no side record,
-    /// with its side record where it has one, at `side_at` in `LaneStack::sides`; where it has
-    /// none, `side_at` is the index one inserted for it takes: above every side record of the
-    /// frames below it.
-    Header { window: Registers, program: ProgramId, side: Option<Side>, side_at: usize },
-    /// The record at `index` of the records.
-    Record { index: usize },
-}
+pub(super) use quench_runtime::vm::engine_types::Walked;
 
-/// The frames innermost first (`LaneStack::walk_innermost`): the innermost plain headers, then
-/// each record followed by the headers it sealed, taking one side record per sided frame. Each
-/// frame is read once, where it is (`plain_frame`, `ActivationView::of_record`): a header's frame names
-/// the next header down, so the walk advances by the frame it yields.
-pub(super) struct Walk<'a> {
-    stack: &'a LaneStack,
-    records: &'a [Activation],
-    sides: &'a [Side],
-    segments: &'a [PlainSegment],
-    /// The side records of the frames not yet walked.
-    left: usize,
-    /// The headers left in the segment being walked, from `window` down, the first's caller
-    /// running `program`.
-    headers: usize,
-    window: Registers,
-    program: ProgramId,
-    /// The records not yet walked, and the sealed segments.
-    next_record: usize,
-    next_segment: usize,
-}
+pub(super) use quench_runtime::vm::engine_types::Walk;
 
-impl Walk<'_> {
-    /// Takes the next side record down, its frame's.
-    fn take_side(&mut self) -> Side {
-        self.left -= 1;
-        self.sides[self.left]
-    }
-}
 
-impl Iterator for Walk<'_> {
-    type Item = (ActivationView, Walked);
 
-    fn next(&mut self) -> Option<(ActivationView, Walked)> {
-        loop {
-            if self.headers != 0 {
-                self.headers -= 1;
-                let (window, program) = (self.window, self.program);
-                let side = header_sided(window).then(|| self.take_side());
-                // Each caller's window and program as the return reads them (an array step's
-                // header names the trampoline's result window, its step the real one).
-                let frame = self.stack.plain_frame(window, side, program);
-                (self.window, self.program) = (frame.caller_registers(), frame.caller_program());
-                return Some((frame, Walked::Header { window, program, side, side_at: self.left }));
-            }
-            let sealed = self.next_segment.checked_sub(1).map(|at| self.segments[at]).filter(|segment| segment.records == self.next_record);
-            if let Some(segment) = sealed {
-                self.next_segment -= 1;
-                (self.headers, self.window, self.program) = (segment.depth, Registers(segment.registers), segment.program);
-                continue;
-            }
-            self.next_record = self.next_record.checked_sub(1)?;
-            let records = self.records;
-            let record = &records[self.next_record];
-            let payload = if LaneStack::record_sided(record) { self.take_side().payload } else { SidePayload::None };
-            return Some((ActivationView::of_record(record, payload), Walked::Record { index: self.next_record }));
-        }
-    }
-}
 
-impl Completion {
-    /// Whether an activation completing so carries a payload in its side record (`SidePayload`).
-    #[inline]
-    fn carries_payload(self) -> bool {
-        matches!(self, Self::Forwarder | Self::SettlesPromise | Self::AsyncRequest | Self::ToWasm | Self::ReadsTrapped | Self::AssignsTrapped)
-    }
-}
+
+
 
 #[quench_macros::ext(LaneStackOps5)]
 impl LaneStack {
-    /// Every frame innermost first, where it is (`Walk`). The side records, seals and
-    /// records change only through `&mut self` and `spill_plain`, which no walk calls: a reader
-    /// calls no `activations` while it walks.
-    pub(super) fn walk_innermost(&self) -> Walk<'_> {
-        // SAFETY: the walk's contract above.
-        let (records, sides, segments) = unsafe { (&self.records_unspilled()[..], (&*self.sides.get()).as_slice(), (&*self.segments.get()).as_slice()) };
-        Walk {
-            stack: self,
-            records,
-            sides,
-            segments,
-            left: sides.len(),
-            headers: self.plain.depth.get(),
-            window: Registers(self.plain.registers.get()),
-            program: self.plain.program.get(),
-            next_record: records.len(),
-            next_segment: segments.len(),
-        }
-    }
-
-    /// Whether `record` owns a side record: a script record whose completion carries a payload
-    /// (`SidePayload`), but a native frame's skipped constructor, which its descriptor names
-    /// until the lane continues in the frame (`native_frames::advance_into_frames`). A header
-    /// spilled into a record carries a payload exactly then, so its side record stays its own.
-    pub(super) fn record_sided(record: &Activation) -> bool {
-        record.callee.is_null() && record.script().is_some_and(|script| script.completion.carries_payload())
-    }
-
     /// Give the innermost activation, just pushed or recompleted, what its completion carries
     /// (`SidePayload`): a header's side record takes it, which its completion flag made; a
     /// record's is pushed.
@@ -160,12 +54,6 @@ impl LaneStack {
     pub(super) fn pop_record_side(&mut self, record: &Activation) -> SidePayload {
         if !Self::record_sided(record) { return SidePayload::None; }
         self.sides.get_mut().pop().expect("a sided record has its side record").payload
-    }
-
-    /// The values the side records keep alive: the skipped forwarders' callees and environments.
-    pub(super) fn side_roots(&self) -> impl Iterator<Item = Value> + '_ {
-        // SAFETY: a root walk changes nothing.
-        unsafe { &*self.sides.get() }.iter().filter_map(|side| side.payload.forwarder()).flat_map(|forwarder| [forwarder.callee, forwarder.env])
     }
 
     /// Store `side` as the side record of the header below `window`, which `had` one at `at` or

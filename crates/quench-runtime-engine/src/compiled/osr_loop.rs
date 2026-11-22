@@ -55,75 +55,11 @@ mod receivers;
 #[path = "osr_loop/lifetime.rs"]
 mod lifetime;
 
-/// An array a region indexes, by its register; `written` when the region stores into it.
-/// The array is the register's value at entry, or, with `field`, the value of that cached
-/// field (`LoopRegion::fields`), which the field's one `GetField` in the region writes to
-/// the register.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ArrayUse {
-    pub(crate) register: Register,
-    pub(crate) written: bool,
-    pub(crate) field: Option<usize>,
-}
+pub(crate) use quench_runtime::vm::engine_types::ArrayUse;
 
-/// A loop's admissible region and the facts its entry needs.
-pub(crate) struct LoopRegion {
-    pub(crate) header: u32,
-    pub(crate) backedge: u32,
-    /// The Number registers; a register's index here names its entry definition (`Webs`).
-    numbers: Vec<Register>,
-    /// Registers with a tagged value lifetime; each web owns its representation.
-    tagged: Vec<Register>,
-    /// Per-value roles when an overwritten physical slot carries unrelated types.
-    /// The original slots and PCs remain the authority for entry and recovery.
-    /// The arrays, in entry-record order. Entry admits one the region writes only when it is
-    /// dense (`Vm::dense_array_length`), owns its backing alone, and no prototype of it holds
-    /// an index (`Vm::prototypes_hold_no_index`).
-    pub(crate) arrays: Vec<ArrayUse>,
-    /// The depth-0 capture slots `LoadCapture` reads and the region does not store, in
-    /// entry-record order.
-    pub(crate) captures: Vec<u16>,
-    /// The depth-0 capture slots the region both reads and stores: no entry snapshot holds
-    /// them, so each read takes the lane's own lookup where it runs.
-    pub(crate) stored_captures: Vec<u16>,
-    /// The cached data fields the region reads, in entry-record order: a field read
-    /// through another's value follows it (`intern_field`).
-    pub(crate) fields: Vec<FieldUse>,
-    /// The field each `GetField` of the region reads, by offset from the header.
-    field_reads: std::collections::BTreeMap<u32, usize>,
-    /// Reads whose direct register receiver is redefined in this loop. These use a
-    /// side-effect-free field-cache callout at the instruction instead of an entry snapshot.
-    dynamic_field_reads: std::collections::BTreeMap<u32, usize>,
-    /// The array registers the region defines: each access reads the array its register
-    /// holds then, from the array's record, and only a present
-    /// element below the backing's length, which no prototype answers, stays native.
-    dynamic_arrays: std::collections::BTreeSet<Register>,
-    /// Existing own-data Number slots stored by the region, by offset from its header.
-    field_stores: std::collections::BTreeMap<u32, usize>,
-    /// Own-data stores whose receiver the region redefines, by offset from its header: each
-    /// stores through the VM's cached store (`OSR_FIELD_STORE`), so every read of the same
-    /// name in the region reads the receiver's current slot (`dynamic_field_reads`).
-    dynamic_field_stores: std::collections::BTreeMap<u32, (quench_runtime::bytecode::Atom, u16)>,
-    /// Receivers and cache sites whose flat slots are guarded before native entry.
-    pub(crate) field_store_sites: Vec<FieldStore>,
-    /// The registers that hold a field's value at every read (`held_registers`), with the
-    /// path they hold and that field's index.
-    held: std::collections::BTreeMap<Register, (FieldPath, usize)>,
-    /// Nullish equality branches against `null` or `undefined` that read an unchanged
-    /// tagged register directly from the activation's rooted register file.
-    identity_branches: std::collections::BTreeMap<u32, IdentityBranch>,
-    /// The region's instructions, from the header.
-    instructions: Vec<WideInstruction>,
-    /// The Number constants the region reads, by constant index.
-    constants: std::collections::BTreeMap<usize, f64>,
-    /// The function's live registers before each instruction (`compile::liveness`), when
-    /// liveness covers it; for an inlining region, by its own PCs (`Inlining`). A plain
-    /// region shares its function's masks (`ResidualProgram::shared_register_root_masks`).
-    live: Option<std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
-    /// Where an inlining region's instructions come from, when the region inlines calls.
-    pub(crate) inlining: Option<Box<Inlining>>,
-}
+pub(crate) use quench_runtime::vm::engine_types::LoopRegion;
 
+#[quench_macros::ext(LoopRegionOps1)]
 impl LoopRegion {
     /// The function's full decoded code, which a loop unit keeps so its PCs stay the
     /// function's; only `header..=backedge` lowers.
@@ -169,42 +105,11 @@ impl LoopRegion {
         if self.fields.iter().any(|field| store.matches(field)) { Type::NUMBER }
         else { Type::ANY }
     }
-
-
-    pub(crate) fn call_boundary_pcs(&self) -> Vec<u32> {
-        self.instructions
-            .iter()
-            .enumerate()
-            .filter(|(_, instruction)| quench_runtime::staged::calls_ordinary(instruction.op()))
-            .map(|(offset, _)| self.header.saturating_add(offset as u32))
-            .collect()
-    }
-
 }
 
-/// Why a backward jump was excluded from OSR before native code generation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RegionRejection {
-    RegionTooLarge,
-    UnsupportedInstruction(u16),
-    RegisterLimit,
-    CaptureLimit,
-    ArrayLimit,
-    FieldLimit,
-    FieldStoreLimit,
-    FieldMutation,
-    /// An array the region indexes is a register it defines other than by reading an
-    /// element or field or moving one (`LoopRegion::dynamic_arrays`), as a capture's value.
-    ArrayRedefined,
-}
+pub(crate) use quench_runtime::vm::engine_types::RegionRejection;
 
-/// A loop analysis failure attributed to the function PC whose requirement blocked it.
-/// Limits that apply to the whole region point at its backedge.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RegionAnalysisFailure {
-    pub(crate) reason: RegionRejection,
-    pub(crate) pc: u32,
-}
+pub(crate) use quench_runtime::vm::engine_types::RegionAnalysisFailure;
 
 /// What a plain region does at a call whose callee a field read gives (a method call): leave
 /// the loop to the inliner, which makes its region once the site is hot (a call boundary,
@@ -223,36 +128,18 @@ impl MethodCalls {
     }
 }
 
+#[quench_macros::ext(RegionAnalysisFailureOps1)]
 impl RegionAnalysisFailure {
-    /// The region stops only at a call, which may run inlined once the site is hot.
-    pub(crate) fn is_call_boundary(self) -> bool {
-        matches!(self.reason, RegionRejection::UnsupportedInstruction(opcode) if super::meaning_compiled::is_call_rejection(opcode))
-    }
-
     fn at(reason: RegionRejection, header: u32, offset: usize) -> Self {
         Self { reason, pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)) }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum FieldReceiver {
-    This,
-    /// A register the region never writes.
-    Register(Register),
-    /// The value of the region's field at this index (`LoopRegion::fields`), an earlier one.
-    Field(usize),
-    /// The value of this depth-0 capture slot, which no region stores (`receivers::captured`).
-    Capture(u16),
-}
+pub(crate) use quench_runtime::vm::engine_types::FieldReceiver;
 
-/// What a `GetField` reads: named fields one after another from a root receiver (`this` or
-/// a register), each step with the cache site that answers it.
-#[derive(Clone, Debug)]
-struct FieldPath {
-    root: FieldReceiver,
-    steps: Vec<(quench_runtime::bytecode::Atom, u16)>,
-}
+use quench_runtime::vm::engine_types::FieldPath;
 
+#[quench_macros::ext(FieldPathOps1)]
 impl FieldPath {
     /// Whether the two paths read one value in a region, which writes no field: the same
     /// root and names, whichever caches answer them.
@@ -386,32 +273,18 @@ fn held_registers(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FieldUse {
-    pub(crate) receiver: FieldReceiver,
-    pub(crate) atom: quench_runtime::bytecode::Atom,
-    pub(crate) cache_site: u16,
-    pub(crate) tagged: bool,
-}
+pub(crate) use quench_runtime::vm::engine_types::FieldUse;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FieldStore {
-    /// `this`, or a register the region never writes.
-    pub(crate) receiver: FieldReceiver,
-    pub(crate) atom: quench_runtime::bytecode::Atom,
-    pub(crate) cache_site: u16,
-}
+pub(crate) use quench_runtime::vm::engine_types::FieldStore;
 
+#[quench_macros::ext(FieldStoreOps1)]
 impl FieldStore {
     fn matches(&self, field: &FieldUse) -> bool {
         field.receiver == self.receiver && field.atom == self.atom
     }
 }
 
-#[derive(Clone, Copy)]
-struct IdentityBranch {
-    register: Register,
-}
+use quench_runtime::vm::engine_types::IdentityBranch;
 
 /// Whether `instruction` is a comparison branch (`JumpBinaryFalse`), by its staged decode.
 fn comparison_jump(instruction: WideInstruction) -> bool {
@@ -722,23 +595,7 @@ fn moved_without_numeric_use(instructions: &[WideInstruction], numeric_uses: &st
     moved_argument
 }
 
-/// A call an inlining region runs in place (`inline_region`): the callee's instructions in
-/// the caller's region, its registers above the caller's from `base`, its numeric
-/// parameters the call's arguments and the others the caller registers they were moved
-/// from, its receiver the caller's.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum InlineGuard {
-    Field(usize),
-    /// The callee's read at this region offset, kept in the region because its receiver
-    /// changes in the loop: native code compares its value with the callee right after it,
-    /// leaving before the read where it differs.
-    AtRead,
-    /// A depth-zero plain capture, checked by the VM at every native entry.
-    Capture(u16),
-    /// A caller register the loop never writes, live at its header (`const f = …; for (…) f(…)`),
-    /// checked by the VM at every native entry.
-    Register(Register),
-}
+pub(crate) use quench_runtime::vm::engine_types::InlineGuard;
 
 /// Where an inlined call's callee is read from: a cached field path, a depth-zero capture, or
 /// a caller register the loop never writes (`inline_region`).
@@ -749,61 +606,15 @@ pub(crate) enum CalleeSource {
     Register(Register),
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct InlineFrame {
-    /// The caller's PC of the call.
-    pub(crate) call: u32,
-    /// The function inlined; `guard` verifies its current field or capture at entry.
-    pub(crate) callee: Value,
-    /// The callee's function id.
-    pub(crate) function: u32,
-    /// The caller register the call read the callee from.
-    pub(crate) callee_register: Register,
-    /// The call's first argument register and count.
-    pub(crate) window: Register,
-    pub(crate) arguments: u16,
-    /// The caller register the call's result lands in.
-    pub(crate) result: Register,
-    pub(crate) guard: InlineGuard,
-    /// The caller register holding the call's receiver, which the region never writes.
-    pub(crate) receiver: Register,
-    /// The callee's register 0 in the region.
-    pub(crate) base: Register,
-    pub(crate) registers: u16,
-    /// The callee's parameters bound to caller registers, which hold its values for them.
-    pub(crate) bound: [Option<Register>; MAX_INLINE_PARAMS],
-}
+pub(crate) use quench_runtime::vm::engine_types::InlineFrame;
 
-/// The parameters an inlined callee may have, each bound or numeric (`InlineFrame::bound`).
-pub(crate) const MAX_INLINE_PARAMS: usize = 8;
+pub(crate) use quench_runtime::vm::engine_types::MAX_INLINE_PARAMS;
 
-/// Where an inlining region's PC comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Origin {
-    /// The caller's instruction at this PC.
-    Caller(u32),
-    /// The instruction at `pc` of `frame`'s callee.
-    Inlined { frame: u16, pc: u32 },
-    /// No instruction: a jump leaving the region, which the caller continues at this PC.
-    Leave(u32),
-}
+pub(crate) use quench_runtime::vm::engine_types::Origin;
 
-/// An inlining region's PCs and frames. Its instructions take consecutive PCs from the
-/// header, then each jump out of the region takes one past them (`Origin::Leave`).
-pub(crate) struct Inlining {
-    /// By offset from the header.
-    pub(crate) origins: Vec<Origin>,
-    pub(crate) frames: Vec<InlineFrame>,
-    /// The captures inlined callees read, by the frame and its depth-0 slot: a callee's
-    /// `LoadCapture` reads `CALLEE_CAPTURE` with its index here, which the entry resolves
-    /// in the callee's own environment (`loop_entry_in_lane`).
-    pub(crate) callee_captures: Vec<(usize, u16)>,
-    /// The caller's register count: every register from it on is an inlined callee's.
-    pub(crate) caller_registers: u16,
-    /// The caller's backward jump PC: the last caller PC of the loop it closes.
-    pub(crate) latch: u32,
-}
+pub(crate) use quench_runtime::vm::engine_types::Inlining;
 
+#[quench_macros::ext(InliningOps1)]
 impl Inlining {
     /// The registers past the caller's that the inlined frames occupy: the scratch window a leave
     /// inside one writes and reads (`LoopEntry::scratch_address`, `LoopEntry::scratch_value`).
@@ -1223,6 +1034,7 @@ pub(super) fn inline_region<'a>(
     Some(region)
 }
 
+#[quench_macros::ext(LoopRegionOps2)]
 impl LoopRegion {
     fn entry_count(&self) -> usize {
         self.numbers.len() + self.tagged.len()
