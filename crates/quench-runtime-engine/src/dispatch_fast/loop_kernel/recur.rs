@@ -238,18 +238,6 @@ impl Recurrence {
         matches!(self.pass, Pass::Machine(_))
     }
 
-    /// Whether the pass runs faster than compiled code runs the loop: no recurrence (columns
-    /// only), or a fold that is int32 or reads no per-iteration word DAG (`Fold::exact`). A
-    /// chain, an interpreted recurrence and an exact binary64 fold over words run one dispatch
-    /// per link and element, which Cranelift's loop does in a few instructions.
-    pub(crate) fn outruns_compiled(&self) -> bool {
-        match &self.pass {
-            Pass::None => true,
-            Pass::Fold(fold) => fold.int32 || fold.exact.is_none(),
-            Pass::Chain(_) | Pass::Machine(_) => false,
-        }
-    }
-
     /// The pass of a single recurrence whose cycle is a chain (`cycle`), whose other nodes
     /// read columns only.
     fn single(shape: &Shape) -> Option<Self> {
