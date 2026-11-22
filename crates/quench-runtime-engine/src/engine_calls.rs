@@ -146,7 +146,10 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_set_exec
 fn quench_engine_vm_enable_lane_methods(this: &mut Vm) -> () { <Vm as CompiledVm4>::enable_lane_methods(this) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_enable_lane_methods = quench_engine_vm_enable_lane_methods;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_compile_wasm_eagerly(this: &mut Vm) -> () { <Vm as CompiledVm4>::compile_wasm_eagerly(this) }
+fn quench_engine_vm_compile_wasm_eagerly(this: &mut Vm) -> () {
+    use crate::compiled::admission::{specialize, UnitKind, UnitRequest};
+    if let Some(unit) = specialize(UnitRequest { kind: UnitKind::Wasm, facts: Default::default() }).compiled() { <Vm as CompiledVm4>::compile_wasm_eagerly(this, unit) }
+}
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_compile_wasm_eagerly = quench_engine_vm_compile_wasm_eagerly;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_native_execution_rejections(this: &Vm) -> u64 { <Vm as CompiledVm4>::native_execution_rejections(this) }

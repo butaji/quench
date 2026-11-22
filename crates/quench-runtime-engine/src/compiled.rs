@@ -7592,8 +7592,11 @@ impl Vm {
     #[cfg(test)]
     pub(crate) fn methods_enrolled_in_lane(&self) -> bool { self.programs.js_jit_lane_methods_enabled() }
 
-    /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
-    pub(crate) fn compile_wasm_eagerly(&mut self) {
+    /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`), as
+    /// `unit` (`UnitKind::Wasm`) says. The runtime's flag only records that the modules compile at
+    /// their first entry.
+    pub(crate) fn compile_wasm_eagerly(&mut self, unit: admission::CompiledUnit) {
+        let _ = unit;
         self.programs.compile_wasm_modules_at_first_entry();
     }
 
