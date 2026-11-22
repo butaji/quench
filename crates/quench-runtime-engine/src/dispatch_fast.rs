@@ -7034,7 +7034,7 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     // (`install_ahead_lane_body`): no warm-up, no runtime tier.
     if vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some() {
         let published = own.entry_published();
-        let installed = own.install_ahead_lane_body(body_entry_row(), || vm.install_ahead_body(code, function, None, &[]));
+        let installed = own.install_ahead_lane_body(body_entry_row(), || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
         if !published && own.entry_published() {
             unsafe { self::vm(cx) }.unprove_view_entries(own);
         }
@@ -7051,7 +7051,8 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
         // A function of a program with a loaded AOT image takes the image's body (`install_ahead_body`) before any tier's.
         if let crate::compiled::LaneBodyWork::Start { generic, .. } = &work
-            && let Some(published) = vm.install_ahead_body(code, function, None, generic)
+            && let Some(unit) = crate::compiled::admission::ahead_unit(function)
+            && let Some(published) = vm.install_ahead_body(unit, code, function, None, generic)
         {
             return crate::compiled::LaneBodyOutcome::Published(published);
         }

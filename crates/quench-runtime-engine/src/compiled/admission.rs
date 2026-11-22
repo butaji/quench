@@ -150,6 +150,8 @@ pub(crate) enum UnitKind {
     Region(quench_runtime::MemoryPolicy),
     /// An eager (AOT) publication: no JIT mode or memory policy gates it.
     Aot,
+    /// An ahead image's body of this function, under the `AotBodies` trace range.
+    Ahead(u32),
 }
 
 /// Whether a unit of `kind` may compile at all, under the process's JIT mode and, for a loop
@@ -159,7 +161,22 @@ fn may_compile(kind: UnitKind) -> bool {
         UnitKind::Body => quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) || quench_runtime::jit_mode::base_only(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
         UnitKind::Aot => true,
+        UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
     }
+}
+
+/// Whether the trace setting `setting` (a `LOOP_RANGE` style `low-high` range, or off) admits
+/// `function`. Off admits every function.
+pub(crate) fn within_trace_range(setting: quench_runtime::trace::Dev, function: u32) -> bool {
+    !setting.on() || setting.value()
+        .and_then(|range| range.split_once('-'))
+        .and_then(|(low, high)| Some((low.parse::<u32>().ok()?, high.parse::<u32>().ok()?)))
+        .is_some_and(|(low, high)| (low..=high).contains(&function))
+}
+
+/// The unit of an ahead image's body of `function`, where the trace range admits it.
+pub(crate) fn ahead_unit(function: u32) -> Option<CompiledUnit> {
+    specialize(UnitRequest { kind: UnitKind::Ahead(function) }).compiled()
 }
 
 /// One request to specialize a unit (`specialize`).

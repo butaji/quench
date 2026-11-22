@@ -21,7 +21,7 @@ mod tests {
         let (get_body, add_body) = (program.function(get), program.function(add));
         let file = AheadImages::compile(&program).unwrap().to_bytes();
         vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
-        let sum = vm.install_ahead_body(&program, add as u32, None, &[]).expect("an ahead body for add");
+        let sum = vm.install_ahead_body(crate::compiled::admission::ahead_unit(add as u32).unwrap(), &program, add as u32, None, &[]).expect("an ahead body for add");
         let sum = sum.lease().expect("published");
         let mut registers = vec![Value::UNDEFINED; usize::from(add_body.registers)];
         registers[0] = Value::number(2.0);
@@ -31,7 +31,7 @@ mod tests {
         let instruction = add_body.instructions().nth(pc).unwrap();
         assert_eq!(instruction.op(), quench_runtime::bytecode::Op::Return);
         assert_eq!(registers[usize::from(instruction.register_a())], Value::number(5.5));
-        let read = vm.install_ahead_body(&program, get as u32, None, &[]).expect("an ahead body for get");
+        let read = vm.install_ahead_body(crate::compiled::admission::ahead_unit(get as u32).unwrap(), &program, get as u32, None, &[]).expect("an ahead body for get");
         let read = read.lease().expect("published");
         let atom = vm.intern_atom("o");
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -85,7 +85,7 @@ mod tests {
         for (served, expected) in [(&program, true), (&other, false)] {
             let mut vm = Vm::new(TestHost::default());
             vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
-            assert_eq!(vm.install_ahead_body(served, 1, None, &[]).is_some(), expected);
+            assert_eq!(vm.install_ahead_body(crate::compiled::admission::ahead_unit(1).unwrap(), served, 1, None, &[]).is_some(), expected);
         }
     }
 
@@ -111,7 +111,7 @@ mod tests {
         vm.execute(&program).unwrap();
         vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
         let put = program.functions.iter().position(|body| body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "put")).unwrap();
-        let method = vm.install_ahead_body(&program, put as u32, None, &[]).expect("an ahead body for put");
+        let method = vm.install_ahead_body(crate::compiled::admission::ahead_unit(put as u32).unwrap(), &program, put as u32, None, &[]).expect("an ahead body for put");
         let method = method.lease().expect("published");
         let atom = vm.intern_atom("o");
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();

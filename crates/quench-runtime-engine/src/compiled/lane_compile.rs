@@ -650,7 +650,8 @@ impl Vm {
         loop {
             let (generic, budget) = pending;
             // A function with an ahead-of-time body takes it where a first compile would.
-            if let Some(published) = self.install_ahead_body(program, function, entry, &generic) { return LaneBodyOutcome::Published(published); }
+            if let Some(unit) = super::admission::ahead_unit(function)
+                && let Some(published) = self.install_ahead_body(unit, program, function, entry, &generic) { return LaneBodyOutcome::Published(published); }
             let direct = direct(self);
             let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, (observed, looped), called, caller.expect("a started body names its view"), &arrays) {
                 Ok(started) => started,
