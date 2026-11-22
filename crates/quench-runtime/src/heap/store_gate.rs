@@ -20,6 +20,16 @@ impl Heap {
         !self.tracks_slot_values() && !logs
     }
 
+    /// `store_unlogged` of a store whose value the slot's type already holds: slot observation
+    /// sees nothing of it, so only the barrier's log is asked.
+    #[inline(always)]
+    pub(crate) fn held_store_unlogged(&self, space: StagedRecordSpace, record_id: u32, value: Value) -> bool {
+        !match space {
+            StagedRecordSpace::Object => self.object_records.store_logs(record_id, value),
+            StagedRecordSpace::Function => self.function_records.store_logs(record_id, value),
+        }
+    }
+
     /// Recomputes `store_watched` after a gate input changed: the snapshot barrier
     /// reference counts (`set_rc`) or slot observation (`track_slot_representations`).
     pub(super) fn refresh_store_watch(&mut self) {

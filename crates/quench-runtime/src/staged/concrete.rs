@@ -187,6 +187,11 @@ impl Stage for Concrete {
         !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
     }
     #[inline(always)]
+    fn held_store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
+        // SAFETY: a stage that stores holds its live heap.
+        !self.heap.is_null() && unsafe { (*self.heap).held_store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
+    }
+    #[inline(always)]
     fn immediate_store_open(&mut self) -> bool {
         if self.heap.is_null() {
             // A stage that holds no heap (the interpreter's rows) reads whether any heap counts.
