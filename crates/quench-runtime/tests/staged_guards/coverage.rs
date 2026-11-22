@@ -124,7 +124,7 @@ fn vocabulary() -> Vocabulary {
         op_predicate_methods(&read(file), &mut predicates);
     }
     Vocabulary {
-        opcodes: crate::bytecode::Op::NAMES.iter().copied().collect(),
+        opcodes: quench_runtime::bytecode::Op::NAMES.iter().copied().collect(),
         predicates,
         classes: enum_variants(&read("bytecode/op_catalog.rs"), "Class").into_iter().filter(|v| v != "Other").collect(),
         denotations: enum_variants(&read("bytecode/denotation.rs"), "JsDenotation").into_iter().collect(),
@@ -233,21 +233,20 @@ fn derivation_debt() -> std::collections::BTreeMap<(String, String), usize> {
     // Opcodes with no staged row: a JS opcode the catalog gives no staged decoder, a Wasm opcode
     // no `wasm_step::Step` describes. An op the catalog marks `NO_STEP` has no meaning to derive:
     // the wide prefix (`Wide`) is never dispatched, and `Nop` does nothing.
-    for index in 0..crate::bytecode::Op::COUNT {
-        let op = crate::bytecode::Op::from_index(index).unwrap();
-        let staged = op.staged().is_some() || op.traits().has(crate::bytecode::Traits::NO_STEP)
-            || (0..1024).any(|tag| super::wasm_step::Step::of(op, tag).is_some());
-        if !staged { debt.insert(("<catalog>".to_owned(), format!("unstaged:{}", crate::bytecode::Op::NAMES[index])), 1); }
+    for index in 0..quench_runtime::bytecode::Op::COUNT {
+        let op = quench_runtime::bytecode::Op::from_index(index).unwrap();
+        let staged = quench_runtime::staged::op_has_row(op);
+        if !staged { debt.insert(("<catalog>".to_owned(), format!("unstaged:{}", quench_runtime::bytecode::Op::NAMES[index])), 1); }
     }
     debt
 }
 
-const DEBT_FILE: &str = include_str!("derivation_debt.txt");
+const DEBT_FILE: &str = include_str!("../../src/staged/derivation_debt.txt");
 
 fn render_debt(debt: &std::collections::BTreeMap<(String, String), usize>) -> String {
     let total: usize = debt.values().sum();
     let mut out = format!("# Derivation debt: each place a tier decides an opcode's meaning outside its staged row\n\
-        # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are\n\
+        # (`tests/staged_guards/coverage.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are\n\
         # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.\n\
         # total {total}\n");
     for ((file, token), count) in debt { out.push_str(&format!("{file} {token} {count}\n")); }

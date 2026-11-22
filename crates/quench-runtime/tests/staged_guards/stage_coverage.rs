@@ -16,9 +16,9 @@ const REQUIRED: [(&str, &[&str]); 4] = [
     ("FlowStage", &["Emit"]),
     ("MachineStage", &["ConcreteWasm", "Emitter", "StencilStage"]),
 ];
-const DEBT: &str = include_str!("stage_debt.txt");
+const DEBT: &str = include_str!("../../src/staged/stage_debt.txt");
 /// The source trees tiers are written in, from this crate's manifest.
-const TREES: [&str; 2] = ["src", "../quench-bjit/stencils"];
+const TREES: [&str; 3] = ["src", "../quench-runtime-engine/src", "../quench-bjit/stencils"];
 
 fn sources(directory: &Path, found: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(directory) else { return };

@@ -4,7 +4,7 @@ use quench_runtime::test_host::TestHost;
 
 #[test]
 fn numeric_pair_compositions_match_general_execution() {
-    let source = include_str!("../../../tests/fixtures/constant-numeric-pairs.js");
+    let source = include_str!("../../../quench-runtime/tests/fixtures/constant-numeric-pairs.js");
     let run = |program| {
         let host = TestHost::default();
         quench_runtime::vm::Vm::new(host.clone()).execute(&program).unwrap();

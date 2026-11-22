@@ -79,7 +79,7 @@ const FINGERPRINTS: &[Fingerprint] = &[
 const TIER_DIRECTORIES: &[&str] = &["quench-runtime/src/vm", "quench-runtime-engine/src", "quench-bjit/stencils"];
 
 /// The allowances: one `fingerprint path:text` line per hit that is allowed to stand.
-const DEBT_FILE: &str = include_str!("semantics_debt.txt");
+const DEBT_FILE: &str = include_str!("../../src/staged/semantics_debt.txt");
 
 /// A hit: a source line outside the home of its fingerprint.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -155,7 +155,7 @@ fn scan(relative: &str, source: &str, hits: &mut Vec<Hit>) {
 
 /// The debt file for `hits`: one `fingerprint path:text` line per hit.
 fn render_debt(hits: &[Hit]) -> String {
-    let mut out = String::from("# Semantic debt: each line allows one hit of a fingerprint (`staged/semantics_duplication_tests.rs`),\n\
+    let mut out = String::from("# Semantic debt: each line allows one hit of a fingerprint (`tests/staged_guards/semantics_duplication.rs`),\n\
         # `fingerprint path:text`, where text is the trimmed source line. A hit outside its home that no line\n\
         # allows fails, and so does a line no hit uses. Lines may only go away. Goal: an empty file.\n");
     for hit in hits { out.push_str(&format!("{} {}:{}\n", hit.fingerprint, hit.path, hit.text)); }

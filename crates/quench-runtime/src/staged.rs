@@ -1228,12 +1228,6 @@ mod layout_tests;
 #[cfg(test)]
 mod property_tests;
 #[cfg(test)]
-mod coverage_tests;
-#[cfg(test)]
-mod stage_coverage_tests;
-#[cfg(test)]
-mod semantics_duplication_tests;
-#[cfg(test)]
 mod capture_return_tests;
 #[cfg(test)]
 mod generic_tests;
@@ -1261,3 +1255,11 @@ mod wasm_gc_tests;
 mod wasm_simd_tests;
 #[cfg(test)]
 mod instanceof_tests;
+
+/// Whether the staged layer gives `op` its meaning: a staged decoder of the catalog, a Wasm step
+/// (`wasm_step::Step`), or nothing to derive (`NO_STEP`: `Nop`, and the never-dispatched `Wide`).
+/// The coverage guard (`tests/staged_guards/coverage.rs`) counts every other opcode as debt.
+pub fn op_has_row(op: crate::bytecode::Op) -> bool {
+    op.staged().is_some() || op.traits().has(crate::bytecode::Traits::NO_STEP)
+        || (0..1024).any(|tag| wasm_step::Step::of(op, tag).is_some())
+}
