@@ -5,7 +5,7 @@ use super::{AnalysisState, Slot, jit_memory_snapshot};
 
 /// Reports the plan of function `index` that started at `started`: its bytecodes, registers, the
 /// reachable states and their stored slots, and the memory before and after (`memory_before`).
-pub(super) fn report(
+pub(crate) fn report(
     index: usize,
     started: std::time::Instant,
     memory_before: Option<(u64, u64)>,

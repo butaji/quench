@@ -1,6 +1,8 @@
 //! Methods of the core's engine types that run engine code; the core calls them through
 //! `quench_runtime::vm::engine_calls2`.
 use crate::engine_prelude::*;
+use quench_runtime::vm::engine_types::{AheadImages, LaneView, LaneBody};
+use crate::aot_image::{self, ImageTarget};
 
 #[quench_macros::ext(AheadImagesLifted160)]
 impl AheadImages {

@@ -101,13 +101,13 @@ impl Emitter<'_, '_> {
         variable
     }
 
-    pub(super) fn read_vector(&mut self, register: u16) -> ir::Value {
+    pub(crate) fn read_vector(&mut self, register: u16) -> ir::Value {
         let variable = self.vector(register);
         self.body.core.builder.use_var(variable)
     }
 
     /// Define `register` as the vector `value`, of any lane shape.
-    pub(super) fn write_vector(&mut self, register: u16, value: ir::Value) {
+    pub(crate) fn write_vector(&mut self, register: u16, value: ir::Value) {
         let value = self.vector_view(Lanes::Bits, value);
         let variable = self.vector(register);
         self.known.retain(|(known, _)| *known != register);
@@ -147,7 +147,7 @@ impl Emitter<'_, '_> {
     }
 
     /// Lowers a vector step.
-    pub(super) fn simd(&mut self, pc: usize, instruction: WideInstruction, step: Simd) {
+    pub(crate) fn simd(&mut self, pc: usize, instruction: WideInstruction, step: Simd) {
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
         match step {
             Simd::Operator { selector } => self.vector_operator(instruction, selector),
@@ -224,7 +224,7 @@ fn holds_operand(state: &AnalysisState, registers: u16, register: u16, ty: WasmT
 impl Analysis<'_> {
     /// Checks a vector step reads vectors where it must and its memory through the function's
     /// memory, and applies its register writes.
-    pub(super) fn transfer_simd(
+    pub(crate) fn transfer_simd(
         &self,
         function: &Function,
         instruction: WideInstruction,

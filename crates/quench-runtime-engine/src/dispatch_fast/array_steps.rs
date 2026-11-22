@@ -4,7 +4,7 @@
 use super::*;
 use quench_runtime::staged::array_iteration::{self as step_rules, Kind};
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 /// The values an array callback method passes its callback: the element, its index and the
 /// array, after a reducer's accumulator (`step_rules::takes_accumulator`).
@@ -13,7 +13,7 @@ fn array_callback_argument_count(native: Native) -> usize {
     ELEMENT_INDEX_ARRAY + usize::from(step_rules::takes_accumulator(Kind::of(native)))
 }
 
-pub(super) use quench_runtime::vm::engine_types::LaneArrayStep;
+pub(crate) use quench_runtime::vm::engine_types::LaneArrayStep;
 
 
 
@@ -91,7 +91,7 @@ fn callback_target_in_lane(
 /// Whether a target of the running program activates in the lane from a path besides a
 /// plain call (`script_target_in_in_lane`): not a frame, an environment or a settling one.
 #[inline(always)]
-pub(super) fn admits_activation_in_lane(target: &ScriptCallTarget) -> bool {
+pub(crate) fn admits_activation_in_lane(target: &ScriptCallTarget) -> bool {
     !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles)
 }
 
@@ -102,7 +102,7 @@ pub(super) fn admits_activation_in_lane(target: &ScriptCallTarget) -> bool {
 /// register takes. The method's own value, `undefined`, is never read, and the length it read
 /// bounds its loop to that call. `None` leaves the call to `begin_array_iteration_in_lane`.
 #[inline(never)]
-pub(super) fn call_for_each_once_in_lane(
+pub(crate) fn call_for_each_once_in_lane(
     cx: *mut LaneContext,
     ip: Ip,
     receiver: Value,
@@ -131,7 +131,7 @@ pub(super) fn call_for_each_once_in_lane(
 /// leaves the call to the native: another receiver, a callback no lane call activates, or a
 /// result the species makes.
 #[inline(never)]
-pub(super) fn begin_array_iteration_in_lane(
+pub(crate) fn begin_array_iteration_in_lane(
     cx: *mut LaneContext,
     ip: Ip,
     native: Native,
@@ -193,7 +193,7 @@ fn array_iteration_setup_in_lane(
 /// The array `receiver` names: a direct array's record, found inline as
 /// `Vm::own_array_length` finds it, or a slot's.
 #[inline(always)]
-pub(super) fn array_object_in_lane(vm: &Vm, receiver: Value) -> Option<&quench_runtime::heap::ArrayObject> {
+pub(crate) fn array_object_in_lane(vm: &Vm, receiver: Value) -> Option<&quench_runtime::heap::ArrayObject> {
     match vm.heap.record_array(receiver) {
         Some(object) => Some(object),
         None => vm.heap.array(receiver),
@@ -268,7 +268,7 @@ fn run_array_iteration_from_frame_in_lane(
 /// completes, which writes the call's register, so the body continues after the call. `None`
 /// leaves the call to the native's call out: what the lane iteration declines, an empty array,
 /// a hole at the first element, or no native stack for a nested run.
-pub(super) fn body_array_iteration_in_lane(
+pub(crate) fn body_array_iteration_in_lane(
     cx: *mut LaneContext,
     ip: Ip,
     native: Native,
@@ -293,7 +293,7 @@ pub(super) fn body_array_iteration_in_lane(
 /// The return of an array callback method's callback `activation` with `mapped`, its
 /// caller restored (`restore_caller_in_lane`): the step of the innermost lane iteration, then
 /// the rest of its loop (`finish_array_step_in_lane`).
-pub(super) fn step_array_iteration_in_lane(cx: *mut LaneContext, frame: &ActivationView, mapped: Value) -> Resumed {
+pub(crate) fn step_array_iteration_in_lane(cx: *mut LaneContext, frame: &ActivationView, mapped: Value) -> Resumed {
     let applied = apply_array_step_in_lane(cx, mapped);
     finish_array_step_in_lane(cx, frame.call(), applied)
 }
@@ -327,7 +327,7 @@ fn lane_apply_step_value(vm: &mut Vm, step: &mut LaneArrayStep, mapped: Value) -
 /// The step runs inside the returning handler: a `forEach` applies nothing, and the next
 /// element is read from the receiver's dense storage by its index alone.
 #[inline(always)]
-pub(super) fn step_array_iteration_in_place_in_lane(cx: *mut LaneContext, mapped: Value) -> Option<Resumed> {
+pub(crate) fn step_array_iteration_in_place_in_lane(cx: *mut LaneContext, mapped: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
     // SAFETY: the entry stays in place while the step, which reads no lane stack, runs and
@@ -434,7 +434,7 @@ script_handler! {
     /// callback, a plain activation, returned. Its plain return popped its header, released its
     /// window and wrote its value to the trampoline's result register; the innermost step takes
     /// it (`array_step_returned_in_lane`).
-    pub(super) fn array_step_returned<>(cx, r, ip, i, view) {
+    pub(crate) fn array_step_returned<>(cx, r, ip, i, view) {
         resume!(cx, array_step_returned_in_lane(cx, r.get(i.a)))
     }
 }

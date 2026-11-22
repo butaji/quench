@@ -1,14 +1,16 @@
 //! The engine's definitions of the core's calls into it (`quench_runtime::vm::engine_calls2`).
 #![allow(clippy::too_many_arguments)]
 use crate::engine_prelude::*;
+use quench_runtime::vm::engine_types::{AheadImages, LaneView, StableFacts};
+use quench_runtime::bytecode::Function;
 
 #[unsafe(no_mangle)]
 #[inline]
-fn quench_engine2_aheadimages_compile(program: &ResidualProgram) -> Result<Self, String> { <AheadImages as AheadImagesLifted160>::compile(program) }
+fn quench_engine2_aheadimages_compile(program: &ResidualProgram) -> Result<AheadImages, String> { <AheadImages as AheadImagesLifted160>::compile(program) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_aheadimages_compile = quench_engine2_aheadimages_compile;
 #[unsafe(no_mangle)]
 #[inline]
-fn quench_engine2_laneview_invalidate_shape_bindings(this: &LaneView) -> () { <LaneView as LaneViewLifted646>::invalidate_shape_bindings(this) }
+fn quench_engine2_laneview_invalidate_shape_bindings(this: &LaneView) -> () { <LaneView as LaneViewLifted648>::invalidate_shape_bindings(this) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_laneview_invalidate_shape_bindings = quench_engine2_laneview_invalidate_shape_bindings;
 #[unsafe(no_mangle)]
 #[inline]
@@ -20,7 +22,7 @@ fn quench_engine2_fn_pays_native_entry(body: &quench_runtime::bytecode::Function
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_fn_pays_native_entry = quench_engine2_fn_pays_native_entry;
 #[unsafe(no_mangle)]
 #[inline]
-fn quench_engine2_fn_subscribe_stable(stable: &lane_region::StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>, heap: &mut quench_runtime::heap::Heap, method_atoms: &mut quench_runtime::code_dependencies::CodeReaders) -> bool { crate::compiled::lane_compile::dependencies::subscribe_stable(stable, code, heap, method_atoms) }
+fn quench_engine2_fn_subscribe_stable(stable: &StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>, heap: &mut quench_runtime::heap::Heap, method_atoms: &mut quench_runtime::code_dependencies::CodeReaders) -> bool { crate::compiled::lane_compile::dependencies::subscribe_stable(stable, code, heap, method_atoms) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_fn_subscribe_stable = quench_engine2_fn_subscribe_stable;
 #[unsafe(no_mangle)]
 #[inline]

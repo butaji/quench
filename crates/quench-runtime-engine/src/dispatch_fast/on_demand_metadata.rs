@@ -8,7 +8,7 @@ impl Vm {
     /// JavaScript tiers inline a site's callees (`site_targets_in_lane`), so interpreted
     /// execution keeps no history, as V8's jitless mode allocates no feedback for an
     /// optimizing compiler it never runs (mandreel: 12.5 MB of history at its peak).
-    pub(super) fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: crate::compiled::CallTarget) {
+    pub(crate) fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: crate::compiled::CallTarget) {
         if self.tier_may_run(quench_runtime::jit_mode::Tier::ANY) {
             self.lane_stack.note_site_callee(link, target);
         }
@@ -23,7 +23,7 @@ impl Vm {
 /// 14 MB; babylonjs's module scope: 124K records, each iteration). Where a return already
 /// `retired`, only a caller that loops takes its view here; any other frame returns at its
 /// call record on the general path (`frame_return`).
-pub(super) fn lane_completes_return(cx: *mut LaneContext, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
+pub(crate) fn lane_completes_return(cx: *mut LaneContext, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame
         && frame + 1 == vm.frames.len()
@@ -64,7 +64,7 @@ fn caller_loops(cx: *mut LaneContext, call: &PendingGeneralCall) -> bool {
 /// A site whose caller counted past the threshold without specializing again
 /// (`LaneContext::late_settled`) counts nothing more in this run: only a count reaching the
 /// threshold acts.
-pub(super) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCallTarget, argc: u16) {
+pub(crate) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCallTarget, argc: u16) {
     if unsafe { (*cx).late_settled } == ip { return; }
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.

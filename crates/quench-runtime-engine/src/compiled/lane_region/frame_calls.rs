@@ -16,13 +16,13 @@ use crate::compiled::regions;
 
 /// A fault-polling body records its poll instruction; any other leaves at the miss edge when
 /// the flag is set.
-pub(super) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
+pub(crate) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
     safepoint_parts(stage.builder, frame.polls, proof)
 }
 
 /// A Number return: the register in the int32 or binary64 view its facts favor, jumped to a
 /// block that `Lowering::finish_number_returns` completes with the joined format.
-pub(super) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
+pub(crate) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
     let super::Edges::ValueGuarded { miss } = frame.edges else { return None };
     let fact = frame.state.values[usize::from(register)].value;
     let value = if fact.ty.is_subtype(Type::INT32) || fact.representation == Representation::Int32 {
@@ -44,7 +44,7 @@ pub(super) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
 }
 
 /// The safepoint emission without a frame: the entry poll-latch fill has no register state.
-pub(in super::super) fn safepoint_parts(builder: &mut cranelift_frontend::FunctionBuilder<'_>,
+pub(crate) fn safepoint_parts(builder: &mut cranelift_frontend::FunctionBuilder<'_>,
     polls: &mut smallvec::SmallVec<[cranelift_codegen::ir::Inst; super::super::INLINE_EFFECT_EDGES]>,
     proof: EmitProof) -> Option<()> {
     let EmitProof::Safepoint { interrupt, miss, fault_poll } = proof else { return None };
@@ -62,7 +62,7 @@ pub(in super::super) fn safepoint_parts(builder: &mut cranelift_frontend::Functi
 }
 
 /// The element store's host helper: its nonzero answer means the store landed.
-pub(super) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
+pub(crate) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
     base: cranelift_codegen::ir::Value, key: cranelift_codegen::ir::Value,
     value: cranelift_codegen::ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::IndexSetHelper { miss } = proof else { return None };
@@ -72,7 +72,7 @@ pub(super) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
 
 /// The element store's host helper over the tagged `base`, `key` and `value`: its nonzero answer
 /// means the store landed, else the body leaves at `miss`.
-pub(in super::super) fn index_set(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
+pub(crate) fn index_set(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
     (base, key, value): (ir::Value, ir::Value, ir::Value), miss: ir::Block) {
     let payload = frame.payload;
     let address = frame.helpers.address(&mut stage.builder, LaneHelper::IndexSet);
@@ -84,7 +84,7 @@ pub(in super::super) fn index_set(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_
 /// A literal allocation's DELETED answer (a due collection) leaves at `miss`; otherwise the
 /// literal is the destination's tagged value.
 #[inline(always)]
-pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
+pub(crate) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
     value: ir::Value, miss: ir::Block) {
     quench_runtime::staged::protocol::guard_received(stage, value, miss);
     <EmitFrame<'_> as quench_runtime::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
@@ -112,7 +112,7 @@ fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window:
 /// An allocation row by the lane's own allocator of it (`LaneHelper::NewObject`, `NewArray`, `NewRegExp`, `NewConstArray`,
 /// `NewObjectPair`, `NewObjectLiteral`, `NewClosure`, `NewTemplate`, `NewConcat`): each leaves for a due collection first, and a
 /// DELETED answer leaves at the proof's miss edge.
-pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
+pub(crate) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
     match allocation.inline_empty() {
         Some(InlineEmpty::Object) => return allocate_template(frame, stage, destination, EMPTY_OBJECT, LaneHelper::NewObject, &[], proof),
@@ -247,7 +247,7 @@ fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destin
 }
 
 /// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.
-pub(in super::super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
+pub(crate) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
     atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::FieldStoreMiss { miss } = proof else { return None };
     let payload = frame.payload;
@@ -269,7 +269,7 @@ fn atom_site_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, si
 
 /// The VM's cached read of `atom` of `object` through `site` (`LaneHelper::FieldGet`): a
 /// DELETED answer leaves at `miss`.
-pub(in super::super) fn field_get_host(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
+pub(crate) fn field_get_host(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
     site: u16, miss: ir::Block) -> ir::Value {
     let packed = atom_site_word(frame, stage, atom, site);
     let get = frame.helpers.address(&mut stage.builder, LaneHelper::FieldGet);
@@ -280,7 +280,7 @@ pub(in super::super) fn field_get_host(frame: &mut EmitFrame<'_>, stage: &mut Em
 
 /// The VM's own, polymorphic and adding store entries (`LaneHelper::FieldAdd`): a false
 /// answer leaves at `miss`.
-pub(in super::super) fn field_add(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
+pub(crate) fn field_add(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
     site: u16, value: ir::Value, miss: ir::Block) {
     let write = atom_site_word(frame, stage, atom, site);
     let add = frame.helpers.address(&mut stage.builder, LaneHelper::FieldAdd);
@@ -383,7 +383,7 @@ impl quench_runtime::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
 impl EmitFrame<'_> {
     /// A literal's allocation by the lane's own `helper`, whose DELETED answer leaves at the proof's miss edge.
-    pub(super) fn allocate(&mut self, stage: &mut Emit<'_, '_>, helper: LaneHelper, destination: Register, arguments: &[ir::Value],
+    pub(crate) fn allocate(&mut self, stage: &mut Emit<'_, '_>, helper: LaneHelper, destination: Register, arguments: &[ir::Value],
         proof: EmitProof) -> Option<ir::Value> {
         let EmitProof::Allocation { miss } = proof else { return None };
         let payload = self.payload;

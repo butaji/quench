@@ -9,7 +9,7 @@ use quench_runtime::Value;
 ///
 /// # Safety
 /// `vm` is the running VM, live and unborrowed for the call.
-pub(super) unsafe extern "C" fn general_element_get(vm: u64, _residual: u64, base: u64, key: u64) -> u64 {
+pub(crate) unsafe extern "C" fn general_element_get(vm: u64, _residual: u64, base: u64, key: u64) -> u64 {
     // SAFETY: as the caller promises; the read allocates nothing.
     let vm = unsafe { &*(vm as *const Vm) };
     vm.absent_array_element(Value::from_bits(base), Value::from_bits(key)).unwrap_or(Value::DELETED).to_bits()

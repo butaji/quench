@@ -5,13 +5,13 @@
 //! primitive body exists once, over `Builds`; one family per file: scalar, memory, flow, vector.
 
 #[path = "emit_machine/flow.rs"]
-mod flow;
+pub(crate) mod flow;
 #[path = "emit_machine/memory.rs"]
-mod memory;
+pub(crate) mod memory;
 #[path = "emit_machine/scalar.rs"]
-mod scalar;
+pub(crate) mod scalar;
 #[path = "emit_machine/vector.rs"]
-mod vector;
+pub(crate) mod vector;
 
 use super::object_slots::Emit;
 use super::{Body, Emitter, RegionCore, VECTOR_IR};
@@ -21,7 +21,7 @@ use cranelift_frontend::FunctionBuilder;
 
 /// A backend that builds into one Cranelift function: the accessor the primitive bodies are
 /// written over.
-pub(in crate::compiled) trait Builds<'b> {
+pub(crate) trait Builds<'b> {
     fn function_builder(&mut self) -> &mut FunctionBuilder<'b>;
 }
 

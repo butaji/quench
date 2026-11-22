@@ -312,7 +312,7 @@ impl Emitter<'_, '_> {
 }
 
 /// The register kind a field's word takes; `None` for a vector, which no tier reads.
-pub(super) fn field_kind(field: GcField) -> Option<Kind> {
+pub(crate) fn field_kind(field: GcField) -> Option<Kind> {
     match field.value() {
         GcFieldValue::Narrow => Some(Kind::I32),
         GcFieldValue::Wide => Some(Kind::I64),
@@ -323,13 +323,13 @@ pub(super) fn field_kind(field: GcField) -> Option<Kind> {
 
 /// Whether a field access names a struct's field, whose index its tag holds, rather than an
 /// array element, whose index is a register.
-pub(super) fn structure_access(op: Op) -> bool {
+pub(crate) fn structure_access(op: Op) -> bool {
     matches!(GcStep::of(op), Some(GcStep::StructGet { .. } | GcStep::StructSet))
 }
 
 /// The registers of a field access, as the interpreter reads them: the reference, the array index
 /// (`None` for a struct) and the data register, which a write stores and a read writes.
-pub(super) fn field_registers(instruction: WideInstruction, write: bool, structure: bool) -> (u16, Option<u16>, u16) {
+pub(crate) fn field_registers(instruction: WideInstruction, write: bool, structure: bool) -> (u16, Option<u16>, u16) {
     match (structure, write) {
         (true, true) => (instruction.a(), None, instruction.b()),
         (true, false) => (instruction.b(), None, instruction.a()),
@@ -366,7 +366,7 @@ impl Analysis<'_> {
     /// `Reference` words, a reference test's and a length's operands as named, and a field write's
     /// value the kind of its storage. An allocating operation checks its own operands
     /// (`transfer_allocating`).
-    pub(super) fn transfer_gc(
+    pub(crate) fn transfer_gc(
         &self,
         function: &Function,
         instruction: WideInstruction,
@@ -409,7 +409,7 @@ impl Analysis<'_> {
 impl Emitter<'_, '_> {
     /// Lowers a GC step as its staged rule, over the frame's registers, or an allocating step as
     /// its callout (`gc_allocate`).
-    pub(super) fn gc(&mut self, pc: usize, instruction: WideInstruction, op: GcOp) {
+    pub(crate) fn gc(&mut self, pc: usize, instruction: WideInstruction, op: GcOp) {
         match op {
             GcOp::Field => self.gc_field(instruction),
             GcOp::ArrayLength => {

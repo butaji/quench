@@ -7,8 +7,8 @@
 //! block goes on its size class's free list for the next body of that size or smaller, and a
 //! chunk whose last body is freed returns its pages to the system.
 
-mod retire;
-mod views;
+pub(crate) mod retire;
+pub(crate) mod views;
 
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -383,7 +383,7 @@ impl CodeMemory {
 pub(crate) use retire::flush as flush_retired_writers;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[unsafe(no_mangle)]
 fn quench_engine_drop_code_memory(memory: &mut CodeMemory) {

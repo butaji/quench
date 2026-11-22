@@ -8,7 +8,7 @@ use super::*;
 /// copies before anything runs, as `function_call_activation_in_lane` activates a call's. `None`
 /// for any other call, which the native makes.
 #[inline(never)]
-pub(super) fn apply_activation_in_lane(
+pub(crate) fn apply_activation_in_lane(
     cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
@@ -48,7 +48,7 @@ pub(super) fn apply_activation_in_lane(
 /// argument array the call's spread evaluation built; `None` for any other list.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(super) fn list_activation_in_lane(
+pub(crate) fn list_activation_in_lane(
     cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
@@ -114,7 +114,7 @@ pub(super) fn list_activation_in_lane(
 /// so one whose result is unused (`ImmediateLayout::call_result_used_in_lane`) is made too: the
 /// value goes to its dead register. `None` for any other callee.
 #[inline(never)]
-pub(super) fn spread_native_call_in_lane(
+pub(crate) fn spread_native_call_in_lane(
     cx: *mut LaneContext,
     ip: Ip,
     i: &LaneInstruction,
@@ -146,7 +146,7 @@ fn spread_native_in_lane(vm: &Vm, callee: Value) -> Option<Native> {
 /// `push`: its live values, which iterating it yields and no step's code can change, copied
 /// out first. `None` for any other spread or callee, which the general path makes.
 #[inline(never)]
-pub(super) fn spread_set_native_call_in_lane(
+pub(crate) fn spread_set_native_call_in_lane(
     cx: *mut LaneContext,
     ip: Ip,
     i: &LaneInstruction,

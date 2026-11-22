@@ -3,21 +3,21 @@
 use super::super::*;
 
 /// `GetIndex`'s miss (`get_index_miss`).
-pub(in crate::dispatch_fast) const GET_INDEX: u8 = 0;
+pub(crate) const GET_INDEX: u8 = 0;
 /// `SetIndex`'s miss (`set_index_miss`).
-pub(in crate::dispatch_fast) const SET_INDEX: u8 = 1;
+pub(crate) const SET_INDEX: u8 = 1;
 /// `Delete`'s miss (`delete_miss`).
-pub(in crate::dispatch_fast) const DELETE: u8 = 2;
+pub(crate) const DELETE: u8 = 2;
 /// `GetField` of a string primitive's miss (`get_field_string_miss`).
-pub(in crate::dispatch_fast) const GET_FIELD_STRING: u8 = 3;
+pub(crate) const GET_FIELD_STRING: u8 = 3;
 /// `GetField` of a nested base's miss (`get_field_nested_miss`).
-pub(in crate::dispatch_fast) const GET_FIELD_NESTED: u8 = 4;
+pub(crate) const GET_FIELD_NESTED: u8 = 4;
 /// `GetField` at a getter site's miss (`get_field_getter_miss`).
-pub(in crate::dispatch_fast) const GET_FIELD_GETTER: u8 = 5;
+pub(crate) const GET_FIELD_GETTER: u8 = 5;
 
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row::<OP, ACC, { protocol_family::ELEMENT | parameters }>`).
-pub(in crate::dispatch_fast) const fn element_miss_of(parameters: u8) -> Handler {
+pub(crate) const fn element_miss_of(parameters: u8) -> Handler {
     match parameters {
         GET_INDEX => super::super::get_index_miss as Handler,
         SET_INDEX => super::super::set_index_miss as Handler,

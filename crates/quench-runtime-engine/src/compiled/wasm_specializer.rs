@@ -9,7 +9,7 @@ use super::*;
 use quench_runtime::vm::specializer::Specializer;
 
 /// The tier a Wasm function is specialized for, with the inputs that tier reads.
-pub(super) enum WasmTierChoice<'s, 'a> {
+pub(crate) enum WasmTierChoice<'s, 'a> {
     /// The u-jit: a Cranelift body and entry, compiled later (`compile_built_functions`).
     Optimizing {
         analysis: &'s Analysis<'a>,
@@ -31,20 +31,20 @@ pub(super) enum WasmTierChoice<'s, 'a> {
 }
 
 /// One Wasm function of one program, to be specialized for `tier`.
-pub(super) struct WasmSpecializer<'s, 'a> {
+pub(crate) struct WasmSpecializer<'s, 'a> {
     /// The function's index in the program.
-    pub(super) index: usize,
+    pub(crate) index: usize,
     /// Every function's interface plan (`Plan::interface`), which callers read.
-    pub(super) plans: &'s [Option<Plan>],
+    pub(crate) plans: &'s [Option<Plan>],
     /// The function's full plan, which its compilation reads.
-    pub(super) full_plan: &'s Plan,
+    pub(crate) full_plan: &'s Plan,
     /// The function's indirect reference sites: (pc, cache site id).
-    pub(super) reference_site_ids: &'a [(usize, usize)],
-    pub(super) tier: WasmTierChoice<'s, 'a>,
+    pub(crate) reference_site_ids: &'a [(usize, usize)],
+    pub(crate) tier: WasmTierChoice<'s, 'a>,
 }
 
 /// What a Wasm specialization publishes.
-pub(super) enum WasmResidual {
+pub(crate) enum WasmResidual {
     /// The Cranelift body and entry of the function, not yet compiled to code.
     Compiled(ir::Function, ir::Function),
     /// The function's stitched rows: its whole entry, in the `WasmEntry` ABI.

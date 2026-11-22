@@ -32,11 +32,11 @@ pub(crate) fn folded(times: &[OperandTime], division: Division) -> impl Iterator
 pub(crate) const FIELD_LAYOUT: BindingTime = BindingTime::Stable;
 
 /// The time of a prototype's field value a read inherits: a code dependency holds it.
-pub(crate) const INHERITED_FIELD: BindingTime = BindingTime::Stable;
+pub const INHERITED_FIELD: BindingTime = BindingTime::Stable;
 
 /// The time of a whole-program field value: the closed program fixes it at specialization,
 /// and the read checks it once.
-pub(crate) const FROZEN_FIELD: BindingTime = BindingTime::Static;
+pub const FROZEN_FIELD: BindingTime = BindingTime::Static;
 
 impl GlobalBinding {
     /// What this binding leaves known: an immutable global's value and a closed program's

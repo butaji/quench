@@ -4,26 +4,26 @@ use super::declared::EntryGuard;
 use super::super::LaneHelper;
 use quench_bjit::{call, padded_holes, patch_successor, HOLES};
 
-mod entry;
-mod place;
-pub(super) use entry::{EntryRow, entry_rows, INT32_BIT};
+pub(crate) mod entry;
+pub(crate) mod place;
+pub(crate) use entry::{EntryRow, entry_rows, INT32_BIT};
 use entry::guard_mask;
-mod exits;
-mod proven;
+pub(crate) mod exits;
+pub(crate) mod proven;
 use proven::Proven;
-pub(super) use exits::Target;
+pub(crate) use exits::Target;
 use exits::{append_routines, exit_addresses, exit_targets, Leave, Leaves};
-pub(super) use place::place_rows;
+pub(crate) use place::place_rows;
 pub(crate) use place::SymbolSite;
 
 /// `jmp rel32`: a resume stub's last row, which jumps to its PC's first row.
 #[cfg(target_arch = "x86_64")]
-pub(super) use quench_bjit::stub::JMP_REL32;
+pub(crate) use quench_bjit::stub::JMP_REL32;
 #[cfg(target_arch = "x86_64")]
-pub(super) const JUMP_LEN: usize = quench_bjit::JMP_REL32_LEN;
+pub(crate) const JUMP_LEN: usize = quench_bjit::JMP_REL32_LEN;
 /// `b`: a resume stub's last row, which branches to its PC's first row.
 #[cfg(target_arch = "aarch64")]
-pub(super) const JUMP_LEN: usize = quench_bjit::patch::INSN_BYTES;
+pub(crate) const JUMP_LEN: usize = quench_bjit::patch::INSN_BYTES;
 
 /// The bytes of a resume stub's jump before `patch_jump` sets its target: `jmp rel32` with a zero
 /// displacement (x86-64).
@@ -63,7 +63,7 @@ fn patch_jump(code: &mut [u8], at: usize, delta: i64) -> Result<(), String> {
 /// status; a function body returns its status and word in two registers, as a lane body does
 /// (`lane_body_abi`), a leave with status `NATIVE_JS_STOPPED`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Ending {
+pub(crate) enum Ending {
     Region,
     Body,
 }
@@ -72,13 +72,13 @@ impl Ending {
     /// The row of a backward jump: a loop region counts the edge in its entry record
     /// (`JumpPoll`); a function body has no such record, so it only polls (`JumpWatch`).
     /// The one place a poll row is chosen, so no body can reach the counting one.
-    pub(super) fn poll(self) -> Kind {
+    pub(crate) fn poll(self) -> Kind {
         match self { Self::Region => Kind::JumpPoll, Self::Body => Kind::JumpWatch }
     }
 
     /// The helper a call row runs: a body's call is made on the activation its native frame runs
     /// (`LaneHelper::Call`), a loop region's on the lane's own (`LaneHelper::RegionCall`).
-    pub(super) fn call_helper(self) -> LaneHelper {
+    pub(crate) fn call_helper(self) -> LaneHelper {
         match self { Self::Region => LaneHelper::RegionCall, Self::Body => LaneHelper::Call }
     }
 
@@ -95,7 +95,7 @@ impl Ending {
 }
 
 /// A routine of the stencil build (`quench-bjit/stencils/entry.rs`) by name, memoized as the rows are.
-pub(super) fn routine(name: &'static str) -> Result<&'static Stencil, String> {
+pub(crate) fn routine(name: &'static str) -> Result<&'static Stencil, String> {
     static ROUTINES: quench_bjit::rustc::Memo<&'static str> = std::sync::OnceLock::new();
     quench_bjit::rustc::memoized(&ROUTINES, name, || quench_bjit::rustc::stencil(name).ok_or_else(|| format!("no stencil routine {name}")))
 }
@@ -103,7 +103,7 @@ pub(super) fn routine(name: &'static str) -> Result<&'static Stencil, String> {
 /// The entry thunk, its calls to the first row (at `rows_at`) patched. A body's is followed by its row entry
 /// (`entry_rows`, at `rows_entry_offset`), which calls the same first row, and its proven-arguments entry (a second
 /// `entry_rows`, at `proven_entry_offset`), which calls the row at `proven_at`: the first row past the Number guards.
-pub(super) fn thunk(ending: Ending, rows_at: usize, proven_at: usize) -> Result<Vec<u8>, String> {
+pub(crate) fn thunk(ending: Ending, rows_at: usize, proven_at: usize) -> Result<Vec<u8>, String> {
     let mut code = Vec::new();
     let names: Vec<(&'static str, usize)> = match ending {
         Ending::Region => vec![("entry_thunk", rows_at)],
@@ -123,7 +123,7 @@ pub(super) fn thunk(ending: Ending, rows_at: usize, proven_at: usize) -> Result<
 
 /// The length of the entry thunk `thunk` builds for `ending`, without building it: the routines it copies
 /// (in the same order), whose lengths its patches never change. `place_rows` checks it against the built thunk.
-pub(super) fn thunk_len(ending: Ending) -> Result<usize, String> {
+pub(crate) fn thunk_len(ending: Ending) -> Result<usize, String> {
     let names: &[&str] = match ending {
         Ending::Region => &["entry_thunk"],
         Ending::Body => &["entry_body", "entry_rows", "entry_rows"],
@@ -132,17 +132,17 @@ pub(super) fn thunk_len(ending: Ending) -> Result<usize, String> {
 }
 
 /// Where a body's row entry (`entry_rows`) lies in its code: past `entry_body`, which starts it.
-pub(in crate::compiled) fn rows_entry_offset() -> Option<usize> {
+pub(crate) fn rows_entry_offset() -> Option<usize> {
     routine("entry_body").ok().map(|stencil| stencil.code.len())
 }
 
 /// Where a body's proven-arguments row entry lies in its code: past `entry_body` and the row entry (`entry_rows`).
-pub(in crate::compiled) fn proven_entry_offset() -> Option<usize> {
+pub(crate) fn proven_entry_offset() -> Option<usize> {
     Some(rows_entry_offset()? + routine("entry_rows").ok()?.code.len())
 }
 
 /// The row entries of a body whose code lies at `base` (`EntryCell::rows`, `proven`), with its guard and `this` facts.
-pub(in crate::compiled) fn row_entries(base: usize, numbers: u64, uses_this: bool) -> Option<crate::compiled::entry_cell::RowEntries> {
+pub(crate) fn row_entries(base: usize, numbers: u64, uses_this: bool) -> Option<crate::compiled::entry_cell::RowEntries> {
     Some(crate::compiled::entry_cell::RowEntries { rows: base + rows_entry_offset()?, proven: base + proven_entry_offset()?, numbers, uses_this })
 }
 
@@ -150,7 +150,7 @@ pub(in crate::compiled) fn row_entries(base: usize, numbers: u64, uses_this: boo
 /// word, a pinned int32 tagged), then copies each of `copies` (destination register, source
 /// register) between their frame slots, and ends in the leave routine `tail`, given `leave` as its
 /// holes.
-pub(super) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Register)], tail: &'static str, leave: [u64; HOLES]) -> Result<Vec<u8>, String> {
+pub(crate) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Register)], tail: &'static str, leave: [u64; HOLES]) -> Result<Vec<u8>, String> {
     let mut chain: Vec<(&'static Stencil, [u64; HOLES])> = Vec::new();
     for (place, register) in spills {
         let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: *place, b: Place::Mem, speculate: false };
@@ -171,68 +171,68 @@ pub(super) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Reg
 
 /// What the linker needs of the region: its span, the registers live at a row, and the entry
 /// loads.
-pub(super) struct Layout<'a> {
+pub(crate) struct Layout<'a> {
     /// The index of the function the code is of, in its program.
-    pub(super) id: u32,
-    pub(super) span: Span<'a>,
-    pub(super) homes: Homes,
-    pub(super) webs: Webs,
-    pub(super) ending: Ending,
+    pub(crate) id: u32,
+    pub(crate) span: Span<'a>,
+    pub(crate) homes: Homes,
+    pub(crate) webs: Webs,
+    pub(crate) ending: Ending,
     /// Per caller PC, what the call there recorded of each callee it reached, latest first: the code
     /// calls each by its entry.
-    pub(super) callees: &'a [Vec<DirectFacts>],
+    pub(crate) callees: &'a [Vec<DirectFacts>],
     /// Per row of a stitched program, where the interpreter resumes if the row leaves.
-    pub(super) origins: &'a [Origin],
+    pub(crate) origins: &'a [Origin],
     /// Per inlined frame, the (parameter register, argument register) copies a leave inside it runs
     /// first: a parameter the callee never writes lives in the caller's argument register.
-    pub(super) copies: &'a [Vec<(Register, Register)>],
+    pub(crate) copies: &'a [Vec<(Register, Register)>],
     /// The first row of each caller PC of the span (`Stitched::entries`), by PC.
-    pub(super) entries: &'a [(u32, u32)],
+    pub(crate) entries: &'a [(u32, u32)],
     /// The address of the invalidation word the code reads before each row that holds a Stable fact a
     /// call may have changed (`Decoded::holds_stable`): a body that folds one and makes a call.
-    pub(super) invalidation: Option<usize>,
+    pub(crate) invalidation: Option<usize>,
     /// The realm the entry proves active, where the code inlines callees.
-    pub(super) realm: Option<RealmProof>,
+    pub(crate) realm: Option<RealmProof>,
     /// Per row, whether a proof the body established reaches it (`Decoded::relies`): no resume stub enters there.
     /// Proofs the entry seed alone reaches get a stub, whose entry rows re-run the declared guards (`guards`).
-    pub(super) relies: &'a [bool],
+    pub(crate) relies: &'a [bool],
     /// Per row, whether its checked operand is a Number on every path into it, so its number guard is redundant
     /// (`numbers::proven_operands`).
-    pub(super) number_held: &'a [bool],
+    pub(crate) number_held: &'a [bool],
     /// Per caller PC, the mask of the call's arguments proven Numbers (bit `k`: argument `k`, `call_args::proven_arguments`);
     /// empty where none is proven.
-    pub(super) proven_args: &'a [u64],
+    pub(crate) proven_args: &'a [u64],
     /// The Number guards a Mem slot's entry keeps, by row (`numbers::entry_reads`).
-    pub(super) entry_reads: &'a super::numbers::EntryReads,
+    pub(crate) entry_reads: &'a super::numbers::EntryReads,
     /// The entry tests of the declared parameters the function never writes (`declared::entry_guards`).
-    pub(super) guards: Vec<EntryGuard>,
+    pub(crate) guards: Vec<EntryGuard>,
     /// The declared Number parameters the function never writes, which the entry's Number guards prove
     /// (`declared::entry_numbers`).
-    pub(super) numbers: Vec<Register>,
+    pub(crate) numbers: Vec<Register>,
     /// The class-typed parameters the function never writes, with the prototype each entry checks (`declared::class_prototypes`).
-    pub(super) prototypes: Vec<super::function::ClassProto>,
+    pub(crate) prototypes: Vec<super::function::ClassProto>,
     /// The loop-invariant receivers whose exact shape the entry checks, and the proofs seed (`Known::shapes`, `Heap::Shape`).
-    pub(super) shapes: Vec<super::function::ShapeProto>,
+    pub(crate) shapes: Vec<super::function::ShapeProto>,
     /// The VM's reads of a cache site (`Known::reads`), which a method call's chain reads (`plan::chain_reads`).
-    pub(super) reads: Option<&'a dyn Fn(u16) -> Vec<crate::compiled::NativeFieldLoad>>,
+    pub(crate) reads: Option<&'a dyn Fn(u16) -> Vec<crate::compiled::NativeFieldLoad>>,
     /// The holders the planned chains read through, which the body subscribes to with its own (`function::assemble`).
-    pub(super) holders: &'a std::cell::RefCell<Vec<u32>>,
+    pub(crate) holders: &'a std::cell::RefCell<Vec<u32>>,
     /// Whether a store is admitted on the run's stores word the entry checks (`Heap::Stores`, `proofs::prove`).
-    pub(super) stores: bool,
+    pub(crate) stores: bool,
     /// The captured declarations the body calls by identity, each with the function its entry checks (`Callees::captured_identities`).
-    pub(super) identities: Vec<(u16, u64)>,
+    pub(crate) identities: Vec<(u16, u64)>,
     /// Per caller PC, the builtin its callee is, where the b-jit runs it on a row (`Callees::builtins`).
-    pub(super) builtins: &'a [Option<super::call_plan::builtin::BuiltinCall>],
+    pub(crate) builtins: &'a [Option<super::call_plan::builtin::BuiltinCall>],
 }
 
 impl Layout<'_> {
     /// What the call at caller PC `pc` recorded of each callee it reached, latest first.
-    pub(super) fn callees(&self, pc: u32) -> &[DirectFacts] {
+    pub(crate) fn callees(&self, pc: u32) -> &[DirectFacts] {
         self.callees.get(pc as usize).map_or(&[], Vec::as_slice)
     }
 
     /// The builtin the call at caller PC `pc` runs on its row, if its callee is one.
-    pub(super) fn builtin(&self, pc: u32) -> Option<super::call_plan::builtin::BuiltinCall> {
+    pub(crate) fn builtin(&self, pc: u32) -> Option<super::call_plan::builtin::BuiltinCall> {
         self.builtins.get(pc as usize).copied().flatten()
     }
 
@@ -241,7 +241,7 @@ impl Layout<'_> {
     }
 
     /// The word a leave at `row` returns: the caller's PC, or the callee's inside its inlined frame.
-    pub(super) fn exit_word(&self, row: u32) -> u64 {
+    pub(crate) fn exit_word(&self, row: u32) -> u64 {
         match self.origin(row) {
             Some(Origin::Caller(pc)) => u64::from(pc),
             Some(Origin::Inlined { frame, pc }) => super::super::LaneExit::Inlined { frame, pc }.word(),
@@ -251,7 +251,7 @@ impl Layout<'_> {
 
     /// The caller's record the instruction of `row` is: where a helper row names it and a
     /// completion records it.
-    pub(super) fn record(&self, row: u32) -> u32 {
+    pub(crate) fn record(&self, row: u32) -> u32 {
         match self.origin(row) {
             Some(Origin::Caller(pc)) => pc,
             _ => row,
@@ -259,7 +259,7 @@ impl Layout<'_> {
     }
 
     /// Whether `row` is inside an inlined callee.
-    pub(super) fn inlined(&self, row: u32) -> bool {
+    pub(crate) fn inlined(&self, row: u32) -> bool {
         matches!(self.origin(row), Some(Origin::Inlined { .. }))
     }
 
@@ -273,7 +273,7 @@ impl Layout<'_> {
 
     /// The pinned ints and doubles live at `pc` (the ones a stub there writes back), each with the register it writes
     /// back to; one liveness query serves both.
-    pub(super) fn live_pinned(&self, pc: u32) -> (Vec<Pin>, Vec<Pin>) {
+    pub(crate) fn live_pinned(&self, pc: u32) -> (Vec<Pin>, Vec<Pin>) {
         let live = self.webs.live_at(&self.span, pc);
         (self.live_homes(&self.homes.pins, &live), self.live_homes(&self.homes.floats, &live))
     }
@@ -284,19 +284,19 @@ impl Layout<'_> {
     }
 
     /// The registers a leave at `pc` writes back: the live pinned doubles, then the ints.
-    pub(super) fn spills(&self, pc: u32) -> Vec<(Place, Register)> {
+    pub(crate) fn spills(&self, pc: u32) -> Vec<(Place, Register)> {
         let (ints, floats) = self.live_pinned(pc);
         spill_list(&ints, &floats)
     }
 
     /// The routine a row's exit stub jumps to: it writes the registers `spills` names back and returns the PC the stub pushed.
-    pub(super) fn routine(&self, spills: &[(Place, Register)]) -> Result<Vec<u8>, String> {
+    pub(crate) fn routine(&self, spills: &[(Place, Register)]) -> Result<Vec<u8>, String> {
         leave_chain(spills, &[], self.ending.tails().1, self.ending.holes(0))
     }
 }
 
 /// The registers a leave writes back, given the live pinned ints and doubles (`Layout::live_pinned`): the doubles, then the ints.
-pub(super) fn spill_list(ints: &[Pin], floats: &[Pin]) -> Vec<(Place, Register)> {
+pub(crate) fn spill_list(ints: &[Pin], floats: &[Pin]) -> Vec<(Place, Register)> {
     let doubles = floats.iter().map(|&(pin, register)| (Place::PinF(pin as u8), register));
     doubles.chain(ints.iter().map(|&(pin, register)| (Place::Pin(pin as u8), register))).collect()
 }
@@ -345,13 +345,13 @@ fn branch_target(layout: &Layout, leaves: &mut Leaves, starts: &[usize], (row, r
 
 /// A linked body: its code, the table of its resume stubs, the code offset of each PC's first row
 /// (for the PCs that have one, ascending), and the symbols its code names.
-pub(super) struct Linked {
-    pub(super) code: Vec<u8>,
-    pub(super) resumes: ResumeTable,
-    pub(super) entries: Vec<(u32, usize)>,
-    pub(super) symbols: Vec<SymbolSite>,
+pub(crate) struct Linked {
+    pub(crate) code: Vec<u8>,
+    pub(crate) resumes: ResumeTable,
+    pub(crate) entries: Vec<(u32, usize)>,
+    pub(crate) symbols: Vec<SymbolSite>,
     /// The parameter registers whose Number guards the proven-arguments entry skips (`u64::MAX`: no such entry).
-    pub(super) number_guards: u64,
+    pub(crate) number_guards: u64,
 }
 
 /// Lays the entry rows, rows, leave stubs and, for a loop region, resume stubs out as one code buffer
@@ -359,7 +359,7 @@ pub(super) struct Linked {
 /// body, which fall through to their successors; everything a guard, a miss or a branch out of the
 /// region reaches (the leave rows, the exit routines and each exiting row's stub) is placed after it
 /// (`place_rows`).
-pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Linked, String> {
+pub(crate) fn link(layout: &Layout, planned: &[Planned]) -> Result<Linked, String> {
     let starts = row_starts(planned);
     let parts = body_parts(planned, &starts);
     let body: Vec<&Planned> = parts.iter().map(|(part, _)| *part).collect();
@@ -407,4 +407,4 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Linked, Strin
 
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

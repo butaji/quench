@@ -31,7 +31,7 @@ impl Emitter<'_, '_> {
     /// native roots, and returns the depth before them for `unroot`. Where the roots have no room
     /// for them, the call traps `CallStackExhausted`, as the native stack's budget would. An
     /// instruction that holds no reference emits nothing and returns `None`.
-    pub(super) fn root(&mut self) -> Option<ir::Value> {
+    pub(crate) fn root(&mut self) -> Option<ir::Value> {
         let registers = self.roots;
         if registers.is_empty() {
             return None;
@@ -43,7 +43,7 @@ impl Emitter<'_, '_> {
 
     /// Releases the roots `root` held: the depth it returned is restored. Emitted before the
     /// call's status propagates, so an error leaves with the depth it found.
-    pub(super) fn unroot(&mut self, depth: Option<ir::Value>) {
+    pub(crate) fn unroot(&mut self, depth: Option<ir::Value>) {
         let Some(depth) = depth else {
             return;
         };

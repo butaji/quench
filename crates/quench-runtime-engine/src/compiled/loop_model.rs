@@ -94,7 +94,7 @@ fn base_saved_per_iteration(priors: &Priors, span: u64) -> u64 {
 /// `taken` iterations: each region's iterations to come (`taken / remaining_divisor`) at its own
 /// saving, the u-jit region's less its compile and entry (`outlay_ns`), the b-jit region's less
 /// its entry alone, as its stencils stitch in microseconds.
-pub(super) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, taken: u64, compile_ns_per_ir: u64, wall_permille: u64) -> bool {
+pub(crate) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, taken: u64, compile_ns_per_ir: u64, wall_permille: u64) -> bool {
     let future = future_count(priors, taken);
     let ultra = net_gain_ns(future, saved_per_iteration(priors, span), outlay_ns(priors, loops, span, compile_ns_per_ir, wall_permille));
     let base = net_gain_ns(future, base_saved_per_iteration(priors, span), priors.region_entry_ns);

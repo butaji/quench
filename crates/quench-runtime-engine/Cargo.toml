@@ -21,6 +21,13 @@ profile-aggregate = ["quench-runtime/profile-aggregate"]
 profile-trace = ["quench-runtime/profile-trace"]
 profile-memory = ["quench-runtime/profile-memory"]
 profile-gc-time = ["quench-runtime/profile-gc-time"]
+aot = ["quench-runtime/aot"]
+profile-allocator = ["quench-runtime/profile-allocator"]
+reference = ["quench-runtime/reference"]
+bench-primitives = ["quench-runtime/bench-primitives"]
+bench-alloc-routes = ["bench-primitives", "quench-runtime/bench-alloc-routes"]
+verify-replay = ["quench-runtime/verify-replay"]
+tier-stress = ["quench-runtime/tier-stress"]
 
 [dependencies]
 quench-runtime = { path = "../quench-runtime", default-features = false }
@@ -36,6 +43,9 @@ wasmparser = "0.247"
 cranelift-codegen = { version = "=0.137.1", default-features = false, features = ["std", "host-arch", "x86", "arm64"] }
 cranelift-frontend = { version = "=0.137.1", default-features = false, features = ["std"] }
 cranelift-native = { version = "=0.137.1", default-features = false }
+cranelift-object = { version = "=0.137.1", default-features = false }
+cranelift-module = { version = "=0.137.1", default-features = false, features = ["std"] }
+quench-regexp = { path = "../quench-regexp" }
 target-lexicon = "0.13.5"
 libc = "0.2"
 

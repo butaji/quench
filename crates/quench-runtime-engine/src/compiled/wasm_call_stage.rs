@@ -27,14 +27,14 @@ use cranelift_codegen::ir;
 
 /// Whether `instruction` is a Wasm call whose destination is flagged as a return: a tail call,
 /// after which the function returns (nothing follows it on its path).
-pub(super) fn is_tail_call(instruction: WideInstruction) -> bool {
+pub(crate) fn is_tail_call(instruction: WideInstruction) -> bool {
     instruction.result_flags() & quench_runtime::bytecode::RETURN_REGISTER != 0
         && matches!(Step::of(instruction.op(), instruction.imm()), Some(Step::Call(_)))
 }
 
 impl Emitter<'_, '_> {
     /// Lowers a call step.
-    pub(super) fn call(&mut self, pc: usize, instruction: WideInstruction, call: Call) {
+    pub(crate) fn call(&mut self, pc: usize, instruction: WideInstruction, call: Call) {
         match call {
             Call::Known => self.call_known(instruction),
             Call::IndirectTarget => self.indirect_target(pc, instruction),
@@ -53,7 +53,7 @@ impl Emitter<'_, '_> {
 
     /// Ends a tail call that wrote its result to its destination: the function returns it.
     /// A tail call that was a true tail call already left (`tail_known`, `call_reference`).
-    pub(super) fn return_if_tail(&mut self, instruction: WideInstruction) {
+    pub(crate) fn return_if_tail(&mut self, instruction: WideInstruction) {
         if is_tail_call(instruction) {
             self.return_register(instruction.result_register());
         }
@@ -143,7 +143,7 @@ impl Emitter<'_, '_> {
 impl Analysis<'_> {
     /// Checks a call step has a compiled denotation in `state` and applies its register
     /// writes; `callable` holds the functions assumed to compile.
-    pub(super) fn transfer_call(
+    pub(crate) fn transfer_call(
         &self,
         function: &Function,
         instruction: WideInstruction,

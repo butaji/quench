@@ -12,24 +12,24 @@ use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRela
 
 /// The specializer's stage (`quench_runtime::staged`): each operation emits its residual as Cranelift
 /// IR into `builder`, where a guard's failure jumps to its miss block.
-pub(in crate::compiled) struct Emit<'a, 'b> {
-    pub(in crate::compiled) builder: &'a mut FunctionBuilder<'b>,
+pub(crate) struct Emit<'a, 'b> {
+    pub(crate) builder: &'a mut FunctionBuilder<'b>,
     /// The property arena's value base (`Table::PropertyValues`), where the operation
     /// addresses a run; a read through a proved layout already holds its address.
-    pub(in crate::compiled) property_values: Option<ir::Value>,
+    pub(crate) property_values: Option<ir::Value>,
     /// The dispatch payload that holds the slot-observation flag and the object marks the store
     /// barrier's test reads, where the operation stores (`Stage::store_gate`).
-    pub(in crate::compiled) gate: Option<ir::Value>,
+    pub(crate) gate: Option<ir::Value>,
     /// The dispatch payload, where the operation may address the arena with no base given
     /// (`property_values` is `None`): `Table::PropertyValues` then reads the payload's property
     /// buffer where it is used, after any call the operation made before it.
-    pub(in crate::compiled) payload: Option<ir::Value>,
+    pub(crate) payload: Option<ir::Value>,
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
 /// patch hole, which is an operand until the patcher fills it).
 #[derive(Clone, Copy)]
-pub(in crate::compiled) enum EmitImm {
+pub(crate) enum EmitImm {
     Const(u64),
 }
 
@@ -39,7 +39,7 @@ impl From<u32> for EmitImm { fn from(bits: u32) -> Self { Self::Const(u64::from(
 impl Emit<'_, '_> {
     /// Whether the dispatch `payload`'s gate word has its counts bit clear (`STORE_WATCH_COUNTS`):
     /// old records keep no reference counts, so an immediate store needs no barrier log.
-    pub(in crate::compiled) fn counts_clear(&mut self, payload: ir::Value) -> ir::Value {
+    pub(crate) fn counts_clear(&mut self, payload: ir::Value) -> ir::Value {
         let watch = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.store_watch));
         let counts = self.and_imm(watch, quench_runtime::staged::layout_offsets::STORE_WATCH_COUNTS);
         self.raw_compare_imm(Relation::Equal, counts, 0)
@@ -338,7 +338,7 @@ impl FlowStage for Emit<'_, '_> {
 
 impl Emit<'_, '_> {
     /// `choose` whose `then` arm is out of line: the path that rarely runs (a call to the VM).
-    pub(in crate::compiled) fn choose_cold(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
+    pub(crate) fn choose_cold(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
         self.choose_arms(cond, then, otherwise, true)
     }
@@ -486,4 +486,4 @@ impl NumericStage for Emit<'_, '_> {
 }
 
 #[cfg(all(test, feature = "jit"))]
-mod tests;
+pub(crate) mod tests;

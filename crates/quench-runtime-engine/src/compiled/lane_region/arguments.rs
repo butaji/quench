@@ -7,20 +7,20 @@ impl Lowering<'_, '_> {
     /// Whether the read at `pc` is of the entry function's own binding in a body that reports
     /// its status and pc: an inlined callee's reads its own, which no window of this
     /// activation holds.
-    pub(super) fn own_arguments_read(&self, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn own_arguments_read(&self, pc: usize, instruction: WideInstruction) -> bool {
         self.completion.status_and_pc() && self.caller_record(pc) && instruction.local_slot() <= usize::from(u16::MAX)
     }
 
     /// `ArgumentsLength` of the entry function's own binding: the count its keeping
     /// activation kept, else the count an unmaterialized one answers
     /// (`lane_arguments_length`).
-    pub(super) fn arguments_length(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn arguments_length(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> Option<bool> {
         self.arguments_read(state, pc, instruction, LaneHelper::ArgumentsLength, &[])
     }
 
     /// `ArgumentGet` of that binding at an integer index a keeping activation kept or an
     /// unmaterialized binding holds; any other key leaves at the record.
-    pub(super) fn arguments_get(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn arguments_get(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> Option<bool> {
         let index = self.tagged(state, instruction.register_b());
         self.arguments_read(state, pc, instruction, LaneHelper::ArgumentGet, &[index])
     }

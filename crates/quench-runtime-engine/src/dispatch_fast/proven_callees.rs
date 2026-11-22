@@ -27,7 +27,7 @@ impl Vm {
 /// the script function the helper resolved there: the record's guard missed, so where the image
 /// proves the site calls `target`'s function, its rows call this closure by its entry from now on
 /// (`Vm::rebind_ahead_call`).
-pub(super) fn rebind_body_call(cx: *mut LaneContext, vm: &mut Vm, argc: u16, target: *const ScriptCallTarget) {
+pub(crate) fn rebind_body_call(cx: *mut LaneContext, vm: &mut Vm, argc: u16, target: *const ScriptCallTarget) {
     // SAFETY: `cx` is the running lane's context; its decoded site names the call being made.
     let Some((code, function, pc, _)) = (unsafe { (*cx).body_site }) else { return };
     let Ok(pc) = u32::try_from(pc) else { return };

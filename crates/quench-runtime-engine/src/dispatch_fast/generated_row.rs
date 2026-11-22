@@ -6,7 +6,7 @@ lane_handler! {
     /// (`Operation::decode_flow`), the row steps on `Concrete` over the lane's frame, and the
     /// step picks the continuation. `OP` and `ACC` are static, so rustc folds the decode and the
     /// row to the residual a hand-written handler would be (Futamura's first projection).
-    pub(in crate::dispatch_fast) fn generated_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+    pub(crate) fn generated_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
         // An accumulator field the opcode reads no register at: the view never selects this
         // instance, which every table and handler set still names. It continues as the row that
         // reads none, so its code is this one jump rather than another copy of the row.

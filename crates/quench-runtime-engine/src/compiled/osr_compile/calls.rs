@@ -15,11 +15,11 @@ use quench_bjit::call_record::CallRecord;
 /// what the region's build stitches in. The default has no call site: every call stays a call.
 #[derive(Default)]
 pub(crate) struct RegionCalls {
-    pub(in crate::compiled) callees: Callees,
-    pub(in crate::compiled) realm: RealmProof,
+    pub(crate) callees: Callees,
+    pub(crate) realm: RealmProof,
     /// By PC, the callees each call site reached (`direct_callees_in_lane`): what a Cranelift
     /// region calls by their entries, as a lane body does (`unit_direct_calls`).
-    pub(in crate::compiled) direct: Vec<DirectCandidates>,
+    pub(crate) direct: Vec<DirectCandidates>,
 }
 
 impl RegionCalls {
@@ -49,13 +49,13 @@ pub(crate) use quench_runtime::vm::engine_types::CallCode;
 impl CallCode {
     /// The calls of a region that inlines and enters none, whose code reads `invalidation`
     /// (`VmFacts::held_atoms`), which its publication sets when a fact it holds changes.
-    pub(super) fn holding(invalidation: Invalidation) -> Self {
+    pub(crate) fn holding(invalidation: Invalidation) -> Self {
         Self { invalidation, ..Self::default() }
     }
 
     /// The calls of a region of a function with `caller_registers` registers: `inlined` as their
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
-    pub(super) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {
+    pub(crate) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {
         // The windows start past the function's environment window (`base_region::function::inline_base`):
         // the room covers that reach as well as the activations a leave inside a callee pushes.
         let recovery = LaneRecoverySpace::inlined(&inlined).reaching(window_width(&inlined, caller_registers));

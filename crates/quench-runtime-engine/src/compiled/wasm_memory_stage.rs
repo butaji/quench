@@ -24,7 +24,7 @@ impl Emitter<'_, '_> {
     /// The length a call passes after the context when the memory is unguarded (`length` is
     /// passed): the current one (`memory_length`), so a callee sees a length a growing callee
     /// refreshed. `None` where the length is not passed.
-    pub(super) fn passed_length(&mut self) -> Option<ir::Value> {
+    pub(crate) fn passed_length(&mut self) -> Option<ir::Value> {
         match self.length {
             Some(_) => Some(self.memory_length()),
             None => None,
@@ -107,7 +107,7 @@ impl WasmMemoryWrite for Emitter<'_, '_> {
 /// in pages before, or the failure word where it cannot grow. The memory's length in the
 /// context is read again after it, the event that changes it; its base never moves, the bytes
 /// being a reservation (`Analysis::callouts` is off for any other memory).
-pub(super) unsafe extern "C" fn memory_grow_callout(context: *mut CallContext, pages: u64) -> u64 {
+pub(crate) unsafe extern "C" fn memory_grow_callout(context: *mut CallContext, pages: u64) -> u64 {
     // SAFETY: compiled code passes the context `run_compiled` made, whose VM is suspended in
     // that call.
     let context = unsafe { &mut *context };
@@ -152,7 +152,7 @@ impl Emitter<'_, '_> {
 
     /// Lowers a linear-memory step. An access's address is a 32-bit index plus an offset plus
     /// its width, which stays inside the guarded reservation.
-    pub(super) fn memory(&mut self, instruction: WideInstruction, step: Memory) {
+    pub(crate) fn memory(&mut self, instruction: WideInstruction, step: Memory) {
         let (a, c) = (instruction.a(), instruction.c());
         match step {
             Memory::Load(access) => {
@@ -207,7 +207,7 @@ impl Analysis<'_> {
     /// Checks a linear-memory step reads the function's memory through its register with
     /// 32-bit operands, and applies its register writes. `memory` is the function's memory
     /// register and the slot it binds.
-    pub(super) fn transfer_memory(
+    pub(crate) fn transfer_memory(
         &self,
         function: &Function,
         instruction: WideInstruction,

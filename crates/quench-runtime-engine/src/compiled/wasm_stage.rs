@@ -13,13 +13,13 @@ use cranelift_codegen::ir;
 use std::convert::Infallible;
 
 /// The value of a result a stage with no exit cannot fail.
-pub(super) fn infallible<T>(result: Result<T, Infallible>) -> T {
+pub(crate) fn infallible<T>(result: Result<T, Infallible>) -> T {
     result.unwrap_or_else(|never| match never {})
 }
 
 impl Emitter<'_, '_> {
     /// `operator` at `width`, whose traps leave through the function's trap blocks.
-    pub(super) fn integer(
+    pub(crate) fn integer(
         &mut self,
         operator: Binary,
         width: Width,
@@ -30,7 +30,7 @@ impl Emitter<'_, '_> {
     }
 
     /// Lowers `operation`; whether control continues to the next instruction.
-    pub(super) fn operation(
+    pub(crate) fn operation(
         &mut self,
         pc: usize,
         instruction: WideInstruction,
@@ -102,7 +102,7 @@ impl Emitter<'_, '_> {
 
 /// Checks the registers `operation` reads hold its operand type, and records the one it writes;
 /// `value` reads a register's integer kind.
-pub(super) fn transfer(
+pub(crate) fn transfer(
     state: &mut AnalysisState,
     registers: u16,
     instruction: WideInstruction,

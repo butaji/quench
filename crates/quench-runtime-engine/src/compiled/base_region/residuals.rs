@@ -59,7 +59,7 @@ fn of_rows(layout: &Layout, decoded: &[Decoded], body: &[Planned]) -> Residual {
 }
 
 /// Reports the region's counts and its code `bytes` when the channel is on.
-pub(super) fn report_rows(layout: &Layout, header: u32, decoded: &[Decoded], body: &[Planned], bytes: usize) {
+pub(crate) fn report_rows(layout: &Layout, header: u32, decoded: &[Decoded], body: &[Planned], bytes: usize) {
     if quench_runtime::trace::Channel::Residuals.on() {
         report(
             "b-jit",

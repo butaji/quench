@@ -63,7 +63,7 @@ pub(crate) struct CellLayout {
     pub(crate) numbers_offset: i32,
     pub(crate) uses_this_offset: i32,
 }
-pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
+pub const ENTRY_CELL: CellLayout = CellLayout {
     entry_offset: std::mem::offset_of!(EntryCellLayoutWords, entry) as i32,
     body_offset: std::mem::offset_of!(EntryCellLayoutWords, body) as i32,
     validity_offset: std::mem::offset_of!(EntryCellLayoutWords, epoch) as i32,
@@ -88,8 +88,8 @@ const PARAMS_SHIFT: u32 = 2 * FACT_BITS;
 const FILL_SHIFT: u32 = 3 * FACT_BITS;
 const ENTRY_SHIFT: u32 = FILL_SHIFT + u8::BITS;
 /// `CellFacts::fill` of a function whose activation starts every register `undefined`.
-pub(crate) const FILL_ALL: u8 = u8::MAX;
-pub(crate) const ENTRY_ACTIVATES: u64 = 0;
+pub const FILL_ALL: u8 = u8::MAX;
+pub const ENTRY_ACTIVATES: u64 = 0;
 /// The entry kind of a function whose calls take a frame or an environment window, not a plain activation.
 pub(crate) const ENTRY_FRAMED: u8 = ENTRY_ACTIVATES as u8 + 1;
 
@@ -103,7 +103,7 @@ pub(crate) fn fits<S: Stage>(stage: &mut S, limit: S::Word, needed: S::Word) -> 
 
 /// Continues where `needed` fits within `limit` (`fits`); leaves at `miss` otherwise.
 #[inline(always)]
-pub(crate) fn admit_room<S: Stage>(stage: &mut S, limit: S::Word, needed: S::Word, miss: S::Miss) -> Option<()> {
+pub fn admit_room<S: Stage>(stage: &mut S, limit: S::Word, needed: S::Word, miss: S::Miss) -> Option<()> {
     let holds = fits(stage, limit, needed);
     stage.guard(holds, miss)
 }
@@ -111,14 +111,14 @@ pub(crate) fn admit_room<S: Stage>(stage: &mut S, limit: S::Word, needed: S::Wor
 /// `fits` on machine words, for the interpreter's own admission of a call: the same row the
 /// native tiers emit.
 #[inline(always)]
-pub(crate) fn concrete_fits(limit: u64, needed: u64) -> bool {
+pub fn concrete_fits(limit: u64, needed: u64) -> bool {
     admit_room(&mut super::Concrete::new(std::ptr::null()), limit, needed, ()).is_some()
 }
 
 /// The facts word as fields: what a publish writes and a planner reads back (the packing above,
 /// once).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CellFacts {
+pub struct CellFacts {
     pub(crate) registers: u16,
     pub(crate) room: u16,
     pub(crate) params: u16,

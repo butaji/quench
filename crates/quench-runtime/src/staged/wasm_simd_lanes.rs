@@ -413,7 +413,7 @@ macro_rules! define_simd_operators {
     ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident, $family:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum SimdOperator { $($name,)* }
+        pub enum SimdOperator { $($name,)* }
 
         impl SimdOperator {
             /// Every operator, by tag.

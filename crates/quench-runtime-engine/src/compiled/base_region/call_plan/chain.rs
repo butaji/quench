@@ -5,18 +5,18 @@ use super::*;
 
 /// One entry of a method site's chain: the read of the method through the Held row (its stencil and holes), the callee
 /// value it answers (the direct row that follows compares it by identity), and the holder whose slot it reads.
-pub(in crate::compiled) struct ChainRead {
-    pub(in crate::compiled) callee: u64,
-    pub(in crate::compiled) holder: u32,
-    pub(in crate::compiled) stencil: &'static Stencil,
-    pub(in crate::compiled) holes: [u64; HOLES],
+pub(crate) struct ChainRead {
+    pub(crate) callee: u64,
+    pub(crate) holder: u32,
+    pub(crate) stencil: &'static Stencil,
+    pub(crate) holes: [u64; HOLES],
 }
 
 /// The chain of a method call whose site has prototype-held entries (`CallPlan::chain`) that pair with a callee the site
 /// reached: for each pair, its read, then its direct row. The read's miss exits two parts on, to the next read, and the
 /// last read's to the helper row; the direct row's completion is `taken` to the continuation, and its refusal falls to the
 /// next read (or the helper), which is sound as the direct row compares the callee's identity. None where no entry pairs.
-pub(super) fn chained_reads(plan: &CallPlan) -> Result<Option<CallChain>, String> {
+pub(crate) fn chained_reads(plan: &CallPlan) -> Result<Option<CallChain>, String> {
     let pairs: Vec<(&ChainRead, &DirectFacts)> = plan.chain.iter()
         .filter_map(|read| plan.direct.iter().find(|facts| facts.callee == read.callee).map(|facts| (read, facts)))
         .collect();

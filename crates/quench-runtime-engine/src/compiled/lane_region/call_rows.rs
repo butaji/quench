@@ -22,13 +22,13 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether `instruction` is a call or return row the facts admit.
-    pub(super) fn is_call_row(&self, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_call_row(&self, instruction: WideInstruction) -> bool {
         self.admitted_call(instruction).is_some()
     }
 
     /// Whether `instruction` is a construction with its arguments in registers, which the
     /// construct plan lowers where no call row did.
-    pub(super) fn is_construction(&self, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_construction(&self, instruction: WideInstruction) -> bool {
         !self.completion.numeric() && Invocation::of(instruction, quench_runtime::staged::DecodeContext::of(self.program)).is_some_and(|site| site.constructs())
     }
 
@@ -41,7 +41,7 @@ impl Lowering<'_, '_> {
     /// The admitted row at `pc`, lowered by its staged definition: a return completes the
     /// activation, a call or construction in the caller's window is the staged call (a Math
     /// function of Numbers runs inline), and any other construction takes its plan.
-    pub(super) fn call_row_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn call_row_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         match self.admitted_call(instruction).expect("an admitted call row decodes") {
             Operation::Return { source } => Some(self.complete(state, pc, source)),
             Operation::Call(CallOperation::Site(site)) if site.constructs() && !self.in_callers_window(pc, &site) =>

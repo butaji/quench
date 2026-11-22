@@ -18,7 +18,7 @@ use crate::vm::wtf16::native_string as form;
 /// names a record only after its space is reserved (`records.rs`, `ensure_reserved` on every
 /// allocation), so a zero base comes only with a small string, which the small-id test leaves.
 #[inline(always)]
-pub(crate) fn flat_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
+pub fn flat_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<(S::Word, S::Cond, S::Cond)> {
     let is_string = is_direct_string(stage, value);
     stage.guard(is_string, miss)?;
@@ -130,7 +130,7 @@ pub(crate) fn string_length<S: Stage>(stage: &mut S, record_base: S::Word, value
 /// string, or no record base yet), which the caller decides. The record is read only on the path
 /// where `flat_record` would continue, so nothing is loaded from an address it would not read.
 #[inline(always)]
-pub(crate) fn flat_truth<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word) -> S::Word {
+pub fn flat_truth<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word) -> S::Word {
     let is_string = is_direct_string(stage, value);
     let present = stage.ne_imm(record_base, 0u32);
     let index = stage.and_imm(value, u64::from(u32::MAX));

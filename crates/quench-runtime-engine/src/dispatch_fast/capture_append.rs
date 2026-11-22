@@ -15,7 +15,7 @@ const CHUNK_PARAMETER: u16 = 0;
 
 /// Whether `body` is `null !== chunk && (binding += chunk); return true;` over its first
 /// parameter and one capture of its own environment, as each instruction's role says.
-pub(super) fn recognizes(body: &Function, constants: &[quench_runtime::bytecode::Constant]) -> bool {
+pub(crate) fn recognizes(body: &Function, constants: &[quench_runtime::bytecode::Constant]) -> bool {
     if body.params == 0 || !body.handlers.is_empty() {
         return false;
     }
@@ -88,7 +88,7 @@ fn returns_true(result: WideInstruction, done: WideInstruction, constants: &[que
 /// `target` belongs to this lane's program and has entry `AppendsCapture`; its load record
 /// and capture storage remain live until a collection, which concatenation only schedules.
 #[inline(always)]
-pub(super) unsafe fn run(
+pub(crate) unsafe fn run(
     cx: *mut LaneContext,
     target: &ScriptCallTarget,
     arguments: ReadArguments,

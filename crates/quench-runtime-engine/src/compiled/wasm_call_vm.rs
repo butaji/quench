@@ -15,7 +15,7 @@ use super::*;
 
 /// `vm_call_callout`, the `CALL_VM` row's callout: (context, defined function index,
 /// argument words, result word) -> status, 0 when the call returned.
-pub(super) unsafe extern "C" fn vm_call_callout(
+pub(crate) unsafe extern "C" fn vm_call_callout(
     context: *mut CallContext,
     function: u64,
     args: *const u64,
@@ -137,7 +137,7 @@ fn absolute_index(vm: &Vm, program: ProgramId, defined: u32) -> Result<u32, JsEr
 /// reference's Value bits, checked against its type under `program`'s declarations (a declared
 /// type's identity is theirs), else the scalar's bits. Every callout that runs a Wasm call in the
 /// VM returns its result word so.
-pub(super) fn result_bits(
+pub(crate) fn result_bits(
     vm: &Vm,
     program: ProgramId,
     result: Value,

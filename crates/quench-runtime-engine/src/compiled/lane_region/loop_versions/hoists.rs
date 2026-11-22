@@ -14,13 +14,13 @@ use super::super::super::operations::NumberArithmetic;
 
 impl Lowering<'_, '_> {
     /// The loops of `loops` the region lowers whole.
-    pub(in super::super) fn lowered_loops(&self, loops: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    pub(crate) fn lowered_loops(&self, loops: &[(usize, usize)]) -> Vec<(usize, usize)> {
         loops.iter().copied().filter(|&(header, back)| self.coverage.lowered(header) && self.coverage.lowered(back)).collect()
     }
 
     /// Whether the arithmetic at `pc` computes an index word from integers: its operands are integer
     /// registers or int32 constants, and every remaining use of its result reads an index.
-    pub(in super::super) fn hoistable(&self, pc: usize, instruction: WideInstruction, point: &Point) -> bool {
+    pub(crate) fn hoistable(&self, pc: usize, instruction: WideInstruction, point: &Point) -> bool {
         let integer = |operand: Operand| operand.register_index()
             .map_or_else(|| self.int32_constant(operand).is_some(), |register| point.int_range(register).is_some());
         arithmetic_of(instruction).is_some_and(|operation| operation != NumberArithmetic::Divide) && !self.generic.contains(&pc)
@@ -30,7 +30,7 @@ impl Lowering<'_, '_> {
 
     /// The loop whose entry evaluates each of the `candidates`: the outermost one around it that
     /// writes none of its operands and that no previous body left at its entry.
-    pub(in super::super) fn plan_hoists(&self, nest: Nest<'_>, candidates: &[usize]) -> Vec<Hoist> {
+    pub(crate) fn plan_hoists(&self, nest: Nest<'_>, candidates: &[usize]) -> Vec<Hoist> {
         candidates.iter().filter_map(|&pc| {
             let instruction = nest.instructions[pc];
             let registers: Vec<Register> = [instruction.operand_b(), instruction.operand_c()].into_iter().filter_map(Operand::register_index).collect();
@@ -41,7 +41,7 @@ impl Lowering<'_, '_> {
 
     /// The loop whose entry decides each relation of `candidates` (`Decision`): the outermost one
     /// around it whose body writes neither source.
-    pub(in super::super) fn plan_decisions(&self, nest: Nest<'_>, candidates: &[usize]) -> Vec<Decision> {
+    pub(crate) fn plan_decisions(&self, nest: Nest<'_>, candidates: &[usize]) -> Vec<Decision> {
         candidates.iter().filter_map(|&pc| nest.around(pc).into_iter().filter(|&span| !self.generic.contains(&span.0))
             .find_map(|span| {
                 let instruction = nest.instructions[pc];
@@ -54,7 +54,7 @@ impl Lowering<'_, '_> {
 
     /// The registers `candidates` order against an int32 counter, each with the innermost loop around
     /// its PC whose body writes it nowhere (`Bound`), once per loop and register.
-    pub(in super::super) fn plan_bounds(&self, nest: Nest<'_>, candidates: &[(usize, Register)]) -> Vec<Bound> {
+    pub(crate) fn plan_bounds(&self, nest: Nest<'_>, candidates: &[(usize, Register)]) -> Vec<Bound> {
         let mut bounds: Vec<Bound> = candidates.iter().filter_map(|&(pc, register)| nest.around(pc).into_iter().rev()
             .filter(|&span| !self.generic.contains(&span.0))
             .find(|&span| nest.unwritten(span, &[register]))
@@ -79,7 +79,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The operations whose loop is the one at `header`, evaluated on its entering edge from `state`.
-    pub(super) fn hoist_pure(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn hoist_pure(&mut self, state: &mut State, header: usize) {
         let pcs: Vec<usize> = self.ranges.hoisted().iter().filter(|hoist| hoist.header == header).map(|hoist| hoist.pc).collect();
         if pcs.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
@@ -102,7 +102,7 @@ impl Lowering<'_, '_> {
     /// each iteration's decision is this one. A pair only the full step decides leaves at the
     /// header, before the loop ran, as each iteration would have left at the test. The jump
     /// reads the held word (`Lowering::decided_jump`).
-    pub(super) fn hoist_decisions(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn hoist_decisions(&mut self, state: &mut State, header: usize) {
         let decisions: Vec<Decision> = self.ranges.decisions().iter().filter(|decision| decision.header == header).copied().collect();
         if decisions.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
@@ -125,7 +125,7 @@ impl Lowering<'_, '_> {
     /// header, before the loop ran (the interpreter runs it, and a later compile of it keeps its
     /// relations on the Number path, since the header is then generic). The loop's relations then
     /// read the int32 view, which no instruction of the loop writes.
-    pub(super) fn hoist_bounds(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn hoist_bounds(&mut self, state: &mut State, header: usize) {
         let registers: Vec<Register> = self.ranges.bounds().iter().filter(|bound| bound.header == header).map(|bound| bound.register).collect();
         if registers.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);

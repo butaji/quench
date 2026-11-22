@@ -4,25 +4,25 @@ use quench_runtime::vm::test_oracle::{assert_tier_agrees_after, Expect, Tier};
 use quench_runtime::vm::tier_events::Event;
 
 #[path = "tests/inlined.rs"]
-mod inlined;
+pub(crate) mod inlined;
 #[path = "tests/returns.rs"]
-mod returns;
+pub(crate) mod returns;
 
 /// What a program prints, run in the interpreter and under `--b-jit`, and the runs of lane bodies
 /// the second made (all, and those that completed their activation).
-pub(super) fn run_both(source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
+pub(crate) fn run_both(source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
     run_in(JitMode::BaseOnly, source)
 }
 
 /// `run_both` with the compiled run under `mode`.
-pub(super) fn run_in(mode: JitMode, source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
+pub(crate) fn run_in(mode: JitMode, source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
     run_after(mode, &[], source)
 }
 
 /// `run_in` of `source` after the global scripts `scripts` (source and name) ran in the same realm: what they declare
 /// is retained in the realm's records when `source` runs. The oracle has the tiers agree and engage; the printed lines
 /// come twice, as the two runs share them.
-pub(super) fn run_after(mode: JitMode, scripts: &[(&str, &str)], source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
+pub(crate) fn run_after(mode: JitMode, scripts: &[(&str, &str)], source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
     let tier = if mode == JitMode::UltraOnly { Tier::UJit } else { Tier::BJit };
     let run = assert_tier_agrees_after(scripts, source, tier, Expect::ENGAGED);
     let runs = [Event::Entered, Event::Returned].map(|event| run.events.count(event) as usize);

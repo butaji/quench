@@ -11,28 +11,28 @@ use super::super::int_ranges::IntRanges;
 
 /// The unit's instructions, the loops of it the region lowers whole, and the operations hoisted out of them.
 #[derive(Clone, Copy)]
-pub(in super::super) struct Nest<'a> {
-    pub(in super::super) instructions: &'a [WideInstruction],
-    pub(in super::super) loops: &'a [(usize, usize)],
-    pub(in super::super) hoists: &'a [Hoist],
+pub(crate) struct Nest<'a> {
+    pub(crate) instructions: &'a [WideInstruction],
+    pub(crate) loops: &'a [(usize, usize)],
+    pub(crate) hoists: &'a [Hoist],
 }
 
 impl Nest<'_> {
     /// The loops that contain `pc`, outermost first.
-    pub(super) fn around(&self, pc: usize) -> Vec<(usize, usize)> {
+    pub(crate) fn around(&self, pc: usize) -> Vec<(usize, usize)> {
         let mut around: Vec<(usize, usize)> = self.loops.iter().copied().filter(|&(header, back)| (header..=back).contains(&pc)).collect();
         around.sort_unstable();
         around
     }
 
     /// Whether no instruction of the loop writes any of `registers`.
-    pub(super) fn unwritten(&self, (header, back): (usize, usize), registers: &[Register]) -> bool {
+    pub(crate) fn unwritten(&self, (header, back): (usize, usize), registers: &[Register]) -> bool {
         self.instructions[header..=back].iter().all(|instruction| !instruction.written_registers().any(|written| registers.contains(&written)))
     }
 }
 
 /// An element access whose index reads as `base + counter * scale`, before the loop that proves it is chosen.
-pub(in super::super) struct Shape {
+pub(crate) struct Shape {
     pc: usize,
     array: Register,
     /// The addition that forms the index, where the index is a sum.
@@ -51,10 +51,10 @@ pub(in super::super) struct Shape {
 
 /// An access proved by the entry of a loop: that proof, the addition it bounds the sum of, and the
 /// product it makes an induction of.
-pub(in super::super) struct Resolved {
-    pub(in super::super) version: Version,
-    pub(in super::super) add: Option<usize>,
-    pub(in super::super) induction: Option<Induction>,
+pub(crate) struct Resolved {
+    pub(crate) version: Version,
+    pub(crate) add: Option<usize>,
+    pub(crate) induction: Option<Induction>,
 }
 
 /// The counter an operand of an index's sum counts: its bound and the scale it is multiplied by.
@@ -72,7 +72,7 @@ fn access_registers(access: WideInstruction) -> Option<(Register, Register)> {
 }
 
 /// The Number arithmetic `instruction` is, where it is a plain binary one.
-pub(super) fn arithmetic_of(instruction: WideInstruction) -> Option<NumberArithmetic> {
+pub(crate) fn arithmetic_of(instruction: WideInstruction) -> Option<NumberArithmetic> {
     (instruction.op().js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame()
         && instruction.result_flags() == 0)
         .then(|| NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()))
@@ -82,7 +82,7 @@ pub(super) fn arithmetic_of(instruction: WideInstruction) -> Option<NumberArithm
 impl Lowering<'_, '_> {
     /// The expression the index of the access at `pc` is made of, where `proof` leaves it to its loop's
     /// entry (`IndexProof::Versioned`) or it is a sum of a counter below a bound (`counted`).
-    pub(in super::super) fn shape(&self, instructions: &[WideInstruction], pc: usize, point: &Point, proof: IndexProof) -> Option<Shape> {
+    pub(crate) fn shape(&self, instructions: &[WideInstruction], pc: usize, point: &Point, proof: IndexProof) -> Option<Shape> {
         let (array, index) = access_registers(instructions[pc])?;
         match proof {
             IndexProof::Proven => None,
@@ -141,7 +141,7 @@ impl Lowering<'_, '_> {
 
     /// The proof of `shape` by the entry of the outermost loop it can be made in, where its array's
     /// view is hoisted a register's.
-    pub(in super::super) fn resolve(&self, (nest, ranges): (Nest<'_>, &IntRanges), model: &Model<'_>, shape: &Shape) -> Option<Resolved> {
+    pub(crate) fn resolve(&self, (nest, ranges): (Nest<'_>, &IntRanges), model: &Model<'_>, shape: &Shape) -> Option<Resolved> {
         let array = self.loop_array(shape.pc, Some(shape.array)).filter(|array| matches!(array.source, ArraySource::Register(_)))?;
         let base = match (shape.base, shape.add) { (Some(operand), Some(add)) => Some(self.term(nest, add, operand, true)?), _ => None };
         let scale = match shape.scale { Some((operand, multiply)) => Some(self.term(nest, multiply, operand, false)?), None => None };
@@ -212,7 +212,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The int32 `operand` is, where it is a constant one.
-    pub(in super::super) fn int32_constant(&self, operand: Operand) -> Option<i32> {
+    pub(crate) fn int32_constant(&self, operand: Operand) -> Option<i32> {
         let value = super::super::super::facts::constant_number(&self.program.constants, operand)?;
         (value == f64::from(value as i32)).then_some(value as i32)
     }

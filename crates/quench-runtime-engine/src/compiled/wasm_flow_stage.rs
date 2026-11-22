@@ -13,7 +13,7 @@ use cranelift_codegen::ir;
 
 impl Emitter<'_, '_> {
     /// Lowers a flow step; whether control continues to the next instruction.
-    pub(super) fn flow(
+    pub(crate) fn flow(
         &mut self,
         function: &Function,
         pc: usize,
@@ -72,7 +72,7 @@ impl Emitter<'_, '_> {
     }
 
     /// Returns the function's result, read from `register`, with the success status.
-    pub(super) fn return_register(&mut self, register: u16) {
+    pub(crate) fn return_register(&mut self, register: u16) {
         let status = self.constant(Width::I64, 0);
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {
@@ -85,7 +85,7 @@ impl Emitter<'_, '_> {
 impl Analysis<'_> {
     /// Checks a flow step's operands and applies its register writes. `result` is the type the
     /// function returns.
-    pub(super) fn transfer_flow(
+    pub(crate) fn transfer_flow(
         &self,
         function: &Function,
         instruction: WideInstruction,

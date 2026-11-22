@@ -14,7 +14,7 @@
 
 use super::*;
 use super::branches::branching;
-use quench_runtime::vm::aot_image::Symbol;
+use crate::aot_image::Symbol;
 use quench_bjit::padded_holes;
 
 /// The semantic row's holes that name symbols: its entry and its operand record (`call_semantic`'s V1, V2).
@@ -28,9 +28,9 @@ const NO_TARGET: u64 = u64::MAX;
 /// operand record of its (function, PC) (`NativeJsOperands`), with the caller PC the record runs at
 /// and the one it jumps to, where it jumps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::compiled::base_region) struct Semantic {
-    pub(in crate::compiled::base_region) entry: Symbol,
-    pub(in crate::compiled::base_region) operands: Symbol,
+pub(crate) struct Semantic {
+    pub(crate) entry: Symbol,
+    pub(crate) operands: Symbol,
     record: u32,
     jump: Option<u32>,
 }
@@ -38,7 +38,7 @@ pub(in crate::compiled::base_region) struct Semantic {
 impl Semantic {
     /// The semantic call of the caller record that row `pc` of `layout` runs; none for a row of an
     /// inlined callee, whose record is no instruction of the activation the entry runs on.
-    pub(in crate::compiled::base_region) fn of(layout: &Layout, pc: u32) -> Result<Self, String> {
+    pub(crate) fn of(layout: &Layout, pc: u32) -> Result<Self, String> {
         if layout.inlined(pc) {
             return Err("generic row: an inlined callee's record".into());
         }
@@ -66,7 +66,7 @@ impl Semantic {
 
 /// The slow arm of a guard (`Step::Guard`) under `LaneHelpers::Ahead`: the record's generic row, as an
 /// image body never leaves; none elsewhere, where the guard's miss leaves for the interpreter.
-pub(in crate::compiled::base_region) fn ahead_miss(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Option<Planned>, String> {
+pub(crate) fn ahead_miss(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Option<Planned>, String> {
     if !helpers.generic_rows() {
         return Ok(None);
     }
@@ -76,7 +76,7 @@ pub(in crate::compiled::base_region) fn ahead_miss(decoded: &Decoded, layout: &L
 /// The generic row of the record at `pc`, which `decoded` holds as a `Step::Generic` (`steps::lowering`
 /// under `LaneHelpers::Ahead`). Its successors are the next record and, where the record jumps, its
 /// target; the registers it reads and writes are the frame's, as every semantic step's are.
-pub(in crate::compiled::base_region) fn generic_row(layout: &Layout, decoded: &Decoded, pc: u32, semantic: Semantic) -> Result<Planned, String> {
+pub(crate) fn generic_row(layout: &Layout, decoded: &Decoded, pc: u32, semantic: Semantic) -> Result<Planned, String> {
     let spills = layout.spills(pc);
     let mut parts = spills.iter().map(|&(place, register)| call_plan::spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
     parts.push(semantic_part(semantic)?);

@@ -5,7 +5,7 @@ use super::super::CallContext;
 use quench_runtime::vm::wtf16::native_string as form;
 #[allow(dead_code)]
 #[path = "../../../../quench-bjit/stencils/layout.rs"]
-mod stencil_layout;
+pub(crate) mod stencil_layout;
 mod stencil_units {
     include!("../../../../../quench-bjit/stencils/units.rs");
 }

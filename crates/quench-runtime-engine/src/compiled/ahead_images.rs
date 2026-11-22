@@ -5,10 +5,10 @@
 use super::*;
 use std::collections::BTreeMap;
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
-use quench_runtime::vm::aot_image::{LaneImage, base::BaseImage, symbols::{Symbol, SymbolTable}};
+use crate::aot_image::{LaneImage, base::BaseImage, symbols::{Symbol, SymbolTable}};
 use quench_runtime::compile::aot_facts::AotFacts;
 use super::lane_unit::Origin;
-use quench_runtime::vm::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self, LiveImage}};
+use crate::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self, LiveImage}};
 #[path = "ahead_images/constructions.rs"] mod constructions;
 
 pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID;
@@ -20,7 +20,7 @@ pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID_PREFIX;
 /// it (`native_link::NativeSupport::check_build`): an image only runs on its own build.
 #[used]
 pub(crate) static AHEAD_BUILD_ID_MARK: [u8; 32] = {
-    let id = env!("QUENCH_BUILD_ID").as_bytes();
+    let id = quench_runtime::vm::engine_types::QUENCH_BUILD_ID_TEXT.as_bytes();
     let mut mark = [0u8; 32];
     let mut at = 0;
     while at < 16 {

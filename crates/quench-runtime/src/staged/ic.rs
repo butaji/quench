@@ -13,7 +13,7 @@ use crate::typed_ir::Representation;
 
 /// One step of a proved property read, over the record the read has reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum IcOp<'a> {
+pub enum IcOp<'a> {
     /// The record's exact shape (`Object::exact_shape`) is this one, else the read misses.
     GuardShape(u32),
     /// The record's layout id is this one (`Object::hint_shape`, a lane record's own-field
@@ -70,7 +70,7 @@ pub(crate) enum IcOp<'a> {
 /// shape word and inline flag, which the read's first guards and load reuse instead of
 /// loading again. A prototype the read reaches starts with none.
 #[derive(Clone, Copy)]
-pub(crate) struct Reached<W, C> {
+pub struct Reached<W, C> {
     pub(crate) record: W,
     pub(crate) shape: Option<W>,
     pub(crate) inline: Option<C>,

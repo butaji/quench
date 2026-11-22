@@ -10,7 +10,7 @@ pub struct WasmTag {
 
 /// Complete exception-construction window: tag followed by its payload.
 #[repr(u16)]
-pub(crate) enum ExceptionInput {
+pub enum ExceptionInput {
     Tag,
     Payload,
 }

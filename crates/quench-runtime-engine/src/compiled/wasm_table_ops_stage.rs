@@ -31,7 +31,7 @@ fn bound(vm: &Vm, environment: super::Value, slot: u64) -> super::Value {
 /// segment a drop names, in the first). The words `a`, `b` and `c` are the operation's
 /// `TableOp::words`, `value` its reference (`TableOp::value`), and its result word is written
 /// to `out`. A trap raised by the operation propagates through `finish_callout`.
-pub(super) unsafe extern "C" fn table_op_callout(
+pub(crate) unsafe extern "C" fn table_op_callout(
     context: *mut CallContext,
     request: u64,
     a: u64,
@@ -217,7 +217,7 @@ impl Analysis<'_> {
     /// binding, its words are `I32`, its reference an `I64` word, and `memory.init`'s memory is
     /// the function's memory register, which the step reads (`Step::reads_memory`). A step is
     /// admitted only with callouts, which every operation makes.
-    pub(super) fn transfer_table(
+    pub(crate) fn transfer_table(
         &self,
         function: &Function,
         instruction: WideInstruction,
@@ -310,7 +310,7 @@ impl Emitter<'_, '_> {
     /// Lowers a table or segment step as the VM callout `table_op_callout`, whose status
     /// propagates. The step's result (a get's reference, a size or a grow) is read back from the
     /// callout's out word.
-    pub(super) fn table_op(&mut self, pc: usize, instruction: WideInstruction, op: TableOp) {
+    pub(crate) fn table_op(&mut self, pc: usize, instruction: WideInstruction, op: TableOp) {
         let first = match op {
             TableOp::SegmentDrop => instruction.imm() as u64,
             _ => match self.plan.operand(pc) {

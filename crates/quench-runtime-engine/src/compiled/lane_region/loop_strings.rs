@@ -13,21 +13,21 @@ use super::builtin_calls::continues;
 /// A loop-invariant register whose flat facts the loop holds: one a `charCodeAt` of the loop reads
 /// (`reads_units`), or one a strict equality of the loop compares (`held_strings_equal`).
 #[derive(Clone, Copy)]
-pub(super) struct LoopString {
-    pub(super) header: usize,
-    pub(super) back: usize,
-    pub(super) register: Register,
-    pub(super) reads_units: bool,
+pub(crate) struct LoopString {
+    pub(crate) header: usize,
+    pub(crate) back: usize,
+    pub(crate) register: Register,
+    pub(crate) reads_units: bool,
     /// Whether the loop's entering edge last hoisted it (`hoist_strings`): its variables are defined
     /// only then.
-    pub(super) hoisted: bool,
+    pub(crate) hoisted: bool,
 }
 
 /// The variables a held string's facts live in across its loop's iterations: its record's address
 /// (fixed while the value is rooted in its register), its form and width as words of 0 or 1, and
 /// its length.
 #[derive(Clone, Copy)]
-pub(super) struct StringVariables {
+pub(crate) struct StringVariables {
     record: Variable,
     short: Variable,
     wide: Variable,
@@ -51,7 +51,7 @@ fn strict_compared(instruction: &WideInstruction) -> Vec<Register> {
 /// that is no string leaves the loop at its header (`hoist_strings`) only when a `charCodeAt` reads it;
 /// a register only compared is held where its entering edge proves a string. A `length` read of any
 /// other register is not held.
-pub(super) fn loop_strings(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)],
+pub(crate) fn loop_strings(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopString> {
     let mut held: Vec<LoopString> = Vec::new();
     for &(header, back) in loops.iter().filter(|(header, back)| lowered(*header) && lowered(*back)) {
@@ -80,7 +80,7 @@ pub(super) fn loop_strings(unit: &super::super::lane_unit::Unit, loops: &[(usize
 
 impl Lowering<'_, '_> {
     /// The held string `register` names at `pc`, of the innermost loop around `pc` that holds it.
-    pub(super) fn loop_string(&self, pc: usize, register: Option<Register>) -> Option<LoopString> {
+    pub(crate) fn loop_string(&self, pc: usize, register: Option<Register>) -> Option<LoopString> {
         let register = register?;
         self.loop_strings.iter().copied()
             .filter(|string| string.hoisted && string.register == register && (string.header..=string.back).contains(&pc))
@@ -115,7 +115,7 @@ impl Lowering<'_, '_> {
     /// same string in a record that holds its units, which the register then holds. A register that
     /// is no string, whose text has no record form, or a length past int32 leaves at the header
     /// before the loop runs.
-    pub(super) fn hoist_strings(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn hoist_strings(&mut self, state: &mut State, header: usize) {
         let held = self.strings_to_hoist(state, header);
         if held.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
@@ -169,7 +169,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The held length of `string` as an int32: a flat string's, proved on the loop's entry.
-    pub(super) fn held_length(&mut self, string: LoopString) -> ir::Value {
+    pub(crate) fn held_length(&mut self, string: LoopString) -> ir::Value {
         let variables = self.string_variables(string.register);
         let length = self.builder.use_var(variables.length);
         self.raw_unary(Unary::Narrow(Lane::I32), length)
@@ -178,7 +178,7 @@ impl Lowering<'_, '_> {
     /// `charCodeAt` at the index in `index` of the held string `string`, as its tagged row: the units
     /// are read from the held record at the call, and the row's miss leaves at `exit`. `within`: the
     /// index is proved below the length, so the row takes no bounds test.
-    pub(super) fn held_char_code_at(&mut self, state: &mut State, string: LoopString, index: Register, within: bool,
+    pub(crate) fn held_char_code_at(&mut self, state: &mut State, string: LoopString, index: Register, within: bool,
         exit: ir::Block) -> ir::Value {
         let variables = self.string_variables(string.register);
         let record = self.builder.use_var(variables.record);
@@ -198,7 +198,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The held pair of a strict equality of two registers both held at `pc` (`equality`).
-    pub(super) fn held_pair(&self, pc: usize, left: Operand, right: Operand, strict: bool) -> Option<[LoopString; 2]> {
+    pub(crate) fn held_pair(&self, pc: usize, left: Operand, right: Operand, strict: bool) -> Option<[LoopString; 2]> {
         match (strict, self.loop_string(pc, left.register_index()), self.loop_string(pc, right.register_index())) {
             (true, Some(left_string), Some(right_string)) => Some([left_string, right_string]),
             _ => None,
@@ -207,7 +207,7 @@ impl Lowering<'_, '_> {
 
     /// `left === right` of a held pair, whose tagged words are `bits`, as C compares two strings: the
     /// identity test first, then the held lengths; equal lengths go to `held_units_equal`.
-    pub(super) fn held_strings_equal(&mut self, pair: [LoopString; 2], bits: [ir::Value; 2]) -> ir::Value {
+    pub(crate) fn held_strings_equal(&mut self, pair: [LoopString; 2], bits: [ir::Value; 2]) -> ir::Value {
         let [identical, distinct, sized, join] = std::array::from_fn(|_| self.builder.create_block());
         let equal = self.builder.append_block_param(join, types::I8);
         let same = self.raw_compare(Relation::Equal, bits[0], bits[1]);

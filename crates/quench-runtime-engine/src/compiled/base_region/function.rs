@@ -23,71 +23,71 @@ use quench_runtime::heap::GlobalFact;
 use quench_bjit::call_record::CallRecord;
 use quench_bjit::{padded_holes, HOLES};
 
-mod calls;
-mod planning;
-mod rows;
-mod switch;
+pub(crate) mod calls;
+pub(crate) mod planning;
+pub(crate) mod rows;
+pub(crate) mod switch;
 
 use calls::*;
 use planning::*;
 use rows::*;
 
 /// A function's code: bytes entered at the lane body ABI, and what its rows are.
-pub(in crate::compiled) struct Body {
-    pub(in crate::compiled) code: Vec<u8>,
+pub(crate) struct Body {
+    pub(crate) code: Vec<u8>,
     /// Instructions that run as rows (a `Return` included), and those that leave the body.
-    pub(in crate::compiled) covered: usize,
-    pub(in crate::compiled) exits: usize,
+    pub(crate) covered: usize,
+    pub(crate) exits: usize,
     /// Whether it jumps backward: a loop pays an entry's cost over its iterations.
-    pub(in crate::compiled) loops: bool,
+    pub(crate) loops: bool,
     /// The records its direct call rows read, which its code must not outlive.
-    pub(in crate::compiled) records: Vec<Box<CallRecord>>,
+    pub(crate) records: Vec<Box<CallRecord>>,
     /// The calls it runs as their callees' rows, by frame.
-    pub(in crate::compiled) frames: Vec<InlinedCall>,
+    pub(crate) frames: Vec<InlinedCall>,
     /// The Stable facts it folded, which its publication subscribes.
-    pub(in crate::compiled) stable: Box<[GlobalFact]>,
+    pub(crate) stable: Box<[GlobalFact]>,
     /// The atoms its stores run in place for, held unnamed by method caches (a Stable fact): a
     /// cache naming one retires the body (`StableFacts::atoms`).
-    pub(in crate::compiled) atoms: Box<[Atom]>,
+    pub(crate) atoms: Box<[Atom]>,
     /// The exact shapes of the holders whose values its folded reads hold (a Stable fact): a change
     /// of a value a prototype of one holds retires the body (`StableFacts::holders`).
-    pub(in crate::compiled) holders: Box<[u32]>,
+    pub(crate) holders: Box<[u32]>,
     /// The prototype chains its folded reads, membership tests and adding stores read through (a
     /// Stable fact): a layout change of a prototype on one retires the body (`StableFacts::chains`).
-    pub(in crate::compiled) chains: Box<[quench_runtime::code_dependencies::PrototypeChain]>,
+    pub(crate) chains: Box<[quench_runtime::code_dependencies::PrototypeChain]>,
     /// What its `instanceof` fast arms hold of their constructors' `prototype`s (a Stable fact): a write of a `prototype`,
     /// a departure of a constructor's shape or a change of the `@@hasInstance` holder's values retires the body
     /// (`StableFacts::instanceofs`).
-    pub(in crate::compiled) instanceofs: Box<[InstanceofFact]>,
+    pub(crate) instanceofs: Box<[InstanceofFact]>,
     /// The constructors those arms guard their operands against by identity, which a collection must not free
     /// while the body lives (`LaneMethod::constructors`).
-    pub(in crate::compiled) constructors: Box<[Value]>,
+    pub(crate) constructors: Box<[Value]>,
     /// Whether it reads no heap row, makes no step and proves no realm: a loop region that does not
     /// needs from its payload only the entry record's address (`Crossing::Bare`).
-    pub(in crate::compiled) bare: bool,
+    pub(crate) bare: bool,
     /// The global layouts and slot types its rows hold (a Stable fact): a change retires the body
     /// (`StableFacts::layouts`, `StableFacts::slots`).
-    pub(in crate::compiled) layouts: Box<[quench_runtime::heap::GlobalLayoutFact]>,
-    pub(in crate::compiled) slot_types: Box<[quench_runtime::code_dependencies::SlotDependency]>,
+    pub(crate) layouts: Box<[quench_runtime::heap::GlobalLayoutFact]>,
+    pub(crate) slot_types: Box<[quench_runtime::code_dependencies::SlotDependency]>,
     /// Where a run that left a loop region at a PC re-enters it (`resume`); none for a body.
-    pub(in crate::compiled) resumes: ResumeTable,
+    pub(crate) resumes: ResumeTable,
     /// The registers its rows name past the function's own: its inlined callees' windows and the scratch of its
     /// `instanceof`/`in` jumps, whose frame slots its recovery room covers (`LaneRecoverySpace::reaching`).
-    pub(in crate::compiled) scratch: usize,
+    pub(crate) scratch: usize,
     /// Whether its inline-cache rows hold shape ids, which a shape compaction renumbers
     /// (`LaneMethod::names_shapes`).
-    pub(in crate::compiled) names_shapes: bool,
+    pub(crate) names_shapes: bool,
     /// The run-time addresses the code names by symbol (`SymbolSite`), which a linked image's loader fills; none
     /// for a body built for this process.
-    pub(in crate::compiled) symbols: Box<[SymbolSite]>,
+    pub(crate) symbols: Box<[SymbolSite]>,
     /// The code offset of each PC's first row, ascending by PC, for the PCs a control may enter (`link::Linked`).
-    pub(in crate::compiled) entries: Box<[(u32, usize)]>,
+    pub(crate) entries: Box<[(u32, usize)]>,
     /// The PCs with no stencil row of their own, which take the generic row (`steps::generic_row`), ascending.
-    pub(in crate::compiled) generic: Box<[u32]>,
+    pub(crate) generic: Box<[u32]>,
     /// The parameter registers whose Number guards its proven-arguments entry skips (`RowEntries::numbers`).
-    pub(in crate::compiled) number_guards: u64,
+    pub(crate) number_guards: u64,
     /// Whether the activation reads its `this` (`RowEntries::uses_this`), so a direct call writes the receiver for it.
-    pub(in crate::compiled) uses_this: bool,
+    pub(crate) uses_this: bool,
 }
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the
@@ -110,7 +110,7 @@ struct Sites<'a> {
 }
 
 /// A row that runs no code: a row control never reaches, or one a tile covers.
-pub(super) fn skipped() -> Planned {
+pub(crate) fn skipped() -> Planned {
     static EMPTY: Stencil = Stencil { code: Vec::new(), relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 0, hot_len: 0 };
     Planned::single(&EMPTY, [0; HOLES], None, None)
 }
@@ -119,20 +119,20 @@ pub(super) fn skipped() -> Planned {
 /// (`widened`, by caller PC), the types its entry held by register (`seen`, its declared Numbers joining as Number types), and what
 /// the program holds Stable (`Known`), whose invalidation word its code reads where a call may
 /// have changed a fact it folded, and the realm its inlined callees belong to (`RealmProof`).
-pub(in crate::compiled) struct BodySpec<'a> {
-    pub(in crate::compiled) function: u32,
-    pub(in crate::compiled) registers: u16,
-    pub(in crate::compiled) known: Known<'a>,
+pub(crate) struct BodySpec<'a> {
+    pub(crate) function: u32,
+    pub(crate) registers: u16,
+    pub(crate) known: Known<'a>,
     /// The realm the body proves active at its entry; none where it folds nothing realm-bound (an image's body).
-    pub(in crate::compiled) realm: Option<RealmProof>,
-    pub(in crate::compiled) widened: &'a [usize],
+    pub(crate) realm: Option<RealmProof>,
+    pub(crate) widened: &'a [usize],
     /// The type each entry register held when the compile observed it, by register (a register past the slice
     /// is no observation: `Type::ANY`).
-    pub(in crate::compiled) seen: &'a [Type],
+    pub(crate) seen: &'a [Type],
     /// What each of the spanned instructions' sites saw of its operands (`OperandKinds`), from the
     /// header: which variant of row an arithmetic or comparison site takes (`variant_of`) and whether it is
     /// widened. Empty where nothing was recorded.
-    pub(in crate::compiled) kinds: &'a [OperandKinds],
+    pub(crate) kinds: &'a [OperandKinds],
 }
 
 /// A class-typed parameter's prototype as the entry observed it: the parameter's register, the receiver's exact shape
@@ -140,12 +140,12 @@ pub(in crate::compiled) struct BodySpec<'a> {
 /// exact shape (`holder`, which the body subscribes to, so a change of its values retires the body), and the prototype's
 /// own data values of the named reads the body makes of the parameter (`members`, by atom, as bits).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::compiled) struct ClassProto {
-    pub(in crate::compiled) register: quench_runtime::bytecode::Register,
-    pub(in crate::compiled) shape: u32,
-    pub(in crate::compiled) link: u32,
-    pub(in crate::compiled) holder: u32,
-    pub(in crate::compiled) members: Vec<(quench_runtime::bytecode::Atom, u64)>,
+pub(crate) struct ClassProto {
+    pub(crate) register: quench_runtime::bytecode::Register,
+    pub(crate) shape: u32,
+    pub(crate) link: u32,
+    pub(crate) holder: u32,
+    pub(crate) members: Vec<(quench_runtime::bytecode::Atom, u64)>,
 }
 
 /// A loop-invariant receiver and the exact shape its field accesses saw at the region's entry: the entry checks the shape
@@ -153,10 +153,10 @@ pub(in crate::compiled) struct ClassProto {
 /// `flat`: every access saw the shape in flat form too, so the entry checks the form (`Heap::ShapeFlat`) and the accesses
 /// take the flat rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::compiled) struct ShapeProto {
-    pub(in crate::compiled) register: quench_runtime::bytecode::Register,
-    pub(in crate::compiled) shape: u32,
-    pub(in crate::compiled) flat: bool,
+pub(crate) struct ShapeProto {
+    pub(crate) register: quench_runtime::bytecode::Register,
+    pub(crate) shape: u32,
+    pub(crate) flat: bool,
 }
 
 /// The body of the function `spec` names that `region` spans, over the callees its call sites
@@ -165,7 +165,7 @@ pub(in crate::compiled) struct ShapeProto {
 ///
 /// # Safety
 /// Each of `callees` names its function's live entry cell (`Callees::targets`).
-pub(in crate::compiled) unsafe fn build_body(region: &LoopRegion, spec: &BodySpec, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
+pub(crate) unsafe fn build_body(region: &LoopRegion, spec: &BodySpec, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     unsafe { build(region, spec, (Ending::Body, Views::Frame), callees, helpers) }
 }
@@ -176,7 +176,7 @@ pub(in crate::compiled) unsafe fn build_body(region: &LoopRegion, spec: &BodySpe
 ///
 /// # Safety
 /// Each of `callees` names its function's live entry cell (`Callees::targets`).
-pub(in crate::compiled) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: ElementViews, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
+pub(crate) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: ElementViews, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     unsafe { build(region, spec, (Ending::Region, views.into()), callees, helpers) }
 }
@@ -346,7 +346,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
 /// (`execution_interrupt::attention_address`: polls). An image's loader fills them, as the compiling
 /// process's addresses mean nothing where the image runs.
 fn name_process_statics(row: &mut Planned) -> Result<(), String> {
-    use quench_runtime::vm::aot_image::Symbol;
+    use crate::aot_image::Symbol;
     let statics = [(quench_runtime::value::NarrowLayout::upper_words() as u64, Symbol::NarrowUpperWords), (quench_runtime::execution_interrupt::attention_address(), Symbol::Attention)];
     row.pre.iter_mut().chain(row.post.iter_mut()).try_for_each(name_process_statics)?;
     for hole in 0..row.holes.len() {

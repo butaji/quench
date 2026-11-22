@@ -10,7 +10,7 @@ use super::Induction;
 impl Lowering<'_, '_> {
     /// The products whose loop is the one at `header`, held from the counter's value on its entering
     /// edge from `state`.
-    pub(super) fn start_inductions(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn start_inductions(&mut self, state: &mut State, header: usize) {
         let inductions: Vec<Induction> = self.ranges.inductions().iter().copied().filter(|induction| induction.span.0 == header).collect();
         if inductions.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
@@ -29,7 +29,7 @@ impl Lowering<'_, '_> {
 
     /// Advances each product held for the counter the instruction at `pc` steps: before the step, which no
     /// instruction between observes.
-    pub(in super::super) fn advance_inductions(&mut self, pc: usize) {
+    pub(crate) fn advance_inductions(&mut self, pc: usize) {
         let instruction = self.unit.instructions[pc];
         for index in 0..self.ranges.inductions().len() {
             let induction = self.ranges.inductions()[index];

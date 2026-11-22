@@ -35,13 +35,13 @@ fn agreed_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction:
 
 /// Whether `instruction` reads a field whose slots have held Numbers, not only int32s: the read
 /// proves Number once and keeps the double view, so its arithmetic takes the double operation.
-pub(super) fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
+pub(crate) fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
     agreed_slot_type(program, fields, instruction) == Some(Type::NUMBER)
 }
 
 /// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): its last read's slots
 /// have only held int32 values.
-pub(super) fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
+pub(crate) fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
     held_slot_type(program, fields, instruction) == Some(Type::INT32)
 }
 
@@ -58,13 +58,13 @@ impl Lowering<'_, '_> {
 
     /// Whether a reached instruction reads or stores a named field: only then does the body
     /// look at the receiver's record and the property arena at entry.
-    pub(super) fn accesses_fields(&self, instructions: &[WideInstruction]) -> bool {
+    pub(crate) fn accesses_fields(&self, instructions: &[WideInstruction]) -> bool {
         instructions.iter().enumerate().any(|(pc, instruction)| self.facts.reached(pc) && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NamedFieldAccess))
     }
 
     /// The entry facts of a body that never looks at the receiver's record: no object, no
     /// shape, no arena.
-    pub(super) fn absent_receiver(&mut self) -> LaneReceiver {
+    pub(crate) fn absent_receiver(&mut self) -> LaneReceiver {
         let receiver = LaneReceiver { object: self.builder.declare_var(types::I64), shape: self.builder.declare_var(types::I32),
             inline: self.builder.declare_var(types::I8), properties: self.builder.declare_var(types::I64) };
         let (zero, none, outside) = (self.raw_const(Lane::I64, 0), self.raw_const(Lane::I32, i64::from(super::super::NO_FIELD_RECEIVER)), self.raw_const(Lane::I8, 0));
@@ -82,7 +82,7 @@ impl Lowering<'_, '_> {
     /// to the function it held: the holder's values are a dependency (`hold_holder`), so a write
     /// to one retires this code rather than each run re-reading the member.
     /// `None` where the read is not one, or completes its frame or writes `this` besides.
-    pub(super) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let Some(&quench_runtime::vm::global_facts::GlobalRead::NativeMember { value, native, holder, folds, .. }) = self.global_reads.get(&pc) else { return None };
         // A method read by name folds only where the receiver can hold no own member of that
         // name: a string primitive, whose members are its prototype's. A string method's read
@@ -114,7 +114,7 @@ impl Lowering<'_, '_> {
         Some(true)
     }
 
-    pub(super) fn fold_frozen_field(&mut self, state: &mut State, read: (quench_runtime::bytecode::FieldBase, FieldLookup),
+    pub(crate) fn fold_frozen_field(&mut self, state: &mut State, read: (quench_runtime::bytecode::FieldBase, FieldLookup),
         first: (Atom, u16), destination: Register, exit: ir::Block) -> bool {
         if !self.division().folds(quench_runtime::staged::division::FROZEN_FIELD) { return false; }
         let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied() else { return false };
@@ -129,7 +129,7 @@ impl Lowering<'_, '_> {
     /// Defines `instruction`'s register as the `value` it read, typed as the slots it reads
     /// have held where that is proved (`prove_held_slot`): `field` names the slot a one-read
     /// lookup (`single`) reads, whose proof `known` held before.
-    pub(super) fn define_field_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, value: ir::Value,
+    pub(crate) fn define_field_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, value: ir::Value,
         (field, single, known): (Option<(Option<Register>, Atom)>, bool, Option<FieldValue>), exit: ir::Block) {
         let held = known.filter(|field| single && field.ty != Type::ANY).map(|field| field.ty);
         let ty = match held {
@@ -203,7 +203,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Gives `destination`, defined as the tagged `value`, the int32 view `int` of it.
-    pub(super) fn define_int_view(&mut self, state: &mut State, destination: Register, value: ir::Value, int: ir::Value) {
+    pub(crate) fn define_int_view(&mut self, state: &mut State, destination: Register, value: ir::Value, int: ir::Value) {
         let variable = self.int_var(usize::from(destination));
         self.builder.def_var(variable, int);
         state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
@@ -216,7 +216,7 @@ impl Lowering<'_, '_> {
     /// double: every read and store site names the one own slot of one shape, whose arena words
     /// are raw doubles, and every store writes a Number. Its stores then write the binary64 word
     /// through the slot the entry projected and its reads take the carried word, boxing nothing.
-    pub(super) fn carries_number(&self, field: &LoopField, instruction: WideInstruction, boundaries: &CompoundBitSet) -> bool {
+    pub(crate) fn carries_number(&self, field: &LoopField, instruction: WideInstruction, boundaries: &CompoundBitSet) -> bool {
         let Some(FieldLookup::Atom { cache_site, .. }) = instruction.field_lookup() else { return false };
         let raw_slot = |site: u16| match site_loads(self.fields, site).map(Vec::as_slice) {
             Some([load]) if load.holder.is_none() && load.valid() && !load.function_shape && load.raw_double => Some((load.shape, load.slot)),

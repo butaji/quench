@@ -20,7 +20,7 @@ struct Renaming {
 /// and keep its number. Analysis only: generated code and recovery still name VM slots. `None`
 /// where an instruction names registers in an immediate this does not decode.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn admit_lifetime_roles(
+pub(crate) fn admit_lifetime_roles(
     instructions: Vec<WideInstruction>,
     registers: usize,
     constants: &[Value],

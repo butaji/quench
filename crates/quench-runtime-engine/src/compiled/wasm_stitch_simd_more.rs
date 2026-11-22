@@ -92,7 +92,7 @@ load_tags! {
 
 /// The rows of the step at `instruction` if these rows compute it, else `None`: an operator in one of
 /// the `SIMD_MORE_*` families, or a V128 splat, extend or zero load. `_pc` is unused: the rows need no position.
-pub(super) fn simd_more(_pc: usize, instruction: WideInstruction, world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn simd_more(_pc: usize, instruction: WideInstruction, world: &World<'_>) -> Option<Vec<Planned>> {
     match Step::of(instruction.op(), instruction.imm()) {
         Some(Step::Simd(Simd::Operator { selector })) => operator(instruction, selector, world),
         None if Family::of(instruction.op()) == Some(Family::MemoryLoad) => load(instruction, world),
@@ -137,6 +137,6 @@ fn load(instruction: WideInstruction, world: &World<'_>) -> Option<Vec<Planned>>
 
 /// Whether `instruction` is a V128 splat, extend or zero load: a vector step with no `Step`, which
 /// `uses_vectors` must count for the frame's vector area.
-pub(super) fn is_vector_load(instruction: WideInstruction) -> bool {
+pub(crate) fn is_vector_load(instruction: WideInstruction) -> bool {
     Family::of(instruction.op()) == Some(Family::MemoryLoad) && codes::SIMD_MORE_LOAD_OPS.contains(&instruction.imm())
 }

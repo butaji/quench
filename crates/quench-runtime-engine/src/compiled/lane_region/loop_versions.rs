@@ -26,12 +26,12 @@ use quench_runtime::staged::Stage;
 #[path = "loop_versions/plan.rs"] mod plan;
 #[path = "loop_versions/hoists.rs"] mod hoists;
 #[path = "loop_versions/inductions.rs"] mod inductions;
-pub(super) use plan::{Nest, Resolved, Shape};
+pub(crate) use plan::{Nest, Resolved, Shape};
 
 /// A loop-invariant integer an index is made of, held as a 64-bit word on its checking loop's
 /// entering edge.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Term {
+pub(crate) enum Term {
     /// An int32 register no instruction of the loop writes.
     Register(Register),
     /// An int32 constant.
@@ -51,7 +51,7 @@ impl Term {
 /// The indices an access reaches over its loop: `base + counter * scale` for the counter in
 /// `low..bound`, where `low` is the counter's least value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Reach {
+pub(crate) enum Reach {
     /// `base + counter * scale` for the counter in `low..bound`.
     Counted { bound: Register, low: i64, base: Option<Term>, scale: Option<Term> },
     /// Every index in `0..=ceiling`, whatever the loop does (a mask or a range of the index).
@@ -60,18 +60,18 @@ pub(super) enum Reach {
 
 /// An access whose indices the entry of the loop at `header` proves within the access's array.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Version {
-    pub(super) pc: usize,
-    pub(super) header: usize,
-    pub(super) reach: Reach,
+pub(crate) struct Version {
+    pub(crate) pc: usize,
+    pub(crate) header: usize,
+    pub(crate) reach: Reach,
 }
 
 /// The pure integer operation at `pc`, which the entry of the loop at `header` (the outermost one
 /// whose body writes none of its operands) evaluates once.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Hoist {
-    pub(super) pc: usize,
-    pub(super) header: usize,
+pub(crate) struct Hoist {
+    pub(crate) pc: usize,
+    pub(crate) header: usize,
 }
 
 /// The relation jump at `pc` the VM decides (`Comparison::Decided`), which the entry of the loop at
@@ -79,36 +79,36 @@ pub(super) struct Hoist {
 /// before the jump in the jump's own block (`Move`), the register it copies, which the loop
 /// does not write.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Decision {
-    pub(super) pc: usize,
-    pub(super) header: usize,
-    pub(super) sources: [Register; 2],
+pub(crate) struct Decision {
+    pub(crate) pc: usize,
+    pub(crate) header: usize,
+    pub(crate) sources: [Register; 2],
 }
 
 /// The register an int32 counter is ordered against in a loop, which the loop's entry proves int32
 /// once (`Lowering::hoist_bounds`): no instruction of the loop writes it, and no int32 proves it at
 /// the relation. Its entry guard leaves at `header` where the register is no int32.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Bound {
-    pub(super) header: usize,
-    pub(super) register: Register,
+pub(crate) struct Bound {
+    pub(crate) header: usize,
+    pub(crate) register: Register,
 }
 
 /// The product at `multiply` of `counter` and `scale`, which the entry of the loop `span` holds as a
 /// word that advances by `scale` at each step of the counter (every write of it in the loop).
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Induction {
-    pub(super) multiply: usize,
-    pub(super) counter: Register,
-    pub(super) scale: Term,
-    pub(super) span: (usize, usize),
+pub(crate) struct Induction {
+    pub(crate) multiply: usize,
+    pub(crate) counter: Register,
+    pub(crate) scale: Term,
+    pub(crate) span: (usize, usize),
 }
 
 impl Lowering<'_, '_> {
     /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a guard that
     /// fails there leaves at the header, before the loop runs. Its pure integer operations come first,
     /// then the views of its arrays and its other invariant reads, then what they make provable.
-    pub(super) fn hoist_entry(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn hoist_entry(&mut self, state: &mut State, header: usize) {
         self.hoist_pure(state, header);
         self.hoist_decisions(state, header);
         self.hoist_bounds(state, header);

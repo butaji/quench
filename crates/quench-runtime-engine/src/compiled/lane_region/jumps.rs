@@ -5,7 +5,7 @@ use super::*;
 impl Lowering<'_, '_> {
     /// `Jump`: a backedge to the region entry counts and polls, and a pure loop header test it
     /// reaches is rotated in; control never falls through.
-    pub(super) fn jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let target = instruction.jump_target() as usize;
         if target <= pc {
             self.backedge |= target == self.coverage.entry();
@@ -30,7 +30,7 @@ impl Lowering<'_, '_> {
 
     /// `IntCaseIndex`: the case slot of its operand, a staged `IntCase` step that writes the slot to its
     /// destination register; `None` leaves the instruction to the exact path.
-    pub(super) fn int_case_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn int_case_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let Some(quench_runtime::staged::Operation::Number(operation @ quench_runtime::staged::NumberOperation::IntCase { .. })) =
             crate::compiled::decoded(instruction) else { return None };
         let exit = self.guard_exit(state, pc as u32);
@@ -40,7 +40,7 @@ impl Lowering<'_, '_> {
 
     /// `WasmBranchTable`: the int32 selector in `a` picks one of the `Jump` rows at `pc + 1 + slot`, each
     /// entered by an edge of its own from its arm of a Cranelift `br_table`. Out of range, the last entry.
-    pub(super) fn branch_table(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn branch_table(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let exit = self.guard_exit(state, pc as u32);
         let selector = self.int(state, instruction.register_a(), exit);
         let targets: Vec<usize> = quench_runtime::bytecode::branch_table_entries(pc, instruction).collect();

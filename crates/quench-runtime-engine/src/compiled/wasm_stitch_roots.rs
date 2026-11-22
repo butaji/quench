@@ -76,7 +76,7 @@ fn is_call(planned: &Planned) -> bool {
 
 /// The rows of the instruction at `pc` (`instruction`), with the native roots around each of its
 /// call rows (see the module's header). `None` where a root row has no encoding.
-pub(super) fn rooted(pc: usize, instruction: WideInstruction, rows: Vec<Planned>, world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn rooted(pc: usize, instruction: WideInstruction, rows: Vec<Planned>, world: &World<'_>) -> Option<Vec<Planned>> {
     // The GC rows make no call that reaches the VM's collector.
     if matches!(Step::of(instruction.op(), instruction.imm()), Some(Step::Gc(_))) {
         return Some(rows);

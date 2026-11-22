@@ -47,7 +47,7 @@ fn is_tail(instruction: WideInstruction) -> bool {
 /// `pc` is unused: a known tail call's rows depend on the instruction alone. The other tail
 /// shape, `Call::Reference`, needs the instruction list (its target check), so it goes through
 /// `indirect::reference` and `leave` at the plan arm.
-pub(super) fn tail(_pc: usize, instruction: WideInstruction, returns: bool, world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn tail(_pc: usize, instruction: WideInstruction, returns: bool, world: &World<'_>) -> Option<Vec<Planned>> {
     if !matches!(Step::of(instruction.op(), instruction.imm()), Some(Step::Call(Call::Known))) || !is_tail(instruction) {
         return None;
     }
@@ -59,7 +59,7 @@ pub(super) fn tail(_pc: usize, instruction: WideInstruction, returns: bool, worl
 /// The leave that ends a tail call: the same routine `Flow::Return` places for the function's
 /// `returns`, reading the call's destination register (`leave_wasm_word`, its frame word; or
 /// `leave_wasm_void`). Falls through nowhere: `taken` is `None` and the leave ends the function.
-pub(super) fn leave(instruction: WideInstruction, returns: bool) -> Planned {
+pub(crate) fn leave(instruction: WideInstruction, returns: bool) -> Planned {
     if returns {
         Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(instruction.result_register())]), taken: None }
     } else {

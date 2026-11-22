@@ -35,7 +35,7 @@ pub(crate) struct BodyRun<'a> {
 
 impl LaneStackWords {
     /// Binds the stack words of a lane run's direct calls into `dispatch` (`Vm::stack_words_in_lane`).
-    pub(super) fn bind(&self, dispatch: &mut JsStepDispatch) {
+    pub(crate) fn bind(&self, dispatch: &mut JsStepDispatch) {
         dispatch.head.lane_frames_end = self.frames_end;
         dispatch.head.lane_values_top = self.values_top;
         dispatch.head.lane_values_end = self.values_end;

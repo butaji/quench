@@ -16,7 +16,7 @@ use quench_runtime::value::Value;
 use quench_bjit::call_record::{return_status_pc, LaneStatus};
 use std::collections::HashMap;
 
-pub(super) use quench_runtime::vm::engine_types::ExitKind;
+pub(crate) use quench_runtime::vm::engine_types::ExitKind;
 
 #[quench_macros::ext(ExitKindOps1)]
 impl ExitKind {
@@ -49,7 +49,7 @@ impl LaneExit {
         matches!(self, Self::Returned { .. } | Self::Threw { .. })
     }
     /// The word a leave is emitted as; a completion is a status, which has none.
-    pub(super) fn word(self) -> u64 {
+    pub(crate) fn word(self) -> u64 {
         match self {
             Self::At(pc) => ExitKind::At.word(pc as u64),
             Self::Inlined { frame, pc } => ExitKind::Inlined.word((frame as u64) << ExitKind::FRAME_SHIFT | u64::from(pc)),
@@ -59,7 +59,7 @@ impl LaneExit {
         }
     }
 
-    pub(super) fn decode(word: u64) -> Self {
+    pub(crate) fn decode(word: u64) -> Self {
         let place = word & ExitKind::PLACE_MASK;
         match ExitKind::of(word) {
             ExitKind::At => Self::At((place & ExitKind::PC_MASK) as usize),
@@ -81,7 +81,7 @@ impl LaneExit {
     /// regions and bare stencils, through `entry_protocol::exit`); the linked step in `compiled.rs`
     /// (`return_status_pc`, the AOT completion's PC); `lane_body_run.rs` and `lane_region/call_frames.rs`
     /// and `stencils/call_rows.rs`, which test a call's `LaneStatus` without decoding a leave.
-    pub(super) fn read(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
+    pub(crate) fn read(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
         match LaneStatus::of(status) {
             Some(LaneStatus::Terminated) => Self::Terminated,
             Some(LaneStatus::Returned) => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
@@ -146,13 +146,13 @@ impl LoopRegion {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::Source;
+pub(crate) use quench_runtime::vm::engine_types::Source;
 
-pub(super) use quench_runtime::vm::engine_types::LiveValue;
+pub(crate) use quench_runtime::vm::engine_types::LiveValue;
 
-pub(super) use quench_runtime::vm::engine_types::ExitSig;
+pub(crate) use quench_runtime::vm::engine_types::ExitSig;
 
-pub(super) use quench_runtime::vm::engine_types::ExitSite;
+pub(crate) use quench_runtime::vm::engine_types::ExitSite;
 
 pub(crate) use quench_runtime::vm::engine_types::ExitTable;
 
@@ -160,7 +160,7 @@ pub(crate) use quench_runtime::vm::engine_types::ExitTable;
 impl ExitTable {
     /// The table of the places `unit`'s PCs leave at. `stored` is the emitter's store set of a
     /// leave at an inlined PC (`unit_pc`, its `frame`), so the table records what the leave writes.
-    pub(super) fn of_unit(unit: &lane_unit::Unit, stored: impl Fn(usize, usize) -> Vec<LiveValue>) -> Self {
+    pub(crate) fn of_unit(unit: &lane_unit::Unit, stored: impl Fn(usize, usize) -> Vec<LiveValue>) -> Self {
         let mut table = Self::default();
         let mut known: HashMap<ExitSig, usize> = HashMap::new();
         for (unit_pc, origin) in unit.origins.iter().enumerate() {
@@ -196,7 +196,7 @@ impl ExitTable {
     }
 
     /// The site at the place `exit` leaves, which only a leave at a PC has.
-    pub(super) fn site(&self, exit: LaneExit) -> Option<&ExitSite> {
+    pub(crate) fn site(&self, exit: LaneExit) -> Option<&ExitSite> {
         if !matches!(exit, LaneExit::At(_) | LaneExit::Inlined { .. }) { return None; }
         self.sites.binary_search_by_key(&exit.word(), |site| site.word).ok().map(|index| &self.sites[index])
     }

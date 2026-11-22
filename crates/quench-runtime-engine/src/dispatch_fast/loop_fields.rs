@@ -2,7 +2,7 @@
 use super::*;
 
 /// The slot addresses of `region`'s field stores, for `entry` (`loop_entry_in_lane`).
-pub(super) fn loop_field_stores(
+pub(crate) fn loop_field_stores(
     cx: *mut LaneContext,
     r: Registers,
     region: &super::compiled::LoopRegion,

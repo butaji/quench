@@ -110,7 +110,7 @@ impl Vm {
     /// The callees `candidates` (the callees each call site of `code`, the function's, reached, by
     /// PC) a stitch calls by their entries or inlines, and the Stable fact that holds each one's
     /// callee register (`Vm::stable_callees`).
-    pub(in crate::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
+    pub(crate) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
         let natives = self.native_callees(program, function, code);
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
@@ -120,7 +120,7 @@ impl Vm {
     }
 
     /// The realm a stitch finds its inlined callees in: the active one, which its entry proves active.
-    pub(in crate::compiled) fn realm_proof(&self) -> RealmProof {
+    pub(crate) fn realm_proof(&self) -> RealmProof {
         RealmProof { offset: u64::from(Self::realm_globals_offset().unsigned_abs()), global: self.realm.globals.to_bits() }
     }
 
@@ -297,7 +297,7 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quenc
 /// the records in row order (`Body::records`; an image body has no builtin row, whose record names none).
 fn image_calls(built: &Body, facts: quench_runtime::compile::aot_facts::FunctionFacts<'_>) -> Result<Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>, String> {
     let sites: Vec<u32> = built.symbols.iter().filter_map(|site| match site.symbol {
-        quench_runtime::vm::aot_image::Symbol::CallRecord { pc, .. } => Some(pc),
+        crate::aot_image::Symbol::CallRecord { pc, .. } => Some(pc),
         _ => None,
     }).collect();
     if sites.len() != built.records.len() { return Err("a direct row names no call record".into()); }
@@ -309,8 +309,8 @@ fn image_calls(built: &Body, facts: quench_runtime::compile::aot_facts::Function
 
 #[cfg(test)]
 #[path = "base_body/tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 #[path = "base_body/forms.rs"]
-mod forms;
+pub(crate) mod forms;

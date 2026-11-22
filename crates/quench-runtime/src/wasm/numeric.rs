@@ -46,7 +46,7 @@ macro_rules! selectors {
     ($enum:ident; $($name:ident, $wasm:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum $enum { $($name,)+ }
+        pub enum $enum { $($name,)+ }
         impl $enum {
             pub(crate) const ALL: &'static [Self] = &[$(Self::$name,)+];
             #[cfg(not(stencil_build))]

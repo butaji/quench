@@ -1,7 +1,7 @@
 //! Object publication: native functions (Cranelift IR, or code an AOT image already relocated)
 //! and data, with the entry table `NativeJsProgram::from_linked_image` reads.
 
-mod module;
+pub(crate) mod module;
 pub use module::{NativeCode, NativeJsModule, NativeReloc, lower_native_js_module, lower_native_js_module_for};
 use module::define_code;
 

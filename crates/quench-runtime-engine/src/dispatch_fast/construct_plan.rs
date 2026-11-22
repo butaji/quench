@@ -1,26 +1,26 @@
 //! Construct plans: a constructor's receiver allocated finished, its initializer stores made at once.
 use super::*;
 use quench_runtime::staged::plan_fields::{field_value, FieldClass};
-mod nested;
-mod adds;
-pub(super) use adds::{add_initializer_fields_in_lane, add_stores_in_lane};
-pub(super) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds, NestedField};
+pub(crate) mod nested;
+pub(crate) mod adds;
+pub(crate) use adds::{add_initializer_fields_in_lane, add_stores_in_lane};
+pub(crate) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds, NestedField};
 
-pub(super) use quench_runtime::vm::engine_types::ConstructPlan;
+pub(crate) use quench_runtime::vm::engine_types::ConstructPlan;
 
-pub(super) use quench_runtime::vm::engine_types::ConstructPlanKind;
+pub(crate) use quench_runtime::vm::engine_types::ConstructPlanKind;
 
 #[quench_macros::ext(ConstructPlanOps1)]
 impl ConstructPlan {
     /// This plan, with its receiver header derived from its prototype and shape; it holds
     /// under the dependency `watch_construct_plan` then gives it.
-    pub(super) fn finish(self) -> Self {
+    pub(crate) fn finish(self) -> Self {
         self.derive_header()
     }
 
     /// This plan with the header its receiver starts with, of its prototype and shape: inline
     /// storage when its fields fit the inline slots, else an arena run.
-    pub(super) fn derive_header(self) -> Self {
+    pub(crate) fn derive_header(self) -> Self {
         let header = if usize::from(self.fields) <= INLINE_PROPERTY_COUNT {
             InlineObjectHeader::of(self.prototype, self.shape)
         } else {
@@ -38,7 +38,7 @@ impl ConstructPlan {
     /// The value of a field of a plan whose stores default nothing (`ConstructPlanKind::Passed`):
     /// a constant field's constant, else the argument its parameter names.
     #[inline(always)]
-    pub(super) fn passed_value(&self, field: usize, argument: impl Fn(u16) -> Value) -> Value {
+    pub(crate) fn passed_value(&self, field: usize, argument: impl Fn(u16) -> Value) -> Value {
         if self.constant & (1 << field) != 0 { self.fallbacks[field] } else { argument(self.parameters[field]) }
     }
 
@@ -57,7 +57,7 @@ impl ConstructPlan {
     /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
     /// value, or a constant field's constant, or a computed field's Number, as its store
     /// computes it. `None` when a computed field's argument is no Number.
-    pub(super) fn values(&self, vm: &Vm, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
+    pub(crate) fn values(&self, vm: &Vm, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
         self.fill_values(vm, &mut values, argument)?;
         Some(values)
@@ -66,7 +66,7 @@ impl ConstructPlan {
     /// `values` written into `values`, which holds `undefined` throughout; `None` where a
     /// computed field's argument is no Number.
     #[inline(always)]
-    pub(super) fn fill_values(&self, vm: &Vm, values: &mut [Value; CONSTRUCT_PLAN_FIELDS], argument: impl Fn(u16) -> Value) -> Option<()> {
+    pub(crate) fn fill_values(&self, vm: &Vm, values: &mut [Value; CONSTRUCT_PLAN_FIELDS], argument: impl Fn(u16) -> Value) -> Option<()> {
         if self.constant | self.computed == 0 {
             self.passed_values(vm, values, argument);
             return Some(());
@@ -91,7 +91,7 @@ impl ConstructPlan {
     /// past them, which is how unused inline slots start: gathered into the receiver's inline
     /// slots where they fit, else into the arena run's values.
     #[inline(always)]
-    pub(super) fn allocate(&self, heap: &mut quench_runtime::heap::Heap, field: impl Fn(usize) -> Value) -> Value {
+    pub(crate) fn allocate(&self, heap: &mut quench_runtime::heap::Heap, field: impl Fn(usize) -> Value) -> Value {
         let fields = usize::from(self.fields);
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
         for (index, value) in values.iter_mut().enumerate().take(fields) {
@@ -103,13 +103,13 @@ impl ConstructPlan {
     /// The receiver this plan allocates with `values`, as `values` computed them: no second
     /// array gathered from them.
     #[inline(always)]
-    pub(super) fn allocate_values(&self, heap: &mut quench_runtime::heap::Heap, values: &[Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
+    pub(crate) fn allocate_values(&self, heap: &mut quench_runtime::heap::Heap, values: &[Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
         heap.alloc_planned_object(self.header, self.prototype, values, usize::from(self.fields))
     }
 
     /// This plan holding the fields `fields` that a forwarded initializer's adds gave a receiver
     /// of `shape` (`record_forwarded_fields_in_lane`), forwarding as `forwarded`.
-    pub(super) fn with_recorded(&self, fields: &Self, shape: u32, forwarded: ForwardedResolution) -> Self {
+    pub(crate) fn with_recorded(&self, fields: &Self, shape: u32, forwarded: ForwardedResolution) -> Self {
         Self {
             shape,
             fields: fields.fields,
@@ -127,7 +127,7 @@ impl ConstructPlan {
     }
 
     /// This plan extended by the field `store` adds, `None` once it names all it can.
-    pub(super) fn with_field(mut self, store: &quench_runtime::bytecode::InitializerStore, value: Value) -> Option<Self> {
+    pub(crate) fn with_field(mut self, store: &quench_runtime::bytecode::InitializerStore, value: Value) -> Option<Self> {
         let field = usize::from(self.fields);
         let slot = self.parameters.get_mut(field)?;
         match store.value {
@@ -157,7 +157,7 @@ impl ConstructPlan {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::EMPTY_CONSTRUCT_PLAN;
+pub(crate) use quench_runtime::vm::engine_types::EMPTY_CONSTRUCT_PLAN;
 
 /// The Number a computed initializer store (`InitializerValue::Numeric`) gives its field:
 /// `operator` of the parameter's `passed` value and `constant`, as the body's `Binary`
@@ -173,7 +173,7 @@ fn numeric_initializer(passed: Value, operator: u8, constant: f64) -> Option<Val
 /// The value an initializer store (`InitializerStore`) gives its field from the parameter's
 /// `passed` value: `fallback` in place of a falsy one where the store has it, else as passed.
 #[inline(always)]
-pub(super) fn initializer_value(vm: &Vm, passed: Value, fallback: Option<Value>) -> Value {
+pub(crate) fn initializer_value(vm: &Vm, passed: Value, fallback: Option<Value>) -> Value {
     match fallback {
         Some(fallback) if !vm.truthy(passed) => fallback,
         _ => passed,
@@ -184,7 +184,7 @@ pub(super) fn initializer_value(vm: &Vm, passed: Value, fallback: Option<Value>)
 /// `None` where the store leaves it to the body (`add_initializer_fields_in_lane`). The running
 /// program is the store's (`Vm::active_constant`).
 #[inline(always)]
-pub(super) fn initializer_store_value(vm: &Vm, store: &quench_runtime::bytecode::InitializerStore, argument: impl Fn(u16) -> Value) -> Option<Value> {
+pub(crate) fn initializer_store_value(vm: &Vm, store: &quench_runtime::bytecode::InitializerStore, argument: impl Fn(u16) -> Value) -> Option<Value> {
     match store.value {
         quench_runtime::bytecode::InitializerValue::Parameter { parameter, fallback } => {
             Some(initializer_value(vm, argument(parameter), fallback.map(Value::number)))
@@ -200,7 +200,7 @@ pub(super) fn initializer_store_value(vm: &Vm, store: &quench_runtime::bytecode:
 /// `prototype` do: the receiver's template is derived from those alone, and the epoch keeps
 /// the adds it planned free of setters. Apart from the planning, whose frame is larger.
 #[inline(always)]
-pub(super) fn planned_construction_in_lane(
+pub(crate) fn planned_construction_in_lane(
     vm: &mut Vm,
     callee: Value,
     r: Registers,
@@ -213,14 +213,14 @@ pub(super) fn planned_construction_in_lane(
 /// calls nothing out of line (`Heap::alloc_planned_inline_quick`); `None`, before any effect,
 /// for anything else, which `planned_construction_in_lane` makes.
 #[inline(always)]
-pub(super) fn planned_inline_quick_in_lane(vm: &mut Vm, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+pub(crate) fn planned_inline_quick_in_lane(vm: &mut Vm, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
     planned_inline_quick(vm, callee, construct_argument_in_lane(r, i))
 }
 
 /// `planned_inline_quick_in_lane` from the parameters' values `argument` gives: any construction
 /// site's quick case, a lane record's or a lane body's (`body_calls::constructed_in_place`).
 #[inline(always)]
-pub(super) fn planned_inline_quick(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+pub(crate) fn planned_inline_quick(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     let plan = &vm.lane_stack.construct_plans[index];
     let len = usize::from(plan.fields);
@@ -237,7 +237,7 @@ pub(super) fn planned_inline_quick(vm: &mut Vm, callee: Value, argument: impl Fn
 
 /// `planned_construction_in_lane` from the parameters' values `argument` gives.
 #[inline(always)]
-pub(super) fn planned_construction(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+pub(crate) fn planned_construction(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
@@ -349,13 +349,13 @@ fn defaulted_construction_in_lane(vm: &mut Vm, index: usize, argument: impl Fn(u
 /// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined
 /// when not passed.
 #[inline(always)]
-pub(super) fn construct_argument_in_lane(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
+pub(crate) fn construct_argument_in_lane(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
     let argc = ImmediateLayout::argument_count(i.imm());
     move |parameter| if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
-#[inline] pub(super) fn construct_plan_index(callee: Value) -> Option<usize> {
+#[inline] pub(crate) fn construct_plan_index(callee: Value) -> Option<usize> {
     callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
 }
 
@@ -363,7 +363,7 @@ pub(super) fn construct_argument_in_lane(r: Registers, i: &LaneInstruction) -> i
 /// layout keeps the plan's epoch and `callee`'s own layout still yields the planned
 /// `prototype`, from which the receiver's template is derived.
 #[inline(always)]
-pub(super) fn holding_construct_plan(vm: &Vm, callee: Value) -> Option<ConstructPlan> {
+pub(crate) fn holding_construct_plan(vm: &Vm, callee: Value) -> Option<ConstructPlan> {
     holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
 }
 
@@ -401,7 +401,7 @@ pub(crate) fn construct_plan_holds(vm: &Vm, callee: Value) -> bool {
 
 /// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
 #[inline(always)]
-pub(super) fn holding_construct_plan_index(vm: &Vm, callee: Value) -> Option<usize> {
+pub(crate) fn holding_construct_plan_index(vm: &Vm, callee: Value) -> Option<usize> {
     let index = construct_plan_index(callee)?;
     (vm.lane_stack.construct_plans[index].callee == callee
         && vm.lane_stack.construct_watches[index].as_ref().is_some_and(|watch| watch.is_published()))
@@ -410,7 +410,7 @@ pub(super) fn holding_construct_plan_index(vm: &Vm, callee: Value) -> Option<usi
 
 /// Records `resolution`, where `callee`'s forwarding read `function`, in plan `index`, which
 /// then also holds only while `function` and the holder of its `apply` keep their layouts.
-pub(super) fn record_forwarded_resolution(vm: &mut Vm, index: usize, function: Value, resolution: ForwardedResolution) {
+pub(crate) fn record_forwarded_resolution(vm: &mut Vm, index: usize, function: Value, resolution: ForwardedResolution) {
     vm.lane_stack.construct_plans[index].forwarded = Some(resolution);
     watch_construct_plan(vm, index, false, &[function, resolution.apply_holder]);
 }
@@ -423,7 +423,7 @@ pub(super) fn record_forwarded_resolution(vm: &mut Vm, index: usize, function: V
 /// or of a prototype above one (`Vm::hold_chain_layouts`), retires it, so a use compares no
 /// epoch, layout or shape; a change to a prototype on none of those chains leaves it. The
 /// plan never holds where a reader table is full.
-pub(super) fn watch_construct_plan(vm: &mut Vm, index: usize, renew: bool, objects: &[Value]) {
+pub(crate) fn watch_construct_plan(vm: &mut Vm, index: usize, renew: bool, objects: &[Value]) {
     use std::rc::Rc;
     use quench_runtime::code_dependencies::DependentCode;
     if renew {
@@ -449,7 +449,7 @@ pub(super) fn watch_construct_plan(vm: &mut Vm, index: usize, renew: bool, objec
 /// to its `each` as a cached add runs, a nested construction's value (`InitializerValue::Construct`)
 /// made by its `nested` from the callee's closure environment `env`: the receiver, and whether
 /// every store was a cached add.
-pub(super) fn initialize_stores_in_lane(
+pub(crate) fn initialize_stores_in_lane(
     vm: &mut Vm,
     callee: Value,
     constructor: Value,
@@ -506,7 +506,7 @@ pub(super) fn initialize_stores_in_lane(
 /// in place: the innermost activation completed with it (`complete_activation_in_lane`), else
 /// the frame's own return of it (`frame_return`).
 #[inline(always)]
-pub(super) fn return_constructed_in_lane(cx: *mut LaneContext, ip: Ip, this: Value) -> Resumed {
+pub(crate) fn return_constructed_in_lane(cx: *mut LaneContext, ip: Ip, this: Value) -> Resumed {
     // A running leaf's construction is its call's completion, as its return is
     // (`complete_leaf_in_lane`).
     if !unsafe { (*cx).leaf.call }.is_null() {

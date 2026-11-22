@@ -6,14 +6,14 @@ use super::*;
 
 /// The type a declared language set seeds where a tier checks it exactly: a Number, or a set
 /// `scalar::checkable` names (a String, an array or a plain object included). A BigInt, Symbol or a mixed set with Number is not checked here.
-pub(super) fn checkable_declared(bits: u16) -> Option<Type> {
+pub(crate) fn checkable_declared(bits: u16) -> Option<Type> {
     let ty = Type::languages(bits);
     (ty == Type::NUMBER || scalar::checkable(bits)).then_some(ty)
 }
 
 /// The checkable return type of program function `function`, from its declared signature keyed by
 /// its source span start (`DeclaredTypes::declared_signature`).
-pub(super) fn declared_return(program: &ResidualProgram, function: u32) -> Option<Type> {
+pub(crate) fn declared_return(program: &ResidualProgram, function: u32) -> Option<Type> {
     let start = program.function_get(function as usize)?.source_span?.start;
     let signature = program.declared_types.as_deref()?.declared_signature(start)?;
     checkable_declared(signature.returns)
@@ -22,7 +22,7 @@ pub(super) fn declared_return(program: &ResidualProgram, function: u32) -> Optio
 /// The checkable type of program function `function`'s `this` parameter (`DeclaredSignature::this`).
 /// An arrow's `this` is its environment's and a derived constructor's is bound by `super()`, so
 /// neither declares one here.
-pub(super) fn declared_this(program: &ResidualProgram, function: &quench_runtime::bytecode::Function) -> Option<Type> {
+pub(crate) fn declared_this(program: &ResidualProgram, function: &quench_runtime::bytecode::Function) -> Option<Type> {
     if function.is_arrow || function.derived_constructor { return None; }
     let start = function.source_span?.start;
     let signature = program.declared_types.as_deref()?.declared_signature(start)?;
@@ -31,7 +31,7 @@ pub(super) fn declared_this(program: &ResidualProgram, function: &quench_runtime
 
 /// The checkable element type of program function `function`'s annotated rest parameter
 /// (`DeclaredSignature::rest`). The rest array's elements hold it; the array itself is not typed.
-pub(super) fn declared_rest_element(program: &ResidualProgram, function: &quench_runtime::bytecode::Function) -> Option<Type> {
+pub(crate) fn declared_rest_element(program: &ResidualProgram, function: &quench_runtime::bytecode::Function) -> Option<Type> {
     if !function.rest { return None; }
     let start = function.source_span?.start;
     let signature = program.declared_types.as_deref()?.declared_signature(start)?;
@@ -41,7 +41,7 @@ pub(super) fn declared_rest_element(program: &ResidualProgram, function: &quench
 /// The rest parameter's register and its checkable element type, where the function never writes
 /// the register (`written`, the unit's written registers): its element reads are then reads of the
 /// array the activation made. The rest parameter is the last of the function's `params`.
-pub(super) fn declared_rest_read(program: &ResidualProgram, function: &quench_runtime::bytecode::Function,
+pub(crate) fn declared_rest_read(program: &ResidualProgram, function: &quench_runtime::bytecode::Function,
     written: &CompoundBitSet) -> Option<(Register, Type)> {
     let ty = declared_rest_element(program, function)?;
     let register = scalar::parameter_register(function, usize::from(function.params.checked_sub(1)?))?;
@@ -52,7 +52,7 @@ pub(super) fn declared_rest_read(program: &ResidualProgram, function: &quench_ru
 /// parameter index, for member reads whose base is a declared parameter (`declared_member_type`).
 /// The rest parameter is left out, as its element reads are `declared_rest_read`'s. Only a function
 /// with a signature key (its source span start) can declare a parameter; the top level has none.
-pub(super) fn declared_member_reads(program: &ResidualProgram, function: &quench_runtime::bytecode::Function,
+pub(crate) fn declared_member_reads(program: &ResidualProgram, function: &quench_runtime::bytecode::Function,
     written: &CompoundBitSet) -> Vec<(Register, u16)> {
     if program.declared_types.is_none() || function.source_span.is_none() { return Vec::new(); }
     let rest = if function.rest { function.params.checked_sub(1) } else { None };
@@ -66,7 +66,7 @@ pub(super) fn declared_member_reads(program: &ResidualProgram, function: &quench
 /// The checkable type of member `name` of parameter `parameter` of the function keyed by its source
 /// span start `function_start`: the member a signature declares on the parameter itself, else the
 /// field of the top-level class the parameter is typed by (`DeclaredTypes::declared_parameter_class`).
-pub(super) fn declared_member_type(program: &ResidualProgram, function_start: u32, parameter: u16, name: &str) -> Option<Type> {
+pub(crate) fn declared_member_type(program: &ResidualProgram, function_start: u32, parameter: u16, name: &str) -> Option<Type> {
     let declared = program.declared_types.as_deref()?;
     let bits = declared.declared_member(function_start, parameter, name)
         .or_else(|| declared.declared_parameter_class(function_start, parameter)
@@ -79,7 +79,7 @@ pub(super) fn declared_member_type(program: &ResidualProgram, function_start: u3
 /// Parameters are checked at entry instead (`scalar::declared_entry_types`). The top level keys
 /// as `u32::MAX`, a nested function by its source span start (`compile::typescript::signatures`).
 /// A captured local (`Function::local_slot_captured`) is left out.
-pub(super) fn declared_local_types(program: &ResidualProgram, function: &quench_runtime::bytecode::Function) -> Vec<(Register, Type)> {
+pub(crate) fn declared_local_types(program: &ResidualProgram, function: &quench_runtime::bytecode::Function) -> Vec<(Register, Type)> {
     let Some(declared) = program.declared_types.as_deref() else { return Vec::new() };
     let key = match function.source_span {
         _ if function.parent.is_none() => u32::MAX,
@@ -100,14 +100,14 @@ pub(super) fn declared_local_types(program: &ResidualProgram, function: &quench_
 impl Lowering<'_, '_> {
     /// Whether a check after the instruction at `pc` can resume at the next PC: a fused successor
     /// (`consumed`) is executed by its predecessor's lowering, so an exit there would run it twice.
-    pub(super) fn resumes_after(&self, pc: usize) -> bool {
+    pub(crate) fn resumes_after(&self, pc: usize) -> bool {
         pc + 1 < self.unit.instructions.len() && !self.consumed.contains(pc + 1)
     }
 
     /// Conforms a call's declared result where the call completes: the result register holds the
     /// declared type, checked once at the resume point after the call's effect. The guard reads the
     /// result value, so it holds whichever path joined the completion (the direct entry or the VM's call).
-    pub(super) fn conform_declared_result(&mut self, state: &mut State, pc: usize, result: Register, ty: Type) {
+    pub(crate) fn conform_declared_result(&mut self, state: &mut State, pc: usize, result: Register, ty: Type) {
         if self.resumes_after(pc) { self.conform_declared(state, pc + 1, result, ty); }
     }
 
@@ -121,7 +121,7 @@ impl Lowering<'_, '_> {
 
     /// Conforms each annotated local the entry function's own instruction at `pc` defines
     /// (`declared_local_types`) where it is written: the local's annotation is checked once there.
-    pub(super) fn conform_declared_definitions(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) {
+    pub(crate) fn conform_declared_definitions(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) {
         if !self.caller_record(pc) || !self.resumes_after(pc) { return; }
         // The entry function's own `this` read (`LoadThis`) enters its destination with the declared type.
         if let Some(ty) = self.declared_this && matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::LoadThis { .. })) {
@@ -137,7 +137,7 @@ impl Lowering<'_, '_> {
     /// Conforms the element an element read of the entry function's rest parameter (`declared_rest`,
     /// the register `base`) yields: the result register holds the declared element type, checked
     /// once where the read completes. Any other base is left alone.
-    pub(super) fn conform_declared_rest_read(&mut self, state: &mut State, pc: usize, base: Register, result: Register) {
+    pub(crate) fn conform_declared_rest_read(&mut self, state: &mut State, pc: usize, base: Register, result: Register) {
         let Some((rest, ty)) = self.declared_rest else { return };
         if base != rest || !self.caller_record(pc) || !self.resumes_after(pc) { return; }
         self.conform_declared(state, pc + 1, result, ty);
@@ -146,7 +146,7 @@ impl Lowering<'_, '_> {
     /// Conforms the value a named read `atom` of the entry function's declared parameter (`base`,
     /// one of `declared_members`) yields: the result register holds the member's declared type,
     /// checked once where the read completes. Any other base, or a name the signature does not type, is left alone.
-    pub(super) fn conform_declared_member_read(&mut self, state: &mut State, pc: usize, base: Register, atom: Atom, result: Register) {
+    pub(crate) fn conform_declared_member_read(&mut self, state: &mut State, pc: usize, base: Register, atom: Atom, result: Register) {
         let Some(&(_, parameter)) = self.declared_members.iter().find(|(register, _)| *register == base) else { return };
         let Some(start) = self.declared_member_start else { return };
         if !self.caller_record(pc) || !self.resumes_after(pc) { return; }

@@ -5,11 +5,11 @@
 use super::*;
 use crate::compiled::{ElementViews, LoopEntry, LoopRegion};
 
-pub(super) use quench_runtime::vm::engine_types::LoopTier;
+pub(crate) use quench_runtime::vm::engine_types::LoopTier;
 
 #[quench_macros::ext(LoopTierOps1)]
 impl LoopTier {
-    pub(super) fn weigh_run(&mut self, backedges: u64) {
+    pub(crate) fn weigh_run(&mut self, backedges: u64) {
         self.runs = self.runs.saturating_add(1);
         self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
@@ -18,7 +18,7 @@ impl LoopTier {
     /// Moves a b-jit region the default mode picked to u-jit once the loop's iterations reach
     /// `promote_at` (`loop_model::promotion_taken`): the stencil code goes, and the next entry compiles
     /// the u-jit region, where a compilation remains.
-    pub(super) fn promote(&mut self, tiers: &Tiers) {
+    pub(crate) fn promote(&mut self, tiers: &Tiers) {
         let due = self.promote_at.is_some_and(|at| self.iterations >= at);
         if !self.base || self.compilations >= tiers.loops.max_compilations || !due { return; }
         // The stencil code keeps running while the u-jit region compiles (`promoting`): the
@@ -30,19 +30,19 @@ impl LoopTier {
     /// The backward edges a run of the current code may take before it leaves to move to u-jit
     /// (`LoopEntry::set_backedge_budget`): for a b-jit region the default mode picked, the
     /// iterations left until the u-jit region is ahead of it; none otherwise.
-    pub(super) fn backedge_budget(&self, tiers: &Tiers) -> Option<u64> {
+    pub(crate) fn backedge_budget(&self, tiers: &Tiers) -> Option<u64> {
         if !self.base || self.compilations >= tiers.loops.max_compilations { return None; }
         self.promote_at.map(|at| at.saturating_sub(self.iterations))
     }
 
     /// Whether the u-jit region of a promoted site is still to start compiling.
-    pub(super) fn promotion_due(&self) -> bool {
+    pub(crate) fn promotion_due(&self) -> bool {
         self.promoting && self.pending.is_none()
     }
 
     /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
     /// the code goes and the next compilation versions no loop bound on entry, once.
-    pub(super) fn missed_entry(&mut self, tiers: &Tiers) {
+    pub(crate) fn missed_entry(&mut self, tiers: &Tiers) {
         if self.unbounded || self.compilations >= tiers.loops.max_compilations { return; }
         self.entry_misses += 1;
         if self.entry_misses < tiers.loops.widen_after_leaves { return; }
@@ -50,40 +50,40 @@ impl LoopTier {
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
-    pub(super) fn weigh_declines(&mut self, declines: u32) {
+    pub(crate) fn weigh_declines(&mut self, declines: u32) {
         self.declined = self.declined.saturating_add(declines);
     }
 
     /// The entries made, native runs and declined ones, and the iterations the runs took.
-    pub(super) fn entries(&self) -> u64 { u64::from(self.runs) + u64::from(self.declined) }
+    pub(crate) fn entries(&self) -> u64 { u64::from(self.runs) + u64::from(self.declined) }
 
-    pub(super) fn iterations(&self) -> u64 { self.iterations }
+    pub(crate) fn iterations(&self) -> u64 { self.iterations }
 
     /// Iterations per native run, or `None` before the first run.
     /// The native runs of its code so far.
-    pub(super) fn runs(&self) -> u64 {
+    pub(crate) fn runs(&self) -> u64 {
         u64::from(self.runs)
     }
 
-    pub(super) fn mean_trip(&self) -> Option<u64> {
+    pub(crate) fn mean_trip(&self) -> Option<u64> {
         self.iterations.checked_div(u64::from(self.runs))
     }
 
     /// Whether published code can re-enter `region` at `pc` (`CompiledOsrRegion::can_run_from`).
-    pub(super) fn resumable(&self, region: &LoopRegion, pc: u32) -> bool {
+    pub(crate) fn resumable(&self, region: &LoopRegion, pc: u32) -> bool {
         self.code.as_ref().and_then(|code| code.lease()).is_some_and(|code| code.can_run_from(region, pc))
     }
 
     /// Makes the compile under way stale where its code names shape ids, which a shape
     /// compaction renumbers.
-    pub(super) fn retire_named_shapes(&self) {
+    pub(crate) fn retire_named_shapes(&self) {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
     }
 
     /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
     /// times joins the widened ones and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
-    pub(super) fn left_at(&mut self, tiers: &Tiers, pc: usize, read: bool) {
+    pub(crate) fn left_at(&mut self, tiers: &Tiers, pc: usize, read: bool) {
         let widened = self.widened.binary_search(&pc).is_ok();
         if !(read || !widened) || self.abandoned.binary_search(&pc).is_ok() || self.compilations >= tiers.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
@@ -100,7 +100,7 @@ impl LoopTier {
     /// (`Lowering::store_leaves`). The first time it has left `widen_after_leaves` times the code
     /// goes and the next compilation plans the store again from what its cache learned since
     /// (a store the loop had not run yet had no plan); after that it widens as `left_at` does.
-    pub(super) fn left_store(&mut self, tiers: &Tiers, pc: usize) {
+    pub(crate) fn left_store(&mut self, tiers: &Tiers, pc: usize) {
         if self.refed.binary_search(&pc).is_ok() { return self.left_at(tiers, pc, false); }
         if self.compilations >= tiers.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
@@ -115,7 +115,7 @@ impl LoopTier {
     /// Whether code over the element `views` an entry found may run: typed code of no kind runs
     /// over any typed kind; code over any other views goes where a compilation remains, which the
     /// entry then makes over these, or over no kind where two kinds were found.
-    pub(super) fn select(&mut self, tiers: &Tiers, views: ElementViews) -> bool {
+    pub(crate) fn select(&mut self, tiers: &Tiers, views: ElementViews) -> bool {
         let common = self.views.common(views);
         if common == Some(self.views) { return true; }
         if self.compilations >= tiers.loops.max_compilations { return false; }
@@ -128,7 +128,7 @@ impl LoopTier {
     /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
     /// the interpreter without reading an entry: reading one at every iteration had cost
     /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
-    pub(super) fn may_run(&self, tiers: &Tiers, policy: quench_runtime::MemoryPolicy) -> bool {
+    pub(crate) fn may_run(&self, tiers: &Tiers, policy: quench_runtime::MemoryPolicy) -> bool {
         self.is_published()
             || (self.compilations < tiers.loops.max_compilations && crate::compiled::loop_tier_compiles(policy))
     }
@@ -136,7 +136,7 @@ impl LoopTier {
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
     /// between looks count down, and a look publishes code that is ready.
     #[inline(always)]
-    pub(super) fn awaits_code(&mut self, vm: &mut Vm, site: &LoopSite) -> bool {
+    pub(crate) fn awaits_code(&mut self, vm: &mut Vm, site: &LoopSite) -> bool {
         // A site with published code, or none under way, has nothing to wait for. A look still
         // counting down is one decrement here; only the look itself leaves the inline path.
         if self.pending.is_none() { return false; }
@@ -149,7 +149,7 @@ impl LoopTier {
 
     /// The entries left before the next look, which the caller runs untried (`LoopSite::skips_entry`):
     /// the next entry looks.
-    pub(super) fn take_wait(&mut self) -> u32 {
+    pub(crate) fn take_wait(&mut self) -> u32 {
         u32::from(std::mem::take(&mut self.wait))
     }
 
@@ -242,7 +242,7 @@ fn entry_types(region: &crate::compiled::LoopRegion, r: Registers) -> Vec<quench
 
 /// Starts compiling `site`'s region over the tier's element views from the running activation,
 /// and looks for its code at once: a code generator without its own thread has it ready.
-pub(super) fn loop_compile_in_lane(
+pub(crate) fn loop_compile_in_lane(
     cx: *mut LaneContext,
     r: Registers,
     site: &LoopSite,
@@ -370,7 +370,7 @@ fn native_store_loads(machine: &Vm, region: &crate::compiled::LoopRegion)
 /// one a typed array a register holds whose elements the loop may address in place
 /// (`Vm::typed_array_elements_in_lane`), which its code views at the loop's header. A mix, or
 /// any other value, declines the entry; a string the loop only reads holds an empty slot.
-pub(super) fn loop_arrays_in_lane(vm: &mut Vm, r: Registers, region: &LoopRegion, entry: &mut LoopEntry)
+pub(crate) fn loop_arrays_in_lane(vm: &mut Vm, r: Registers, region: &LoopRegion, entry: &mut LoopEntry)
     -> Option<ElementViews> {
     let value_of = |(register, field): (quench_runtime::bytecode::Register, Option<usize>), entry: &LoopEntry| match field {
         None => r.get(register),
@@ -446,7 +446,7 @@ fn push_dense_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopEn
 
 /// The running activation's function in `code`, the context's program: its index, body and
 /// decoded code, and the program's constants, from which a loop site's region is analyzed.
-pub(super) fn loop_function_in_lane(cx: *mut LaneContext, code: &ResidualProgram)
+pub(crate) fn loop_function_in_lane(cx: *mut LaneContext, code: &ResidualProgram)
     -> Option<(u32, &quench_runtime::bytecode::Function, Vec<WideInstruction>, Vec<Value>)> {
     let machine = unsafe { vm(cx) };
     let function_index = machine
@@ -461,7 +461,7 @@ pub(super) fn loop_function_in_lane(cx: *mut LaneContext, code: &ResidualProgram
 /// The plain region of `site`'s loop, which leaves at each method call the inliner declined
 /// (`MethodCalls::Exit`).
 #[inline(never)]
-pub(super) fn method_call_region_in_lane(cx: *mut LaneContext, site: &LoopSite) -> Option<LoopRegion> {
+pub(crate) fn method_call_region_in_lane(cx: *mut LaneContext, site: &LoopSite) -> Option<LoopRegion> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let (function_index, function, decoded, constants) = loop_function_in_lane(cx, code)?;
@@ -481,7 +481,7 @@ pub(super) fn method_call_region_in_lane(cx: *mut LaneContext, site: &LoopSite) 
 
 /// The depth-zero capture slots the running function reads that hold typed arrays now (an observation
 /// the compiled loop's entry checks): a loop indexing such a capture views it as a typed array.
-pub(super) fn typed_capture_slots(cx: *mut LaneContext) -> Vec<u16> {
+pub(crate) fn typed_capture_slots(cx: *mut LaneContext) -> Vec<u16> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let Some((_, function, _, _)) = loop_tier::loop_function_in_lane(cx, code) else { return Vec::new() };
@@ -497,7 +497,7 @@ pub(super) fn typed_capture_slots(cx: *mut LaneContext) -> Vec<u16> {
 
 /// The depth-zero capture slots the running function reads that hold int32s now (an observation
 /// the compiled loop's entry guard checks): a loop's integer arithmetic on such a capture stays int32.
-pub(super) fn int_capture_slots(cx: *mut LaneContext) -> Vec<u16> {
+pub(crate) fn int_capture_slots(cx: *mut LaneContext) -> Vec<u16> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let Some((_, function, _, _)) = loop_function_in_lane(cx, code) else { return Vec::new() };
@@ -525,7 +525,7 @@ const SAMPLED_ELEMENTS: usize = 64;
 /// The registers of `region`'s arrays whose first elements, sampled on entry, are all int32s or all
 /// Numbers (int32 or double, no hole), with that type: an observation (a guess the code checks at
 /// every read), not a proof.
-pub(super) fn number_arrays(vm: &Vm, r: Registers, region: &LoopRegion) -> Vec<(Register, quench_runtime::typed_ir::Type)> {
+pub(crate) fn number_arrays(vm: &Vm, r: Registers, region: &LoopRegion) -> Vec<(Register, quench_runtime::typed_ir::Type)> {
     region.arrays.iter().filter(|array| array.field.is_none())
         .filter_map(|array| sample_array(vm, r.get(array.register)).map(|ty| (array.register, ty))).collect()
 }
@@ -533,11 +533,11 @@ pub(super) fn number_arrays(vm: &Vm, r: Registers, region: &LoopRegion) -> Vec<(
 /// The type the first elements of the array `value` all have, int32 or Number (no hole), sampled:
 /// an observation (a guess the code checks at every read), not a proof.
 /// The array-typed values among `values` (register order), sampled: what a lane body's loops read typed.
-pub(super) fn sampled_arrays(vm: &Vm, values: impl Iterator<Item = Value>) -> Vec<(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)> {
+pub(crate) fn sampled_arrays(vm: &Vm, values: impl Iterator<Item = Value>) -> Vec<(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)> {
     values.enumerate().filter_map(|(register, value)| sample_array(vm, value).map(|ty| (register as quench_runtime::bytecode::Register, ty))).collect()
 }
 
-pub(super) fn sample_array(vm: &Vm, value: Value) -> Option<quench_runtime::typed_ir::Type> {
+pub(crate) fn sample_array(vm: &Vm, value: Value) -> Option<quench_runtime::typed_ir::Type> {
     use quench_runtime::typed_ir::Type;
     // A float typed array's kind fixes its elements as Numbers, as a C array's element type does.
     if let Some(kind) = vm.typed_array_kind(value) {
@@ -554,7 +554,7 @@ pub(super) fn sample_array(vm: &Vm, value: Value) -> Option<quench_runtime::type
 /// The registers of the running activation that hold int32s at entry and that the loop writes,
 /// each with the range its value gives the entry (`IntRange::entering`): an observation the
 /// compiled code's entry contract checks, as `number_arrays`'.
-pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, quench_runtime::typed_ir::IntRange)> {
+pub(crate) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, quench_runtime::typed_ir::IntRange)> {
     region.entry_registers().filter_map(|register| r.get(register).as_int()
         .map(|value| (register, quench_runtime::typed_ir::IntRange::entering(value)))).collect()
 }

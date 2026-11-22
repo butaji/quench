@@ -13,7 +13,7 @@ use super::*;
 script_handler! {
     /// A `LoadCapture` of a root slot written once, whose value the record keeps
     /// (`hold_root_constant`).
-    pub(super) fn lane_load_root_constant<>(cx, r, ip, i, view) {
+    pub(crate) fn lane_load_root_constant<>(cx, r, ip, i, view) {
         r.set(i.a, i.constant());
         next!(cx, r, following(ip), view)
     }
@@ -36,7 +36,7 @@ fn holds_plain_capture_read(cx: *mut LaneContext, ip: Ip) -> bool {
 /// `owner`'s root environment (`lane_root_binding_owner`), keep `value`
 /// (`lane_load_root_constant`) where `owner` is the running program, the slot is written once
 /// and `value` is initialized; whether it did.
-pub(super) fn hold_root_constant(cx: *mut LaneContext, ip: Ip, owner: ProgramId, slot: u16, value: Value) -> bool {
+pub(crate) fn hold_root_constant(cx: *mut LaneContext, ip: Ip, owner: ProgramId, slot: u16, value: Value) -> bool {
     let vm = unsafe { vm(cx) };
     let program = unsafe { (*cx).program };
     if value.is_internal_marker() || owner != program || !holds_plain_capture_read(cx, ip) || !vm.programs.root_slot_written_once(program, slot) {

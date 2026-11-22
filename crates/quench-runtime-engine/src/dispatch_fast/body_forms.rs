@@ -10,10 +10,10 @@ use quench_runtime::staged::protocol::fill_call;
 use quench_runtime::staged::{Arguments, Callee, Concrete, DecodeContext, FunctionId, Invocation, Passed, Receiver};
 
 /// Values a call gathers from its register list, kept inline up to what a call usually passes.
-pub(super) type Gathered = SmallVec<[Value; GATHERED_INLINE_VALUES]>;
+pub(crate) type Gathered = SmallVec<[Value; GATHERED_INLINE_VALUES]>;
 
 /// The values a call passes: a window's, in place, or a list's, gathered.
-pub(super) enum Values<'a> {
+pub(crate) enum Values<'a> {
     Window(&'a [Value]),
     Gathered(Gathered),
 }
@@ -31,10 +31,10 @@ impl std::ops::Deref for Values<'_> {
 
 /// A call record of the running body, decoded once.
 #[derive(Clone, Copy)]
-pub(super) struct BodyCall<'a> {
-    pub(super) site: Invocation,
-    pub(super) registers: Registers,
-    pub(super) ip: Ip,
+pub(crate) struct BodyCall<'a> {
+    pub(crate) site: Invocation,
+    pub(crate) registers: Registers,
+    pub(crate) ip: Ip,
     /// The running activation's `this`; the deleted marker where the body reads a lexical one.
     this: Value,
     code: &'a ResidualProgram,
@@ -49,7 +49,7 @@ impl<'a> BodyCall<'a> {
     /// # Safety
     /// `cx` is the running lane's context and `call_pc` a record of the running body's function.
     #[inline(always)]
-    pub(super) unsafe fn at(cx: *mut LaneContext, call_pc: u64) -> Option<Self> {
+    pub(crate) unsafe fn at(cx: *mut LaneContext, call_pc: u64) -> Option<Self> {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         // SAFETY: the context names the running activation, which a native callee's frame is while its helper
@@ -76,27 +76,27 @@ impl<'a> BodyCall<'a> {
 
     /// How many arguments the call passes.
     #[inline]
-    pub(super) fn argc(&self) -> u16 {
+    pub(crate) fn argc(&self) -> u16 {
         self.site.arguments.count()
     }
 
     /// The record's hint of the script call target that answered it last.
     #[inline]
-    pub(super) fn link(&self) -> &'a std::cell::Cell<u16> {
+    pub(crate) fn link(&self) -> &'a std::cell::Cell<u16> {
         // SAFETY: `ip` is a record of the running view.
         unsafe { &(*self.ip).call_link }
     }
 
     /// Whether the call's record may be requickened to its read memo (`memoize_read_in_lane`): only a
     /// register call's record has the layout the memo's handlers read.
-    pub(super) fn memoizes(&self) -> bool {
+    pub(crate) fn memoizes(&self) -> bool {
         matches!((self.site.callee, self.site.arguments), (Callee::Register(_), Arguments::Window { .. }))
     }
 
     /// The receiver the call binds: a register, the activation's `this` or the field of it a cached
     /// read gives, or `undefined`. `None` where the helper cannot read it in place: a lexical `this`,
     /// a field the caches do not hold, or a construction's receiver, which its plan allocates.
-    pub(super) fn receiver(&self, vm: &mut Vm) -> Option<Value> {
+    pub(crate) fn receiver(&self, vm: &mut Vm) -> Option<Value> {
         match self.site.receiver {
             Receiver::Register(register) => Some(self.registers.get(register)),
             Receiver::Undefined => Some(Value::UNDEFINED),
@@ -116,7 +116,7 @@ impl<'a> BodyCall<'a> {
     /// (`Vm::method_cache_load`), or the function a known call names, which its site linked. `None`
     /// where the method is not cached or the site linked no such function.
     #[inline(always)]
-    pub(super) fn callee(&self, vm: &mut Vm, receiver: Value) -> Option<Value> {
+    pub(crate) fn callee(&self, vm: &mut Vm, receiver: Value) -> Option<Value> {
         match self.site.callee {
             Callee::Register(register) => Some(self.registers.get(register)),
             Callee::Method { atom, site } => vm.method_cache_load(self.code, site as usize, atom, receiver),
@@ -127,7 +127,7 @@ impl<'a> BodyCall<'a> {
     /// Parameter `k` of a plain activation as this call passes it: argument `k`, or `undefined`
     /// where it is not passed.
     #[inline(always)]
-    pub(super) fn argument(&self) -> impl Fn(u16) -> Value + '_ {
+    pub(crate) fn argument(&self) -> impl Fn(u16) -> Value + '_ {
         #[inline(always)] move |parameter| match self.site.arguments {
             Arguments::Window { first, count } if parameter < count => self.registers.get(first + parameter),
             Arguments::Window { .. } => Value::UNDEFINED,
@@ -139,7 +139,7 @@ impl<'a> BodyCall<'a> {
     ///
     /// # Safety
     /// The caller's registers do not move while the values are read.
-    pub(super) unsafe fn values(&self) -> Values<'a> {
+    pub(crate) unsafe fn values(&self) -> Values<'a> {
         match self.site.arguments {
             // SAFETY: the window is registers of the running function.
             Arguments::Window { first, count } => Values::Window(unsafe { std::slice::from_raw_parts(self.registers.0.add(usize::from(first)), usize::from(count)) }),
@@ -149,7 +149,7 @@ impl<'a> BodyCall<'a> {
 
     /// The arguments as the keeping activation takes them: the window in place, or the values of a
     /// list gathered into `gathered`, which then outlives the activation.
-    pub(super) fn kept(&self, gathered: &mut Gathered) -> ActivationArguments {
+    pub(crate) fn kept(&self, gathered: &mut Gathered) -> ActivationArguments {
         match self.site.arguments {
             Arguments::Window { first, .. } => ActivationArguments::Window(first),
             Arguments::List(_) => {
@@ -162,7 +162,7 @@ impl<'a> BodyCall<'a> {
     /// The plain activation of `target` this call makes: its window of registers filled with the
     /// arguments, then `undefined`. The call passes at most `target`'s parameters and the lane stack
     /// has room (`activation_room_in_lane`).
-    pub(super) fn push_plain(&self, cx: *mut LaneContext, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
+    pub(crate) fn push_plain(&self, cx: *mut LaneContext, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
         match self.site.arguments {
             Arguments::Window { first, count } => {
                 // SAFETY: the record's window of the registers holds its values.

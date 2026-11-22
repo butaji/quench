@@ -16,7 +16,7 @@ use quench_runtime::staged::call_complete::{concrete_call_result, concrete_write
 /// job to deliver, or a body's callee's, whose call's register takes it, a construction's
 /// receiver (`this`) for a non-object. `None` for any other completion.
 #[inline(always)]
-pub(super) fn ends_run(cx: *mut LaneContext, frame: &ActivationView, completion: Completion, this: Value, value: Value) -> Option<Resumed> {
+pub(crate) fn ends_run(cx: *mut LaneContext, frame: &ActivationView, completion: Completion, this: Value, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     match completion {
         Completion::ReturnsToNative | Completion::ResumesJob => {}
@@ -36,7 +36,7 @@ pub(super) fn ends_run(cx: *mut LaneContext, frame: &ActivationView, completion:
 /// the general loop that finishes it, as a native's callback or a job's is. A body's callee is not:
 /// its frame's return leaves the lane instead (`LaneStack::body_boundary`), which the
 /// innermost such frame decides.
-pub(super) fn enters_as_frame(stack: &mut LaneStack, activation: &Activation, frame: usize) -> bool {
+pub(crate) fn enters_as_frame(stack: &mut LaneStack, activation: &Activation, frame: usize) -> bool {
     match activation.script().map(|script| script.completion) {
         Some(Completion::ReturnsToNative | Completion::ResumesJob) => true,
         Some(Completion::ReturnsToBody | Completion::ConstructsToBody) => {
@@ -50,7 +50,7 @@ pub(super) fn enters_as_frame(stack: &mut LaneStack, activation: &Activation, fr
 /// Whether `resume`, the record a body's callee left at, is where the lane left for the
 /// general path (`finish`), not a record the lane continues at.
 #[inline(always)]
-pub(super) fn left_lane(resume: Ip) -> bool {
+pub(crate) fn left_lane(resume: Ip) -> bool {
     resume.addr() & EXIT_TAG != 0
 }
 
@@ -73,7 +73,7 @@ fn leave(cx: *mut LaneContext, resume: Ip, acc: Value) -> u64 {
 /// (`LANE_CALL_COMPLETED`). A run that leaves the lane for the general path leaves the body
 /// too, at the record the lane left at (`left_lane`), as does a call no nested run takes:
 /// one below such a leave, or without native stack.
-pub(super) fn finish(cx: *mut LaneContext, depth: usize, resume: Ip, acc: Value, constructs: bool) -> u64 {
+pub(crate) fn finish(cx: *mut LaneContext, depth: usize, resume: Ip, acc: Value, constructs: bool) -> u64 {
     let (plain, nested) = if constructs { (Completion::Constructs, Completion::ConstructsToBody) } else { (Completion::Plain, Completion::ReturnsToBody) };
     let Ok(_stack) = quench_runtime::stack::StackGuard::enter() else { return leave(cx, resume, acc) };
     if left_lane(resume) || !recomplete(cx, depth, plain, nested) { return leave(cx, resume, acc); }
@@ -106,7 +106,7 @@ fn run_nested(cx: *mut LaneContext, resume: Ip, acc: Value) -> Option<Ip> {
 /// (`array_steps::body_array_iteration_in_lane`), its record `resume`: run in the lane until the
 /// iteration completes the call (`LANE_CALL_COMPLETED`); a run that leaves the lane for the
 /// general path leaves the body at the record it left at.
-pub(super) fn finish_array_iteration(cx: *mut LaneContext, resume: Ip) -> u64 {
+pub(crate) fn finish_array_iteration(cx: *mut LaneContext, resume: Ip) -> u64 {
     ended(cx, run_nested(cx, resume, Value::UNDEFINED))
 }
 

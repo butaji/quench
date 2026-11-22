@@ -31,7 +31,7 @@ const FIELD_BITS: u32 = 16;
 /// The operand registers an allocating step reads, as `Vm::wasm_gc_value_step` reads them: a
 /// window's registers, a pair's, and the fixed operands. `None` for an operation that is not an
 /// allocating step.
-pub(super) fn allocating_reads(instruction: WideInstruction) -> Option<Vec<u16>> {
+pub(crate) fn allocating_reads(instruction: WideInstruction) -> Option<Vec<u16>> {
     let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
     Some(match GcStep::of(instruction.op())? {
         GcStep::ArrayNew { construction: ArrayConstruction::Repeated } => vec![b, c],
@@ -58,7 +58,7 @@ pub(super) fn allocating_reads(instruction: WideInstruction) -> Option<Vec<u16>>
 /// The kind of the word an allocating step returns; `None` for a step that returns none. An i31
 /// step's operator (its immediate) decides: `ref.i31` gives a reference, `i31.get_s` and
 /// `i31.get_u` an i32 (`I31Operator::apply`).
-pub(super) fn allocating_result(instruction: WideInstruction) -> Option<Kind> {
+pub(crate) fn allocating_result(instruction: WideInstruction) -> Option<Kind> {
     match GcStep::of(instruction.op()) {
         Some(GcStep::ArrayFill | GcStep::ArrayCopy | GcStep::ArraySegment { init: true, .. }) => None,
         Some(GcStep::Test { cast: false, descriptor: true }) => Some(Kind::I32),
@@ -69,13 +69,13 @@ pub(super) fn allocating_result(instruction: WideInstruction) -> Option<Kind> {
 
 /// The instruction as one word (its opcode and registers, which fit in 16 bits each) and its
 /// immediate, which the callout unpacks.
-pub(super) fn pack(instruction: WideInstruction) -> i64 {
+pub(crate) fn pack(instruction: WideInstruction) -> i64 {
     let fields = [instruction.op() as u64, u64::from(instruction.a()), u64::from(instruction.b()), u64::from(instruction.c())];
     fields.iter().enumerate().fold(0, |packed, (index, field)| packed | (field << (index as u32 * FIELD_BITS))) as i64
 }
 
 /// The instruction `pack` and the immediate name.
-pub(super) fn unpack(packed: u64, imm: u64) -> WideInstruction {
+pub(crate) fn unpack(packed: u64, imm: u64) -> WideInstruction {
     let field = |index: u32| ((packed >> (index * FIELD_BITS)) & u64::from(u16::MAX)) as u16;
     let op = Op::from_index(usize::from(field(0))).expect("packed opcode");
     WideInstruction::new(op, field(1), field(2), field(3), imm as u32)
@@ -83,7 +83,7 @@ pub(super) fn unpack(packed: u64, imm: u64) -> WideInstruction {
 
 /// The Value of an operand the emitted code spilled: an i32 from its low word, an i64 boxed
 /// where its payload does not fit, a reference as its Value bits.
-pub(super) fn operand_value(vm: &mut Vm, kind: u64, bits: u64) -> Value {
+pub(crate) fn operand_value(vm: &mut Vm, kind: u64, bits: u64) -> Value {
     if kind == Kind::I32 as u64 {
         Value::integer(bits as u32 as i32)
     } else if kind == Kind::I64 as u64 {
@@ -133,7 +133,7 @@ unsafe extern "C" fn gc_allocate(
 /// The interpreter's step of an allocating `instruction` over `operands` (each register's Value),
 /// as the Wasm bits of its result's kind (`allocating_result`): a reference's Value bits, an i32
 /// (a descriptor test's flag, an i31 read) zero-extended, or 0 where the step has no result. Both allocation callouts (the u-jit's `gc_allocate`, the b-jit's `allocate_frame`) run it.
-pub(super) fn allocating_bits(
+pub(crate) fn allocating_bits(
     vm: &mut Vm,
     program: ProgramId,
     env: Value,
@@ -160,7 +160,7 @@ pub(super) fn allocating_bits(
 /// # Safety
 /// `context` is the live context of the row's call, `frame` the stitched frame whose registers
 /// the descriptor names, `descriptor` holds `count` words, and `out` is a word the row owns.
-pub(super) unsafe extern "C" fn allocate_frame(
+pub(crate) unsafe extern "C" fn allocate_frame(
     context: *mut CallContext,
     packed: u64,
     meta: u64,
@@ -199,7 +199,7 @@ pub(super) unsafe extern "C" fn allocate_frame(
 impl Analysis<'_> {
     /// Checks an allocating step: each operand it reads holds a value, and its result takes the
     /// kind the step returns.
-    pub(super) fn transfer_allocating(
+    pub(crate) fn transfer_allocating(
         &self,
         function: &Function,
         instruction: WideInstruction,
@@ -240,7 +240,7 @@ impl Emitter<'_, '_> {
 
     /// Lowers an allocating step as the callout `gc_allocate`, whose status propagates. Each read
     /// register is spilled with its kind (`Plan::gc_reads`), a reference or a number's Wasm bits.
-    pub(super) fn gc_allocate(&mut self, pc: usize, instruction: WideInstruction) {
+    pub(crate) fn gc_allocate(&mut self, pc: usize, instruction: WideInstruction) {
         let plan = self.plan;
         let reads = &plan.gc_reads[pc];
         let operand_count = reads.len();

@@ -8,19 +8,19 @@ use super::super::facts::TypedAccess;
 /// array's view once, writable where the loop stores through it, and only the element
 /// store's general path, which may grow the backing, loads the view again.
 #[derive(Clone, Copy)]
-pub(super) struct LoopArray {
-    pub(super) header: usize,
-    pub(super) back: usize,
-    pub(super) source: ArraySource,
+pub(crate) struct LoopArray {
+    pub(crate) header: usize,
+    pub(crate) back: usize,
+    pub(crate) source: ArraySource,
     /// Whether the array's elements are viewed as a dense array's or a typed array's.
-    pub(super) views: ElementViews,
-    pub(super) writable: bool,
+    pub(crate) views: ElementViews,
+    pub(crate) writable: bool,
 }
 
 /// Where a loop's array comes from: a register the loop never writes, or a capture read the
 /// loop's entry hoisted (`hoisted_reads`), whose register the body may reuse.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum ArraySource {
+pub(crate) enum ArraySource {
     Register(Register),
     Capture(usize),
 }
@@ -66,7 +66,7 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 /// The receiver of an append (`push`) is a writable view too, where the region's arrays are dense:
 /// the append stores within the view's room (`Lowering::hoisted_push`). A search's receiver
 /// (`includes`, `indexOf`) is a read-only view, scanned in place (`Lowering::element_search`).
-pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
+pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
     captured: impl Fn(usize, usize) -> bool, views: ElementViews, typed_captures: &[u16],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
     let mut arrays = Vec::new();
@@ -112,7 +112,7 @@ fn enclosed(arrays: &[LoopArray], inner: &LoopArray, lowered: &impl Fn(usize) ->
 impl Lowering<'_, '_> {
     /// The hoisted array `register` names at `pc` (`copied_from`, `resolved_base`), of the loop
     /// around `pc` that proved it (the outermost lowered one: `loop_arrays`), if any.
-    pub(super) fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
+    pub(crate) fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
         let source = copied_from(&self.unit.instructions, |at| self.blocks[at].is_some(),
             |at| self.hoisted.get(&at).is_some_and(|read| read.representation == Representation::Tagged) && matches!(crate::compiled::performed(self.unit.instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })), pc, register?);
         self.loop_arrays.iter().copied()
@@ -125,7 +125,7 @@ impl Lowering<'_, '_> {
     /// Whether the element access at `pc` goes through a hoisted view (`element_read`,
     /// `dense_element_write`), whose miss leaves the body, so nothing runs between the access
     /// and its next instruction.
-    pub(super) fn hoisted_access(&self, pc: usize) -> bool {
+    pub(crate) fn hoisted_access(&self, pc: usize) -> bool {
         let instruction = self.unit.instructions[pc];
         let base = match instruction.op().class() {
             _ if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })) => instruction.operand_b().register_index(),
@@ -141,7 +141,7 @@ impl Lowering<'_, '_> {
     /// register's typed array, which `length_read` answers from the view, or an element store through a
     /// typed or double view, which the held view writes or leaves at its miss (`element_write`). Any
     /// other access, or one through a view that is not hoisted, is `None`.
-    pub(super) fn typed_access(&self, pc: usize) -> Option<TypedAccess> {
+    pub(crate) fn typed_access(&self, pc: usize) -> Option<TypedAccess> {
         let instruction = self.unit.instructions[pc];
         let (base, access) = match crate::compiled::performed(instruction) {
             Some(quench_runtime::staged::Operation::ElementWrite { .. }) if !instruction.returns_from_frame() => (Some(instruction.register_b()), TypedAccess::Store),

@@ -22,12 +22,12 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether `instruction` is a row `element_step` lowers.
-    pub(super) fn is_element_row(&self, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_element_row(&self, instruction: WideInstruction) -> bool {
         self.element_row(instruction).is_some()
     }
 
     /// The element row at `pc`, lowered by its definition; whether control falls through.
-    pub(super) fn element_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn element_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         match self.element_row(instruction).expect("an element row decodes") {
             Operation::ElementRead { base, key, .. } => {
                 let destination = instruction.result_register();
@@ -194,7 +194,7 @@ impl Lowering<'_, '_> {
     /// and a store past the end leaves to the VM instead of making a hole (`dense_element_write`).
     /// Only an array the loop reads as int32s (`int32_read_at`) qualifies, so the guard never
     /// leaves for an array the loop would not read as one.
-    pub(super) fn int32_loop(&self, array: LoopArray) -> bool {
+    pub(crate) fn int32_loop(&self, array: LoopArray) -> bool {
         let ArraySource::Register(source) = array.source else { return false };
         array.writable && array.views == ElementViews::Dense && self.int32_stores(array, source)
             && (array.header..=array.back).any(|pc| self.int32_read_at(pc, source) && !self.generic.contains(&pc))
@@ -258,7 +258,7 @@ impl Lowering<'_, '_> {
     /// its count), and every element read in the loop is observed int32 (a read observed otherwise
     /// would leave at the entry on every run that found a non-int32 element). The loop must read it,
     /// else the entry guard buys nothing.
-    pub(super) fn int_only_array(&self, array: LoopArray) -> bool {
+    pub(crate) fn int_only_array(&self, array: LoopArray) -> bool {
         if array.views != ElementViews::Dense || array.writable { return false; }
         let mut reads = false;
         for pc in array.header..=array.back {
@@ -301,7 +301,7 @@ impl Lowering<'_, '_> {
 
     /// Whether the loop's array `array` is a register its entering facts type as a string: such a
     /// base is no array, so its element reads take the string row and it is no hoisted view.
-    pub(super) fn string_base(&self, array: &LoopArray) -> bool {
+    pub(crate) fn string_base(&self, array: &LoopArray) -> bool {
         let super::loop_arrays::ArraySource::Register(register) = array.source else { return false };
         self.facts.at(array.header).and_then(|types| types.get(usize::from(register)).copied())
             .is_some_and(|ty| ty.is_subtype(Type::language(quench_runtime::ValueType::String)))

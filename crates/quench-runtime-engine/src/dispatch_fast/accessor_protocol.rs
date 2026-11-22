@@ -10,13 +10,13 @@ use quench_runtime::vm::object_get::ordinary_chain::ChainRead;
 /// The lane context of one accessor call: the activations a getter, setter or trap makes run in
 /// it. A row builds it with `of` where it meets the accessor.
 #[derive(Clone, Copy)]
-pub(super) struct AccessorCall {
+pub(crate) struct AccessorCall {
     cx: *mut LaneContext,
 }
 
 impl AccessorCall {
     #[inline(always)]
-    pub(super) fn of(cx: *mut LaneContext) -> Self {
+    pub(crate) fn of(cx: *mut LaneContext) -> Self {
         Self { cx }
     }
 
@@ -29,7 +29,7 @@ impl AccessorCall {
     /// # Safety
     /// `self.cx` is the running lane's context.
     #[inline(never)]
-    pub(super) unsafe fn getter_read(&self, object: Value, atom: quench_runtime::bytecode::Atom, site: u16) -> Option<Option<Value>> {
+    pub(crate) unsafe fn getter_read(&self, object: Value, atom: quench_runtime::bytecode::Atom, site: u16) -> Option<Option<Value>> {
         let vm = unsafe { vm(self.cx) };
         let index = vm.field_cache_index(site);
         let getter = match vm.getter_entry_read(object, index) {
@@ -49,7 +49,7 @@ impl AccessorCall {
     /// (`Vm::memoize_getter_answer`): a `Reads` target whose returning `GetField` of `this` hits
     /// an own or holder entry and binds the receiver as `this`.
     #[inline(never)]
-    pub(super) fn memoize_getter(&self, getter: Value, object: Value, site: usize) {
+    pub(crate) fn memoize_getter(&self, getter: Value, object: Value, site: usize) {
         let vm = unsafe { vm(self.cx) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = vm.script_call_entry(getter).map(|entry| unsafe { *entry }) else {
@@ -112,7 +112,7 @@ impl AccessorCall {
     /// (`call_native_in_lane`); `Err` after such a call that raised leaves the error in
     /// `Vm::lane_raised`. The answer's read may have made the activations frames, so the
     /// registers are the context's again.
-    pub(super) fn read_getter(&self, r: Registers, ip: Ip, i: &LaneInstruction, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
+    pub(crate) fn read_getter(&self, r: Registers, ip: Ip, i: &LaneInstruction, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
         let reads = i.a & quench_runtime::bytecode::RETURN_REGISTER == 0;
         // A native getter is answered or called in place; a script getter's target, resolved
         // once, is answered by its read or activated.
@@ -166,7 +166,7 @@ impl AccessorCall {
     ///
     /// # Safety
     /// `self.cx` is the running lane's context and `ip` the `GetField` record `i`.
-    pub(super) unsafe fn hold_getter_hint(&self, ip: Ip, i: &LaneInstruction, base: Value) -> Option<Value> {
+    pub(crate) unsafe fn hold_getter_hint(&self, ip: Ip, i: &LaneInstruction, base: Value) -> Option<Value> {
         let vm = unsafe { vm(self.cx) };
         let site = vm.field_cache_index(i.c);
         let getter = vm.cached_field_getter(base, i.imm(), site)?;
@@ -237,7 +237,7 @@ impl AccessorCall {
     /// (`get_trap_call`), whose completion is the read's value. `Err` carries the record to
     /// continue at: the general path for any other read, or for an activation the lane has no
     /// room for.
-    pub(super) fn read_get_trap(&self, r: Registers, ip: Ip, read: Option<(Value, quench_runtime::bytecode::Atom)>) -> Result<(Registers, Ip), Ip> {
+    pub(crate) fn read_get_trap(&self, r: Registers, ip: Ip, read: Option<(Value, quench_runtime::bytecode::Atom)>) -> Result<(Registers, Ip), Ip> {
         let vm = unsafe { vm(self.cx) };
         let Some((base, atom)) = read else {
             return Err(exit(ip));
@@ -270,7 +270,7 @@ impl AccessorCall {
     /// which its activation enters and its return leaves (`complete_activation_in_lane`): a trap of
     /// a library loaded as its own script, as Vue's and MobX's handlers are, activates as one of
     /// the running program's does. `None` for a trap the lane does not activate.
-    pub(super) fn trap_target(&self, trap: Value) -> Option<(ScriptCallTarget, bool)> {
+    pub(crate) fn trap_target(&self, trap: Value) -> Option<(ScriptCallTarget, bool)> {
         if let Some(target) = script_target_in_lane(self.cx, trap) {
             return (!target.forwards()).then_some((target, false));
         }
@@ -298,7 +298,7 @@ impl AccessorCall {
     /// trap a named read would activate (`read_get_trap`): the same activation with the
     /// key's string. `None`, before any effect, for any other read, which goes on along its
     /// path; `Err` carries the record to continue at.
-    pub(super) fn keyed_get_trap(&self, r: Registers, ip: Ip, base: Value, key: Value) -> Option<Result<(Registers, Ip), Ip>> {
+    pub(crate) fn keyed_get_trap(&self, r: Registers, ip: Ip, base: Value, key: Value) -> Option<Result<(Registers, Ip), Ip>> {
         let vm = unsafe { vm(self.cx) };
         vm.proxy_parts(base)?;
         let atom = keyed_trap_atom(vm, key)?;
@@ -341,7 +341,7 @@ impl AccessorCall {
     /// (`Completion::Assigns`, or `AssignsChecked` for a strict store, whose rejection the
     /// general path raises). `None`, before any effect, leaves any other store to its path; an
     /// activation the lane has no room for exits at the record.
-    pub(super) fn store_set_trap(&self, r: Registers, ip: Ip, object: Value, atom: quench_runtime::bytecode::Atom, value: Value, strict: bool) -> Option<Resumed> {
+    pub(crate) fn store_set_trap(&self, r: Registers, ip: Ip, object: Value, atom: quench_runtime::bytecode::Atom, value: Value, strict: bool) -> Option<Resumed> {
         let vm = unsafe { vm(self.cx) };
         let Some((trap, handler, arguments)) = set_trap_call(vm, object, atom, value) else {
             return self.store_forwarded(r, ip, object, atom, value);
@@ -364,7 +364,7 @@ impl AccessorCall {
     /// they are (`Completion::Assigns`). `None`, before any effect, leaves any other store to its
     /// path; an activation the lane has no room for exits at the record, where the general path
     /// makes the call.
-    pub(super) fn store_setter(&self, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
+    pub(crate) fn store_setter(&self, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
         let vm = unsafe { vm(self.cx) };
         let site = vm.field_cache_index(i.c);
         if !met_setter(&vm.lane_stack, site) {

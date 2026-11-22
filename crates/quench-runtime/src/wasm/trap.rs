@@ -33,7 +33,7 @@ pub enum WasmTrap {
 /// The traps compiled code raises, in status order: a trap's status is its position plus one
 /// (zero is a return), the same for the u-jit's code and the b-jit's stencils.
 /// Every trap is listed: a compiled GC, table or exception rule raises its own trap like any other.
-pub(crate) const COMPILED_TRAPS: [WasmTrap; 24] = [
+pub const COMPILED_TRAPS: [WasmTrap; 24] = [
     WasmTrap::Unreachable,
     WasmTrap::OutOfBoundsMemory,
     WasmTrap::IntegerDivideByZero,

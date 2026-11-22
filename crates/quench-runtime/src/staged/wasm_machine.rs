@@ -39,7 +39,7 @@ pub(crate) struct ConcretePair<'a> {
 
 /// A stage over an instance: the native slots of its globals by environment slot and its
 /// linear memory.
-pub(crate) struct ConcreteInstance<'a> {
+pub struct ConcreteInstance<'a> {
     pub(crate) globals: &'a mut [u64],
     pub(crate) memory: &'a mut [u8],
 }

@@ -215,7 +215,7 @@ lane_handler! {
 }
 
 /// The handler of a `wasm_gc_value_op` (`lane_wasm_gc_step`), for `op` if it is one.
-pub(super) const fn wasm_gc_handler(op: Op) -> Option<Handler> {
+pub(crate) const fn wasm_gc_handler(op: Op) -> Option<Handler> {
     let raw = op.traits().has(quench_runtime::bytecode::Traits::RAW_FORM);
     match (quench_runtime::staged::wasm_gc::GcStep::of(op), raw) {
         (Some(quench_runtime::staged::wasm_gc::GcStep::StructGet { signed: None }), false) => {

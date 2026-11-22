@@ -142,7 +142,7 @@ const fn leaf_binds_this(form: LeafForm) -> bool {
     quench_runtime::staged::call_leaf::binds_this(form)
 }
 
-pub(super) use quench_runtime::vm::engine_types::LaneInstruction;
+pub(crate) use quench_runtime::vm::engine_types::LaneInstruction;
 
 use quench_runtime::vm::engine_types::INLINE_SITE_TARGETS;
 use quench_runtime::vm::engine_types::NOTED_SITE_CALLEES;
@@ -252,7 +252,7 @@ impl LaneInstruction {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::RegionDecline;
+pub(crate) use quench_runtime::vm::engine_types::RegionDecline;
 
 
 
@@ -275,11 +275,11 @@ impl LoopSite {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::LoopSite;
+pub(crate) use quench_runtime::vm::engine_types::LoopSite;
 
 #[quench_macros::ext(LoopSiteOps2)]
 impl LoopSite {
-    pub(super) fn function(&self) -> u32 { self.function }
+    pub(crate) fn function(&self) -> u32 { self.function }
 
     /// Whether native code may still run the loop: its runs have paid for their entries, its
     /// entries are not declining, and it has code or may compile it. A site without it
@@ -294,7 +294,7 @@ impl LoopSite {
 
     /// Whether its loop runs in a region entered from the lane: a closed one that still enters and
     /// has run natively (a region that never ran makes none of the loop's work native).
-    pub(super) fn runs_region(&self) -> bool {
+    pub(crate) fn runs_region(&self) -> bool {
         self.call_boundary_pcs.is_empty() && self.active_region().is_some() && self.enters() && self.tier.borrow().runs() > 0
     }
 }
@@ -308,13 +308,13 @@ impl IndirectSlot {
     const NONE: Self = Self { next: std::ptr::null(), register: 0, reference: 0, entry: 0, instance: 0 };
 }
 
-pub(super) use quench_runtime::vm::engine_types::LaneView;
+pub(crate) use quench_runtime::vm::engine_types::LaneView;
 
-pub(super) use quench_runtime::vm::engine_types::OsrDiagnostics;
+pub(crate) use quench_runtime::vm::engine_types::OsrDiagnostics;
 
-pub(super) use quench_runtime::vm::engine_types::OsrSiteStatus;
+pub(crate) use quench_runtime::vm::engine_types::OsrSiteStatus;
 
-pub(super) use quench_runtime::vm::engine_types::OsrSiteDiagnostics;
+pub(crate) use quench_runtime::vm::engine_types::OsrSiteDiagnostics;
 
 #[quench_macros::ext(LaneViewOps1)]
 impl LaneView {
@@ -388,11 +388,11 @@ impl LaneView {
 
 use quench_runtime::vm::engine_types::EnvironmentWindow;
 
-pub(super) use quench_runtime::vm::engine_types::WINDOW_ENVIRONMENT;
-pub(super) use quench_runtime::vm::engine_types::WINDOW_SLOTS;
-pub(super) const WINDOW_CAPTURED: u16 = 2;
-pub(super) use quench_runtime::vm::engine_types::WINDOW_STORAGE;
-pub(super) use quench_runtime::vm::engine_types::WINDOW_LOCALS;
+pub(crate) use quench_runtime::vm::engine_types::WINDOW_ENVIRONMENT;
+pub(crate) use quench_runtime::vm::engine_types::WINDOW_SLOTS;
+pub(crate) const WINDOW_CAPTURED: u16 = 2;
+pub(crate) use quench_runtime::vm::engine_types::WINDOW_STORAGE;
+pub(crate) use quench_runtime::vm::engine_types::WINDOW_LOCALS;
 pub(crate) use quench_runtime::vm::engine_types::INLINED_WINDOW_ROOM;
 
 use quench_runtime::vm::engine_types::TargetBody;
@@ -404,69 +404,69 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 /// Script activation admission groups two base granules.
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
-mod closure_targets;
+pub(crate) mod closure_targets;
 use closure_targets::target_entry;
-mod window_records;
+pub(crate) mod window_records;
 use window_records::{window_local_handler, window_record, WindowRecord};
-mod lane_stack_growth;
-mod lane_generations;
-mod native_frames;
+pub(crate) mod lane_stack_growth;
+pub(crate) mod lane_generations;
+pub(crate) mod native_frames;
 use quench_runtime::vm::lane_values::{self, LaneValues, HEAP_WINDOW};
 use quench_runtime::vm::lane_activations::LaneActivations;
-mod this_binding;
+pub(crate) mod this_binding;
 use this_binding::ThisBinding;
-mod loop_fields; use loop_fields::loop_field_stores;
-mod construct_plan; mod super_chain; use super_chain::super_construction; mod setters; mod proxy_traps; mod accessor_protocol; mod completions; use completions::*;
+pub(crate) mod loop_fields; use loop_fields::loop_field_stores;
+pub(crate) mod construct_plan; mod super_chain; use super_chain::super_construction; mod setters; mod proxy_traps; mod accessor_protocol; mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, planned_inline_quick_in_lane, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, scalar_construct_plan, construct_plan_holds};
 use accessor_protocol::AccessorCall;
-mod list_calls;
-mod loop_runs;
-mod unary_values;
-mod lane_capture_store; use lane_capture_store::{store_to_capture, store_to_environment};
+pub(crate) mod list_calls;
+pub(crate) mod loop_runs;
+pub(crate) mod unary_values;
+pub(crate) mod lane_capture_store; use lane_capture_store::{store_to_capture, store_to_environment};
 use unary_values::{unary_value, unary_values};
 use list_calls::{apply_activation_in_lane, list_activation_in_lane, spread_native_call_in_lane};
 
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "../../quench-runtime/src/vm/primitive_bench/windows.rs"]
-mod window_primitives;
+pub(crate) mod window_primitives;
 
 #[cfg(test)]
 #[path = "../../quench-runtime/src/vm/primitive_bench/activations.rs"]
-mod activation_primitives;
+pub(crate) mod activation_primitives;
 
 #[cfg(test)]
 #[path = "../../quench-runtime/src/vm/primitive_bench/commutative_reads.rs"]
-mod commutative_read_primitives;
+pub(crate) mod commutative_read_primitives;
 
 #[cfg(test)]
 #[path = "../../quench-runtime/src/vm/primitive_bench/indexed_forwarding.rs"]
-mod indexed_forwarding_primitives;
+pub(crate) mod indexed_forwarding_primitives;
 
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "../../quench-runtime/src/vm/primitive_bench/indexed_compositions.rs"]
-mod indexed_compositions;
+pub(crate) mod indexed_compositions;
 
 #[path = "lane_body_stats.rs"]
-pub(super) mod lane_body_stats;
-mod body_calls;
-mod body_forms;
-mod proven_callees;
-pub(super) use body_calls::{body_call_helper, body_construct_helper};
+pub(crate) mod lane_body_stats;
+pub(crate) mod body_calls;
+pub(crate) mod body_forms;
+pub(crate) mod proven_callees;
+pub(crate) use body_calls::{body_call_helper, body_construct_helper};
 #[path = "lane_leaves.rs"]
-mod lane_leaves;
+pub(crate) mod lane_leaves;
 #[path = "operand_feedback.rs"]
-pub(super) mod operand_feedback;
+pub(crate) mod operand_feedback;
 use operand_feedback::{has_operand_feedback, note_operands, seed_declared_feedback, Records};
 #[path = "body_tier_in_lane.rs"]
-mod body_tier_in_lane;
+pub(crate) mod body_tier_in_lane;
 #[path = "loop_tier.rs"]
-mod loop_tier;
+pub(crate) mod loop_tier;
 use loop_tier::{loop_compile_in_lane, LoopTier};
 use body_tier_in_lane::LaneBodyHistory;
-pub(super) use lane_body_stats::{miss_report as lane_miss_report, unlowered_report as lane_unlowered_report};
+pub(crate) use lane_body_stats::{miss_report as lane_miss_report, unlowered_report as lane_unlowered_report};
 use lane_leaves::LaneLeaves;
-pub(super) use lane_body_stats::LaneBodyStats;
+pub(crate) use lane_body_stats::LaneBodyStats;
 
 /// Conservative lane-stack admission room for `count` registers: whole blocks, at
 /// least one. Only the logical range is initialized and made live.
@@ -545,14 +545,14 @@ fn entry_fill_known(function: &Function) -> u16 {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::LaneRecoverySpace;
+pub(crate) use quench_runtime::vm::engine_types::LaneRecoverySpace;
 
 #[quench_macros::ext(LaneRecoverySpaceOps1)]
 impl LaneRecoverySpace {
     /// Frames follow their parents. Take independent maxima: the deepest
     /// chain and the largest register window need not be the same chain. Each frame's window
     /// leaves the next one's context words past its registers (`lane_values::CONTEXT`).
-    pub(super) fn inlined(frames: &[crate::compiled::InlinedCall]) -> Self {
+    pub(crate) fn inlined(frames: &[crate::compiled::InlinedCall]) -> Self {
         let mut chains = smallvec::SmallVec::<[Self; 1]>::new();
         let mut space = Self::default();
         for frame in frames {
@@ -568,7 +568,7 @@ impl LaneRecoverySpace {
     }
 
     /// Room for `registers` frame slots past the caller's, which a body's rows name beyond its inlined windows (its scratch).
-    pub(super) fn reaching(self, registers: usize) -> Self {
+    pub(crate) fn reaching(self, registers: usize) -> Self {
         if registers == 0 { self } else { Self { values: self.values.max(fill_room::<SCRIPT_FILL_BLOCK>(registers)), ..self } }
     }
 }
@@ -576,7 +576,7 @@ impl LaneRecoverySpace {
 use quench_runtime::vm::engine_types::LaneBody;
 
 
-pub(super) use quench_runtime::vm::engine_types::LaneTier;
+pub(crate) use quench_runtime::vm::engine_types::LaneTier;
 
 
 
@@ -645,7 +645,7 @@ impl LaneView {
     }
 
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
-    pub(super) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
+    pub(crate) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
 
     /// The publication of the specialized body, which a direct caller holds
     /// (`compiled::DirectCallee::method`).
@@ -684,7 +684,7 @@ impl LaneView {
     /// of the receiver it last answered: what a specializer guards in one compare to read the
     /// record's storage form with no test (`NativeFieldLoad::formed`).
     /// `None` where the record holds no own hint, or is no hinted field record.
-    pub(super) fn own_field_hint(&self, pc: usize) -> Option<u32> {
+    pub(crate) fn own_field_hint(&self, pc: usize) -> Option<u32> {
         let pc = u32::try_from(pc).ok()?;
         if !self.field_records.contains(&pc) { return None; }
         // SAFETY: each listed record's operand is `field` (`holds_field_hint`).
@@ -695,13 +695,13 @@ impl LaneView {
     /// How many of its records hold an own-field hint. Profiled builds derive no lane views,
     /// so only the unprofiled test reads it.
     #[cfg(all(test, not(quench_profiled)))]
-    pub(super) fn held_field_hints(&self) -> usize {
+    pub(crate) fn held_field_hints(&self) -> usize {
         self.held_hints(&self.field_records)
     }
 
     /// How many of its by-name loads hold a global-object hint (`name_row`).
     #[cfg(all(test, not(quench_profiled)))]
-    pub(super) fn held_name_hints(&self) -> usize {
+    pub(crate) fn held_name_hints(&self) -> usize {
         self.held_hints(&self.name_records)
     }
 
@@ -715,7 +715,7 @@ impl LaneView {
 
     /// The address range its records span (`lane_exits::register_view`).
     #[cfg(feature = "profile-lane-exits")]
-    pub(super) fn record_range(&self) -> (usize, usize) {
+    pub(crate) fn record_range(&self) -> (usize, usize) {
         let start = self.records().addr();
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
     }
@@ -1167,14 +1167,14 @@ impl ActivationState {
 
 use quench_runtime::vm::engine_types::Completion;
 
-pub(super) use quench_runtime::vm::engine_types::JsImportPlan;
+pub(crate) use quench_runtime::vm::engine_types::JsImportPlan;
 
-pub(super) use quench_runtime::vm::engine_types::JS_IMPORT_ARGUMENTS;
-pub(super) const JS_IMPORT_I32: u8 = 0;
-pub(super) const JS_IMPORT_F32: u8 = 1;
-pub(super) const JS_IMPORT_F64: u8 = 2;
+pub(crate) use quench_runtime::vm::engine_types::JS_IMPORT_ARGUMENTS;
+pub(crate) const JS_IMPORT_I32: u8 = 0;
+pub(crate) const JS_IMPORT_F32: u8 = 1;
+pub(crate) const JS_IMPORT_F64: u8 = 2;
 
-pub(super) use quench_runtime::vm::engine_types::ToWasmCall;
+pub(crate) use quench_runtime::vm::engine_types::ToWasmCall;
 
 #[quench_macros::ext(CompletionOps1)]
 impl Completion {
@@ -1238,14 +1238,14 @@ enum ActivationArguments {
     Kept(*const Value, usize),
 }
 
-pub(super) use quench_runtime::vm::engine_types::ScriptCallTarget;
+pub(crate) use quench_runtime::vm::engine_types::ScriptCallTarget;
 
-mod call_entry;
+pub(crate) mod call_entry;
 use call_entry::CallEntry;
 
 // Recognized once per target, as it resolves; no operation runs them.
 #[path = "call_body_forms.rs"]
-mod call_body_forms;
+pub(crate) mod call_body_forms;
 use call_body_forms::{body_entry, leaf_body};
 
 /// `ScriptCallTarget::forms`: `new` may activate it.
@@ -1378,7 +1378,7 @@ impl ScriptCallTarget {
     }
 
     #[inline(always)]
-    pub(super) fn program(&self) -> ProgramId {
+    pub(crate) fn program(&self) -> ProgramId {
         self.admission.program()
     }
 }
@@ -1477,7 +1477,7 @@ const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 
 /// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
 
-pub(super) use quench_runtime::vm::engine_types::LaneStack;
+pub(crate) use quench_runtime::vm::engine_types::LaneStack;
 
 /// Drops the entries of `held` that activations from index `depth` on own. Activations push
 /// their entries innermost last, so the owners ascend and those entries are a suffix: the
@@ -1571,7 +1571,7 @@ impl LaneStack {
     /// Records that Rust changed the frames: the emitted native push's bound is void until the next
     /// binding (`Vm::stack_words_in_lane`), so emitted calls take the helper row meanwhile.
     #[inline(always)]
-    pub(super) fn frames_changed(&self) { self.plain_depth_limit.set(0); }
+    pub(crate) fn frames_changed(&self) { self.plain_depth_limit.set(0); }
 
     /// Make every frame a record, outermost first, as their pushes would have: the plain
     /// headers, innermost and sealed alike, each the record the frame view reads it as
@@ -1940,13 +1940,13 @@ impl LaneStack {
     /// Notes whether the running lane run calls script functions (`LaneContext::script_calls`):
     /// while it does not, every cached call misses (`Admission::NO_SCRIPT_CALLS`).
     #[inline(always)]
-    pub(super) fn set_script_calls(&mut self, allowed: bool) {
+    pub(crate) fn set_script_calls(&mut self, allowed: bool) {
         self.set_condition(Admission::NO_SCRIPT_CALLS, !allowed);
     }
 
     /// Whether the lane's admission admits script calls (`set_script_calls`).
     #[inline(always)]
-    pub(super) fn script_calls_allowed(&self) -> bool {
+    pub(crate) fn script_calls_allowed(&self) -> bool {
         self.refused & Admission::NO_SCRIPT_CALLS == 0
     }
 
@@ -1955,7 +1955,7 @@ impl LaneStack {
     /// pending and `program` the active one, in one compare of the admission word, the same
     /// word every link's admission is compared with.
     #[inline(always)]
-    pub(super) fn admits_program(&self, program: ProgramId) -> bool {
+    pub(crate) fn admits_program(&self, program: ProgramId) -> bool {
         self.admission.0 >> Admission::PROGRAM_SHIFT == program.raw() as u64
     }
 
@@ -1969,7 +1969,7 @@ impl LaneStack {
     /// every lane run's start mirrors (`Vm::drive_lane`): while they do, no proved plain call
     /// runs. Changes nothing where it is already so.
     #[inline(always)]
-    pub(super) fn set_diagnosed(&mut self, diagnosed: bool) {
+    pub(crate) fn set_diagnosed(&mut self, diagnosed: bool) {
         if (self.refused & Admission::DIAGNOSED != 0) != diagnosed {
             self.set_condition(Admission::DIAGNOSED, diagnosed);
         }
@@ -1977,7 +1977,7 @@ impl LaneStack {
 
     /// Takes the proof (`Admission::UNPROVEN`) from every script call entry of `view`, whose
     /// entry cell just published a body: a proved call of it would skip the body.
-    pub(super) fn unprove_view_entries(&mut self, view: *const LaneView) {
+    pub(crate) fn unprove_view_entries(&mut self, view: *const LaneView) {
         for entry in self.script_targets.entries.iter_mut().filter(|entry| std::ptr::eq(entry.view, view)) {
             entry.admission.0 |= Admission::UNPROVEN;
         }
@@ -2004,11 +2004,11 @@ impl LaneStack {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::DeferredLaneCall;
+pub(crate) use quench_runtime::vm::engine_types::DeferredLaneCall;
 
 use quench_runtime::vm::engine_types::NativeBoundary;
 
-pub(super) use quench_runtime::vm::engine_types::LaneNativeCall;
+pub(crate) use quench_runtime::vm::engine_types::LaneNativeCall;
 
 use quench_runtime::vm::engine_types::LaneBinding;
 
@@ -2034,7 +2034,7 @@ unsafe fn retire_lane_binding(context: *mut ()) {
 /// Retires the thread's running lane context after a collection ran under it: a native call
 /// out of the lane (`gc()`, a host callback) or an allocation that made one due. The run
 /// continues past the call with nothing it resolved under the epoch before.
-pub(super) fn retire_running_lane_context() {
+pub(crate) fn retire_running_lane_context() {
     let cx = tls_lane_context();
     if cx.is_null() {
         return;
@@ -2126,12 +2126,12 @@ const NO_OUTER_WALK: OuterWalk = OuterWalk { env: Value::DELETED, depth: 0, slot
 /// its environment admits every direct store (`Vm::admits_every_direct_store`) and is in the
 /// remembered set already, so a write needs no barrier until the next collection, which
 /// retires the target that tagged it.
-pub(super) const CAPTURE_STORES: usize = 1;
+pub(crate) const CAPTURE_STORES: usize = 1;
 const _: () = assert!(std::mem::align_of::<usize>() > CAPTURE_STORES);
 
 /// The slots a `LaneContext::capture` reads, its tag cleared.
 #[inline(always)]
-pub(super) fn capture_reads(capture: *const usize) -> *const usize {
+pub(crate) fn capture_reads(capture: *const usize) -> *const usize {
     capture.map_addr(|address| address & !CAPTURE_STORES)
 }
 
@@ -2151,7 +2151,7 @@ unsafe fn frame_locals(cx: *mut ()) -> (*mut Value, usize) {
 
 /// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
 #[inline(always)]
-pub(super) fn capture_stores(capture: *const usize) -> Option<*const usize> {
+pub(crate) fn capture_stores(capture: *const usize) -> Option<*const usize> {
     (capture.addr() & CAPTURE_STORES != 0).then(|| capture_reads(capture))
 }
 
@@ -2161,7 +2161,7 @@ pub(super) fn capture_stores(capture: *const usize) -> Option<*const usize> {
 /// # Safety
 /// `capture` is null or names a live environment's storage, which the caller keeps live.
 #[inline(always)]
-pub(super) unsafe fn capture_view(capture: *const usize) -> (Option<(*const Value, usize)>, bool) {
+pub(crate) unsafe fn capture_view(capture: *const usize) -> (Option<(*const Value, usize)>, bool) {
     // SAFETY: as the caller promises.
     (unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads(capture)) }, capture_stores(capture).is_some())
 }
@@ -2322,7 +2322,7 @@ fn script_below_floor(cx: *mut LaneContext) -> bool {
 /// After a lane allocation, a due collection raises the floor of the running lane, where
 /// one runs: a linked region's general frame polls the heap's own counters instead.
 #[inline(always)]
-pub(super) fn note_allocation(vm: &Vm) {
+pub(crate) fn note_allocation(vm: &Vm) {
     if vm.heap.should_collect() {
         let floor = tls_lane_floor();
         // SAFETY: as `lane_floor`, while a lane runs; null otherwise.
@@ -2657,24 +2657,24 @@ lane_handler! {
 }
 
 #[path = "dispatch_fast/lane_frame.rs"]
-mod lane_frame;
-mod protocol_misses; use protocol_misses::*;
-mod derived_frames;
-mod local_fields;
+pub(crate) mod lane_frame;
+pub(crate) mod protocol_misses; use protocol_misses::*;
+pub(crate) mod derived_frames;
+pub(crate) mod local_fields;
 use local_fields::{local_field_handler, local_field_miss};
-mod window_bodies;
-pub(super) use window_bodies::{LocalsOf, body_locals};
-mod lane_reads;
+pub(crate) mod window_bodies;
+pub(crate) use window_bodies::{LocalsOf, body_locals};
+pub(crate) mod lane_reads;
 use lane_reads::RecordOperand;
-mod loop_body;
-mod loop_resume;
+pub(crate) mod loop_body;
+pub(crate) mod loop_resume;
 use loop_body::LoopBody;
 use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, operator_row, protocol_family, is_row, jump_row, row_jump, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
-mod capture_append;
-mod mapped_windows;
-mod string_case_filter;
+pub(crate) mod capture_append;
+pub(crate) mod mapped_windows;
+pub(crate) mod string_case_filter;
 
 /// `ScopeReads::closure` of a window whose names do not resolve through its scope
 /// (`FLAG_WINDOW_CLOSURE`): the closure over the running environment, as `window_closure_value_in_lane` makes it.
@@ -2805,7 +2805,7 @@ fn plain_local_operand(cx: *mut LaneContext, slot: u16) -> Option<Value> {
 /// The integer `IncDec` of `value`, the update `dispatch::number_increment` makes of an
 /// integer that does not overflow; `None` for any other value.
 #[inline(always)]
-pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
+pub(crate) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
     // As `dispatch::integer_increment`: a non-negative step by one word-range compare.
     let offset = value.int_key_offset();
     let stepped = if DECREMENT { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
@@ -2970,7 +2970,7 @@ script_handler! {
     /// the pure operation (`binary_values`) folds to that operator's arms, with no generic row decoding
     /// the record and stepping the Number arms again first. What it leaves takes the general step.
     #[inline(never)]
-    pub(super) fn binary_operator_miss<OPERATOR: u8>(cx, r, ip, i, view) {
+    pub(crate) fn binary_operator_miss<OPERATOR: u8>(cx, r, ip, i, view) {
         debug_assert_eq!(i.imm(), u32::from(OPERATOR), "an operator row's record names its operator");
         if let (Some(left), Some(right)) = (operand_value_in_lane(cx, r, i.b), operand_value_in_lane(cx, r, i.c))
             && let Some(value) = unsafe { binary_values(cx, u32::from(OPERATOR), left, right) }
@@ -2988,7 +2988,7 @@ script_handler! {
     /// unequal int32 words two Numbers; any other pair is the strict equality's pure answer
     /// (`binary_values`), else the general step. No generic row decodes the operator first.
     #[inline(never)]
-    pub(super) fn strict_equality_row<NEGATE: bool>(cx, r, ip, i, view) {
+    pub(crate) fn strict_equality_row<NEGATE: bool>(cx, r, ip, i, view) {
         let operator = if NEGATE { oxc_ast::ast::BinaryOperator::StrictInequality } else { oxc_ast::ast::BinaryOperator::StrictEquality } as u32;
         let (Some(left), Some(right)) = (operand_value_in_lane(cx, r, i.b), operand_value_in_lane(cx, r, i.c)) else {
             sibling!(general_step_in_lane, r, ip, Carried::script_in(cx, view))
@@ -3216,7 +3216,7 @@ fn read_number_operands<const OP: u32>(r: Registers, operator: &LaneInstruction,
 /// integer key, as `Vm::direct_dense_element` takes one.
 #[cfg(all(test, feature = "bench-primitives"))]
 #[inline(always)]
-pub(super) fn proof_index(key: Value) -> Option<usize> {
+pub(crate) fn proof_index(key: Value) -> Option<usize> {
     usize::try_from(key.as_int()?).ok()
 }
 
@@ -4064,7 +4064,7 @@ fn store_own_capture(cx: *mut LaneContext, slot: u16, value: Value) -> bool {
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn context_captures(context: usize) -> Option<((*const Value, usize), bool)> {
+pub(crate) unsafe fn context_captures(context: usize) -> Option<((*const Value, usize), bool)> {
     let cx = context as *mut LaneContext;
     unsafe {
         if capture_reads((*cx).registers.capture()).is_null() && (*cx).registers.env().is_deleted() {
@@ -4082,7 +4082,7 @@ pub(super) unsafe fn context_captures(context: usize) -> Option<((*const Value, 
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn context_this_in_lane(context: usize) -> Value {
+pub(crate) unsafe fn context_this_in_lane(context: usize) -> Value {
     let cx = context as *mut LaneContext;
     unsafe { this_in_lane(cx, (*cx).registers) }.unwrap_or(Value::DELETED)
 }
@@ -4247,7 +4247,7 @@ fn object_pair_in_lane(cx: *mut LaneContext, r: Registers, site: u32, [first, se
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(always)]
-pub(super) unsafe fn super_parts_in_lane(cx: *mut LaneContext, index: usize) -> Option<[WideInstruction; 4]> {
+pub(crate) unsafe fn super_parts_in_lane(cx: *mut LaneContext, index: usize) -> Option<[WideInstruction; 4]> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     code.superinstructions.get(index).map(|site| site.wide)
@@ -4481,7 +4481,7 @@ const fn element_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE
 /// and reads or stores the element inline; a miss takes the host path (`row_index_read_miss`,
 /// `row_index_write`), which records the kind again.
 // merge: HEAD's typed element rows are restored: the shared `requicken_typed` and `row_typed_element` use them.
-pub(super) const TYPED_SITE: u8 = own_site(false, OWN_FORMS.len() + 26);
+pub(crate) const TYPED_SITE: u8 = own_site(false, OWN_FORMS.len() + 26);
 
 /// The generated typed keyed read (`generated_row` of `ELEMENT_READ`, `TYPED_SITE`).
 const fn element_typed_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, TYPED_SITE) }
@@ -4540,41 +4540,41 @@ const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this a
 
 /// The site facts of a generated read through a prototype hint (`IcOp::Held`), of `this` and of
 /// a register: past every own-field site.
-pub(super) const HELD_SITE_THIS: u8 = own_site(true, OWN_FORMS.len());
-pub(super) const HELD_SITE_REGISTER: u8 = own_site(false, OWN_FORMS.len());
+pub(crate) const HELD_SITE_THIS: u8 = own_site(true, OWN_FORMS.len());
+pub(crate) const HELD_SITE_REGISTER: u8 = own_site(false, OWN_FORMS.len());
 
 /// The site facts of the held read of a receiver other than a direct object (an array, function
 /// or ordinary builtin, as `a.push` or `f.call`), which a held site's miss takes: its object part
 /// is resolved out of line (`RecordPlan::other`).
 /// One instantiation for both bases: the base is a runtime test (`runtime_base`), as these rows are cold.
-pub(super) const HELD_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 1);
-pub(super) const HELD_OTHER_REGISTER: u8 = HELD_OTHER_THIS;
+pub(crate) const HELD_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 1);
+pub(crate) const HELD_OTHER_REGISTER: u8 = HELD_OTHER_THIS;
 
 /// The site fact of a string register's read through a `String.prototype` hint
 /// (`IcOp::HeldString`), as `s.charCodeAt`.
-pub(super) const STRING_SITE: u8 = own_site(false, OWN_FORMS.len() + 2);
+pub(crate) const STRING_SITE: u8 = own_site(false, OWN_FORMS.len() + 2);
 
 /// Whether site `site` is a read through a prototype hint.
-pub(super) const fn held_site(site: u8) -> bool {
+pub(crate) const fn held_site(site: u8) -> bool {
     site == HELD_SITE_THIS || site == HELD_SITE_REGISTER || held_other_site(site)
 }
 
 /// The site fact of a held read at a site whose receivers live outside the object records, as
 /// `a.push` or `f.call` (`FieldSiteTier::Holder` of a cell): the held-other read from the first,
 /// whose miss takes the site's holder entry (`row_get_field_holder_cell_refresh`).
-pub(super) const HELD_CELL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 3);
+pub(crate) const HELD_CELL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 3);
 
 /// The site facts of a read through the record's inherited hint, a method beyond the immediate
 /// prototype (`FieldSiteTier::Inherited`): of a direct object, then of any receiver's object
 /// part, each of `this` and of a register.
-pub(super) const INHERITED_THIS: u8 = own_site(true, OWN_FORMS.len() + 4);
-pub(super) const INHERITED_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 4);
-pub(super) const INHERITED_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 5);
-pub(super) const INHERITED_OTHER_REGISTER: u8 = INHERITED_OTHER_THIS;
+pub(crate) const INHERITED_THIS: u8 = own_site(true, OWN_FORMS.len() + 4);
+pub(crate) const INHERITED_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 4);
+pub(crate) const INHERITED_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 5);
+pub(crate) const INHERITED_OTHER_REGISTER: u8 = INHERITED_OTHER_THIS;
 
 /// Whether site `site` reads `this` or a register as its record says at run time, not as a
 /// site fact: a cold row kept to one instantiation for both bases.
-pub(super) const fn runtime_base(site: u8) -> bool {
+pub(crate) const fn runtime_base(site: u8) -> bool {
     site == HELD_OTHER_THIS || site == INHERITED_OTHER_THIS || entry_site(site)
 }
 
@@ -4583,63 +4583,63 @@ pub(super) const fn runtime_base(site: u8) -> bool {
 /// (`Vm::cell_own_hint`), guarded by one compare of the function's record (`IcOp::GuardLayout`);
 /// one instantiation per base: the register one (`A.x`) is the common read, and a fixed base
 /// saves the base test (5 Ir per read).
-pub(super) const CELL_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 6);
-pub(super) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
+pub(crate) const CELL_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 6);
+pub(crate) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
 /// The cell-own sites whose hint layout keeps its slots in an arena run of tagged words, where
 /// float slots are off for the process (`switches::float_slots`): the row reads the slot
 /// untested and undecoded, as an own-field site of that form does (`OWN_FORMS`), so the read
 /// is the slot load past the layout guard.
-pub(super) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
-pub(super) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
+pub(crate) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
+pub(crate) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
 
 /// The site fact of a `GetField` of a local slot's row (`local_field_handler`): an own-field read of a
 /// plain local, whose hint the record binds like an own read's. Own-form index 30, a
 /// free one below the returning sites.
-pub(super) const LOCAL_FIELD_SITE: u8 = own_site(false, OWN_FORMS.len() + 30);
+pub(crate) const LOCAL_FIELD_SITE: u8 = own_site(false, OWN_FORMS.len() + 30);
 /// The site fact of a register read of one object's own constant (`IcOp::OwnConstant`): the
 /// record's hint names an own-constant hint (`OWN_CONSTANT_HINT`, `Vm::own_constant_operands`).
-pub(super) const OWN_CONSTANT_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 8);
-pub(super) const fn own_constant_site(site: u8) -> bool { site == OWN_CONSTANT_REGISTER }
+pub(crate) const OWN_CONSTANT_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 8);
+pub(crate) const fn own_constant_site(site: u8) -> bool { site == OWN_CONSTANT_REGISTER }
 
 /// The site facts of a register's `length`: an array's (`IcOp::ArrayLength`) and a string's
 /// (`IcOp::StringLength`); a miss takes `row_length_other`.
-pub(super) const ARRAY_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 9);
-pub(super) const STRING_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 10);
-pub(super) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE || site == STRING_LENGTH_SITE }
+pub(crate) const ARRAY_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 9);
+pub(crate) const STRING_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 10);
+pub(crate) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE || site == STRING_LENGTH_SITE }
 
 /// The site facts of a read the VM's geometry or length answers from the receiver's word, which no
 /// record addresses (`FieldPlan::Length`, `FieldPlan::Geometry`): a register's `length` of an
 /// arguments object, a user function or a typed view (`TYPED_LENGTH_SITE`, a miss to the array row),
 /// and any geometry name of a typed view, DataView, Map or Set (`GEOMETRY_SITE`, a miss to the
 /// general read).
-pub(super) const TYPED_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 20);
-pub(super) const GEOMETRY_SITE: u8 = own_site(false, OWN_FORMS.len() + 21);
-pub(super) const fn host_read_site(site: u8) -> bool { site == TYPED_LENGTH_SITE || site == GEOMETRY_SITE }
+pub(crate) const TYPED_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 20);
+pub(crate) const GEOMETRY_SITE: u8 = own_site(false, OWN_FORMS.len() + 21);
+pub(crate) const fn host_read_site(site: u8) -> bool { site == TYPED_LENGTH_SITE || site == GEOMETRY_SITE }
 
 /// The site fact of a number receiver's read through a `Number.prototype` hint (`IcOp::HeldNumber`),
 /// as `n.toFixed`: own-form index 14.
-pub(super) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
+pub(crate) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
 
 /// The site facts of a read that met a getter whose hint returns an own field of the receiver
 /// (`IcOp::GetterOwn`, `Vm::getter_hint_operands`), of `this` and of a register; a miss takes the
 /// getter's refresh, which makes the hint (`row_get_field_getter_refresh`).
-pub(super) const GETTER_THIS: u8 = own_site(true, OWN_FORMS.len() + 15);
-pub(super) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
-pub(super) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site == GETTER_REGISTER }
+pub(crate) const GETTER_THIS: u8 = own_site(true, OWN_FORMS.len() + 15);
+pub(crate) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
+pub(crate) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site == GETTER_REGISTER }
 
 /// The site fact of a nested read `a.b.c` of two own entries (`get_field_nested_miss`'s steps):
 /// the record's hint is the first step's entry, the site's second entry the second; the row runs
 /// them as a chain of two own hops (`RecordPlan::nested`), and its miss takes the hand read that
 /// refreshes the hint.
-pub(super) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
+pub(crate) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
 
 /// The site facts of the general read (`FieldPlan::Host`): the record names no plan the row
 /// runs, so its hit is the VM's cached read of the atom through the site's cache
 /// (`general_field_read`, the value `lane_get_field` made), of `this` and of a register. Its miss
 /// is `row_get_field_general`, the general read's activation path.
-pub(super) const GENERAL_THIS: u8 = own_site(true, OWN_FORMS.len() + 18);
-pub(super) const GENERAL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 18);
-pub(super) const fn general_site(site: u8) -> bool { site == GENERAL_THIS || site == GENERAL_REGISTER }
+pub(crate) const GENERAL_THIS: u8 = own_site(true, OWN_FORMS.len() + 18);
+pub(crate) const GENERAL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 18);
+pub(crate) const fn general_site(site: u8) -> bool { site == GENERAL_THIS || site == GENERAL_REGISTER }
 
 /// The generated general read of a `GetField` by its base: `GENERAL_THIS` for `this`,
 /// `GENERAL_REGISTER` for a register, and `row_get_field_general` for a nested or local base.
@@ -4658,7 +4658,7 @@ fn general_handler(base: u16) -> Handler {
 /// `proved_inherited_field_hit`), then the caches' probe (`field_step_in_lane`), with `record` the
 /// instruction's address for a private name's site. `None` leaves to `row_get_field_general`.
 #[inline(always)]
-pub(super) fn general_field_read(context: *mut (), record: usize, register: bool, object: Value, atom: u32,
+pub(crate) fn general_field_read(context: *mut (), record: usize, register: bool, object: Value, atom: u32,
     site: u16) -> Option<Value> {
     let cx = context.cast::<LaneContext>();
     let vm = unsafe { vm(cx) };
@@ -4681,56 +4681,56 @@ fn nested_row_site(vm: &Vm, code: &ResidualProgram, i: &LaneInstruction) -> bool
 
 /// The site fact of a named store that may add its property (`StorePlan::Add`, `RecordPlan::own_add`):
 /// its row runs the VM's adds, and a refused add takes the general cached write.
-pub(super) const ADD_SITE: u8 = own_site(false, OWN_FORMS.len() + 17);
+pub(crate) const ADD_SITE: u8 = own_site(false, OWN_FORMS.len() + 17);
 
 /// The site fact of a named store whose own hint is a narrow run (`StorePlan::Hinted`, `narrow`):
 /// the row stores the value's narrow form in place (`hinted_narrow_field_store_hit`); a refusal
 /// takes the VM's own-field store, and a store whose object is no longer narrow moves back.
-pub(super) const NARROW_SITE: u8 = own_site(false, OWN_FORMS.len() + 22);
+pub(crate) const NARROW_SITE: u8 = own_site(false, OWN_FORMS.len() + 22);
 
 /// The site fact of a named store on a runtime whose arena keeps slot representations
 /// (`Heap::tracks_slot_representations`): the row stores through the record's hint in place of
 /// the untracked own store (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`).
-pub(super) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
+pub(crate) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
 
 /// The site fact of a named store past one shape (`StorePlan::Polymorphic`): the record's hint,
 /// the site's polymorphic entries, then the proved add, all inside the row; a refusal takes
 /// `GENERAL_SITE`'s activation path.
-pub(super) const POLY_SITE: u8 = own_site(false, OWN_FORMS.len() + 24);
+pub(crate) const POLY_SITE: u8 = own_site(false, OWN_FORMS.len() + 24);
 
 /// The site fact of a named store the general cached write completes (`StorePlan::Host`): the VM's
 /// cached store or add inside the row, a private name's or a refusal's activation path after it
 /// (`row_set_field_miss_path`).
-pub(super) const GENERAL_SITE: u8 = own_site(false, OWN_FORMS.len() + 25);
+pub(crate) const GENERAL_SITE: u8 = own_site(false, OWN_FORMS.len() + 25);
 /// The site facts of a field read whose value is the callee of a Math call the record after it
 /// makes (`native_calls::install_math_field_call`): one argument, a register second argument,
 /// and a constant second argument. The row runs the call past its read (`math_row_resume`), the
 /// function's identity read by the VM (`PropertyFrame::math_call`).
-pub(super) const MATH_CALL_SITE: u8 = own_site(false, OWN_FORMS.len() + 44);
-pub(super) const MATH_CALL2_SITE: u8 = own_site(false, OWN_FORMS.len() + 45);
-pub(super) const MATH_CALL2_CONST_SITE: u8 = own_site(false, OWN_FORMS.len() + 46);
+pub(crate) const MATH_CALL_SITE: u8 = own_site(false, OWN_FORMS.len() + 44);
+pub(crate) const MATH_CALL2_SITE: u8 = own_site(false, OWN_FORMS.len() + 45);
+pub(crate) const MATH_CALL2_CONST_SITE: u8 = own_site(false, OWN_FORMS.len() + 46);
 
 /// The site fact of a nested read that stores its value to `this` (`this.a = this.b.c`), the
 /// read's flag `SET_THIS_REGISTER` its row's store (`PropertyFrame::sink_store`).
-pub(super) const SINK_SITE: u8 = own_site(false, OWN_FORMS.len() + 47);
+pub(crate) const SINK_SITE: u8 = own_site(false, OWN_FORMS.len() + 47);
 
 /// Whether site `site` is a field read of a Math call's callee (`MATH_CALL_SITE`, `MATH_CALL2_SITE`,
 /// `MATH_CALL2_CONST_SITE`).
-pub(super) const fn math_site(site: u8) -> bool {
+pub(crate) const fn math_site(site: u8) -> bool {
     site == MATH_CALL_SITE || site == MATH_CALL2_SITE || site == MATH_CALL2_CONST_SITE
 }
 
 /// The number of arguments the Math call of math site `site` passes.
-pub(super) const fn math_arity(site: u8) -> usize {
+pub(crate) const fn math_arity(site: u8) -> usize {
     if site == MATH_CALL_SITE { 1 } else { 2 }
 }
 
 /// Whether site `site` is a sinking read (`SINK_SITE`).
-pub(super) const fn sink_site(site: u8) -> bool { site == SINK_SITE }
+pub(crate) const fn sink_site(site: u8) -> bool { site == SINK_SITE }
 
 /// The store `(atom, cache)` of the sinking read `i` (`SINK_SITE`): its site's sink.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn sink_operands(cx: *mut LaneContext, i: &LaneInstruction) -> Option<(quench_runtime::bytecode::Atom, u16)> {
+pub(crate) fn sink_operands(cx: *mut LaneContext, i: &LaneInstruction) -> Option<(quench_runtime::bytecode::Atom, u16)> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     code.field_sites.get(i.imm() as usize)?.sink
@@ -4740,24 +4740,24 @@ pub(in crate::dispatch_fast) fn sink_operands(cx: *mut LaneContext, i: &LaneInst
 /// one hit shape of the VM's entry lookups, whose host call the row makes (`field_entry_read`).
 /// Of `this` and of a register alike (`runtime_base`).
 /// The polymorphic read: the record's own hint, then the site's inline entries (`row_polymorphic_miss` past them).
-pub(super) const POLYMORPHIC_SITE: u8 = own_site(false, OWN_FORMS.len() + 38);
+pub(crate) const POLYMORPHIC_SITE: u8 = own_site(false, OWN_FORMS.len() + 38);
 /// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`), the polymorphic read's miss.
-pub(super) const HASHED_SITE: u8 = own_site(false, OWN_FORMS.len() + 39);
+pub(crate) const HASHED_SITE: u8 = own_site(false, OWN_FORMS.len() + 39);
 /// The site's primary holder entry, of a direct object or of any receiver in a heap cell (`Vm::primary_holder_field_hit`,
 /// `Vm::cell_holder_field_hit`), which holds no hint.
-pub(super) const HOLDER_SITE: u8 = own_site(false, OWN_FORMS.len() + 40);
+pub(crate) const HOLDER_SITE: u8 = own_site(false, OWN_FORMS.len() + 40);
 /// The site's inherited entry walked past the immediate prototype (`Vm::inherited_field_entry_hit`), whose answer
 /// becomes the record's inherited hint.
-pub(super) const INHERITED_WALK_SITE: u8 = own_site(false, OWN_FORMS.len() + 41);
+pub(crate) const INHERITED_WALK_SITE: u8 = own_site(false, OWN_FORMS.len() + 41);
 
 /// Whether site `site` reads through a VM entry lookup (`FieldPlan::Entry`, `FieldPlan::Hinted`).
-pub(super) const fn entry_site(site: u8) -> bool {
+pub(crate) const fn entry_site(site: u8) -> bool {
     site == POLYMORPHIC_SITE || site == HASHED_SITE || site == HOLDER_SITE || site == INHERITED_WALK_SITE
 }
 
 /// The entry lookup a non-polymorphic entry site makes (`EntryKind`); the polymorphic site's own
 /// plan is `FieldPlan::Hinted`, whose entry is `EntryKind::Polymorphic` too.
-pub(super) const fn entry_kind(site: u8) -> quench_runtime::staged::property::EntryKind {
+pub(crate) const fn entry_kind(site: u8) -> quench_runtime::staged::property::EntryKind {
     use quench_runtime::staged::property::EntryKind;
     if site == POLYMORPHIC_SITE { EntryKind::Polymorphic }
     else if site == HASHED_SITE { EntryKind::Hashed }
@@ -4768,18 +4768,18 @@ pub(super) const fn entry_kind(site: u8) -> quench_runtime::staged::property::En
 /// The site facts of a private name's read of `this` and of a register (`FieldPlan::Private`):
 /// the record's private field at its own address (`LaneFrame::private_value`). A method, accessor
 /// or missing field takes `get_private_field_miss`, the general read.
-pub(super) const PRIVATE_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 48);
-pub(super) const PRIVATE_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 48);
-pub(super) const fn private_field_site(site: u8) -> bool {
+pub(crate) const PRIVATE_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 48);
+pub(crate) const PRIVATE_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 48);
+pub(crate) const fn private_field_site(site: u8) -> bool {
     site == PRIVATE_FIELD_THIS || site == PRIVATE_FIELD_REGISTER
 }
 
 /// The site facts of a read the VM's cache answers, of `this` and of a register (`FieldPlan::Host`):
 /// the cached read of the site's atom (`LaneFrame::cached_read`). A miss takes `lane_get_field`,
 /// the general read, which runs the getter and the data lookups.
-pub(super) const CACHED_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 42);
-pub(super) const CACHED_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 42);
-pub(super) const fn cached_field_site(site: u8) -> bool {
+pub(crate) const CACHED_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 42);
+pub(crate) const CACHED_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 42);
+pub(crate) const fn cached_field_site(site: u8) -> bool {
     site == CACHED_FIELD_THIS || site == CACHED_FIELD_REGISTER
 }
 
@@ -4789,10 +4789,10 @@ pub(super) const fn cached_field_site(site: u8) -> bool {
 /// facts of one family: `returning_site(this, leaf)`.
 const RETURNING_FORM: usize = OWN_FORMS.len() + 50;
 const RETURNING_BASE: u8 = own_site(false, RETURNING_FORM);
-pub(super) const fn returning_site(this: bool, leaf: u8) -> u8 { own_site(this, RETURNING_FORM) + 2 * leaf }
-pub(super) const fn returning_field_site(site: u8) -> bool { site >= RETURNING_BASE }
+pub(crate) const fn returning_site(this: bool, leaf: u8) -> u8 { own_site(this, RETURNING_FORM) + 2 * leaf }
+pub(crate) const fn returning_field_site(site: u8) -> bool { site >= RETURNING_BASE }
 /// Saturating: a const branch for a site of another family still instantiates the call.
-pub(super) const fn returning_leaf(site: u8) -> u8 { site.saturating_sub(RETURNING_BASE) / 2 }
+pub(crate) const fn returning_leaf(site: u8) -> u8 { site.saturating_sub(RETURNING_BASE) / 2 }
 
 /// Whether `handler` is the returning own-field row of no leaf form, at `this` or a register
 /// (`returning_site`): the leaf call's reads recognise it as the own read it is.
@@ -4801,26 +4801,26 @@ fn returning_own_row(handler: *const ()) -> bool {
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(false, NOT_LEAF)) as *const ()
 }
 
-pub(super) const fn cell_own_site(site: u8) -> bool {
+pub(crate) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
 }
 
 /// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
-pub(super) const fn inherited_site(site: u8) -> bool {
+pub(crate) const fn inherited_site(site: u8) -> bool {
     site == INHERITED_THIS || site == INHERITED_REGISTER || inherited_other_site(site)
 }
-pub(super) const fn inherited_other_site(site: u8) -> bool { site == INHERITED_OTHER_THIS || site == INHERITED_OTHER_REGISTER }
+pub(crate) const fn inherited_other_site(site: u8) -> bool { site == INHERITED_OTHER_THIS || site == INHERITED_OTHER_REGISTER }
 
 /// Whether held site `site` reads any receiver's object part, not a direct object's alone.
-pub(super) const fn held_other_site(site: u8) -> bool {
+pub(crate) const fn held_other_site(site: u8) -> bool {
     site == HELD_OTHER_THIS || site == HELD_OTHER_REGISTER || site == HELD_CELL_REGISTER
 }
 
 /// Whether own-field or held site `site` reads `this`.
-pub(super) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
+pub(crate) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
 
 /// The storage form own-field site `site` fixes (`OWN_FORMS`); `HINTED_FORM` for none.
-pub(super) const fn own_site_form(site: u8) -> u32 {
+pub(crate) const fn own_site_form(site: u8) -> u32 {
     let index = (site.wrapping_sub(1) / 2) as usize;
     if index < OWN_FORMS.len() { OWN_FORMS[index] }
     else if index == OWN_FORMS.len() + 7 { quench_runtime::staged::TAGGED_SLOTS }
@@ -4829,7 +4829,7 @@ pub(super) const fn own_site_form(site: u8) -> u32 {
 
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
 /// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
-pub(super) const fn own_site_decodes(site: u8) -> bool {
+pub(crate) const fn own_site_decodes(site: u8) -> bool {
     if held_site(site) || site == STRING_SITE || site == NUMBER_SITE || inherited_site(site) || own_constant_site(site) || length_site(site)
         || host_read_site(site) || private_field_site(site) || cached_field_site(site) { return false; }
     let form = own_site_form(site);
@@ -5028,7 +5028,7 @@ fn inherited_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Value>
 }
 
 /// The VM's entry lookup `kind` answers for `object` at the row's record `ip` (`LaneFrame::field_entry`).
-pub(super) fn field_entry_read(context: *mut (), ip: Ip, object: Value,
+pub(crate) fn field_entry_read(context: *mut (), ip: Ip, object: Value,
     kind: quench_runtime::staged::property::EntryKind) -> Option<Value> {
     use quench_runtime::staged::property::EntryKind;
     let cx = context.cast::<LaneContext>();
@@ -5417,7 +5417,7 @@ fn length_read(vm: &mut Vm, receiver: Value) -> Option<Value> {
         .or_else(|| vm.typed_array_geometry_read_inline(receiver, atom))
 }
 
-pub(super) use quench_runtime::vm::engine_types::FieldSiteTier;
+pub(crate) use quench_runtime::vm::engine_types::FieldSiteTier;
 
 fn field_site_tier_in_lane(
     vm: &Vm,
@@ -5543,7 +5543,7 @@ unsafe fn nested_polymorphic_value_in_lane(cx: *mut LaneContext, r: Registers, i
 /// A nested site's read of `base` where both steps hit primary own entries
 /// (`lane_nested_value`), which runs no guest code.
 #[inline(always)]
-pub(super) fn nested_own_field_hit(
+pub(crate) fn nested_own_field_hit(
     vm: &mut Vm,
     code: &ResidualProgram,
     site: &quench_runtime::bytecode::FieldSite,
@@ -7346,7 +7346,7 @@ fn frame_reaches_in_lane(cx: *mut LaneContext, registers: u16, reach: usize) -> 
 /// own storage does not cover the function.
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn context_locals_in_window_in_lane(context: usize) -> bool {
+pub(crate) unsafe fn context_locals_in_window_in_lane(context: usize) -> bool {
     let cx = context as *mut LaneContext;
     let vm = unsafe { vm(cx) };
     if let Some(activation) = vm.lane_stack.top_frame() {
@@ -7684,8 +7684,8 @@ fn inlined_activation_in_lane(
 }
 
 #[path = "vector_region.rs"]
-mod vector_region;
-mod wasm_instance;
+pub(crate) mod vector_region;
+pub(crate) mod wasm_instance;
 use wasm_instance::lane_instance_binding_memory;
 
 
@@ -7699,12 +7699,12 @@ lane_handler! {
 }
 
 /// The bytes of memory binding `binding` code addresses in place (`MemoryStorage::direct_view`).
-pub(super) fn direct_memory(vm: &Vm, binding: Value) -> Option<(*mut u8, usize)> {
+pub(crate) fn direct_memory(vm: &Vm, binding: Value) -> Option<(*mut u8, usize)> {
     direct_memory_and_guard(vm, binding).map(|(bytes, _)| bytes)
 }
 
 /// `direct_memory` with the memory's guard reservation, read together.
-pub(super) fn direct_memory_and_guard(
+pub(crate) fn direct_memory_and_guard(
     vm: &Vm,
     binding: Value,
 ) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
@@ -7945,7 +7945,7 @@ impl Vm {
     /// Whether `callee` is a native that runs beside a lane's activations
     /// (`runs_beside_activations`), which a call made while they stay frameless may make
     /// without making them frames.
-    pub(super) fn callee_runs_beside_activations(&self, callee: Value) -> bool {
+    pub(crate) fn callee_runs_beside_activations(&self, callee: Value) -> bool {
         match self.heap.function(callee) {
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
                 self.runs_beside_activations(*native, callee)
@@ -7957,7 +7957,7 @@ impl Vm {
     /// Whether the activations of a lane native call deferred beside them (`lane_deferred`)
     /// run a function of `program`: the innermost runs its lane context's program, and each
     /// names its caller's, the outermost's being a frame's.
-    pub(super) fn deferred_activations_run(&self, program: ProgramId) -> bool {
+    pub(crate) fn deferred_activations_run(&self, program: ProgramId) -> bool {
         let Some(DeferredLaneCall { cx, .. }) = &self.lane_deferred else {
             return false;
         };
@@ -7971,7 +7971,7 @@ impl Vm {
     /// `call_native_in_lane` would have before calling: at every point that observes the frame
     /// stack while a native runs, which guest code, a stack capture and a collection do.
     #[inline(always)]
-    pub(super) fn materialize_deferred_lane(&mut self) {
+    pub(crate) fn materialize_deferred_lane(&mut self) {
         if self.lane_deferred.is_some() {
             self.materialize_deferred_lane_now();
         }
@@ -8441,7 +8441,7 @@ impl Vm {
     /// ordinary `this`: the facts an inlined frame's recovery relies on
     /// (`body_inlined_activation_in_lane`), admitted once when its body is published; a
     /// lifecycle edge retires the body before they can expire.
-    pub(super) fn inlined_target_admitted_in_lane(&mut self, code: &ResidualProgram, callee: Value, function: u32) -> bool {
+    pub(crate) fn inlined_target_admitted_in_lane(&mut self, code: &ResidualProgram, callee: Value, function: u32) -> bool {
         self.resolve_script_call_target(code, callee).is_some_and(|target| target.program() == self.active_program
             && target.function == function
             && target.entry.activates_registers_only()
@@ -8694,7 +8694,7 @@ impl Vm {
     /// The capture slots a frameless target whose closure has environment `env` reads
     /// (`ScriptCallTarget::capture`), tagged `CAPTURE_STORES` when they admit every store,
     /// whose barrier this takes once.
-    pub(super) fn target_capture(
+    pub(crate) fn target_capture(
         &mut self,
         code: &ResidualProgram,
         program: ProgramId,
@@ -8729,11 +8729,11 @@ impl Vm {
     /// Whether `program` runs in the lane when dynamic execution is allowed:
     /// Wasm always, JavaScript where it and the VM are specialized. A lane run keeps its program and the VM's specialization, so the
     /// lane's field caches (`Vm::primary_own_field_hit` and its kin) need not test them.
-    pub(super) fn specialized_operations_enabled(&self, program: &ResidualProgram) -> bool {
+    pub(crate) fn specialized_operations_enabled(&self, program: &ResidualProgram) -> bool {
         program.kind == quench_runtime::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized)
     }
 
-    pub(super) fn admits_in_lane(&self, program: &ResidualProgram) -> bool {
+    pub(crate) fn admits_in_lane(&self, program: &ResidualProgram) -> bool {
         self.execution_mode.allows_dynamic_execution() && self.specialized_operations_enabled(program)
     }
 
@@ -8742,7 +8742,7 @@ impl Vm {
     /// address by emitted code; the end of the values' capacity; and the end of the `frames`
     /// activations the run may nest above the activations' top, bounded by what the lane may
     /// still make of them.
-    pub(super) fn stack_words_in_lane(&mut self, frames: usize) -> LaneStackWords {
+    pub(crate) fn stack_words_in_lane(&mut self, frames: usize) -> LaneStackWords {
         let stack = &mut self.lane_stack;
         let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activation_count() + 1));
         // The one spill left for emitted code (one-frame-one-call.md F5): its direct calls push
@@ -8778,12 +8778,12 @@ impl Vm {
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
-    pub(super) fn hot_loop_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
+    pub(crate) fn hot_loop_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
         self.view_any_in_lane(program, function).unwrap_or(std::ptr::null())
     }
 
     /// The lane view of `function`, derived on first use.
-    pub(super) fn view_any_in_lane(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
+    pub(crate) fn view_any_in_lane(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
         if !self.runs_lane || !self.execution_mode.allows_dynamic_execution() { return None; }
         let diagnostics = self.programs.reports_on_drop();
         let tiers = self.programs.tiers();
@@ -8811,7 +8811,7 @@ impl Vm {
     /// width handler settled | instruction`, handlers as run-time addresses (symbolized against
     /// the symbol table by `quench-gate --only ir-predict`, less the anchor's bias), `settled`
     /// the handler the stored view holds after the run (`-` where no run derived one).
-    pub(super) fn report_lane_plan(&mut self) {
+    pub(crate) fn report_lane_plan(&mut self) {
         if quench_runtime::trace::Channel::Bytecode.value() != Some(quench_runtime::vm::inspection::LANE_PLAN) {
             return;
         }
@@ -9078,7 +9078,7 @@ macro_rules! lane_plain_activation {
 }
 use lane_plain_activation;
 
-mod leaf_calls;
+pub(crate) mod leaf_calls;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_leaf_in_lane, leaf_call_handler};
 
 /// Refuses the direct calls of a lane body or region about to run in `registers` where the running leaf owns them: a
@@ -10901,40 +10901,40 @@ fn promise_native_call_in_lane(cx: *mut LaneContext, ip: Ip, native: Native, cal
     call_native_in_lane(cx, ip, native, callee, receiver, args)
 }
 
-mod named_keys;
-mod wasm_calls;
+pub(crate) mod named_keys;
+pub(crate) mod wasm_calls;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use named_keys::named_key_element;
-mod in_place_natives;
+pub(crate) mod in_place_natives;
 /// Whether a compiled loop may call `native` in place and go on (`in_place_natives::in_place_in_loop`).
 pub(crate) const fn in_place_in_loop(native: Native) -> bool { in_place_natives::in_place_in_loop(native) }
-mod root_bindings;
+pub(crate) mod root_bindings;
 use root_bindings::frame_capture_at_root;
-mod native_calls; mod regexp_calls; mod getters; mod generator_yields;
-mod lane_roots;
-mod lane_trace;
-mod lane_stack_trace;
-mod lane_frames; use lane_frames::{ActivationView, SidePayload};
-mod frame_walk;
-mod with_scopes;
-mod scoped_names; mod window_owner; pub(crate) use window_owner::WindowScope;
-mod lane_eval;
+pub(crate) mod native_calls; mod regexp_calls; mod getters; mod generator_yields;
+pub(crate) mod lane_roots;
+pub(crate) mod lane_trace;
+pub(crate) mod lane_stack_trace;
+pub(crate) mod lane_frames; use lane_frames::{ActivationView, SidePayload};
+pub(crate) mod frame_walk;
+pub(crate) mod with_scopes;
+pub(crate) mod scoped_names; mod window_owner; pub(crate) use window_owner::WindowScope;
+pub(crate) mod lane_eval;
 use lane_roots::{LaneRoot, LaneStart};
 pub(crate) use lane_roots::{JobEnd, ParkedLane};
-mod async_requests;
-mod generator_windows; use generator_windows::{generator_returned_in_lane, resume_generator_step_in_lane}; pub(crate) use generator_windows::WindowPlan;
-mod raised_windows;
-mod array_steps;
-mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;
-mod vm_steps;
+pub(crate) mod async_requests;
+pub(crate) mod generator_windows; use generator_windows::{generator_returned_in_lane, resume_generator_step_in_lane}; pub(crate) use generator_windows::WindowPlan;
+pub(crate) mod raised_windows;
+pub(crate) mod array_steps;
+pub(crate) mod name_probe; use name_probe::probe_handler; pub(crate) use name_probe::settle_name_record;
+pub(crate) mod vm_steps;
 pub(crate) mod family_helpers;
-mod value_steps;
+pub(crate) mod value_steps;
 pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, vm_operation_step};
-mod handler_edges;
+pub(crate) mod handler_edges;
 pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
 use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler};
-mod wasm_gc;
+pub(crate) mod wasm_gc;
 use wasm_gc::wasm_gc_handler;
 
 #[quench_macros::ext(DispatchFastVm4)]
@@ -12841,7 +12841,7 @@ fn callee_captures_in_lane(cx: *mut LaneContext, callee: Value) -> (usize, usize
 impl Vm {
     /// The dense capture slots of `callee`'s environment (`EnvironmentSlots::native_dense_view`),
     /// as values and count, or none: what an inlined frame of it reads its captures from.
-    pub(super) fn callee_capture_slots(&self, callee: Value) -> (usize, usize) {
+    pub(crate) fn callee_capture_slots(&self, callee: Value) -> (usize, usize) {
         self.script_call_entry(callee)
             // SAFETY: as `Vm::script_call_entry`; a live environment's slots never move.
             .and_then(|target| unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads((*target).capture)) })
@@ -13152,7 +13152,7 @@ pub(crate) unsafe extern "C" fn body_argument_get_in_lane(_vm: u64, _residual: u
     }
 }
 
-pub(super) unsafe extern "C" fn body_capture_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
+pub(crate) unsafe extern "C" fn body_capture_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
     // As `body_call_helper`: static regions recover captures through their semantic operation,
     // and an ahead body has no lane context to read them from.
     if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
@@ -13179,7 +13179,7 @@ pub(super) unsafe extern "C" fn body_capture_in_lane(_vm: u64, _residual: u64, c
 ///
 /// # Safety
 /// As `body_capture_in_lane`.
-pub(super) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64, value: u64) -> u64 {
+pub(crate) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64, value: u64) -> u64 {
     if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return 0; }
     let cx = context as usize as *mut LaneContext;
     let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, Value::from_bits(value));
@@ -13342,7 +13342,7 @@ fn frames_resumed_in_lane(
 ///
 /// # Safety
 /// `context` is the running lane's.
-pub(super) unsafe fn refresh_body_bases(context: u64) {
+pub(crate) unsafe fn refresh_body_bases(context: u64) {
     let cx = context as usize as *mut LaneContext;
     // SAFETY: the caller's contract.
     unsafe { vm(cx).refresh_body_bases() };
@@ -13354,7 +13354,7 @@ pub(super) unsafe fn refresh_body_bases(context: u64) {
 ///
 /// # Safety
 /// `context` is the running lane's.
-pub(super) unsafe fn region_payload_in_lane(context: usize, payload: usize) -> usize {
+pub(crate) unsafe fn region_payload_in_lane(context: usize, payload: usize) -> usize {
     // SAFETY: the caller's contract.
     std::mem::replace(unsafe { &mut (*(context as *mut LaneContext)).region_payload }, payload)
 }
@@ -13366,7 +13366,7 @@ pub(super) unsafe fn region_payload_in_lane(context: usize, payload: usize) -> u
 ///
 /// # Safety
 /// `context` is the running lane's, which the region entered (`region_payload_in_lane`), and `call_pc` a call record of its function.
-pub(super) unsafe extern "C" fn region_call_in_lane(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(crate) unsafe extern "C" fn region_call_in_lane(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     let status = unsafe { body_calls::body_call_helper(vm, residual, context, call_pc) };
     // SAFETY: as above.
@@ -13380,7 +13380,7 @@ pub(super) unsafe extern "C" fn region_call_in_lane(vm: u64, residual: u64, cont
 ///
 /// # Safety
 /// `context` is the running lane's.
-pub(super) unsafe fn refresh_region_bases_of(context: u64) {
+pub(crate) unsafe fn refresh_region_bases_of(context: u64) {
     let cx = context as usize as *mut LaneContext;
     // SAFETY: the caller's contract.
     let payload = unsafe { (*cx).region_payload };
@@ -16535,7 +16535,7 @@ impl LaneTable {
 
 /// Whether the lane may run `instruction` from its view record: every
 /// register it names lies inside the register file and carries no flag.
-pub(super) fn fields_fit_in_lane(instruction: WideInstruction, function: &Function) -> bool {
+pub(crate) fn fields_fit_in_lane(instruction: WideInstruction, function: &Function) -> bool {
     let registers = function.registers;
     let op = instruction.op();
     let fields = [
@@ -16902,7 +16902,7 @@ fn returns_in_lane(instruction: WideInstruction) -> bool {
 /// through, when there is exactly one: the direct accesses', or in a body with none, its
 /// vector accesses' (`WasmMemoryAddress`) when the prologue binds it, as lowering binds a
 /// memory32 memory once per call.
-pub(super) fn memory_register(function: &Function) -> Option<u16> {
+pub(crate) fn memory_register(function: &Function) -> Option<u16> {
     let instructions = || function.code.iter().map(|packed| function.widened(*packed));
     let direct = instructions().filter_map(|instruction| match instruction.op() {
         op if MemoryLoad::from_direct_op(op).is_some()
@@ -17743,8 +17743,8 @@ fn specialize_constant_returns(records: &mut [LaneInstruction]) {
     }
 }
 
-mod loop_kernel;
-mod int_kinds;
+pub(crate) mod loop_kernel;
+pub(crate) mod int_kinds;
 pub(crate) use int_kinds::note_retired as note_int_speculation_retired;
 
 /// The proved row of the element record running `handler` (`specialize_proved_arrays`): the row of
@@ -17764,11 +17764,11 @@ fn proved_row(handler: *const ()) -> Option<Handler> {
 
 /// The proved element read row (`proved_row` of `ELEMENT_READ`), which the primitive bench counts.
 #[cfg(test)]
-pub(super) fn proved_element_read_row() -> *const () { generated_row!(ELEMENT_READ, ACC_NONE, FLAG_SET) as Handler as *const () }
+pub(crate) fn proved_element_read_row() -> *const () { generated_row!(ELEMENT_READ, ACC_NONE, FLAG_SET) as Handler as *const () }
 
 /// The proved element write row (`proved_row` of `ELEMENT_WRITE`), which the primitive bench counts.
 #[cfg(test)]
-pub(super) fn proved_element_write_row() -> *const () { generated_row!(ELEMENT_WRITE, ACC_NONE, FLAG_SET) as Handler as *const () }
+pub(crate) fn proved_element_write_row() -> *const () { generated_row!(ELEMENT_WRITE, ACC_NONE, FLAG_SET) as Handler as *const () }
 
 /// The span of the array a proved element row (`proved_row`) reads or stores through the proof of its
 /// base register's slot (`ArrayStorageProofs::read_span`, `write_span`), proving the array first where
@@ -18478,7 +18478,7 @@ fn entered_records(instructions: &[WideInstruction], parameter_end_pc: u32) -> I
     targets
 }
 
-pub(super) fn decoded_instruction(
+pub(crate) fn decoded_instruction(
     function: &Function,
     packed: quench_runtime::bytecode::Instr,
 ) -> WideInstruction {
@@ -18493,7 +18493,7 @@ pub(super) fn decoded_instruction(
 impl Vm {
     /// The lane view a general-loop entry of `function` runs with, or null when it runs
     /// without one (`ProgramStore::entry_lane_view`).
-    pub(super) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
+    pub(crate) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
         if !self.runs_lane || !self.execution_mode.allows_dynamic_execution() { return std::ptr::null(); }
         let diagnostics = self.programs.reports_on_drop();
         let tiers = self.programs.tiers();
@@ -18530,7 +18530,7 @@ impl Vm {
 
     /// Whether the instruction at `pc` of `view` runs in the lane.
     #[inline(always)]
-    pub(super) fn runs_in_lane(view: *const LaneView, pc: usize) -> bool {
+    pub(crate) fn runs_in_lane(view: *const LaneView, pc: usize) -> bool {
         // SAFETY: a non-null view has an entry for every validated PC.
         quench_runtime::DYNAMIC_EXECUTION_ENABLED
             && !view.is_null()
@@ -18544,7 +18544,7 @@ impl Vm {
     /// Whether a call from a native enters `view` at its first instruction: where the general
     /// loop would, or where the lane runs the call whole (`LaneView::returns_from_entry`).
     #[inline(always)]
-    pub(super) fn runs_call_in_lane(view: *const LaneView) -> bool {
+    pub(crate) fn runs_call_in_lane(view: *const LaneView) -> bool {
         // SAFETY: a non-null view lives with its program.
         Self::runs_in_lane(view, 0) || quench_runtime::DYNAMIC_EXECUTION_ENABLED && !view.is_null() && unsafe { (*view).returns_from_entry }
     }
@@ -18556,7 +18556,7 @@ impl Vm {
     /// depend on the lane.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn run_fast_lane(
+    pub(crate) fn run_fast_lane(
         &mut self,
         code: &ResidualProgram,
         program: ProgramId,
@@ -18648,7 +18648,7 @@ impl Vm {
     /// (`Vm::run_frames_after_lane_exit`), as a general call of it would have run it. `None`
     /// leaves the call to the general path: a native not running from the lane's frame, or a
     /// callee or call no lane call would activate.
-    pub(super) fn native_callback_in_lane(
+    pub(crate) fn native_callback_in_lane(
         &mut self,
         callee: Value,
         receiver: Value,
@@ -18762,7 +18762,7 @@ impl Vm {
     /// and the native then returns to its caller's frame, as an observed deferred call does.
     /// `None` leaves the call to the general path: another lane, program or frame count, a
     /// callee no lane call would activate, or a boundary already in place.
-    pub(super) fn deferred_callback_in_lane(
+    pub(crate) fn deferred_callback_in_lane(
         &mut self,
         callee: Value,
         receiver: Value,
@@ -18922,7 +18922,7 @@ unsafe fn restore_context_in_lane(cx: *mut LaneContext, saved: LaneContext) {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::PreparedLaneCallback;
+pub(crate) use quench_runtime::vm::engine_types::PreparedLaneCallback;
 
 use quench_runtime::vm::engine_types::PreparedShape;
 
@@ -19276,7 +19276,7 @@ unsafe fn enter_suspended_in_lane(
 impl Vm {
     /// `native_callback_in_lane`'s tests and resolution, made once for a native's loop of calls
     /// of `callee` with `receiver`: `None` where none of them would run in the lane.
-    pub(super) fn prepare_lane_callback(&mut self, callee: Value, receiver: Value) -> Option<PreparedLaneCallback> {
+    pub(crate) fn prepare_lane_callback(&mut self, callee: Value, receiver: Value) -> Option<PreparedLaneCallback> {
         if !self.execution_mode.allows_dynamic_execution() || self.lane_deferred.is_some() {
             return None;
         }
@@ -19316,7 +19316,7 @@ impl Vm {
     /// Ends a prepared loop: the context names its caller's pending calls and executing
     /// program again (`Vm::call_prepared_lane` left the loop's named), and its pending-call
     /// stack returns to the pool.
-    pub(super) fn finish_lane_callback(&mut self, prepared: PreparedLaneCallback) {
+    pub(crate) fn finish_lane_callback(&mut self, prepared: PreparedLaneCallback) {
         // SAFETY: the lane's context lives while its native, which ends the loop, runs.
         unsafe {
             (*prepared.cx).pending = prepared.caller.pending;
@@ -19331,7 +19331,7 @@ impl Vm {
     /// it tests the frame depth, the lane's activations and program, a due collection and
     /// the collection epoch, which the native's steps between calls can change. `None`
     /// leaves the call to the general path.
-    pub(super) fn call_prepared_lane(
+    pub(crate) fn call_prepared_lane(
         &mut self,
         prepared: &mut PreparedLaneCallback,
         args: &[Value],
@@ -19419,27 +19419,27 @@ impl Vm {
     }
 }
 
-mod lane_dispatch; use lane_dispatch::dispatch_in_lane;
+pub(crate) mod lane_dispatch; use lane_dispatch::dispatch_in_lane;
 
 #[cfg(test)]
-mod instruction_set_tests;
+pub(crate) mod instruction_set_tests;
 #[cfg(test)]
-mod call_site_history_tests;
+pub(crate) mod call_site_history_tests;
 #[cfg(test)]
-mod update_fusion_tests;
-mod on_demand_metadata;
+pub(crate) mod update_fusion_tests;
+pub(crate) mod on_demand_metadata;
 use on_demand_metadata::{lane_completes_return, record_late_call};
 
 #[cfg(test)]
-mod numeric_pair_tests;
+pub(crate) mod numeric_pair_tests;
 
 #[cfg(all(test, feature = "profile-field-primitives"))]
-mod field_pair_census_tests;
+pub(crate) mod field_pair_census_tests;
 
 #[cfg(test)]
-mod leaf_call_tests;
+pub(crate) mod leaf_call_tests;
 #[cfg(test)]
-mod retirement_tests;
+pub(crate) mod retirement_tests;
 
 /// Counts a leave of a lane body at a place its body had not named before on the field sites of
 /// the instruction there (`Vm::note_field_leave`): a place counts once per body.

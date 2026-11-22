@@ -9,7 +9,7 @@ impl Lowering<'_, '_> {
     /// Stable fact while the realm compiled against is the active one (`hold_global`); a global
     /// lexical binding no code folds, read live from its word under the global layout
     /// (`hold_lexical`); else the lane's own read, which leaves where it misses.
-    pub(super) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let (binding, held) = self.global_binding(pc);
         let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, pc as u32));
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
@@ -30,7 +30,7 @@ impl Lowering<'_, '_> {
 
     /// The by-name load at `pc` of a loop's callee, read on the entering edge of the loop at `header` (`hoist_scalar_calls`):
     /// the read `global_read` makes, but a miss leaves at the header, before the loop ran. Its tagged value.
-    pub(super) fn hoist_native_read(&mut self, state: &mut State, header: usize, pc: usize) -> Option<ir::Value> {
+    pub(crate) fn hoist_native_read(&mut self, state: &mut State, header: usize, pc: usize) -> Option<ir::Value> {
         let instruction = self.unit.instructions[pc];
         if !matches!(quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(quench_runtime::staged::Operation::LoadName { .. })) { return None; }
         let (binding, held) = self.global_binding(pc);
@@ -67,7 +67,7 @@ impl Lowering<'_, '_> {
     /// (`Vm::stable_global_slot`), after taking its dependencies: the layout and the slot's
     /// type, and the realm that names the global object (`hold_global_slot`); a store also holds
     /// that no method cache names its atom (`emit_store_atom_admitted`).
-    pub(super) fn global_cell(&mut self, state: &mut State, pc: usize, row: &quench_runtime::staged::Operation<ir::Value, EmitProof>, exit: ir::Block)
+    pub(crate) fn global_cell(&mut self, state: &mut State, pc: usize, row: &quench_runtime::staged::Operation<ir::Value, EmitProof>, exit: ir::Block)
         -> Option<GlobalSlot> {
         let GlobalRead::Slot(slot) = *self.global_reads.get(&pc)? else { return None };
         if !self.division().folds(BindingTime::Stable) { return None; }
@@ -85,7 +85,7 @@ impl Lowering<'_, '_> {
     /// (`keeps_stable_facts`), the invalidation word (`hold_stable`). A write elsewhere retires
     /// the code then, and the next entry leaves; a body that may write reads the word again
     /// after each such instruction (`State::call_effect`).
-    pub(super) fn hoist_stable(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn hoist_stable(&mut self, state: &mut State, header: usize) {
         if !self.division().folds(BindingTime::Stable) { return; }
         let Some(end) = self.loop_end(header) else { return };
         let global = self.loop_realm(header, end);
@@ -115,7 +115,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The last backedge of the loop at `header`, if one closes there.
-    pub(super) fn loop_end(&self, header: usize) -> Option<usize> {
+    pub(crate) fn loop_end(&self, header: usize) -> Option<usize> {
         self.unit.instructions.iter().rposition(|instruction|
             matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Jump)) && instruction.jump_target() as usize == header).filter(|end| *end >= header)
     }

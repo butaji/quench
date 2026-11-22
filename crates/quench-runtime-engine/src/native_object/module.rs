@@ -66,7 +66,7 @@ pub fn lower_native_js_module_for(program: &ResidualProgram, namespace: &str, ta
 }
 
 /// Defines `code` as the already-compiled body of `id`, its relocations named by declaration.
-pub(super) fn define_code(module: &mut ObjectModule, id: FuncId, code: NativeCode) -> Result<(), String> {
+pub(crate) fn define_code(module: &mut ObjectModule, id: FuncId, code: NativeCode) -> Result<(), String> {
     let relocations = code.relocations.iter().map(|reloc| ModuleReloc {
         kind: reloc.kind,
         offset: reloc.offset,

@@ -7,7 +7,7 @@ use super::*;
 /// entry answers (`field_site_tier_in_lane`): its generated row of the local-field site. `None` for any
 /// other record, tier or receiver, which the general read keeps: a name read through function
 /// information, a private name, a primitive or a receiver outside the object records.
-pub(super) fn local_field_handler(cx: *mut LaneContext, i: &LaneInstruction) -> Option<Handler> {
+pub(crate) fn local_field_handler(cx: *mut LaneContext, i: &LaneInstruction) -> Option<Handler> {
     let slot = quench_runtime::bytecode::FieldBase(i.b).local_index()?;
     // SAFETY: the context outlives the lane run.
     let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
@@ -29,7 +29,7 @@ script_handler! {
     /// the site's tier of the plain local, which binds the record's own-field hint at the primary
     /// own entry so the row reads it next time. Any other read goes through `row_get_field_miss`,
     /// which may move the record to a fitting handler and makes the general read.
-    pub(super) fn local_field_miss<>(cx, r, ip, i, view) {
+    pub(crate) fn local_field_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let tier = field_site_tier_in_lane(unsafe { vm(cx) }, code, i);

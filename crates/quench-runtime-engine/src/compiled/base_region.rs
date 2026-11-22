@@ -30,44 +30,44 @@ use super::LaneHelpers;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-mod adds;
-mod call_args;
-mod names;
-mod call_plan;
-mod sites;
-pub(in crate::compiled) mod callees;
-mod decode;
-pub(in crate::compiled) mod declared;
-mod entry_facts;
-mod exact;
-mod fold;
-pub(in crate::compiled) mod function;
+pub(crate) mod adds;
+pub(crate) mod call_args;
+pub(crate) mod names;
+pub(crate) mod call_plan;
+pub(crate) mod sites;
+pub(crate) mod callees;
+pub(crate) mod decode;
+pub(crate) mod declared;
+pub(crate) mod entry_facts;
+pub(crate) mod exact;
+pub(crate) mod fold;
+pub(crate) mod function;
 pub(crate) use function::inlined_exit_key;
-mod globals;
-mod link;
-mod locals;
-pub(in crate::compiled) use locals::env_owned;
-mod numbers;
-mod plan;
-mod proofs;
-mod repr;
-mod residuals;
-mod resume;
-mod span;
-mod steps;
-mod throws;
-mod stitch;
-mod tile;
-mod webs;
+pub(crate) mod globals;
+pub(crate) mod link;
+pub(crate) mod locals;
+pub(crate) use locals::env_owned;
+pub(crate) mod numbers;
+pub(crate) mod plan;
+pub(crate) mod proofs;
+pub(crate) mod repr;
+pub(crate) mod residuals;
+pub(crate) mod resume;
+pub(crate) mod span;
+pub(crate) mod steps;
+pub(crate) mod throws;
+pub(crate) mod stitch;
+pub(crate) mod tile;
+pub(crate) mod webs;
 use sites::*;
 #[cfg(test)]
 #[path = "base_region/region_tests.rs"]
-mod region_tests;
+pub(crate) mod region_tests;
 use decode::*;
 use entry_facts::*;
 use globals::*;
 use link::*;
-pub(in crate::compiled) use link::row_entries;
+pub(crate) use link::row_entries;
 pub(crate) use link::SymbolSite;
 use plan::*;
 use repr::*;
@@ -75,77 +75,77 @@ pub(crate) use resume::ResumeTable;
 use resume::*;
 use span::*;
 use steps::*;
-pub(in crate::compiled) use steps::covers;
+pub(crate) use steps::covers;
 use stitch::*;
 use webs::*;
 
 /// What a row reads of the running program rather than of the registers: the names its
 /// instructions' atoms are, and whether a store may run in place.
 #[derive(Clone, Copy)]
-pub(in crate::compiled) struct Known<'a> {
-    pub(in crate::compiled) program: &'a ResidualProgram,
+pub(crate) struct Known<'a> {
+    pub(crate) program: &'a ResidualProgram,
     /// The compiling VM's stitch-inlining thresholds (`tier_policy::Stitch`), a Static fact of the code.
-    pub(in crate::compiled) stitch: &'static super::tier_policy::Stitch,
+    pub(crate) stitch: &'static super::tier_policy::Stitch,
     /// The names method caches hold now, where the VM and the program run specialized, so a
     /// store of an unnamed atom may run in place; `None` where none may. Code that stores holds
     /// each such atom unnamed as a Stable fact (`Body::atoms`), which a cache naming it retires.
-    pub(in crate::compiled) stores: Option<&'a quench_runtime::vm::method_cache::AtomBits>,
+    pub(crate) stores: Option<&'a quench_runtime::vm::method_cache::AtomBits>,
     /// The loads a cache site proves for a read (`Vm::native_field_read_descriptors`), where the VM and
     /// the program run specialized and the code may hold Stable facts: a read of a field its receiver's
     /// prototype chain holds folds to the value the holder holds now (`folded_read`), which a change of the
     /// holder's values or of a layout on the way retires the code over (`Body::holders`, `Body::chains`). `None`
     /// where no fact may be held.
-    pub(in crate::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
+    pub(crate) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
     /// The add a cache site recorded for an atom, as a define's (`false`) or an adding store's (`true`,
     /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
     /// `DefineField` or an adding `SetField` runs it as `staged::add`'s row. `None` where no fact may be held.
-    pub(in crate::compiled) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>>,
+    pub(crate) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>>,
     /// The naming a cache site recorded for a `SetFunctionName`'s atom, with the word of the name's string
     /// (`Vm::native_function_name`): the instruction runs it as `staged::naming`'s row. `None` where no fact may be held.
-    pub(in crate::compiled) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
+    pub(crate) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which code that
     /// holds a Stable fact and makes a call reads before the rows that hold it.
-    pub(in crate::compiled) invalidation: Option<usize>,
+    pub(crate) invalidation: Option<usize>,
     /// The program's constants as the compiling VM materialized them (a string or BigInt is a heap
     /// value there, which lives as long as the program), where it has them; none for a region.
-    pub(in crate::compiled) constants: &'a [Value],
+    pub(crate) constants: &'a [Value],
     /// The compiling VM's table of `typeof` result strings (`Vm::typeof_names`), indexed as
     /// `bytecode::TYPEOF_NAMES`: a `typeof` string row names it, so a value's string is the entry its tag's
     /// index selects. Empty for a region, whose `typeof` is the helper step.
-    pub(in crate::compiled) typeof_names: &'a [Value],
+    pub(crate) typeof_names: &'a [Value],
     /// The constructor the `instanceof` at a PC names and what the VM proved of it (`Vm::instanceof_fact`), where the VM and
     /// the program run specialized and the code may hold Stable facts: the row stands on the constructor's identity (its
     /// register is guarded against it) and walks the value's chain for its `prototype` link, which a write of that
     /// slot, a departure of its shape or a change of the `@@hasInstance` holder's values retires the code over
     /// (`Body::instanceofs`). `None` where no fact may be held.
-    pub(in crate::compiled) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
+    pub(crate) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
     /// What `key in object` answered at the PC of an `in` whose key is a constant string (`Vm::membership_facts`), where
     /// the VM and the program run specialized and the code may hold Stable facts: the row answers the boolean while its
     /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of a
     /// prototype on its chain retires the code over (`Body::chains`). `None` where no fact may be held.
-    pub(in crate::compiled) presences: Option<&'a [Option<InPresence>]>,
+    pub(crate) presences: Option<&'a [Option<InPresence>]>,
     /// Whether a field cache site's primary entry holds a receiver (`Vm::field_cache_filled`), where the VM runs
     /// specialized: admits a field row's direct arm (`family_helpers::admits`). `None` where none may be held.
-    pub(in crate::compiled) fields: Option<&'a dyn Fn(u16) -> bool>,
+    pub(crate) fields: Option<&'a dyn Fn(u16) -> bool>,
     /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
     /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.
-    pub(in crate::compiled) globals: Option<&'a quench_runtime::vm::global_facts::GlobalReads>,
+    pub(crate) globals: Option<&'a quench_runtime::vm::global_facts::GlobalReads>,
     /// The prototypes the class-typed parameters entered with, as the compiling VM observed them (`VM::class_prototypes`):
     /// a named read of such a parameter folds to its prototype's own value (`declared::class_member_read`), and the entry
     /// checks each (`declared::class_prototypes`). Empty where none was observed.
-    pub(in crate::compiled) classes: &'a [function::ClassProto],
+    pub(crate) classes: &'a [function::ClassProto],
     /// The exact shapes the region's field accesses of each loop-invariant receiver saw at entry (`osr_compile::loop_shapes`):
     /// the entry checks each (`Heap::Shape`). Empty for a body, whose parameters are `classes`.
-    pub(in crate::compiled) shapes: &'a [function::ShapeProto],
+    pub(crate) shapes: &'a [function::ShapeProto],
 }
 
 /// The realm a body's inlined callees were found in: where the active realm's global object sits in
 /// the VM (`Vm::realm_globals_offset`) and the global object itself. A body that inlines code runs
 /// it under its own realm's globals, so its entry proves this realm active (`Heap::Realm`).
 #[derive(Clone, Copy, Default)]
-pub(in crate::compiled) struct RealmProof {
-    pub(in crate::compiled) offset: u64,
-    pub(in crate::compiled) global: u64,
+pub(crate) struct RealmProof {
+    pub(crate) offset: u64,
+    pub(crate) global: u64,
 }
 
 impl Known<'_> {
@@ -252,7 +252,7 @@ fn note_inlined() {
     INLINED_SITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub(in crate::compiled) fn inlined_sites() -> u64 {
+pub(crate) fn inlined_sites() -> u64 {
     INLINED_SITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 

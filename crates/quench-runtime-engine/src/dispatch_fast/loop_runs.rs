@@ -13,17 +13,17 @@ fn backoff(declines: u8) -> u32 {
 const MAX_REASK_WAIT: u32 = 1 << 16;
 
 /// The epoch no body state carries: a site with no refusal holds it.
-pub(super) const NO_REFUSAL: u32 = u32::MAX;
+pub(crate) const NO_REFUSAL: u32 = u32::MAX;
 
 #[quench_macros::ext(LoopSiteRunsOps)]
 impl super::LoopSite {
     /// The bytecodes of one iteration, from the header to the backward jump.
-    pub(super) fn span(&self) -> u64 {
+    pub(crate) fn span(&self) -> u64 {
         u64::from(self.backedge - self.header + 1)
     }
 
     /// Weighs a native run that took `backedges` backward jumps against the entry it paid.
-    pub(super) fn note_run(&self, backedges: u64) {
+    pub(crate) fn note_run(&self, backedges: u64) {
         self.declines_in_row.set(0);
         let mut tier = self.tier.borrow_mut();
         tier.weigh_run(backedges);
@@ -36,7 +36,7 @@ impl super::LoopSite {
     /// untried, so a cause that persists is retried at doubling distances. The entries passed
     /// since the last decline weigh as declined ones too: each took the site's backward jump
     /// and ran no iteration natively, so the site retires where it would retrying every entry.
-    pub(super) fn note_decline(&self) {
+    pub(crate) fn note_decline(&self) {
         let before = self.declines_in_row.get();
         let declines = before.saturating_add(1);
         self.declines_in_row.set(declines);
@@ -48,7 +48,7 @@ impl super::LoopSite {
 
     /// Whether this entry passes to the interpreter untried, counting it off the backoff.
     #[inline(always)]
-    pub(super) fn skips_entry(&self) -> bool {
+    pub(crate) fn skips_entry(&self) -> bool {
         let skipped = self.skipped_entries.get();
         if skipped == 0 { return false; }
         self.skipped_entries.set(skipped - 1);
@@ -72,7 +72,7 @@ impl super::LoopSite {
     /// (`enclosing`): this loop then runs as plain jumps inside it, and does not warm up or enter its own
     /// region, which the enclosing loop's region covers. Once that loop stops entering (it retires, or its
     /// runs cost more than they save) this loop takes its own region again.
-    pub(super) fn inside_admitted_loop(&self) -> bool {
+    pub(crate) fn inside_admitted_loop(&self) -> bool {
         // An enclosing site that stops entering never enters again (`entering` only falls, and
         // `is_admitted` is fixed at install), so a walk that finds none stays none.
         if !self.enclosed.get() { return false; }
@@ -90,7 +90,7 @@ impl super::LoopSite {
 
     /// Whether the body's dispatch counts this header dispatch down to its plan (`body_wait`),
     /// counting it as an iteration of the loop either way.
-    pub(super) fn body_waits(&self) -> bool {
+    pub(crate) fn body_waits(&self) -> bool {
         self.body_seen.set(self.body_seen.get().saturating_add(1));
         let wait = self.body_wait.get();
         if wait == 0 { return false; }
@@ -102,7 +102,7 @@ impl super::LoopSite {
     /// same count `interprets` makes, while the site warms up; false, changing nothing, once warm,
     /// where `interprets` decides.
     #[inline(always)]
-    pub(super) fn warm_backedge(&self) -> bool {
+    pub(crate) fn warm_backedge(&self) -> bool {
         let (taken, needed) = (self.taken.get(), self.needed.get());
         if taken >= needed {
             return false;
@@ -114,7 +114,7 @@ impl super::LoopSite {
     /// Whether the interpreter takes this backward jump: while the site warms up, and until the
     /// model, weighing the compile where the count reaches `needed`, finds it pays.
     #[inline(always)]
-    pub(super) fn interprets(&self) -> bool {
+    pub(crate) fn interprets(&self) -> bool {
         let (taken, needed) = (self.taken.get(), self.needed.get());
         if taken < needed {
             self.taken.set(taken + 1);
@@ -138,7 +138,7 @@ impl super::LoopSite {
     /// Refuses the site's compile while its function's body state is `epoch`: its back edges
     /// are plain jumps until the wait (back edges, doubling per refusal under one epoch) runs
     /// out, and the first refusal under a new epoch waits the warm-up's worth of jumps.
-    pub(super) fn refuse_warming(&self, own: &super::LaneView, warmup: u32) {
+    pub(crate) fn refuse_warming(&self, own: &super::LaneView, warmup: u32) {
         let epoch = own.body_epoch();
         let same = self.refused_epoch.get() == epoch;
         let span = if same { self.refused_span.get().saturating_mul(2).min(MAX_REASK_WAIT) } else { warmup.max(1) };
@@ -151,7 +151,7 @@ impl super::LoopSite {
     /// Whether this back edge is a refused site's plain jump: one compare of the body epoch
     /// and, while the wait lasts, one decrement.
     #[inline(always)]
-    pub(super) fn refused_now(&self) -> bool {
+    pub(crate) fn refused_now(&self) -> bool {
         let refused = self.refused_epoch.get();
         // SAFETY: a refused site lies in the view that refused it, which outlives the site's runs.
         if refused == NO_REFUSAL || refused != unsafe { (*self.refused_view.get()).body_epoch() } { return false; }

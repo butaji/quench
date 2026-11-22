@@ -11,18 +11,18 @@ use super::call_plan::{CallForm, CallShape};
 
 /// A field read folded into the call that invokes it: the read's PC, the call's, the call's row (which leaves at the read) and a
 /// returning call's completion.
-pub(super) struct Fold {
-    pub(super) read: u32,
-    pub(super) call: u32,
+pub(crate) struct Fold {
+    pub(crate) read: u32,
+    pub(crate) call: u32,
     row: Decoded,
     completion: Option<Decoded>,
     /// The Number rows between the read and the call (local index, row), each leaving at the read where its operands are no Numbers.
-    pub(super) arithmetic: Vec<(usize, Decoded)>,
+    pub(crate) arithmetic: Vec<(usize, Decoded)>,
 }
 
 impl Fold {
     /// The rows of the call, in place of its own: the row that leaves at the read, then the completion.
-    pub(super) fn whats(self) -> Vec<What> {
+    pub(crate) fn whats(self) -> Vec<What> {
         let mut whats = vec![What::Resume(self.row, self.read)];
         whats.extend(self.completion.map(What::Row));
         whats
@@ -30,7 +30,7 @@ impl Fold {
 }
 
 /// The folds of the field reads of `region`, where `plans` takes the calls the stitch plans (`Sites::plans`).
-pub(super) fn pairs(region: &LoopRegion, known: Known<'_>, plans: impl Fn(WideInstruction) -> bool) -> Vec<Fold> {
+pub(crate) fn pairs(region: &LoopRegion, known: Known<'_>, plans: impl Fn(WideInstruction) -> bool) -> Vec<Fold> {
     let code = region.instructions();
     // The region's instructions some jump lands on: a row entered there would skip the read.
     let mut lands = Bits::default();
@@ -113,7 +113,7 @@ fn leaving_number(region: &LoopRegion, instruction: WideInstruction) -> Option<D
 
 /// The Number operation a native Math method computes (`math_call`'s row), if it is one: the row's
 /// `MathCall` read as the base tier's `Kind`. The libm and two-Number functions are no row.
-pub(super) fn math_kind(native: quench_runtime::heap::Native) -> Option<Kind> {
+pub(crate) fn math_kind(native: quench_runtime::heap::Native) -> Option<Kind> {
     use quench_runtime::staged::call_native::MathCall;
     use quench_runtime::staged::math::FloatUnary;
     Some(match quench_runtime::vm::number::math_call(native)? {

@@ -13,7 +13,7 @@ use quench_runtime::vm::activation::{JobRoot, SuspendKind};
 
 /// Where control goes after a row on the lane's frame: the edge a jump takes, or where the lane
 /// continues after a suspension or an in-place step.
-pub(in crate::dispatch_fast) enum LaneControl {
+pub(crate) enum LaneControl {
     Edge(Edge),
     Resumed(Resumed),
     /// The row's suspension, which the handler makes in place once the row stops
@@ -23,7 +23,7 @@ pub(in crate::dispatch_fast) enum LaneControl {
 
 /// How the running activation suspends in place (`generator_yields::suspend_at_in_lane`).
 #[derive(Clone, Copy)]
-pub(in crate::dispatch_fast) enum Suspender {
+pub(crate) enum Suspender {
     /// A sync generator over its record's register file (`generator_windows::running_generator`).
     Window,
     /// An async generator's request run in place (`async_requests::running_request`).
@@ -38,7 +38,7 @@ pub(in crate::dispatch_fast) enum Suspender {
 impl Suspender {
     /// How the running activation of `cx` suspends a `yield`, in the order the lane tries them;
     /// `None` where it suspends in place by none, and the general path suspends its frame.
-    pub(in crate::dispatch_fast) fn of_yield(cx: *mut LaneContext) -> Option<Self> {
+    pub(crate) fn of_yield(cx: *mut LaneContext) -> Option<Self> {
         let vm = unsafe { vm(cx) };
         if super::super::generator_windows::running_generator(vm) {
             return Some(Self::Window);
@@ -56,7 +56,7 @@ impl Suspender {
     /// request parks, a settling body hands its frame over, and a promise job's run suspends into
     /// its owner. `None` where it suspends in place by none, and the general path suspends its frame.
     #[inline(always)]
-    pub(in crate::dispatch_fast) fn of_await(cx: *mut LaneContext) -> Option<Self> {
+    pub(crate) fn of_await(cx: *mut LaneContext) -> Option<Self> {
         let vm = unsafe { vm(cx) };
         let activation = vm.lane_stack.activations().last()?;
         let script = activation.script()?;
@@ -90,7 +90,7 @@ impl Suspender {
 /// the record it runs, how the activation suspends, and the lane's suspension, in-place
 /// delegate step and plain iterator result read.
 #[derive(Clone, Copy)]
-pub(in crate::dispatch_fast) struct LaneSuspends {
+pub(crate) struct LaneSuspends {
     cx: *mut (),
     ip: Ip,
     suspender: Suspender,
@@ -112,7 +112,7 @@ impl LaneSuspends {
     }
 
     /// Whether the activation that suspends is async (`CallFrame::asynchronous`).
-    pub(super) fn asynchronous(self) -> bool {
+    pub(crate) fn asynchronous(self) -> bool {
         self.suspender.asynchronous()
     }
 
@@ -120,7 +120,7 @@ impl LaneSuspends {
     /// The word of a delegation `step` the lane reads without guest code: `done` and `value` of
     /// a plain iterator result, ToBoolean of a primitive; `None` for any other step (GetIterator,
     /// the `next` method, a call of `next`), which the general path makes.
-    pub(super) fn delegation(self, step: DelegationStep<u64>) -> Option<u64> {
+    pub(crate) fn delegation(self, step: DelegationStep<u64>) -> Option<u64> {
         let parts = |result: u64| (self.result_parts)(self.cx, Value::from_bits(result));
         match step {
             DelegationStep::Done { result } => parts(result).map(|(_, done)| Value::boolean(done).to_bits()),
@@ -132,7 +132,7 @@ impl LaneSuspends {
 
     /// A `next` step of a delegate generator made in place over registers `r`, its result
     /// arriving in the record's state register; `None`, before any effect, for any other step.
-    pub(super) fn in_place(self, r: Registers, step: DelegationStep<u64>) -> Option<Resumed> {
+    pub(crate) fn in_place(self, r: Registers, step: DelegationStep<u64>) -> Option<Resumed> {
         let DelegationStep::Next { iterator, method, input } = step else { return None };
         (self.in_place)(self.cx, r, self.ip, [iterator, method, input].map(Value::from_bits))
     }
@@ -140,11 +140,11 @@ impl LaneSuspends {
 
 /// The `yield` row the lane runs: an async generator's value converted as an `await`'s source
 /// (`YieldConversion::AwaitSource`, which the general path's PromiseResolve settles alike).
-pub(in crate::dispatch_fast) const LANE_YIELD: Suspension = Suspension::Yield { conversion: YieldConversion::AwaitSource };
+pub(crate) const LANE_YIELD: Suspension = Suspension::Yield { conversion: YieldConversion::AwaitSource };
 
 /// The `yield*` row of the record `i`: the delegate's iterator in `c`, its state and `next`
 /// method the immediate's pair.
-pub(in crate::dispatch_fast) fn yield_star_kind(i: &LaneInstruction) -> Suspension {
+pub(crate) fn yield_star_kind(i: &LaneInstruction) -> Suspension {
     let (state, next) = ImmediateLayout::register_pair(i.imm());
     Suspension::YieldStar { iterator: i.c, state, next }
 }
@@ -155,7 +155,7 @@ pub(in crate::dispatch_fast) fn yield_star_kind(i: &LaneInstruction) -> Suspensi
 /// goes on, and a row the frame declined, before any effect, exits at the record.
 // Inlined into each handler, so a suspender known there folds the frame and the suspension.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn suspension_row_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction,
+pub(crate) fn suspension_row_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction,
     (kind, suspender): (Suspension, Suspender)) -> Resumed {
     let mut stage = Concrete::new(std::ptr::null());
     // Only an async activation's or an await's conversion resolves promises through the lane's host.

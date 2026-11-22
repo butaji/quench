@@ -34,7 +34,7 @@ lane_handler! {
     /// not 0, fixes the test's comparison and operand form at install (`target_comparison`), so the
     /// back edge runs that one test with no switch on the record's operator.
     #[inline(never)]
-    pub(in crate::dispatch_fast) fn fused_rows<A: u16, B: u16, BACKWARD: bool, FAMILY: u8, TEST: u16, PREFIX: u16, CMP: u8>(cx, r, ip, i, view) {
+    pub(crate) fn fused_rows<A: u16, B: u16, BACKWARD: bool, FAMILY: u8, TEST: u16, PREFIX: u16, CMP: u8>(cx, r, ip, i, view) {
         // The settings word of this record (the pair's head), read before `B`'s record is named.
         let mode = i.mode;
         // A proven loop step (`PROVEN_STEP` of `CMP`, `prove_loop_steps`): `A` is `i++` of a register the
@@ -164,7 +164,7 @@ lane_handler! {
     /// `FUSED_WINDOW`). The head record's `mode` word holds the raw mask: bit `k` (`raw_bit`) keeps link `k`'s
     /// double result raw (`LaneFrame::raw_result`), which the next link reads as its operand or key.
     #[inline(never)]
-    pub(super) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, FAMILY: u8>(cx, r, ip, i, view) {
+    pub(crate) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, FAMILY: u8>(cx, r, ip, i, view) {
         // The head record's settings word, read before the links name their own records.
         let mode = i.mode;
         // Each macro takes its link's record (`$ip`, `$i`) as arguments: a `macro_rules!` body's own
@@ -281,13 +281,13 @@ lane_handler! {
 }
 
 /// Chain `(L0, L1, L2, L3)`'s record handler: one for both jump directions of its last link, which reads its own distance.
-pub(in crate::dispatch_fast) const fn chain_row<const L0: u16, const L1: u16, const L2: u16, const L3: u16, const FAMILY: u8>() -> Handler {
+pub(crate) const fn chain_row<const L0: u16, const L1: u16, const L2: u16, const L3: u16, const FAMILY: u8>() -> Handler {
     chain_rows::<L0, L1, L2, L3, FAMILY>
 }
 
 /// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
 /// an environment window's function, which `window_local_handler` gives its row.
-pub(in crate::dispatch_fast) fn is_window_row<const OP: u16>(handler: *const ()) -> bool {
+pub(crate) fn is_window_row<const OP: u16>(handler: *const ()) -> bool {
     generated_row!(OP, ACC_NONE, FLAG_WINDOW) as Handler as *const () == handler
 }
 
@@ -385,7 +385,7 @@ fn number_binary_row(handler: *const ()) -> bool {
 /// that record's own row. A link keeps its double result raw (its `mode` raw mask, `raw_bit`) where
 /// `chain_raw_links` allows it and `chain_link_raw` holds for the record; `raw_results` (no
 /// handler in the function) gates it, as for `fuse_rows`. Returns each fused record's head and last record.
-pub(in crate::dispatch_fast) fn fuse_chains(records: &mut [LaneInstruction], decoded: &[quench_runtime::bytecode::WideInstruction], live: Option<&quench_runtime::compile::liveness::RegisterMasks>, raw_results: bool) -> Vec<(usize, usize)> {
+pub(crate) fn fuse_chains(records: &mut [LaneInstruction], decoded: &[quench_runtime::bytecode::WideInstruction], live: Option<&quench_runtime::compile::liveness::RegisterMasks>, raw_results: bool) -> Vec<(usize, usize)> {
     if const { quench_runtime::staged::FUSED_CHAINS.is_empty() } { return Vec::new(); }
     // The jump targets a raw result may not pass over (`raw_out_link`); a function with a handler has no raw results.
     let targets = if raw_results { jump_targets(decoded) } else { None };
@@ -459,7 +459,7 @@ pub(in crate::dispatch_fast) fn fuse_chains(records: &mut [LaneInstruction], dec
 /// Opcode pair `(A, B)`'s fused record handler for `B`'s jump direction `backward`. Only a branch table
 /// second row reads the direction (`fused_rows`' `BACKWARD`); any other `B` takes its own distance, so
 /// both directions name one record and one instance.
-pub(in crate::dispatch_fast) fn fused_row<const A: u16, const B: u16, const FAMILY: u8>(backward: bool) -> Handler {
+pub(crate) fn fused_row<const A: u16, const B: u16, const FAMILY: u8>(backward: bool) -> Handler {
     if const { quench_runtime::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } {
         if backward { fused_rows::<A, B, true, FAMILY, B, { quench_runtime::staged::NO_LINK }, 0> } else { fused_rows::<A, B, false, FAMILY, B, { quench_runtime::staged::NO_LINK }, 0> }
     } else {
@@ -479,7 +479,7 @@ const fn fused_index(pair: usize) -> usize { if pair < quench_runtime::staged::F
 /// A `FUSED_RAW` pair takes its raw record only where `raw_results` (no handler in the function) and
 /// `B` reads `A`'s register with `A`'s register dead after it or overwritten by `B`. Returns each fused
 /// record's head and its last record, which `derive_lane_view` reads for the accumulator carry.
-pub(in crate::dispatch_fast) fn fuse_rows(records: &mut [LaneInstruction], decoded: &[quench_runtime::bytecode::WideInstruction], live: Option<&quench_runtime::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
+pub(crate) fn fuse_rows(records: &mut [LaneInstruction], decoded: &[quench_runtime::bytecode::WideInstruction], live: Option<&quench_runtime::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
     // Pair `$pair`'s record handlers for its step family, indexed by the direction (`fused_row`). Its table
     // mode is no instance: `fuse_rows` writes it as the record's settings bits, so one family instance serves
     // every mode of the pair.

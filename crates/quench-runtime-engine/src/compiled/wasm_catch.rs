@@ -13,9 +13,9 @@ use cranelift_codegen::ir::{self, MemFlagsData};
 
 /// The catch a raise enters: the pc its thrown value goes to, and the register that holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Catch {
-    pub(super) target: usize,
-    pub(super) local: u16,
+pub(crate) struct Catch {
+    pub(crate) target: usize,
+    pub(crate) local: u16,
 }
 
 impl Catch {
@@ -29,7 +29,7 @@ impl Catch {
 /// The catch of each pc of `function` and the frame's state bound (its registers and locals), or
 /// `None` where a handler is not one a Wasm function lowers: a binding that is not a frame local, a
 /// `finally` return, or a target past the code.
-pub(super) fn catch_frame(function: &Function) -> Option<(Vec<Option<Catch>>, u16)> {
+pub(crate) fn catch_frame(function: &Function) -> Option<(Vec<Option<Catch>>, u16)> {
     let bound = function.registers.checked_add(function.locals)?;
     let catches = (0..function.code.len())
         .map(|pc| match function.handler_at(u32::try_from(pc).ok()?) {
@@ -52,7 +52,7 @@ fn catch_of(function: &Function, handler: Handler) -> Option<Catch> {
 
 /// Joins the entry of a raise at a pc into its handler's state: the state `before` the raising
 /// instruction, with the thrown value bound. Nothing where the pc has no catch.
-pub(super) fn raise_edge(
+pub(crate) fn raise_edge(
     states: &mut [Option<AnalysisState>],
     work: &mut Vec<usize>,
     catch: Option<Catch>,
@@ -107,7 +107,7 @@ unsafe extern "C" fn exception_catch_callout(context: *mut CallContext, status: 
 
 impl Emitter<'_, '_> {
     /// Leaves the activation with the raised `status` and a zero result.
-    pub(super) fn leave_raised(&mut self, status: ir::Value) {
+    pub(crate) fn leave_raised(&mut self, status: ir::Value) {
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {
             values.push(self.raw_const(Kind::of(ty).expect("planned").lane(), 0));
@@ -118,7 +118,7 @@ impl Emitter<'_, '_> {
     /// The catch of a raised `status` by `catch`: where the handler catches the error the call left
     /// raised, the error leaves the context and its thrown value binds to the handler's local, which
     /// control enters. Otherwise the status leaves the activation (`leave_raised`).
-    pub(super) fn catch_raised(&mut self, status: ir::Value, catch: Catch) {
+    pub(crate) fn catch_raised(&mut self, status: ir::Value, catch: Catch) {
         let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
             ir::StackSlotKind::ExplicitSlot,
             size_of::<u64>() as u32,

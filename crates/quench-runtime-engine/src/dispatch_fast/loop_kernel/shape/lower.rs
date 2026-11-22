@@ -3,7 +3,7 @@ use super::*;
 
 impl Lowering<'_> {
     /// The shape of `graph`, whose pass ended with the register file `file`.
-    pub(super) fn lower(mut self, graph: Graph, file: &[Sym], test: (Sym, NumberRelation, Sym)) -> Option<Shape> {
+    pub(crate) fn lower(mut self, graph: Graph, file: &[Sym], test: (Sym, NumberRelation, Sym)) -> Option<Shape> {
         // A loop with no array access is a kernel too: its recurrences and temps run in the
         // scalar pass, one Rust loop over the iterations (C-shaped code runs as C).
         let mut nodes = Vec::with_capacity(graph.nodes.len());
@@ -156,7 +156,7 @@ fn sequential(nodes: &mut [Node], phis: &[(u16, Arg)]) -> Vec<u16> {
 }
 
 /// `value`, reporting what has no kernel model when it is `None` (`Channel::LoopKernel`).
-pub(super) fn traced<T>(value: Option<T>, what: &str) -> Option<T> {
+pub(crate) fn traced<T>(value: Option<T>, what: &str) -> Option<T> {
     if value.is_none() && quench_runtime::trace::Channel::LoopKernel.on() {
         eprintln!("loop-kernel:   no model for {what}");
     }

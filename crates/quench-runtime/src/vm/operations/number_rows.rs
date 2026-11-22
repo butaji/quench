@@ -393,7 +393,7 @@ pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
 /// too; `vm::operations` asserts each equals the parser's.
 #[allow(non_upper_case_globals)]
 pub mod binary_operator {
-    pub(crate) const Equality: u32 = 0;
+    pub const Equality: u32 = 0;
     pub(crate) const Inequality: u32 = 1;
     pub(crate) const StrictEquality: u32 = 2;
     pub(crate) const StrictInequality: u32 = 3;
@@ -401,18 +401,18 @@ pub mod binary_operator {
     pub(crate) const LessEqualThan: u32 = 5;
     pub(crate) const GreaterThan: u32 = 6;
     pub(crate) const GreaterEqualThan: u32 = 7;
-    pub(crate) const Addition: u32 = 8;
+    pub const Addition: u32 = 8;
     pub(crate) const Subtraction: u32 = 9;
     pub(crate) const Multiplication: u32 = 10;
     pub(crate) const Division: u32 = 11;
-    pub(crate) const Remainder: u32 = 12;
+    pub const Remainder: u32 = 12;
     pub(crate) const Exponential: u32 = 13;
-    pub(crate) const ShiftLeft: u32 = 14;
-    pub(crate) const ShiftRight: u32 = 15;
+    pub const ShiftLeft: u32 = 14;
+    pub const ShiftRight: u32 = 15;
     pub(crate) const ShiftRightZeroFill: u32 = 16;
-    pub(crate) const BitwiseOR: u32 = 17;
-    pub(crate) const BitwiseXOR: u32 = 18;
-    pub(crate) const BitwiseAnd: u32 = 19;
+    pub const BitwiseOR: u32 = 17;
+    pub const BitwiseXOR: u32 = 18;
+    pub const BitwiseAnd: u32 = 19;
     pub(crate) const In: u32 = 20;
     pub(crate) const Instanceof: u32 = 21;
 }

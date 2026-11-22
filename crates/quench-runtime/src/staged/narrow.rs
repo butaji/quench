@@ -18,7 +18,7 @@ pub(super) const NOT_NARROW: u64 = u64::MAX;
 
 /// Whether the int32 `value`'s biased low word is below the narrow integer span: it has a narrow form.
 #[inline(always)]
-pub(crate) fn integer_fits<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
+pub fn integer_fits<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
     let lower = stage.and_imm(value, LOWER_WORD);
     let span = 1_u64 << NarrowLayout::INTEGER_BITS;
     let biased = stage.add_imm(lower, span >> 1);
@@ -29,7 +29,7 @@ pub(crate) fn integer_fits<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
 
 /// The narrow word of the int32 `value` that `integer_fits` holds for: its code under the integer flag.
 #[inline(always)]
-pub(crate) fn integer_code<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+pub fn integer_code<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     let lower = stage.and_imm(value, LOWER_WORD);
     let shifted = stage.mul_imm(lower, 1_u64 << NarrowLayout::CODE_SHIFT);
     let shifted = stage.and_imm(shifted, LOWER_WORD);

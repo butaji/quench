@@ -19,7 +19,7 @@ fn steps_and_continues(instruction: WideInstruction) -> bool {
 /// `run`, the row of `decoded` at `pc`, with every exit that leaves before its effects (`Exit::Spilling`
 /// at `pc`, `Exit::At` its record) taken to the step helper's chain behind it, where an image body
 /// makes the record that way (`steps_and_continues`); `run` as it is otherwise, or where nothing leaves.
-pub(in crate::compiled::base_region) fn stepped_misses(run: Planned, decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
+pub(crate) fn stepped_misses(run: Planned, decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     if helpers != LaneHelpers::Ahead || decoded.completes || layout.inlined(pc) || run.stop.is_some() { return Ok(run); }
     let record = layout.record(pc);
     let Some(instruction) = layout.span.instruction(record) else { return Ok(run) };

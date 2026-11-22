@@ -6,13 +6,13 @@ use super::{Handler, LaneBody, LaneLeaves, LaneView, Tiers};
 use quench_runtime::vm::tier_policy::PERCENT;
 use crate::compiled::LaneExit;
 
-pub(super) use quench_runtime::vm::engine_types::LaneBodyHistory;
+pub(crate) use quench_runtime::vm::engine_types::LaneBodyHistory;
 
 use quench_runtime::vm::lane_body_audit as audit;
-pub(super) use audit::{Epochs, Verdict};
+pub(crate) use audit::{Epochs, Verdict};
 
 #[path = "lane_body_specialize.rs"]
-mod specialize;
+pub(crate) mod specialize;
 
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
@@ -87,7 +87,7 @@ impl LaneView {
     /// `self.tiers.lane_body.reoptimize_exits` leaves, doubled per recompile, it takes its
     /// `verdict`. A body it compiles past keeps its code for the direct callers that name it.
     /// Whether the run retired the body.
-    pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) -> bool {
+    pub(crate) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) -> bool {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return false };
@@ -154,7 +154,7 @@ impl LaneView {
 
     /// Counts a leave inside this function's body that a native caller's run made, which no
     /// handler entry notes (`native_frames::advance_into_frames`): one add to the cell's word, on the leave.
-    pub(super) fn note_native_leave(&self) { self.entry.note_leave(); }
+    pub(crate) fn note_native_leave(&self) { self.entry.note_leave(); }
 
     /// The entries a compile at its warm-up count `entries` is priced at: those and its retired bodies' runs.
     fn priced_entries(&self, entries: u32) -> u32 {
@@ -162,7 +162,7 @@ impl LaneView {
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
-    pub(super) fn warmup_entries(&self) -> u32 {
+    pub(crate) fn warmup_entries(&self) -> u32 {
         u32::from(self.tiers.lane_body.warmup()) << self.tier().history.get().lifetimes.min(MAX_DOUBLINGS)
     }
 
@@ -213,7 +213,7 @@ impl LaneView {
     }
 
     /// Whether its history affords another compile.
-    pub(super) fn affords_compile(&self) -> bool {
+    pub(crate) fn affords_compile(&self) -> bool {
         let history = self.tier().history.get();
         history.lifetimes <= self.tiers.lane_body.max_lifetimes
     }
@@ -291,7 +291,7 @@ impl LaneView {
     }
 
     #[inline]
-    pub(super) fn note_late_call(&self) -> bool {
+    pub(crate) fn note_late_call(&self) -> bool {
         let history = self.tier().history.get();
         let late_calls = history.late_calls.saturating_add(1);
         self.tier().history.set(LaneBodyHistory { late_calls, ..history });
@@ -301,17 +301,17 @@ impl LaneView {
     /// Whether the late calls counted past the threshold (`note_late_call`), which only a
     /// respecialization resets.
     #[inline]
-    pub(super) fn late_calls_settled(&self) -> bool {
+    pub(crate) fn late_calls_settled(&self) -> bool {
         self.tier().history.get().late_calls > self.tiers.lane_body.late_call_calls
     }
 
     #[inline]
-    pub(super) fn owns_record(&self, record: super::Ip) -> bool {
+    pub(crate) fn owns_record(&self, record: super::Ip) -> bool {
         let start = self.records();
         record >= start && record < start.wrapping_add(self.records.len())
     }
 
-    pub(super) fn respecialize(&self) {
+    pub(crate) fn respecialize(&self) {
         let history = self.tier().history.get();
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         let LaneBody::Specialized { tier_prologue, recompiles, stuck, .. } = body else { return };
@@ -329,13 +329,13 @@ impl LaneView {
 
     /// A compile a lifecycle edge outran counts as a dropped body: no run
     /// of it took place.
-    pub(super) fn note_dropped_compile(&self) {
+    pub(crate) fn note_dropped_compile(&self) {
         let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory { lifetimes: history.lifetimes.saturating_add(1), ..history });
     }
 
     /// The body a just published method makes of this view.
-    pub(super) fn specialized(&self, entry: Handler, method: std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+    pub(crate) fn specialized(&self, entry: Handler, method: std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
         // A body whose entry would not pay for itself serves native callers only
         // (`body_call_helper`, direct calls); the lane's own entries keep the records, and it
         // has no trial to run.
@@ -364,13 +364,13 @@ impl LaneView {
 /// The target of the callee the call at `pc` of `view` last reached itself, by the site's own
 /// record (`site_targets_in_lane`): the entry its record links is another callee's once the
 /// target cache replaced it.
-pub(super) fn site_target(vm: &super::Vm, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
+pub(crate) fn site_target(vm: &super::Vm, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
     site_targets(vm, view, pc).next()
 }
 
 /// Every callee the call at `pc` of `view` reached (`site_targets_in_lane`), by its target, the
 /// latest first.
-pub(super) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
+pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
     super::site_targets_in_lane(vm, view, pc as u32).into_iter().filter(|site| site.through().is_none()).filter_map(|site| {
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         vm.script_call_entry(site.identity()?).map(|target| unsafe { *target })
@@ -380,7 +380,7 @@ pub(super) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) ->
 
 /// What a first compile of `view` comes to before any planning. A function whose callees still compile waits for their bodies, which it then calls by their entries
 /// (`compiled::DirectCallee`); one whose callees only lack a body does not.
-pub(super) fn start_gate(vm: &super::Vm, view: &LaneView, body: Option<&quench_runtime::bytecode::Function>) -> Option<crate::compiled::LaneBodyOutcome> {
+pub(crate) fn start_gate(vm: &super::Vm, view: &LaneView, body: Option<&quench_runtime::bytecode::Function>) -> Option<crate::compiled::LaneBodyOutcome> {
     use crate::compiled::LaneBodyOutcome;
     let body = body?;
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {

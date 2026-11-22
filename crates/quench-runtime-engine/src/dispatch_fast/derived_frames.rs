@@ -19,7 +19,7 @@ script_handler! {
     /// (`Vm::dense_super_arguments`). Beside frameless activations, and for arguments or a parent
     /// the general loop would not push either, it takes the general path (`construct_super_value`).
     #[inline(never)]
-    pub(super) fn super_construct_in_frame<>(cx, r, ip, i, view) {
+    pub(crate) fn super_construct_in_frame<>(cx, r, ip, i, view) {
         super_construct(cx, r, ip, i)
     }
 }
@@ -67,7 +67,7 @@ fn super_construct(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstructi
 /// makes active and the loop's executing one sets aside. A failed push (the guest call depth)
 /// throws at the construction, as the general path's.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn push_construction_frame(
+pub(crate) fn push_construction_frame(
     cx: *mut LaneContext,
     ip: Ip,
     i: &LaneInstruction,
@@ -168,7 +168,7 @@ script_handler! {
     /// `super(...)` read the receiver from the word. Beside frameless activations, whose binding
     /// no frame holds, it takes the general path.
     #[inline(never)]
-    pub(super) fn bind_this_in_frame<>(cx, r, ip, i, view) {
+    pub(crate) fn bind_this_in_frame<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if vm.lane_stack.has_frames() {
             return exit(ip);

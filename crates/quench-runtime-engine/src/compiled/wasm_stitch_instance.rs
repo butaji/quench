@@ -47,7 +47,7 @@ use quench_runtime::staged::wasm_memory::Memory;
 /// offset of `memory_grow` (HOLE_B), the offset of `memory_length` (HOLE_FOURTH). The memory in
 /// `b` is not read: as the bulk rows assume, a stitched function binds only the frame's memory
 /// (`wasm_stitch_memory.rs` header), which the callout grows.
-pub(super) fn instance_op(
+pub(crate) fn instance_op(
     _pc: usize,
     instruction: WideInstruction,
     step: Memory,

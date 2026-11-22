@@ -10,7 +10,7 @@ use crate::{WasmTrap, WasmType};
 
 /// The float width an operation runs at; an f32 operator is its f64 namesake at `F32`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Float {
+pub enum Float {
     F32,
     F64,
 }
@@ -43,7 +43,7 @@ impl Float {
 
 /// A trapping float-to-integer conversion: the float it reads and the integers it may produce.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Truncation {
+pub struct Truncation {
     pub(crate) float: Float,
     pub(crate) width: Width,
     pub(crate) signed: bool,
@@ -66,7 +66,7 @@ pub(crate) const fn is_float_comparison(operator: FloatBinary) -> bool {
 /// `operator` on `left` and `right`: an extremum with a NaN operand is the canonical NaN. The
 /// one place that rule is written.
 #[inline(always)]
-pub(crate) fn float_binary<S: WasmStage>(
+pub fn float_binary<S: WasmStage>(
     stage: &mut S,
     operator: FloatBinary,
     float: Float,
@@ -85,7 +85,7 @@ pub(crate) fn float_binary<S: WasmStage>(
 /// `operator` on `value`: a truncation to integer traps on a NaN, then outside the integers'
 /// range. The one place these rules are written.
 #[inline(always)]
-pub(crate) fn convert<S: WasmStage>(
+pub fn convert<S: WasmStage>(
     stage: &mut S,
     operator: ScalarConversionOperator,
     value: S::Word,
@@ -155,7 +155,7 @@ pub(crate) fn float_of_bits(bits: u64) -> f64 {
 /// The bounds of a `bits`-wide integer as f64: a truncated value is kept when `lower <= value <
 /// limit`.
 #[inline(always)]
-pub(crate) fn truncation_limits(bits: u32, signed: bool) -> (f64, f64) {
+pub fn truncation_limits(bits: u32, signed: bool) -> (f64, f64) {
     if signed {
         let limit = pow2_bits(bits - 1);
         (float_of_bits(SIGN64 | limit), float_of_bits(limit))

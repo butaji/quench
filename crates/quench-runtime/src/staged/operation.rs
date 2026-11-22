@@ -379,7 +379,7 @@ pub mod kind {
     pub(crate) const FIELD_ADD: u16 = 69;
     pub(crate) const DELETE: u16 = 70;
     pub(crate) const INDEX_GET_HOST: u16 = 71;
-    pub(crate) const CALL: u16 = 72;
+    pub const CALL: u16 = 72;
     pub(crate) const SPREAD_CALL: u16 = 73;
     pub(crate) const SUPER_CALL: u16 = 74;
     pub(crate) const RETURN: u16 = 75;

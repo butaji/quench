@@ -10,7 +10,7 @@ use quench_runtime::bytecode::ThrownValueSlot;
 
 /// Drops what the lane caches of the running frame's environment, which a copy of it replaced
 /// (`Vm::clone_frame_environment`): its captures, its outer walk and its storage.
-pub(super) fn drop_environment_caches(cx: *mut LaneContext) {
+pub(crate) fn drop_environment_caches(cx: *mut LaneContext) {
     // SAFETY: the running lane's context.
     unsafe {
         (*cx).registers.set_capture(std::ptr::null());
@@ -84,7 +84,7 @@ script_handler! {
     /// leaves as a body's does (`raised_exit_in_lane`): no frame of the activations is made before
     /// the raise needs one.
     #[inline(never)]
-    pub(super) fn throw_record<>(cx, r, ip, i, view) {
+    pub(crate) fn throw_record<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let value = r.get(i.a);
         let error = JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, vm.detail_string(value)));
@@ -97,7 +97,7 @@ script_handler! {
 /// there (`Vm::lane_raise_site`), then taken by a handler of the running function or of a plain
 /// caller in the lane (`catch_raised`), else left as a body's raise leaves
 /// (`raised_exit_in_lane`), from wherever unwinding stopped.
-pub(super) fn unwind_raised(cx: *mut LaneContext, ip: Ip) -> Ip {
+pub(crate) fn unwind_raised(cx: *mut LaneContext, ip: Ip) -> Ip {
     let vm = unsafe { vm(cx) };
     // SAFETY: the record lies in the running view.
     let pc = unsafe { ip.offset_from((*cx).base) } as u32;
@@ -117,7 +117,7 @@ pub(super) fn unwind_raised(cx: *mut LaneContext, ip: Ip) -> Ip {
 /// and it is raised and unwound as any operation made in place raises (`unwind_raised` where
 /// the activations stayed the lane's, else from frames on the general path). Where it
 /// unexpectedly succeeded, its effect is made and the general path continues after the record.
-pub(super) fn raise_again<T>(
+pub(crate) fn raise_again<T>(
     cx: *mut LaneContext,
     ip: Ip,
     again: impl FnOnce(&mut Vm, &ResidualProgram) -> Result<T, JsError>,
@@ -185,7 +185,7 @@ fn catchable_value(cx: *mut LaneContext) -> Option<Value> {
 /// Whether the lane may unwind `error` (`catch_raised`): a thrown value whose message the
 /// general loop does not rewrite (`Vm::name_non_callable_callee`). Any other error (a
 /// termination, a trap, an error with no value yet) the general path raises.
-pub(super) fn unwinds_in_lane(error: &JsError) -> bool {
+pub(crate) fn unwinds_in_lane(error: &JsError) -> bool {
     let renamed = error.has_message(quench_runtime::vm::call_printer::NOT_CALLABLE_MESSAGE)
         || error.has_message(quench_runtime::vm::call_printer::NOT_CONSTRUCTOR_MESSAGE);
     !renamed && error.thrown_value().is_some()

@@ -27,17 +27,17 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether `instruction` is the unconditional jump row, whose block layout the lowering owns.
-    pub(super) fn is_jump(&self, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_jump(&self, instruction: WideInstruction) -> bool {
         matches!(quench_runtime::staged::Operation::<ir::Value, EmitProof>::decode(instruction, quench_runtime::staged::DecodeContext::of(self.program)), Some(quench_runtime::staged::Operation::Jump))
     }
 
     /// Whether `instruction` is a row `register_step` lowers.
-    pub(super) fn is_register_row(&self, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_register_row(&self, instruction: WideInstruction) -> bool {
         self.register_row(instruction).is_some()
     }
 
     /// The row at `pc`, stepped by its staged definition, guarded at `pc` where it can leave.
-    pub(super) fn register_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn register_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let row = self.register_row(instruction).expect("a register row decodes");
         let row = self.bounded(pc, row);
         let edges = if row.leaves() { frame::Edges::ValueGuarded { miss: self.guard_exit(state, pc as u32) } } else { frame::Edges::Value };

@@ -11,8 +11,8 @@ use super::lane_compile::LaneDependencies;
 use super::tier_policy::{Tiers, REGION_CODE_BUDGET};
 use super::lane_region::StableFacts;
 use quench_runtime::code_dependencies::Invalidation;
-mod calls;
-mod inlined_unit;
+pub(crate) mod calls;
+pub(crate) mod inlined_unit;
 use inlined_unit::*;
 pub(crate) use calls::{CallCode, RegionCalls};
 use quench_runtime::bytecode::{FieldLookup, Function, Register, ResidualProgram, WideInstruction};
@@ -301,7 +301,7 @@ impl OsrFacts {
 /// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
 /// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
 /// that is not one. A lane body's observation is its entry activation's array parameters.
-pub(super) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)],
+pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)],
     abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
     let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
         .filter(|(pc, instruction)| {
@@ -536,10 +536,10 @@ impl PendingOsrRegion {
 
 #[cfg(test)]
 #[path = "osr_compile/tests.rs"]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 #[path = "osr_compile/method_tests.rs"]
-mod method_tests;
+pub(crate) mod method_tests;
 #[cfg(test)]
 #[path = "osr_compile/math_replacement_tests.rs"]
-mod math_replacement_tests;
+pub(crate) mod math_replacement_tests;

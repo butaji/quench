@@ -32,7 +32,7 @@ fn store_class(value: Value) -> Option<SlotType> {
 /// Records on `site`'s entry the class of `value`, which a native-preserving helper store just
 /// wrote through it without widening its slot's representation, where the class proves
 /// every later store of it (`store_class`).
-pub(super) fn record_store_class(vm: &mut Vm, site: u16, value: Value) {
+pub(crate) fn record_store_class(vm: &mut Vm, site: u16, value: Value) {
     let Some(class) = store_class(value) else { return };
     // A native store writes the value's tagged word, which a slot of raw doubles does not hold.
     let entry = vm.field_cache_entry(site);
@@ -51,7 +51,7 @@ pub(super) fn record_store_class(vm: &mut Vm, site: u16, value: Value) {
 
 /// Whether no method cache names `atom` (`Vm::method_caches_may_name`), from the payload's
 /// atom bits; an atom past them is unnamed.
-pub(super) fn emit_atom_unnamed(builder: &mut FunctionBuilder<'_>, payload: ir::Value, atom: Atom) -> ir::Value {
+pub(crate) fn emit_atom_unnamed(builder: &mut FunctionBuilder<'_>, payload: ir::Value, atom: Atom) -> ir::Value {
     let word_index = atom / u64::BITS;
     let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.method_cache_atoms));
     let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.method_cache_atom_words));

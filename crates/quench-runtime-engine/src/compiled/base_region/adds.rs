@@ -18,10 +18,10 @@ use quench_bjit::{padded_holes, HOLES};
 /// What one add instruction runs: the site's transition, the storage form it can take
 /// (`Transition::form`) and whether the receiver is the activation's `this`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) struct Add {
-    pub(super) site: AddSite,
-    pub(super) form: Form,
-    pub(super) this: bool,
+pub(crate) struct Add {
+    pub(crate) site: AddSite,
+    pub(crate) form: Form,
+    pub(crate) this: bool,
 }
 
 /// An object register's frame offset travels in `ADD_OBJECT_BITS` bits of hole 2.
@@ -29,18 +29,18 @@ const _: () = assert!((Register::MAX as u64) * SLOT < 1 << numeric::site_bits::A
 
 impl Add {
     /// The heap row that runs it.
-    pub(super) fn heap(self) -> Heap {
+    pub(crate) fn heap(self) -> Heap {
         Heap::Add { form: self.form, this: self.this }
     }
 
     /// The chain whose prototypes' layouts the code holds for the chain proof, where the add has one.
-    pub(super) fn chain(self) -> Option<quench_runtime::code_dependencies::PrototypeChain> {
+    pub(crate) fn chain(self) -> Option<quench_runtime::code_dependencies::PrototypeChain> {
         self.site.link.map(|link| quench_runtime::code_dependencies::PrototypeChain { link, depth: self.site.depth })
     }
 
     /// The row's holes: the before and after layouts, the value operand's frame offset, and the slot
     /// with the prototype link and the object register's frame offset (`numeric::site_bits::ADD_*`).
-    pub(super) fn holes(self, object: u64, value: u64) -> [u64; HOLES] {
+    pub(crate) fn holes(self, object: u64, value: u64) -> [u64; HOLES] {
         use numeric::site_bits::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
         let transition = self.site.transition;
         let [before, after] = transition.layouts.map(u64::from);
@@ -65,7 +65,7 @@ fn receiver(instruction: WideInstruction) -> Option<Register> {
 /// The add `instruction` runs where its site recorded a transition that a row may hold: the atom
 /// is unnamed by method caches, the receiver is no result of the frame's own completion, and the
 /// storage form can take the slot.
-pub(super) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
+pub(crate) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
     let adds = known.adds?;
     let defines = is_define(instruction);
     let stores = matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. })) && !instruction.returns_from_frame() && !instruction.writes_current_this();
@@ -79,7 +79,7 @@ pub(super) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
 }
 
 /// The registers an add row names: the value in `a`, the receiver through `base`.
-pub(super) fn operands(instruction: WideInstruction) -> (Option<Source>, Option<Register>) {
+pub(crate) fn operands(instruction: WideInstruction) -> (Option<Source>, Option<Register>) {
     (Some(Source::Register(instruction.register_a())), receiver(instruction))
 }
 
@@ -87,7 +87,7 @@ pub(super) fn operands(instruction: WideInstruction) -> (Option<Source>, Option<
 /// hops to the next instruction and whose miss enters `slow`, laid out behind it, or with none
 /// leaves at `pc`. A value or receiver held outside its frame slot (a pinned register holds a
 /// Number, which is no receiver and takes a narrow slot only as an int) has the slow arm alone, or the leave.
-pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, slow: Option<Planned>) -> Result<Planned, String> {
+pub(crate) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, slow: Option<Planned>) -> Result<Planned, String> {
     let add = decoded.add.ok_or("add: no site")?;
     let (value, value_hole) = operand(&layout.homes, decoded.a);
     let (object, object_hole) = operand(&layout.homes, decoded.base.map(Source::Register));

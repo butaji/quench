@@ -11,7 +11,7 @@ use quench_runtime::Value;
 /// # Safety
 /// Every element read lies inside the typed array whose first element is at `elements`.
 #[inline(always)]
-pub(super) unsafe fn load(kind: TypedArrayKind, elements: *const u8, first: i64, step: i64, out: &mut [f64]) {
+pub(crate) unsafe fn load(kind: TypedArrayKind, elements: *const u8, first: i64, step: i64, out: &mut [f64]) {
     // Each arm loads with its kind as a constant, so the staged element load (`element_number`)
     // folds to that kind's one conversion, as the typed array element get makes it.
     macro_rules! load {
@@ -48,7 +48,7 @@ pub(super) unsafe fn load(kind: TypedArrayKind, elements: *const u8, first: i64,
 /// Every element written lies inside the typed array whose first element is at `elements`,
 /// whose buffer is the view's alone.
 #[inline(always)]
-pub(super) unsafe fn store(
+pub(crate) unsafe fn store(
     kind: TypedArrayKind,
     elements: *mut u8,
     first: isize,

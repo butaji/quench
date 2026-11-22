@@ -33,7 +33,7 @@ const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
 /// whether it keeps the passed values past its registers (`keeps`) and whether its last
 /// parameter gathers the rest (`gathers`, `CallEntry::Gathers`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct KeepingWindow {
+pub struct KeepingWindow {
     pub(crate) registers: u16,
     pub(crate) params: u16,
     pub(crate) keeps: bool,
@@ -43,7 +43,7 @@ pub(crate) struct KeepingWindow {
 /// The words a keeping window covers past its context: its registers, then the `argc` kept
 /// values where it keeps them. The tier rounds it to its fill block for the room.
 #[inline(always)]
-pub(crate) const fn keeping_window_words(registers: u16, argc: usize, keeps: bool) -> usize {
+pub const fn keeping_window_words(registers: u16, argc: usize, keeps: bool) -> usize {
     registers as usize + if keeps { argc } else { 0 }
 }
 
@@ -52,7 +52,7 @@ pub(crate) const fn keeping_window_words(registers: u16, argc: usize, keeps: boo
 /// hold, a rest body's rest array among them) and the register of its first kept value
 /// (`ScriptActivation::kept`, 0 for none), which marks it forwarding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct KeepingRecord {
+pub struct KeepingRecord {
     pub(crate) argc: u16,
     pub(crate) forwards: bool,
     pub(crate) kept: u16,
@@ -93,7 +93,7 @@ pub(crate) fn admit_keeping<S: Stage>(stage: &mut S, depth: S::Word, depth_limit
 
 /// `admit_keeping` on machine words, for the interpreter's own admission.
 #[inline(always)]
-pub(crate) fn concrete_admits_keeping(depth: usize, depth_limit: usize, room: usize, needed: usize) -> bool {
+pub fn concrete_admits_keeping(depth: usize, depth_limit: usize, room: usize, needed: usize) -> bool {
     admit_keeping(&mut super::Concrete::new(core::ptr::null()), depth as u64, depth_limit as u64, room as u64, needed as u64, ())
         .is_some()
 }
@@ -102,7 +102,7 @@ pub(crate) fn concrete_admits_keeping(depth: usize, depth_limit: usize, room: us
 /// register `registers` on): one load and one store each. Writes `Region::Frame` words
 /// `kept[0..argc)`; reads `arguments[0..argc)`, which lie outside the window.
 #[inline(always)]
-pub(crate) fn keep_passed<S: Stage>(stage: &mut S, kept: S::Word, arguments: S::Word, argc: u16) {
+pub fn keep_passed<S: Stage>(stage: &mut S, kept: S::Word, arguments: S::Word, argc: u16) {
     for index in 0..argc {
         let value = stage.load_u64(Region::Frame.readonly(), arguments, word_offset(index));
         stage.store_u64(Region::Frame.mutable(), kept, word_offset(index), value);
@@ -118,7 +118,7 @@ pub(crate) fn keep_passed<S: Stage>(stage: &mut S, kept: S::Word, arguments: S::
 /// Writes `top[0..registers)`, `top[registers..registers + argc)` when keeping. The tier moves
 /// the values' top past the window and its context itself.
 #[inline(always)]
-pub(crate) fn fill_keeping<S: Stage>(stage: &mut S, top: S::Word, arguments: S::Word, argc: u16, window: KeepingWindow,
+pub fn fill_keeping<S: Stage>(stage: &mut S, top: S::Word, arguments: S::Word, argc: u16, window: KeepingWindow,
     rest: S::Word) {
     let count = if argc < window.params { argc } else { window.params };
     fill_call(stage, top, &[], Passed::Window { arguments, count }, window.registers);
@@ -135,7 +135,7 @@ pub(crate) fn fill_keeping<S: Stage>(stage: &mut S, top: S::Word, arguments: S::
 /// `CONTEXT_CAPTURE` below register 0): the bound receiver, the closure's environment and
 /// its captures. Writes those three `Region::Frame` words.
 #[inline(always)]
-pub(crate) fn enter_context<S: Stage>(stage: &mut S, window: S::Word, this: S::Word, env: S::Word, capture: S::Word) {
+pub fn enter_context<S: Stage>(stage: &mut S, window: S::Word, this: S::Word, env: S::Word, capture: S::Word) {
     let at = Region::Frame.mutable();
     stage.store_u64(at, window, context_at(frame::CONTEXT_ENV), env);
     stage.store_u64(at, window, context_at(frame::CONTEXT_CAPTURE), capture);

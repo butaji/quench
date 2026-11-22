@@ -11,7 +11,7 @@
 //!
 //! A child of `wasm_stitch` (`#[path]`), so it names `wasm_stitch`'s helpers through `super`.
 
-use quench_runtime::vm::CONTEXT_MEMORY_LENGTH;
+use crate::compiled::CONTEXT_MEMORY_LENGTH;
 use super::{Planned, World, leak, slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_table_ops::TableOp;
@@ -43,7 +43,7 @@ fn pack(low: u32, high: u32) -> u64 {
 
 /// The rows of the table operation `op` at `pc` (`instruction`), or `None` where a binding the
 /// plan does not name, or an offset a 32-bit hole cannot hold, has no row.
-pub(super) fn table(pc: usize, instruction: WideInstruction, op: TableOp, world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn table(pc: usize, instruction: WideInstruction, op: TableOp, world: &World<'_>) -> Option<Vec<Planned>> {
     let (first, second) = match op {
         // The segment a drop names is its environment slot, the immediate.
         TableOp::SegmentDrop => (instruction.imm(), 0),

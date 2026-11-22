@@ -16,7 +16,7 @@ use crate::wasm::integer::{
 
 /// Where an integer operation reads its operands and what it does with its value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Form {
+pub enum Form {
     /// `a = b op c`.
     Register,
     /// `a = b op imm`.
@@ -31,7 +31,7 @@ pub(crate) enum Form {
 
 /// An operand: a register, or a constant of the operation's width.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Operand {
+pub enum Operand {
     Register(u16),
     Constant(i64),
 }
@@ -61,7 +61,7 @@ impl Form {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum WasmOperation {
+pub enum WasmOperation {
     Binary {
         operator: Binary,
         width: Width,

@@ -105,49 +105,49 @@ pub(crate) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> 
 }
 
 #[path = "compiled/osr_loop.rs"]
-mod osr_loop;
+pub(crate) mod osr_loop;
 pub(crate) mod call_signature;
-mod exit_protocol;
-mod entry_protocol;
-mod region_lend;
-pub(super) use exit_protocol::{ExitTable, RegionRun};
-mod osr_compile; mod osr_lane; pub(crate) mod base_region; mod base_body; pub(crate) use base_body::image_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
-pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(crate) mod exit_protocol;
+pub(crate) mod entry_protocol;
+pub(crate) mod region_lend;
+pub(crate) use exit_protocol::{ExitTable, RegionRun};
+pub(crate) mod osr_compile; mod osr_lane; pub(crate) mod base_region; mod base_body; pub(crate) use base_body::image_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+pub(crate) use osr_compile::{start_osr_region, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
 pub(crate) use lane_compile::FactTables;
-pub(super) use lane_facts::bind_callees as bind_region_callees;
-pub(super) use lane_region::ElementViews;
+pub(crate) use lane_facts::bind_callees as bind_region_callees;
+pub(crate) use lane_region::ElementViews;
 pub(crate) use lane_region::{inlines_in_loop, inlines_in_loop_call, native_method_call};
 use osr_compile::OsrFacts;
 use quench_runtime::typed_ir;
 
 #[path = "compiled/facts.rs"]
-pub(super) mod facts;
+pub(crate) mod facts;
 pub use quench_runtime::vm::tier_policy;
 #[cfg(test)]
-mod stable_fact_tests;
+pub(crate) mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
-mod lane_region;
+pub(crate) mod lane_region;
 pub(crate) use lane_region::relocs::RelocKind;
-mod declared_checks;
+pub(crate) mod declared_checks;
 #[path = "compiled/emit_machine.rs"]
-pub(super) mod emit_machine;
+pub(crate) mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
-mod lane_unit;
-mod admission;
+pub(crate) mod lane_unit;
+pub(crate) mod admission;
 #[cfg(all(test, feature = "aot"))]
 #[path = "compiled/lane_unit_polymorphic_tests.rs"]
-mod lane_unit_polymorphic_tests;
+pub(crate) mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
-mod lane_sites;
+pub(crate) mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
 use lane_allocations::{binary_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
-mod lane_compile;
+pub(crate) mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
-mod site_posterior;
-#[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
-#[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
-pub(super) use numeric_image::NumericImage;
+pub(crate) mod site_posterior;
+#[path = "compiled/entry_cell.rs"] pub(crate) mod entry_cell;
+#[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(crate) use numeric_image::compile_js_typed_numeric_region;
+pub(crate) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages; pub(crate) use ahead_images::closed_lane_image;
 pub use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fingerprint};
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
@@ -155,48 +155,48 @@ pub use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fing
 pub(crate) mod lane_facts;
 #[path = "compiled/tier_model.rs"] mod tier_model;
 #[path = "compiled/loop_model.rs"] pub(crate) mod loop_model;
-pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
+pub(crate) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
-mod static_loops;
+pub(crate) mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
-mod wasm_callable;
-mod wasm_growth;
+pub(crate) mod wasm_callable;
+pub(crate) mod wasm_growth;
 #[path = "compiled/wasm_stage.rs"]
-mod wasm_stage;
-mod wasm_instance_stage;
-mod instance_context;
-mod indirect_profile;
+pub(crate) mod wasm_stage;
+pub(crate) mod wasm_instance_stage;
+pub(crate) mod instance_context;
+pub(crate) mod indirect_profile;
 pub use instance_context::{InstanceContext, InstanceRecord, NativeRoots};
 #[cfg(test)]
-mod wasm_global_tests;
-mod wasm_memory_stage;
-mod wasm_flow_stage;
-mod wasm_call_stage;
-mod wasm_table_stage;
-mod wasm_table_ops_stage;
-mod wasm_gc_stage;
-mod wasm_gc_allocate;
+pub(crate) mod wasm_global_tests;
+pub(crate) mod wasm_memory_stage;
+pub(crate) mod wasm_flow_stage;
+pub(crate) mod wasm_call_stage;
+pub(crate) mod wasm_table_stage;
+pub(crate) mod wasm_table_ops_stage;
+pub(crate) mod wasm_gc_stage;
+pub(crate) mod wasm_gc_allocate;
 use self::wasm_gc_allocate::allocating_reads;
-mod wasm_exception_stage;
-mod wasm_catch;
-mod plan_report;
-mod wasm_gc_callout;
-mod wasm_instance_switch;
-mod wasm_roots;
-mod wasm_simd_stage;
+pub(crate) mod wasm_exception_stage;
+pub(crate) mod wasm_catch;
+pub(crate) mod plan_report;
+pub(crate) mod wasm_gc_callout;
+pub(crate) mod wasm_instance_switch;
+pub(crate) mod wasm_roots;
+pub(crate) mod wasm_simd_stage;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-mod wasm_stitch;
-mod wasm_specializer;
+pub(crate) mod wasm_stitch;
+pub(crate) mod wasm_specializer;
 use wasm_specializer::{WasmResidual, WasmSpecializer, WasmTierChoice};
 use quench_runtime::vm::specializer::Specializer as _;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
-mod wasm_codes_check;
+pub(crate) mod wasm_codes_check;
 #[cfg(target_arch = "x86_64")]
-mod wasm_call_vm;
-pub(super) use lane_unit::{CalleeBinding, CallTarget, InlinedCall};
+pub(crate) mod wasm_call_vm;
+pub(crate) use lane_unit::{CalleeBinding, CallTarget, InlinedCall};
 #[cfg(test)]
-pub(super) use lane_unit::static_call_targets;
+pub(crate) use lane_unit::static_call_targets;
 /// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call
 /// protocol is no speculation (`forced_miss::exempt`).
 #[inline(always)]
@@ -217,7 +217,7 @@ pub(crate) mod forced_miss {
     }
     /// Runs `emit`, whose guards are not deopt points: they dispatch on a status the code
     /// already holds, which no speculation could make fail, so they are neither counted nor forced.
-    pub(in crate::compiled) fn exempt<T>(emit: impl FnOnce() -> T) -> T {
+    pub(crate) fn exempt<T>(emit: impl FnOnce() -> T) -> T {
         let outer = EXEMPT.replace(true);
         let result = emit();
         EXEMPT.set(outer);
@@ -227,7 +227,7 @@ pub(crate) mod forced_miss {
     pub(crate) fn arm(forced: Option<usize>) { STATE.with(|state| state.set((forced, 0))); }
     /// Guards emitted since `arm`.
     pub(crate) fn emitted() -> usize { STATE.with(|state| state.get().1) }
-    pub(in crate::compiled) fn next() -> bool {
+    pub(crate) fn next() -> bool {
         if EXEMPT.get() { return false; }
         STATE.with(|state| {
             let (forced, count) = state.get();
@@ -246,51 +246,51 @@ fn forced_or(ok: ir::Block, fail: ir::Block) -> ir::Block {
     let _ = fail;
     ok
 }
-mod object_slots;
-pub(super) mod regions;
-pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
-mod residuals;
-mod code_heap;
-pub(super) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
+pub(crate) mod object_slots;
+pub(crate) mod regions;
+pub(crate) use object_slots::{InheritedConstant, NativeFieldLoad};
+pub(crate) mod residuals;
+pub(crate) mod code_heap;
+pub(crate) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
-mod direct_call;
-mod direct_callee;
-pub(super) use direct_callee::{frames_window, names_dead_callee, window_width, DirectCallee, DirectCandidates};
+pub(crate) mod direct_call;
+pub(crate) mod direct_callee;
+pub(crate) use direct_callee::{frames_window, names_dead_callee, window_width, DirectCallee, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
-mod lane_storage;
-mod lane_body_run;
+pub(crate) mod lane_storage;
+pub(crate) mod lane_body_run;
 pub(crate) use lane_body_run::{BodyRun, CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 #[path = "compiled/general_elements.rs"]
-mod general_elements;
+pub(crate) mod general_elements;
 #[path = "compiled/frameless.rs"]
-mod frameless;
+pub(crate) mod frameless;
 #[path = "compiled/constructions.rs"]
-mod constructions;
-mod function_binding;
+pub(crate) mod constructions;
+pub(crate) mod function_binding;
 use function_binding::{admitted_function_binding_in_lane, function_binding_in_lane};
-mod general_store;
-pub(super) use frameless::CalleeAdmissions;
+pub(crate) mod general_store;
+pub(crate) use frameless::CalleeAdmissions;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
-mod guard_aarch64;
-mod eager;
-mod frozen;
+pub(crate) mod guard_aarch64;
+pub(crate) mod eager;
+pub(crate) mod frozen;
 #[cfg(feature = "native-execution")]
-mod semantic_stop;
-pub(super) use frozen::ClosedFrozen;
-pub(super) use eager::compile_eager_native;
+pub(crate) mod semantic_stop;
+pub(crate) use frozen::ClosedFrozen;
+pub(crate) use eager::compile_eager_native;
 #[cfg(unix)]
 #[path = "compiled/fault_handler.rs"]
-mod fault_handler;
+pub(crate) mod fault_handler;
 #[cfg(unix)]
 pub use fault_handler::NativeFaultHandler;
-pub(super) use osr_loop::{
+pub(crate) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
     MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
 };
 
-pub(super) use quench_runtime::staged::Domain as NumberRelationDomain;
+pub(crate) use quench_runtime::staged::Domain as NumberRelationDomain;
 
 /// The most records a native function body covers.
 const MAX_NATIVE_RECORDS: usize = quench_bjit::call_record::GENERAL_DISPATCH_BLOCKS as usize;
@@ -366,19 +366,19 @@ thread_local! {
 }
 
 /// Starts recording the boxes `emit_js_box_number` makes, until `take_boxed_numbers`.
-pub(super) fn record_boxed_numbers() {
+pub(crate) fn record_boxed_numbers() {
     BOXED_NUMBERS.with(|boxed| *boxed.borrow_mut() = Some(Vec::new()));
 }
 
 /// The boxes made since `record_boxed_numbers`, which stops recording.
-pub(super) fn take_boxed_numbers() -> Vec<(ir::Value, ir::Value)> {
+pub(crate) fn take_boxed_numbers() -> Vec<(ir::Value, ir::Value)> {
     BOXED_NUMBERS.with(|boxed| boxed.borrow_mut().take().unwrap_or_default())
 }
 
 /// Encode a Number result with `Value::number`'s integer, double and NaN
 /// representations. A double with a fraction is its own bits, after one compare
 /// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
-pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+pub(crate) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
     let recording = BOXED_NUMBERS.with(|boxed| boxed.borrow().is_some());
     if !recording { return emit_js_box_number_word(builder, number); }
     // A recorded box is pure (no branch), so a lowering that reads the Number back leaves it
@@ -416,7 +416,7 @@ fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value)
 
 /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
 /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
-pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
+pub(crate) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
     // A double converted from an int32 is that int32's exact value, so its ToInt32 is the
     // int32 itself: no round trip through the double, no range guard.
     let number = builder.func.dfg.resolve_aliases(number);
@@ -462,7 +462,7 @@ fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::V
 /// which an array without extras has as its length (no arguments object, no sparse elements,
 /// `Object::mark_sparse_elements`). Any other base, or a length past int32, leaves through
 /// `fallback`.
-pub(super) fn emit_array_length_read(
+pub(crate) fn emit_array_length_read(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
     base: ir::Value,
@@ -480,26 +480,26 @@ pub(super) fn emit_array_length_read(
 /// its length. Holds until something changes the array's storage (`ArrayElements`): only
 /// element reads and in-place replacements may run in between.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct DenseArrayView {
-    pub(super) values: ir::Value,
+pub(crate) struct DenseArrayView {
+    pub(crate) values: ir::Value,
     /// The backing's `u32` length, as `i32`.
-    pub(super) length: ir::Value,
+    pub(crate) length: ir::Value,
     /// Whether a store may replace a present element in place: the array owns its backing
     /// alone, is not frozen and has no extras (indexed descriptors, an arguments map or a
     /// prototype watch), as `Vm::try_replace_record_element` requires.
-    pub(super) writable: bool,
+    pub(crate) writable: bool,
     /// Whether its backing counts no values (`emit_dense_array_uncounted` ran on the edge
     /// that proved the view): a store through it then writes the element alone.
-    pub(super) uncounted: bool,
+    pub(crate) uncounted: bool,
     /// The double flag of a backing the staged row's proof admitted double
     /// (`staged::elements::DenseView::double`); `None` where the view proved it wide.
-    pub(super) double: Option<ir::Value>,
+    pub(crate) double: Option<ir::Value>,
 }
 
 /// The emission proofs a staged value operation carries: a dense array view with the cold
 /// block a hole or miss continues at.
 #[derive(Clone, Copy)]
-pub(in crate::compiled) enum EmitProof {
+pub(crate) enum EmitProof {
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     Allocation { miss: ir::Block },
@@ -508,7 +508,7 @@ pub(in crate::compiled) enum EmitProof {
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
 /// replacement. Any other base leaves through `fallback`, with nothing read.
-pub(super) fn emit_dense_array_view(
+pub(crate) fn emit_dense_array_view(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
     base: ir::Value,
@@ -535,7 +535,7 @@ pub(super) fn emit_dense_array_view(
 /// writability stay what the view proved, so only the backing is read again. The helper may
 /// also have given the array extras (a sparse store's facts), which then hold the backing:
 /// `staged::elements::array_header` reads it from either place.
-pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
     let record_base = emit_array_record_base(&mut stage, payload);
@@ -554,7 +554,7 @@ pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
 /// (`staged::elements::double_view`): their first word and their 64-bit count, as a typed view
 /// holds them; `writable` also proves in-place replacement. Any other base or backing leaves
 /// through `fallback`, with nothing read.
-pub(super) fn emit_double_array_view(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+pub(crate) fn emit_double_array_view(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
     writable: bool, fallback: ir::Block) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
     let record_base = emit_array_record_base(&mut stage, payload);
@@ -564,7 +564,7 @@ pub(super) fn emit_double_array_view(builder: &mut FunctionBuilder<'_>, payload:
 
 /// `emit_dense_array_reload` of a double view (`emit_double_array_view`): the backing read again,
 /// empty once it is no longer double (`staged::elements::reloaded_double_view`).
-pub(super) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
     let record_base = emit_array_record_base(&mut stage, payload);
     let record = quench_runtime::staged::elements::array_record(&mut stage, record_base, base);
@@ -574,7 +574,7 @@ pub(super) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payloa
 /// The address of `view`'s present element `index` (an int32) and its value; an index past
 /// the elements (a negative one among them, compared unsigned) or a hole leaves through
 /// `fallback`.
-pub(super) fn emit_dense_element(
+pub(crate) fn emit_dense_element(
     builder: &mut FunctionBuilder<'_>,
     view: DenseArrayView,
     index: ir::Value,
@@ -595,7 +595,7 @@ pub(super) fn emit_dense_element(
 /// `value` through a writable view, as `ArrayElements::replace_through` does: the backing's
 /// count of non-int32 values (`OTHERS_FROM_VALUES`) follows the write, and an unknown count
 /// stays unknown. A non-heap value needs no generational log (`RecordSpace::store_logs`).
-pub(super) fn emit_dense_element_replace(
+pub(crate) fn emit_dense_element_replace(
     builder: &mut FunctionBuilder<'_>,
     view: DenseArrayView,
     address: ir::Value,
@@ -615,7 +615,7 @@ pub(super) fn emit_dense_element_replace(
 /// stores through it need not keep the count (`ArrayElements::replace_through`), as
 /// `osr_loop` does for the arrays a region writes; the count stays unknown until the heap
 /// counts the values again.
-pub(super) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view: DenseArrayView) {
+pub(crate) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view: DenseArrayView) {
     debug_assert!(view.writable, "only a writable view's backing is this array's own");
     quench_runtime::staged::elements::uncount_backing(&mut object_slots::emit(builder), view.values);
 }
@@ -974,7 +974,7 @@ enum NarrowTable {
 /// The linked data symbol `symbol` as a global value of `builder`'s function.
 fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::GlobalValue {
     let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-        quench_runtime::vm::native_object::NATIVE_DATA_NAMESPACE, symbol));
+        crate::native_object::NATIVE_DATA_NAMESPACE, symbol));
     builder.create_global_value(ir::GlobalValueData::Symbol {
         name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false,
     })
@@ -1051,7 +1051,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
 macro_rules! lane_helper_inventory {
     ($($(#[$attr:meta])* $name:ident => $address:expr),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(super) enum LaneHelper { $($(#[$attr])* $name),+ }
+        pub(crate) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
             const COUNT: usize = [$(stringify!($name)),+].len();
             /// Each helper's name, by its index (`addresses`).
@@ -1229,10 +1229,10 @@ thread_local! {
 }
 
 /// An object's atom table is the data symbol after its narrow table.
-pub(super) const NATIVE_ATOM_TABLE_OFFSET: u32 = 1;
+pub(crate) const NATIVE_ATOM_TABLE_OFFSET: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LaneHelpers {
+pub(crate) enum LaneHelpers {
     /// A frameless Number region: no VM helper capability, helpers named by symbol.
     Numeric,
     Process(&'static [*const (); LaneHelper::COUNT]),
@@ -1249,13 +1249,13 @@ const AHEAD_GENERIC_ROWS: bool = false;
 
 impl LaneHelpers {
     /// Whether a record no row takes runs as the generic semantic row (`AHEAD_GENERIC_ROWS`), which never leaves.
-    pub(super) fn generic_rows(self) -> bool {
+    pub(crate) fn generic_rows(self) -> bool {
         AHEAD_GENERIC_ROWS && matches!(self, Self::Ahead)
     }
 }
 
 /// The process helper table a JIT publication binds.
-pub(super) fn process_lane_helpers() -> LaneHelpers {
+pub(crate) fn process_lane_helpers() -> LaneHelpers {
     LaneHelpers::Process(LaneHelper::addresses())
 }
 
@@ -1266,14 +1266,14 @@ impl LaneHelpers {
     }
 
     /// Whether helper addresses are symbols a loader resolves, not addresses of this process.
-    pub(super) fn links(self) -> bool {
+    pub(crate) fn links(self) -> bool {
         !matches!(self, Self::Process(_))
     }
 
     /// The word of program atom `atom`: its id now for a live lowering; for a linking one the
     /// symbol of an ahead image, or the object's atom table entry (`NATIVE_ATOM_TABLE_OFFSET`
     /// symbols after its narrow table) the loader's namespace check proves to hold the id.
-    pub(super) fn atom_word(self, builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
+    pub(crate) fn atom_word(self, builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
         match self {
             Self::Process(_) => object_slots::emit(builder).constant(u64::from(atom)),
             Self::Numeric | Self::Ahead => lane_region::atom_symbol(builder, atom),
@@ -1332,7 +1332,7 @@ pub fn native_js_lane_helpers() -> *const () {
     LaneHelper::addresses().as_ptr().cast()
 }
 
-pub(super) fn native_lane_helpers_signature(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Signature {
+pub(crate) fn native_lane_helpers_signature(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Signature {
     call_signature::word_signature(isa.default_call_conv(), 0, 1, isa.pointer_type())
 }
 
@@ -1364,62 +1364,62 @@ fn nullish_comparison(constants: &[quench_runtime::bytecode::Constant], instruct
 /// What the online division may fold as Stable facts of one VM, and where the code learns
 /// that one changed (`typed_ir::BindingTime::Stable`).
 #[derive(Clone, Copy)]
-pub(super) struct OnlineFacts<'a> {
+pub(crate) struct OnlineFacts<'a> {
     /// The names method caches hold now.
-    pub(super) method_cache_atoms: &'a quench_runtime::vm::method_cache::AtomBits,
+    pub(crate) method_cache_atoms: &'a quench_runtime::vm::method_cache::AtomBits,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`).
-    pub(super) invalidation: usize,
+    pub(crate) invalidation: usize,
     /// The program's constants as the VM made and roots them (`Vm::active_constant`).
-    pub(super) constants: &'a [Value],
+    pub(crate) constants: &'a [Value],
     /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
-    pub(super) instanceofs: &'a dyn Fn(Value) -> Option<quench_runtime::code_dependencies::InstanceofFact>,
+    pub(crate) instanceofs: &'a dyn Fn(Value) -> Option<quench_runtime::code_dependencies::InstanceofFact>,
     /// Whether code may hold an object's exact shape past a call (`Vm::shape_is_stable`).
-    pub(super) shape_stable: &'a dyn Fn(u32) -> bool,
+    pub(crate) shape_stable: &'a dyn Fn(u32) -> bool,
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
-    pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
+    pub(crate) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
     /// The own member of a constant-marked object that the VM holds for `atom` (`Vm::own_constant_of`):
     /// a read of it folds under an identity guard and a dependency on the object's exact shape.
-    pub(super) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
+    pub(crate) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
     /// The root constant a capture read at a PC takes (`FactTables::root_constant`): a written-once root
     /// binding's function, with the program whose root it is; `None` where none may be held.
-    pub(super) root_constant: &'a dyn Fn(usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)>,
+    pub(crate) root_constant: &'a dyn Fn(usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)>,
 }
 
-pub(super) use quench_runtime::vm::engine_types::OwnConstant;
+pub(crate) use quench_runtime::vm::engine_types::OwnConstant;
 
 /// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
 /// callee, its receiver's exact shape and, per field in slot order, the field's name and where
 /// its value comes from. A body that reads such a receiver's fields and lets it escape nowhere
 /// keeps the values and allocates the receiver only at a leave.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct ScalarConstructPlan {
-    pub(super) callee: PlanCallee,
+pub(crate) struct ScalarConstructPlan {
+    pub(crate) callee: PlanCallee,
     /// The receiver's shape: its id, or for an image's plan (`PlanCallee::Image`) its
     /// `Symbol::Shape` key, which the loader interns.
-    pub(super) shape: u32,
-    pub(super) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
+    pub(crate) shape: u32,
+    pub(crate) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
 }
 
 /// The callee a `ScalarConstructPlan` constructs by, which its code guards by identity: a closure
 /// the VM made, or in an ahead image the `Symbol::HeapValue` key of the closure the closed world
 /// proves the site constructs (`HeapValueRecipe::ClosureOf`), which the loader resolves.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum PlanCallee {
+pub(crate) enum PlanCallee {
     Live(Value),
     Image(u32),
 }
 
 impl PlanCallee {
     /// The closure, where the VM made it.
-    pub(super) fn live(self) -> Option<Value> {
+    pub(crate) fn live(self) -> Option<Value> {
         match self { Self::Live(callee) => Some(callee), Self::Image(_) => None }
     }
 }
 
 /// Where a field of a `ScalarConstructPlan` takes its value.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum ScalarField {
+pub(crate) enum ScalarField {
     /// The argument of this parameter (`undefined` past the passed ones).
     Parameter(u16),
     /// This constant, whatever is passed.
@@ -1428,7 +1428,7 @@ pub(super) enum ScalarField {
 
 impl OnlineFacts<'_> {
     /// Whether a method cache names `atom` now.
-    pub(super) fn names(&self, atom: Atom) -> bool {
+    pub(crate) fn names(&self, atom: Atom) -> bool {
         self.method_cache_atoms.contains(atom as usize)
     }
 }
@@ -1436,13 +1436,13 @@ impl OnlineFacts<'_> {
 /// Whether `atom` of `program` names `length`, which a direct array answers from its record.
 /// The program's own name decides, so code compiled for no particular VM (a static image's)
 /// reads it as natively as a VM's own compile does.
-pub(super) fn names_length(program: &ResidualProgram, atom: Atom) -> bool {
+pub(crate) fn names_length(program: &ResidualProgram, atom: Atom) -> bool {
     program.atoms.get(atom as usize) == Some("length")
 }
 
 /// Whether `instruction` is a plain read of `length`, which its lowering answers for any base
 /// (`Lowering::array_length`), so the base needs no object record.
-pub(super) fn reads_length(program: &ResidualProgram, instruction: WideInstruction) -> bool {
+pub(crate) fn reads_length(program: &ResidualProgram, instruction: WideInstruction) -> bool {
     // Only a field op reads a `length`: `field_lookup` proves that of its reader.
     instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::FieldLookup
         && !instruction.writes_current_this() && !instruction.returns_from_frame()
@@ -1451,66 +1451,66 @@ pub(super) fn reads_length(program: &ResidualProgram, instruction: WideInstructi
 
 /// The facts of the VM a lowering specializes to, fixed when the VM is built.
 #[derive(Clone, Copy)]
-pub(super) struct VmFacts<'a> {
+pub(crate) struct VmFacts<'a> {
     /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
     /// it, loosely only `null` and `undefined` equal `null`.
-    pub(super) html_dda: bool,
+    pub(crate) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
-    pub(super) diagnostics: bool,
+    pub(crate) diagnostics: bool,
     /// The thresholds the compiling VM's tier controllers read: a Static fact of the code it makes.
-    pub(super) tiers: &'static Tiers,
+    pub(crate) tiers: &'static Tiers,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
-    pub(super) online: Option<OnlineFacts<'a>>,
+    pub(crate) online: Option<OnlineFacts<'a>>,
     /// Whether those Stable facts come from a closed whole-program image rather than from a
     /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
-    pub(super) frozen: bool,
+    pub(crate) frozen: bool,
     /// Whole-program prototype values by atom, each guarded at its read site.
-    pub(super) frozen_fields: Option<&'a quench_runtime::dense_map::DenseMap<Value>>,
+    pub(crate) frozen_fields: Option<&'a quench_runtime::dense_map::DenseMap<Value>>,
     /// The image's constant block, materialized after realm initialization.
-    pub(super) frozen_constants: Option<usize>,
+    pub(crate) frozen_constants: Option<usize>,
     /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
-    pub(super) scalar: Option<lane_region::scalar::ScalarAbi>,
+    pub(crate) scalar: Option<lane_region::scalar::ScalarAbi>,
     /// The names method caches hold now, where offline code stores in place under a dependency on
     /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
     /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
-    pub(super) held_atoms: Option<HeldAtoms<'a>>,
+    pub(crate) held_atoms: Option<HeldAtoms<'a>>,
     /// The construct plan a construction record of a function holds now, by function and PC
     /// (`ScalarConstructPlan`): what code may keep as its field values while the object
     /// escapes nowhere (`lane_region::virtual_objects`). The code tests that the plan still
     /// holds where it would construct, so it takes no dependency on it.
-    pub(super) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<ScalarConstructPlan>>,
+    pub(crate) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<ScalarConstructPlan>>,
     /// Where an ahead lane body's leaves continue, in its base body (`lane_region::AheadLeaves`);
     /// `None` where a leave returns its exit word.
-    pub(super) ahead: Option<lane_region::AheadLeaves<'a>>,
+    pub(crate) ahead: Option<lane_region::AheadLeaves<'a>>,
     /// The whole-program facts of an AOT image (`compile::aot_facts`): its call targets admit the
     /// callees the unit inlines (`Lowering::closed_call`) and its Number registers are entry
     /// entry types (`int_inputs::closed_entry_types`), each a dependency on the image's invalidation word.
-    pub(super) closed: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
+    pub(crate) closed: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
     /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
-    pub(super) proven_entry: bool,
+    pub(crate) proven_entry: bool,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
 /// hold now, and the word its publication sets when a cache names one it stores
 /// (`code_dependencies::Invalidation`), which a run that calls reads after each call.
 #[derive(Clone, Copy)]
-pub(super) struct HeldAtoms<'a> {
-    pub(super) names: &'a quench_runtime::vm::method_cache::AtomBits,
-    pub(super) invalidation: usize,
+pub(crate) struct HeldAtoms<'a> {
+    pub(crate) names: &'a quench_runtime::vm::method_cache::AtomBits,
+    pub(crate) invalidation: usize,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
+    pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
         frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
 impl Vm {
-    pub(super) fn vm_facts(&self) -> VmFacts<'static> {
+    pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
             frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false }
@@ -1538,7 +1538,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
 }
 
 /// `lowered_lane_body`'s code with the atoms it stores without a method-cache test.
-pub(super) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
+pub(crate) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
     helpers: LaneHelpers, facts: VmFacts<'_>, global_reads: &quench_runtime::vm::global_facts::GlobalReads,
 ) -> Option<(ir::Function, Box<[Atom]>)> {
     lowered_lane_body(program, function_id, isa, helpers, facts, global_reads)
@@ -1797,7 +1797,7 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
 /// Whether Wasm modules stay selective for good, compiling only their hot roots
 /// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
 /// whole.
-pub(super) fn jit_wasm_selective_enabled() -> bool {
+pub(crate) fn jit_wasm_selective_enabled() -> bool {
     quench_runtime::trace::Dev::WasmSelective.on()
 }
 
@@ -1845,7 +1845,7 @@ fn eager_unreachable_admitted() -> bool {
 }
 
 #[cfg(test)]
-pub(super) fn with_eager_unreachable_rejected_for_test<R>(run: impl FnOnce() -> R) -> R {
+pub(crate) fn with_eager_unreachable_rejected_for_test<R>(run: impl FnOnce() -> R) -> R {
     struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
@@ -1859,7 +1859,7 @@ pub(super) fn with_eager_unreachable_rejected_for_test<R>(run: impl FnOnce() -> 
 }
 
 #[cfg(test)]
-pub(super) fn with_wasm_jit_mode_for_test<R>(
+pub(crate) fn with_wasm_jit_mode_for_test<R>(
     root_only: bool,
     root_first: bool,
     root: Option<usize>,
@@ -1941,7 +1941,7 @@ fn trap_status(trap: quench_runtime::WasmTrap) -> i64 {
 /// exhausted; the interpreter's own guards bound the remainder.
 const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 
-pub(super) use quench_runtime::vm::engine_types::CallContext;
+pub(crate) use quench_runtime::vm::engine_types::CallContext;
 
 use quench_runtime::vm::engine_types::CallContextFields;
 
@@ -2111,7 +2111,7 @@ impl CallContext {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::Raised;
+pub(crate) use quench_runtime::vm::engine_types::Raised;
 
 const CONTEXT_INTERRUPT: i32 = std::mem::offset_of!(CallContext, head.interrupt) as i32;
 const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, head.stack_limit) as i32;
@@ -2225,7 +2225,7 @@ use quench_runtime::vm::engine_types::ReferenceCallSiteCounts;
 
 use quench_runtime::vm::engine_types::ReferenceCallTargetCounts;
 
-pub(super) use quench_runtime::vm::engine_types::ReferenceCallSiteDiagnostics;
+pub(crate) use quench_runtime::vm::engine_types::ReferenceCallSiteDiagnostics;
 
 fn note_reference_call_site(
     context: &CallContext,
@@ -2291,7 +2291,7 @@ fn refresh_memory_length(context: &mut CallContext, vm: &Vm) {
 
 /// Publishes the Wasm GC record range's base (`CallContext::wasm_gc_records`) after a callout that may
 /// have reserved it: the base is fixed once reserved, so zero means the range is not yet made.
-pub(super) fn refresh_wasm_gc_records(context: &mut CallContext, vm: &Vm) {
+pub(crate) fn refresh_wasm_gc_records(context: &mut CallContext, vm: &Vm) {
     context.wasm_gc_records = vm.heap.wasm_gc_record_base().map_or(0, |base| base as usize);
 }
 
@@ -2681,14 +2681,14 @@ use quench_runtime::vm::engine_types::WasmEntry;
 
 /// The native-entry ABI of compiled Wasm functions: (context, memory base or locals, memory
 /// length or local count, arguments or registers, result word) -> status.
-pub(super) fn native_entry_signature(
+pub(crate) fn native_entry_signature(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
     call_signature::typed_signature(call_conv, &[pointer, types::I64, types::I64, pointer, pointer], &[types::I32])
 }
 
-pub(super) use quench_runtime::vm::engine_types::NativeNumberResult;
+pub(crate) use quench_runtime::vm::engine_types::NativeNumberResult;
 
 enum CompiledArgs<'a> {
     Values(&'a [Value]),
@@ -2798,7 +2798,7 @@ fn stitched_entry(_: &Vm, _: ProgramId, _: &quench_runtime::bytecode::ResidualPr
 /// The `CompiledProgram::positions` entry of a function an artifact does not hold.
 const NOT_COMPILED: u32 = u32::MAX;
 
-pub(super) use quench_runtime::vm::engine_types::CompiledFunction;
+pub(crate) use quench_runtime::vm::engine_types::CompiledFunction;
 
 type DirectReferenceEntry = (
     Rc<CompiledProgram>,
@@ -2876,7 +2876,7 @@ fn compiled_reference_target(
         })
 }
 
-pub(super) use quench_runtime::vm::engine_types::CompiledProgram;
+pub(crate) use quench_runtime::vm::engine_types::CompiledProgram;
 
 use quench_runtime::vm::engine_types::WasmJitDiagnostics;
 
@@ -2889,7 +2889,7 @@ fn jit_diagnostics_enabled() -> bool {
 #[quench_macros::ext(CompiledProgramOps1)]
 impl CompiledProgram {
     #[cfg(test)]
-    pub(super) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
+    pub(crate) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
         self.diagnostics
             .as_ref()
             .map_or(0, |stats| stats.emscripten_memcpy_fast_path_hits.get())
@@ -2942,7 +2942,7 @@ impl CompiledProgram {
     }
 
     #[cfg(test)]
-    pub(super) fn reference_call_site_counts(&self) -> Option<Vec<(usize, usize, u64, u64, u64)>> {
+    pub(crate) fn reference_call_site_counts(&self) -> Option<Vec<(usize, usize, u64, u64, u64)>> {
         Some(
             self.diagnostics
                 .as_ref()?
@@ -2963,7 +2963,7 @@ impl CompiledProgram {
     }
 
     #[cfg(test)]
-    pub(super) fn reference_call_target_counts(
+    pub(crate) fn reference_call_target_counts(
         &self,
     ) -> Option<Vec<(usize, usize, usize, u64, u64, u64)>> {
         Some(
@@ -2992,7 +2992,7 @@ impl CompiledProgram {
     }
 
     #[cfg(test)]
-    pub(super) fn same_artifact_direct_reference_hits(&self) -> Option<u64> {
+    pub(crate) fn same_artifact_direct_reference_hits(&self) -> Option<u64> {
         Some(
             self.diagnostics
                 .as_ref()?
@@ -3004,12 +3004,12 @@ impl CompiledProgram {
     }
 
     #[cfg(test)]
-    pub(super) fn native_entries(&self, function: usize) -> Option<u64> {
+    pub(crate) fn native_entries(&self, function: usize) -> Option<u64> {
         self.function(function).map(|function| function.native_entries.get())
     }
 
     #[cfg(test)]
-    pub(super) fn direct_reference_entries(&self, function: usize) -> Option<u64> {
+    pub(crate) fn direct_reference_entries(&self, function: usize) -> Option<u64> {
         self.function(function).map(|function| function.direct_reference_entries.get())
     }
 }
@@ -3043,9 +3043,9 @@ fn note_osr_run(events: &quench_runtime::vm::tier_events::TierEvents, run: &Regi
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::CompiledOsrRegion;
+pub(crate) use quench_runtime::vm::engine_types::CompiledOsrRegion;
 
-pub(super) use quench_runtime::vm::engine_types::EntryStamp;
+pub(crate) use quench_runtime::vm::engine_types::EntryStamp;
 
 #[quench_macros::ext(EntryStampOps1)]
 impl EntryStamp {
@@ -3080,7 +3080,7 @@ fn captures_key(vm: &Vm, frame: usize) -> (usize, u64) {
 #[quench_macros::ext(CompiledOsrRegionOps1)]
 impl CompiledOsrRegion {
     /// Whether a run can begin at `pc`: the region's header, or a PC with a resume stub.
-    pub(super) fn can_run_from(&self, region: &LoopRegion, pc: u32) -> bool {
+    pub(crate) fn can_run_from(&self, region: &LoopRegion, pc: u32) -> bool {
         pc == region.header || self.resumes.stub(pc).is_some()
     }
 
@@ -3095,7 +3095,7 @@ impl CompiledOsrRegion {
     }
 
     /// Whether a run builds an activation over the lane's VM frame; a bare run reads the registers alone.
-    pub(super) fn needs_frame(&self) -> bool { self.crossing != Crossing::Bare }
+    pub(crate) fn needs_frame(&self) -> bool { self.crossing != Crossing::Bare }
 
     /// Runs the region on `registers` with `entry`'s record, through the lane body ABI
     /// (`enter_body`), from its header or, where `can_run_from`, from the instruction at `from`;
@@ -3107,7 +3107,7 @@ impl CompiledOsrRegion {
     /// captures. Capacity helpers may refresh array backing words without collecting;
     /// `vm` and `interrupt` belong to
     /// this lane activation, which excludes other mutable VM access while native code runs.
-    pub(super) unsafe fn run(
+    pub(crate) unsafe fn run(
         &self,
         registers: *mut quench_runtime::value::Value,
         entry: &mut LoopEntry,
@@ -3214,7 +3214,7 @@ impl CompiledOsrRegion {
 /// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each
 /// callee from `resolve` of the cached field its function is read from.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn analyze_inlining_osr_region<'a>(
+pub(crate) fn analyze_inlining_osr_region<'a>(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[quench_runtime::value::Value],
@@ -3229,7 +3229,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
 
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
 /// Analyze a loop candidate and preserve the function PC that blocked admission.
-pub(super) fn analyze_osr_region_detailed(
+pub(crate) fn analyze_osr_region_detailed(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[quench_runtime::value::Value],
@@ -3244,7 +3244,7 @@ pub(super) fn analyze_osr_region_detailed(
 }
 
 /// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).
-pub(super) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
+pub(crate) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
     tier_policy::by_policy(policy).loop_tier
 }
 
@@ -3280,7 +3280,7 @@ fn native_dump_directory() -> Option<&'static std::path::Path> {
 /// bytecode position, or a function's body, named by its function and, where it has one, the
 /// byte offset of its scalar entry (the per-call path the C-parity gate measures).
 #[derive(Clone, Copy)]
-pub(super) enum DumpSite {
+pub(crate) enum DumpSite {
     Loop { header: u32 },
     Body { function: u32, scalar: Option<usize> },
 }
@@ -3352,30 +3352,30 @@ fn compile_native_function<T>(
     })
 }
 
-pub(super) use quench_runtime::vm::engine_types::CompiledJsFunction;
+pub(crate) use quench_runtime::vm::engine_types::CompiledJsFunction;
 
-pub(super) use quench_runtime::vm::engine_types::JsNativeStep;
+pub(crate) use quench_runtime::vm::engine_types::JsNativeStep;
 
 use quench_runtime::vm::engine_types::JsStepDispatch;
 
 
 
 
-pub(super) use quench_runtime::vm::engine_types::LaneMethod;
+pub(crate) use quench_runtime::vm::engine_types::LaneMethod;
 
 #[quench_macros::ext(LaneMethodOps1)]
 impl LaneMethod {
-    pub(super) fn frame_reach(&self) -> usize { self.frame_reach }
+    pub(crate) fn frame_reach(&self) -> usize { self.frame_reach }
     #[inline]
-    pub(super) fn recovery_space(&self) -> crate::dispatch_fast::LaneRecoverySpace { self.recovery_space }
+    pub(crate) fn recovery_space(&self) -> crate::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
-    pub(super) fn caller_registers(&self) -> u16 {
+    pub(crate) fn caller_registers(&self) -> u16 {
         self.caller_registers
     }
 
     /// Whether its inlined frames' registers are in the activation's register file past the
     /// caller's (`LaneMethod::framed`).
-    pub(super) fn framed(&self) -> bool {
+    pub(crate) fn framed(&self) -> bool {
         self.framed
     }
 
@@ -3387,26 +3387,26 @@ impl LaneMethod {
     /// The entry types its proven entry takes its parameters at, the types a direct caller proves its arguments have
     /// before it calls the proven entry (`call_frames`). Read through this one accessor, which the summary of the
     /// body's parameter types (`TypeSummary`) may come to back.
-    pub(super) fn entry_param_types(&self) -> Option<&[quench_runtime::typed_ir::Type]> {
+    pub(crate) fn entry_param_types(&self) -> Option<&[quench_runtime::typed_ir::Type]> {
         self.proven.as_ref().map(|(_, params)| &params[..])
     }
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
     /// (`Tiers::amortizing_instructions`). A short leaf runs in the lane, or inlined.
-    pub(super) fn amortizes_entry(&self) -> bool {
+    pub(crate) fn amortizes_entry(&self) -> bool {
         self.amortizes
     }
 
     /// Whether a direct caller may call it (`LaneMethod::closed`).
-    pub(super) fn calls_only_natively(&self) -> bool {
+    pub(crate) fn calls_only_natively(&self) -> bool {
         self.closed
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::PublishedLaneMethod;
+pub(crate) use quench_runtime::vm::engine_types::PublishedLaneMethod;
 
-pub(super) use quench_runtime::vm::engine_types::LaneExit;
+pub(crate) use quench_runtime::vm::engine_types::LaneExit;
 
 /// The status of a lane body whose activation completes: its result word holds the value,
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
@@ -3415,13 +3415,13 @@ pub(super) use quench_runtime::vm::engine_types::LaneExit;
 /// `Returned`: the activation completes, its result word holds the value and `JsStepDispatch::returned_pc`
 /// names the completing record. `Threw`: the exception is in `Vm::lane_raised` and `returned_pc` names the
 /// record that raised it (`LaneExit::Threw`), which native callers unwind through.
-pub(super) use quench_bjit::call_record::{LANE_BODY_RETURNED, LANE_BODY_THREW};
+pub(crate) use quench_bjit::call_record::{LANE_BODY_RETURNED, LANE_BODY_THREW};
 
 /// What a lane body's native call (`dispatch_fast::body_call_helper`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
 /// or left the lane in the callee's activation it made.
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
-pub(super) use quench_bjit::call_record::{
+pub(crate) use quench_bjit::call_record::{
     LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED,
 };
 
@@ -3430,19 +3430,19 @@ impl LaneExit {
     /// The caller PC a leave or completion is at, with a completion's value written to the
     /// register its record names, where a test reads a `Return`'s result.
     #[cfg(test)]
-    pub(super) fn settled(self, registers: &mut [Value], instructions: &[quench_runtime::bytecode::WideInstruction]) -> Option<usize> {
+    pub(crate) fn settled(self, registers: &mut [Value], instructions: &[quench_runtime::bytecode::WideInstruction]) -> Option<usize> {
         if let Self::Returned { pc, value } = self {
             registers[usize::from(instructions[pc].register_a() & quench_runtime::bytecode::REGISTER_MASK)] = value;
         }
         self.caller_pc()
     }
     #[cfg(test)]
-    pub(super) fn caller_pc(self) -> Option<usize> {
+    pub(crate) fn caller_pc(self) -> Option<usize> {
         match self { Self::At(pc) | Self::Returned { pc, .. } | Self::Threw { pc } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
     }
     /// Where the activation resumes: an entry leave at its first record.
     #[inline]
-    pub(super) fn resumed(self) -> Self {
+    pub(crate) fn resumed(self) -> Self {
         if self.entered_nothing() { Self::At(0) } else { self }
     }
 }
@@ -3516,7 +3516,7 @@ unsafe extern "C" fn field_write_admission_in_lane(vm: u64, _residual: u64, shap
 
 /// The bit of a write admission's domain word (`field_write_admission_in_lane`) that says the
 /// writer stores a slot of raw doubles as raw doubles (`StoreArm::raw_double`).
-pub(super) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
+pub(crate) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
@@ -3559,12 +3559,12 @@ unsafe extern "C" fn call_budget_in_lane(_vm: u64, _residual: u64) -> u64 {
 }
 
 /// The word naming the record a lane body's `throw` raised at: its function above the record.
-pub(super) fn raise_site(function: u32, record: u32) -> u64 {
+pub(crate) fn raise_site(function: u32, record: u32) -> u64 {
     u64::from(function) << u32::BITS | u64::from(record)
 }
 
 /// The function and record `raise_site` names.
-pub(super) fn raise_site_parts(site: u64) -> (u32, u32) {
+pub(crate) fn raise_site_parts(site: u64) -> (u32, u32) {
     ((site >> u32::BITS) as u32, site as u32)
 }
 
@@ -3784,7 +3784,7 @@ impl Vm {
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
     /// does (`dispatch_fast::global_name_refresh_miss`): its global lexical binding's, else
     /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
-    pub(super) fn global_read_in_lane(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
+    pub(crate) fn global_read_in_lane(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
         match self.global_name_read(code, atom, site) {
             quench_runtime::vm::field_cache::GlobalNameRead::Value(value, _) => Some(value),
             quench_runtime::vm::field_cache::GlobalNameRead::Uninitialized | quench_runtime::vm::field_cache::GlobalNameRead::Miss => None,
@@ -3798,7 +3798,7 @@ impl Vm {
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`).
     /// Counts a run of a lane body that left at the instruction `pc` of `function`, on each
     /// field site it has: the leave path's one write of a site's instability.
-    pub(super) fn note_field_leave(&mut self, program: &ResidualProgram, function: u32, pc: usize) {
+    pub(crate) fn note_field_leave(&mut self, program: &ResidualProgram, function: u32, pc: usize) {
         let Some(instruction) = program.function_get(function as usize).and_then(|body| body.instructions().nth(pc)) else { return };
         for (site, _) in Self::instruction_field_sites(program, &instruction) {
             self.record_field_leave(self.field_cache_index(site));
@@ -3844,7 +3844,7 @@ impl Vm {
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
     /// native `Return` leaves at its own record, whose register already holds the result.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn run_lane_method(
+    pub(crate) fn run_lane_method(
         &mut self,
         method: &LaneMethod,
         direct_calls: bool,
@@ -3864,7 +3864,7 @@ impl Vm {
     /// Points the lane frame's field cache entries at the table's current mapping, where the
     /// frame is this VM's: its payload word is what generated code reads, and it was bound
     /// before the table moved (`Vm::field_caches_moved`).
-    pub(super) fn rebind_lane_field_entries(&self) {
+    pub(crate) fn rebind_lane_field_entries(&self) {
         // SAFETY: the frame is reached only through this pointer, on its thread; the table
         // moves in the VM's own code, never inside a payload access.
         let frame = unsafe { &mut *LANE_FRAME.with(std::cell::UnsafeCell::get) };
@@ -3877,7 +3877,7 @@ impl Vm {
     /// caller's body continues with the per-entry words it entered with. Its callee runs in
     /// the same program (`crosses_in_lane`) and allocates nothing, so the program's bases stand.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn run_nested_lane_method(
+    pub(crate) fn run_nested_lane_method(
         &mut self,
         method: &LaneMethod,
         program: ProgramId,
@@ -3923,7 +3923,7 @@ impl Vm {
     /// Copies the registers that follow the first `from` of the activation at `registers`, where a
     /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
     /// leave inside one reads (`scratch_in_lane`), before the activations it makes overwrite them.
-    pub(super) fn adopt_window_in_lane(registers: *const Value, from: usize, width: usize) {
+    pub(crate) fn adopt_window_in_lane(registers: *const Value, from: usize, width: usize) {
         let frame = frame_in_lane();
         // SAFETY: as `stack_words_in_lane`; the body's admission proved the room past the
         // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
@@ -3938,7 +3938,7 @@ impl Vm {
     /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
     /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
     /// helper ends with it, so a row after one reads current bases and checks none.
-    pub(super) fn refresh_body_bases(&mut self) {
+    pub(crate) fn refresh_body_bases(&mut self) {
         let lane = frame_in_lane();
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
         unsafe { (*lane).dispatch.refresh_object_bases(self) };
@@ -3946,7 +3946,7 @@ impl Vm {
 
     /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), in the
     /// window's header the body's rows read: the frame's own and the header's are written by the one step.
-    pub(super) fn publish_body_receiver(&self, receiver: Value) {
+    pub(crate) fn publish_body_receiver(&self, receiver: Value) {
         let frame = frame_in_lane();
         // SAFETY: as `refresh_body_bases`; the running body's window is the dispatch's registers.
         unsafe { set_frame_word((*frame).dispatch.native_registers, CONTEXT_THIS, receiver.to_bits()) }
@@ -3962,7 +3962,7 @@ impl Vm {
     /// stencil call row's push, whose pop restores the plain depth, window and body top it found). Binding
     /// spills it into a record that pop never removes: each such call that allocated left one record more,
     /// until the walk over them outgrew the activation limit (ai-astar under `--b-jit`).
-    pub(super) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
+    pub(crate) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
         // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
         if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
             payload.refresh_object_bases(self);
@@ -3974,7 +3974,7 @@ impl Vm {
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`BodyRunContext::scratch`).
-    pub(super) fn scratch_in_lane(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
+    pub(crate) fn scratch_in_lane(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
         LANE_FRAME.with(|frame| {
             // SAFETY: as in `run_lane_method`; no lane body runs while the lane reads it.
             let Some(frame) = (unsafe { &*frame.get() }).as_ref() else { return };
@@ -3990,7 +3990,7 @@ impl Vm {
 const SHADOW_FRAMES: usize = 64;
 
 /// The stride of the native frames a run pushes: an activation record, whose first words they are.
-pub(super) const FRAME_BYTES: usize = std::mem::size_of::<Activation>();
+pub(crate) const FRAME_BYTES: usize = std::mem::size_of::<Activation>();
 
 /// The words of `JsStepDispatch` one lane body entry owns (`Vm::run_lane_method`).
 #[derive(Clone, Copy)]
@@ -4125,7 +4125,7 @@ thread_local! {
 /// This thread's lane frame, made at its first lane body run.
 /// The lowering line of the guard the lane body that just ran left at, reset; zero where it
 /// recorded none (`VmFacts::diagnostics`).
-pub(super) fn take_lane_exit_line() -> u64 {
+pub(crate) fn take_lane_exit_line() -> u64 {
     // SAFETY: as `lane_frame`.
     unsafe { std::mem::take(&mut (*frame_in_lane()).dispatch.exit_line) }
 }
@@ -4457,15 +4457,15 @@ pub fn native_js_operation_entry_for(opcode: usize) -> Option<NativeJsOperationE
     Op::from_index(opcode).map(Op::native_semantic_entry)
 }
 
-pub(super) fn native_js_operation_signature(
+pub(crate) fn native_js_operation_signature(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Signature {
     let pointer = isa.pointer_type();
     call_signature::typed_signature(isa.default_call_conv(), &[pointer, types::I64, pointer, pointer], &[types::I64])
 }
 
-pub(super) use quench_bjit::call_record::NATIVE_JS_STOPPED;
-pub(super) const NATIVE_JS_INVALID_PC: u32 = 2;
+pub(crate) use quench_bjit::call_record::NATIVE_JS_STOPPED;
+pub(crate) const NATIVE_JS_INVALID_PC: u32 = 2;
 #[cfg(feature = "native-execution")]
 const JS_NO_STOP_PC: usize = usize::MAX;
 
@@ -4584,7 +4584,7 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
     }
 }
 
-pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
+pub(crate) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
     use quench_runtime::staged::machine::Lane;
     let pointer = emit_machine::of_in_lane(builder.func.signature.params[0].value_type);
     let mut stage = object_slots::emit(builder);
@@ -5082,7 +5082,7 @@ unsafe fn stopped<const SINGLE_OPERATION: bool>(context: &mut CallContext, step:
 
 #[quench_macros::ext(CompiledJsFunctionOps1)]
 impl CompiledJsFunction {
-    pub(super) fn from_artifact(artifact: crate::js_compiled::JsJitArtifact) -> Option<Self> {
+    pub(crate) fn from_artifact(artifact: crate::js_compiled::JsJitArtifact) -> Option<Self> {
         let code = CodeMemory::new(&artifact.code)?;
         Some(Self {
             mapped_bytes: code.length(),
@@ -5096,13 +5096,13 @@ impl CompiledJsFunction {
         })
     }
 
-    pub(super) fn params(&self) -> usize {
+    pub(crate) fn params(&self) -> usize {
         self.params
     }
 
     /// The numeric body's result on `arguments`; `None` for too few arguments, an argument
     /// that is no Number, or an interrupted run.
-    pub(super) fn call(
+    pub(crate) fn call(
         &self,
         arguments: &[Value],
         interrupt: &quench_runtime::ExecutionInterrupt,
@@ -5120,7 +5120,7 @@ impl CompiledJsFunction {
     }
 
     #[cfg(all(test, not(quench_profiled)))]
-    pub(super) fn native_entries(&self) -> u64 {
+    pub(crate) fn native_entries(&self) -> u64 {
         self.native_entries.get()
     }
 }
@@ -7433,7 +7433,7 @@ unsafe fn enter_wasm(
 ///
 /// # Safety
 /// `call` must enter compiled code of the ABI it types the trampoline with, under `context`.
-pub(super) unsafe fn enter_compiled<R>(context: *mut CallContext, call: impl FnOnce(Option<Trampoline>) -> R) -> R {
+pub(crate) unsafe fn enter_compiled<R>(context: *mut CallContext, call: impl FnOnce(Option<Trampoline>) -> R) -> R {
     // SAFETY: the caller's context outlives the call.
     let roots = unsafe { (*context).native_roots };
     // SAFETY: a context with roots is a Wasm entry's, whose VM outlives the call.
@@ -7584,7 +7584,7 @@ const FUNCTION_ALIGNMENT: usize = 64;
 #[quench_macros::ext(CompiledVm4)]
 impl Vm {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode; quench_runtime::vm::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
+        self.execution_mode = mode; crate::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
         self.heap.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 
@@ -7614,7 +7614,7 @@ impl Vm {
 
     /// A compiled tier's poll page is usable only when the shared entry can
     /// resume the protected-page fault back into the interpreter.
-    pub(super) fn compiled_poll_page(&self) -> Option<(usize, usize)> {
+    pub(crate) fn compiled_poll_page(&self) -> Option<(usize, usize)> {
         native_poll_page(&self.execution_interrupt)
     }
 
@@ -7622,7 +7622,7 @@ impl Vm {
     /// that compiles them (`PolicyTiers::js_function_tiers`) and a JIT mode that allows one, in a build whose profiles do not count
     /// interpreted work exactly.
     #[inline]
-    pub(super) fn tier_may_run(&self, tiers: &[quench_runtime::jit_mode::Tier]) -> bool {
+    pub(crate) fn tier_may_run(&self, tiers: &[quench_runtime::jit_mode::Tier]) -> bool {
         !cfg!(quench_profiled)
             && self.execution_mode == ExecutionMode::Compiled
             && tier_policy::tier_may_run(self.memory_policy(), tiers)
@@ -7630,7 +7630,7 @@ impl Vm {
 
     /// Whether the entry paths claim `function`: a numeric candidate that pays for a native
     /// entry, or a body a lane body may take.
-    pub(super) fn js_tier_may_claim(
+    pub(crate) fn js_tier_may_claim(
         &mut self,
         program: &ResidualProgram,
         id: ProgramId,
@@ -7670,7 +7670,7 @@ impl Vm {
     /// instruction the activation continues at, its register and the value to write there;
     /// else `None`, and the activation runs from its entry. `parameters` are the
     /// activation's parameter registers.
-    pub(super) fn js_tier_activation_entry(
+    pub(crate) fn js_tier_activation_entry(
         &mut self,
         program: &ResidualProgram,
         id: ProgramId,
@@ -7701,7 +7701,7 @@ impl Vm {
     }
 
     /// The callee's depth-0 capture under the same environment binding as the lane.
-    pub(super) fn environment_capture(&mut self, env: Value, slot: u16) -> Option<Value> {
+    pub(crate) fn environment_capture(&mut self, env: Value, slot: u16) -> Option<Value> {
         // A frameless activation's function has no environment of its own
         // (`load_capture_walk_miss`).
         let (slots, root) = self.walked_capture_slots(env, false, 0)?;
@@ -7786,7 +7786,7 @@ impl Vm {
     /// (`frame_call_in_lane`). With the native result written to its return register, the PC
     /// of the `Return` that completes the frame; else `None`, the entry counted as an
     /// interpreter fallback, and the untouched frame runs from its entry.
-    pub(super) fn js_tier_frame_entry(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
+    pub(crate) fn js_tier_frame_entry(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
@@ -7831,7 +7831,7 @@ impl Vm {
     /// Try the per-function JavaScript tier at an already-initialized frame's
     /// entry. A guard miss leaves the frame untouched so the interpreter can
     /// run from the same bytecode PC.
-    pub(super) fn js_jit_at_entry(
+    pub(crate) fn js_jit_at_entry(
         &mut self,
         program: &ResidualProgram,
         entry: &TierEntry,
@@ -7961,7 +7961,7 @@ impl Vm {
     /// enters; its native subset is pure and has a guarded Number ABI. A call that returns
     /// its callee's completion (`returns`) completes its caller, so it and every guard miss
     /// stay on the ordinary frame path.
-    pub(super) fn js_jit_compiled_call(
+    pub(crate) fn js_jit_compiled_call(
         &mut self,
         program: &ResidualProgram,
         (program_id, function_id): (ProgramId, u32),
@@ -8000,7 +8000,7 @@ impl Vm {
     /// (`LaneView::tier_direct`): where its body reads only its parameters
     /// (`CompiledJsFunction::direct_callable`) and ends in a `Return`, which its result
     /// completes.
-    pub(super) fn direct_tier_entry(
+    pub(crate) fn direct_tier_entry(
         &self,
         program: &ResidualProgram,
         id: ProgramId,
@@ -8027,7 +8027,7 @@ impl Vm {
     /// Runs `entry` on a frameless activation's `parameters`, as `js_jit_compiled_call` runs
     /// the body: the `Return` to continue at, its register and the result; `None` where an
     /// argument is no Number the body's guards admit, or the tier retired the artifact.
-    pub(super) fn run_direct_tier_entry(
+    pub(crate) fn run_direct_tier_entry(
         &mut self,
         entry: &DirectTierEntry,
         parameters: &[Value],
@@ -8576,7 +8576,7 @@ impl Vm {
     }
 
     #[cfg(test)]
-    pub(super) fn install_compiled_diagnostics_for_test(
+    pub(crate) fn install_compiled_diagnostics_for_test(
         &mut self,
         program: ProgramId,
         env: Value,
@@ -8592,7 +8592,7 @@ impl Vm {
     }
 
     #[cfg(test)]
-    pub(super) fn install_compiled_root_for_test(
+    pub(crate) fn install_compiled_root_for_test(
         &mut self,
         program: ProgramId,
         env: Value,
@@ -8609,7 +8609,7 @@ impl Vm {
     }
 
     #[cfg(test)]
-    pub(super) fn install_compiled_root_only_for_test(
+    pub(crate) fn install_compiled_root_only_for_test(
         &mut self,
         program: ProgramId,
         env: Value,
@@ -8628,7 +8628,7 @@ impl Vm {
     /// Run known function `id` of the caller's program as native code, with
     /// arguments from the caller's register `window`. `None` leaves the call
     /// to the interpreter.
-    pub(super) fn call_compiled(
+    pub(crate) fn call_compiled(
         &mut self,
         caller: usize,
         id: u32,
@@ -8656,7 +8656,7 @@ impl Vm {
     /// Run function `id` of `program` in instance `env` as native code, with
     /// encoded Wasm `args`. `None` leaves the call to the interpreter, which
     /// is then exactly where the call would otherwise have gone.
-    pub(super) fn run_compiled(
+    pub(crate) fn run_compiled(
         &mut self,
         program: ProgramId,
         env: Value,
@@ -9147,28 +9147,28 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(super) fn body_may_amortize_in_lane(tiers: &Tiers, body: &quench_runtime::bytecode::Function) -> bool {
+pub(crate) fn body_may_amortize_in_lane(tiers: &Tiers, body: &quench_runtime::bytecode::Function) -> bool {
     body_may_amortize(tiers, body, tier_policy::body_tier_in_lane())
 }
 
 /// `body_may_amortize_in_lane` for the body of `tier`, whose length that tier must reach.
-pub(super) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: quench_runtime::jit_mode::Tier) -> bool {
+pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: quench_runtime::jit_mode::Tier) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
         || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(crate::dispatch_fast::decoded_instruction(body, *packed)))
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
 /// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
-pub(super) fn pays_native_entry(body: &quench_runtime::bytecode::Function) -> bool {
+pub(crate) fn pays_native_entry(body: &quench_runtime::bytecode::Function) -> bool {
     body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
 }
 
-pub(super) use quench_runtime::vm::engine_types::DirectTierEntry;
+pub(crate) use quench_runtime::vm::engine_types::DirectTierEntry;
 
 #[quench_macros::ext(DirectTierEntryOps1)]
 impl DirectTierEntry {
     /// Whether the tier retired the artifact.
-    pub(super) fn retired(&self) -> bool {
+    pub(crate) fn retired(&self) -> bool {
         self.compiled.strong_count() == 0
     }
 }
@@ -9177,7 +9177,7 @@ impl DirectTierEntry {
 /// (`Vm::js_tier_frame_entry`) or a frameless lane activation's
 /// (`Vm::js_tier_activation_entry`). Either way a native result continues the same
 /// activation, so the tier never decides how a function is called.
-pub(super) struct TierEntry {
+pub(crate) struct TierEntry {
     program: ProgramId,
     function: u32,
     /// The activation's parameter registers.
@@ -10591,7 +10591,7 @@ mod tests {
         for inst in polls { assert_eq!(native.dfg.inst_args(inst), &[owners[0]]); }
     }
 
-    pub(super) fn semantic_vm(source: &str) -> Vm {
+    pub(crate) fn semantic_vm(source: &str) -> Vm {
         let program = quench_runtime::Engine::specialize(source, "semantic-entry.js").unwrap();
         semantic_program(program)
     }

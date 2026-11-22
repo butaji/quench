@@ -51,7 +51,7 @@ impl ScalarAbi {
     /// The entry of `function_id` over `unit`, which calls itself through `direct`: where the unit
     /// is numeric but for those calls and the binding loads they take their callee from. A
     /// parameter is an int32 where an operation of the unit requires one (`require_entry_types`).
-    pub(super) fn of(program: &ResidualProgram, function_id: u32, unit: &super::super::lane_unit::Unit,
+    pub(crate) fn of(program: &ResidualProgram, function_id: u32, unit: &super::super::lane_unit::Unit,
         direct: &DirectSites) -> Option<Self> {
         let function = program.function_get(function_id as usize)?;
         let params = u8::try_from(function.params).ok().filter(|params| usize::from(*params) <= MAX_PARAMETERS)?;
@@ -80,7 +80,7 @@ impl ScalarAbi {
 
     /// The signature of the entry: the context, the captures' word, the parameters, then a status
     /// and a result word.
-    pub(super) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
+    pub(crate) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
         let mut signature = Signature::new(call_conv);
         signature.params.extend([AbiParam::new(pointer), AbiParam::new(types::I64)]);
         signature.params.extend((0..self.params()).map(|index| AbiParam::new(if self.is_float(index) { types::F64 } else { types::I32 })));
@@ -92,10 +92,10 @@ impl ScalarAbi {
 #[quench_macros::ext(CompletionOps3)]
 impl Completion {
     /// Whether a run returns a Number by its status and a result word (a numeric region, or a scalar entry).
-    pub(super) fn numeric(self) -> bool { self != Self::Body }
+    pub(crate) fn numeric(self) -> bool { self != Self::Body }
 
     /// The signature the run's function has.
-    pub(super) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
+    pub(crate) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
         match self {
             Self::Scalar(abi) => abi.signature(pointer, call_conv),
             _ => body_signature_in_lane(pointer, call_conv),
@@ -104,7 +104,7 @@ impl Completion {
 
     /// The types of the registers at entry: a numeric region's parameters are Numbers, a scalar
     /// entry's what it takes.
-    pub(super) fn initial_types(self, registers: usize, params: usize) -> Vec<Type> {
+    pub(crate) fn initial_types(self, registers: usize, params: usize) -> Vec<Type> {
         let mut initial = vec![Type::ANY; registers];
         match self {
             Self::Body => {}
@@ -116,20 +116,20 @@ impl Completion {
 }
 
 /// The plan of a scalar entry: the whole function, its parameters in registers.
-pub(super) fn plan(abi: ScalarAbi) -> RegionPlan {
+pub(crate) fn plan(abi: ScalarAbi) -> RegionPlan {
     RegionPlan { entry_bounds: true, coverage: Coverage::Full, completion: Completion::Scalar(abi), views: ElementViews::Dense }
 }
 
 /// The scalar entry `specializer` lowers, if it fits a function's cell: its result is an int32
 /// (which a recursive call assumes) and it polls no loop.
-pub(super) fn lowered(program: &ResidualProgram, specializer: RegionSpecializer<'_>) -> Option<ir::Function> {
+pub(crate) fn lowered(program: &ResidualProgram, specializer: RegionSpecializer<'_>) -> Option<ir::Function> {
     let region = specializer.specialize(program).ok()?;
     (region.number_result == Some(NativeNumberResult::Int32) && !region.fault_poll).then_some(region.function)
 }
 
 /// The words an entry block's parameters are: the context, the receiver, the captures and the
 /// register file, of which a scalar entry has the context and the captures.
-pub(super) fn entry_words(builder: &mut FunctionBuilder<'_>, completion: Completion, parameters: &[ir::Value]) -> Option<[ir::Value; ENTRY_WORDS]> {
+pub(crate) fn entry_words(builder: &mut FunctionBuilder<'_>, completion: Completion, parameters: &[ir::Value]) -> Option<[ir::Value; ENTRY_WORDS]> {
     match (completion, parameters) {
         (Completion::Scalar(_), [context, captures, ..]) => {
             let none = emit(builder).raw_const(Lane::I64, 0);
@@ -143,7 +143,7 @@ pub(super) fn entry_words(builder: &mut FunctionBuilder<'_>, completion: Complet
 /// Whether the unit has no heap, environment or guest-call effect that scalar-call recovery
 /// could repeat: no inlined frame, and only numeric instructions, but for a scalar entry's
 /// direct calls and the loads of their callees' bindings.
-pub(super) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_unit::Unit, scalar: bool,
+pub(crate) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_unit::Unit, scalar: bool,
     direct: &DirectSites) -> bool {
     unit.frames.is_empty() && unit.instructions.iter().enumerate().all(|(pc, instruction)|
         numeric_instruction(program, *instruction)
@@ -211,7 +211,7 @@ fn is_parameter(function: &quench_runtime::bytecode::Function, register: Registe
 /// Whether the non-empty language set `bits` is one entry conformance tests exactly (`conform_language`):
 /// the members of `LANE_TESTED`: a Boolean, `undefined`, `null`, a direct object, array, plain object or
 /// function, and a string. A set with a Number, BigInt or Symbol is not checkable here.
-pub(super) fn checkable(bits: u16) -> bool {
+pub(crate) fn checkable(bits: u16) -> bool {
     bits != 0 && bits & !LANE_TESTED == 0
 }
 
@@ -233,7 +233,7 @@ fn lane_check(check: EntryCheck) -> Option<Type> {
 /// once (conformance) and every later use trusts it. A value outside it leaves at the entry, so
 /// an annotation that lies costs an exit, never a wrong result. Which parameters and what each
 /// check is comes from the shared check; `lane_check` only maps it to this tier's fact.
-pub(super) fn declared_entry_types(function: &quench_runtime::bytecode::Function, written: &CompoundBitSet, initial: &mut [Type]) {
+pub(crate) fn declared_entry_types(function: &quench_runtime::bytecode::Function, written: &CompoundBitSet, initial: &mut [Type]) {
     for (index, check) in declared_checks::entry_checks(function) {
         let Some(ty) = lane_check(check) else { continue };
         let Some(register) = parameter_register(function, index) else { continue };
@@ -246,7 +246,7 @@ pub(super) fn declared_entry_types(function: &quench_runtime::bytecode::Function
 }
 
 /// The register parameter `index` enters in.
-pub(in crate::compiled) fn parameter_register(function: &quench_runtime::bytecode::Function, index: usize) -> Option<Register> {
+pub(crate) fn parameter_register(function: &quench_runtime::bytecode::Function, index: usize) -> Option<Register> {
     let index = u16::try_from(index).ok().filter(|index| *index < function.params)?;
     match function.parameter_registers {
         Some(base) => base.checked_add(index),
@@ -256,7 +256,7 @@ pub(in crate::compiled) fn parameter_register(function: &quench_runtime::bytecod
 
 /// The type `initial` gives each parameter the unit never writes (`written`) that its instructions
 /// (but those `skipped`) read as numbers: an int32 where any needs one, else a Number.
-pub(super) fn require_entry_types(program: &ResidualProgram, function: &quench_runtime::bytecode::Function, instructions: &[WideInstruction],
+pub(crate) fn require_entry_types(program: &ResidualProgram, function: &quench_runtime::bytecode::Function, instructions: &[WideInstruction],
     skipped: impl Fn(usize) -> bool, written: &CompoundBitSet, initial: &mut [Type]) {
     for (operands, required) in instructions.iter().enumerate().filter(|(pc, _)| !skipped(*pc))
         .filter_map(|(_, instruction)| requirement(program, *instruction)) {
@@ -271,7 +271,7 @@ pub(super) fn require_entry_types(program: &ResidualProgram, function: &quench_r
 impl Lowering<'_, '_> {
     /// The scalar entry the lowering calls and defines: its own, or the one its body's plan
     /// found (`VmFacts::scalar`).
-    pub(super) fn scalar_abi(&self) -> Option<ScalarAbi> {
+    pub(crate) fn scalar_abi(&self) -> Option<ScalarAbi> {
         match self.completion {
             Completion::Scalar(abi) => Some(abi),
             _ => self.vm.scalar,
@@ -280,7 +280,7 @@ impl Lowering<'_, '_> {
 
     /// A numeric entry's parameters. A window entry proves each a Number once; a scalar entry
     /// holds each as the number it takes, after its one check of the machine stack.
-    pub(super) fn enter_numeric_parameters(&mut self, state: &mut State, pc: usize, parameters: &[ir::Value]) {
+    pub(crate) fn enter_numeric_parameters(&mut self, state: &mut State, pc: usize, parameters: &[ir::Value]) {
         let Completion::Scalar(abi) = self.completion else {
             for register in 0..self.params as Register {
                 let miss = self.guard_exit(state, pc as u32);
@@ -314,7 +314,7 @@ impl Lowering<'_, '_> {
 
     /// Whether the call at `pc` is one of this function by its scalar entry: the callee register
     /// holds the function as a Stable fact, and the arguments are proved the numbers the entry takes.
-    pub(super) fn scalar_call_admitted(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn scalar_call_admitted(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
         let (Some(abi), Some(callee)) = (self.scalar_abi(), self.scalar_target(pc).map(|callee| callee.callee)) else { return false };
         if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Call) || instruction.result_flags() != 0 { return false; }
         let window = usize::from(ImmediateLayout::call_window_base(instruction.imm()));
@@ -326,7 +326,7 @@ impl Lowering<'_, '_> {
 
     /// The call at `pc` (`scalar_call_admitted`): the entry called with the arguments in registers; the
     /// result is an int32 where it returned, else the call leaves at `pc` for the generic call to run.
-    pub(super) fn scalar_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn scalar_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let abi = self.scalar_abi().expect("an admitted scalar call has its entry");
         let callee = self.scalar_target(pc).expect("an admitted scalar call has its callee");
         let (cell, captures) = (callee.cell, callee.capture_word());
@@ -353,13 +353,13 @@ impl Lowering<'_, '_> {
     }
 
     /// The dense capture slots (address, count) in the entry's captures word (`entry_cell::capture_word`).
-    pub(super) fn entry_capture_slots(&mut self) -> (ir::Value, ir::Value) {
+    pub(crate) fn entry_capture_slots(&mut self) -> (ir::Value, ir::Value) {
         let word = self.entry_words.1;
         self.capture_slots_of(word)
     }
 
     /// The dense capture slots (address, count) a captures word names (`entry_cell::capture_word`).
-    pub(super) fn capture_slots_of(&mut self, word: ir::Value) -> (ir::Value, ir::Value) {
+    pub(crate) fn capture_slots_of(&mut self, word: ir::Value) -> (ir::Value, ir::Value) {
         let mask = self.raw_const(Lane::I64, super::super::entry_cell::CAPTURE_ADDRESS_MASK);
         let values = self.raw_binary(Binary::And, word, mask);
         (values, self.raw_binary_imm(Binary::ShiftRightUnsigned, word, i64::from(super::super::entry_cell::CAPTURE_ADDRESS_BITS)))
@@ -367,13 +367,13 @@ impl Lowering<'_, '_> {
 
     /// Whether `instruction` at `pc` loads the callee of a self-call by the scalar entry: its
     /// capture, in the entry or in the body that calls it, or its global binding, in the entry.
-    pub(super) fn is_scalar_callee_load(&self, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_scalar_callee_load(&self, pc: usize, instruction: WideInstruction) -> bool {
         if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::LoadCapture { .. })) { return self.scalar_abi().is_some() && callee_capture(self.unit, self.direct, pc).is_some(); }
         quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::ThrowingNameLoad) && matches!(self.completion, Completion::Scalar(_))
     }
 
     /// The load `is_scalar_callee_load` admits.
-    pub(super) fn scalar_callee_load(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn scalar_callee_load(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::LoadCapture { .. })) { self.scalar_callee_capture(state, pc, instruction) } else { self.scalar_callee(state, pc, instruction) }
     }
 

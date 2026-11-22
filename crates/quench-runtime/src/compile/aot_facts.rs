@@ -35,7 +35,7 @@ use scope::Scope;
 
 /// The facts of one program.
 #[derive(Default)]
-pub(crate) struct AotFacts {
+pub struct AotFacts {
     /// `(function, pc)` of a plain call → the function it always calls.
     pub(crate) call_targets: BTreeMap<(u32, u32), u32>,
     /// `(function, pc)` of a construction (`new`) → the function it always constructs.
@@ -58,7 +58,7 @@ impl AotFacts {
 }
 
 /// The facts of one function.
-pub(crate) struct FunctionFacts<'a> {
+pub struct FunctionFacts<'a> {
     facts: &'a AotFacts,
     function: u32,
 }
@@ -86,7 +86,7 @@ impl<'a> FunctionFacts<'a> {
 }
 
 /// The facts of `program`, or none where the program can add code at run time.
-pub(crate) fn analyze(program: &ResidualProgram) -> AotFacts {
+pub fn analyze(program: &ResidualProgram) -> AotFacts {
     if !gate::closed_world(program) {
         return AotFacts::default();
     }

@@ -33,7 +33,7 @@ use quench_runtime::vm::wasm_gc::stage::HeapStage;
 
 /// The GC operation a callout runs: its tag is the request's low byte (`wasm_stitch_gc.rs`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum GcCall {
+pub(crate) enum GcCall {
     ArrayLength = 0,
     IsNull = 1,
     AsNonNull = 2,
@@ -56,7 +56,7 @@ pub(super) enum GcCall {
 
 impl GcCall {
     /// The request tag of the operation.
-    pub(super) const fn tag(self) -> u64 {
+    pub(crate) const fn tag(self) -> u64 {
         self as u64
     }
 
@@ -135,7 +135,7 @@ fn run(vm: &mut Vm, program: ProgramId, call: GcCall, imm: u32, a: u64, b: u64, 
 /// The GC callout of the b-jit's rows (`CallContext` holds the VM and the program): decodes the
 /// request, runs the operation on the VM's heap, and writes the result to `out`. A trap leaves
 /// through `finish_callout`, as the table callout's does.
-pub(super) unsafe extern "C" fn wasm_gc_callout(
+pub(crate) unsafe extern "C" fn wasm_gc_callout(
     context: *mut CallContext,
     request: u64,
     a: u64,

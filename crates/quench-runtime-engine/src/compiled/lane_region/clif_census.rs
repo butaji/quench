@@ -6,25 +6,25 @@ use std::collections::BTreeMap;
 
 /// The parts of a lowering that no single bytecode op owns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Part { Entry, Edges, Leaves, Exits, Tail }
+pub(crate) enum Part { Entry, Edges, Leaves, Exits, Tail }
 
-pub(super) struct Census {
+pub(crate) struct Census {
     ops: BTreeMap<String, (u32, u32)>,
     parts: BTreeMap<Part, u32>,
     blocks: BTreeMap<String, u32>,
     units: u32,
 }
 
-pub(super) fn enabled() -> bool {
+pub(crate) fn enabled() -> bool {
     quench_runtime::vm::switches::clif_census()
 }
 
 impl Census {
-    pub(super) fn new() -> Option<Self> {
+    pub(crate) fn new() -> Option<Self> {
         enabled().then(|| Self { ops: BTreeMap::new(), parts: BTreeMap::new(), blocks: BTreeMap::new(), units: 0 })
     }
 
-    pub(super) fn op(&mut self, name: impl std::fmt::Debug, emitted: usize) {
+    pub(crate) fn op(&mut self, name: impl std::fmt::Debug, emitted: usize) {
         let entry = self.ops.entry(format!("{name:?}")).or_default();
         entry.0 += 1;
         entry.1 += emitted as u32;
@@ -33,20 +33,20 @@ impl Census {
 
     /// Whether to print the CLIF of this op's lowering: the first few of each op where
     /// `QUENCH_CLIF_CENSUS=sample`.
-    pub(super) fn sample(&self, name: impl std::fmt::Debug) -> bool {
+    pub(crate) fn sample(&self, name: impl std::fmt::Debug) -> bool {
         quench_runtime::vm::switches::clif_census_sample()
             && self.ops.get(&format!("{name:?}")).is_none_or(|(count, _)| *count < 2)
     }
 
-    pub(super) fn blocks(&mut self, name: impl std::fmt::Debug, made: usize) {
+    pub(crate) fn blocks(&mut self, name: impl std::fmt::Debug, made: usize) {
         *self.blocks.entry(format!("{name:?}")).or_default() += made as u32;
     }
 
-    pub(super) fn part(&mut self, part: Part, emitted: usize) {
+    pub(crate) fn part(&mut self, part: Part, emitted: usize) {
         *self.parts.entry(part).or_default() += emitted as u32;
     }
 
-    pub(super) fn report(&self, function: u32, total: usize) {
+    pub(crate) fn report(&self, function: u32, total: usize) {
         let ops: Vec<String> = self.ops.iter().map(|(name, (count, emitted))| format!("\"{name}\":[{count},{emitted}]")).collect();
         let blocks: Vec<String> = self.blocks.iter().map(|(name, made)| format!("\"{name}\":{made}")).collect();
         let parts: Vec<String> = self.parts.iter().map(|(part, emitted)| format!("\"{part:?}\":{emitted}")).collect();

@@ -7,7 +7,7 @@ impl Facts {
     /// The registers written by what the analysis reached and by all that runs past an
     /// instruction it left at, not by a branch it decided (the exact step's code, until the
     /// body enters again).
-    pub(in crate::compiled) fn written(&self, instructions: &[WideInstruction], writes: &dyn Fn(WideInstruction) -> super::Writes, count: usize) -> CompoundBitSet {
+    pub(crate) fn written(&self, instructions: &[WideInstruction], writes: &dyn Fn(WideInstruction) -> super::Writes, count: usize) -> CompoundBitSet {
         let mut left = Vec::new();
         for pc in self.reached.iter().filter(|pc| !instructions[*pc].op().control_flow_layout().jumps()) {
             quench_runtime::bytecode::for_each_instruction_successor(pc, instructions[pc], |next| left.push(next));

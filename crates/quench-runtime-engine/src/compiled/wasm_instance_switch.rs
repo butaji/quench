@@ -21,7 +21,7 @@ impl Emitter<'_, '_> {
     /// The call of the function at index `entry` of the instance at `record`, a row's other
     /// instance: its status jumps to `done`; an instance this artifact cannot call across, or one
     /// whose code table has no body for the function, leaves for `slow`.
-    pub(super) fn foreign_call(
+    pub(crate) fn foreign_call(
         &mut self,
         record: ir::Value,
         entry: ir::Value,

@@ -23,13 +23,13 @@ use quench_runtime::typed_ir::BindingTime;
 
 /// Where a run's completion goes: the block a run leaves at with its status and result word.
 #[derive(Clone, Copy)]
-pub(super) struct Leave {
-    pub(super) block: ir::Block,
+pub(crate) struct Leave {
+    pub(crate) block: ir::Block,
 }
 
 impl Leave {
     /// Leaves with `status`, and with `word` as the result word where a run publishes one.
-    pub(super) fn with(self, builder: &mut FunctionBuilder<'_>, status: ir::Value, word: Option<ir::Value>) {
+    pub(crate) fn with(self, builder: &mut FunctionBuilder<'_>, status: ir::Value, word: Option<ir::Value>) {
         let word = word.unwrap_or_else(|| emit(builder).raw_const(Lane::I64, 0));
         emit(builder).jump(self.block, &[status, word]);
     }
@@ -38,37 +38,37 @@ impl Leave {
 /// What the lowering knows of the call at one record: the callee its site is bound to, the
 /// words the call reads, and the blocks its statuses continue at.
 #[derive(Clone, Copy)]
-pub(super) struct CallSite<'a> {
+pub(crate) struct CallSite<'a> {
     /// The callee a body calls by its entry: one the body owns, or an image's proven callee; `None` where the VM calls.
-    pub(super) callee: Option<DirectSite<'a>>,
+    pub(crate) callee: Option<DirectSite<'a>>,
     /// The record the VM's call reads, and the lane context a body enters with.
-    pub(super) record: u32,
-    pub(super) context: ir::Value,
+    pub(crate) record: u32,
+    pub(crate) context: ir::Value,
     /// The base of the caller's registers, written back for the call.
-    pub(super) registers: ir::Value,
+    pub(crate) registers: ir::Value,
     /// A completed call continues at `completed`, a miss leaves at `missed`, a callee that ended by
     /// an exception (`Vm::lane_raised`) continues at `raised` (`Lowering::raised_call`), and a
     /// leave in a callee, or a termination, reaches `stop` with its status.
-    pub(super) completed: ir::Block,
+    pub(crate) completed: ir::Block,
     /// Where a native return of a callee whose summary types the result continues, with the returned word
     /// as its parameter (`Lowering::typed_completion`); `None` completes at `completed`.
-    pub(super) returned: Option<ir::Block>,
-    pub(super) missed: ir::Block,
-    pub(super) raised: ir::Block,
-    pub(super) stop: ir::Block,
-    pub(super) leave: Leave,
+    pub(crate) returned: Option<ir::Block>,
+    pub(crate) missed: ir::Block,
+    pub(crate) raised: ir::Block,
+    pub(crate) stop: ir::Block,
+    pub(crate) leave: Leave,
     /// A construction whose target's body only initializes `this` (`Function::only_initializes_this_fields`
     /// of an `inline_constructible` function, the facts `dispatch_fast` makes `TARGET_INITIALIZES`), and
     /// the window of arguments it passes in the caller's registers. Its receiver is allocated finished by
     /// `LaneHelper::Construct` (`lane_body_construction`), which is the construction's result; its body is
     /// not entered (`call_enter`), as the VM's own construction does not run it (`initializes()`).
-    pub(super) initializing: Option<(Register, u16)>,
+    pub(crate) initializing: Option<(Register, u16)>,
 }
 
 /// The callee a body calls by its entry: one the body owns (a JIT plan's `DirectCallee`), or a call of an image the
 /// closed world proves, whose run-time words its record holds.
 #[derive(Clone, Copy)]
-pub(super) enum DirectSite<'a> {
+pub(crate) enum DirectSite<'a> {
     Owned(&'a DirectCallee),
     Proven(ProvenCall),
 }
@@ -79,11 +79,11 @@ pub(super) enum DirectSite<'a> {
 /// which the loader binds (`BoundCalls::bind`). Until a binding the record's identity is no callee's, so the identity
 /// guard sends every call to the VM's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::compiled) struct ProvenCall {
-    pub(in crate::compiled) function: u32,
-    pub(in crate::compiled) registers: u16,
-    pub(in crate::compiled) sloppy: bool,
-    pub(in crate::compiled) record: (u32, u32),
+pub(crate) struct ProvenCall {
+    pub(crate) function: u32,
+    pub(crate) registers: u16,
+    pub(crate) sloppy: bool,
+    pub(crate) record: (u32, u32),
 }
 
 impl DirectSite<'_> {
@@ -110,15 +110,15 @@ const CALL_RECORD: Access = Region::EntryCell.readonly();
 /// The record that completes the activation a return ends (`LaneExit::Returned`), and where it
 /// leaves.
 #[derive(Clone, Copy)]
-pub(super) struct ReturnSite {
-    pub(super) record: u32,
-    pub(super) leave: Leave,
+pub(crate) struct ReturnSite {
+    pub(crate) record: u32,
+    pub(crate) leave: Leave,
 }
 
 impl ReturnSite {
     /// Stops with the activation's completion: `value` in the result word, the record in the
     /// dispatch (`LANE_BODY_RETURNED`).
-    pub(super) fn complete(self, builder: &mut FunctionBuilder<'_>, payload: ir::Value, value: ir::Value) {
+    pub(crate) fn complete(self, builder: &mut FunctionBuilder<'_>, payload: ir::Value, value: ir::Value) {
         let record = emit(builder).raw_const(Lane::I64, i64::from(self.record));
         emit(builder).store_u64(Region::Dispatch.mutable(), payload, field(std::mem::offset_of!(JsStepDispatch, head.returned_pc)), record);
         let returned = emit(builder).raw_const(Lane::I32, i64::from(LANE_BODY_RETURNED));
@@ -128,7 +128,7 @@ impl ReturnSite {
 
 /// The site a step of the call family runs for.
 #[derive(Clone, Copy)]
-pub(super) enum Site<'a> {
+pub(crate) enum Site<'a> {
     Call(CallSite<'a>),
     Return(ReturnSite),
 }
@@ -353,7 +353,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             // only, so a call of any other form takes the VM's (its callee is not the record's to check).
             DirectSite::Proven(proven) => {
                 if !matches!(site.callee, quench_runtime::staged::forms::Callee::Register(_)) { return CallEntry::Helper; }
-                (Identity::Guarded(quench_runtime::vm::aot_image::unbound_callee()), proven.sloppy.then(quench_runtime::vm::aot_image::unbound_callee))
+                (Identity::Guarded(crate::aot_image::unbound_callee()), proven.sloppy.then(crate::aot_image::unbound_callee))
             }
         };
         let plan = DirectPlan { kind, identity, sloppy, registers: callee.registers(), returned: LANE_BODY_RETURNED, bound: None };
@@ -525,7 +525,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
 /// Completes the activation with `value` (`Frame::ret`): only a return the lowering made a site
 /// for can.
-pub(super) fn complete_activation(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, value: ir::Value) -> Option<()> {
+pub(crate) fn complete_activation(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, value: ir::Value) -> Option<()> {
     let Some(Site::Return(site)) = frame.site else { return None };
     site.complete(stage.builder, frame.payload, value);
     Some(())

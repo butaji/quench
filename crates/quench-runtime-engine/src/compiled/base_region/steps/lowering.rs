@@ -12,7 +12,7 @@ use quench_runtime::staged::{Operation, Protocol};
 
 /// The most registers a step the helper makes writes: its result, and the `this` a name call
 /// defines beside its callee.
-pub(in crate::compiled::base_region) const STEP_WRITES: usize = 2;
+pub(crate) const STEP_WRITES: usize = 2;
 
 /// Whether `instruction` is made in place by `LaneHelper::Step`: no result flag but a numeric operator's local target,
 /// which the interpreter's step writes to the frame's local slot (`Vm::step`'s `numeric_local_target`) and defines no
@@ -103,7 +103,7 @@ fn fast_right(instruction: WideInstruction, fast: Heap) -> Option<Source> {
 /// Whether a loop region makes `instruction` by its call row (`Step::Call`): a call a body's chain makes
 /// (`callees::chains`) that completes no activation, where the helper table has the region call
 /// helper's address. Any other call leaves, as the rest of the instructions no row takes.
-pub(in crate::compiled::base_region) fn calls_in_place(instruction: WideInstruction, helpers: LaneHelpers) -> bool {
+pub(crate) fn calls_in_place(instruction: WideInstruction, helpers: LaneHelpers) -> bool {
     chains(instruction) && instruction.result_flags() == 0 && call_plan::helper_address(helpers, LaneHelper::RegionCall).is_some()
 }
 
@@ -141,7 +141,7 @@ fn allocates_object(instruction: WideInstruction) -> bool {
 /// it has none (`Step::Guard`); a name store or `typeof` is a call-out where the table has the VM step
 /// helper's address; a fixed-shape object is the allocation step (`allocates_object`); every other instruction, and
 /// every one without the address, leaves (`unplaced`).
-pub(in crate::compiled::base_region) fn lowering(instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Step {
+pub(crate) fn lowering(instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Step {
     let addressed = |helper| call_plan::helper_address(helpers, helper).is_some();
     if addressed(LaneHelper::AllocateStep) && allocates_object(instruction) {
         return Step::Allocate;
@@ -160,7 +160,7 @@ pub(in crate::compiled::base_region) fn lowering(instruction: WideInstruction, k
 
 /// The step of an instruction no row takes: the leave to the interpreter, or where an image body runs generic
 /// rows (`LaneHelpers::generic_rows`) the generic semantic row, which never leaves.
-pub(in crate::compiled::base_region) fn unplaced(helpers: LaneHelpers) -> Step {
+pub(crate) fn unplaced(helpers: LaneHelpers) -> Step {
     if helpers.generic_rows() { Step::Generic } else { Step::Leave }
 }
 
@@ -175,7 +175,7 @@ fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
 /// next instruction, the rest their step. `polls` where a row before it polls the interrupt flag,
 /// as a body's do, so a step that jumps backward may be made in place. A helper step names the register it writes, and a fast
 /// arm the register it reads; an add row also names its transition and the atom it holds unnamed.
-pub(in crate::compiled::base_region) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
+pub(crate) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
     match staged_of(instruction) {
         Some(Operation::Nop) => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {

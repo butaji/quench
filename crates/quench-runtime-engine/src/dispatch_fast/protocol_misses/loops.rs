@@ -3,19 +3,19 @@
 use super::super::*;
 
 /// `f64_sqrt_miss::<ACC_NONE>`.
-pub(in crate::dispatch_fast) const F64_SQRT_NONE: u8 = 0;
+pub(crate) const F64_SQRT_NONE: u8 = 0;
 /// `f64_sqrt_miss::<ACC_A>`.
-pub(in crate::dispatch_fast) const F64_SQRT_A: u8 = 1;
+pub(crate) const F64_SQRT_A: u8 = 1;
 /// `f64_sqrt_miss::<ACC_B>`.
-pub(in crate::dispatch_fast) const F64_SQRT_B: u8 = 2;
+pub(crate) const F64_SQRT_B: u8 = 2;
 /// `f64_sqrt_miss::<ACC_C>`.
-pub(in crate::dispatch_fast) const F64_SQRT_C: u8 = 3;
+pub(crate) const F64_SQRT_C: u8 = 3;
 /// `f64_sqrt_miss::<ACC_PAIR>`.
-pub(in crate::dispatch_fast) const F64_SQRT_PAIR: u8 = 4;
+pub(crate) const F64_SQRT_PAIR: u8 = 4;
 
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row::<OP, ACC, { protocol_family::LOOP | parameters }>`).
-pub(in crate::dispatch_fast) const fn loop_miss_of(parameters: u8) -> Handler {
+pub(crate) const fn loop_miss_of(parameters: u8) -> Handler {
     match parameters {
         F64_SQRT_NONE => f64_sqrt_miss::<ACC_NONE> as Handler,
         F64_SQRT_A => f64_sqrt_miss::<ACC_A> as Handler,

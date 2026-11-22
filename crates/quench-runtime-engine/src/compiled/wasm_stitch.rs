@@ -404,11 +404,11 @@ const ENTRY_ZEROED: [&str; 5] = ["entry_wasm_p0", "entry_wasm_p1", "entry_wasm_p
 /// The same, for an entry with no registers after its arguments.
 const ENTRY_UNZEROED: [&str; 5] = ["entry_wasm_p0_nz", "entry_wasm_p1_nz", "entry_wasm_p2_nz", "entry_wasm_p3_nz", "entry_wasm_p4_nz"];
 
-pub(super) use quench_runtime::vm::engine_types::World;
+pub(crate) use quench_runtime::vm::engine_types::World;
 
-pub(super) use quench_runtime::vm::engine_types::IndirectSite;
+pub(crate) use quench_runtime::vm::engine_types::IndirectSite;
 
-pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
+pub(crate) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
     let instructions: Vec<WideInstruction> =
         function.code.iter().map(|packed| function.widened(*packed)).collect();
     let mut planned = Vec::with_capacity(instructions.len());
@@ -501,28 +501,28 @@ fn patch_routine(routine: &Stencil, code: &mut [u8], holes: &[u64; HOLES], rows_
 }
 
 #[path = "wasm_stitch_memory.rs"]
-mod wasm_stitch_memory;
+pub(crate) mod wasm_stitch_memory;
 use self::wasm_stitch_memory::bulk;
 #[path = "wasm_stitch_global.rs"]
-mod wasm_stitch_global;
+pub(crate) mod wasm_stitch_global;
 #[path = "wasm_stitch_table.rs"]
-mod wasm_stitch_table;
+pub(crate) mod wasm_stitch_table;
 #[path = "wasm_stitch_gc.rs"]
-mod wasm_stitch_gc;
+pub(crate) mod wasm_stitch_gc;
 #[path = "wasm_stitch_roots.rs"]
-mod wasm_stitch_roots;
+pub(crate) mod wasm_stitch_roots;
 #[path = "wasm_stitch_simd.rs"]
-mod wasm_stitch_simd;
+pub(crate) mod wasm_stitch_simd;
 #[path = "wasm_stitch_simd_more.rs"]
-mod wasm_stitch_simd_more;
+pub(crate) mod wasm_stitch_simd_more;
 #[path = "wasm_stitch_tail.rs"]
-mod wasm_stitch_tail;
+pub(crate) mod wasm_stitch_tail;
 #[path = "wasm_stitch_instance.rs"]
-mod wasm_stitch_instance;
+pub(crate) mod wasm_stitch_instance;
 use self::wasm_stitch_instance::instance_op;
 #[path = "wasm_stitch_indirect.rs"]
-pub(super) mod indirect;
+pub(crate) mod indirect;
 
 #[cfg(test)]
 #[path = "wasm_stitch_tests.rs"]
-mod tests;
+pub(crate) mod tests;

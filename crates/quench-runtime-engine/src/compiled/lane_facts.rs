@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 /// The unit PCs of a previous body's leaves: the specialization's feedback. Only the table's
 /// places are read here, so no leave's stored values are asked for.
-pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
+pub(crate) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
     let exits = ExitTable::of_unit(unit, |_, _| Vec::new());
     generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc as usize)).collect()
 }
@@ -16,7 +16,7 @@ pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<u
 /// callees binds every candidate the unit does not inline, in the order the candidates list them
 /// (a chain of identity tests takes them, `Lowering::polymorphic_call`); a construction binds only
 /// the first, and a site whose candidates are all inlined binds the first of them.
-pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
+pub(crate) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
     -> (Box<[DirectCallee]>, BTreeMap<usize, Vec<*const DirectCallee>>) {
     let chosen: Vec<(usize, Vec<DirectCallee>)> = unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::Call) || quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::Construct))
@@ -48,26 +48,26 @@ pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidat
 
 /// The unit PC a running loop enters at: its `header`'s own instruction; `Some(None)` for a
 /// body that starts at its first, `None` where the unit has no such instruction.
-pub(super) fn entry_pc(unit: &lane_unit::Unit, header: Option<u32>) -> Option<Option<usize>> {
+pub(crate) fn entry_pc(unit: &lane_unit::Unit, header: Option<u32>) -> Option<Option<usize>> {
     let Some(header) = header else { return Some(None) };
     unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header)).map(Some)
 }
 
 /// Whether a function is pure numeric, observing neither closure environment nor identity.
-pub(super) fn numeric_callee(program: &ResidualProgram, function: u32) -> bool {
+pub(crate) fn numeric_callee(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body| body.plain_activation(program))
         && numeric_restartable(program, function)
 }
 
 /// Whether a callee bound by its definition restarts its call on a leave, as a pure numeric
 /// function does.
-pub(super) fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
+pub(crate) fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body|
         lane_region::restartable_numeric_function(program, body, body.instructions()))
 }
 
 /// `targets`, each once, in first-seen order.
-pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
+pub(crate) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
     let mut kept = 0;
     for index in 0..targets.len() {
         let target = targets[index];
@@ -78,7 +78,7 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
 }
 
 /// Whether `code` jumps backward: it has a loop, whose iterations repay any entry.
-pub(super) fn closes_loop(code: &[quench_runtime::bytecode::WideInstruction]) -> bool {
+pub(crate) fn closes_loop(code: &[quench_runtime::bytecode::WideInstruction]) -> bool {
     code.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc)
 }
@@ -89,7 +89,7 @@ pub(super) fn closes_loop(code: &[quench_runtime::bytecode::WideInstruction]) ->
 /// leaf never pays: a loop, an inlined call, a call of itself (its recursion runs natively inside
 /// the entry), or length (`Tiers::amortizing_instructions`, which counts the inlined callees'
 /// instructions too, as they are in `unit.instructions`).
-pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
+pub(crate) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
 }
 
@@ -99,7 +99,7 @@ use tier_policy::RECURSION_DEPTH;
 /// (`targets`), each within `RECURSION_DEPTH` calls of it: `function` itself where it recurses
 /// directly, and the other members of a mutual recursion (`f` calling `g` calling `f`). Empty
 /// where `function` does not recurse.
-pub(super) fn recursion_cycle(program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> std::collections::BTreeSet<u32> {
+pub(crate) fn recursion_cycle(program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> std::collections::BTreeSet<u32> {
     let callees = |caller: u32| -> Vec<u32> {
         let Some(body) = program.function_get(caller as usize) else { return Vec::new() };
         (0..body.code.len() as u32).flat_map(|pc| targets(caller, pc)).map(|target| target.function).collect()
@@ -140,7 +140,7 @@ fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
 /// planned from, its field proofs and its direct callees. Equal keys make equal code.
-pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
+pub(crate) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
     direct: usize, generic: &[LaneExit], entry: Option<u32>, budget: usize,
     arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> u64 {
     use std::fmt::Write;
@@ -181,7 +181,7 @@ impl std::fmt::Write for Fnv {
 /// Whether the tier model admits compiling `function`'s body for the `entries` it has made
 /// (`tier_model::admits`), its plan charged too where `unplanned`: the gate every lane-body
 /// compile request passes.
-pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &crate::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> super::tier_model::Pick {
+pub(crate) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &crate::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> super::tier_model::Pick {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
     super::tier_model::decide(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, unplanned, diagnostics)
 }
@@ -203,16 +203,16 @@ pub(crate) fn bind_callees(direct: &[DirectCallee], caller: &crate::dispatch_fas
 }
 
 /// What a lane compile reports under `QUENCH_TRACE=js-jit` (`QUENCH_LANE_COMPILE`).
-pub(super) struct Census {
-    pub(super) function: u32, pub(super) osr: bool, pub(super) unit: usize, pub(super) ir: usize, pub(super) key: u64,
-    pub(super) generic: usize, pub(super) direct: usize, pub(super) budget: usize, pub(super) observed: Option<u32>, pub(super) closed: bool,
+pub(crate) struct Census {
+    pub(crate) function: u32, pub(crate) osr: bool, pub(crate) unit: usize, pub(crate) ir: usize, pub(crate) key: u64,
+    pub(crate) generic: usize, pub(crate) direct: usize, pub(crate) budget: usize, pub(crate) observed: Option<u32>, pub(crate) closed: bool,
     /// The planning, proofs and lowering on the VM's own thread, which the background `us`
     /// excludes and the measured window pays.
-    pub(super) plan_us: u64,
+    pub(crate) plan_us: u64,
 }
 
 impl Census {
-    pub(super) fn report(&self, took: std::time::Duration, bytes: usize) -> String {
+    pub(crate) fn report(&self, took: std::time::Duration, bytes: usize) -> String {
         let Self { function, osr, unit, ir, key, generic, direct, budget, observed, closed, plan_us } = self;
         format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{bytes},\"plan_us\":{plan_us}}}",
             observed.map_or(-1, i64::from), took.as_micros())
@@ -222,7 +222,7 @@ impl Census {
 /// Whether every call of a unit that has run is direct (`LaneMethod::closed`). A call that
 /// recorded no callee has not run; where it first does it leaves, as any helper call does
 /// under a direct caller's frames.
-pub(super) fn unit_closed(unit: &lane_unit::Unit, function: u32, direct: impl Fn(usize) -> bool,
+pub(crate) fn unit_closed(unit: &lane_unit::Unit, function: u32, direct: impl Fn(usize) -> bool,
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> bool {
     unit.instructions.iter().enumerate().all(|(pc, instruction)| !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Call)
         || direct(pc)

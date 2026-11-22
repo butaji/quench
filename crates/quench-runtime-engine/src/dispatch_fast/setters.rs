@@ -14,7 +14,7 @@ fn setter_site_bit(site: usize) -> (usize, u64) {
 
 /// Whether a general store called a setter at the site at cache index `site`.
 #[inline(always)]
-pub(super) fn met_setter(stack: &LaneStack, site: usize) -> bool {
+pub(crate) fn met_setter(stack: &LaneStack, site: usize) -> bool {
     let (word, bit) = setter_site_bit(site);
     stack.setter_sites.get(word).is_some_and(|bits| bits & bit != 0)
 }
@@ -24,7 +24,7 @@ pub(super) fn met_setter(stack: &LaneStack, site: usize) -> bool {
 /// (`Vm::set_field_uncached`): an ordinary object's own or inherited accessor, with no proxy
 /// up its chain to mediate an inherited one, which the site then caches. `None` for any other
 /// store, a private name's among them.
-pub(super) fn stored_setter(vm: &mut Vm, object: Value, atom: quench_runtime::bytecode::Atom, site: usize) -> Option<Value> {
+pub(crate) fn stored_setter(vm: &mut Vm, object: Value, atom: quench_runtime::bytecode::Atom, site: usize) -> Option<Value> {
     if let Some((_, setter)) = vm.cached_field_accessor(object, atom, site) {
         return setter;
     }
@@ -45,7 +45,7 @@ pub(super) fn stored_setter(vm: &mut Vm, object: Value, atom: quench_runtime::by
 /// (`Completion::Assigns`). `None`, before any effect, leaves any other store to its path;
 /// an activation the lane has no room for exits at the record, where the general path makes
 /// the call.
-pub(super) fn lane_store_setter(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
+pub(crate) fn lane_store_setter(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let site = vm.field_cache_index(i.c);
     if !met_setter(&vm.lane_stack, site) {
@@ -149,7 +149,7 @@ fn trivial_setter_store(vm: &Vm, target: &ScriptCallTarget, object: Value) -> Se
 /// its returned object, otherwise the receiver it allocated; a setter's store
 /// (`Completion::Assigns`) the value stored, which the caller's register still holds.
 #[inline(always)]
-pub(super) fn completed_value(vm: &Vm, frame: &ActivationView, completion: Completion, this: Value, value: Value) -> Value {
+pub(crate) fn completed_value(vm: &Vm, frame: &ActivationView, completion: Completion, this: Value, value: Value) -> Value {
     match completion {
         // The construct family's completion row (`staged::call_construct::construct_value`).
         completion if completion.constructs() =>
@@ -165,7 +165,7 @@ pub(super) fn completed_value(vm: &Vm, frame: &ActivationView, completion: Compl
 /// steps an array: a setter's store keeps yielding the value stored, a proxy trap's access
 /// owes its target's invariants (its side record's `payload`), and a generator's step its iterator
 /// result, which a delegate's step makes fresh.
-pub(super) fn frame_completion(completion: Option<Completion>, payload: SidePayload) -> CallCompletion {
+pub(crate) fn frame_completion(completion: Option<Completion>, payload: SidePayload) -> CallCompletion {
     match completion {
         Some(Completion::Assigns) => CallCompletion::Assigned,
         Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(payload.trap()),
@@ -207,4 +207,4 @@ impl Vm {
 
 #[cfg(test)]
 #[path = "../setter_tests.rs"]
-mod tests;
+pub(crate) mod tests;

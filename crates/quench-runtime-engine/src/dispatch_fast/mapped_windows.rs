@@ -20,7 +20,7 @@ impl Vm {
     /// Records the depth of the window activation just pushed at `depth` on the `arguments`
     /// object its window holds, where an element's write finds its parameter
     /// (`LaneStack::window_parameter`).
-    pub(super) fn record_window_owner(&mut self, code: &ResidualProgram, depth: usize) {
+    pub(crate) fn record_window_owner(&mut self, code: &ResidualProgram, depth: usize) {
         let Some((body, entries)) = self.lane_stack.window_at(code, depth) else {
             return;
         };

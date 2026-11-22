@@ -5,7 +5,7 @@
 use super::*;
 
 /// Which rows control reaches from row 0; an error where one falls off the program's end.
-pub(super) fn reachable(span: &Span, decoded: &[Decoded]) -> Result<Bits, String> {
+pub(crate) fn reachable(span: &Span, decoded: &[Decoded]) -> Result<Bits, String> {
     let count = decoded.len();
     let (mut reached, mut pending) = (Bits::default(), vec![0]);
     while let Some(k) = pending.pop() {
@@ -24,19 +24,19 @@ pub(super) fn reachable(span: &Span, decoded: &[Decoded]) -> Result<Bits, String
 }
 
 /// A row that leaves at `pc` unless the frame slot at byte offset `slot` holds a Number.
-pub(super) fn number_guard(pc: u32, slot: u64) -> Result<Planned, String> {
+pub(crate) fn number_guard(pc: u32, slot: u64) -> Result<Planned, String> {
     Ok(Planned { stop: Some(Stop { pc, returns: None }), ..Planned::single(control(Kind::Guard)?, padded_holes([0, slot]), None, None) })
 }
 
 /// A row that leaves at `pc` once the invalidation word at `address` is set (`Heap::Live`): a Stable
 /// fact the code holds changed under a call, so the interpreter makes the instruction.
-pub(super) fn live_guard(pc: u32, address: usize) -> Result<Planned, String> {
+pub(crate) fn live_guard(pc: u32, address: usize) -> Result<Planned, String> {
     let row = HeapRow { heap: Heap::Live, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     Ok(Planned::single(base_rows::stencil(row)?, padded_holes([0, address as u64]), None, Some(pc)))
 }
 
 /// A row that leaves at `pc` when an interrupt is requested, and continues.
-pub(super) fn poll_row(pc: u32) -> Result<Planned, String> {
+pub(crate) fn poll_row(pc: u32) -> Result<Planned, String> {
     let interrupt = std::mem::offset_of!(super::super::super::CallContext, head.interrupt) as u64;
     let attention = quench_runtime::execution_interrupt::attention_address();
     Ok(Planned::single(control(Kind::Poll)?, padded_holes([interrupt, 0, 0, attention]), None, Some(pc)))
@@ -48,7 +48,7 @@ pub(super) fn poll_row(pc: u32) -> Result<Planned, String> {
 /// callee are not proved), and the poll a conditional branch back takes (an unconditional one is its
 /// own `JumpWatch`), so no loop a function runs goes unwatched; a region's own jumps count and poll
 /// (`JumpPoll`).
-pub(super) fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, String> {
+pub(crate) fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, String> {
     let (place, slot) = operand(&layout.homes, row.a);
     let body = layout.ending == Ending::Body;
     let mut before = Vec::new();
@@ -71,7 +71,7 @@ pub(super) fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Pl
 /// Whether the register a heap row reads its array, object or callee through is held in its frame
 /// slot, where the row reads it: a pinned register holds a Number, never one of those, and its
 /// slot is not kept current.
-pub(super) fn framed(homes: &Homes, row: &Decoded) -> bool {
+pub(crate) fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
         Some(Heap::Store | Heap::TypedStore(_) | Heap::SiteStore) => row.base,
         Some(Heap::Index | Heap::TypedIndex(_) | Heap::TypedLength | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity | Heap::CharCodeAt | Heap::ParseInt) => row.a.and_then(register_of),
@@ -81,14 +81,14 @@ pub(super) fn framed(homes: &Homes, row: &Decoded) -> bool {
 }
 
 /// Whether the row leaves the body: a leave step, or a heap row whose array is not in its frame slot.
-pub(super) fn leaves(layout: &Layout, row: &Decoded) -> bool {
+pub(crate) fn leaves(layout: &Layout, row: &Decoded) -> bool {
     row.step == Some(Step::Leave) || !framed(&layout.homes, row)
 }
 
 /// The caller records that run as the generic semantic row (`steps::generic_row`), ascending: under
 /// `LaneHelpers::Ahead`, every reached row that is a `Step::Generic`, would leave (`leaves`) or guards
 /// (`Step::Guard`, whose miss is that row); elsewhere the rows that leave, where the interpreter runs them.
-pub(super) fn generic_records(layout: &Layout, decoded: &[Decoded], reached: &Bits, helpers: LaneHelpers) -> Box<[u32]> {
+pub(crate) fn generic_records(layout: &Layout, decoded: &[Decoded], reached: &Bits, helpers: LaneHelpers) -> Box<[u32]> {
     let ahead = helpers.generic_rows();
     let generic = |row: &Decoded| match row.step {
         Some(Step::Generic | Step::Guard(_)) => ahead,
@@ -111,7 +111,7 @@ pub(super) fn generic_records(layout: &Layout, decoded: &[Decoded], reached: &Bi
 /// (`quench-gate --only ir-budget`: call_direct, call_closure, k03_call_add) holds the call protocol
 /// at most the interpreter's. A fast arm's slow arm (`Step::Fast`), a throw and a leave are off the
 /// loop's steady path.
-pub(super) fn interprets(row: &Decoded) -> bool {
+pub(crate) fn interprets(row: &Decoded) -> bool {
     match row.step {
         Some(Step::Helper) => row.packed.is_none(),
         Some(Step::CallOut | Step::Generic) => true,
@@ -121,7 +121,7 @@ pub(super) fn interprets(row: &Decoded) -> bool {
 
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the
 /// rows before it its kind needs.
-pub(super) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), rows: &[Decoded], reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
+pub(crate) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), rows: &[Decoded], reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
     if !reached {
         return Ok(skipped());
     }

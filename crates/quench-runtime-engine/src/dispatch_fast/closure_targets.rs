@@ -8,7 +8,7 @@ impl Vm {
     /// program, unless `framed` (across programs, or numeric), under a host that observes no
     /// promise lifecycle; and whether they would settle from an environment activation
     /// (`settles_in_environment`).
-    pub(super) fn settling_calls(&self, body: &quench_runtime::bytecode::Function, plan: &quench_runtime::bytecode::CallPlan, framed: bool) -> (bool, bool) {
+    pub(crate) fn settling_calls(&self, body: &quench_runtime::bytecode::Function, plan: &quench_runtime::bytecode::CallPlan, framed: bool) -> (bool, bool) {
         let may_settle = !framed && !self.host.observes_promise_lifecycle();
         (may_settle, may_settle && settles_in_environment(body, plan))
     }
@@ -17,7 +17,7 @@ impl Vm {
     /// eval code once a `with` statement was entered, whose frame takes the chain its environment
     /// captured (`Vm::captured_with_objects_for_function`), which a lane activation does not
     /// push; its calls take the general path's frame (`frame_call_in_lane`).
-    pub(super) fn user_target_in_lane(&self, callee: Value) -> Option<(ProgramId, u32, Value)> {
+    pub(crate) fn user_target_in_lane(&self, callee: Value) -> Option<(ProgramId, u32, Value)> {
         let target = self.same_realm_user_target(callee)?;
         let takes_with_chain = self.with_scope_entered
             && self.programs.residual(target.0).is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Eval);
@@ -25,7 +25,7 @@ impl Vm {
     }
 
     /// `known`, a function's target, for its closure `callee` of `env`: only the closure's facts read.
-    pub(super) fn closure_target(&mut self, code: &ResidualProgram, program: ProgramId, callee: Value, env: Value,
+    pub(crate) fn closure_target(&mut self, code: &ResidualProgram, program: ProgramId, callee: Value, env: Value,
         known: ScriptCallTarget) -> Option<ScriptCallTarget> {
         let capture = if known.view.is_null() { std::ptr::null() } else { self.target_capture(code, program, env) };
         // An arrow's `this` is its own closure's environment's, like `capture`.
@@ -47,7 +47,7 @@ impl Vm {
     /// `callee`'s own set, where every lookup finds it.
     #[cold]
     #[inline(never)]
-    pub(super) fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
+    pub(crate) fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let entry = *self.lane_stack.script_targets.entries.get(linked)?;
         if !entry.admission.admits(self.lane_stack.admission) {
             return None;
@@ -75,7 +75,7 @@ impl Vm {
     /// function's enclosing one in the running program, so the site's entry for that function
     /// turns to it with only its environment's storage read.
     #[inline(never)]
-    pub(super) fn relink_known_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
+    pub(crate) fn relink_known_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let (function, env) = callee.as_known_closure()?;
         let entry = self.lane_stack.script_targets.entries.get(linked)?;
         if !entry.admission.admits(self.lane_stack.admission)
@@ -167,7 +167,7 @@ impl Vm {
 /// The entry a call of `body` takes, whose resolution `shape` records: settling, an environment
 /// activation, a gather of rest parameters or a keeping of the arguments take their own, a class
 /// constructor its first resolution's, and any other the activation or leaf its shape allows.
-pub(super) fn target_entry(body: &quench_runtime::bytecode::Function, plan: &quench_runtime::bytecode::CallPlan, shape: &TargetBody, (settles, environment, cross): (bool, bool, bool)) -> CallEntry {
+pub(crate) fn target_entry(body: &quench_runtime::bytecode::Function, plan: &quench_runtime::bytecode::CallPlan, shape: &TargetBody, (settles, environment, cross): (bool, bool, bool)) -> CallEntry {
     if settles {
         CallEntry::Settles
     } else if body.is_class_constructor {
@@ -194,7 +194,7 @@ pub(super) fn target_entry(body: &quench_runtime::bytecode::Function, plan: &que
 /// activation lays out an ordinary body (`CallPlan::environment_activation`): each parameter a
 /// frame local, every register starting `undefined`. Its `await` suspends it in place, its frame
 /// taking the window's environment (`generator_yields::suspend_settling`).
-pub(super) fn settles_in_environment(body: &quench_runtime::bytecode::Function, plan: &quench_runtime::bytecode::CallPlan) -> bool {
+pub(crate) fn settles_in_environment(body: &quench_runtime::bytecode::Function, plan: &quench_runtime::bytecode::CallPlan) -> bool {
     body.is_async
         && !body.is_generator
         && !body.is_class_constructor

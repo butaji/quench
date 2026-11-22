@@ -13,31 +13,31 @@ use quench_runtime::vm::operations::NumberRelation;
 /// The abstract state of a run at one point: the registers' types (a range is a type), and the
 /// length relations a unit-proving run tracks beside them.
 #[derive(Clone)]
-pub(in crate::compiled) struct Point {
-    pub(super) types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
-    pub(super) relations: Relations,
+pub(crate) struct Point {
+    pub(crate) types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
+    pub(crate) relations: Relations,
 }
 
 /// The unit a run proves the ranges of: its inlined frames, whose arguments the markers pass,
 /// and the element accesses whose index it bounds.
 #[derive(Clone, Copy)]
-pub(in crate::compiled) struct Model<'a> {
-    pub(in crate::compiled) program: &'a ResidualProgram,
-    pub(in crate::compiled) unit: &'a super::super::lane_unit::Unit,
+pub(crate) struct Model<'a> {
+    pub(crate) program: &'a ResidualProgram,
+    pub(crate) unit: &'a super::super::lane_unit::Unit,
     /// The PCs a previous body left at (`Lowering::generic`): their rows are unknown, and their
     /// instructions run guest code.
-    pub(in crate::compiled) generic: &'a [usize],
+    pub(crate) generic: &'a [usize],
     /// Whether the element access at a PC reads or writes a hoisted view, whose miss leaves the
     /// body (`Lowering::hoisted_access`).
-    pub(in crate::compiled) dense: &'a dyn Fn(usize) -> bool,
+    pub(crate) dense: &'a dyn Fn(usize) -> bool,
     /// What the access at a PC does through a hoisted typed view (`Lowering::typed_access`), where it is
     /// one that runs no guest code and changes no array's length (`TypedAccess`).
-    pub(in crate::compiled) typed: &'a dyn Fn(usize) -> Option<TypedAccess>,
+    pub(crate) typed: &'a dyn Fn(usize) -> Option<TypedAccess>,
 }
 
 /// An instruction on a hoisted typed view whose effect on lengths is known (`Model::typed`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(in crate::compiled) enum TypedAccess {
+pub(crate) enum TypedAccess {
     /// A `length` read of a register's typed array, which the view answers natively.
     Length,
     /// An element store through a typed or double view: it changes no length, and runs guest
@@ -47,45 +47,45 @@ pub(in crate::compiled) enum TypedAccess {
 
 /// What a run assumes beyond the program text.
 #[derive(Clone, Copy)]
-pub(in crate::compiled) struct Seeds<'a> {
+pub(crate) struct Seeds<'a> {
     /// The guarded block input contracts the fixed point keeps.
-    pub(in crate::compiled) contracts: &'a [Contract],
+    pub(crate) contracts: &'a [Contract],
     /// The element reads observed or known to hold integers or Numbers.
-    pub(in crate::compiled) observed: Observed<'a>,
+    pub(crate) observed: Observed<'a>,
     /// The registers the entry guards to a range narrower than int32 (`Lowering::guard_entering_ranges`).
-    pub(in crate::compiled) entering: &'a [(Register, IntRange)],
+    pub(crate) entering: &'a [(Register, IntRange)],
     /// The unit the run proves ranges of; a type-only run has none and tracks no relations.
-    pub(in crate::compiled) model: Option<Model<'a>>,
+    pub(crate) model: Option<Model<'a>>,
     /// The PCs (ascending) of the products no consumer reads the sign of a zero of
     /// (`Lowering::signless_products`): where operands of ranges make a negative zero possible,
     /// the result is still an integer of their product's range.
-    pub(in crate::compiled) signless: &'a [usize],
+    pub(crate) signless: &'a [usize],
 }
 
 impl<'a> Seeds<'a> {
     /// A type-only run that takes `observed` reads and no contract.
-    pub(in crate::compiled) fn observing(observed: Observed<'a>) -> Self {
+    pub(crate) fn observing(observed: Observed<'a>) -> Self {
         Self { contracts: &[], observed, entering: &[], model: None, signless: &[] }
     }
 }
 
 /// The program text a run reads.
-pub(in crate::compiled) struct Text<'a> {
-    pub(in crate::compiled) entry: usize,
-    pub(in crate::compiled) instructions: &'a [WideInstruction],
-    pub(in crate::compiled) leaders: &'a CompoundBitSet,
-    pub(in crate::compiled) constants: &'a [Constant],
-    pub(in crate::compiled) written: &'a dyn Fn(WideInstruction) -> super::Writes,
-    pub(in crate::compiled) own_shape: &'a dyn Fn(usize) -> Option<(Register, u32)>,
-    pub(in crate::compiled) native_calls: bool,
+pub(crate) struct Text<'a> {
+    pub(crate) entry: usize,
+    pub(crate) instructions: &'a [WideInstruction],
+    pub(crate) leaders: &'a CompoundBitSet,
+    pub(crate) constants: &'a [Constant],
+    pub(crate) written: &'a dyn Fn(WideInstruction) -> super::Writes,
+    pub(crate) own_shape: &'a dyn Fn(usize) -> Option<(Register, u32)>,
+    pub(crate) native_calls: bool,
     /// The exception edges native code takes (`lane_region::catches`), ascending by PC.
-    pub(in crate::compiled) raises: &'a [Raise],
+    pub(crate) raises: &'a [Raise],
 }
 
 /// An exception edge: the raising instruction's PC, its handler's block and the register the
 /// handler binds the thrown value to, if any. The handler is entered in the state before the
 /// instruction, a call's register untouched, with the bound register holding any value.
-pub(in crate::compiled) type Raise = (usize, usize, Option<Register>);
+pub(crate) type Raise = (usize, usize, Option<Register>);
 
 impl Point {
     /// The state at the entry: the checked inputs, an int32 one taking the range the entry
@@ -116,28 +116,28 @@ impl Point {
 
     /// Whether the int32 arithmetic or step of `instruction` is exact in int32 here, whatever
     /// int32 operands reach it.
-    pub(in crate::compiled) fn overflow_free(&self, constants: &[Constant], instruction: WideInstruction) -> bool {
+    pub(crate) fn overflow_free(&self, constants: &[Constant], instruction: WideInstruction) -> bool {
         ranges::exact(&ranges::lookup(&self.types, constants), instruction).is_some_and(|range| range.fits_int32())
     }
 
     /// Whether `register` holds a Number at this point on every path into it (`Type::NUMBER`).
-    pub(in crate::compiled) fn holds_number(&self, register: Register) -> bool {
+    pub(crate) fn holds_number(&self, register: Register) -> bool {
         self.types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER))
     }
 
     /// Whether `register` holds an int32 at this point on every path into it (`Type::INT32`).
-    pub(in crate::compiled) fn holds_int32(&self, register: Register) -> bool {
+    pub(crate) fn holds_int32(&self, register: Register) -> bool {
         self.types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::INT32))
     }
 
     /// The range of the result of the arithmetic of `instruction` where it leaves int32 but is
     /// an integer Number of `IntRange::WORD` (`ranges::index_range`).
-    pub(in crate::compiled) fn index_range(&self, constants: &[Constant], instruction: WideInstruction, signless: bool) -> Option<IntRange> {
+    pub(crate) fn index_range(&self, constants: &[Constant], instruction: WideInstruction, signless: bool) -> Option<IntRange> {
         ranges::index_range(&ranges::lookup(&self.types, constants), instruction, signless)
     }
 
     /// Whether the product of `instruction` is no negative zero, whatever operands reach it.
-    pub(in crate::compiled) fn zero_free(&self, constants: &[Constant], instruction: WideInstruction) -> bool {
+    pub(crate) fn zero_free(&self, constants: &[Constant], instruction: WideInstruction) -> bool {
         ranges::zero_free(&ranges::lookup(&self.types, constants), instruction)
     }
 }
@@ -196,7 +196,7 @@ fn run_block(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, leader: usize
 impl Facts {
     /// Each reachable block replayed from its row, as the fixed point ran it: `visit` sees the
     /// state before each instruction.
-    pub(in crate::compiled) fn replay(&self, text: &Text<'_>, seeds: Seeds<'_>, mut visit: impl FnMut(usize, &Point)) {
+    pub(crate) fn replay(&self, text: &Text<'_>, seeds: Seeds<'_>, mut visit: impl FnMut(usize, &Point)) {
         for start in (0..text.instructions.len()).filter(|pc| self.at(*pc).is_some()) {
             let mut point = self.point_at(start);
             run_block(&mut point, text, seeds, start, &mut visit);
@@ -205,7 +205,7 @@ impl Facts {
 }
 
 /// The fixpoint of `transfer` over the CFG, seeded by checked region-entry facts.
-pub(in crate::compiled) fn analyze(entry: usize, initial: &[Type], instructions: &[WideInstruction],
+pub(crate) fn analyze(entry: usize, initial: &[Type], instructions: &[WideInstruction],
     leaders: &CompoundBitSet, constants: &[Constant], written: &dyn Fn(WideInstruction) -> super::Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], seeds: Seeds<'_>) -> Facts {
     analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls, raises }, initial, seeds)
@@ -422,7 +422,7 @@ fn heads(text: &Text<'_>) -> Vec<usize> {
 }
 
 /// `analyze` over `text`.
-pub(in crate::compiled) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) -> Facts {
+pub(crate) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) -> Facts {
     let length = text.instructions.len();
     let heads = heads(text);
     let blocks = heads.len();

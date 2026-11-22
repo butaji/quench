@@ -11,7 +11,7 @@ use crate::bytecode::{Class, Op, WideInstruction};
 /// The table, element-segment, data-segment and memory-init operations a function body runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub(crate) enum TableOp {
+pub enum TableOp {
     /// `a = table.size b`.
     Size,
     /// `a = table.get b[c]`: the reference bits of the element.

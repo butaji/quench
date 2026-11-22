@@ -9,7 +9,7 @@ use std::mem::size_of_val;
 /// need: most functions use fewer than 64 registers, so their masks take half the space
 /// (V8-v7 RegExp: 95 KiB of masks at its heap's peak, all within 64 registers).
 #[derive(Clone, Debug)]
-pub(crate) enum RegisterMasks {
+pub enum RegisterMasks {
     Narrow(Box<[u64]>),
     Half(Box<[u128]>),
     Wide(Box<[RegisterSet]>),

@@ -16,7 +16,7 @@ fn method_call(sites: &Sites, pc: u32, instruction: WideInstruction, returning: 
 /// catches natively (`throws::caught`), a call of a form no stitch plans (`Sites::plans`: the
 /// construct and stepped forms, the call planner's chain), else what the loop regions' decode covers
 /// (a leave where nothing does).
-pub(super) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction, returning): (WideInstruction, bool), (facts, helpers): (Facts, LaneHelpers)) -> Decoded {
+pub(crate) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction, returning): (WideInstruction, bool), (facts, helpers): (Facts, LaneHelpers)) -> Decoded {
     let plain = instruction.result_flags() == 0;
     if instruction.op().raises() && let Some(caught) = throws::caught(sites.function, (pc, sites.registers), instruction) {
         return caught;
@@ -36,13 +36,13 @@ pub(super) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction,
 /// Whether the row is a fast arm of its instruction: a fast step, a constant written as it is, the value a Stable
 /// fact folded (`Decoded::folded`), or a global lexical binding's word read or written in place.
 #[cfg(test)]
-pub(super) fn is_fast(row: &Decoded) -> bool {
+pub(crate) fn is_fast(row: &Decoded) -> bool {
     matches!(row.step, Some(Step::Fast(_) | Step::Guard(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some() || row.lexical.is_some()
 }
 
 /// Whether a row may be followed by the completion of the activation with its result: it falls
 /// through to what follows it, and writes the register the completion reads.
-pub(super) fn completable(row: &Decoded) -> bool {
+pub(crate) fn completable(row: &Decoded) -> bool {
     row.dst.is_some() && row.target.is_none() && row.step.is_none_or(|step| matches!(step, Step::Helper | Step::Allocate | Step::Fast(_) | Step::Call(_)))
 }
 
@@ -51,7 +51,7 @@ impl Sites<'_> {
     /// `callees::chains` admits (a returning one with its completion); a region makes the plain calls
     /// it can run in place (`calls_in_place`), which complete no activation. The other forms are rows
     /// of their own (`lowered`).
-    pub(super) fn plans(&self, instruction: WideInstruction, helpers: LaneHelpers) -> bool {
+    pub(crate) fn plans(&self, instruction: WideInstruction, helpers: LaneHelpers) -> bool {
         match self.ending {
             Ending::Body => chains(instruction),
             Ending::Region => calls_in_place(instruction, helpers),
@@ -61,7 +61,7 @@ impl Sites<'_> {
 
 /// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
 /// of an `instanceof` or `in` jump (`sites::compare_jump`). A region reads its entry record, and leaves it to `cover`.
-pub(super) fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> Option<Vec<What>> {
+pub(crate) fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> Option<Vec<What>> {
     (sites.ending == Ending::Body && sites.scratch < quench_runtime::bytecode::REGISTER_MASK).then_some(())?;
     let rows = compare_jump(sites.known, pc, instruction, sites.scratch)?;
     #[cfg(test)]
@@ -71,7 +71,7 @@ pub(super) fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> 
 
 /// The registers the rows name above the function's own `registers`: the scratch the rows of `expanded` write, and inlined windows, whose
 /// frame slots the body's recovery room covers (`LaneRecoverySpace::reaching`).
-pub(super) fn scratch(rows: &[Decoded], registers: u16) -> usize {
+pub(crate) fn scratch(rows: &[Decoded], registers: u16) -> usize {
     let method = rows.iter().filter_map(|row| match row.step {
         Some(Step::Call(shape)) => shape.method.map(|method| method.scratch),
         _ => None,
@@ -83,7 +83,7 @@ pub(super) fn scratch(rows: &[Decoded], registers: u16) -> usize {
 /// The facts the rows of the instructions that are no planned call decode by: a body's read the heap
 /// by its tables; a region's read its entry record, but for what a call row it keeps may change
 /// (`Facts::Entry::calls`: a call stitched in changes nothing), and what its stores stale.
-pub(super) fn decode_facts(region: &LoopRegion, sites: &Sites, calls: &[Option<Vec<What>>]) -> Facts {
+pub(crate) fn decode_facts(region: &LoopRegion, sites: &Sites, calls: &[Option<Vec<What>>]) -> Facts {
     if sites.ending == Ending::Body {
         return Facts::Site;
     }
@@ -97,7 +97,7 @@ pub(super) fn decode_facts(region: &LoopRegion, sites: &Sites, calls: &[Option<V
 /// lowers as the one without it, followed by the completion with its result
 /// (`Decoded::completes`); in a region what the loop regions' decode covers. An instruction no row
 /// takes leaves at its PC as it is, flag and all, for the interpreter.
-pub(super) fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: WideInstruction, (facts, helpers): (Facts, LaneHelpers)) -> What {
+pub(crate) fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: WideInstruction, (facts, helpers): (Facts, LaneHelpers)) -> What {
     if let Some(folded) = super::declared::typeof_fold(sites.function, instruction) {
         return What::Row(folded);
     }
@@ -123,7 +123,7 @@ pub(super) fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: Wi
 
 /// The rows whose int32 speculation failed: those of the caller's instructions at the `widened` PCs,
 /// and of the inlined callees' at the `widened` keys (`inlined_exit_key`).
-pub(super) fn widened_rows(origins: &[Origin], frames: &[InlinedCall], widened: &[usize]) -> Vec<usize> {
+pub(crate) fn widened_rows(origins: &[Origin], frames: &[InlinedCall], widened: &[usize]) -> Vec<usize> {
     let widens = |origin: &Origin| match origin {
         Origin::Caller(pc) => widened.contains(&(*pc as usize)),
         Origin::Inlined { frame, pc } => widened.contains(&inlined_exit_key(frames[*frame].call, *pc)),
@@ -133,7 +133,7 @@ pub(super) fn widened_rows(origins: &[Origin], frames: &[InlinedCall], widened: 
 
 /// What each row's site saw of its operands: the caller's instructions' (`kinds`, from the region's
 /// header), none for the rows of an inlined callee.
-pub(super) fn row_kinds(region: &LoopRegion, origins: &[Origin], kinds: &[OperandKinds]) -> Vec<Option<OperandKinds>> {
+pub(crate) fn row_kinds(region: &LoopRegion, origins: &[Origin], kinds: &[OperandKinds]) -> Vec<Option<OperandKinds>> {
     origins.iter().map(|origin| match origin {
         Origin::Caller(pc) => kinds.get((*pc - region.header) as usize).copied(),
         Origin::Inlined { .. } => None,
@@ -143,7 +143,7 @@ pub(super) fn row_kinds(region: &LoopRegion, origins: &[Origin], kinds: &[Operan
 /// Every caller instruction as its parts: its row, or its call's site, and a returning call's
 /// completion. The calls are planned first: which a site takes decides what the rest decode by
 /// (`decode_facts`).
-pub(super) fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Part> {
+pub(crate) fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Part> {
     let at = |k: usize| region.header + k as u32;
     let planned: Vec<(usize, WideInstruction)> = region.instructions().iter().copied().enumerate().filter(|(_, instruction)| sites.plans(*instruction, helpers)).collect();
     // A native method's field read folds into its call (`fold`): the read plans no row, the call's rows leave at the read.

@@ -13,9 +13,9 @@ use quench_bjit::{padded_holes, HOLES};
 /// What one `SetFunctionName` instruction runs: the site's edge, whose slot is the function's `name`
 /// slot, and the word of the name's string.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) struct Name {
-    pub(super) transition: Transition,
-    pub(super) word: u64,
+pub(crate) struct Name {
+    pub(crate) transition: Transition,
+    pub(crate) word: u64,
 }
 
 /// A function register's frame offset travels above `NAME_FUNCTION_AT` in hole 2.
@@ -23,13 +23,13 @@ const _: () = assert!((Register::MAX as u64) * SLOT < 1 << (u64::BITS - numeric:
 
 impl Name {
     /// The heap row that runs it.
-    pub(super) fn heap(self) -> Heap {
+    pub(crate) fn heap(self) -> Heap {
         Heap::Name { form: name_form(self.transition.slot) }
     }
 
     /// The row's holes: the before and after layouts (as an add's), the name's word, and the name slot
     /// with the function register's frame offset above it (`numeric::site_bits::NAME_FUNCTION_AT`).
-    pub(super) fn holes(self, function: u64) -> [u64; HOLES] {
+    pub(crate) fn holes(self, function: u64) -> [u64; HOLES] {
         use numeric::site_bits::{ADD_AFTER_AT, NAME_FUNCTION_AT};
         let [before, after] = self.transition.layouts.map(u64::from);
         padded_holes([before | after << ADD_AFTER_AT, self.word, u64::from(self.transition.slot) | function << NAME_FUNCTION_AT])
@@ -37,7 +37,7 @@ impl Name {
 }
 
 /// The naming `instruction` runs where its site recorded one that a row may hold.
-pub(super) fn of(known: Known, instruction: WideInstruction) -> Option<Name> {
+pub(crate) fn of(known: Known, instruction: WideInstruction) -> Option<Name> {
     let names = known.names?;
     if !matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Protocol {
         step: quench_runtime::staged::Protocol::Class(quench_runtime::staged::protocol_classes::ClassStep::SetFunctionName { .. }), .. }))
@@ -52,7 +52,7 @@ pub(super) fn of(known: Known, instruction: WideInstruction) -> Option<Name> {
 /// instruction and whose miss enters `slow`, laid out behind it, or with none leaves at `pc`
 /// (`Step::Guard`). A function held outside its frame slot (a pinned register holds a Number, which is
 /// no function) has the slow arm alone, or the leave.
-pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, slow: Option<Planned>) -> Result<Planned, String> {
+pub(crate) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, slow: Option<Planned>) -> Result<Planned, String> {
     let name = decoded.name.ok_or("name: no site")?;
     let (function, function_hole) = operand(&layout.homes, decoded.a);
     if function != Place::Mem {

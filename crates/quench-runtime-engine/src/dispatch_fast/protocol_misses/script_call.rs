@@ -6,53 +6,53 @@ use super::super::*;
 // `script_call_miss` is in bits 0-2 (`ANY_ARGC` is 5), and `PLAIN` is bit 3.
 
 /// `script_call_miss::<0, false>`.
-pub(in crate::dispatch_fast) const ARGC_0: u8 = 0;
+pub(crate) const ARGC_0: u8 = 0;
 /// `script_call_miss::<1, false>`.
-pub(in crate::dispatch_fast) const ARGC_1: u8 = 1;
+pub(crate) const ARGC_1: u8 = 1;
 /// `script_call_miss::<2, false>`.
-pub(in crate::dispatch_fast) const ARGC_2: u8 = 2;
+pub(crate) const ARGC_2: u8 = 2;
 /// `script_call_miss::<3, false>`.
-pub(in crate::dispatch_fast) const ARGC_3: u8 = 3;
+pub(crate) const ARGC_3: u8 = 3;
 /// `script_call_miss::<4, false>`.
-pub(in crate::dispatch_fast) const ARGC_4: u8 = 4;
+pub(crate) const ARGC_4: u8 = 4;
 /// `script_call_miss::<ANY_ARGC, false>`.
-pub(in crate::dispatch_fast) const ARGC_ANY: u8 = 5;
+pub(crate) const ARGC_ANY: u8 = 5;
 /// The `PLAIN` bit of `script_call_miss`.
-pub(in crate::dispatch_fast) const PLAIN: u8 = 8;
+pub(crate) const PLAIN: u8 = 8;
 /// `script_call_miss::<0, true>`.
-pub(in crate::dispatch_fast) const PLAIN_ARGC_0: u8 = PLAIN | ARGC_0;
+pub(crate) const PLAIN_ARGC_0: u8 = PLAIN | ARGC_0;
 /// `script_call_miss::<1, true>`.
-pub(in crate::dispatch_fast) const PLAIN_ARGC_1: u8 = PLAIN | ARGC_1;
+pub(crate) const PLAIN_ARGC_1: u8 = PLAIN | ARGC_1;
 /// `script_call_miss::<2, true>`.
-pub(in crate::dispatch_fast) const PLAIN_ARGC_2: u8 = PLAIN | ARGC_2;
+pub(crate) const PLAIN_ARGC_2: u8 = PLAIN | ARGC_2;
 /// `script_call_miss::<3, true>`.
-pub(in crate::dispatch_fast) const PLAIN_ARGC_3: u8 = PLAIN | ARGC_3;
+pub(crate) const PLAIN_ARGC_3: u8 = PLAIN | ARGC_3;
 /// `script_call_miss::<4, true>`.
-pub(in crate::dispatch_fast) const PLAIN_ARGC_4: u8 = PLAIN | ARGC_4;
+pub(crate) const PLAIN_ARGC_4: u8 = PLAIN | ARGC_4;
 /// `script_call_miss::<ANY_ARGC, true>`.
-pub(in crate::dispatch_fast) const PLAIN_ARGC_ANY: u8 = PLAIN | ARGC_ANY;
+pub(crate) const PLAIN_ARGC_ANY: u8 = PLAIN | ARGC_ANY;
 /// `script_call_full_miss`.
-pub(in crate::dispatch_fast) const FULL: u8 = 16;
+pub(crate) const FULL: u8 = 16;
 /// `script_call_environment_miss`.
-pub(in crate::dispatch_fast) const ENVIRONMENT: u8 = 17;
+pub(crate) const ENVIRONMENT: u8 = 17;
 /// `script_call_settles_miss`.
-pub(in crate::dispatch_fast) const SETTLES: u8 = 18;
+pub(crate) const SETTLES: u8 = 18;
 /// `script_call_cross_miss`.
-pub(in crate::dispatch_fast) const CROSS: u8 = 19;
+pub(crate) const CROSS: u8 = 19;
 /// `script_call_cross_plain_miss::<0>`.
-pub(in crate::dispatch_fast) const CROSS_PLAIN_0: u8 = 20;
+pub(crate) const CROSS_PLAIN_0: u8 = 20;
 /// `script_call_cross_plain_miss::<1>`.
-pub(in crate::dispatch_fast) const CROSS_PLAIN_1: u8 = 21;
+pub(crate) const CROSS_PLAIN_1: u8 = 21;
 /// `script_call_cross_plain_miss::<2>`.
-pub(in crate::dispatch_fast) const CROSS_PLAIN_2: u8 = 22;
+pub(crate) const CROSS_PLAIN_2: u8 = 22;
 /// `script_call_cross_plain_miss::<3>`.
-pub(in crate::dispatch_fast) const CROSS_PLAIN_3: u8 = 23;
+pub(crate) const CROSS_PLAIN_3: u8 = 23;
 /// `script_call_cross_plain_miss::<4>`.
-pub(in crate::dispatch_fast) const CROSS_PLAIN_4: u8 = 24;
+pub(crate) const CROSS_PLAIN_4: u8 = 24;
 
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row::<OP, ACC, { protocol_family::SCRIPT_CALL | parameters }>`).
-pub(in crate::dispatch_fast) const fn script_call_miss_of(parameters: u8) -> Handler {
+pub(crate) const fn script_call_miss_of(parameters: u8) -> Handler {
     match parameters {
         ARGC_0 => script_call_miss::<0, false> as Handler,
         ARGC_1 => script_call_miss::<1, false> as Handler,

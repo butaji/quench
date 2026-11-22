@@ -41,7 +41,7 @@ fn build(nodes: &mut Vec<(Node, Option<usize>)>, targets: &[Option<u32>], low: u
 
 /// The plan of the switch row `row` at `pc` (its selector in `a`, its slot count in `hole`): the tree's root, with the
 /// rest of its nodes as the run's later parts. The entry of slot `k` is the `Jump` at `pc + 1 + k`.
-pub(super) fn switch_run(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), rows: &[Decoded], pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
+pub(crate) fn switch_run(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), rows: &[Decoded], pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
     let selector = row.a.ok_or("switch: no selector")?;
     let targets: Vec<Option<u32>> = (0..=row.hole as usize).map(|slot| rows.get(pc as usize + 1 + slot).and_then(|entry| entry.target)).collect();
     let mut nodes = Vec::new();

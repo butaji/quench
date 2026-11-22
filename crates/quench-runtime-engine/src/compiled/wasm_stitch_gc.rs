@@ -17,10 +17,10 @@
 //!
 //! A child of `wasm_stitch` (`#[path]`), so it names `wasm_stitch`'s helpers through `super`.
 
-use quench_runtime::vm::CONTEXT_MEMORY_LENGTH;
-use quench_runtime::vm::wasm_gc_allocate::{allocating_reads, allocating_result, pack};
-use quench_runtime::vm::wasm_gc_callout::GcCall;
-use quench_runtime::vm::wasm_gc_stage::{field_registers, structure_access};
+use crate::compiled::CONTEXT_MEMORY_LENGTH;
+use crate::compiled::wasm_gc_allocate::{allocating_reads, allocating_result, pack};
+use crate::compiled::wasm_gc_callout::GcCall;
+use crate::compiled::wasm_gc_stage::{field_registers, structure_access};
 use super::{Planned, World, leak, slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_gc::{GcOp, GcStep};
@@ -121,7 +121,7 @@ fn allocating(pc: usize, instruction: WideInstruction, world: &World<'_>) -> Opt
 
 /// The rows of the GC operation `op` of `instruction` at `pc`, or `None` where it has none (a
 /// binding or operand a 32-bit hole cannot hold, a vector field, or the callouts' memory gate).
-pub(super) fn gc(pc: usize, instruction: WideInstruction, op: GcOp, world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn gc(pc: usize, instruction: WideInstruction, op: GcOp, world: &World<'_>) -> Option<Vec<Planned>> {
     // The callouts run no Wasm code, but a row that calls a VM callout shares the memory gate of
     // the others: the memory base must not move during one.
     if !world.memory_stable {

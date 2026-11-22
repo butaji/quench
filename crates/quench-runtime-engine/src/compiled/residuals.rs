@@ -12,26 +12,26 @@ use cranelift_codegen::{
 };
 
 /// The categories of a count, in field order.
-pub(super) const NAMES: [&str; 5] = ["boxes", "guards", "spills", "calls", "instructions"];
+pub(crate) const NAMES: [&str; 5] = ["boxes", "guards", "spills", "calls", "instructions"];
 
 /// The index of the registers parameter of the lane body signature (`body_signature_in_lane`):
 /// the activation's register file, where a loop keeps nothing it can hold in a register.
 const REGISTERS_PARAM: usize = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct Residual {
+pub(crate) struct Residual {
     /// Stores of a value word to the register file.
-    pub(super) boxes: u32,
+    pub(crate) boxes: u32,
     /// Exits other than the loop's own test.
-    pub(super) guards: u32,
+    pub(crate) guards: u32,
     /// Loop-variable traffic through the register file or the stack.
-    pub(super) spills: u32,
-    pub(super) calls: u32,
-    pub(super) instructions: u32,
+    pub(crate) spills: u32,
+    pub(crate) calls: u32,
+    pub(crate) instructions: u32,
 }
 
 impl Residual {
-    pub(super) fn counts(self) -> [u32; NAMES.len()] {
+    pub(crate) fn counts(self) -> [u32; NAMES.len()] {
         [
             self.boxes,
             self.guards,
@@ -43,7 +43,7 @@ impl Residual {
 }
 
 /// Prints `residual` as one report line when the channel is on.
-pub(super) fn report(tier: &str, header: u32, residual: Residual, bytes: Option<usize>) {
+pub(crate) fn report(tier: &str, header: u32, residual: Residual, bytes: Option<usize>) {
     if !Channel::Residuals.on() {
         return;
     }
@@ -62,7 +62,7 @@ pub(super) fn report(tier: &str, header: u32, residual: Residual, bytes: Option<
 }
 
 /// Reports the u-jit loop `function` lowered at `header`.
-pub(super) fn report_clif(header: u32, function: &ir::Function) {
+pub(crate) fn report_clif(header: u32, function: &ir::Function) {
     if Channel::Residuals.on() {
         report("u-jit", header, of_clif(function), None);
     }
@@ -70,7 +70,7 @@ pub(super) fn report_clif(header: u32, function: &ir::Function) {
 
 /// The counts of the deepest loops of `function`: of the blocks whose innermost loop is at the
 /// greatest nesting level.
-pub(super) fn of_clif(function: &ir::Function) -> Residual {
+pub(crate) fn of_clif(function: &ir::Function) -> Residual {
     let cfg = ControlFlowGraph::with_function(function);
     let dominators = DominatorTree::with_function(function, &cfg);
     let mut loops = LoopAnalysis::new();

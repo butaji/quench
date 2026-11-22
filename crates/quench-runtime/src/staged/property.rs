@@ -20,7 +20,7 @@ use crate::typed_ir::Type;
 
 /// Whose object a read starts from: what a frame keys its proofs of an object by.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Owner {
+pub enum Owner {
     /// The activation's bound `this`.
     This,
     Register(Register),
@@ -40,7 +40,7 @@ impl Owner {
 /// One shape family of a polymorphic read: the sorted exact shapes that take `ops`, which
 /// read from the record the shapes already matched.
 #[derive(Clone, Copy)]
-pub(crate) struct Arm<'a> {
+pub struct Arm<'a> {
     pub(crate) shapes: &'a [u32],
     pub(crate) ops: &'a [IcOp<'a>],
     /// The exact shape of the prototypes whose values `ops` fold as constants, which a code
@@ -52,7 +52,7 @@ pub(crate) struct Arm<'a> {
 /// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
 /// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum EntryKind {
+pub enum EntryKind {
     /// The site's inline megamorphic entries, own or of the immediate prototype.
     Polymorphic,
     /// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`).
@@ -65,7 +65,7 @@ pub(crate) enum EntryKind {
 
 /// What holds an inherited read's receiver to the prototype its constants fold against.
 #[derive(Clone, Copy)]
-pub(crate) enum PrototypeProof {
+pub enum PrototypeProof {
     /// The holder is subscribed (`PropertyFrame::hold_prototype`): a change of its values retires the
     /// constant, and the read checks the link only through `IcOp::PrototypeConstants`.
     Watched { holder: u32 },
@@ -76,7 +76,7 @@ pub(crate) enum PrototypeProof {
 
 /// How a `GetField` site reads, as the proof its tier holds of the site.
 #[derive(Clone, Copy)]
-pub(crate) enum FieldPlan<'a> {
+pub enum FieldPlan<'a> {
     /// The ops of `staged::ic` over the receiver's record: own slot, prototype slot, or a
     /// prototype constant.
     Ops(&'a [IcOp<'a>]),
@@ -130,7 +130,7 @@ pub(crate) enum FieldPlan<'a> {
 /// double (`Representation::Float64`): the store writes the value's binary64 word (`PropertyFrame::stored_number`),
 /// never its tagged one, so a Number keeps no integer canonical form on its way in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct StoreArm {
+pub struct StoreArm {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub(crate) holds: Option<Type>,
@@ -166,7 +166,7 @@ impl StoreArm {
 /// How the VM completes a named store that an in-place arm does not: where no arm holds the
 /// receiver's shape, or its value, its barrier or its storage.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum StoreJoin {
+pub enum StoreJoin {
     /// The VM's own-field store hit, which a failure leaves at the miss edge.
     Host,
     /// The same hit through the site's bound slot first, which the frame addressed before the
@@ -179,7 +179,7 @@ pub(crate) enum StoreJoin {
 
 /// How a named store site writes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum StorePlan<'a> {
+pub enum StorePlan<'a> {
     /// The first of `arms` whose exact shape the receiver has stores in place where the
     /// value, the barrier and the storage admit it; every other store runs through `join`.
     Own { arms: &'a [StoreArm], join: StoreJoin },
@@ -222,7 +222,7 @@ impl<'a> StorePlan<'a> {
 
 /// The plans a frame's tier proved, by site. A frame with none answers `None`, and the
 /// operation is left to the host path.
-pub(crate) trait PlanSource {
+pub trait PlanSource {
     /// The read plan of `lookup`.
     fn field_plan(&self, lookup: FieldLookup) -> Option<FieldPlan<'_>>;
     /// The store plan of cache site `site`.
@@ -477,7 +477,7 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
 
 /// The record of the direct object `object`; anything else leaves at `miss`.
 #[inline(always)]
-pub(crate) fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
+pub fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
     miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
     let records = frame.object_records(stage)?;
     let direct = value::is_direct_object(stage, object);

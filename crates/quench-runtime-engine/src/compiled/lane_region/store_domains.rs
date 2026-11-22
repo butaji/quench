@@ -26,7 +26,7 @@ impl Lowering<'_, '_> {
     /// online body's plan registered those possible writes before it was lowered
     /// (`Vm::admit_lane_stores`); other code registers them here, at each entry. A frozen
     /// image has no plan, so it admits them at each entry, as offline code does.
-    pub(super) fn admit_store_domains(&mut self, instructions: &[WideInstruction], miss: &mut Option<ir::Block>) {
+    pub(crate) fn admit_store_domains(&mut self, instructions: &[WideInstruction], miss: &mut Option<ir::Block>) {
         if self.vm.online.is_some() && !self.vm.frozen {
             return;
         }

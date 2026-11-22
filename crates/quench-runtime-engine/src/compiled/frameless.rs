@@ -11,7 +11,7 @@ use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, 
 use cranelift_frontend::FunctionBuilder;
 
 #[path = "frameless/admission.rs"] mod admission;
-pub(super) use admission::general_frameless_admit;
+pub(crate) use admission::general_frameless_admit;
 
 const CACHE_ENTRIES: usize = 256;
 /// `CallEntry::meta`'s fields above its function: the register count, then the parameter count.
@@ -60,7 +60,7 @@ impl CalleeAdmissions {
     }
 
     /// Binds a general entry's payload to the call cache its native code reads admissions from.
-    pub(super) fn bind(&self, dispatch: &mut JsStepDispatch) {
+    pub(crate) fn bind(&self, dispatch: &mut JsStepDispatch) {
         dispatch.call_cache = self.cache().as_ptr() as usize;
     }
 }
@@ -69,7 +69,7 @@ impl CalleeAdmissions {
 /// frameless activation of it reads, from the payload's call cache word `cache`. A declined
 /// admission, or a payload that binds none (a lane run's), gives an empty run, so each read
 /// takes its slow case.
-pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value,
+pub(crate) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value,
     cache: ir::Value) -> (ir::Value, ir::Value) {
     let (bound, declined, done) = (builder.create_block(), builder.create_block(), builder.create_block());
     let values = builder.append_block_param(done, types::I64);

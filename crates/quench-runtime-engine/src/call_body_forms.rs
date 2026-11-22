@@ -16,7 +16,7 @@ fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {
 /// activating it, else `CallEntry::Activates`. A class constructor's calls throw on the
 /// general path, so they take a frame; only its constructions activate frameless
 /// (`script_construct_miss`).
-pub(super) fn body_entry(body: &Function, constants: &[quench_runtime::bytecode::Constant]) -> CallEntry {
+pub(crate) fn body_entry(body: &Function, constants: &[quench_runtime::bytecode::Constant]) -> CallEntry {
     if body.is_class_constructor {
         CallEntry::Frame
     } else if body.code.first().is_some_and(|packed| returning_kind(body.widened(*packed)) == Some(RETURNING_FIELD)) {
@@ -170,7 +170,7 @@ fn keeps_frame_state(body: &Function) -> bool {
 /// body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is none.
 /// `private` says whether an atom is a private name, whose access the running function
 /// decides (`LaneFrame::cached_miss`, `lane_private_atom`).
-pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(quench_runtime::bytecode::Atom) -> bool) -> Option<LeafForm> {
+pub(crate) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(quench_runtime::bytecode::Atom) -> bool) -> Option<LeafForm> {
     if keeps_frame_state(body) {
         return None;
     }

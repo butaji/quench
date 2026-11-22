@@ -5,17 +5,17 @@ use super::*;
 use crate::compiled::tier_policy::PERCENT;
 use crate::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit, PendingLaneMethod, PublishedLaneMethod};
 
-pub(super) use quench_runtime::vm::engine_types::LoopBody;
+pub(crate) use quench_runtime::vm::engine_types::LoopBody;
 
 use crate::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOOP_BODY_KEEP_SHARE, LOOP_BODY_POLL};
 #[quench_macros::ext(LoopBodyOps1)]
 impl LoopBody {
-    pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
+    pub(crate) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
     /// A new loop site's body: none is planned while loop bodies are off (`tier_policy::LOOP_BODIES`)
     /// outside `tier-stress`, which keeps compiling every eligible body,
     /// or where the process runs no Cranelift function tiers (`--b-jit`).
-    pub(super) fn initial(tiers: &Tiers) -> Self { if (crate::compiled::tier_policy::LOOP_BODIES || tiers.admits_all) && quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
+    pub(crate) fn initial(tiers: &Tiers) -> Self { if (crate::compiled::tier_policy::LOOP_BODIES || tiers.admits_all) && quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
@@ -69,7 +69,7 @@ impl LoopBody {
 impl LoopSite {
     /// The iterations the loop has taken, as far as the lane sees them: the interpreter's
     /// warm-up, its regions' iterations, and the idle body's header dispatches since.
-    pub(super) fn body_iterations(&self) -> u64 {
+    pub(crate) fn body_iterations(&self) -> u64 {
         u64::from(self.taken.get()) + self.tier.borrow().iterations() + self.body_seen.get()
     }
 }
@@ -77,7 +77,7 @@ impl LoopSite {
 #[quench_macros::ext(LoopBodyOps2)]
 impl LoopBody {
     /// Whether the loop may still run a body of its own: one planning, compiling or running.
-    pub(super) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
+    pub(crate) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
 }
 
 /// Makes `site`'s loop a body's once, where its call boundary has no region (no inlinable
@@ -86,7 +86,7 @@ impl LoopBody {
 /// Each call must be one the body runs inline (a Math function, a string builtin) or a script
 /// function's, which it inlines or calls by its entry, by the callee its register holds now: a
 /// body's general native call costs more than the lane's own.
-pub(super) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) -> bool {
+pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) -> bool {
     let vm = unsafe { vm(cx) };
     if (site.call_boundary_pcs.is_empty() && site.analysis_failure.is_none()) || site.body_offered.replace(true) || !vm.programs.js_jit_lane_methods_enabled()
         || !quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) { return false; }
@@ -173,7 +173,7 @@ fn raise_tier_up(vm: &Vm, site: &LoopSite) {
 /// Whether a region's exit at `pc` is its poll's tier-up leave: at the loop's unconditional
 /// backward jump (no guard of it can fail) while a tier-up is requested and no termination,
 /// which the jump's own safepoint ends. The lane resumes at the header, which dispatches.
-pub(super) fn left_for_tier_up(cx: *mut LaneContext, site: &LoopSite, pc: u32) -> bool {
+pub(crate) fn left_for_tier_up(cx: *mut LaneContext, site: &LoopSite, pc: u32) -> bool {
     let vm = unsafe { vm(cx) };
     if pc != site.backedge || !vm.execution_interrupt.tier_up_requested() || vm.execution_interrupt.is_termination_requested() {
         return false;
@@ -198,7 +198,7 @@ const fn tier_up_resume(header: u32, backedge: u32, pc: u32, held: bool, ready: 
 /// compiled it): while a tier-up is requested for a loop whose body has published, the lane
 /// resumes at that loop's header, as a region's leave does (`left_for_tier_up`). The leaving
 /// body stays published for its other entries.
-pub(super) fn header_for_tier_up(cx: *mut LaneContext, own: &LaneView, pc: usize) -> Option<usize> {
+pub(crate) fn header_for_tier_up(cx: *mut LaneContext, own: &LaneView, pc: usize) -> Option<usize> {
     let pc = u32::try_from(pc).ok()?;
     let at = own.loop_at_backedge.binary_search_by_key(&pc, |&(backedge, _)| backedge).ok()?;
     let site = &own.loops[own.loop_at_backedge[at].1 as usize];
@@ -212,7 +212,7 @@ pub(super) fn header_for_tier_up(cx: *mut LaneContext, own: &LaneView, pc: usize
 /// interpreter. A body is planned once the loop is hot, where function tiers run and no region
 /// has published: a body over a published region replaces native code with native code, the
 /// same work at its own plan, compile and entry cost (navier-stokes: twice the region's time).
-pub(super) fn enter_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+pub(crate) fn enter_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     vm.execution_interrupt.clear_tier_up();
     // A declined body is terminal: its dispatch has nothing to plan, run or count.
@@ -257,7 +257,7 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
 /// What a loop site's attempt leaves the lane to do after native code of its loop left, and the lane
 /// recovered `resumed` (`body_left_in_lane`, `body_inlined_activation_in_lane`): `ip` is the record the run
 /// was reached at.
-pub(super) fn loop_attempt(cx: *mut LaneContext, ip: Ip, resumed: LaneBodyLeft) -> LoopAttempt {
+pub(crate) fn loop_attempt(cx: *mut LaneContext, ip: Ip, resumed: LaneBodyLeft) -> LoopAttempt {
     match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),
         // A callee's run that left the lane for the general path leaves it at its record.

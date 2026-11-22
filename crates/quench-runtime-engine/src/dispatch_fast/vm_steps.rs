@@ -97,7 +97,7 @@ pub(crate) unsafe extern "C" fn body_string_concat(_vm: u64, _residual: u64, con
 /// (`Vm::steady_instanceof`) and `in` of a string key in an ordinary object (`Vm::plain_in`);
 /// `None` for any other pair, which the full algorithm decides. The one rule of the interpreter's
 /// staged frame and of the lane's decide helper.
-pub(super) fn comparison_decision(vm: &mut Vm, operator: u32, left: Value, right: Value) -> Option<bool> {
+pub(crate) fn comparison_decision(vm: &mut Vm, operator: u32, left: Value, right: Value) -> Option<bool> {
     // Two Numbers: the Number comparison (`operations::number_relation`), which runs no guest code.
     if let Some((holds, _)) = quench_runtime::vm::operations::number_relation(operator, left, right) {
         return Some(holds);

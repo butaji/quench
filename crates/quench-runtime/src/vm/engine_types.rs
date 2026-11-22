@@ -3309,6 +3309,7 @@ pub enum JobEnd {
 }
 
 /// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
+pub const QUENCH_BUILD_ID_TEXT: &str = env!("QUENCH_BUILD_ID");
 pub const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
 
 /// The text that names the build in a library's bytes, followed by `QUENCH_BUILD_ID` in 16 hex

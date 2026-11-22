@@ -14,7 +14,7 @@ use quench_bjit::wasm::{self as codes};
 /// The rows of the global access `step` at `pc` (`a` is the value or the destination register,
 /// `b` the binding), or `None` where the global has no row: a reference or a vector, or an access
 /// the function's plan did not admit (`World::global` answers `None`).
-pub(super) fn global(pc: usize, instruction: WideInstruction, step: Instance, world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn global(pc: usize, instruction: WideInstruction, step: Instance, world: &World<'_>) -> Option<Vec<Planned>> {
     let (index, storage) = (world.global)(pc)?;
     let storage = match storage {
         Storage::Bits32 => codes::STORAGE_BITS32,

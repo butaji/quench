@@ -60,12 +60,12 @@ fn kind(code: Code, a: u32, b: u32) -> Kind {
     Kind(op * ARITH_FORMS + forms)
 }
 
-pub(super) use quench_runtime::vm::engine_types::Machine;
+pub(crate) use quench_runtime::vm::engine_types::Machine;
 
 #[quench_macros::ext(MachineOps1)]
 impl Machine {
     /// The machine running the scalar pass's nodes but `side`'s.
-    pub(super) fn of(shape: &Shape, side: &[u16]) -> Option<Self> {
+    pub(crate) fn of(shape: &Shape, side: &[u16]) -> Option<Self> {
         let count = shape.phis.len();
         if count > MAX_RECURRENCES {
             return None;
@@ -113,16 +113,16 @@ impl Machine {
     }
 
     /// Whether a step is a bitwise operator.
-    pub(super) fn has_bitwise(&self) -> bool {
+    pub(crate) fn has_bitwise(&self) -> bool {
         self.steps.iter().any(|step| matches!(step.code, Code::Bits { .. }))
     }
 
     /// Columns past the nodes' this machine uses: the dump.
-    pub(super) fn columns(&self) -> usize {
+    pub(crate) fn columns(&self) -> usize {
         1
     }
 
-    pub(super) fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) {
+    pub(crate) fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) {
         let mut file = [0.0f64; REGISTERS];
         let count = phis.len();
         file[..count].copy_from_slice(phis);

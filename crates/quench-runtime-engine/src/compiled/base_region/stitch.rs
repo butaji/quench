@@ -19,7 +19,7 @@ use super::call_plan::inline::{InlineSite, Proof};
 use quench_runtime::heap::GlobalFact;
 
 /// What a caller instruction becomes: a row, or a call's inlined site.
-pub(super) enum What {
+pub(crate) enum What {
     Row(Decoded),
     Site(InlineSite),
     /// A PC that plans no row: a field read folded into its call (`fold`), whose call's row leaves at this PC.
@@ -47,25 +47,25 @@ impl What {
 }
 
 /// A caller instruction's row or site, and its PC.
-pub(super) struct Part {
-    pub(super) pc: u32,
-    pub(super) what: What,
+pub(crate) struct Part {
+    pub(crate) pc: u32,
+    pub(crate) what: What,
 }
 
 /// The flat program: its rows, where each resumes the interpreter, and what each reads there.
-pub(super) struct Stitched {
-    pub(super) rows: Vec<Decoded>,
-    pub(super) origins: Vec<Origin>,
-    pub(super) live: Live,
+pub(crate) struct Stitched {
+    pub(crate) rows: Vec<Decoded>,
+    pub(crate) origins: Vec<Origin>,
+    pub(crate) live: Live,
     /// The inlined calls, in program order: the method's frames.
-    pub(super) frames: Vec<InlinedCall>,
+    pub(crate) frames: Vec<InlinedCall>,
     /// The copies a leave inside each frame runs first (`InlineSite::copies`), by frame.
-    pub(super) copies: Vec<Vec<(Register, Register)>>,
+    pub(crate) copies: Vec<Vec<(Register, Register)>>,
     /// The Stable facts the sites fold: the code is subscribed to each.
-    pub(super) facts: Vec<GlobalFact>,
+    pub(crate) facts: Vec<GlobalFact>,
     /// The first row of each caller PC of the span that has rows (PC, row): where the interpreter's resume at the PC
     /// re-enters the program (`resume`); a folded read has none.
-    pub(super) entries: Vec<(u32, u32)>,
+    pub(crate) entries: Vec<(u32, u32)>,
 }
 
 /// The first row of each caller PC's parts (by offset from the span's header), and the row past the last.
@@ -108,7 +108,7 @@ fn callers(region: &LoopRegion, pc: u32, registers: u16) -> impl Iterator<Item =
 /// The parts laid out as one program over the span `region` holds of its function, which has
 /// `registers` registers, folding facts under the invalidation word at `invalidation`; a loop
 /// region's (`ending`) is followed by its leave rows (`outside`).
-pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, invalidation: Option<usize>, ending: Ending) -> Stitched {
+pub(crate) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, invalidation: Option<usize>, ending: Ending) -> Stitched {
     let changed = parts.iter().any(|part| part.what.changes_globals());
     let starts = starts(region, &parts, changed);
     let leaves = outside(region, &parts, ending);

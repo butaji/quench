@@ -24,13 +24,13 @@ enum Access {
 
 impl Lowering<'_, '_> {
     /// The payload's environment storage word.
-    pub(super) fn environment_word(&mut self) -> ir::Value {
+    pub(crate) fn environment_word(&mut self) -> ir::Value {
         emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.environment_storage))
     }
 
     /// The storage word again, after an operation that made the environment.
     /// A numeric body (no entry facts) holds no environment word: its locals live in no window.
-    pub(super) fn reload_environment(&mut self) {
+    pub(crate) fn reload_environment(&mut self) {
         let Some(variable) = self.entry.as_ref().map(|entry| entry.environment) else { return };
         let word = self.environment_word();
         self.builder.def_var(variable, word);
@@ -73,12 +73,12 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether `instruction` at `pc` is an environment-owned local access this lowering makes.
-    pub(super) fn is_window_row(&self, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_window_row(&self, pc: usize, instruction: WideInstruction) -> bool {
         self.window_access(pc, instruction).is_some()
     }
 
     /// The access at `pc` by the staged rows, leaving at `pc` where the row's proof fails.
-    pub(super) fn window_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn window_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let (slot, access) = self.window_access(pc, instruction).expect("a window row decodes");
         let miss = self.guard_exit(state, pc as u32);
         let storage = self.builder.use_var(self.entry.as_ref().expect("entry facts").environment);

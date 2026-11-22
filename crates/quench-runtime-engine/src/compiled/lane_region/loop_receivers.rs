@@ -13,7 +13,7 @@ use super::*;
 /// A register whose object a loop's entering edge proved of an exact shape, for the blocks
 /// `header..=end`.
 #[derive(Clone, Copy)]
-pub(super) struct LoopShape {
+pub(crate) struct LoopShape {
     header: usize,
     end: usize,
     register: Register,
@@ -62,7 +62,7 @@ impl Lowering<'_, '_> {
     /// On the entering edge of the loop at `header`, the proof that each invariant register
     /// its accesses agree on holds an object of the shape they expect, where the VM holds the
     /// shape stable. A register of another shape leaves at the header, before the loop runs.
-    pub(super) fn hoist_receivers(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn hoist_receivers(&mut self, state: &mut State, header: usize) {
         let Some(online) = self.vm.online.filter(|_| self.entry.is_some() && self.division().folds(BindingTime::Site)) else { return };
         let Some(end) = self.loop_end(header).filter(|end| self.enters_only_at_header(header, *end)) else { return };
         for (register, shape) in self.invariant_receiver_shapes(header, end) {
@@ -79,7 +79,7 @@ impl Lowering<'_, '_> {
 
     /// At the block leader `pc`, the shapes the loops around it proved on their entering edges
     /// (`hoist_receivers`), kept for the registers' next uses (`kept_shapes`).
-    pub(super) fn seed_loop_shapes(&self, state: &mut State, pc: usize) {
+    pub(crate) fn seed_loop_shapes(&self, state: &mut State, pc: usize) {
         for held in self.loop_shapes.iter().filter(|held| (held.header..=held.end).contains(&pc)) {
             let fact = state.values[usize::from(held.register)];
             if fact.value.ty.object_shape().is_none() && fact.value.representation == Representation::Tagged && fact.tagged.current() {

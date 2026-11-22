@@ -24,7 +24,7 @@ use crate::typed_ir::Type;
 /// An array's elements as an access reads them, once proved: a dense array's backing or a
 /// typed array's elements, whose kind the proof carries.
 #[derive(Clone, Copy)]
-pub(crate) enum ElementView<W> {
+pub enum ElementView<W> {
     Dense(DenseView<W>),
     Typed(TypedView<W>),
 }

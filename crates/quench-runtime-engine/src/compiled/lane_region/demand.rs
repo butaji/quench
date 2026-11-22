@@ -17,7 +17,7 @@ use std::num::NonZeroUsize;
 
 /// The views the next uses of a register read; empty when none does before a redefinition.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct Demand(u8);
+pub(crate) struct Demand(u8);
 
 impl Demand {
     const TAGGED: Self = Self(1);
@@ -28,17 +28,17 @@ impl Demand {
     /// is only one, which an exact integer word of any width serves.
     const INDEX: Self = Self(8);
 
-    pub(super) fn tagged(self) -> bool { self.0 & Self::TAGGED.0 != 0 }
+    pub(crate) fn tagged(self) -> bool { self.0 & Self::TAGGED.0 != 0 }
 
     /// Whether the next uses read a Number's double or int32 view and never its tagged bits.
-    pub(super) fn numeric_only(self) -> bool { self.0 & Self::FLOAT64.0 != 0 && !self.tagged() }
+    pub(crate) fn numeric_only(self) -> bool { self.0 & Self::FLOAT64.0 != 0 && !self.tagged() }
 
     /// Whether every remaining use reads an integer index and no other view.
-    pub(super) fn index_only(self) -> bool { self == Self::INDEX }
+    pub(crate) fn index_only(self) -> bool { self == Self::INDEX }
 
     /// Whether some use remains and every one reads an index or a bitwise operation's int32,
     /// neither of which tells a negative zero from zero.
-    pub(super) fn sign_insensitive(self) -> bool { self.0 != 0 && self.0 & !(Self::INDEX.0 | Self::INT32.0) == 0 }
+    pub(crate) fn sign_insensitive(self) -> bool { self.0 != 0 && self.0 & !(Self::INDEX.0 | Self::INT32.0) == 0 }
 
     fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
 }
@@ -105,7 +105,7 @@ fn reads(unit: &super::super::lane_unit::Unit, pc: usize, instruction: WideInstr
 /// The rows of every block leader, in one flat buffer; empty for a unit wider than the
 /// liveness sets, whose every register is taken to be read tagged.
 #[derive(Default)]
-pub(super) struct Demands {
+pub(crate) struct Demands {
     offsets: Vec<Option<NonZeroUsize>>,
     rows: Vec<Demand>,
     registers: usize,
@@ -245,7 +245,7 @@ impl Dataflow for DemandSolve<'_> {
 /// Each block leader's use demand, solved backward to a fixed point over the unit's CFG. A
 /// block runs again only when a successor's row grew, so each change queues its predecessors
 /// alone instead of sweeping every block once more.
-pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
+pub(crate) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
     leaders: &CompoundBitSet, liveness: &Liveness) -> Demands {
     let Liveness::Unit(masks) = liveness else { return Demands::default() };
     let masks = masks.as_deref();
@@ -276,7 +276,7 @@ pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
 impl Lowering<'_, '_> {
     /// The views the uses of `register` from `pc` on read: the instructions to the next
     /// leader, then that leader's row; every use where no demand was solved.
-    pub(super) fn demand_from(&self, pc: usize, register: usize) -> Demand {
+    pub(crate) fn demand_from(&self, pc: usize, register: usize) -> Demand {
         if self.demands.registers == 0 { return Demand::TAGGED; }
         let mut demand = Demand::default();
         for (at, instruction) in self.unit.instructions.iter().copied().enumerate().skip(pc) {

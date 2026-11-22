@@ -6,7 +6,7 @@ use super::super::*;
 /// (`protocol_row::<OP, ACC, { protocol_family::FRAME_CALL | parameters }>`). A memoized script
 /// call (`Op::Call`) takes its memo shape (`MEMO_FIELD` .. `MEMO_FORWARD | MEMO_NESTED`) as its
 /// parameters, which are the codes `script_call_memo_handler` installs.
-pub(in crate::dispatch_fast) const fn frame_call_miss_of(parameters: u8) -> Handler {
+pub(crate) const fn frame_call_miss_of(parameters: u8) -> Handler {
     match parameters {
         _ if parameters == MEMO_FIELD => script_call_memo_miss::<MEMO_FIELD> as Handler,
         _ if parameters == MEMO_ELEMENT => script_call_memo_miss::<MEMO_ELEMENT> as Handler,

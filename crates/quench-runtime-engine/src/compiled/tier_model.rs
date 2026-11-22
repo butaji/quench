@@ -8,18 +8,18 @@
 use super::tier_policy::{Priors, Tiers, PER_MILLE};
 
 /// What the model knows of one function at a decision point.
-pub(super) struct Observed {
+pub(crate) struct Observed {
     /// Bytecodes of straight-line work per entry.
-    pub(super) length: u64,
+    pub(crate) length: u64,
     /// Bytecodes per entry inside its loops that the interpreter still runs (trip means times spans).
-    pub(super) loop_work: u64,
+    pub(crate) loop_work: u64,
     /// Entries so far.
-    pub(super) entries: u32,
+    pub(crate) entries: u32,
     /// Native runs of its loops that run in a region entered from the lane, over all entries:
     /// each a crossing the body removes, while the loop's own work is native already.
-    pub(super) region_runs: u64,
+    pub(crate) region_runs: u64,
     /// IR instructions of the planned body.
-    pub(super) ir: usize,
+    pub(crate) ir: usize,
 }
 
 /// The part per thousand of a compile's time that waits on the running program: the prior's
@@ -27,7 +27,7 @@ pub(super) struct Observed {
 /// has one (the compile then takes the program's own time).
 const SINGLE_CORE: usize = 1;
 
-pub(super) fn compile_wall_permille(priors: &Priors) -> u64 {
+pub(crate) fn compile_wall_permille(priors: &Priors) -> u64 {
     static SECOND_CORE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let second_core = *SECOND_CORE.get_or_init(|| std::thread::available_parallelism().is_ok_and(|cores| cores.get() > SINGLE_CORE));
     if second_core { priors.compile_wall_permille } else { PER_MILLE }
@@ -35,25 +35,25 @@ pub(super) fn compile_wall_permille(priors: &Priors) -> u64 {
 
 /// What a body of `ir` instructions costs the running program before it runs: its plan
 /// (`plan_ns`, all on the program's thread; 0 once the plan is made) and the wall share of its compile.
-pub(super) fn outlay_ns(ir: usize, plan_ns_per_ir: u64, compile_ns_per_ir: u64, wall_permille: u64) -> u64 {
+pub(crate) fn outlay_ns(ir: usize, plan_ns_per_ir: u64, compile_ns_per_ir: u64, wall_permille: u64) -> u64 {
     ir as u64 * (plan_ns_per_ir + compile_ns_per_ir * wall_permille / PER_MILLE)
 }
 
 /// The interpreter's time in ns over `work` bytecodes that code taking `share` per mille of it
 /// per bytecode leaves to the interpreter: the work at `interpreter_ns`, less the share the code
 /// still takes. Loop regions (`loop_model`) and lane bodies both save this much per iteration or entry.
-pub(super) fn interpreted_ns(interpreter_ns: u64, work: u64, share: u64) -> u64 {
+pub(crate) fn interpreted_ns(interpreter_ns: u64, work: u64, share: u64) -> u64 {
     work * interpreter_ns * (PER_MILLE - share) / PER_MILLE
 }
 
 /// The future uses of a compile after `count` past ones (Lindy): `count / remaining_divisor`.
-pub(super) fn future_count(priors: &Priors, count: u64) -> u64 {
+pub(crate) fn future_count(priors: &Priors, count: u64) -> u64 {
     count / priors.remaining_divisor
 }
 
 /// The net gain in ns of a compile: `future` uses to come, each saving `saved` ns, less the
 /// `outlay` the compile and its entry cost the program. Exact: no product saturates.
-pub(super) fn net_gain_ns(future: u64, saved: u64, outlay: u64) -> i128 {
+pub(crate) fn net_gain_ns(future: u64, saved: u64, outlay: u64) -> i128 {
     i128::from(future) * i128::from(saved) - i128::from(outlay)
 }
 
@@ -78,12 +78,12 @@ fn saved_per_entry(priors: &Priors, share: u64, entry_ns: u64, observed: &Observ
 /// less the share the body still takes, and the region crossings an entry makes, less its own
 /// entry crossing; the compile costs the wall share of its time.
 #[cfg(test)]
-pub(super) fn net_ns(priors: &Priors, share: u64, compile_ns_per_ir: u64, wall_permille: u64, observed: &Observed) -> i64 {
+pub(crate) fn net_ns(priors: &Priors, share: u64, compile_ns_per_ir: u64, wall_permille: u64, observed: &Observed) -> i64 {
     net_planned_ns(priors, share, (0, compile_ns_per_ir), wall_permille, observed)
 }
 
 /// `net_ns` where the body's plan is still to make, at `plan_ns_per_ir`, besides its compile.
-pub(super) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compile_ns_per_ir): (u64, u64), wall_permille: u64, observed: &Observed) -> i64 {
+pub(crate) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compile_ns_per_ir): (u64, u64), wall_permille: u64, observed: &Observed) -> i64 {
     let saved = entry_work_ns(priors, share, observed).saturating_sub(priors.body_entry_ns);
     let outlay = outlay_ns(observed.ir, plan_ns_per_ir, compile_ns_per_ir, wall_permille);
     net_gain_ns(future_count(priors, u64::from(observed.entries)), saved, outlay) as i64
@@ -92,14 +92,14 @@ pub(super) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compi
 /// The net gain in ns of a b-jit body of `observed`: stencil code at `base_body_share` per
 /// bytecode behind the same `body_entry_ns` entry a u-jit body pays, stitched in microseconds on the program's thread,
 /// so neither a plan nor a compile is charged (`Tiers::amortizing_instructions`' `Tier::Base`).
-pub(super) fn base_net_ns(priors: &Priors, observed: &Observed) -> i64 {
+pub(crate) fn base_net_ns(priors: &Priors, observed: &Observed) -> i64 {
     let saved = entry_work_ns(priors, priors.base_body_share, observed).saturating_sub(priors.body_entry_ns);
     net_gain_ns(future_count(priors, u64::from(observed.entries)), saved, 0) as i64
 }
 
 /// The tier the model picks for a function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Pick {
+pub(crate) enum Pick {
     /// Neither tier pays yet: it counts on.
     Interpreter,
     /// b-jit, for good: each entry of a u-jit body would save no more than a b-jit body's, so
@@ -116,7 +116,7 @@ pub(super) enum Pick {
 /// unlike a loop region (`loop_model::promotes`), is never promoted from b-jit to u-jit, so the
 /// b-jit body it would wait beside is never built, and waiting for u-jit to get ahead of it only
 /// leaves the function interpreted the longer.
-pub(super) fn pick(ultra: i64, base: Option<(i64, i64, i64)>) -> Pick {
+pub(crate) fn pick(ultra: i64, base: Option<(i64, i64, i64)>) -> Pick {
     match base {
         Some((net, base_saving, ultra_saving)) if base_saving >= ultra_saving => if net > 0 { Pick::Base } else { Pick::Interpreter },
         _ if ultra > 0 => Pick::Ultra,
@@ -127,7 +127,7 @@ pub(super) fn pick(ultra: i64, base: Option<(i64, i64, i64)>) -> Pick {
 /// What the model picks for `observed`, whose u-jit plan is made already unless `unplanned` (its
 /// plan is then charged too). Where `tiers` admits every eligible compile (`Tiers::admits_all`,
 /// the floor row), it picks u-jit.
-pub(super) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> Pick {
+pub(crate) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> Pick {
     let priors = &tiers.priors;
     let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
     let net = net_planned_ns(priors, priors.body_share, (plan, priors.compile_ns_per_ir), compile_wall_permille(priors), observed);
@@ -144,7 +144,7 @@ pub(super) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagno
 /// where the entries to come gain more from its cheaper compile than they lose to its slower code
 /// (`Priors::quick_body_share`, `quick_compile_permille`). A body entered many times takes the
 /// optimizing compile; one compiled quick moves to it once its entries repay that (`optimizes`).
-pub(super) fn compiles_quick(tiers: &Tiers, observed: &Observed, unplanned: bool) -> bool {
+pub(crate) fn compiles_quick(tiers: &Tiers, observed: &Observed, unplanned: bool) -> bool {
     !tiers.admits_all && quick_ahead(&tiers.priors, observed, unplanned)
 }
 
@@ -160,7 +160,7 @@ fn quick_ahead(priors: &Priors, observed: &Observed, unplanned: bool) -> bool {
 /// Whether a body compiled quick moves to an optimizing compile after `observed.entries` entries
 /// in all: the entries to come (`remaining_divisor`) at the optimized body's extra saving per
 /// entry repay its plan and compile.
-pub(super) fn optimizes(tiers: &Tiers, observed: &Observed) -> bool {
+pub(crate) fn optimizes(tiers: &Tiers, observed: &Observed) -> bool {
     optimizes_under(&tiers.priors, observed)
 }
 
@@ -173,7 +173,7 @@ fn optimizes_under(priors: &Priors, observed: &Observed) -> bool {
 
 /// Whether the model admits the u-jit compile of `observed` (`decide` picks u-jit).
 #[cfg(test)]
-pub(super) fn admits(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
+pub(crate) fn admits(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
     decide(tiers, observed, unplanned, diagnostics) == Pick::Ultra
 }
 

@@ -17,7 +17,7 @@ impl EmitFrame<'_> {
     /// takes (`staged::store`); anything else, and a site with no bound slot, takes the plain
     /// hit (`PropertyFrame::field_store_host`). The object's record is proved before the
     /// branches, which both use.
-    pub(super) fn bound_store(&mut self, stage: &mut Emit<'_, '_>, owner: Owner, object: ir::Value,
+    pub(crate) fn bound_store(&mut self, stage: &mut Emit<'_, '_>, owner: Owner, object: ir::Value,
         (atom, site): (u32, u16), (value, fact): (ir::Value, Type), miss: ir::Block) -> Option<()> {
         let entry = self.entry();
         let binding = entry.and_then(|entry| entry.fields.iter().find_map(|(known, binding)| (*known == site).then_some(*binding)))
@@ -50,7 +50,7 @@ impl EmitFrame<'_> {
     /// The int32 `value` stored through the slot a loop's entry projected (`LoopStore`): a
     /// packed object takes the narrow word, an arena object the full one, both without the
     /// store barrier a verified integer never needs. A value past the packed range leaves at `miss`.
-    pub(super) fn loop_slot_store(&mut self, stage: &mut Emit<'_, '_>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
+    pub(crate) fn loop_slot_store(&mut self, stage: &mut Emit<'_, '_>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
         let slot = self.fields.as_ref()?.held.slot?;
         #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
         let builder = &mut *stage.builder;

@@ -3,38 +3,38 @@ use super::super::declared::EntryGuard;
 
 /// An entry row: its stencil and hole values, and where its miss goes. A Number guard's miss is its
 /// taken successor; a declared test's (`Heap::Declared`) is its exit 0. Either leaves to the failed entry.
-pub(in super::super) struct EntryRow {
-    pub(in super::super) stencil: &'static Stencil,
-    pub(in super::super) holes: [u64; HOLES],
+pub(crate) struct EntryRow {
+    pub(crate) stencil: &'static Stencil,
+    pub(crate) holes: [u64; HOLES],
     declared: bool,
     /// The register a Number guard checks (a Mem slot or a pinned double); `None` for any other row.
-    pub(in super::super) number: Option<Register>,
+    pub(crate) number: Option<Register>,
     /// The register an int32 guard checks (a pinned int32 or an int slot); `None` for any other row.
-    pub(in super::super) int32: Option<Register>,
+    pub(crate) int32: Option<Register>,
     /// The unboxing row a pinned guard runs in the proven-arguments entry (`UNBOX` or `UNBOX_INT`, the guard's tag test left out);
     /// `None` for a slot guard, which writes nothing and that entry skips.
-    pub(in super::super) unbox: Option<&'static Stencil>,
+    pub(crate) unbox: Option<&'static Stencil>,
 }
 
 /// The bit of an int32 guard in a guard mask (`RowEntries::numbers`): a Number guard of parameter `r` sets bit `r`,
 /// an int32 guard of `r` bit `INT32_BIT + r`. A register past `INT32_BIT` sets every bit, so no call covers it.
-pub(in super::super) const INT32_BIT: u32 = u64::BITS / 2;
+pub(crate) const INT32_BIT: u32 = u64::BITS / 2;
 
 impl EntryRow {
     /// Whether the row is a Number or int32 guard, which the proven-arguments entry starts past.
-    pub(in super::super) fn guards(&self) -> bool {
+    pub(crate) fn guards(&self) -> bool {
         self.number.is_some() || self.int32.is_some()
     }
 }
 
 impl EntryRow {
     /// The taken successor of the row: the failed entry's leave, unless its miss is an exit.
-    pub(in super::super) fn taken(&self, failed: usize) -> Option<usize> {
+    pub(crate) fn taken(&self, failed: usize) -> Option<usize> {
         (!self.declared).then_some(failed)
     }
 
     /// The exits of the row: exit 0 to the failed entry's leave, for a declared test.
-    pub(in super::super) fn exits(&self, failed: usize) -> Vec<Target> {
+    pub(crate) fn exits(&self, failed: usize) -> Vec<Target> {
         if self.declared { vec![Target::Row(failed)] } else { Vec::new() }
     }
 }
@@ -46,7 +46,7 @@ fn guard_bit(register: Register, int32: bool) -> u64 {
 }
 
 /// The parameter registers the Number and int32 guards of `entry` check, as a mask (`RowEntries::numbers`).
-pub(in super::super) fn guard_mask(entry: &[EntryRow]) -> u64 {
+pub(crate) fn guard_mask(entry: &[EntryRow]) -> u64 {
     let numbers = entry.iter().filter_map(|row| row.number).map(|register| guard_bit(register, false));
     let int32s = entry.iter().filter_map(|row| row.int32).map(|register| guard_bit(register, true));
     numbers.chain(int32s).fold(0, |mask, bit| mask | bit)
@@ -82,7 +82,7 @@ fn number_guard(kind: Kind, dst: Place, offset: u64, register: Register) -> Resu
 /// test (`layout.prototypes`: exact shape and prototype link).
 /// `at` is the row the entry enters at (0 for the body's entry, a stub's PC for a resume stub): a Mem
 /// slot's Number guard is emitted only where `layout.entry_reads` says a row reads its entry value.
-pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize], at: usize) -> Result<Vec<EntryRow>, String> {
+pub(crate) fn entry_rows(layout: &Layout, entered: &[usize], at: usize) -> Result<Vec<EntryRow>, String> {
     let orig = |web: Register| layout.homes.orig[usize::from(web)];
     let slot = |web: Register| u64::from(orig(web)) * SLOT;
     let mut rows = Vec::new();

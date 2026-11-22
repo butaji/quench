@@ -6,7 +6,7 @@ use super::*;
 /// The machine view a block entry keeps a register of fact type `ty` in: the unboxed view of
 /// a Number type, tagged bits for any other. Entry states and edges both take it from the
 /// target's fact (`facts.at`), so an edge conforms to exactly what its target reads.
-pub(super) fn target_representation(ty: Type) -> Representation {
+pub(crate) fn target_representation(ty: Type) -> Representation {
     let ty = ty.machine();
     if ty == Type::INT32 { Representation::Int32 }
     else if ty == Type::NUMBER { Representation::Float64 }
@@ -15,7 +15,7 @@ pub(super) fn target_representation(ty: Type) -> Representation {
 
 /// `index`'s tagged bits boxed from its unboxed view in `representation`: the one boxing of a
 /// numeric register, for a tagged read (`frame::register_tagged`) and for a leave (`exits.rs`).
-pub(super) fn box_unboxed(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+pub(crate) fn box_unboxed(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     representation: Representation, index: usize) -> ir::Value {
     match representation {
         Representation::Int32 => {
@@ -40,7 +40,7 @@ pub(super) fn box_unboxed(builder: &mut FunctionBuilder<'_>, registers: &mut Reg
 
 impl Lowering<'_, '_> {
     /// Whether every operand is proved int32: a register by its type, a constant by its value.
-    pub(super) fn proved_int(&self, state: &State, operands: [Operand; 2]) -> bool {
+    pub(crate) fn proved_int(&self, state: &State, operands: [Operand; 2]) -> bool {
         operands.iter().all(|operand| match operand.kind() {
             Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
             Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
@@ -53,7 +53,7 @@ impl Lowering<'_, '_> {
     /// the int32 remainder, as C does; its NaN and `-0` leave at `exit`. The guards the facts prove
     /// redundant are dropped: a dividend no negative makes no `-0`, a sum that only its ToInt32 reads
     /// ignores the sign of one (`truncated_sum_operand`), and a divisor no zero needs no zero test.
-    pub(super) fn remainder(&mut self, state: &mut State, pc: usize, destination: Register,
+    pub(crate) fn remainder(&mut self, state: &mut State, pc: usize, destination: Register,
         [left, right]: [Operand; 2], exit: ir::Block) {
         let int = self.proved_int(state, [left, right]) && !self.left_here;
         let domain = if int {

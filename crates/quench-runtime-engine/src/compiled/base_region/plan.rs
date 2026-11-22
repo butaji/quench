@@ -6,25 +6,25 @@ use super::call_plan::ChainRead;
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
 /// frame slots.
-pub(super) struct Homes {
-    pub(super) pins: Vec<Pin>,
-    pub(super) floats: Vec<Pin>,
-    pub(super) slots: Vec<Register>,
+pub(crate) struct Homes {
+    pub(crate) pins: Vec<Pin>,
+    pub(crate) floats: Vec<Pin>,
+    pub(crate) slots: Vec<Register>,
     /// The register of the activation each web belongs to, whose frame slot a web uses.
-    pub(super) orig: Vec<Register>,
+    pub(crate) orig: Vec<Register>,
 }
 
 impl Homes {
     /// The homes of the ranked int and double webs: a pin of each kind goes to the most named
     /// webs that do not clash with another web holding it, so webs with disjoint lifetimes share
     /// a pin; an int web with no pin takes an int slot.
-    pub(super) fn of(ints: &[Register], doubles: &[Register], orig: Vec<Register>, clash: &[Vec<usize>]) -> Self {
+    pub(crate) fn of(ints: &[Register], doubles: &[Register], orig: Vec<Register>, clash: &[Vec<usize>]) -> Self {
         let (pins, slots) = colored(ints, PINNED, clash);
         let (floats, _) = colored(doubles, PINNED_F, clash);
         Self { pins, floats, slots, orig }
     }
 
-    pub(super) fn place(&self, register: Register) -> Place {
+    pub(crate) fn place(&self, register: Register) -> Place {
         let find = |pins: &[Pin]| pins.iter().find(|(_, pinned)| *pinned == register).map(|(pin, _)| *pin as u8);
         if let Some(pin) = find(&self.pins) {
             return Place::Pin(pin);
@@ -51,7 +51,7 @@ fn colored(ranked: &[Register], limit: usize, clash: &[Vec<usize>]) -> (Vec<Pin>
 }
 
 /// The place and hole of an operand: an int32 constant is an immediate.
-pub(super) fn operand(homes: &Homes, source: Option<Source>) -> (Place, u64) {
+pub(crate) fn operand(homes: &Homes, source: Option<Source>) -> (Place, u64) {
     match source {
         Some(Source::Register(register)) => (homes.place(register), u64::from(homes.orig[usize::from(register)]) * SLOT),
         Some(Source::Constant(word)) if word >> HALF == INT_HIGH => (Place::Imm, word & u64::from(u32::MAX)),
@@ -63,7 +63,7 @@ pub(super) fn operand(homes: &Homes, source: Option<Source>) -> (Place, u64) {
 /// Where an exit hole of a row, by exit kind, is patched to. Every exit lies in the cold area
 /// after the hot rows, so a row falls through to its successor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Exit {
+pub(crate) enum Exit {
     /// A stub that names `pc` and enters the routine writing the live pinned registers back, then
     /// leaves at `pc`: a guard that failed before the row's effects.
     Spilling(u32),
@@ -79,57 +79,57 @@ pub(super) enum Exit {
 /// A row that leaves the function at `pc`, or completes the activation with the register slot
 /// at byte offset `returns`.
 #[derive(Clone, Copy)]
-pub(super) struct Stop {
-    pub(super) pc: u32,
-    pub(super) returns: Option<u64>,
+pub(crate) struct Stop {
+    pub(crate) pc: u32,
+    pub(crate) returns: Option<u64>,
 }
 
 /// Where a row branches to: a bytecode PC (a row of the region, or a leave outside it), or a part
 /// of the run of rows its own instruction makes (`Planned::pre`, itself, `post`, in order), where
 /// the run's length is the row that follows it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Branch {
+pub(crate) enum Branch {
     Pc(u32),
     Part(usize),
 }
 
 /// A row placed in the program: its stencil, hole values and branch target.
-pub(super) struct Planned {
-    pub(super) stencil: &'static Stencil,
+pub(crate) struct Planned {
+    pub(crate) stencil: &'static Stencil,
     /// The row's library code, which a tile of this row and its neighbour is looked up by (`tile`);
     /// none for a tile itself and for the rows no supernode names (chains, leaves).
-    pub(super) node: Option<Node>,
-    pub(super) holes: [u64; HOLES],
-    pub(super) branch: Option<Branch>,
+    pub(crate) node: Option<Node>,
+    pub(crate) holes: [u64; HOLES],
+    pub(crate) branch: Option<Branch>,
     /// The exits of the row by exit kind.
-    pub(super) exits: Vec<Exit>,
+    pub(crate) exits: Vec<Exit>,
     /// Rows that run before and after this one at the same PC (a heap row reads and writes tagged
     /// frame slots only; these move its operands and result between the slot and a pinned register).
-    pub(super) pre: Vec<Planned>,
-    pub(super) post: Vec<Planned>,
+    pub(crate) pre: Vec<Planned>,
+    pub(crate) post: Vec<Planned>,
     /// Set for a row that leaves the function or completes it: it jumps to its leave row.
-    pub(super) stop: Option<Stop>,
+    pub(crate) stop: Option<Stop>,
     /// The call record the row reads (`CallRecord`), which the code must not outlive.
-    pub(super) owned: Vec<Box<quench_bjit::call_record::CallRecord>>,
+    pub(crate) owned: Vec<Box<quench_bjit::call_record::CallRecord>>,
     /// Reached only through a fast row's miss (`steps::behind`): laid out after the hot rows.
-    pub(super) cold: bool,
+    pub(crate) cold: bool,
     /// The holes that name a symbol the loader resolves, each with its symbol (`CallPart::symbols`).
-    pub(super) symbolic: Symbolic,
+    pub(crate) symbolic: Symbolic,
 }
 
 /// The most holes of one row that name symbols: the generic row's semantic entry and operand record.
-pub(super) const SYMBOLIC_HOLES: usize = 2;
+pub(crate) const SYMBOLIC_HOLES: usize = 2;
 
 /// The holes of a row whose run-time address is a symbol the loader resolves, each with its symbol.
-pub(super) type Symbolic = [Option<(u8, quench_runtime::vm::aot_image::Symbol)>; SYMBOLIC_HOLES];
+pub(crate) type Symbolic = [Option<(u8, crate::aot_image::Symbol)>; SYMBOLIC_HOLES];
 
 /// A row that names no symbol.
-pub(super) const NO_SYMBOLS: Symbolic = [None; SYMBOLIC_HOLES];
+pub(crate) const NO_SYMBOLS: Symbolic = [None; SYMBOLIC_HOLES];
 
 impl Planned {
     /// The run with the rows `before` laid out ahead of it at the same PC: the parts the run names by
     /// index (`Branch::Part`) are `before.len()` parts later.
-    pub(super) fn after(mut self, before: Vec<Planned>) -> Self {
+    pub(crate) fn after(mut self, before: Vec<Planned>) -> Self {
         let shift = before.len();
         let later = |part: &mut Planned| {
             if let Some(Branch::Part(index)) = &mut part.branch {
@@ -143,7 +143,7 @@ impl Planned {
         self
     }
 
-    pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
+    pub(crate) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
         Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: NO_SYMBOLS }
     }
 }
@@ -187,7 +187,7 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
 }
 
 /// The hole values of a heap row of `decoded`, given its holes of destination, first and second operand.
-pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
+pub(crate) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
     site_holes(decoded, heap, base, holes).or_else(|| global_holes(decoded, heap, holes)).or_else(|| slot_holes(heap, dst_hole, a_hole)).or_else(|| test_holes(decoded, heap, dst_hole, a_hole)).unwrap_or_else(|| padded_holes(match heap {
         Heap::Store | Heap::TypedStore(_) => [base, a_hole, b_hole],
@@ -321,7 +321,7 @@ fn chosen_row(kind: Kind, [dst, a, b]: [Place; 3], variant: Variant, general: bo
 /// as a Held row over the receiver (`Heap::Held`: the receiver's exact shape and prototype link, then the value the holder
 /// held at compile time, into `scratch`). The holder is listed in `Layout::holders`, so a change of its values retires the
 /// body; a call's direct row compares the value by identity. Empty where the receiver is not framed, or the site records none.
-pub(super) fn chain_reads(layout: &Layout, receiver: Register, cache: u16, scratch: Register) -> Vec<ChainRead> {
+pub(crate) fn chain_reads(layout: &Layout, receiver: Register, cache: u16, scratch: Register) -> Vec<ChainRead> {
     let Some(reads) = layout.reads else { return Vec::new() };
     if layout.homes.place(receiver) != Place::Mem {
         return Vec::new();
@@ -343,7 +343,7 @@ pub(super) fn chain_reads(layout: &Layout, receiver: Register, cache: u16, scrat
 /// The site read of a method call's callee (`call_plan::Method`): the field cache entry `cache` answers for the
 /// receiver register `receiver`, written to the frame slot of `scratch`, where the call's direct row checks it. A miss
 /// leaves with nothing written (`Exit::At` the call), so the interpreter runs the call instruction again.
-pub(super) fn method_read(receiver: Register, cache: u16, scratch: Register) -> Result<(&'static Stencil, [u64; HOLES]), String> {
+pub(crate) fn method_read(receiver: Register, cache: u16, scratch: Register) -> Result<(&'static Stencil, [u64; HOLES]), String> {
     let row = HeapRow { heap: Heap::Site, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     let (dst_hole, a_hole) = (u64::from(scratch) * SLOT, u64::from(receiver) * SLOT);
     let object = dst_hole | a_hole << numeric::site_bits::SITE_OBJECT_AT;
@@ -354,7 +354,7 @@ pub(super) fn method_read(receiver: Register, cache: u16, scratch: Register) -> 
 
 /// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of
 /// its feedback `variant`; a backward jump takes the poll row the layout's ending names.
-pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
+pub(crate) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
     // An image body makes a miss by the step helper and continues (`steps::stepped_misses`).
     steps::stepped_misses(planned_row(decoded, layout, pc, (general, variant), helpers)?, decoded, layout, pc, helpers)
 }
@@ -454,11 +454,11 @@ fn folded(kind: Kind, [dst, a, b]: [(Place, u64); 3]) -> ((Kind, [Place; 3]), [u
 }
 
 /// Whether `place` holds a number the row reads or writes in a register or as an int32 in memory, not a tagged word.
-pub(super) fn holds_number(place: Place) -> bool {
+pub(crate) fn holds_number(place: Place) -> bool {
     matches!(place, Place::Pin(_) | Place::PinF(_) | Place::MemInt)
 }
 
 /// A leave row: the stub that tags the pinned registers back and returns `word`.
-pub(super) fn leave_row(code: Vec<u8>) -> Stencil {
+pub(crate) fn leave_row(code: Vec<u8>) -> Stencil {
     Stencil { raw_len: code.len(), hot_len: code.len(), code, relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0 }
 }

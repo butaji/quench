@@ -27,13 +27,13 @@ use quench_bjit::padded_holes;
 
 /// The frame byte of vector register `register` in a function of `registers` registers: its low
 /// word (the high word is 8 more).
-pub(super) const fn vector_slot(registers: u16, register: u16) -> u64 {
+pub(crate) const fn vector_slot(registers: u16, register: u16) -> u64 {
     slot(registers) + 16 * register as u64
 }
 
 /// The frame's bytes of a function of `registers` registers: the scalar frame (`frame_bytes`), and
 /// with vectors the vector area after it, padded as `frame_bytes` pads.
-pub(super) fn frame_bytes(registers: u16, vectors: bool) -> u64 {
+pub(crate) fn frame_bytes(registers: u16, vectors: bool) -> u64 {
     if !vectors {
         return super::frame_bytes(registers);
     }
@@ -52,14 +52,14 @@ fn words(bytes: [u8; V128_BYTES]) -> [u64; 2] {
 /// A row of kind `kind` and operator `operator` (shape register, width 64: the library's row of
 /// `wasm_library.rs`), its value holes as the row reads them: hole 0 the destination, then the operands
 /// in `HOLE_A`, `HOLE_B`, `HOLE_FOURTH`, `LAST_HOLE`.
-pub(super) fn vector_row<const N: usize>((kind, operator): (u8, u32), holes: [u64; N]) -> Planned {
+pub(crate) fn vector_row<const N: usize>((kind, operator): (u8, u32), holes: [u64; N]) -> Planned {
     let code: WasmCode = (kind, operator, codes::W64, codes::REGISTER);
     Planned { stencil: leak(codes::wasm_name(code)), holes: padded_holes(holes), taken: None }
 }
 
 /// The rows of the vector step `step` at `instruction`, or `None` where the step has none: an
 /// operator outside the library's kinds, or a shuffle whose indices are not a vector constant.
-pub(super) fn simd(instruction: WideInstruction, step: Simd, world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn simd(instruction: WideInstruction, step: Simd, world: &World<'_>) -> Option<Vec<Planned>> {
     let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
     let vector = |register: u16| vector_slot(world.registers, register);
     let planned = match step {
@@ -99,7 +99,7 @@ pub(super) fn simd(instruction: WideInstruction, step: Simd, world: &World<'_>) 
 
 /// The rows of a v128 constant or a move of vectors at `pc`, or `None` for any other instance step
 /// (the caller plans a scalar one): `plan()` tries this first.
-pub(super) fn instance(pc: usize, instruction: WideInstruction, step: Instance, world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn instance(pc: usize, instruction: WideInstruction, step: Instance, world: &World<'_>) -> Option<Vec<Planned>> {
     let (a, b) = (instruction.a(), instruction.b());
     if step == Instance::Move && (world.vector_move)(pc) {
         let (to, from) = (vector_slot(world.registers, a), vector_slot(world.registers, b));
@@ -112,7 +112,7 @@ pub(super) fn instance(pc: usize, instruction: WideInstruction, step: Instance, 
 
 /// Whether a function holds a vector: a vector step, a v128 constant or a move of vectors. Its
 /// frame then has the vector area (`frame_bytes`).
-pub(super) fn uses_vectors(instructions: &[WideInstruction], world: &World<'_>) -> bool {
+pub(crate) fn uses_vectors(instructions: &[WideInstruction], world: &World<'_>) -> bool {
     instructions.iter().enumerate().any(|(pc, &instruction)| match Step::of(instruction.op(), instruction.imm()) {
         Some(Step::Simd(_)) => true,
         Some(Step::Instance(step)) => {

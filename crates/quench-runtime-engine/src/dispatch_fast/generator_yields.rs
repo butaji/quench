@@ -46,7 +46,7 @@ fn record_pc(cx: *mut LaneContext, ip: Ip) -> usize {
 /// ends (`suspend_job_root`), unless an `await` continues in place (`settled_await_in_place`);
 /// a settling body hands its frame over (`suspend_settling`). `r` holds the record's registers.
 #[inline(always)]
-pub(super) fn lane_suspend_at(cx: *mut LaneContext, r: Registers, ip: Ip, suspender: Suspender,
+pub(crate) fn lane_suspend_at(cx: *mut LaneContext, r: Registers, ip: Ip, suspender: Suspender,
     suspending: Suspending<u64>) -> Resumed {
     let at = (record_pc(cx, ip) + usize::from(!suspending.again), suspending.destination);
     let (value, yielded) = (Value::from_bits(suspending.value), suspending.effect == SuspendEffect::Yield);
@@ -154,7 +154,7 @@ script_handler! {
 
 /// The handlers of a frame's suspensions: each runs its staged `Suspend` row on the lane's frame
 /// (`suspension_row_in_lane`), with the suspender its record's activation makes.
-pub(super) const fn suspend_handler(opcode: Op) -> Option<Handler> {
+pub(crate) const fn suspend_handler(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::Yield => Some(yield_row),
         Class::YieldStar => Some(yield_star_row),
@@ -263,7 +263,7 @@ unsafe fn environment_passed<'a>(code: &ResidualProgram, activation: &'a Activat
 /// `ip` with registers `r`, passing `passed` with receiver `this`: its return settles the call's
 /// promise, whose root its side record keeps (`Completion::SettlesPromise`, `SidePayload::Settles`).
 /// An activation refused leaves the caller to release it, before any effect.
-pub(super) fn activate_settling_environment(
+pub(crate) fn activate_settling_environment(
     cx: *mut LaneContext,
     r: Registers,
     ip: Ip,

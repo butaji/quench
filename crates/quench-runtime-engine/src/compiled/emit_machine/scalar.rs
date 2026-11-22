@@ -172,7 +172,7 @@ fn overflowing(builder: &mut FunctionBuilder<'_>, operation: Binary, a: ir::Valu
 }
 
 /// The integer constant `value` is, at its type's width: (zero-extended, sign-extended) bits.
-pub(super) fn known_integer(builder: &FunctionBuilder<'_>, value: ir::Value) -> Option<(u64, i64)> {
+pub(crate) fn known_integer(builder: &FunctionBuilder<'_>, value: ir::Value) -> Option<(u64, i64)> {
     let dfg = &builder.func.dfg;
     let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = dfg.insts[dfg.value_def(value).inst()?] else { return None };
     let bits = dfg.value_type(value).bits();

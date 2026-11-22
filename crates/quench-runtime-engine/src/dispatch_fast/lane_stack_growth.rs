@@ -8,12 +8,12 @@ const LANE_STACK_GROWTH: usize = 2;
 
 /// Which of a lane stack's two arrays lacks room: (values, activations).
 #[derive(Clone, Copy)]
-pub(super) struct LaneStackFull(bool, bool);
+pub(crate) struct LaneStackFull(bool, bool);
 
 #[quench_macros::ext(LaneStackOps4)]
 impl LaneStack {
     /// Which arrays lack room for a window of `room` values and one more activation.
-    pub(super) fn full(&self, room: usize) -> LaneStackFull {
+    pub(crate) fn full(&self, room: usize) -> LaneStackFull {
         LaneStackFull(
             self.values.room() < room,
             // Every frame counts against the records' capacity, headers too (`spill_plain`).
@@ -27,7 +27,7 @@ impl LaneStack {
     /// word; a plain header's is where the walk finds it, so the words naming one move instead
     /// of the headers spilling (one-frame-one-call.md F4 (3)): each header's caller registers,
     /// the innermost window and each sealed segment's (`relocate_plain`).
-    pub(super) fn reserve_values(&mut self, additional: usize) {
+    pub(crate) fn reserve_values(&mut self, additional: usize) {
         let before = self.values.span();
         if !self.values.reserve(additional) { return; }
         let after = self.values.as_ptr().addr();
@@ -39,7 +39,7 @@ impl LaneStack {
     }
 
     /// Grows the arrays `full` names; only a lack of room grows the stack.
-    pub(super) fn grow(&mut self, full: LaneStackFull, room: usize) {
+    pub(crate) fn grow(&mut self, full: LaneStackFull, room: usize) {
         if full.0 {
             self.reserve_values((LANE_STACK_GROWTH * self.values.capacity()).max(room));
         }

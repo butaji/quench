@@ -45,15 +45,15 @@ use oxc_ast::ast::UnaryOperator;
 use crate::compiled::tier_policy::{MAX_REGION_INSTRUCTIONS, MAX_REGION_REGISTERS, MAX_REGION_ARRAYS, MAX_REGION_CAPTURES, MAX_REGION_FIELDS, MAX_REGION_FIELD_STORES};
 
 #[path = "osr_loop/inlining.rs"]
-mod inlining;
+pub(crate) mod inlining;
 #[path = "osr_loop/function.rs"]
-mod function;
+pub(crate) mod function;
 #[path = "osr_loop/iteration.rs"]
-mod iteration;
+pub(crate) mod iteration;
 #[path = "osr_loop/receivers.rs"]
-mod receivers;
+pub(crate) mod receivers;
 #[path = "osr_loop/lifetime.rs"]
-mod lifetime;
+pub(crate) mod lifetime;
 
 pub(crate) use quench_runtime::vm::engine_types::ArrayUse;
 
@@ -65,9 +65,9 @@ impl LoopRegion {
     /// function's; only `header..=backedge` lowers.
     pub(crate) fn instructions(&self) -> &[WideInstruction] { &self.instructions }
     /// The Number constant the region reads at pool index `index`.
-    pub(super) fn number_constant(&self, index: usize) -> Option<f64> { self.constants.get(&index).copied() }
+    pub(crate) fn number_constant(&self, index: usize) -> Option<f64> { self.constants.get(&index).copied() }
     /// The registers the region treats as Numbers.
-    pub(super) fn number_registers(&self) -> &[Register] { &self.numbers }
+    pub(crate) fn number_registers(&self) -> &[Register] { &self.numbers }
     /// The cached field reads, by offset from the header: the lane specializer's field
     /// sites, mapped from the observation's descriptors.
     pub(crate) fn field_reads(&self) -> &std::collections::BTreeMap<u32, usize> { &self.field_reads }
@@ -664,7 +664,7 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
 /// Whether an inlined callee's instruction computes its result and returns it in one
 /// (`RETURN_REGISTER` alone, of a value-producing instruction), which inlining splits into
 /// the computation and the `Return` it makes.
-pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
+pub(crate) fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == quench_runtime::bytecode::RETURN_REGISTER
         && !quench_runtime::staged::returns(instruction.op())
         && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
@@ -681,7 +681,7 @@ fn inlinable(op: Op) -> bool {
 /// `instruction` with each register `register` renames, a `this` field base made the
 /// `this` register, and a jump target `target` renames; `None` for a field it cannot
 /// rename, or a register with flags.
-pub(super) fn renamed(
+pub(crate) fn renamed(
     instruction: WideInstruction,
     register: &dyn Fn(Register) -> Register,
     this: Register,
@@ -831,7 +831,7 @@ fn pure_setup(op: Op) -> bool {
 /// the region. Leaving at a callee's instruction makes the callee's activation
 /// (`LaneExit::Inlined`).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn inline_region<'a>(
+pub(crate) fn inline_region<'a>(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
@@ -1058,7 +1058,7 @@ impl LoopRegion {
 
     /// Whether the interpreter may read `register` resuming at `pc` before writing it; every
     /// register is, where liveness does not cover the function.
-    pub(super) fn is_live(&self, pc: u32, register: Register) -> bool {
+    pub(crate) fn is_live(&self, pc: u32, register: Register) -> bool {
         let Some(live) = &self.live else {
             return true;
         };
@@ -1097,14 +1097,14 @@ pub(crate) struct LoopEntry {
 
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
 /// unsigned comparison bounds every `i32` index.
-pub(super) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
+pub(crate) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// The first record word counts executions of the region's own backward edge: the iterations
 /// a run completed natively, which weigh what its entry paid for (`LoopSite::note_run`).
 const ENTRY_BACKEDGE_COUNT: usize = 0;
 /// The backward edges one native run may take before it leaves to the interpreter, which re-enters the loop (a run's
 /// budget is the record's first word, primed here and debited by the stencils' `count_edge` and the lane's flush).
 pub(crate) const BACKEDGE_BUDGET: i64 = 1 << 20;
-pub(super) const ENTRY_CAPTURES: usize = 1;
+pub(crate) const ENTRY_CAPTURES: usize = 1;
 
 /// The entry word of the region's `index`th field: the single home of the record's field
 /// layout, shared by the verified lowering and the lane region's snapshot reads.
@@ -1113,7 +1113,7 @@ pub(crate) fn field_word(region: &LoopRegion, index: usize) -> usize {
 }
 /// An array's entry words: its element pointer, its length, then its capacity (which only
 /// a written array's appends read).
-pub(super) const ARRAY_WORDS: usize = 3;
+pub(crate) const ARRAY_WORDS: usize = 3;
 const FIELD_STORE_WORDS: usize = 1;
 /// The heap views native reads use (`LoopEntry::push_native_heap`): the object records'
 /// base, the property values' base and count, and the array records' base.
@@ -1151,7 +1151,7 @@ impl LoopEntry {
     }
 
     /// The record's words. Native OSR may also update the private first counter word.
-    pub(super) fn words_mut(&mut self) -> *mut u64 {
+    pub(crate) fn words_mut(&mut self) -> *mut u64 {
         debug_assert!(self.length <= ENTRY_WORDS);
         self.words.as_mut_ptr().cast()
     }
@@ -1226,7 +1226,7 @@ impl LoopEntry {
     /// The window's first `width` words start `undefined`, so a register the leave did not write
     /// reads as a value even if the callee's and the unit's liveness ever disagreed; only inlining
     /// regions ask for the window, and `scratch_value` reads no word past `Inlining::window`.
-    pub(super) fn scratch_address(&mut self, width: usize) -> usize {
+    pub(crate) fn scratch_address(&mut self, width: usize) -> usize {
         let filled = width.min(self.scratch.len());
         self.scratch[..filled].fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
         self.scratch.as_mut_ptr().addr()
@@ -1410,7 +1410,7 @@ impl Admission<'_> {
 
 /// The region of the loop from `header` to its backward jump at `backedge`, when every
 /// instruction in it is one the tier lowers.
-pub(super) fn region(
+pub(crate) fn region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
@@ -2240,7 +2240,7 @@ impl Webs {
 }
 
 /// The Number registers an instruction reads.
-pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
+pub(crate) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     if exits_before_effects(instruction) || reads_type(instruction) || !instruction.op().reads_values() {
         return Vec::new();
     }

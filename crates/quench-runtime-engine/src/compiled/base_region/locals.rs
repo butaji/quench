@@ -39,7 +39,7 @@ fn frame_owned(function: &Function, id: u32, slot: usize) -> bool {
 /// Whether `slot` of `function` (index `id`) lives in the storage of an activation's environment window, as the
 /// window handlers' `ENVIRONMENT` flavor reads it (`specialize_environment_window`): the function resolves no names at
 /// run time and no mapped `arguments` aliases the slot.
-pub(in crate::compiled) fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
+pub(crate) fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
     id != quench_runtime::vm::ROOT_FUNCTION_ID && function.local_slot_uses_environment(slot) && !function.has_dynamic_scope_access()
         && quench_runtime::vm::arguments::mapped_arguments_slot(function, slot).is_none()
 }
@@ -75,7 +75,7 @@ fn env_row(function: &Function, id: u32, instruction: WideInstruction) -> Option
 
 /// The fast row of the local instruction `instruction` of `function` (index `id`), if it has one: a frame-owned
 /// slot's, or in a body an environment window's (`env_row`).
-pub(super) fn fast_row(function: &Function, id: u32, instruction: WideInstruction, ending: Ending) -> Option<Decoded> {
+pub(crate) fn fast_row(function: &Function, id: u32, instruction: WideInstruction, ending: Ending) -> Option<Decoded> {
     frame_row(function, id, instruction).or_else(|| env_row(function, id, instruction).filter(|_| ending == Ending::Body))
 }
 

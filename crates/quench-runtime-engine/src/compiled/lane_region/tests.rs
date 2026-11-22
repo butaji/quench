@@ -260,7 +260,7 @@ fn capture_entry_preserves_distinct_environments_and_mutations() {
             let module = quench_runtime::lower_native_js_module(&program, "capture_entry").unwrap();
             let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
             for function in module.functions {
-                if let quench_runtime::vm::native_object::NativeFunction::Definition { function, .. } = function {
+                if let crate::native_object::NativeFunction::Definition { function, .. } = function {
                     quench_runtime::vm::jit_backend::compile_function(function, &*isa, None, |_, _| Ok(())).unwrap();
                 }
             }

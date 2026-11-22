@@ -12,22 +12,22 @@ use quench_runtime::staged::machine::{Binary, Lane, MachineFlow, MachineScalar, 
 /// A non-null table reservation admitted for this native run. This proves no
 /// receiver identity, ID range, record liveness or property-storage lifetime.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct CheckedObjectTable(ir::Value);
+pub(crate) struct CheckedObjectTable(ir::Value);
 
 impl CheckedObjectTable {
-    pub(super) fn prove(builder: &mut FunctionBuilder<'_>, base: ir::Value, miss: ir::Block) -> Self {
+    pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, base: ir::Value, miss: ir::Block) -> Self {
         let present = emit(builder).raw_compare_imm(Relation::NotEqual, base, 0);
         emit_js_guard(builder, present, miss);
         Self(base)
     }
 
-    pub(super) fn base(self) -> ir::Value { self.0 }
+    pub(crate) fn base(self) -> ir::Value { self.0 }
 }
 
 /// Legacy operation-local admission and region-entry admission use the same
 /// projector; only the latter has already discharged the table-present guard.
 #[derive(Clone, Copy)]
-pub(super) enum ObjectTable {
+pub(crate) enum ObjectTable {
     Unchecked(ir::Value),
     Checked(CheckedObjectTable),
 }
@@ -41,30 +41,30 @@ impl From<CheckedObjectTable> for ObjectTable {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct ObjectHeader {
-    pub(super) record: ObjectRecord,
-    pub(super) shape: ir::Value,
-    pub(super) inline: ir::Value,
+pub(crate) struct ObjectHeader {
+    pub(crate) record: ObjectRecord,
+    pub(crate) shape: ir::Value,
+    pub(crate) inline: ir::Value,
     /// The record's address, computed once for the header loads and every later read.
-    pub(super) address: ir::Value,
+    pub(crate) address: ir::Value,
     /// The record's layout id, where it was loaded (`IcOp::GuardLayout`).
-    pub(super) word: Option<ir::Value>,
+    pub(crate) word: Option<ir::Value>,
     /// The record's auxiliary word (exact shape and storage-form bits) the header read, which a
     /// formed read compares (`staged::property_slots::formed_slot`) instead of reading it again.
-    pub(super) auxiliary: Option<ir::Value>,
+    pub(crate) auxiliary: Option<ir::Value>,
 }
 
 /// A verified direct-object locator. Indexed records keep the admitted base and
 /// byte offset; address values are derived only for their consumers.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ObjectRecord {
+pub(crate) enum ObjectRecord {
     /// A record address already admitted by the region's receiver entry.
     Address(ir::Value),
     Indexed { base: ir::Value, offset: ir::Value },
 }
 
 impl ObjectRecord {
-    pub(super) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+    pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: impl Into<ObjectTable>, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
         let records = match records.into() {
             ObjectTable::Unchecked(base) => base,
@@ -85,7 +85,7 @@ impl ObjectRecord {
         Self::Indexed { base: records, offset }
     }
 
-    pub(super) fn address(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
+    pub(crate) fn address(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
         match self {
             Self::Address(address) => address,
             Self::Indexed { base, offset } => emit(builder).raw_binary(Binary::Add, base, offset),
@@ -94,7 +94,7 @@ impl ObjectRecord {
 
     /// Combine the slot displacement with the record index before projecting
     /// an address, so the record's summed pointer need not span the guards.
-    pub(super) fn offset_address(self, builder: &mut FunctionBuilder<'_>, displacement: ir::Value) -> ir::Value {
+    pub(crate) fn offset_address(self, builder: &mut FunctionBuilder<'_>, displacement: ir::Value) -> ir::Value {
         let (base, offset) = match self {
             Self::Address(address) => (address, displacement),
             Self::Indexed { base, offset } => (base, emit(builder).raw_binary(Binary::Add, offset, displacement)),
@@ -102,7 +102,7 @@ impl ObjectRecord {
         emit(builder).raw_binary(Binary::Add, base, offset)
     }
 
-    pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
+    pub(crate) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
         let address = self.address(builder);
         let (loaded, word, inline, auxiliary) = shape_and_inline(builder, address);
         let (shape, word) = match known.and_then(|fact| fact.ty.object_shape()) {
@@ -114,7 +114,7 @@ impl ObjectRecord {
 }
 
 impl ObjectHeader {
-    pub(super) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+    pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: impl Into<ObjectTable>, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
         ObjectRecord::prove(builder, bits, records, known, miss).header(builder, known)
     }
@@ -122,7 +122,7 @@ impl ObjectHeader {
     /// `prove` for a read, which a function's own fields answer too: a direct function's
     /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
     /// A store must not take this proof: its barrier reads object record marks.
-    pub(super) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+    pub(crate) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
         let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
         let function = quench_runtime::heap::NATIVE_FUNCTION_LAYOUT;
@@ -154,18 +154,18 @@ impl ObjectHeader {
 }
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
-pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
+pub(crate) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
     Emit { builder, property_values: None, gate: None, payload: None }
 }
 
 /// The exact shape (`Object::exact_shape`) of the record at `address`, as an `I32`: its
 /// auxiliary word without the storage-form bits, which no recorded shape carries.
-pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> ir::Value {
+pub(crate) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> ir::Value {
     exact_shape_word(builder, flags, address).0
 }
 
 /// `exact_shape` with the record's layout id (`I32`), the word it was read through.
-pub(super) fn exact_shape_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn exact_shape_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> (ir::Value, ir::Value) {
     let (layout_id, word) = auxiliary_word(builder, flags, address);
     let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
     (builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form))), layout_id)
@@ -190,7 +190,7 @@ fn auxiliary_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, ad
 /// came from, from one layout read:
 /// the auxiliary word's storage-form bits carry the header's inline flag
 /// (`Object::storage_form`), so the flag needs no second header word.
-pub(super) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value, ir::Value, ir::Value) {
+pub(crate) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value, ir::Value, ir::Value) {
     let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
     let (layout_id, word) = auxiliary_word(builder, regions::shape_word(), address);
     let shape = builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)));
@@ -200,7 +200,7 @@ pub(super) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::V
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
-pub(super) fn inline_storage(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
+pub(crate) fn inline_storage(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
     quench_runtime::staged::object::inline_storage(&mut emit(builder), record)
 }
 
@@ -244,7 +244,7 @@ pub(crate) fn field_load_groups(loads: &[NativeFieldLoad]) -> Option<Vec<(Native
 /// compare for one shape, a range check and a bit of a constant bitset over the span the
 /// shapes cover, else a compare per shape. Flag bits above the shape id put a header outside
 /// every span.
-pub(super) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, shapes: &[u32]) -> ir::Value {
+pub(crate) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, shapes: &[u32]) -> ir::Value {
     let (low, high) = (shapes[0], shapes[shapes.len() - 1]);
     let span = u64::from(high - low) + 1;
     if shapes.len() == 1 || span > SHAPE_SET_WORDS as u64 * u64::from(SHAPE_SET_WORD_BITS) {
@@ -296,7 +296,7 @@ impl NativeFieldLoad {
         self.holder.is_none() && !self.function_shape
     }
 
-    pub(super) fn slot_dependency(self) -> Option<quench_runtime::code_dependencies::SlotDependency> {
+    pub(crate) fn slot_dependency(self) -> Option<quench_runtime::code_dependencies::SlotDependency> {
         use quench_runtime::typed_ir::Type;
         (self.ty != Type::ANY && self.ty != Type::NEVER).then_some(quench_runtime::code_dependencies::SlotDependency {
             shape: self.holder.unwrap_or(self.shape), slot: self.slot, ty: self.ty,
@@ -307,13 +307,13 @@ impl NativeFieldLoad {
     /// by the immediate prototype proves only that prototype, where a deeper holder's read
     /// may answer, and a polymorphic site's other receivers may be cached. A monomorphic
     /// site's inherited constant proves its value exactly; its miss leaves.
-    pub(super) fn probes_misses(loads: &[Self]) -> bool {
+    pub(crate) fn probes_misses(loads: &[Self]) -> bool {
         match loads {
             [load] => load.holder.is_some() && load.inherited.is_none(),
             loads => loads.iter().any(|load| load.holder.is_some()),
         }
     }
-    pub(super) fn valid(self) -> bool {
+    pub(crate) fn valid(self) -> bool {
         self.shape & quench_runtime::value_vec::DICTIONARY_STORAGE == 0
             && usize::from(self.slot) < self.storage_len
             && (self.storage != Some(PlainPropertyStorage::PackedInline)
@@ -443,21 +443,21 @@ mod tests {
 }
 
 use quench_runtime::staged::{Layout, Slots};
-mod emit;
-pub(super) use emit::Emit;
+pub(crate) mod emit;
+pub(crate) use emit::Emit;
 
 /// A projection for a guarded receiver and exact shape: `staged::own_layout`'s residual. It may
 /// only be reused while no admitted effect can change its layout, arena base or object lifetime.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct CheckedObject(Layout<ir::Value, ir::Value>);
+pub(crate) struct CheckedObject(Layout<ir::Value, ir::Value>);
 
 impl CheckedObject {
     /// The proof of a layout a staged read established.
-    pub(super) fn of(layout: Layout<ir::Value, ir::Value>) -> Self { Self(layout) }
+    pub(crate) fn of(layout: Layout<ir::Value, ir::Value>) -> Self { Self(layout) }
 
     /// A flat store can reuse the range proof; packed writes use the VM's
     /// narrow-value encoder and layout-preserving barrier helper instead.
-    pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
+    pub(crate) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
         debug_assert!(usize::from(slot) < self.0.storage_len);
         let base = match self.0.slots {
             Slots::Packed(_) | Slots::Narrow(_) => return None,
@@ -474,12 +474,12 @@ impl CheckedObject {
     /// The projection of the record `record` whose `storage_len` values the arena at `base` holds
     /// behind its extras (`staged::arena_extras_layout`), as a global object by name does: its
     /// shape is held by a dependency, so only the representation is tested.
-    pub(super) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value, inline: ir::Value,
+    pub(crate) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value, inline: ir::Value,
         base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
         let mut stage = Emit { builder, property_values: Some(base), gate: None, payload: None };
         quench_runtime::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss).map(Self)
     }
 
     /// The layout this proof carries, for a staged read of fresh contents through it.
-    pub(super) fn layout(self) -> Layout<ir::Value, ir::Value> { self.0 }
+    pub(crate) fn layout(self) -> Layout<ir::Value, ir::Value> { self.0 }
 }

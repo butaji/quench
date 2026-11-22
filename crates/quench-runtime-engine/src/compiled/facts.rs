@@ -24,15 +24,15 @@ const INLINE_ANALYSIS_ITEMS: usize = 16;
 /// A guarded block input contract the fixed point keeps: the register holds the type on
 /// entry to the leader, which every native edge into it proves (`Lowering::conform`) and
 /// every in-loop definition preserves (`loop_int32`).
-pub(super) type Contract = (usize, Register, Type);
+pub(crate) type Contract = (usize, Register, Type);
 
 /// The registers one instruction writes, inline: an instruction has three register fields (A, B, C).
-pub(super) type Writes = smallvec::SmallVec<[Register; 3]>;
+pub(crate) type Writes = smallvec::SmallVec<[Register; 3]>;
 
 /// The registers' types on entry to each block leader; `None` at a PC that leads no block or
 /// that no path from the entry reaches.
 #[derive(Default)]
-pub(super) struct Facts {
+pub(crate) struct Facts {
     offsets: Vec<Option<NonZeroUsize>>,
     types: Vec<Type>,
     registers: usize,
@@ -64,9 +64,9 @@ struct Replay {
 }
 
 impl Facts {
-    pub(super) fn reached(&self, pc: usize) -> bool { self.reached.contains(pc) }
-    pub(super) fn backedge(&self) -> &[Type] { &self.backedge }
-    pub(super) fn contracts(&self) -> &[Contract] { &self.contracts }
+    pub(crate) fn reached(&self, pc: usize) -> bool { self.reached.contains(pc) }
+    pub(crate) fn backedge(&self) -> &[Type] { &self.backedge }
+    pub(crate) fn contracts(&self) -> &[Contract] { &self.contracts }
 
     /// A run over `blocks` PCs of `registers` registers.
     fn new(blocks: usize, registers: usize, seeds: run::Seeds<'_>) -> Self {
@@ -100,7 +100,7 @@ impl Facts {
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
     /// the PC table stores element offsets, including reachable zero-register rows.
-    pub(super) fn at(&self, pc: usize) -> Option<&[Type]> {
+    pub(crate) fn at(&self, pc: usize) -> Option<&[Type]> {
         let start = self.offsets.get(pc)?.as_ref()?.get() - 1;
         Some(&self.types[start..start + self.registers])
     }
@@ -112,7 +112,7 @@ impl Facts {
 
     /// Select a guarded block input contract. Every native edge must conform
     /// before the lowering consumes this row; this is not a source inference.
-    pub(super) fn require(&mut self, pc: usize, register: Register, required: Type) {
+    pub(crate) fn require(&mut self, pc: usize, register: Register, required: Type) {
         let start = self.offsets[pc].expect("reachable contract block").get() - 1;
         let known = &mut self.types[start + usize::from(register)];
         if !known.is_subtype(required) { *known = required; }
@@ -124,7 +124,7 @@ impl Facts {
     /// semantics as the fixed point. This is a representation candidate; the
     /// lowering must still discharge entry and update requirements.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn before(&self, pc: usize, register: Register, instructions: &[WideInstruction],
+    pub(crate) fn before(&self, pc: usize, register: Register, instructions: &[WideInstruction],
         leaders: &CompoundBitSet, constants: &[Constant],
         written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool) -> Type {
         let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
@@ -152,7 +152,7 @@ impl Facts {
     /// Project each definition in `body`'s post-state through the same transfer as the fixed
     /// point. Each block replays from its own entry row, so only the blocks reaching `body` run.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn for_each_definition(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+    pub(crate) fn for_each_definition(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
         constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool,
         body: std::ops::RangeInclusive<usize>, mut visit: impl FnMut(usize, Register, Type)) {
         // The block covering `body.start()` may begin earlier: replay it from its leader.
@@ -275,7 +275,7 @@ pub(crate) fn numberless(ty: Type) -> bool {
     !ty.is_subtype(Type::NUMBER) && !Type::NUMBER.is_subtype(ty)
 }
 
-pub(super) fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
+pub(crate) fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
     for register in operands.into_iter().filter_map(register) {
         if !types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) {
             set(types, register, Type::NUMBER);
@@ -291,7 +291,7 @@ fn set(types: &mut [Type], register: Register, ty: Type) {
 
 /// Whether a binary `operator` yields a Boolean however it completes: an equality, a
 /// relation, `instanceof` or `in`.
-pub(super) fn boolean_binary(operator: u32) -> bool {
+pub(crate) fn boolean_binary(operator: u32) -> bool {
     use oxc_ast::ast::BinaryOperator;
     quench_runtime::vm::operations::equality_operator(operator).is_some()
         || quench_runtime::vm::operations::NumberRelation::from_operator(operator).is_some()
@@ -423,7 +423,7 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction, operation: O
 /// The registers `instruction` leaves unless they hold Numbers (what its transfer proves of
 /// operands it does not write): a loop that does not write one may have that proved once, on its
 /// entering edge, instead of by each use.
-pub(super) fn proves_numbers(instruction: WideInstruction, registers: usize, constants: &[Constant],
+pub(crate) fn proves_numbers(instruction: WideInstruction, registers: usize, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool) -> Vec<Register> {
     let mut types = vec![Type::ANY; registers];
     let operation = Operation::<u64, ()>::of(instruction);
@@ -436,20 +436,20 @@ pub(super) fn proves_numbers(instruction: WideInstruction, registers: usize, con
 /// An element read the entry observed to hold Numbers or int32s: its unit PC and the type its
 /// result is proved to have, where it leaves for any other element.
 #[derive(Clone, Copy)]
-pub(super) struct ObservedRead {
-    pub(super) pc: usize,
-    pub(super) ty: Type,
+pub(crate) struct ObservedRead {
+    pub(crate) pc: usize,
+    pub(crate) ty: Type,
 }
 
 /// The element reads an entry observed to yield Numbers or int32s (sorted by PC).
 #[derive(Clone, Copy)]
-pub(super) struct Observed<'a>(pub(super) &'a [ObservedRead]);
+pub(crate) struct Observed<'a>(pub(crate) &'a [ObservedRead]);
 
 impl Observed<'_> {
-    pub(super) const NONE: Observed<'static> = Observed(&[]);
+    pub(crate) const NONE: Observed<'static> = Observed(&[]);
 
     /// The type the element read at `pc` was observed to yield.
-    pub(super) fn at(&self, pc: usize) -> Option<Type> {
+    pub(crate) fn at(&self, pc: usize) -> Option<Type> {
         self.0.binary_search_by_key(&pc, |read| read.pc).ok().map(|at| self.0[at].ty)
     }
 }
@@ -473,7 +473,7 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 /// and every backedge must preserve the entry hypothesis. Rejecting one input
 /// removes that assumption from all dependent proofs on the next iteration.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
+pub(crate) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
@@ -483,7 +483,7 @@ pub(super) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
 /// `inductive_int32` for the header contract `required`: an int32, or a Number (an
 /// accumulator that enters as an int32 or a double and every definition keeps a Number).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, required: Type,
+pub(crate) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, required: Type,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
@@ -514,7 +514,7 @@ pub(super) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, re
 /// and a register) holds an int32 there when every definition in its loop's body yields one
 /// under all the contracts. Rejecting one removes it from the next iteration's hypothesis.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
+pub(crate) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
     instructions: &[WideInstruction], leaders: &CompoundBitSet, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Writes, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
     native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
@@ -543,13 +543,13 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 #[path = "facts/written.rs"] mod written;
 #[path = "facts/binary.rs"] mod binary;
 #[path = "facts/widen.rs"] mod widen;
-#[path = "facts/ranges.rs"] pub(super) mod ranges;
+#[path = "facts/ranges.rs"] pub(crate) mod ranges;
 #[path = "facts/lengths.rs"] mod lengths;
 #[path = "facts/run.rs"] mod run;
 pub(crate) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(crate) use binary::{heap_operator, heap_primitive_binary};
-pub(super) use lengths::IndexProof;
-pub(super) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text, TypedAccess};
+pub(crate) use lengths::IndexProof;
+pub(crate) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text, TypedAccess};
 
 #[cfg(test)]
 #[path = "facts/decode_ratchet.rs"] mod decode_ratchet;

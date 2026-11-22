@@ -226,7 +226,7 @@ fn primitive_leaf_value(vm: &mut Vm, code: &ResidualProgram, native: Native, rec
 
 /// The catalog fact the lean native rows derive from (`native_calls::in_place_handler`): whether
 /// `native` has an in-place body, which runs no guest code, raises nothing and observes no frame.
-pub(super) const fn runs_no_guest_code(native: Native) -> bool {
+pub(crate) const fn runs_no_guest_code(native: Native) -> bool {
     IN_PLACE_FAMILIES[native as usize] != 0
 }
 
@@ -234,7 +234,7 @@ pub(super) const fn runs_no_guest_code(native: Native) -> bool {
 /// (`lane_region::native_calls::Inline::InPlace`): the body runs no guest code, raises nothing
 /// and observes no frame (`runs_no_guest_code`), and changes no array's elements, which a loop's
 /// hoisted views and folded facts do not survive.
-pub(super) const fn in_place_in_loop(native: Native) -> bool {
+pub(crate) const fn in_place_in_loop(native: Native) -> bool {
     let families = IN_PLACE_FAMILIES[native as usize];
     families != 0 && families & ARRAY == 0
         && !matches!(native, Native::ArrayPush | Native::ArrayPop | Native::Uint8ArrayFill)
@@ -505,4 +505,4 @@ fn decimal_text(vm: &mut Vm, number: f64) -> Value {
 
 #[cfg(test)]
 #[path = "../lane_exit_tests.rs"]
-mod tests;
+pub(crate) mod tests;

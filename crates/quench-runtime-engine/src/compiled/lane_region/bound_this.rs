@@ -5,7 +5,7 @@ use crate::compiled::regions;
 impl Lowering<'_, '_> {
     /// A bound run's fixed `this`: the value its payload's slot holds, or
     /// `Value::DELETED` where the payload binds none.
-    pub(super) fn fixed_this(&mut self) -> ir::Value {
+    pub(crate) fn fixed_this(&mut self) -> ir::Value {
         let slot = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
         let present = self.raw_compare_imm(Relation::NotEqual, slot, 0);
         let bound = self.builder.create_block();

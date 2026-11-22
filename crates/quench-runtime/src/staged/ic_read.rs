@@ -135,13 +135,13 @@ pub(crate) fn layout_id<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
 /// specializer folds it at compile time. `id` is one a record's layout matched (an interned
 /// id, its entry readable with no bound test).
 #[inline(always)]
-pub(crate) fn layout_form(id: u32) -> u32 {
+pub fn layout_form(id: u32) -> u32 {
     crate::heap::layouts::word(id) as u32 & FORM_BITS
 }
 
 /// The exact shape of layout `id` (`Object::exact_shape`), any word (`layouts::auxiliary`).
 #[inline(always)]
-pub(crate) fn layout_shape(id: u32) -> u32 {
+pub fn layout_shape(id: u32) -> u32 {
     crate::heap::layouts::auxiliary(id) & !FORM_BITS
 }
 
@@ -155,7 +155,7 @@ pub(crate) const FORM_BITS: u32 = OBJECT.inline_form | OBJECT.extras_form | OBJE
 /// the fallback reads them as `Either`. An id past the table names no layout and reads as `Arena`,
 /// which no guard of a cleared hint admits. Reads the auxiliary word, which bounds its id.
 #[inline(always)]
-pub(crate) fn form_of_layout(id: u32) -> Form {
+pub fn form_of_layout(id: u32) -> Form {
     match crate::heap::layouts::auxiliary(id) & FORM_BITS {
         0 => Form::Arena,
         bits if bits == OBJECT.inline_form => Form::Packed,

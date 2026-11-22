@@ -17,56 +17,56 @@ use quench_runtime::staged::PropertyFrame;
 use quench_runtime::staged::Layout;
 
 /// What the lowering holds of the instruction's field access, beside the register frame.
-pub(super) struct FieldFacts<'a> {
+pub(crate) struct FieldFacts<'a> {
     /// The plans the instruction's sites proved (`field_plans::with_read_plan`).
-    pub(super) plans: &'a LanePlans<'a>,
+    pub(crate) plans: &'a LanePlans<'a>,
     /// The region's entry proofs: the receiver's record, its shape, the bound field slots.
-    pub(super) entry: Option<&'a Entry>,
+    pub(crate) entry: Option<&'a Entry>,
     /// Whether the unit makes native calls, after which no read folds the receiver's entry facts.
-    pub(super) native_calls: bool,
+    pub(crate) native_calls: bool,
     /// The values the access already has from a loop's entry or an OSR region's record.
-    pub(super) held: HeldRead,
+    pub(crate) held: HeldRead,
     /// Where a folded prototype value takes its code dependency.
-    pub(super) stable: StableHold<'a>,
+    pub(crate) stable: StableHold<'a>,
 }
 
 /// What an instruction's field access already holds: the reads its value may come from, and for
 /// a store the slot its loop projected and the run's admission of the atom.
 #[derive(Clone, Copy, Default)]
-pub(super) struct HeldRead {
+pub(crate) struct HeldRead {
     /// A read the loop made once on its entry edge.
-    pub(super) hoisted: Option<LoopRead>,
+    pub(crate) hoisted: Option<LoopRead>,
     /// The word of the OSR region's entry record that holds the field's value.
-    pub(super) entry_word: Option<u32>,
+    pub(crate) entry_word: Option<u32>,
     /// The value an earlier read of the first field proved (`LocalProofs::fields`).
-    pub(super) known: Option<ir::Value>,
+    pub(crate) known: Option<ir::Value>,
     /// The slot a loop's entry projected for the store at this access (`StorePlan::Entry`).
-    pub(super) slot: Option<LoopStore>,
+    pub(crate) slot: Option<LoopStore>,
     /// The test that no method cache names the atom a store writes: the entry's where the run
     /// calls nothing, made at the store where it does.
-    pub(super) admitted: Option<ir::Value>,
+    pub(crate) admitted: Option<ir::Value>,
     /// Whether a store the in-place arms miss leaves instead of calling the VM's store
     /// (`Lowering::store_leaves`).
-    pub(super) leaves: bool,
+    pub(crate) leaves: bool,
 }
 
 /// The Stable facts a lowering takes, and where it takes them.
-pub(super) struct StableHold<'a> {
+pub(crate) struct StableHold<'a> {
     /// Exact shapes of the prototypes whose values the code holds (`StableUses::holders`).
-    pub(super) holders: &'a mut quench_runtime::bitset::BitSet,
+    pub(crate) holders: &'a mut quench_runtime::bitset::BitSet,
     /// Exact shapes of the objects whose shape the code holds past a call (`StableUses::shapes`).
-    pub(super) shapes: &'a mut quench_runtime::bitset::BitSet,
+    pub(crate) shapes: &'a mut quench_runtime::bitset::BitSet,
     /// The loops that hold every Stable fact (`StableUses::stable_loops`).
-    pub(super) loops: &'a [(usize, usize)],
+    pub(crate) loops: &'a [(usize, usize)],
     /// The facts of the VM the code depends on; none for code shared across VMs.
-    pub(super) online: Option<OnlineFacts<'a>>,
+    pub(crate) online: Option<OnlineFacts<'a>>,
     /// The unit PC being lowered, which a loop that holds every Stable fact contains.
-    pub(super) at: usize,
+    pub(crate) at: usize,
 }
 
 impl<'a> EmitFrame<'a> {
     /// The region's entry proofs, where the lowering has them.
-    pub(super) fn entry(&self) -> Option<&'a Entry> { self.fields.as_ref()?.entry }
+    pub(crate) fn entry(&self) -> Option<&'a Entry> { self.fields.as_ref()?.entry }
 
     /// Whether `owner`'s object is the entry's receiver, whose record, shape and storage kind
     /// the entry proved: `this`, or a register holding it, in a run that calls nothing.
@@ -81,7 +81,7 @@ impl<'a> EmitFrame<'a> {
 
     /// The key of `owner`'s proofs in `State` (`None` is the fixed `this`'s); a receiver's
     /// proofs are shared by every register that holds it, and a temporary keeps none.
-    pub(super) fn proof_key(&self, owner: Owner) -> Option<Option<Register>> {
+    pub(crate) fn proof_key(&self, owner: Owner) -> Option<Option<Register>> {
         match owner {
             Owner::Temporary => None,
             Owner::This => Some(None),
@@ -336,7 +336,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 }
 
 /// Word `word` of the loop's entry record (`JsStepDispatch::loop_entry`).
-pub(super) fn entry_record_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, word: u32) -> ir::Value {
+pub(crate) fn entry_record_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, word: u32) -> ir::Value {
     let entry = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.loop_entry));
     let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
         * std::mem::size_of::<u64>()).expect("entry word offset fits i32");

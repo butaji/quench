@@ -7,7 +7,7 @@ use super::{exits_before_effects, MethodCalls, WideInstruction};
 /// iteration of which leaves runs in its function's lane body instead; the error is the
 /// first exit that blocks it. A method call the lane runs in place (`native_call`, by absolute PC) is no
 /// exit even under `MethodCalls::Exit`: the lane lowers it as an intrinsic and guards its callee.
-pub(super) fn iterates_natively(instructions: &[WideInstruction], header: u32, method_calls: MethodCalls,
+pub(crate) fn iterates_natively(instructions: &[WideInstruction], header: u32, method_calls: MethodCalls,
     native_call: &dyn Fn(usize) -> bool) -> Result<(), usize> {
     let last = instructions.len() - 1;
     let (mut seen, mut pending, mut blocked) = (quench_runtime::bitset::BitSet::new(instructions.len()), vec![0], usize::MAX);

@@ -7,7 +7,7 @@ use super::super::object_slots::emit;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation};
 
 /// `owner`'s value: a register's, or the fixed `this`.
-pub(super) fn owner_bits(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State, entry: &Entry,
+pub(crate) fn owner_bits(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State, entry: &Entry,
     owner: Option<Register>) -> ir::Value {
     match owner {
         Some(register) => frame::register_tagged(builder, registers, state, register),
@@ -16,7 +16,7 @@ pub(super) fn owner_bits(builder: &mut FunctionBuilder<'_>, registers: &mut Regi
 }
 
 /// The record table of the run: the entry's checked reservation, else the dispatch payload's.
-pub(super) fn object_table(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ObjectTable {
+pub(crate) fn object_table(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ObjectTable {
     match entry.object_table {
         Some(table) => ObjectTable::Checked(table),
         None => ObjectTable::Unchecked(emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base))),
@@ -24,7 +24,7 @@ pub(super) fn object_table(builder: &mut FunctionBuilder<'_>, entry: &Entry, pay
 }
 
 /// The object record reservation's base (`object_table`).
-pub(super) fn object_table_base(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ir::Value {
+pub(crate) fn object_table_base(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ir::Value {
     match object_table(builder, entry, payload) {
         ObjectTable::Checked(table) => table.base(),
         ObjectTable::Unchecked(base) => base,
@@ -49,7 +49,7 @@ fn refine_owner(state: &mut State, index: usize, fact: Option<VerifiedFact>) {
 /// value not known to be a direct object, an object's or a function's record
 /// (`ObjectHeader::prove_readable`); for a store, an object's only. A store of a read's proof
 /// tests the family once, after which the proof is the object's.
-pub(super) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
+pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
     (entry, payload): (&Entry, ir::Value), owner: Option<Register>, read: bool, exit: ir::Block) -> ObjectHeader {
     let index = state.header_index(owner);
     let fact = owner.map(|register| state.values[usize::from(register)].value);
@@ -86,7 +86,7 @@ pub(super) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
 
 /// Guards that `shape`, the shape word of `owner`'s object, is `expected`; the owner's header
 /// then holds the shape as that constant, which folds every later test of it.
-pub(super) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>,
+pub(crate) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>,
     shape: ir::Value, expected: u32, exit: ir::Block) {
     let same = emit(builder).raw_compare_imm(Relation::Equal, shape, i64::from(expected));
     emit_js_guard(builder, same, exit);
@@ -94,7 +94,7 @@ pub(super) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut 
 }
 
 /// The owner's header holds the shape `expected`, as a constant.
-pub(super) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>, expected: u32) {
+pub(crate) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>, expected: u32) {
     let index = state.header_index(owner);
     if let Some(proof) = &mut state.proofs.headers[index] {
         proof.shape = emit(builder).raw_const(Lane::I32, i64::from(expected));
@@ -103,7 +103,7 @@ pub(super) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut S
 
 /// The exact shape `owner`'s header holds as a constant: what a fact of the register's type,
 /// or an earlier guard, proved.
-pub(super) fn header_shape(builder: &FunctionBuilder<'_>, state: &State, owner: Option<Register>) -> Option<u32> {
+pub(crate) fn header_shape(builder: &FunctionBuilder<'_>, state: &State, owner: Option<Register>) -> Option<u32> {
     let header = state.proofs.headers[state.header_index(owner)]?;
     let ir::ValueDef::Result(constant, _) = builder.func.dfg.value_def(header.shape) else { return None };
     let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = builder.func.dfg.insts[constant] else { return None };

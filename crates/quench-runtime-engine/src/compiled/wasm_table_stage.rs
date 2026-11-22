@@ -29,7 +29,7 @@ use cranelift_codegen::ir::{self, MemFlagsData, types};
 /// The table an indirect target is being emitted for: the address of its published words, its
 /// binding and the type the call expects.
 #[derive(Clone, Copy)]
-pub(super) struct IndirectSite {
+pub(crate) struct IndirectSite {
     words: ir::Value,
     table: u32,
     signature_index: u32,
@@ -40,7 +40,7 @@ pub(super) struct IndirectSite {
 /// the block the target ended in (only moves of its arguments between: anything that could
 /// change the table also branches) reads them instead of loading them again.
 #[derive(Clone, Copy)]
-pub(super) struct CheckedRow {
+pub(crate) struct CheckedRow {
     block: Option<ir::Block>,
     index: ir::Value,
     address: ir::Value,
@@ -75,7 +75,7 @@ impl Emitter<'_, '_> {
     }
 
     /// Makes `block` the current one: the code that follows is its own.
-    pub(super) fn enter(&mut self, block: ir::Block) {
+    pub(crate) fn enter(&mut self, block: ir::Block) {
         self.body.core.builder.switch_to_block(block);
         self.body.core.builder.seal_block(block);
     }
@@ -105,7 +105,7 @@ impl Emitter<'_, '_> {
 
     /// Lowers the target of an indirect call: the staged rule over the table, whose result,
     /// the row of the element, the call that follows reads.
-    pub(super) fn indirect_target(&mut self, pc: usize, instruction: WideInstruction) {
+    pub(crate) fn indirect_target(&mut self, pc: usize, instruction: WideInstruction) {
         let table = self.binding_slot(pc);
         let signature_index = instruction.imm();
         let expected = self.analysis.type_canonical(signature_index).expect("planned");
@@ -193,7 +193,7 @@ impl WasmTable for Emitter<'_, '_> {
 
 impl Analysis<'_> {
     /// The canonical id of the type `index` of the program.
-    pub(super) fn type_canonical(&self, index: u32) -> Option<CanonicalSignature> {
+    pub(crate) fn type_canonical(&self, index: u32) -> Option<CanonicalSignature> {
         self.vm
             .programs
             .wasm_signatures(self.program)?
@@ -204,7 +204,7 @@ impl Analysis<'_> {
 impl Emitter<'_, '_> {
     /// Lowers a call of the row an indirect target produced: natively through the function the
     /// row names where it has one, else through the VM's callout.
-    pub(super) fn call_reference(&mut self, pc: usize, instruction: WideInstruction) {
+    pub(crate) fn call_reference(&mut self, pc: usize, instruction: WideInstruction) {
         let Slot::IndirectReference { signature: signature_index, table } = self.plan.operand(pc)
         else {
             unreachable!("planned indirect calls retain their table binding");
@@ -312,7 +312,7 @@ impl Emitter<'_, '_> {
 
     /// The body at index `entry` of the code table at `table`; a function without one leaves
     /// for `slow`.
-    pub(super) fn entry_body(&mut self, table: ir::Value, entry: ir::Value, slow: ir::Block) -> ir::Value {
+    pub(crate) fn entry_body(&mut self, table: ir::Value, entry: ir::Value, slow: ir::Block) -> ir::Value {
         let size = self.constant(Width::I64, size_of::<usize>() as i64);
         let offset = self.operate(Binary::Multiply, Width::I64, entry, size);
         let slot = self.operate(Binary::Add, Width::I64, table, offset);
@@ -327,7 +327,7 @@ impl Emitter<'_, '_> {
 
     /// The call of `body` with the arguments the call spilled and the memory arguments the
     /// callee takes: its status, the result stored through `out`.
-    pub(super) fn call_body(
+    pub(crate) fn call_body(
         &mut self,
         body: ir::Value,
         signature: &quench_runtime::WasmSignature,

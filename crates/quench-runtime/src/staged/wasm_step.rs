@@ -14,7 +14,7 @@ use super::wasm_table_ops::TableOp;
 use crate::bytecode::{Class, InstructionField, Op, WideInstruction};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Step {
+pub enum Step {
     /// Integer, float and conversion arithmetic, and the jumps on it.
     Numeric(WasmOperation),
     /// Registers, constants, instance bindings and globals.
@@ -125,7 +125,7 @@ impl Step {
 /// selector: a memory access, scalar or vector, and a float operator by its width and whether
 /// it runs over raw registers. The handler bodies still read the tag at run time.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Family {
+pub enum Family {
     /// A linear-memory load, scalar or vector.
     MemoryLoad,
     /// A linear-memory store, scalar or vector.
@@ -254,7 +254,7 @@ pub(crate) use wasm_lane_list;
 /// fall-through flag, the b-jit's rows). `dispatch` is the one match over `Step` the tiers run,
 /// so a family added to `Step` is a method every tier must answer, and no tier keeps its own
 /// match over the families.
-pub(crate) trait WasmTier {
+pub trait WasmTier {
     type Out;
     fn numeric(&mut self, pc: usize, instruction: WideInstruction, operation: WasmOperation) -> Self::Out;
     fn instance(&mut self, pc: usize, instruction: WideInstruction, step: Instance) -> Self::Out;
@@ -270,7 +270,7 @@ pub(crate) trait WasmTier {
 
 /// The tier's answer for `step`, the step of `instruction` at `pc`.
 #[inline(always)]
-pub(crate) fn dispatch<T: WasmTier>(tier: &mut T, pc: usize, instruction: WideInstruction, step: Step) -> T::Out {
+pub fn dispatch<T: WasmTier>(tier: &mut T, pc: usize, instruction: WideInstruction, step: Step) -> T::Out {
     match step {
         Step::Numeric(operation) => tier.numeric(pc, instruction, operation),
         Step::Instance(step) => tier.instance(pc, instruction, step),

@@ -3,7 +3,7 @@
 //! tiers' lowering.
 
 #[allow(unused_imports)]
-pub(crate) use super::wasm_simd_rules::{Lanes, Native, NativeOp, WasmSimd, simd, simd_scalar};
+pub use super::wasm_simd_rules::{Lanes, Native, NativeOp, WasmSimd, simd, simd_scalar};
 
 // The vector steps' classes and operands read bytecode and the Wasm kernels: runtime only.
 #[cfg(not(stencil_build))]
@@ -15,7 +15,7 @@ use crate::wasm::simd::SimdKernel;
 
 #[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Simd {
+pub enum Simd {
     /// `a = operator(b, c)`; the selector (the operator and its lane immediate) is `imm`.
     Operator { selector: u32 },
     /// `a = shuffle(b, c)` by the sixteen lane indices of the constant.

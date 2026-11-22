@@ -10,7 +10,7 @@ use quench_runtime::vm::object_get::ordinary_chain::ChainRead;
 /// unit there, or NaN outside the string. `None` for any other receiver or index, which the
 /// native coerces, and for a rope, which it flattens.
 #[inline(always)]
-pub(super) fn string_char_code_at(vm: &Vm, receiver: Value, index: Value) -> Option<Value> {
+pub(crate) fn string_char_code_at(vm: &Vm, receiver: Value, index: Value) -> Option<Value> {
     let records = vm.heap.string_record_base().unwrap_or(std::ptr::null());
     concrete_char_code_at(ConcreteString::Record { records, value: receiver }, index)
         .or_else(|| concrete_char_code_at(ConcreteString::Units(vm.heap.flat_text(receiver)?.units()), index))
@@ -19,7 +19,7 @@ pub(super) fn string_char_code_at(vm: &Vm, receiver: Value, index: Value) -> Opt
 /// `charAt` of a flat string at an integer index of an ASCII unit
 /// (`staged::builtins::char_at_ascii`): the unit's shared string (`Vm::ascii_byte_string`).
 /// Any other receiver, index or unit takes the native.
-pub(super) fn string_char_at_ascii(vm: &mut Vm, receiver: Value, index: Value) -> Option<Value> {
+pub(crate) fn string_char_at_ascii(vm: &mut Vm, receiver: Value, index: Value) -> Option<Value> {
     let (records, table) = (vm.heap.string_record_base().unwrap_or(std::ptr::null()), vm.heap.ascii_unit_strings_base().unwrap_or(std::ptr::null()));
     if let Some(character) = concrete_char_at(ConcreteString::Record { records, value: receiver }, table, index) {
         return Some(character);
@@ -43,7 +43,7 @@ macro_rules! builtin_rows {
             match row { $($row => protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (BUILTIN_KIND | $row) as u16 }>(),)* _ => call_row::<{ protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() }
         }
         /// The miss body of builtin row `row` (`leaf_call_miss_of`).
-        pub(in crate::dispatch_fast) const fn builtin_miss_of(row: u8) -> Handler {
+        pub(crate) const fn builtin_miss_of(row: u8) -> Handler {
             match row { $($row => builtin_miss::<$row> as Handler,)* _ => native_call_miss }
         }
         /// The builtin rows, whose identity slots come first (`NativeIdentities`).
@@ -69,7 +69,7 @@ macro_rules! math_rows {
             match native { $(Native::$native => Some(protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (MATH_KIND | $row) as u16 }>()),)* _ => None }
         }
         /// The miss body of Math row `row` (`leaf_call_miss_of`).
-        pub(in crate::dispatch_fast) const fn math_miss_of(row: u8) -> Handler {
+        pub(crate) const fn math_miss_of(row: u8) -> Handler {
             match row { $($row => math_native_miss::<$row> as Handler,)* _ => call_math_miss }
         }
         /// The Math rows, whose identity slots follow the builtin rows' (`NativeIdentities`).
@@ -418,7 +418,7 @@ const fn math_slot(row: u8) -> usize {
 
 use quench_runtime::vm::engine_types::UNPROVEN;
 
-pub(super) use quench_runtime::vm::engine_types::NativeIdentities;
+pub(crate) use quench_runtime::vm::engine_types::NativeIdentities;
 
 
 
@@ -450,7 +450,7 @@ fn prove_native_identity(vm: &mut Vm, callee: Value, slot: usize, native: Native
 macro_rules! in_place_rows {
     ($($row:literal => $native:ident),* $(,)?) => {
         /// The in-place row of `native`, or `None` where no row serves it (`in_place_natives`).
-        pub(super) const fn in_place_row(native: Native) -> Option<u8> {
+        pub(crate) const fn in_place_row(native: Native) -> Option<u8> {
             match native { $(Native::$native => Some($row),)* _ => None }
         }
     };
@@ -466,7 +466,7 @@ in_place_rows!(
 /// The handlers of a Math call's field read: `GetField` rows (`generated_row`) at the three Math call
 /// sites (`MATH_CALL_SITE`, `MATH_CALL2_SITE`, `MATH_CALL2_CONST_SITE`). `FieldHit` reads a record
 /// of these as an own-field read.
-pub(super) fn math_field_call_handlers() -> [*const (); 3] {
+pub(crate) fn math_field_call_handlers() -> [*const (); 3] {
     [generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE) as *const (),
         generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE) as *const (),
         generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE) as *const ()]
@@ -476,7 +476,7 @@ script_handler! {
     /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): the
     /// native's admission (`native_admitted`) and its staged row of Number arguments
     /// (`staged::call_native::math_call`). Any other callee or argument takes `call_math_miss`.
-    pub(super) fn math_native_miss<ROW: u8>(cx, r, ip, i, view) {
+    pub(crate) fn math_native_miss<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { math_row_native(ROW) };
         let value = if native_admitted(vm, r.get(i.b), const { math_slot(ROW) }, native) {
@@ -499,7 +499,7 @@ script_handler! {
 /// frame does not compute continues at the record after the read, which makes the call as before.
 /// Returns the record the row continues at.
 #[inline(always)]
-pub(super) fn math_row_resume<F: quench_runtime::staged::PropertyFrame<quench_runtime::staged::Concrete>, const SITE: u8>(
+pub(crate) fn math_row_resume<F: quench_runtime::staged::PropertyFrame<quench_runtime::staged::Concrete>, const SITE: u8>(
     frame: &mut F, stage: &mut quench_runtime::staged::Concrete, r: Registers, ip: Ip, callee: u64) -> Ip {
     let first_ip = following(ip);
     // SAFETY: the installer matched the copies and the `Call` that follow in this view.
@@ -530,7 +530,7 @@ pub(super) fn math_row_resume<F: quench_runtime::staged::PropertyFrame<quench_ru
 /// record's row (`MATH_CALL_SITE`) runs the read and the call (`math_row_resume`). The callee
 /// register is the field's own read (`own_bound_handlers`), the copy a plain `Move` into the
 /// call's one-value window.
-pub(super) fn install_math_field_call(cx: *mut LaneContext, call_ip: Ip, native: Native) {
+pub(crate) fn install_math_field_call(cx: *mut LaneContext, call_ip: Ip, native: Native) {
     if math_handler(native).is_none() { return }
     // SAFETY: `call_ip` is a record of the running view, which starts at the context's base.
     let pc = unsafe { call_ip.offset_from((*cx).base) };
@@ -626,7 +626,7 @@ script_handler! {
     /// native's admission (`native_admitted`, the staged `admit_identity`), then that call in its
     /// steady case (`Vm::steady_native_value`). Any other callee or case takes
     /// `native_call_miss`.
-    pub(super) fn builtin_miss<ROW: u8>(cx, r, ip, i, view) {
+    pub(crate) fn builtin_miss<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { row_native(ROW) };
         let value = if !native_admitted(vm, r.get(i.b), ROW as usize, native) {
@@ -666,7 +666,7 @@ script_handler! {
 /// arguments. Each arm is the body `Vm::in_place_native_value` reaches for that native, with
 /// the same arguments and the same preconditions. `None` leaves the call to the native.
 #[inline(always)]
-pub(super) fn in_place_row_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: Value,
+pub(crate) fn in_place_row_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: Value,
     args: &[Value]) -> Option<Value> {
     // A new attempt clears any flag a previous attempt left for its general native.
     vm.declined_fast = None;
@@ -754,7 +754,7 @@ script_handler! {
 /// discard it (`call_array_callback_miss`'s `DISCARDS`). A `String.prototype.replace` whose
 /// result only the `GetField "length"` after it reads (`length_only`, asked only there) takes
 /// the replacement's length without building it (`regexp_calls::replace_length_handler`).
-pub(super) fn native_call_handler(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool, length_only: impl FnOnce() -> bool) -> Handler {
+pub(crate) fn native_call_handler(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool, length_only: impl FnOnce() -> bool) -> Handler {
     if concrete_returns_callee_completion(i.a) {
         return call_row::<{ protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>();
     }
@@ -775,7 +775,7 @@ pub(super) fn native_call_handler(native: Native, i: &LaneInstruction, result_de
 /// the body reads as it reads a completed script call's, so the body stays native across
 /// `Math.imul`, a string method or a collection read. Any other native is called out
 /// (`body_native_out_in_lane`). A call that returns its result is a miss, which leaves the body at the call.
-pub(super) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> u64 {
+pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> u64 {
     use crate::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
@@ -802,7 +802,7 @@ script_handler! {
     /// `this` (`activate_getter_in_lane`), whose completion is the call's value; any other
     /// call is the native's (`native_call_value_in_lane`).
     #[inline(never)]
-    pub(super) fn reflect_get_miss<>(cx, r, ip, i, view) {
+    pub(crate) fn reflect_get_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the window is registers of the running function, read before anything runs.
         let window = unsafe { call_window_in_lane(r, i) };
@@ -828,7 +828,7 @@ script_handler! {
 }
 
 /// The handler of a `Reflect.get` call site (`native_call_miss`'s sibling).
-pub(super) fn reflect_get_call_handler() -> Handler {
+pub(crate) fn reflect_get_call_handler() -> Handler {
     protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | REFLECT_GET_KIND as u16 }>()
 }
 

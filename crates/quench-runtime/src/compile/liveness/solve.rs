@@ -54,7 +54,7 @@ impl Pc for u32 {
 
 /// The registers live before each instruction of `function` and after its last, under
 /// `transfers` (each instruction's uses and definitions).
-pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(M, M)]) -> Vec<M> {
+pub fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(M, M)]) -> Vec<M> {
     analyze_successors(function, transfers, &crate::bytecode::Successors::of_code(function))
 }
 
@@ -68,7 +68,7 @@ pub(crate) fn analyze_wide(
 }
 
 /// `analyze_wide`, narrowing its transfers into `scratch`'s buffers.
-pub(crate) fn analyze_wide_with(
+pub fn analyze_wide_with(
     function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
     scratch: &mut CompileScratch,
 ) -> Vec<RegisterSet> {
@@ -132,7 +132,7 @@ pub(crate) fn analyze_successors<M: LiveMask>(
 /// handler covers), so a handler edge leaves from the end of its block. A block's state is the
 /// pair (live after its last instruction, live into the handlers it may leave by); blocks are
 /// numbered from the function's end, so the driver's lowest-first order is a reverse sweep.
-pub(crate) fn analyze_graph<M: LiveMask, P: Pc>(
+pub fn analyze_graph<M: LiveMask, P: Pc>(
     transfers: &[(M, M)], starts: &[P], successors: &[P], kinds: &[ControlEdge], required: impl Fn(usize) -> M,
 ) -> Vec<M> {
     let length = transfers.len();
@@ -277,7 +277,7 @@ fn resumes_into_handler(op: Op) -> bool {
     op.control_flow_layout() == ControlFlowLayout::Call || op.suspends()
 }
 
-pub(crate) fn add_suspended_exception_roots<M: LiveMask>(function: &Function, live: &mut [M]) {
+pub fn add_suspended_exception_roots<M: LiveMask>(function: &Function, live: &mut [M]) {
     // Most functions have no handler for an abrupt resumption to enter.
     if function.handlers.is_empty() {
         return;

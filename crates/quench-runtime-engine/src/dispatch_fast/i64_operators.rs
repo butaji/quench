@@ -70,7 +70,7 @@ impl I64Operators {
 }
 
 /// The handler of the i64 binary record `op` with operator `selector` and accumulator field `acc`.
-pub(super) fn i64_operator_handler(op: Op, selector: u32, acc: u8) -> Option<Handler> {
+pub(crate) fn i64_operator_handler(op: Op, selector: u32, acc: u8) -> Option<Handler> {
     let raw = WasmOperation::is_raw(op);
     let table = match Step::of(op, selector) {
         Some(Step::Numeric(WasmOperation::Binary { width: Width::I64, form: Form::Register, .. })) => {

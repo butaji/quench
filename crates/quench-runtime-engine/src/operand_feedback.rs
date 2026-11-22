@@ -127,7 +127,7 @@ impl OperandKinds {
 
 /// Whether an instruction's record has a feedback byte: the arithmetic and comparison
 /// instructions whose lane handlers quicken on int32 operands.
-pub(super) fn has_operand_feedback(op: Op) -> bool {
+pub(crate) fn has_operand_feedback(op: Op) -> bool {
     op.is_binary_arithmetic() || op.compares_and_jumps() || matches!(op, Op::GetIndex | Op::SetIndex)
 }
 
@@ -149,7 +149,7 @@ unsafe fn feedback_cell<'a>(base: Ip, ip: Ip) -> &'a std::cell::Cell<u8> {
 /// `ip` is a record of the running view, an arithmetic or comparison record
 /// (`has_operand_feedback`).
 #[inline(always)]
-pub(super) unsafe fn note_operands(cx: *mut LaneContext, ip: Ip, left: Value, right: Value) {
+pub(crate) unsafe fn note_operands(cx: *mut LaneContext, ip: Ip, left: Value, right: Value) {
     // SAFETY: as the function's own.
     let (heap, cell) = unsafe { (&vm(cx).heap, feedback_cell((*cx).base, ip)) };
     let seen = OperandKinds(cell.get());
@@ -159,7 +159,7 @@ pub(super) unsafe fn note_operands(cx: *mut LaneContext, ip: Ip, left: Value, ri
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::Records;
+pub(crate) use quench_runtime::vm::engine_types::Records;
 
 #[quench_macros::ext(RecordsOps1)]
 impl Records {
@@ -177,7 +177,7 @@ impl Records {
     }
 
     /// `records`, with feedback bytes (all `NONE`) in front of them where `feedback`.
-    pub(super) fn new(records: Box<[LaneInstruction]>, feedback: bool) -> Self {
+    pub(crate) fn new(records: Box<[LaneInstruction]>, feedback: bool) -> Self {
         let front = if feedback { records.len().div_ceil(RECORD_BYTES) } else { 0 };
         // The records move into their own allocation, grown by the feedback records in front
         // (`reserve_exact`, so no slack), instead of being copied into a second one: a derivation
@@ -324,7 +324,7 @@ fn declared_operand_kinds(function: &quench_runtime::bytecode::Function, instruc
 ///
 /// An operand register counts as its parameter at entry; a parameter reassigned before the site
 /// is seeded all the same, which a feedback hint tolerates.
-pub(super) fn seed_declared_feedback(function: &quench_runtime::bytecode::Function, records: &Records) {
+pub(crate) fn seed_declared_feedback(function: &quench_runtime::bytecode::Function, records: &Records) {
     if !records.has_feedback() {
         return;
     }

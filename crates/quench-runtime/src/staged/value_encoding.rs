@@ -12,7 +12,7 @@ pub(crate) const PAYLOAD_MASK: u64 = 0x0000_ffff_ffff_ffff;
 pub(crate) const TAG_UNDEFINED: u64 = 0x7ff9_0000_0000_0000;
 pub(crate) const TAG_NULL: u64 = 0x7ffa_0000_0000_0000;
 pub(crate) const TAG_BOOL: u64 = 0x7ffb_0000_0000_0000;
-pub(crate) const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
+pub const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 pub(crate) const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 pub(crate) const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 pub(crate) const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
@@ -79,7 +79,7 @@ pub(crate) const DIRECT_SYMBOL_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIREC
 pub(crate) const DIRECT_COLLECTION_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
 /// The Wasm GC object record family's code: the vector bit with the array bit (no narrow word sets
 /// the vector bit, so it names no narrow family; `family_is` compares every family bit exactly).
-pub(crate) const DIRECT_WASM_GC_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+pub const DIRECT_WASM_GC_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The payload bits that code a heap value's reference family.
 pub(crate) const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
 /// Where a known closure keeps its function id: the payload bits above the 32-bit slot index and below
@@ -88,7 +88,7 @@ pub(crate) const KNOWN_CLOSURE_FUNCTION_SHIFT: u32 = u32::BITS;
 pub(crate) const KNOWN_CLOSURE_FUNCTION_MASK: u64 = (1 << (DIRECT_V128_HANDLE_BIT.trailing_zeros() - KNOWN_CLOSURE_FUNCTION_SHIFT)) - 1;
 pub(crate) const KNOWN_CLOSURE_FUNCTION_BITS: u64 = KNOWN_CLOSURE_FUNCTION_MASK << KNOWN_CLOSURE_FUNCTION_SHIFT;
 /// The bits that name a heap value's reference family.
-pub(crate) const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
+pub const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
 /// The shift of the family bits within the payload, to the family's index.
 pub(crate) const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
 
@@ -131,7 +131,7 @@ pub(crate) const NARROW_LOOKUP_CODES: usize = 2 * (1 << NARROW_CODE_BITS);
 /// Upper words of narrow non-integers by code: the eight heap reference families in `HEAP_FAMILY_BITS`
 /// order, then the tagged constants. Unused codes hold zero, the upper word of a number, which `to_narrow`
 /// never looks up.
-pub(crate) const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
+pub const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
     let mut words = [0; NARROW_LOOKUP_CODES];
     let mut family = 0;
     while family < NARROW_HEAP_FAMILIES {

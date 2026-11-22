@@ -26,7 +26,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// Pushes the lookahead's mark, with the position the match goes on from, and runs its body.
-    pub(super) fn look(&mut self, pc: u32) {
+    pub(crate) fn look(&mut self, pc: u32) {
         let mark = self.mark(pc);
         let top = self.top();
         self.b.define_variable(mark, top);
@@ -37,7 +37,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// The body matched.
-    pub(super) fn look_succeed(&mut self, pc: u32) {
+    pub(crate) fn look_succeed(&mut self, pc: u32) {
         let (look, negative) = self.look_of(pc);
         let mark = self.mark(look);
         let mark = self.b.read_variable(mark);
@@ -56,7 +56,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// The backtrack popped the mark: the body found no match.
-    pub(super) fn look_failed(&mut self, pc: u32, position: M::Word) {
+    pub(crate) fn look_failed(&mut self, pc: u32, position: M::Word) {
         let NativeInst::Look { negative, end } = self.plan.insts[pc as usize] else { unreachable!("a lookahead's mark") };
         if !negative {
             self.fail();

@@ -9,7 +9,7 @@ impl Lowering<'_, '_> {
     /// own-constant object the VM holds for that name (`VmFacts::online`'s `own_constant`), to the
     /// value that object held: a receiver that is not the object leaves through the guard to the
     /// shared body. `None`, emitting nothing, where the read is not one or nothing holds it.
-    pub(super) fn fold_own_constant(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn fold_own_constant(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let online = self.vm.online?;
         if !self.holds_holders() || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
         let base = self.field_base(pc, instruction)?;

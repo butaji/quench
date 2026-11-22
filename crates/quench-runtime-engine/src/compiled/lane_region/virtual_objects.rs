@@ -15,9 +15,9 @@ use super::super::{PlanCallee, ScalarConstructPlan, ScalarField};
 
 /// A receiver kept as its field values.
 #[derive(Clone, PartialEq)]
-pub(super) struct VirtualObject {
+pub(crate) struct VirtualObject {
     /// The register the construction defined.
-    pub(super) register: Register,
+    pub(crate) register: Register,
     /// The plan's callee, which the allocation at a leave constructs again.
     callee: PlanCallee,
     /// Per field in slot order: its name, and the variable holding its tagged value (an
@@ -48,7 +48,7 @@ const MAX_ARGUMENTS: u16 = 8;
 /// value reads 0 (Cranelift's undefined variable). No code depends on the plan, so a loop
 /// region with static facts needs no Stable division.
 #[derive(Clone, Copy)]
-pub(super) struct ConstructReady {
+pub(crate) struct ConstructReady {
     callee: PlanCallee,
     variable: Variable,
     header: usize,
@@ -68,7 +68,7 @@ impl Lowering<'_, '_> {
     /// The plan the construction at `pc` would build its receiver by, where the body may keep
     /// that receiver as its field values: a plain construction of registers whose site named one
     /// callee with such a plan (`OnlineFacts::construct_plans`).
-    pub(super) fn virtual_construct_plan(&self, pc: usize, instruction: WideInstruction) -> Option<ScalarConstructPlan> {
+    pub(crate) fn virtual_construct_plan(&self, pc: usize, instruction: WideInstruction) -> Option<ScalarConstructPlan> {
         if self.completion.numeric() || instruction.result_flags() != 0 || !self.completion.status_and_pc() { return None; }
         let quench_runtime::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
         if window.count > MAX_ARGUMENTS || !self.is_construction(instruction) { return None; }
@@ -91,7 +91,7 @@ impl Lowering<'_, '_> {
     /// The construction at `pc` by `plan`, kept as its field values: the callee is the plan's
     /// and the plan holds, else it leaves before any effect; the result register holds no
     /// object until one is needed (`materialize_virtuals`).
-    pub(super) fn virtual_construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, plan: ScalarConstructPlan) -> bool {
+    pub(crate) fn virtual_construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, plan: ScalarConstructPlan) -> bool {
         let quench_runtime::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return false };
         let exit = self.guard_exit(state, pc as u32);
         let callee = self.tagged(state, instruction.register_b());
@@ -154,7 +154,7 @@ impl Lowering<'_, '_> {
     }
 
     /// A plain read of a field of a kept receiver: the field's kept value.
-    pub(super) fn virtual_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn virtual_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
         let base = self.field_base(pc, instruction)?.register_index()?;
         let kept = state.virtuals.iter().find(|kept| kept.register == base)?;
@@ -175,7 +175,7 @@ impl Lowering<'_, '_> {
 
     /// Drops each kept receiver whose register the instruction, which reads none of them as an
     /// object, writes: the register names another value from there on.
-    pub(super) fn drop_overwritten_virtuals(&self, state: &mut State, instruction: WideInstruction) {
+    pub(crate) fn drop_overwritten_virtuals(&self, state: &mut State, instruction: WideInstruction) {
         let (_, definitions) = quench_runtime::compile::liveness::transfer(instruction, self.program, &self.program.field_sites, &self.program.superinstructions);
         state.virtuals.retain(|kept| !definitions.contains(usize::from(kept.register)));
     }
@@ -183,7 +183,7 @@ impl Lowering<'_, '_> {
     /// Whether the instruction at `pc` leaves every kept receiver kept: it reads none of them
     /// but as a field the kept values answer, and it neither allocates nor calls nor ends the
     /// block with one live.
-    pub(super) fn keeps_virtuals(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn keeps_virtuals(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
         let (uses, _) = quench_runtime::compile::liveness::transfer(instruction, self.program, &self.program.field_sites, &self.program.superinstructions);
         let virtual_use = state.virtuals.iter().any(|kept| uses.contains(usize::from(kept.register)));
         let ends_block = self.blocks.get(pc + 1).is_some_and(Option::is_some)
@@ -213,7 +213,7 @@ impl Lowering<'_, '_> {
     /// Allocates each kept receiver live at `pc` by its plan, from the arguments it kept, into
     /// its register, and drops the rest: what the instruction at `pc`, or the interpreter
     /// resuming there, reads as the object.
-    pub(super) fn materialize_virtuals(&mut self, state: &mut State, pc: usize) {
+    pub(crate) fn materialize_virtuals(&mut self, state: &mut State, pc: usize) {
         for kept in std::mem::take(&mut state.virtuals) {
             if !self.is_live(pc, kept.register) { continue; }
             let count = kept.arguments.len();
@@ -253,7 +253,7 @@ impl Lowering<'_, '_> {
     /// callee its kept constructions build by (`virtual_construct_plan`), once: its answer is
     /// the callee's readiness in the loop (`ConstructReady`). A refusal costs nothing here;
     /// each construction then tests at its site and leaves there as before.
-    pub(super) fn hoist_constructions(&mut self, header: usize) {
+    pub(crate) fn hoist_constructions(&mut self, header: usize) {
         let Some(end) = self.loop_end(header).filter(|end| self.enters_only_at_header(header, *end)) else { return };
         let mut callees = smallvec::SmallVec::<[PlanCallee; 2]>::new();
         for pc in header..=end {
@@ -279,7 +279,7 @@ impl Lowering<'_, '_> {
     /// Whether the instruction at `pc` leaves every construction readiness as it found it
     /// (`ConstructReady`): it allocates nothing, calls nothing, stores nothing and constructs
     /// nothing but a kept receiver, and runs no guest code.
-    pub(super) fn keeps_constructions_ready(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn keeps_constructions_ready(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
         if self.hoisted.contains_key(&pc) { return true; }
         if self.unit.markers.contains(&pc) { return false; }
         if self.virtual_construct_plan(pc, instruction).is_some() { return true; }
@@ -312,7 +312,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Forgets every construction readiness from here (`ConstructReady`).
-    pub(super) fn unready_constructions(&mut self) {
+    pub(crate) fn unready_constructions(&mut self) {
         if self.construct_ready.is_empty() { return; }
         let zero = self.raw_const(Lane::I64, 0);
         let mut forgotten = smallvec::SmallVec::<[Variable; 2]>::new();

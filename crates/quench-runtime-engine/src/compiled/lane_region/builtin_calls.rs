@@ -13,7 +13,7 @@ use quench_runtime::heap::Native;
 
 /// A builtin a call runs on its staged row.
 #[derive(Clone, Copy)]
-pub(super) enum Builtin {
+pub(crate) enum Builtin {
     /// `String.prototype.charCodeAt` of a flat string at an int32 index.
     CharCodeAt,
     /// `String.prototype.charAt` of a flat string at an int32 index of an ASCII unit.
@@ -34,7 +34,7 @@ pub(super) enum Builtin {
 
 impl Builtin {
     /// The builtin `native` is, if it is one a call runs inline.
-    pub(super) fn of(native: Native) -> Option<Self> {
+    pub(crate) fn of(native: Native) -> Option<Self> {
         Some(match native {
             Native::StringCharCodeAt => Self::CharCodeAt,
             Native::StringCharAt => Self::CharAt,
@@ -49,25 +49,25 @@ impl Builtin {
     }
 
     /// The arguments the builtin reads; a call passing another count takes the native.
-    pub(super) const fn arguments(self) -> u16 {
+    pub(crate) const fn arguments(self) -> u16 {
         match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger | Self::Includes | Self::IndexOf | Self::IsArray => 1 }
     }
 
     /// Whether the builtin changes an array's elements.
-    pub(super) const fn mutates_arrays(self) -> bool {
+    pub(crate) const fn mutates_arrays(self) -> bool {
         matches!(self, Self::Push | Self::Pop)
     }
 }
 
 /// The row of an Emit stage, which continues past each guard it makes.
-pub(super) fn continues<T>(row: Option<T>) -> T {
+pub(crate) fn continues<T>(row: Option<T>) -> T {
     row.expect("the emit stage continues past its guards")
 }
 
 impl Lowering<'_, '_> {
     /// The call `builtin` whose callee `exit` guarded: its result is the call's register, or
     /// the call leaves through `exit` before it changes anything.
-    pub(super) fn builtin_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, builtin: Builtin, exit: ir::Block) {
+    pub(crate) fn builtin_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, builtin: Builtin, exit: ir::Block) {
         let argument = ImmediateLayout::call_window_base(instruction.imm());
         let (receiver, result) = (instruction.register_c(), instruction.result_register());
         match builtin {
@@ -181,7 +181,7 @@ impl Lowering<'_, '_> {
 
     /// The `length` of the flat string `base` (tagged) as an int32; any other value, or a
     /// length past int32, leaves through `miss`.
-    pub(super) fn string_length(&mut self, base: ir::Value, miss: ir::Block) -> ir::Value {
+    pub(crate) fn string_length(&mut self, base: ir::Value, miss: ir::Block) -> ir::Value {
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.string_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let string = continues(strings::flat_string(&mut stage, records, base, miss));

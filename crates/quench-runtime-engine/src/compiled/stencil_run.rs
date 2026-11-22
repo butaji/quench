@@ -7,14 +7,14 @@ use super::{BodyEntry, CallContext, LoopEntry, RegionRun, Raised};
 /// A bare run's payload is the entry record's address alone, where the dispatch holds it.
 const _: () = assert!(std::mem::offset_of!(super::JsStepDispatch, head.loop_entry) == 0);
 
-pub(super) use quench_runtime::vm::engine_types::Crossing;
+pub(crate) use quench_runtime::vm::engine_types::Crossing;
 
 /// Runs a `Crossing::Bare` region on the register file in place: no activation, dispatch or
 /// view is built, the payload is the entry record's address.
 ///
 /// # Safety
 /// As `run`.
-pub(super) unsafe fn run_bare(
+pub(crate) unsafe fn run_bare(
     (entry_code, resume): (BodyEntry, u64),
     registers: *mut quench_runtime::value::Value,
     entry: &mut LoopEntry,

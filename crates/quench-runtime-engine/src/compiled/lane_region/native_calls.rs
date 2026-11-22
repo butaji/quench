@@ -27,7 +27,7 @@ use quench_runtime::vm::global_facts::scalar_native;
 /// A native a call runs inline: a Math function of Numbers that native code lowers
 /// (`MathCall::is_row`), computed by its staged row; or a builtin on its staged row (`Builtin`).
 #[derive(Clone, Copy)]
-pub(super) enum Inline {
+pub(crate) enum Inline {
     Math(MathCall),
     Builtin(Builtin),
     /// A scalar native (`global_facts::scalar_native`), called in place by its helper (`Lowering::scalar_native_call`).
@@ -100,7 +100,7 @@ impl Inline {
 
 /// The inline operation of each call of a unit, by PC (`intrinsic_calls`).
 /// Each with the function it held and the exact shape of the prototype holding it.
-pub(super) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
+pub(crate) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
 /// Whether a lane body runs a call of `native` inline and a loop holds it natively: the call
 /// changes no array, or appends to one (`holds_in_loop`). A loop whose calls are all such runs
@@ -129,35 +129,35 @@ pub(crate) fn native_method_call(machine: &mut Vm, decoded: &[WideInstruction], 
 
 /// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`): its read
 /// is a slot or a live load that leaves at a miss, and it changes nothing a loop holds.
-pub(super) fn scalar_name_read(global_reads: &quench_runtime::vm::global_facts::GlobalReads, pc: usize) -> bool {
+pub(crate) fn scalar_name_read(global_reads: &quench_runtime::vm::global_facts::GlobalReads, pc: usize) -> bool {
     matches!(global_reads.get(&pc), Some(quench_runtime::vm::global_facts::GlobalRead::NativeSlot { .. }))
 }
 
 /// Whether the call at `pc` runs inline and changes no array, so the Stable facts its code
 /// folded survive it.
-pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
+pub(crate) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| !inline.mutates_arrays())
 }
 
 /// Whether a loop holds the call at `pc` natively (`holds_in_loop`).
-pub(super) fn holds_in_loop(intrinsics: &Intrinsics, pc: usize) -> bool {
+pub(crate) fn holds_in_loop(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.holds_in_loop())
 }
 
 /// Whether the call at `pc` appends to an array (`appends`): the array's length may grow.
-pub(super) fn appends(intrinsics: &Intrinsics, pc: usize) -> bool {
+pub(crate) fn appends(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.appends())
 }
 
 /// Whether the call at `pc` searches an array's elements (`searches`): its receiver's view is
 /// hoisted around the loop that holds the call (`loop_arrays`).
-pub(super) fn searches(intrinsics: &Intrinsics, pc: usize) -> bool {
+pub(crate) fn searches(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.searches())
 }
 
 /// Whether the call at `pc` reads a string's units (`reads_string`): its receiver's flat facts are
 /// held around the loop that holds the call (`loop_strings`).
-pub(super) fn reads_string(intrinsics: &Intrinsics, pc: usize) -> bool {
+pub(crate) fn reads_string(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.reads_string())
 }
 
@@ -166,7 +166,7 @@ pub(super) fn reads_string(intrinsics: &Intrinsics, pc: usize) -> bool {
 /// member of a Stable global, or a method of the string or array prototype; `GlobalRead::NativeSlot`: a
 /// global name holding a scalar native), the call passes that function's argument count, and no direct callee
 /// is bound to it. Each with the function it held, whose identity the call guards.
-pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads: &quench_runtime::vm::global_facts::GlobalReads,
+pub(crate) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads: &quench_runtime::vm::global_facts::GlobalReads,
     direct: impl Fn(usize) -> bool) -> Intrinsics {
     unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::Call)
         && !direct(*pc) && !instruction.returns_from_frame()
@@ -189,7 +189,7 @@ impl Lowering<'_, '_> {
     /// run as SSA code: guarded once on the callee's identity (the call's interpreter step runs
     /// where it differs) and on each operand its operation reads (a Number, a flat string, a
     /// dense array). False where the call is not one.
-    pub(super) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
         // A scalar native whose callee identity and arguments the loop's entry proved (`hoist_scalar_calls`): the call's
         // value is the one the entry computed, its callee being the same function on each iteration.
@@ -300,9 +300,9 @@ impl Lowering<'_, '_> {
 /// whether its callee register is no write of the loop's, so the entry's identity guard holds on every iteration (`fixed`).
 /// Else the call keeps its identity guard per iteration, and takes the held result where that guard passes.
 #[derive(Clone, Copy)]
-pub(super) struct HoistedScalar {
-    pub(super) value: Variable,
-    pub(super) fixed: bool,
+pub(crate) struct HoistedScalar {
+    pub(crate) value: Variable,
+    pub(crate) fixed: bool,
 }
 
 /// An argument of a hoisted scalar call, as the loop's entry reads it: a register no instruction of the loop writes, or a
@@ -318,7 +318,7 @@ impl Lowering<'_, '_> {
     /// edge (`HoistedScalar`), so an iteration takes their result instead of the helper call. Each call is one the entry
     /// can run before the loop: a pure native on primitive arguments, whose exit (an object argument, an error, a due
     /// collection) leaves at the header before the loop ran, as each iteration would have left at the call.
-    pub(super) fn hoist_scalar_calls(&mut self, state: &mut State, header: usize) {
+    pub(crate) fn hoist_scalar_calls(&mut self, state: &mut State, header: usize) {
         if self.generic.contains(&header) || !self.holds_holders() { return; }
         let Some(end) = self.loop_end(header) else { return };
         if !self.enters_only_at_header(header, end) { return; }

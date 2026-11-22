@@ -6,7 +6,7 @@ use super::*;
 // merge: theirs window_record/window_local_handler taken whole (staged queries, op-based); HEAD's class-match helpers and window handlers are dropped with the hand fast paths. meaning_fast import dropped as unused.
 
 /// What an environment window does with one record.
-pub(super) enum WindowRecord {
+pub(crate) enum WindowRecord {
     /// The record reads no local and makes no closure: it keeps its handler.
     Keeps,
     /// A direct eval, which runs in a window activation (`lane_eval`); in a frame's run it leaves.
@@ -15,7 +15,7 @@ pub(super) enum WindowRecord {
     Local(u32),
 }
 
-pub(super) fn window_record(function: &Function, instruction: WideInstruction) -> WindowRecord {
+pub(crate) fn window_record(function: &Function, instruction: WideInstruction) -> WindowRecord {
     let op = instruction.op();
     if quench_runtime::staged::calls(op) && instruction.direct_eval() {
         return WindowRecord::Eval;
@@ -38,7 +38,7 @@ pub(super) fn window_record(function: &Function, instruction: WideInstruction) -
 /// own (a `LoadEnvLocal` or `StoreEnvLocal` of a slot the window does not hold in its locals, which its
 /// environment row answers and misses from in a window run). `scoped` marks a function that resolves
 /// names at run time, whose environment stores go through its scope first (`scoped_names`).
-pub(super) fn window_local_handler(function: &Function, op: Op, own: usize, scoped: bool) -> Option<Handler> {
+pub(crate) fn window_local_handler(function: &Function, op: Op, own: usize, scoped: bool) -> Option<Handler> {
     // A clone is its generated row, which clones the window's environment (`CallOut::CloneEnv`).
     if op as u16 == quench_runtime::staged::CLONE_ENV_ROW {
         return Some(generated_row!(quench_runtime::staged::CLONE_ENV_ROW, ACC_NONE, FLAG_UNREAD) as Handler);

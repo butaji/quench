@@ -14,7 +14,7 @@ use quench_runtime::bytecode::{Constant, Function};
 use cranelift_codegen::bitset::CompoundBitSet;
 
 /// The no-overflow kind of an int32 `+` or `-`: the row whose overflow test a proof removed.
-pub(super) fn exact_kind(kind: Kind) -> Option<Kind> {
+pub(crate) fn exact_kind(kind: Kind) -> Option<Kind> {
     match kind {
         Kind::Add => Some(Kind::AddNoOverflow),
         Kind::Sub => Some(Kind::SubNoOverflow),
@@ -24,7 +24,7 @@ pub(super) fn exact_kind(kind: Kind) -> Option<Kind> {
 
 /// The checked kind of a no-overflow row: the row it falls back to where the library holds no row over the
 /// operands' places (a double operand's pinned register), which takes the same int32 operands and tests overflow.
-pub(super) fn checked(kind: Kind) -> Kind {
+pub(crate) fn checked(kind: Kind) -> Kind {
     match kind {
         Kind::AddNoOverflow => Kind::Add,
         Kind::SubNoOverflow => Kind::Sub,
@@ -59,7 +59,7 @@ fn exact_pcs(function: &Function, constants: &[Constant]) -> Option<Box<[u32]>> 
 /// exact. The analysis runs once per function (`Function::exact_sums`): its facts are invariants of the bytecode,
 /// since the function is entered only at pc 0, so every state a region or resume stub enters with is one it covers.
 /// Inlined callees' rows keep their checked kinds.
-pub(super) fn promote(function: &Function, constants: &[Constant], origins: &[Origin], rows: &mut [Decoded]) {
+pub(crate) fn promote(function: &Function, constants: &[Constant], origins: &[Origin], rows: &mut [Decoded]) {
     let Some(exact) = function.caches().exact_sums.get_or_init(|| exact_pcs(function, constants)).as_deref() else { return };
     for (row, origin) in rows.iter_mut().zip(origins) {
         let Origin::Caller(pc) = origin else { continue };

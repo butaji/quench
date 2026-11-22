@@ -6,12 +6,12 @@
 //! while another thread may be running code on it. Darwin maps one `MAP_JIT` region and flips
 //! only the writing thread to write access for the duration of a fill.
 
-pub(super) use quench_runtime::vm::engine_types::Views;
+pub(crate) use quench_runtime::vm::engine_types::Views;
 
 #[quench_macros::ext(ViewsOps1)]
 impl Views {
     /// The writable address of `exec + offset`.
-    pub(super) fn writer(&self, offset: usize) -> *mut u8 {
+    pub(crate) fn writer(&self, offset: usize) -> *mut u8 {
         self.write.wrapping_add(offset)
     }
 }
@@ -21,7 +21,7 @@ impl Views {
 impl Views {
     /// Reserves `bytes` (a multiple of the page size) as two views of one shared region.
     /// Pages are committed by first touch and charged nothing before it.
-    pub(super) fn reserve(bytes: usize) -> Result<Self, String> {
+    pub(crate) fn reserve(bytes: usize) -> Result<Self, String> {
         // SAFETY: a fresh shared anonymous mapping; the result is checked.
         let write = unsafe {
             libc::mmap(
@@ -83,20 +83,20 @@ impl Views {
     }
 
     /// Returns the pages of `[offset, offset + bytes)` to the system; both views read zero.
-    pub(super) fn release(&self, offset: usize, bytes: usize) {
+    pub(crate) fn release(&self, offset: usize, bytes: usize) {
         // SAFETY: a page-aligned range of this region's shared pages, which no live code uses.
         unsafe { libc::madvise(self.writer(offset).cast(), bytes, libc::MADV_REMOVE) };
     }
 
     /// Runs `fill` with write access to the writable view.
-    pub(super) fn writing<T>(fill: impl FnOnce() -> T) -> T {
+    pub(crate) fn writing<T>(fill: impl FnOnce() -> T) -> T {
         fill()
     }
 
     /// Unmaps the written pages from the writable view once code is published, so each
     /// resident code page is counted once (through the executable view). The shared pages
     /// keep their contents.
-    pub(super) fn retire_writer(&self, offset: usize, bytes: usize) {
+    pub(crate) fn retire_writer(&self, offset: usize, bytes: usize) {
         let (start, length) = page_span(offset, bytes);
         // SAFETY: page-aligned writable-view range; `DONTNEED` on shared pages drops only
         // this view's page-table entries.
@@ -109,7 +109,7 @@ impl Views {
 impl Views {
     /// Reserves `bytes` as one `MAP_JIT` region; each thread sees it executable until it
     /// opens a write window.
-    pub(super) fn reserve(bytes: usize) -> Result<Self, String> {
+    pub(crate) fn reserve(bytes: usize) -> Result<Self, String> {
         // SAFETY: a fresh private JIT mapping; the result is checked.
         let exec = unsafe {
             libc::mmap(
@@ -130,14 +130,14 @@ impl Views {
         })
     }
 
-    pub(super) fn release(&self, offset: usize, bytes: usize) {
+    pub(crate) fn release(&self, offset: usize, bytes: usize) {
         // SAFETY: a page-aligned range of this region, which no live code uses.
         unsafe { libc::madvise(self.writer(offset).cast(), bytes, libc::MADV_FREE) };
     }
 
     /// Runs `fill` with this thread's view of JIT memory writable; other threads keep
     /// executing.
-    pub(super) fn writing<T>(fill: impl FnOnce() -> T) -> T {
+    pub(crate) fn writing<T>(fill: impl FnOnce() -> T) -> T {
         // SAFETY: toggles only this thread's JIT write protection, restored below.
         unsafe { libc::pthread_jit_write_protect_np(0) };
         let result = fill();
@@ -146,7 +146,7 @@ impl Views {
         result
     }
 
-    pub(super) fn retire_writer(&self, _: usize, _: usize) {}
+    pub(crate) fn retire_writer(&self, _: usize, _: usize) {}
 }
 
 #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
@@ -161,7 +161,7 @@ fn page_span(offset: usize, bytes: usize) -> (usize, usize) {
 }
 
 /// The system page size, which every region and chunk is a multiple of.
-pub(super) fn page_bytes() -> usize {
+pub(crate) fn page_bytes() -> usize {
     static PAGE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     // SAFETY: `sysconf` has no preconditions.
     *PAGE.get_or_init(|| {
@@ -184,7 +184,7 @@ pub(super) fn page_bytes() -> usize {
 /// core can be mid-fetch of the patched bytes, and the entry's call and return serialize
 /// speculation past them. Only immediates are patched, never an opcode or a length. AArch64 has
 /// split caches: it cleans the data line and invalidates the instruction line (below).
-pub(super) fn flush_icache(code: *mut u8, bytes: usize) {
+pub(crate) fn flush_icache(code: *mut u8, bytes: usize) {
     #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
     {
         unsafe extern "C" {
@@ -206,7 +206,7 @@ mod aarch64 {
     const LINE_FIELD_MASK: u64 = 0xf;
     const WORD_BYTES: usize = 4;
 
-    pub(super) fn flush(start: usize, bytes: usize) {
+    pub(crate) fn flush(start: usize, bytes: usize) {
         let ctr: u64;
         // SAFETY: `CTR_EL0` is readable at EL0 on Linux.
         unsafe { core::arch::asm!("mrs {}, ctr_el0", out(reg) ctr) };

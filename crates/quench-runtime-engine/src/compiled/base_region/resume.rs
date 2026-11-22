@@ -20,7 +20,7 @@ fn offset_word(offset: usize) -> Result<u32, String> {
 #[quench_macros::ext(ResumeTableOps1)]
 impl ResumeTable {
     /// The table of `stubs`, whose first rows `jumps` name, over the code `offsets` of the rows.
-    pub(super) fn of(thunk: usize, stubs: &[Stub], jumps: &[Jump], offsets: &[usize]) -> Result<Self, String> {
+    pub(crate) fn of(thunk: usize, stubs: &[Stub], jumps: &[Jump], offsets: &[usize]) -> Result<Self, String> {
         let entries = stubs.iter().zip(jumps).map(|(stub, jump)| Ok((stub.pc, offset_word(offsets[jump.first])?)));
         let (pcs, offsets): (Vec<u32>, Vec<u32>) = entries.collect::<Result<Vec<_>, String>>()?.into_iter().unzip();
         debug_assert!(pcs.windows(2).all(|pair| pair[0] < pair[1]), "stubs are in PC order");
@@ -50,8 +50,8 @@ impl ResumeTable {
 }
 
 /// The entry rows of one PC's resume stub.
-pub(super) struct Stub {
-    pub(super) pc: u32,
+pub(crate) struct Stub {
+    pub(crate) pc: u32,
     rows: Vec<EntryRow>,
     /// The row the stub's jump lands on: the PC's first row.
     target: usize,
@@ -59,28 +59,28 @@ pub(super) struct Stub {
 
 impl Stub {
     /// The hole values of the stub's rows, its jump last.
-    pub(super) fn holes(&self) -> impl Iterator<Item = [u64; HOLES]> + '_ {
+    pub(crate) fn holes(&self) -> impl Iterator<Item = [u64; HOLES]> + '_ {
         self.rows.iter().map(|row| row.holes).chain([[0; HOLES]])
     }
 
     /// The exits of the stub's rows, then none for its jump, where a declared test's miss goes to `failed`.
-    pub(super) fn exits(&self, failed: usize) -> impl Iterator<Item = Vec<Target>> + '_ {
+    pub(crate) fn exits(&self, failed: usize) -> impl Iterator<Item = Vec<Target>> + '_ {
         self.rows.iter().map(move |row| row.exits(failed)).chain([Vec::new()])
     }
 }
 
 /// A stub's rows in the chain: its first row, its jump and the row the jump lands on.
-pub(super) struct Jump {
-    pub(super) first: usize,
-    pub(super) row: usize,
-    pub(super) target: usize,
+pub(crate) struct Jump {
+    pub(crate) first: usize,
+    pub(crate) row: usize,
+    pub(crate) target: usize,
 }
 
 /// A stub for each caller PC of a loop region that has a row of its own, ascending: not one a tile
 /// covers (its first row's instruction is run with it, so the interpreter takes the PC), nor one
 /// control never reaches. `first` is the index of the body's first row and `starts` the index of
 /// each row's first part among the body's.
-pub(super) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts): (usize, &[usize])) -> Result<Vec<Stub>, String> {
+pub(crate) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts): (usize, &[usize])) -> Result<Vec<Stub>, String> {
     layout
         .entries
         .iter()
@@ -98,7 +98,7 @@ pub(super) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts)
 /// Appends the rows of `stubs` to `rows`, each failed guard taking row `failed` (the failed
 /// entry's leave) and each stub ending in `jump`; the rows' holes are `holes` from the first
 /// row appended.
-pub(super) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jump: &'a Stencil, holes: &'a [[u64; HOLES]], failed: usize) -> Vec<Jump> {
+pub(crate) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jump: &'a Stencil, holes: &'a [[u64; HOLES]], failed: usize) -> Vec<Jump> {
     let mut hole = rows.len();
     let mut jumps = Vec::with_capacity(stubs.len());
     for stub in stubs {
@@ -137,7 +137,7 @@ mod tests {
             (instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::JumpTarget && (instruction.jump_target() as usize) <= pc)
                 .then(|| (instruction.jump_target(), pc as u32))
         }).expect("the function has a loop");
-        let region = quench_runtime::vm::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, quench_runtime::vm::osr_loop::MethodCalls::Inliner, &|_| false).expect("the loop is admitted");
+        let region = crate::compiled::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, crate::compiled::osr_loop::MethodCalls::Inliner, &|_| false).expect("the loop is admitted");
         (program, id, region)
     }
 

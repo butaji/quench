@@ -21,7 +21,7 @@ impl Lowering<'_, '_> {
     /// its value from a caller record), an array of elements among the unit's registers; otherwise
     /// plain, its window inside the unit's registers, and a closure or template only of the
     /// caller's own frame, whose environment and literals the allocator names.
-    pub(super) fn allocation_row(&self, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn allocation_row(&self, pc: usize, instruction: WideInstruction) -> bool {
         let Some((_, allocation)) = Allocation::decode(instruction, self.straight_following(pc)) else { return false };
         let inside = |window: quench_runtime::bytecode::RegisterWindow|
             u32::from(window.base) + u32::from(window.count) <= u32::from(self.unit.registers);
@@ -42,7 +42,7 @@ impl Lowering<'_, '_> {
     /// environment, so what the body knew of the heap is dropped; an array of elements consumes
     /// the definitions it made with it. A row that returns its value completes the activation
     /// (`literal_done`).
-    pub(super) fn allocation(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn allocation(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let exit = self.guard_exit(state, pc as u32);
         let (destination, allocation) = Allocation::decode(instruction, self.straight_following(pc))
             .expect("an allocation row decodes");

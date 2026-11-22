@@ -12,7 +12,7 @@ use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unar
 
 /// The exception operations a Wasm function's instruction can be.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Exception {
+pub enum Exception {
     /// `exception.new`: a tag and its payload, from a window of registers, the tag first.
     New,
     /// A catch's test of an exception against a tag.
@@ -39,7 +39,7 @@ impl Exception {
 /// The type a payload read carries in its instruction's `c` field: a payload's Wasm type. A numeric
 /// type is decided by its code alone; a reference's word is its Value's bits.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum PayloadType {
+pub enum PayloadType {
     I32,
     I64,
     F32,

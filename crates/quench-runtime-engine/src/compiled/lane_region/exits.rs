@@ -11,7 +11,7 @@ use super::super::exit_protocol::{LiveValue, Source};
 /// The caller registers a leave stores, by the view the cold block stores each from: the
 /// current tagged bits, or the int32, 64-bit integer or float64 view boxed there.
 #[derive(PartialEq)]
-pub(super) struct ExitStores {
+pub(crate) struct ExitStores {
     tagged: CompoundBitSet,
     int: CompoundBitSet,
     long: CompoundBitSet,
@@ -19,14 +19,14 @@ pub(super) struct ExitStores {
 }
 
 /// A leave block and the registers it stores to the lane frame.
-pub(super) struct ExitBlock {
-    pub(super) stored: ExitStores,
-    pub(super) block: ir::Block,
+pub(crate) struct ExitBlock {
+    pub(crate) stored: ExitStores,
+    pub(crate) block: ir::Block,
 }
 
 impl Lowering<'_, '_> {
     /// The caller registers a leave at `pc` stores from `state`: written, live there and not homed.
-    pub(super) fn stored_at(&self, state: &State, pc: usize) -> ExitStores {
+    pub(crate) fn stored_at(&self, state: &State, pc: usize) -> ExitStores {
         let mut stores = ExitStores { tagged: CompoundBitSet::new(), int: CompoundBitSet::new(), long: CompoundBitSet::new(), float: CompoundBitSet::new() };
         for register in self.written.iter().take_while(|register| *register < usize::from(self.unit.caller_registers)) {
             if !self.is_live(pc, register as Register) || state.proofs.homed.contains(register) { continue; }
@@ -48,7 +48,7 @@ impl Lowering<'_, '_> {
 
     /// Gives the live registers of the inlined frames a leave at `pc` recovers their tagged bits:
     /// the recovery reads them from the variables.
-    pub(super) fn materialize_inlined(&mut self, state: &mut State, pc: usize) {
+    pub(crate) fn materialize_inlined(&mut self, state: &mut State, pc: usize) {
         let inlined = usize::from(self.unit.caller_registers)..state.values.len();
         let needed: Vec<usize> = inlined.filter(|register| self.is_live(pc, *register as Register))
             // An unboxed register's tagged word is boxed again here, where it dominates the leave (`stored_at`).
@@ -57,7 +57,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The block that stores `stored` and leaves at `pc`, made at its first leave.
-    pub(super) fn exit_block(&mut self, pc: usize, stored: ExitStores) -> ir::Block {
+    pub(crate) fn exit_block(&mut self, pc: usize, stored: ExitStores) -> ir::Block {
         if let Some(held) = self.exits[pc].iter().find(|held| held.stored == stored) { return held.block; }
         let block = cold_block(&mut self.builder);
         self.exits[pc].push(ExitBlock { stored, block });
@@ -66,7 +66,7 @@ impl Lowering<'_, '_> {
 
     /// The block that stores `stored` and leaves at the exit word it is passed, shared by every
     /// caller-frame leave of a body that stores the same registers.
-    pub(super) fn shared_exit_block(&mut self, stored: ExitStores) -> ir::Block {
+    pub(crate) fn shared_exit_block(&mut self, stored: ExitStores) -> ir::Block {
         if let Some(held) = self.shared_exits.iter().find(|held| held.stored == stored) { return held.block; }
         let block = cold_block(&mut self.builder);
         self.builder.append_block_param(block, ir::types::I64);
@@ -76,7 +76,7 @@ impl Lowering<'_, '_> {
 
     /// The exit blocks: write back each one's registers, and an inlined callee's registers to the
     /// window its recovery makes the activation from, then leave at the origin.
-    pub(super) fn fill_exits(&mut self) -> Option<()> {
+    pub(crate) fn fill_exits(&mut self) -> Option<()> {
         if super::clif_census::enabled() {
             let count = |stored: &ExitStores| [&stored.tagged, &stored.int, &stored.long, &stored.float].iter().map(|set| set.iter().count()).sum::<usize>();
             let private: Vec<(usize, usize)> = self.exits.iter().flatten().map(|exit| (count(&exit.stored), usize::from(matches!(self.unit.origins.first(), Some(_))))).collect();
@@ -143,7 +143,7 @@ impl Lowering<'_, '_> {
     /// The values a leave at `pc` inside `frame` stores: the live registers of the frame and of
     /// the frames around it (`is_live`, the one liveness query), each at its unit register past the
     /// caller's (`LaneMethod::scratch_width`). The exit table records this same list (`ExitTable::of_unit`).
-    pub(super) fn inlined_stores(&self, pc: usize, frame: usize) -> Vec<LiveValue> {
+    pub(crate) fn inlined_stores(&self, pc: usize, frame: usize) -> Vec<LiveValue> {
         self.unit.chain(frame).into_iter().flat_map(|index| {
             let inlined = self.unit.frames[index];
             inlined.base..inlined.base + inlined.registers

@@ -4,9 +4,9 @@ use crate::dispatch_fast::operand_feedback::{OperandClass, OperandKinds};
 
 /// The representation of each web, by its number: `None` is unseen (a web no writer reaches), else
 /// how its values are held. A register takes the widest of what its writers produce.
-pub(super) type Reprs = Vec<Option<Representation>>;
+pub(crate) type Reprs = Vec<Option<Representation>>;
 
-pub(super) fn operand_repr(reprs: &[Option<Representation>], source: Option<Source>) -> Option<Representation> {
+pub(crate) fn operand_repr(reprs: &[Option<Representation>], source: Option<Source>) -> Option<Representation> {
     match source {
         Some(Source::Register(register)) => reprs.get(usize::from(register)).copied().unwrap_or(Some(Representation::Tagged)),
         Some(Source::Constant(word)) if word >> HALF == INT_HIGH => Some(Representation::Int32),
@@ -18,7 +18,7 @@ pub(super) fn operand_repr(reprs: &[Option<Representation>], source: Option<Sour
 
 /// The variant of row a site gets, chosen from its operand feedback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Variant {
+pub(crate) enum Variant {
     /// The int32-speculating row: guards int32 operands, exits at the PC on any other.
     Int32,
     /// The double row: takes Numbers, ints converted; exits at the PC on any other operand.
@@ -30,7 +30,7 @@ pub(super) enum Variant {
 }
 
 impl Variant {
-    pub(super) fn speculates(self) -> bool {
+    pub(crate) fn speculates(self) -> bool {
         self == Self::Int32
     }
 }
@@ -52,7 +52,7 @@ fn selected(class: OperandClass) -> Variant {
 }
 
 /// The variant of the row of `kind` at a site with `kinds`.
-pub(super) fn variant_of(kind: Kind, kinds: Option<&OperandKinds>) -> Variant {
+pub(crate) fn variant_of(kind: Kind, kinds: Option<&OperandKinds>) -> Variant {
     // A no-overflow row's operands are int32s by proof: it never meets a string (no Concat) or a double.
     if matches!(kind, Kind::AddNoOverflow | Kind::SubNoOverflow) {
         return Variant::Int32;
@@ -78,7 +78,7 @@ fn heap_repr(numbers: bool, widened: bool) -> Option<Representation> {
 /// operation wrote, a tagged word, as is a logical negation's boolean; a Number negation gives a
 /// double (an int32 zero negates to `-0`); a division, a double operand or a `widened` row (its int32
 /// speculation failed) gives a double; a bitwise row an int32 unless widened.
-pub(super) fn result_repr(row: &Decoded, reprs: &[Option<Representation>], widened: bool, numbers: bool) -> Option<Representation> {
+pub(crate) fn result_repr(row: &Decoded, reprs: &[Option<Representation>], widened: bool, numbers: bool) -> Option<Representation> {
     if row.step.is_some() {
         return Some(Representation::Tagged);
     }
@@ -111,7 +111,7 @@ fn read_doubles(row: &Decoded) -> bool {
 /// `Body::slot_types` as `StableFacts::slots`): a store that widens the slot retires the code before its next entry.
 /// Inside one run nothing the rows do widens it (an in-place store writes only what the slot's type holds, or leaves
 /// through the store gate); only a call or a helper step could, so code that makes one keeps no proof.
-pub(super) fn keep_typed_reads(homes: &Homes, decoded: &mut [Decoded]) {
+pub(crate) fn keep_typed_reads(homes: &Homes, decoded: &mut [Decoded]) {
     let calls = decoded.iter().any(Decoded::makes_calls);
     for row in decoded.iter_mut() {
         let place = row.dst.map(|dst| homes.place(dst));
@@ -180,7 +180,7 @@ fn entry_repr(entered: bool, register: Register, seen: &[Type]) -> Option<Repres
 
 /// The representation of every web the region names, to a fixed point: where the compile
 /// began (`seen`, the entry's observed types; dead at the header: none yet), then each writer's result.
-pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: &[Type], webs: &Webs) -> Reprs {
+pub(crate) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: &[Type], webs: &Webs) -> Reprs {
     let header = span.header;
     // One loaded value that left for its int32 speculation widens every loaded value at once: the
     // next compile need not discover them one leave at a time.
@@ -216,7 +216,7 @@ fn concat_site(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
 
 /// Whether the row takes general (tagged word) semantics: its result or an operand of a
 /// relation is no int32.
-pub(super) fn is_general(row: &Decoded, reprs: &[Option<Representation>]) -> bool {
+pub(crate) fn is_general(row: &Decoded, reprs: &[Option<Representation>]) -> bool {
     match row.dst {
         Some(dst) => reprs[usize::from(dst)] != Some(Representation::Int32),
         None => operand_repr(reprs, row.a).max(operand_repr(reprs, row.b)) >= Some(Representation::Float64),
@@ -224,7 +224,7 @@ pub(super) fn is_general(row: &Decoded, reprs: &[Option<Representation>]) -> boo
 }
 
 /// The webs of `repr`, the most named first.
-pub(super) fn ranked(decoded: &[Decoded], reprs: &[Option<Representation>], repr: Option<Representation>) -> Vec<Register> {
+pub(crate) fn ranked(decoded: &[Decoded], reprs: &[Option<Representation>], repr: Option<Representation>) -> Vec<Register> {
     let mut uses = vec![0usize; reprs.len()];
     for row in decoded {
         for web in row.registers() {

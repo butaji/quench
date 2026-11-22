@@ -21,7 +21,7 @@ script_handler! {
     /// unpublished), the callee's identity, the entry's form and the site's argument count
     /// against its parameters. The room is one compare (`LaneStack::plain_room`). Anything
     /// else takes `script_call_leaf_prove_miss`, which makes the call as before.
-    pub(super) fn script_call_leaf_miss<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
+    pub(crate) fn script_call_leaf_miss<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         debug_assert!(unsafe { (*cx).script_calls || !vm(cx).lane_stack.script_calls_allowed() });
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
@@ -138,7 +138,7 @@ script_handler! {
 /// cached, whose parameters take `ARGC` values and whose activation's room the stack holds;
 /// `this` is the receiver its form binds.
 #[inline(always)]
-pub(super) unsafe fn lane_run_leaf<const LEAF: u8, const ARGC: u16>(
+pub(crate) unsafe fn lane_run_leaf<const LEAF: u8, const ARGC: u16>(
     cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
@@ -207,7 +207,7 @@ fn leaf_arm(leaf: LeafForm, argc: u16) -> Handler {
 /// `script_call_leaf_miss` instantiation of the same form and count (`leaf_call_miss_of`), or,
 /// for a record past `FIXED_ARGUMENT_COPIES` or returning its completion, which completes its
 /// caller too, the row whose miss is `script_call_full_miss`, which activates the leaf.
-pub(super) fn leaf_call_handler(entry: CallEntry, i: &LaneInstruction) -> Handler {
+pub(crate) fn leaf_call_handler(entry: CallEntry, i: &LaneInstruction) -> Handler {
     const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
     if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 {
         return call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>();
@@ -239,7 +239,7 @@ fn binds_directly_in_lane(target: &ScriptCallTarget, receiver: Value) -> bool {
 /// below it.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) unsafe fn lane_enter_leaf(
+pub(crate) unsafe fn lane_enter_leaf(
     cx: *mut LaneContext,
     window: Registers,
     call: Ip,
@@ -275,7 +275,7 @@ pub(super) unsafe fn lane_enter_leaf(
 /// records and context again, and the call's result in its register, as the plain
 /// activation's return makes them (`return_plain_in_lane`). `None` while no leaf runs.
 #[inline(always)]
-pub(super) fn complete_leaf_in_lane(cx: *mut LaneContext, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
+pub(crate) fn complete_leaf_in_lane(cx: *mut LaneContext, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
     // SAFETY: the running lane's context.
     let leaf = unsafe { std::ptr::addr_of_mut!((*cx).leaf) };
     let caller = leave_leaf_in_lane(leaf)?;
@@ -292,7 +292,7 @@ pub(super) fn complete_leaf_in_lane(cx: *mut LaneContext, value: Value, form: Le
 /// nothing, where no leaf runs or the leaf crosses programs (`caller_program`), which
 /// `complete_leaf_in_lane` completes.
 #[inline(always)]
-pub(super) fn lane_return_leaf_header(cx: *mut LaneContext, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
+pub(crate) fn lane_return_leaf_header(cx: *mut LaneContext, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
     // SAFETY: the running lane's context.
     let leaf = unsafe { std::ptr::addr_of_mut!((*cx).leaf) };
     if unsafe { (*leaf).caller_program }.is_some() {
@@ -341,7 +341,7 @@ unsafe fn resume_leaf_caller_in_lane(
 /// made in place), a leaf is the activation its call would have pushed. Its records reach
 /// nothing else that does (`leaf_body`).
 #[inline(always)]
-pub(super) fn materialize_running_leaf_in_lane(cx: *mut LaneContext) {
+pub(crate) fn materialize_running_leaf_in_lane(cx: *mut LaneContext) {
     if !unsafe { (*cx).leaf.call }.is_null() {
         materialize_leaf_in_lane(cx);
     }
@@ -355,7 +355,7 @@ pub(super) fn materialize_running_leaf_in_lane(cx: *mut LaneContext) {
 /// make (more values than `FIXED_ARGUMENT_COPIES` or past the parameters, a receiver whose
 /// binding reads the heap, no room, a call returning its completion, refused cached calls).
 #[inline(always)]
-pub(super) fn cross_leaf_call_in_lane(
+pub(crate) fn cross_leaf_call_in_lane(
     cx: *mut LaneContext,
     r: Registers,
     ip: Ip,

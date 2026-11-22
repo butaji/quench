@@ -66,7 +66,7 @@ static PREVIOUS_SEGV: OnceLock<libc::sigaction> = OnceLock::new();
 static PREVIOUS_BUS: OnceLock<libc::sigaction> = OnceLock::new();
 static SUPPORT: OnceLock<Option<GuardSupport>> = OnceLock::new();
 
-pub(super) fn support() -> Option<&'static GuardSupport> {
+pub(crate) fn support() -> Option<&'static GuardSupport> {
     SUPPORT.get_or_init(|| {
         // Linux installs with the same SA_NODEFER as the x86-64 guard handler.
         #[cfg(target_os = "macos")]
@@ -89,7 +89,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, raw_context: *mut l
     unsafe { super::forward_guard_fault(signal, info, raw_context, previous); }
 }
 
-pub(super) unsafe fn resume_fault(info: *mut libc::siginfo_t, raw_context: *mut libc::c_void) -> bool {
+pub(crate) unsafe fn resume_fault(info: *mut libc::siginfo_t, raw_context: *mut libc::c_void) -> bool {
     let active = ACTIVE_CONTEXT.with(std::cell::Cell::get);
     // SAFETY: the signal ABI supplies these contexts. ACTIVE_CONTEXT is lent only
     // while its native invocation and trampoline's saved stack are live.
@@ -192,7 +192,7 @@ mod tests {
             // SAFETY: the outer entry lends its interrupt owner and protected page.
             let mut child = CallContext::native_adapter(std::ptr::null_mut(), unsafe { (*context).interrupt },
                 Some((page as usize, bytes as usize)));
-            let status = unsafe { quench_runtime::vm::enter_wasm(&mut child, page, bytes,
+            let status = unsafe { crate::compiled::enter_wasm(&mut child, page, bytes,
                 std::ptr::null(), std::ptr::null_mut(), clobber_and_poll) };
             assert_eq!(i64::from(status), TERMINATED_STATUS);
             assert_eq!(ACTIVE_CONTEXT.with(std::cell::Cell::get), context);
@@ -205,7 +205,7 @@ mod tests {
         let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.attention_flag(), None);
         let before = ACTIVE_CONTEXT.with(std::cell::Cell::get);
         let mut result = 0;
-        let status = unsafe { quench_runtime::vm::enter_wasm(&mut context, page as u64, bytes as u64,
+        let status = unsafe { crate::compiled::enter_wasm(&mut context, page as u64, bytes as u64,
             std::ptr::null(), &mut result, nested) };
         assert_eq!(status, 0);
         assert_eq!(result, 42);
@@ -245,7 +245,7 @@ mod tests {
         }
         let first = OnceLock::new();
         let invalid = OnceLock::new();
-        assert!(quench_runtime::vm::install_guard_signals(&[(libc::SIGUSR2, &first), (-1, &invalid)],
+        assert!(crate::compiled::install_guard_signals(&[(libc::SIGUSR2, &first), (-1, &invalid)],
             fault as *const () as usize, libc::SA_SIGINFO).is_none());
         assert_eq!(unsafe { libc::raise(libc::SIGUSR2) }, 0, "partial install must restore its previous handler");
         support().unwrap();

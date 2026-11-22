@@ -65,7 +65,7 @@ impl Identity {
 /// `count` words of the frame's plan constants from `start` (`CallFrame::call_constants`): a handle,
 /// so a plan stays plain data the frame owns the words of.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct WordList {
+pub struct WordList {
     pub(crate) start: u32,
     pub(crate) count: u16,
 }
@@ -82,7 +82,7 @@ impl WordList {
 /// What a bound function binds, unwrapped to its target: the `this` the target is called with, and
 /// the arguments that precede the call's own. Both are constants of the plan.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Bound {
+pub struct Bound {
     pub(crate) this: u64,
     pub(crate) arguments: WordList,
 }

@@ -4,19 +4,19 @@
 use super::*;
 
 /// Bits in a word of a live set.
-pub(super) const WORD: usize = u64::BITS as usize;
+pub(crate) const WORD: usize = u64::BITS as usize;
 
-pub(super) use quench_runtime::vm::engine_types::Live;
+pub(crate) use quench_runtime::vm::engine_types::Live;
 
 #[quench_macros::ext(LiveOps1)]
 impl Live {
     /// An empty table over `registers` registers.
-    pub(super) fn new(registers: usize) -> Self {
+    pub(crate) fn new(registers: usize) -> Self {
         Self { words: registers.div_ceil(WORD), bits: Vec::new() }
     }
 
     /// Appends the next row, with the registers `live` names live.
-    pub(super) fn push(&mut self, live: impl Iterator<Item = Register>) {
+    pub(crate) fn push(&mut self, live: impl Iterator<Item = Register>) {
         let start = self.bits.len();
         self.bits.resize(start + self.words, 0);
         for register in live {
@@ -31,7 +31,7 @@ impl Live {
 }
 
 /// The rows of a stitched program, numbered from 0, and what is live at each.
-pub(super) struct Span<'a> {
+pub(crate) struct Span<'a> {
     pub region: &'a LoopRegion,
     pub header: u32,
     pub backedge: u32,
@@ -41,21 +41,21 @@ pub(super) struct Span<'a> {
 #[quench_macros::ext(SpanOps1)]
 impl<'a> Span<'a> {
     /// The span of a stitched program of `rows` rows over the span `region` holds of its function.
-    pub(super) fn of(region: &'a LoopRegion, rows: usize, live: &'a Live) -> Self {
+    pub(crate) fn of(region: &'a LoopRegion, rows: usize, live: &'a Live) -> Self {
         Self { region, header: 0, backedge: rows as u32 - 1, live }
     }
 
     /// Whether the interpreter may read `register` resuming at row `pc`.
-    pub(super) fn is_live(&self, pc: u32, register: Register) -> bool {
+    pub(crate) fn is_live(&self, pc: u32, register: Register) -> bool {
         self.live.is_live(pc, register)
     }
 
     /// The function's instruction at caller PC `record`.
-    pub(super) fn instruction(&self, record: u32) -> Option<WideInstruction> {
+    pub(crate) fn instruction(&self, record: u32) -> Option<WideInstruction> {
         self.region.instructions().get(record as usize).copied()
     }
 
-    pub(super) fn number_registers(&self) -> &[Register] {
+    pub(crate) fn number_registers(&self) -> &[Register] {
         self.region.number_registers()
     }
 }

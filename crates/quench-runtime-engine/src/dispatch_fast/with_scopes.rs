@@ -5,7 +5,7 @@
 //! the frame (`FrameRecord::with_objects`), and a materialized activation's frame takes it.
 use super::*;
 
-pub(super) use quench_runtime::vm::engine_types::WithChain;
+pub(crate) use quench_runtime::vm::engine_types::WithChain;
 use quench_runtime::vm::engine_types::WITH_CHAIN_INLINE_OBJECTS;
 
 #[quench_macros::ext(LaneStackOps7)]
@@ -13,7 +13,7 @@ impl LaneStack {
     /// The objects of a resumed frame's chain, now the activation at `depth`'s, moved off its
     /// record.
     #[inline(always)]
-    pub(super) fn restore_with_objects(&mut self, depth: usize, record: &mut quench_runtime::vm::activation::FrameRecord) {
+    pub(crate) fn restore_with_objects(&mut self, depth: usize, record: &mut quench_runtime::vm::activation::FrameRecord) {
         if let Some(held) = record.held_with_objects_mut()
             && !held.is_empty()
         {
@@ -29,7 +29,7 @@ impl LaneStack {
     /// Drops the objects of the activations from index `depth` on, which returned from inside a
     /// `with` statement: the compiler emits no scope exit before a `return`.
     #[inline(always)]
-    pub(super) fn drop_with_objects_from(&mut self, depth: usize) {
+    pub(crate) fn drop_with_objects_from(&mut self, depth: usize) {
         if !self.with_objects.is_empty() {
             self.drop_with_objects_held_from(depth);
         }
@@ -66,7 +66,7 @@ impl Vm {
 /// in the innermost lane activation, which owns the scope: the object joins, or leaves, its
 /// chain. `None`, before any effect, leaves the call to the native, which a frame's run needs
 /// (its scope is the VM's stack) and which boxes a primitive or throws for a nullish operand.
-pub(super) fn native_with_scope(cx: *mut LaneContext, native: Native, args: &[Value]) -> Option<Value> {
+pub(crate) fn native_with_scope(cx: *mut LaneContext, native: Native, args: &[Value]) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     if vm.lane_deferred.is_some() || vm.lane_stack.native_boundary.is_some() {
         return None;

@@ -150,6 +150,6 @@ script_handler! {
 }
 
 /// The handler of a direct eval call in a function whose window activations run it.
-pub(super) const fn direct_eval_row_handler() -> Handler {
+pub(crate) const fn direct_eval_row_handler() -> Handler {
     direct_eval_row
 }

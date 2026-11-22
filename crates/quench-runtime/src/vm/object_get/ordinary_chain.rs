@@ -6,7 +6,7 @@ use super::super::{Atom, JsError, PropertyKey, ResidualProgram, Value, Vm};
 use std::ops::ControlFlow;
 
 /// Where `Vm::ordinary_chain_read` stopped.
-pub(in crate::vm) enum ChainRead {
+pub enum ChainRead {
     /// The key's data value.
     Value(Value),
     /// No link holds the key.

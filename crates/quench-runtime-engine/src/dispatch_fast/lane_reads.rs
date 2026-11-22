@@ -12,7 +12,7 @@ const IMMEDIATE_CONSTANT: u32 = 0;
 
 /// A comparison jump's operand as its record holds it.
 #[derive(Clone, Copy)]
-pub(super) enum RecordOperand {
+pub(crate) enum RecordOperand {
     Register(u16),
     /// A plain local slot of the running function.
     Local(u16),
@@ -25,7 +25,7 @@ pub(super) enum RecordOperand {
 impl RecordOperand {
     /// The operand an encoded record field names; `None` for a field operand, which only the
     /// general path reads.
-    #[inline(always)] pub(super) fn encoded(encoded: u16) -> Option<Self> {
+    #[inline(always)] pub(crate) fn encoded(encoded: u16) -> Option<Self> {
         let operand = Operand(encoded);
         Some(match operand.kind()? {
             OperandKind::Register => Self::Register(operand.payload()),
@@ -49,7 +49,7 @@ impl RecordOperand {
     }
 
     /// The value the operand holds in `r`, as the frame reads it.
-    #[inline(always)] pub(super) fn value(self, cx: *mut LaneContext, r: Registers) -> Option<Value> {
+    #[inline(always)] pub(crate) fn value(self, cx: *mut LaneContext, r: Registers) -> Option<Value> {
         match self {
             Self::Register(register) => Some(r.get(register)),
             operand => {
@@ -61,7 +61,7 @@ impl RecordOperand {
 
     /// The staged operands of a jump over `operands`, and the reads that answer them.
     #[inline(always)]
-    pub(super) fn staged_pair(cx: *mut LaneContext, operands: [Self; 2]) -> ([Operand; 2], Reads) {
+    pub(crate) fn staged_pair(cx: *mut LaneContext, operands: [Self; 2]) -> ([Operand; 2], Reads) {
         // Destructured, not `array::map`, whose out-of-line drain would keep the pair in memory.
         let [left, right] = operands;
         let ((left, left_immediate), (right, right_immediate)) = (left.staged(), right.staged());
@@ -72,7 +72,7 @@ impl RecordOperand {
 /// The reads a staged frame makes outside its registers, erased of the lane's host so the frame
 /// names no `H`.
 #[derive(Clone, Copy)]
-pub(super) struct Reads {
+pub(crate) struct Reads {
     /// The program's constants, which constant operands index (`LaneContext::constants`).
     constants: *const [Value],
     /// The record's own constant, which answers every constant operand where there is one.
@@ -97,11 +97,11 @@ struct CaptureReads {
 
 impl Reads {
     /// The reads of a frame that makes none: its operands are registers.
-    pub(super) const NONE: Self = Self { constants: &[], immediate: None, locals: None, captures: None };
+    pub(crate) const NONE: Self = Self { constants: &[], immediate: None, locals: None, captures: None };
 
     /// The reads of a comparison jump of the running lane's `cx`, whose record holds `immediate`.
     #[inline(always)]
-    pub(super) fn of_jump(cx: *mut LaneContext, immediate: Option<Value>) -> Self {
+    pub(crate) fn of_jump(cx: *mut LaneContext, immediate: Option<Value>) -> Self {
         let context: *mut () = cx.cast();
         Self { constants: unsafe { (*cx).constants }, immediate,
             locals: Some(LocalReads { context, read: |context, slot|
@@ -112,13 +112,13 @@ impl Reads {
     /// These reads with every constant operand answered by `immediate`: a record whose one constant
     /// the view folded into the record (`specialize_plain_operators`' int32 form).
     #[inline(always)]
-    pub(super) fn with_immediate(self, immediate: Value) -> Self {
+    pub(crate) fn with_immediate(self, immediate: Value) -> Self {
         Self { immediate: Some(immediate), ..self }
     }
 
     /// The reads of a capture access of the running lane's `cx`.
     #[inline(always)]
-    pub(super) fn of_captures(cx: *mut LaneContext) -> Self {
+    pub(crate) fn of_captures(cx: *mut LaneContext) -> Self {
         Self { captures: Some(CaptureReads { context: cx.cast(), read: |context, depth, slot, root|
             capture_slot_read(context.cast::<LaneContext>(), depth, slot, root) }), ..Self::NONE }
     }
@@ -127,7 +127,7 @@ impl Reads {
     /// address of the frame that holds these reads, which keeps the whole frame in memory and
     /// every handler that builds one would initialize it in full before its fast path.
     #[inline(always)]
-    pub(super) fn word(&self, operand: Operand) -> Option<Value> {
+    pub(crate) fn word(&self, operand: Operand) -> Option<Value> {
         match operand.kind()? {
             // SAFETY: the run's program keeps its constants (`LaneContext::constants`).
             OperandKind::Constant => self.immediate.or_else(|| unsafe { &*self.constants }
@@ -142,7 +142,7 @@ impl Reads {
 
     /// The capture `slot`, `depth` scopes out, or the root's projected binding where `root`.
     #[inline(always)]
-    pub(super) fn capture(&self, depth: u16, slot: u16, root: bool) -> Option<Value> {
+    pub(crate) fn capture(&self, depth: u16, slot: u16, root: bool) -> Option<Value> {
         let CaptureReads { context, read } = self.captures?;
         read(context, depth, slot, root)
     }

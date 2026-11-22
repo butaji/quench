@@ -100,7 +100,7 @@ impl NativeJsProgram {
 impl Vm {
     /// Loads the image the system linker placed for program `id` (`NativeJsCode`) as its ahead
     /// images (`Vm::load_linked_image`).
-    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: &NativeJsCode) -> Result<(), String> {
+    pub(crate) fn attach_native_js(&mut self, id: ProgramId, code: &NativeJsCode) -> Result<(), String> {
         let program = self.programs.get(id).ok_or("native JS program is missing")?;
         self.load_linked_image(&program, &code.table)
     }
@@ -113,7 +113,7 @@ impl Vm {
         self.native_program_resolver = Some(resolver);
     }
 
-    pub(super) fn resolve_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<NativeJsProgram>, quench_runtime::NativeSourceError> {
+    pub(crate) fn resolve_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<NativeJsProgram>, quench_runtime::NativeSourceError> {
         if let Some(resolver) = &self.native_program_resolver
             && let Some(program) = resolver(name, parts)? { return Ok(Some(program)); }
         self.host.kept_native_program(name, parts)
@@ -121,7 +121,7 @@ impl Vm {
 
     /// Admit a linked module without remapping the atom IDs embedded in its code.
     /// Module records, environments and evaluation remain owned by the shared loader.
-    pub(super) fn kept_native_module_program(
+    pub(crate) fn kept_native_module_program(
         &mut self, module: &quench_runtime::ModuleSource,
     ) -> Result<Option<ProgramId>, JsError> {
         let parts = [self.specialization_part(), module.compilation_goal(), &module.source];
@@ -131,7 +131,7 @@ impl Vm {
         self.store_native_module_program(native).map(Some)
     }
 
-    pub(super) fn store_native_module_program(&mut self, native: NativeJsProgram) -> Result<ProgramId, JsError> {
+    pub(crate) fn store_native_module_program(&mut self, native: NativeJsProgram) -> Result<ProgramId, JsError> {
         if native.program.kind != quench_runtime::bytecode::ProgramKind::Module {
             return Err(JsError::validation("native module has the wrong parse goal".into()));
         }
@@ -145,7 +145,7 @@ impl Vm {
 
     /// Native operands already contain atom IDs. Only an identical prefix of
     /// the initialized VM namespace can be adopted without rewriting the code.
-    pub(super) fn prepare_native_script(
+    pub(crate) fn prepare_native_script(
         &mut self, native: NativeJsProgram,
     ) -> Result<quench_runtime::PreparedScript, JsError> {
         self.validate_native_namespace(&native)?;

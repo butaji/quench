@@ -26,7 +26,7 @@ static PENDING: Mutex<Pending> = Mutex::new(Pending { spans: Vec::new(), bytes: 
 
 /// Queues `[offset, offset + bytes)` of `views`' writable view for retirement, flushing the
 /// queue once a batch has gathered.
-pub(super) fn retire(views: Views, offset: usize, bytes: usize) {
+pub(crate) fn retire(views: Views, offset: usize, bytes: usize) {
     let mut pending = PENDING.lock().unwrap_or_else(PoisonError::into_inner);
     pending.spans.push((views, offset, bytes));
     pending.bytes += bytes;

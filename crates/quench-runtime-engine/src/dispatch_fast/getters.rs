@@ -13,7 +13,7 @@ use quench_runtime::vm::accessor_cache::GetterEntryRead;
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(never)]
-pub(super) unsafe fn lane_getter_read(
+pub(crate) unsafe fn lane_getter_read(
     cx: *mut LaneContext,
     object: Value,
     atom: quench_runtime::bytecode::Atom,
@@ -39,7 +39,7 @@ pub(super) unsafe fn lane_getter_read(
 /// whose call on `object` a read just answered, returns for receivers of its layout
 /// (`Vm::memoize_getter_answer`, `getter_forward`).
 #[inline(never)]
-pub(super) fn lane_memoize_getter(cx: *mut LaneContext, getter: Value, object: Value, site: usize) {
+pub(crate) fn lane_memoize_getter(cx: *mut LaneContext, getter: Value, object: Value, site: usize) {
     let vm = unsafe { vm(cx) };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let Some(target) = vm.script_call_entry(getter).map(|entry| unsafe { *entry }) else {
@@ -157,7 +157,7 @@ unsafe fn lane_script_getter_answer(cx: *mut LaneContext, target: &ScriptCallTar
 /// (`call_native_in_lane`); `Err` after such a call that raised leaves the error in
 /// `Vm::lane_raised`. The answer's read may have made the activations frames, so the
 /// registers are the context's again.
-pub(super) fn lane_read_getter(
+pub(crate) fn lane_read_getter(
     cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
@@ -200,7 +200,7 @@ pub(super) fn lane_read_getter(
 
 /// What a getter site's `GetField` record does after one walk of its site's accessor entries
 /// (`lane_getter_step`).
-pub(super) enum GetterStep {
+pub(crate) enum GetterStep {
     /// A trivial getter's forward (`Vm::getter_entry_read`): the read's value, no call.
     Answer(Value),
     /// The getter's read or call (`lane_read_getter`), found without the fact table's probe
@@ -216,7 +216,7 @@ pub(super) enum GetterStep {
 /// does), or the getter, which a lane allowed script calls reads or calls as
 /// `getter_activation_in_lane` would. A nested read, and any base no entry proves, is `Miss`.
 #[inline(always)]
-pub(super) fn lane_getter_step(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> GetterStep {
+pub(crate) fn lane_getter_step(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> GetterStep {
     if i.b == quench_runtime::bytecode::FieldBase::NESTED {
         return GetterStep::Miss;
     }
@@ -248,7 +248,7 @@ pub(super) fn lane_getter_step(cx: *mut LaneContext, r: Registers, ip: Ip, i: &L
 /// by the plain compare; `activate_kept_in_lane` takes those. A leaf getter that binds its
 /// receiver runs as a leaf instead, with no header (`lane_run_leaf_getter`).
 #[inline(always)]
-pub(super) fn lane_push_getter(
+pub(crate) fn lane_push_getter(
     cx: *mut LaneContext,
     r: Registers,
     ip: Ip,
@@ -372,7 +372,7 @@ script_handler! {
     /// getter's answer makes (`AccessorCall::getter_answer`), whose getter's own field becomes the
     /// hint (`AccessorCall::hold_getter_hint`). A getter the answer declines takes `get_field_getter_miss`.
     #[inline(never)]
-    pub(super) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
+    pub(crate) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
         let base = unsafe { field_base_in_lane(cx, r, quench_runtime::bytecode::FieldBase(i.b)) };
         let Some(value) = base.and_then(|base| unsafe { AccessorCall::of(cx).hold_getter_hint(ip, i, base) }) else {
             requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
@@ -389,7 +389,7 @@ const GETTER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 3;
 
 /// Makes the own field `slot` of `base`, which the record's getter returns, the hint of the
 /// `GetField` record at `ip`, in place of the one it holds; whether the record holds it.
-pub(super) fn set_getter_hint(vm: &mut Vm, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
+pub(crate) fn set_getter_hint(vm: &mut Vm, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
     if holds_loop_site(ip) {
         return false;
     }

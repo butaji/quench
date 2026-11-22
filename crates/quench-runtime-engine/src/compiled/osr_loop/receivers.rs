@@ -6,7 +6,7 @@ use super::{field_path, FieldPath, FieldReceiver, FieldSite, Register, RegisterS
 
 /// Whether the receiver is read through a name the loop stores, so it changes in the loop:
 /// the callee's read stays, and native code checks the callee after it (`InlineGuard::AtRead`).
-pub(super) fn stored(caller: &[WideInstruction], read: usize, receiver: Register, sites: &[FieldSite],
+pub(crate) fn stored(caller: &[WideInstruction], read: usize, receiver: Register, sites: &[FieldSite],
     stored: &dyn Fn(quench_runtime::bytecode::Atom) -> bool) -> bool {
     read.checked_sub(1).is_some_and(|own| caller[own].defined_register() == Some(receiver)
         && field_path(caller[own], sites, &BTreeMap::new())
@@ -16,7 +16,7 @@ pub(super) fn stored(caller: &[WideInstruction], read: usize, receiver: Register
 /// The root a receiver the loop writes reads as, and the register holding it there: the
 /// capture it holds (`captured`), or the register it is copied from right before the callee's
 /// read when the loop never writes that one (`p.m()` with `p` held outside the loop).
-pub(super) fn rerooted(caller: &[WideInstruction], read: usize, receiver: Register, defines: &dyn Fn(Register) -> bool,
+pub(crate) fn rerooted(caller: &[WideInstruction], read: usize, receiver: Register, defines: &dyn Fn(Register) -> bool,
     callee: Option<&FieldPath>, captured: &BTreeMap<Register, FieldPath>) -> Option<(FieldReceiver, Register)> {
     callee.is_some_and(|path| path.root == FieldReceiver::Register(receiver)).then_some(())?;
     if let Some(path) = captured.get(&receiver) {
@@ -31,7 +31,7 @@ pub(super) fn rerooted(caller: &[WideInstruction], read: usize, receiver: Regist
 /// The registers whose every definition in `instructions` reads one depth-0 capture slot,
 /// none live at the header: each holds that slot's value at every read, rooted at the slot
 /// (`FieldReceiver::Capture`). A region stores no capture, so the value is its entry's.
-pub(super) fn captured(instructions: &[WideInstruction], header_live: RegisterSet) -> BTreeMap<Register, FieldPath> {
+pub(crate) fn captured(instructions: &[WideInstruction], header_live: RegisterSet) -> BTreeMap<Register, FieldPath> {
     let mut slots = BTreeMap::<Register, Option<u16>>::new();
     for instruction in instructions {
         let Some(register) = instruction.defined_register() else { continue };

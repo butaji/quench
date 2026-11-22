@@ -12,10 +12,10 @@
 use super::*;
 
 /// The calls from the caller down to a site: each call's PC in its function and its callee.
-pub(super) type SitePath = Vec<(u32, u32)>;
+pub(crate) type SitePath = Vec<(u32, u32)>;
 
 /// A call site the unplanned unit would inline.
-pub(super) struct Candidate {
+pub(crate) struct Candidate {
     path: SitePath,
     weight: u64,
     /// The callee instructions it takes of the budget.
@@ -23,7 +23,7 @@ pub(super) struct Candidate {
 }
 
 /// What the planner does at a call site that would inline: note it, or admit only the chosen.
-pub(super) enum Choice {
+pub(crate) enum Choice {
     Survey(Vec<Candidate>),
     /// The chosen sites' paths, sorted.
     Admit(Vec<SitePath>),
@@ -35,7 +35,7 @@ impl Default for Choice {
 
 /// Per PC of `code`, the executions per entry of its function: the product of the trip counts
 /// of the loops (backward jumps) holding it. `trip` gives a loop's measured mean by its header.
-pub(super) fn loop_weights(code: &[WideInstruction], trip: &dyn Fn(u32) -> Option<u64>) -> Vec<u64> {
+pub(crate) fn loop_weights(code: &[WideInstruction], trip: &dyn Fn(u32) -> Option<u64>) -> Vec<u64> {
     let loops: Vec<(usize, usize, u64)> = quench_runtime::bytecode::back_edges_of(code.iter().copied())
         .map(|(backedge, header)| (header, backedge, trip(header as u32).unwrap_or(super::super::tier_policy::ASSUMED_LOOP_TRIP).max(1)))
         .collect();
@@ -52,7 +52,7 @@ fn denser(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
 
 /// The sites to inline within `budget` instructions: greedy by density, a callee's own sites
 /// only once the call that reaches it is chosen, and a site that no longer fits skipped.
-pub(super) fn select(mut candidates: Vec<Candidate>, budget: usize) -> Vec<SitePath> {
+pub(crate) fn select(mut candidates: Vec<Candidate>, budget: usize) -> Vec<SitePath> {
     candidates.sort_by(denser);
     let (mut left, mut chosen) = (budget, Vec::<SitePath>::new());
     loop {
@@ -73,7 +73,7 @@ pub(super) fn select(mut candidates: Vec<Candidate>, budget: usize) -> Vec<SiteP
 
 impl Planner<'_, '_> {
     /// The plan of `function` (`function_id`) under `budget`, its call sites chosen by weight.
-    pub(super) fn plan_weighted(&mut self, function_id: u32, function: &Function, budget: usize) -> Plan {
+    pub(crate) fn plan_weighted(&mut self, function_id: u32, function: &Function, budget: usize) -> Plan {
         let surveys = budget != 0;
         let (registers, strict) = (u32::from(function.registers), function.strict);
         self.restart(registers, if surveys { usize::MAX } else { 0 }, if surveys { Choice::Survey(Vec::new()) } else { Choice::default() });
@@ -91,7 +91,7 @@ impl Planner<'_, '_> {
 
     /// The target of the call at `pc`, inlined if the choice admits it: its site is noted where
     /// the plan surveys, and forgotten again with the callee's sites where it does not inline.
-    pub(super) fn inline_target(&mut self, target: CallTarget, pc: u32, instruction: WideInstruction, depth: usize, weight: u64) -> Option<InlinedPlan> {
+    pub(crate) fn inline_target(&mut self, target: CallTarget, pc: u32, instruction: WideInstruction, depth: usize, weight: u64) -> Option<InlinedPlan> {
         self.path.push((pc, target.function));
         let mark = self.survey_len();
         let above = std::mem::replace(&mut self.weight, weight);
@@ -118,11 +118,11 @@ impl Planner<'_, '_> {
         }
     }
 
-    pub(super) fn survey_len(&self) -> usize {
+    pub(crate) fn survey_len(&self) -> usize {
         match &self.choice { Choice::Survey(sites) => sites.len(), Choice::Admit(_) => 0 }
     }
 
-    pub(super) fn forget_after(&mut self, mark: usize) {
+    pub(crate) fn forget_after(&mut self, mark: usize) {
         if let Choice::Survey(sites) = &mut self.choice { sites.truncate(mark); }
     }
 }

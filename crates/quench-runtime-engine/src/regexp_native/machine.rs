@@ -9,7 +9,7 @@ use quench_regexp::backtrack::native::{NativeInst, NativeTest};
 
 impl<M: RegexpMachine> Emit<'_, M> {
     /// The code of the instruction at `pc`.
-    pub(super) fn instruction(&mut self, pc: u32, inst: &NativeInst) {
+    pub(crate) fn instruction(&mut self, pc: u32, inst: &NativeInst) {
         let at = Cursor::at(pc, self.position());
         let step = match inst {
             NativeInst::Unit(test) => m::unit(self, *test, at),
@@ -47,7 +47,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// Ends the current block where `step` goes.
-    pub(super) fn finish_step(&mut self, step: Step<M::Word>) {
+    pub(crate) fn finish_step(&mut self, step: Step<M::Word>) {
         match step {
             Step::Continue(next) => {
                 self.set_position(next.position);

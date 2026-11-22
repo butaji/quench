@@ -12,14 +12,14 @@ use quench_runtime::vm::dispatch_frame::{ExecutingProgram, LaneExit};
 /// a job's lane excludes while its activations run.
 const NO_FRAME: usize = usize::MAX;
 
-pub(super) use quench_runtime::vm::engine_types::LaneRoot;
+pub(crate) use quench_runtime::vm::engine_types::LaneRoot;
 
 #[quench_macros::ext(LaneRootOps1)]
 impl LaneRoot {
     /// The VM frame the run continues, if it has one: a job's has none until its activations
     /// become frames.
     #[inline]
-    pub(super) fn frame(self) -> Option<usize> {
+    pub(crate) fn frame(self) -> Option<usize> {
         match self {
             Self::Frame(frame) => Some(frame),
             Self::Job(_) => None,
@@ -30,7 +30,7 @@ impl LaneRoot {
     /// stack: the root's own, or, for a job, the index below its first frame, which wraps for an
     /// empty stack. Nothing reads it: that frame enters as the general loop's entry frame, which
     /// no pending call names (`Completion::ResumesJob`).
-    pub(super) fn caller_of_first(self, frames: usize) -> usize {
+    pub(crate) fn caller_of_first(self, frames: usize) -> usize {
         self.frame().unwrap_or(frames.wrapping_sub(1))
     }
 }
@@ -40,13 +40,13 @@ impl LaneContext {
     /// The VM frame the lane runs, for the code a frame's run reads; `NO_FRAME` where a job's
     /// activations run.
     #[inline(always)]
-    pub(super) fn frame(&self) -> usize {
+    pub(crate) fn frame(&self) -> usize {
         self.root.frame().unwrap_or(NO_FRAME)
     }
 
     /// Whether the lane runs a VM frame, which a region's activation reads (`CompiledOsrRegion::needs_frame`).
     #[inline(always)]
-    pub(super) fn has_frame(&self) -> bool {
+    pub(crate) fn has_frame(&self) -> bool {
         self.root.frame().is_some()
     }
 }
@@ -54,19 +54,19 @@ impl LaneContext {
 use quench_runtime::vm::engine_types::INNERMOST_STATE_LEN;
 
 /// Everything a lane run's context starts from (`Vm::context_for_start`).
-pub(super) struct LaneStart<'a> {
-    pub(super) code: &'a ResidualProgram,
-    pub(super) program: ProgramId,
-    pub(super) root: LaneRoot,
-    pub(super) registers: Registers,
-    pub(super) base: Ip,
-    pub(super) this: Value,
-    pub(super) pending: *mut Vec<PendingGeneralCall>,
-    pub(super) executing: *mut ExecutingProgram,
-    pub(super) inline_calls: bool,
-    pub(super) script_calls: bool,
-    pub(super) script_constructs: bool,
-    pub(super) floor: *const std::sync::atomic::AtomicUsize,
+pub(crate) struct LaneStart<'a> {
+    pub(crate) code: &'a ResidualProgram,
+    pub(crate) program: ProgramId,
+    pub(crate) root: LaneRoot,
+    pub(crate) registers: Registers,
+    pub(crate) base: Ip,
+    pub(crate) this: Value,
+    pub(crate) pending: *mut Vec<PendingGeneralCall>,
+    pub(crate) executing: *mut ExecutingProgram,
+    pub(crate) inline_calls: bool,
+    pub(crate) script_calls: bool,
+    pub(crate) script_constructs: bool,
+    pub(crate) floor: *const std::sync::atomic::AtomicUsize,
 }
 
 /// The lane start of `job`'s run over `window`, whose root is the job: its function's dispatch class
@@ -141,7 +141,7 @@ impl Vm {
 
     /// The context of a lane run that starts as `start` says; its other state starts empty.
     #[inline(always)]
-    pub(super) fn context_for_start(&mut self, start: LaneStart<'_>) -> LaneContext {
+    pub(crate) fn context_for_start(&mut self, start: LaneStart<'_>) -> LaneContext {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
         // and captures are the window's to write where it has its own (a frame's run has none).
@@ -198,7 +198,7 @@ impl Vm {
     /// is itself an exit leaves at once, as a raise at the entry does), then makes the
     /// activations frames the general path runs, and restores the lane that was running
     /// (`entered`, the floor it raised, was made by `enter_lane_floor`). The record it exited at.
-    pub(super) fn drive_lane(
+    pub(crate) fn drive_lane(
         &mut self,
         context: &mut LaneContext,
         entered: LaneFloor,
@@ -278,7 +278,7 @@ impl Vm {
     /// The activation at `depth` of a lane run with `root` becomes a frame whose call is in
     /// frame `caller`, which resumes at `pc` after it. A job's bottom activation has no caller
     /// frame.
-    pub(super) fn resume_caller_frame(&mut self, root: LaneRoot, depth: usize, caller: usize, pc: usize) {
+    pub(crate) fn resume_caller_frame(&mut self, root: LaneRoot, depth: usize, caller: usize, pc: usize) {
         if depth > 0 || root.frame().is_some() {
             self.frames[caller].pc = pc;
             self.frames[caller].pc_is_resume = true;
@@ -287,7 +287,7 @@ impl Vm {
 
     /// The frame of a windowed activation of `script`, made a VM frame where the activations of
     /// a lane run with `root` materialize: its owner's, a generator's or a job's.
-    pub(super) fn push_window_frame(
+    pub(crate) fn push_window_frame(
         &mut self,
         root: LaneRoot,
         script: &ScriptActivation,

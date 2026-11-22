@@ -6,7 +6,7 @@ use super::*;
 
 /// Whether a capture read may take the lane's own lookup for a root-held binding, and where it runs.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum RootedRead {
+pub(crate) enum RootedRead {
     No,
     /// In a loop body, where the helper call spills every live value: only once the code has left here.
     InBody,
@@ -16,7 +16,7 @@ pub(super) enum RootedRead {
 
 /// Where the activation that reads keeps its dense capture slots, as one load reaches them.
 #[derive(Clone, Copy)]
-pub(super) enum Dense {
+pub(crate) enum Dense {
     /// The slots (values, count) the running activation holds (`Entry::capture_values`), or a
     /// published callee's, fixed by the identity its call guards (`Lowering::frame_captures`), or
     /// the bound callee's frameless admission, as its frameless activation would read them
@@ -29,19 +29,19 @@ pub(super) enum Dense {
 /// What a capture row's emission needs of the lowering: the slots its fast case loads, the
 /// closure its slow case projects, and whether the lane's own lookup may serve it.
 #[derive(Clone, Copy)]
-pub(super) struct CaptureSite {
-    pub(super) dense: Dense,
+pub(crate) struct CaptureSite {
+    pub(crate) dense: Dense,
     /// The closure an inlined frame's call bound, whose captures the VM projects
     /// (`LaneHelper::FunctionCapture`).
-    pub(super) callee: Option<ir::Value>,
+    pub(crate) callee: Option<ir::Value>,
     /// Whether a read past the dense slots may take the lane's own lookup (`LaneHelper::CaptureGet`):
     /// for a root-held binding, and for a capture past the activation's own scope.
-    pub(super) walks: bool,
+    pub(crate) walks: bool,
 }
 
 impl CaptureSite {
     /// A store's site, or a read past the activation's scope: the lane's own lookup, nothing else.
-    pub(super) const OUTER: Self = Self { dense: Dense::Absent, callee: None, walks: true };
+    pub(crate) const OUTER: Self = Self { dense: Dense::Absent, callee: None, walks: true };
 }
 
 /// The emit stage's reach into the running body: its payload and helper table.
@@ -50,7 +50,7 @@ type Reach = (ir::Value, LaneHelpers);
 /// The capture `slot`, `depth` scopes out, as the site reaches it: one load from its dense
 /// slots where the slot holds an ordinary value, else the slow case. Anything the access cannot
 /// serve leaves at `exit`.
-pub(super) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureSite,
+pub(crate) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureSite,
     (depth, slot): (u16, u16), exit: ir::Block) -> ir::Value {
     let (slow, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(slow);
@@ -113,7 +113,7 @@ fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), 
 
 /// A capture's store by the lane's own store (`dispatch_fast::body_capture_store_in_lane`); a binding
 /// it does not take leaves at `exit`.
-pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), value: ir::Value,
+pub(crate) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), value: ir::Value,
     exit: ir::Block) {
     let (context, packed) = capture_operands(builder, reach.0, at);
     let stored = call_helper(builder, reach, LaneHelper::CaptureSet, &[context, packed, value]);
@@ -145,7 +145,7 @@ impl Lowering<'_, '_> {
     /// (`function_capture_read_in_lane`), which also resolves shared and statically bound callees'
     /// slots, else the lane's own read. Each read loads where it runs, after any call that may
     /// have stored to the slot.
-    pub(super) fn capture_site(&mut self, state: &mut State, pc: usize, depth: u16,
+    pub(crate) fn capture_site(&mut self, state: &mut State, pc: usize, depth: u16,
         admitted_callee: Option<ir::Value>, rooted: RootedRead) -> CaptureSite {
         let frame = match self.unit.origins.get(pc).copied() {
             Some(super::super::lane_unit::Origin::Inlined { frame, .. }) => Some(frame),
@@ -199,7 +199,7 @@ impl Lowering<'_, '_> {
 
     /// A loop's hoisted read of the capture `instruction` names, on the entry edge, with the
     /// callee its inlined frame was admitted for.
-    pub(super) fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block,
+    pub(crate) fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block,
         admitted_callee: Option<ir::Value>, rooted: RootedRead) -> ir::Value {
         let at = (instruction.capture_depth(), instruction.capture_slot());
         let site = self.capture_site(state, pc, at.0, admitted_callee, rooted);
@@ -221,7 +221,7 @@ impl Lowering<'_, '_> {
 
     /// The root constant the capture read at `pc` takes (`FactTables::root_constant`), with its
     /// program, where the division folds Stable facts.
-    pub(super) fn root_constant_at(&self, pc: usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)> {
+    pub(crate) fn root_constant_at(&self, pc: usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)> {
         let found = (self.vm.online?.root_constant)(pc)?;
         self.division().folds(BindingTime::Stable).then_some(found)
     }
@@ -231,7 +231,7 @@ impl Lowering<'_, '_> {
     /// function is held as a Stable fact (`hold_stable`), a dependency on the program's root
     /// constants (`StableFacts::root_program`), so the program's second root run retires the code.
     /// `None` where the value is no function.
-    pub(super) fn root_constant_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn root_constant_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let (program, value) = self.root_constant_at(pc)?;
         let ty = Type::function(value)?;
         let exit = self.guard_exit(state, pc as u32);
@@ -259,14 +259,14 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether `instruction` is a capture row this lowering makes.
-    pub(super) fn is_capture_row(&self, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_capture_row(&self, pc: usize, instruction: WideInstruction) -> bool {
         self.capture_row(pc, instruction).is_some()
     }
 
     /// The capture row at `pc`, stepped by its staged definition: a store retires every field
     /// proof, as another register may name what it wrote, and both leave at `pc` where the lane's
     /// access declines.
-    pub(super) fn capture_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn capture_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let row = self.capture_row(pc, instruction).expect("a capture row decodes");
         let store = matches!(row, quench_runtime::staged::Operation::StoreCapture { .. });
         if store { state.proofs.fields.clear(); }

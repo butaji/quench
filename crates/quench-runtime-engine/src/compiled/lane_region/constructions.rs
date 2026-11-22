@@ -11,7 +11,7 @@ impl Lowering<'_, '_> {
     /// cross-program target. Neither changes what the stores are; the helper answers the deleted marker
     /// where the receiver is not finished, and a cross-program plan is the callee's own. The predicate uses
     /// no host, so it is named at the one host type.
-    pub(super) fn initializes_on_construction(&self, function: u32) -> bool {
+    pub(crate) fn initializes_on_construction(&self, function: u32) -> bool {
         let function = self.program.function(function as usize);
         !function.rest && quench_runtime::vm::Vm::inline_constructible(function)
             && function.only_initializes_this_fields(&self.program.constants)
@@ -23,7 +23,7 @@ impl Lowering<'_, '_> {
     /// the property arena (`allocated`). A construction in the caller's window is the call row
     /// (`call_rows`); one a previous body left at runs as a call does
     /// (`dispatch_fast::body_construct_helper`): the callee's plan, else its activation.
-    pub(super) fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let quench_runtime::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
             (false, _) if instruction.result_flags() == 0 => None,

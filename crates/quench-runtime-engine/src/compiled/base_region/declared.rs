@@ -43,7 +43,7 @@ const _: () = {
 /// What a declared parameter's entry check gives the b-jit's entry: exactly a Number, proved through the
 /// register's representation, or a set of language types (`language` bits), tested by tag at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::compiled) enum DeclaredFact {
+pub(crate) enum DeclaredFact {
     Number,
     Languages(u16),
 }
@@ -51,7 +51,7 @@ pub(in crate::compiled) enum DeclaredFact {
 impl DeclaredFact {
     /// The fact `check` gives where this tier's entry test decides it; None for a check this tier does not
     /// decide by a tag. A string is the direct string family word, one tag test (`tag_languages`).
-    pub(in crate::compiled) fn of(check: EntryCheck) -> Option<Self> {
+    pub(crate) fn of(check: EntryCheck) -> Option<Self> {
         match check {
             EntryCheck::Number => Some(Self::Number),
             EntryCheck::String => Some(Self::Languages(STRING)),
@@ -83,7 +83,7 @@ fn written(function: &Function) -> Bits {
 /// nothing observed it as an int or another Number. A body's entry web of the register ends at its first
 /// write; a region is entered at its loop's header, where only a parameter the function never writes still
 /// holds the value it entered with.
-pub(super) fn seen(function: &Function, ending: Ending, seen: &[Type]) -> Vec<Type> {
+pub(crate) fn seen(function: &Function, ending: Ending, seen: &[Type]) -> Vec<Type> {
     let written = (ending == Ending::Region).then(|| written(function));
     let mut types = seen.to_vec();
     for (register, _) in declared(function).filter(|(_, fact)| *fact == DeclaredFact::Number) {
@@ -108,15 +108,15 @@ pub(super) fn seen(function: &Function, ending: Ending, seen: &[Type]) -> Vec<Ty
 /// included, fails the entry with `LaneExit::Entry` before any row runs, as a Number guard's failure does
 /// (`Leaves::open`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct EntryGuard {
-    pub(super) register: Register,
-    pub(super) languages: u16,
+pub(crate) struct EntryGuard {
+    pub(crate) register: Register,
+    pub(crate) languages: u16,
 }
 
 /// The entry tests of `function`'s declared parameters that are no Number and that the function
 /// never writes, so the fact holds at every row: what `link::entry_rows` emits after the
 /// Number guards (`Heap::Declared`).
-pub(super) fn entry_guards(function: &Function) -> Vec<EntryGuard> {
+pub(crate) fn entry_guards(function: &Function) -> Vec<EntryGuard> {
     let written = written(function);
     declared(function)
         .filter(|(register, _)| !written.contains(usize::from(*register)))
@@ -129,7 +129,7 @@ pub(super) fn entry_guards(function: &Function) -> Vec<EntryGuard> {
 
 /// The declared Number parameters the function never writes: the entry's Number guard of each
 /// (`link::entry_rows`) holds at every row, so a row reading it in its frame slot needs no proof of its own.
-pub(super) fn entry_numbers(function: &Function) -> Vec<Register> {
+pub(crate) fn entry_numbers(function: &Function) -> Vec<Register> {
     let written = written(function);
     declared(function).filter(|(register, fact)| *fact == DeclaredFact::Number && !written.contains(usize::from(*register))).map(|(register, _)| register).collect()
 }
@@ -138,7 +138,7 @@ pub(super) fn entry_numbers(function: &Function) -> Vec<Register> {
 /// each class-typed receiver of `classes` (`class_prototypes`, a direct object the entry tests). `proofs::prove`
 /// starts from them, so the inline-cache rows on them take the known-shape form (`Heap::IcKnownGet`,
 /// `Heap::IcKnownSet`), whose record indexing assumes a plain object.
-pub(super) fn exact_objects(function: &Function, classes: &[ClassProto]) -> Vec<Register> {
+pub(crate) fn exact_objects(function: &Function, classes: &[ClassProto]) -> Vec<Register> {
     let guards = entry_guards(function).into_iter().filter(|guard| guard.languages == OBJECT_PLAIN).map(|guard| guard.register);
     guards.chain(classes.iter().map(|proto| proto.register)).collect()
 }
@@ -147,7 +147,7 @@ pub(super) fn exact_objects(function: &Function, classes: &[ClassProto]) -> Vec<
 /// of `resolved` (`VM::class_prototypes`, observed where the body was compiled) whose parameter the function
 /// never writes, so the receiver it entered with holds the fact until a row may change it (`proofs::prove`, which
 /// seeds the entry's proof of each receiver's shape and link).
-pub(super) fn class_prototypes(function: &Function, resolved: &[ClassProto]) -> Vec<ClassProto> {
+pub(crate) fn class_prototypes(function: &Function, resolved: &[ClassProto]) -> Vec<ClassProto> {
     let written = written(function);
     resolved.iter().filter(|proto| !written.contains(usize::from(proto.register))).cloned().collect()
 }
@@ -157,7 +157,7 @@ pub(super) fn class_prototypes(function: &Function, resolved: &[ClassProto]) -> 
 /// exact shape and prototype link, checked per use (`Heap::Held`). `proofs::prove` makes it a constant load where the
 /// receiver's shape is proven at the row; the prototype's values are a dependency (`Folded::holder`). `None` for any
 /// other base or name.
-pub(super) fn class_member_read(known: Known, object: Option<Register>, atom: quench_runtime::bytecode::Atom, dst: Register) -> Option<Decoded> {
+pub(crate) fn class_member_read(known: Known, object: Option<Register>, atom: quench_runtime::bytecode::Atom, dst: Register) -> Option<Decoded> {
     let register = object?;
     let proto = known.classes.iter().find(|proto| proto.register == register)?;
     let (_, value) = proto.members.iter().find(|(member, _)| *member == atom)?;
@@ -171,7 +171,7 @@ pub(super) fn class_member_read(known: Known, object: Option<Register>, atom: qu
 /// exactly a direct object or array (`OBJECT_PLAIN` and `ARRAY` only: `typeof` of each is `'object'`): the
 /// entry test admits no other word, and no instruction writes the register, so the test is that Boolean,
 /// written to the destination as a constant. `None` for any other row.
-pub(super) fn typeof_fold(function: &Function, instruction: WideInstruction) -> Option<Decoded> {
+pub(crate) fn typeof_fold(function: &Function, instruction: WideInstruction) -> Option<Decoded> {
     if instruction.op().class() != Class::Unary || instruction.result_flags() != 0 {
         return None;
     }
@@ -243,7 +243,7 @@ fn nullish_result(function: &Function, constants: &[Value], instruction: WideIns
 /// jump: to its target where taken, else to the next row (as `Nop` is). Covers `JumpTrue`/`JumpFalse` on
 /// the register's truthiness (`constant_truth`) and the equality jumps `??`, `?.` and `== null` take
 /// (`JumpBinaryFalse`, `nullish_result`). `None` for any other row, or where the entry does not decide it.
-pub(super) fn branch_fold(function: &Function, constants: &[Value], pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+pub(crate) fn branch_fold(function: &Function, constants: &[Value], pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     let taken = match Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY) {
         Some(Operation::JumpIf { register, taken }) => constant_truth(guard_languages(function, register)?)? == taken,
         _ if instruction.op().class() == Class::JumpBinaryFalse => !nullish_result(function, constants, instruction)?,

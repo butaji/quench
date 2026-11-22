@@ -34,6 +34,6 @@ pub(crate) fn settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool
 }
 
 /// The miss arm of a by-name read of kind `KIND` at `FLAG_PROBE`: its scope is left to the general path's read.
-pub(super) const fn probe_handler<const KIND: u8>() -> Handler {
+pub(crate) const fn probe_handler<const KIND: u8>() -> Handler {
     name_probe_miss::<KIND>
 }

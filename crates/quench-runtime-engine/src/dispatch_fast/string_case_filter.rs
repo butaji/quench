@@ -5,8 +5,8 @@ use std::hash::Hasher;
 
 // Construction runs once, as the lane view is derived; only `select` runs per operation.
 #[path = "../string_case_derivation.rs"]
-mod derivation;
-pub(super) use derivation::specialize;
+pub(crate) mod derivation;
+pub(crate) use derivation::specialize;
 
 /// The low word contains two edge units; the high word contains the UTF-16 length.
 const CASE_LENGTH_SHIFT: u32 = 2 * u16::BITS;
@@ -54,7 +54,7 @@ use quench_runtime::vm::engine_types::Bucket;
 
 use quench_runtime::vm::engine_types::Case;
 
-pub(super) use quench_runtime::vm::engine_types::StringCaseFilter;
+pub(crate) use quench_runtime::vm::engine_types::StringCaseFilter;
 
 #[quench_macros::ext(StringCaseFilterOps1)]
 impl StringCaseFilter {
@@ -107,7 +107,7 @@ impl StringCaseFilter {
 /// `cx` is the running lane's context; `filter` is null or the record's filter, which the lane's
 /// constants retain.
 #[inline(always)]
-pub(super) unsafe fn case_index_in_lane(cx: *mut (), filter: *const StringCaseFilter, value: Value, start: usize, count: usize) -> u32 {
+pub(crate) unsafe fn case_index_in_lane(cx: *mut (), filter: *const StringCaseFilter, value: Value, start: usize, count: usize) -> u32 {
     let cx = cx.cast::<LaneContext>();
     // SAFETY: the original selector's validated run of constants is unchanged.
     let cases = unsafe { (&*(*cx).constants).get_unchecked(start..start + count) };

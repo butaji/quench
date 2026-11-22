@@ -3,7 +3,7 @@
 use super::*;
 
 /// `run` of `source`, lowered as a lane region from its first loop header.
-pub(super) fn lower_loop(source: &str, file: &str) -> ir::Function {
+pub(crate) fn lower_loop(source: &str, file: &str) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, file).unwrap();
     let caller = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "run")).unwrap();
@@ -22,7 +22,7 @@ pub(super) fn lower_loop(source: &str, file: &str) -> ir::Function {
 }
 
 /// The `(offset, address, value)` of each store in the hot blocks, or in the cold ones.
-pub(super) fn stores(function: &ir::Function, cold: bool) -> Vec<(i32, ir::Value, ir::Value)> {
+pub(crate) fn stores(function: &ir::Function, cold: bool) -> Vec<(i32, ir::Value, ir::Value)> {
     function.layout.blocks().filter(|block| function.layout.is_cold(*block) == cold)
         .flat_map(|block| function.layout.block_insts(block))
         .filter_map(|inst| match function.dfg.insts[inst] {

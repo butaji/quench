@@ -9,7 +9,7 @@
 //! made yet, or another closure, only leaves to the base body, whose construction makes it.
 use super::*;
 use quench_runtime::bytecode::{InitializerConstant, InitializerStore, InitializerValue};
-use quench_runtime::vm::aot_image::symbols::{
+use crate::aot_image::symbols::{
     HeapValueRecipe, ShapeRecipe, ATTRIBUTE_CONFIGURABLE, ATTRIBUTE_ENUMERABLE, ATTRIBUTE_WRITABLE,
 };
 
@@ -18,7 +18,7 @@ const ADDED_FIELD: u8 = ATTRIBUTE_WRITABLE | ATTRIBUTE_ENUMERABLE | ATTRIBUTE_CO
 
 /// By `(function, pc)` of each construction in `unit` (its caller's or an inlined frame's), the
 /// plan the image keeps its receiver by, its callee and shape interned in `symbols`.
-pub(super) fn construct_plans(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, facts: &AotFacts,
+pub(crate) fn construct_plans(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, facts: &AotFacts,
     symbols: &mut SymbolTable) -> BTreeMap<(u32, u32), ScalarConstructPlan> {
     let sites: Vec<(u32, u32)> = unit.origins.iter().map(|origin| match *origin {
         Origin::Caller(record) => (function, record),

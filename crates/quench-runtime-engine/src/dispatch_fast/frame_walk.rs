@@ -6,11 +6,11 @@
 use super::*;
 use super::lane_frames::{header_sided, ActivationView, Side};
 
-pub(super) use quench_runtime::vm::engine_types::PlainSegment;
+pub(crate) use quench_runtime::vm::engine_types::PlainSegment;
 
-pub(super) use quench_runtime::vm::engine_types::Walked;
+pub(crate) use quench_runtime::vm::engine_types::Walked;
 
-pub(super) use quench_runtime::vm::engine_types::Walk;
+pub(crate) use quench_runtime::vm::engine_types::Walk;
 
 
 
@@ -23,7 +23,7 @@ impl LaneStack {
     /// Give the innermost activation, just pushed or recompleted, what its completion carries
     /// (`SidePayload`): a header's side record takes it, which its completion flag made; a
     /// record's is pushed.
-    pub(super) fn attach_payload(&mut self, payload: SidePayload) {
+    pub(crate) fn attach_payload(&mut self, payload: SidePayload) {
         if self.plain.depth.get() != 0 {
             debug_assert!(header_sided(Registers(self.plain.registers.get())), "a payload's completion flags its header");
             self.sides.get_mut().last_mut().expect("a sided header has its side record").payload = payload;
@@ -35,7 +35,7 @@ impl LaneStack {
 
     /// Push the side record of the record at `index` carrying `payload`: the innermost sided
     /// frame's, the frames above holding none.
-    pub(super) fn push_record_side(&mut self, index: usize, payload: SidePayload) {
+    pub(crate) fn push_record_side(&mut self, index: usize, payload: SidePayload) {
         // SAFETY: the copy ends the read.
         let record = unsafe { self.records_unspilled() }[index];
         debug_assert!(Self::record_sided(&record), "a record's payload rides with its completion");
@@ -44,14 +44,14 @@ impl LaneStack {
 
     /// The side record of `record`, a sided one, carrying `payload`: a record's own words say
     /// the rest, so its side record is read for its payload alone (`record_sided`).
-    pub(super) fn record_side(record: &Activation, payload: SidePayload) -> Side {
+    pub(crate) fn record_side(record: &Activation, payload: SidePayload) -> Side {
         let completion = record.script().map_or(Completion::Plain, |script| script.completion);
         Side { payload, ..Side::plain(completion, record.caller_program()) }
     }
 
     /// Pop the side record of `record`, the innermost frame just popped, where it owns one: what
     /// its completion carries.
-    pub(super) fn pop_record_side(&mut self, record: &Activation) -> SidePayload {
+    pub(crate) fn pop_record_side(&mut self, record: &Activation) -> SidePayload {
         if !Self::record_sided(record) { return SidePayload::None; }
         self.sides.get_mut().pop().expect("a sided record has its side record").payload
     }
@@ -60,7 +60,7 @@ impl LaneStack {
     /// takes one there (`Walked::Header`'s `side_at`): the header's flags rewritten
     /// (`staged::call_complete::write_side_flags`), then the side record replaced, inserted or
     /// dropped where the flags come to none.
-    pub(super) fn store_side(&mut self, window: Registers, had: bool, at: usize, side: Side) {
+    pub(crate) fn store_side(&mut self, window: Registers, had: bool, at: usize, side: Side) {
         let flags = side.flags();
         quench_runtime::staged::call_complete::concrete_write_side_flags(window.0.expose_provenance() as u64, flags);
         let sides = self.sides.get_mut();
@@ -76,7 +76,7 @@ impl LaneStack {
     /// where it is: the innermost as `recomplete_top` does, a header below it through its side
     /// record (`store_side`), a record in place. False, changing nothing, where it completes
     /// otherwise or is no script frame.
-    pub(super) fn recomplete_at(&mut self, depth: usize, from: Completion, to: Completion) -> bool {
+    pub(crate) fn recomplete_at(&mut self, depth: usize, from: Completion, to: Completion) -> bool {
         let Some(above) = self.activation_count().checked_sub(depth + 1) else { return false };
         if above == 0 {
             if self.top_frame().and_then(|frame| frame.completion()) != Some(from) { return false; }
@@ -104,7 +104,7 @@ impl LaneStack {
 
     /// Seal the innermost plain headers below a record about to be pushed (`PlainSegment`): no
     /// spill. Nothing where none is.
-    pub(super) fn seal_plain(&mut self) {
+    pub(crate) fn seal_plain(&mut self) {
         let depth = self.plain.depth.get();
         if depth == 0 { return; }
         let records = self.record_count();
@@ -118,7 +118,7 @@ impl LaneStack {
 
     /// Unseal the headers the record just popped sealed, where it sealed any: they are the
     /// innermost frames again.
-    pub(super) fn unseal_plain(&mut self) {
+    pub(crate) fn unseal_plain(&mut self) {
         debug_assert_eq!(self.plain.depth.get(), 0, "a record was the innermost");
         let records = self.record_count();
         let segments = self.segments.get_mut();
@@ -138,7 +138,7 @@ impl LaneStack {
     /// record. The records below the floor are records already, and the side records left under
     /// the walked frames (the second count) are theirs, so the spill keeps both where they are
     /// and its cost follows the headers pushed since the last spill, not the stack's depth.
-    pub(super) fn frames_to_spill(&self) -> (usize, usize, smallvec::SmallVec<[ActivationView; 16]>) {
+    pub(crate) fn frames_to_spill(&self) -> (usize, usize, smallvec::SmallVec<[ActivationView; 16]>) {
         // SAFETY: reads the lengths alone.
         let records = unsafe { self.records_unspilled() }.len();
         // Seals are pushed innermost last over a records count that never falls below an outer one.
@@ -153,7 +153,7 @@ impl LaneStack {
     ///
     /// # Safety
     /// No walk runs.
-    pub(super) unsafe fn clear_segments(&self) {
+    pub(crate) unsafe fn clear_segments(&self) {
         // SAFETY: the caller's contract.
         unsafe { (*self.segments.get()).clear() };
         self.sealed.set(0);
@@ -162,7 +162,7 @@ impl LaneStack {
     /// Take every frame off the stack, outermost first, each as the record it becomes
     /// (`ActivationView::record`) with what its side record carries: the materialization's frames,
     /// without a spill. The windows stay in the values for the frames to take.
-    pub(super) fn take_frames(&mut self) -> Vec<(Activation, SidePayload)> {
+    pub(crate) fn take_frames(&mut self) -> Vec<(Activation, SidePayload)> {
         let mut frames: Vec<(Activation, SidePayload)> = self.frames_innermost().map(|frame| (frame.record(), frame.payload())).collect();
         frames.reverse();
         self.records_mut().truncate(0);
@@ -178,7 +178,7 @@ impl LaneStack {
     /// maps an old address to its new one, and keeps any other. The header words moved with the
     /// values; the words naming a window are each header's caller registers, the trampolines'
     /// caller registers, the innermost window and each seal's.
-    pub(super) fn relocate_plain(&mut self, moved: impl Fn(usize) -> usize) {
+    pub(crate) fn relocate_plain(&mut self, moved: impl Fn(usize) -> usize) {
         let relocate = |registers: Registers| Registers(std::ptr::with_exposed_provenance_mut(moved(registers.0.expose_provenance())));
         // The trampolines' words first: a trampoline's header names its caller through them.
         self.callback_return.caller_registers.set(relocate(self.callback_return.caller_registers.get()));

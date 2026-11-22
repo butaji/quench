@@ -13,14 +13,14 @@ use super::builtin_calls::continues;
 
 /// A DataView getter or setter of a fixed-width element, by its element kind and direction.
 #[derive(Clone, Copy)]
-pub(super) struct DataViewCall {
+pub(crate) struct DataViewCall {
     element: DataViewElement,
     setter: bool,
 }
 
 impl DataViewCall {
     /// The getter or setter `native` is, where it reads or writes a fixed-width element (not Float16 or BigInt).
-    pub(super) fn of(native: Native) -> Option<Self> {
+    pub(crate) fn of(native: Native) -> Option<Self> {
         let (element, setter) = match native {
             Native::DataViewGetInt8 => (DataViewElement::Int8, false),
             Native::DataViewGetUint8 => (DataViewElement::Uint8, false),
@@ -44,12 +44,12 @@ impl DataViewCall {
     }
 
     /// The arguments the call takes at least: an offset, and for a setter the value after it.
-    pub(super) const fn required(self) -> u16 {
+    pub(crate) const fn required(self) -> u16 {
         if self.setter { 2 } else { 1 }
     }
 
     /// Whether a call passing `count` arguments runs inline: the required ones, and the endianness flag after them.
-    pub(super) const fn accepts(self, count: u16) -> bool {
+    pub(crate) const fn accepts(self, count: u16) -> bool {
         count == self.required() || count == self.required() + 1
     }
 }
@@ -57,7 +57,7 @@ impl DataViewCall {
 impl Lowering<'_, '_> {
     /// The DataView call `call` whose callee `exit` guarded: its result is the call's register (a Number for a getter,
     /// `undefined` for a setter), or the call leaves through `exit` before it changes anything.
-    pub(super) fn data_view_call(&mut self, state: &mut State, instruction: WideInstruction, call: DataViewCall, exit: ir::Block) {
+    pub(crate) fn data_view_call(&mut self, state: &mut State, instruction: WideInstruction, call: DataViewCall, exit: ir::Block) {
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let argc = ImmediateLayout::argument_count(instruction.imm());
         let (receiver, result) = (instruction.register_c(), instruction.result_register());

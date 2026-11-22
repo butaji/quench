@@ -2,15 +2,15 @@ use super::*;
 use quench_runtime::vm::global_facts::LexicalSlot;
 use quench_runtime::staged::property::StoreArm;
 use quench_runtime::staged::{BinaryClass, Constant, DecodeContext, Operation};
-mod fields;
+pub(crate) mod fields;
 use fields::{field_row, field_store_row};
-pub(super) use fields::{site_read_row, stores_field};
-mod number_rows;
-pub(super) use number_rows::{numeric_row, staged_binary, staged_unary};
+pub(crate) use fields::{site_read_row, stores_field};
+pub(crate) mod number_rows;
+pub(crate) use number_rows::{numeric_row, staged_binary, staged_unary};
 
 /// The row kind of a `Binary`'s operator class (`staged::BinaryClass`, the one classification of the operators):
 /// an arithmetic, bitwise or remainder operator's row. A relation as a value, or any other operator, has no Number row.
-pub(super) fn kind_of(class: BinaryClass) -> Option<Kind> {
+pub(crate) fn kind_of(class: BinaryClass) -> Option<Kind> {
     use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise};
     Some(match class {
         BinaryClass::Arithmetic(NumberArithmetic::Add) => Kind::Add,
@@ -29,7 +29,7 @@ pub(super) fn kind_of(class: BinaryClass) -> Option<Kind> {
 }
 
 /// The row kind of a Number relation: the compare-and-jump rows and the relational `kind_of` both take it.
-pub(super) fn relation_kind(relation: quench_runtime::vm::operations::NumberRelation) -> Kind {
+pub(crate) fn relation_kind(relation: quench_runtime::vm::operations::NumberRelation) -> Kind {
     use quench_runtime::vm::operations::NumberRelation;
     match relation {
         NumberRelation::LessThan => Kind::Lt,
@@ -43,7 +43,7 @@ pub(super) fn relation_kind(relation: quench_runtime::vm::operations::NumberRela
 
 /// An operand: a register of the activation or a constant `Value` word.
 #[derive(Clone, Copy)]
-pub(super) enum Source {
+pub(crate) enum Source {
     Register(Register),
     Constant(u64),
     /// A constant that is no Number: a tagged word (`undefined`, a boolean, `null`, a string or a
@@ -56,91 +56,91 @@ pub(super) enum Source {
 /// row's `hole`), the holder's exact shape, whose values the code holds, and the `depth` prototypes
 /// from the link the answer was read through, whose layouts it holds (Stable facts).
 #[derive(Clone, Copy)]
-pub(super) struct Folded {
-    pub(super) shape: u32,
-    pub(super) link: u32,
-    pub(super) holder: u32,
-    pub(super) depth: u8,
+pub(crate) struct Folded {
+    pub(crate) shape: u32,
+    pub(crate) link: u32,
+    pub(crate) holder: u32,
+    pub(crate) depth: u8,
 }
 
 impl Folded {
     /// The chain the answer was read through (`StableFacts::chains`).
-    pub(super) fn chain(self) -> quench_runtime::code_dependencies::PrototypeChain {
+    pub(crate) fn chain(self) -> quench_runtime::code_dependencies::PrototypeChain {
         quench_runtime::code_dependencies::PrototypeChain { link: self.link, depth: self.depth }
     }
 
     /// The row's receiver word: the shape, and the link above `HELD_LINK_AT` bits.
-    pub(super) fn word(self) -> u64 {
+    pub(crate) fn word(self) -> u64 {
         u64::from(self.shape) | u64::from(self.link) << numeric::site_bits::HELD_LINK_AT
     }
 }
 
 /// An instruction as a row: its kind, destination, operands and branch target.
-pub(super) struct Decoded {
-    pub(super) kind: Kind,
-    pub(super) dst: Option<Register>,
+pub(crate) struct Decoded {
+    pub(crate) kind: Kind,
+    pub(crate) dst: Option<Register>,
     /// The second register a step writes: the `this` a name call defines beside its callee
     /// (`STEP_WRITES`). Its value is a tagged word the step made in its frame slot.
-    pub(super) also: Option<Register>,
-    pub(super) a: Option<Source>,
-    pub(super) b: Option<Source>,
-    pub(super) target: Option<u32>,
+    pub(crate) also: Option<Register>,
+    pub(crate) a: Option<Source>,
+    pub(crate) b: Option<Source>,
+    pub(crate) target: Option<u32>,
     /// A heap row (`base_rows`) in place of the numeric `kind`, with the array register a store
     /// writes through and the entry-record byte offset a field read loads.
-    pub(super) heap: Option<Heap>,
-    pub(super) base: Option<Register>,
-    pub(super) hole: u64,
+    pub(crate) heap: Option<Heap>,
+    pub(crate) base: Option<Register>,
+    pub(crate) hole: u64,
     /// How an instruction no row takes runs (`steps`), in place of the numeric `kind`.
-    pub(super) step: Option<Step>,
+    pub(crate) step: Option<Step>,
     /// The instruction a helper step runs packed (`WideInstruction::words`), where a family covers its opcode
     /// and the helper table has the packed helper (`steps::packed_words`).
-    pub(super) packed: Option<[u64; 2]>,
+    pub(crate) packed: Option<[u64; 2]>,
     /// The atom a field store holds unnamed by method caches (`Known::stores`), a Stable fact.
-    pub(super) atom: Option<Atom>,
+    pub(crate) atom: Option<Atom>,
     /// The receiver a folded prototype-held read stands on, with its value in `hole`.
-    pub(super) folded: Option<Folded>,
+    pub(crate) folded: Option<Folded>,
     /// A named read of a class-typed parameter's prototype value (`declared::class_member_read`): a Linked held read
     /// that `proofs::prove` makes a constant load where the receiver's shape is proven at the row.
-    pub(super) class_read: bool,
+    pub(crate) class_read: bool,
     /// The recorded transition an add row runs (`adds`), with the form its storage takes and whether
     /// the receiver is the activation's `this`.
-    pub(super) add: Option<adds::Add>,
+    pub(crate) add: Option<adds::Add>,
     /// The recorded naming a `SetFunctionName` row runs (`names`).
-    pub(super) name: Option<names::Name>,
+    pub(crate) name: Option<names::Name>,
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
-    pub(super) checked: bool,
+    pub(crate) checked: bool,
     /// The instruction carried the return flag: the activation completes with the result the row
     /// writes (`steps::completing`), so control reaches nothing after it.
-    pub(super) completes: bool,
+    pub(crate) completes: bool,
     /// The constructor an `instanceof` fast arm stands on, with what the VM proved of it (`Known::instanceofs`): its
     /// identity is the row's `hole`, which the constructor register must hold, and the prototype link the walk looks for
     /// is the fact's, a Stable fact the code depends on (`held_instanceofs`).
-    pub(super) instanceof: Option<(Value, InstanceofFact)>,
+    pub(crate) instanceof: Option<(Value, InstanceofFact)>,
     /// The global object's slot the row holds under the object's layout and the slot's observed type
     /// (`globals`): Stable facts the code takes.
-    pub(super) global: Option<Access>,
+    pub(crate) global: Option<Access>,
     /// The global lexical binding's word the row reads or stores live (`globals`), at the address in `hole`, under the global
     /// object's layout: a Stable fact the code takes.
-    pub(super) lexical: Option<LexicalSlot>,
+    pub(crate) lexical: Option<LexicalSlot>,
     /// The observed type of the own slot a field store writes, where its site proves one own load
     /// (`NativeFieldLoad::ty`).
-    pub(super) slot: Option<quench_runtime::typed_ir::Type>,
+    pub(crate) slot: Option<quench_runtime::typed_ir::Type>,
     /// The exact shape whose slot `slot` is the type of, for a field store: an ungated store row
     /// writes only into a receiver of this shape (`plan::site_holes`, hole 4), as the site's live
     /// cache entry may name another shape, whose slot type nothing proved.
-    pub(super) slot_shape: Option<u32>,
+    pub(crate) slot_shape: Option<u32>,
     /// A site read's or store's one own flat entry (`decode::fields::ic_hole`: the exact shape, and the
     /// slot's byte offset above 32 bits), whose inline-cache row runs first and falls to the site row
     /// on a miss (`plan::ic_plan`).
-    pub(super) ic: Option<u64>,
+    pub(crate) ic: Option<u64>,
     /// The step a store row's instruction runs as where the row declines its operand (`declines`):
     /// the instruction's own (`steps::lowering`).
-    pub(super) declined: Option<Step>,
+    pub(crate) declined: Option<Step>,
     /// The exact shape of the holder whose own native function the row stands on (`math_call`'s
     /// identity guard): a Stable fact the code takes (`held_holders`), so the function's identity is
     /// not recycled while the code runs.
-    pub(super) holder: Option<u32>,
+    pub(crate) holder: Option<u32>,
     /// The Stable cell of the global member the row folds (`GlobalRead::NativeMember`'s `cell`, or a held object's read): its fact is
     /// subscribed by the body (`Stitched::push`), and its realm proved once (`globals::held_realm`).
     /// The slot type the fact store proves of a site read's one own flat entry (`decode::fields::cached_read`): a
@@ -148,49 +148,49 @@ pub(super) struct Decoded {
     /// widening of the slot retires it over. A Number read's inline-cache row then delivers the word to a pinned
     /// double with no tag test (`plan::ic_plan`); an object read's destination is a direct object after it
     /// (`proofs::typed_object`). Kept only where that row runs and the code makes no call (`repr::keep_typed_reads`).
-    pub(super) typed: Option<quench_runtime::code_dependencies::SlotDependency>,
-    pub(super) cell: Option<quench_runtime::vm::global_facts::StableCell>,
+    pub(crate) typed: Option<quench_runtime::code_dependencies::SlotDependency>,
+    pub(crate) cell: Option<quench_runtime::vm::global_facts::StableCell>,
     /// Every path proves the inline-cache access's receiver of its entry's shape (`proofs::prove`): the row
     /// reads or writes the slot with no guard.
-    pub(super) proven: bool,
+    pub(crate) proven: bool,
     /// Where `proven`, the receiver's storage form is proven flat too (`proofs::prove`): the row's slot is the arena run's,
     /// with no compare of the auxiliary word (`Heap::IcKnownGetFlat`, `Heap::IcKnownSetFlat`).
-    pub(super) flat: bool,
+    pub(crate) flat: bool,
     /// Some receiver proof reaches the row (`proofs::prove`), which a later row may stand on: the code
     /// is not resumed here.
-    pub(super) relies: bool,
+    pub(crate) relies: bool,
     /// A proven store whose run-level stores test the region's entry made, and no call since (`proofs::prove`): the row
     /// tests nothing of its own (`Heap::IcKnownSet`'s `admitted`), or the test `recheck` makes before it.
-    pub(super) admitted: bool,
+    pub(crate) admitted: bool,
     /// A proven store a call cleared the run-level stores test for, which re-reads the run's stores word
     /// before it (`Heap::Stores`, a mid-body guard), so the stores after it are admitted (`proofs::prove`).
-    pub(super) recheck: bool,
+    pub(crate) recheck: bool,
     /// A generic `Binary` (its operator is data, so its step helper runs any operands): a numeric row whose site is a
     /// string `+` (`Variant::Concat`) keeps the region running through that helper as its miss (`plan::concat_run`).
-    pub(super) generic: bool,
+    pub(crate) generic: bool,
     /// Operand a's frame slot holds an int32 on every path into this row (`numbers::proven_int_operands`).
-    pub(super) int_a: bool,
+    pub(crate) int_a: bool,
     /// Operand b's frame slot holds an int32 on every path into this row (`numbers::proven_int_operands`).
-    pub(super) int_b: bool,
+    pub(crate) int_b: bool,
 }
 
 impl Decoded {
-    pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
+    pub(crate) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
         Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false }
     }
 
-    pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
+    pub(crate) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
         Self { heap: Some(heap), ..Self::number(Kind::Move, dst, a, b, None) }
     }
 
-    pub(super) fn step(step: Step, dst: Option<Register>) -> Self {
+    pub(crate) fn step(step: Step, dst: Option<Register>) -> Self {
         Self { step: Some(step), ..Self::number(Kind::Move, dst, None, None, None) }
     }
 
     /// Whether the row holds a Stable fact its code took: a folded prototype-held read, an
     /// `instanceof` of a constructor's `prototype`, a global object's slot, an add, or a store in place for an atom no method cache
     /// names. A change of the fact retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
-    pub(super) fn holds_stable(&self) -> bool {
+    pub(crate) fn holds_stable(&self) -> bool {
         self.add.is_some() || self.folded.is_some() || self.holder.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
     }
 
@@ -215,7 +215,7 @@ impl Decoded {
 
     /// What a tested store (`store_arm` of a frame word) admits besides an int32: a double, where
     /// the slot's observed type holds Number, so the store widens no observation and logs nothing.
-    pub(super) fn admitted_tags(&self) -> u64 {
+    pub(crate) fn admitted_tags(&self) -> u64 {
         if self.stored_slot_type().is_some_and(|ty| quench_runtime::typed_ir::Type::NUMBER.is_subtype(ty)) {
             numeric::site_bits::STORE_ADMITS_DOUBLES
         } else {
@@ -225,7 +225,7 @@ impl Decoded {
 
     /// The step a store row runs as where it cannot write its operand in `place` (`store_arm`): the
     /// instruction's own.
-    pub(super) fn declines(&self, place: Place) -> Option<Step> {
+    pub(crate) fn declines(&self, place: Place) -> Option<Step> {
         self.stored_slot_type().filter(|_| self.store_arm(place).is_none()).and(self.declined)
     }
 
@@ -239,7 +239,7 @@ impl Decoded {
     /// not prove (no single own load, `Decoded::slot` `None`) or does not admit, is gated: the gate
     /// refuses every store while slot types are tracked, so the interpreter's store joins the type.
     /// Slot types only widen, so an admission proved here stays true while the code runs.
-    pub(super) fn gated(&self, place: Place) -> bool {
+    pub(crate) fn gated(&self, place: Place) -> bool {
         match self.store_arm(place) {
             None => true,
             Some(arm) => arm.holds.is_none() && !value_fact(place).is_subtype(quench_runtime::typed_ir::Type::IMMEDIATE),
@@ -248,28 +248,28 @@ impl Decoded {
 
     /// Whether the row makes a call or a step the interpreter's operation runs, either of which may
     /// run guest code that changes a Stable fact.
-    pub(super) fn makes_calls(&self) -> bool {
+    pub(crate) fn makes_calls(&self) -> bool {
         matches!(self.step, Some(Step::Call(_))) || self.step.is_some_and(Step::runs_helper)
     }
 
     /// Whether the plan gives the row an inline-cache row ahead of its site row (`plan::ic_plan`): a site read or store
     /// with a cache entry, naming no second register and not completing. The proofs and the plan both ask this, so the
     /// inline-cache row is taken exactly where the proofs credit its hit.
-    pub(super) fn takes_ic_row(&self) -> bool {
+    pub(crate) fn takes_ic_row(&self) -> bool {
         self.ic.is_some() && matches!(self.heap, Some(Heap::Site | Heap::SiteStore)) && self.also.is_none() && !self.completes
     }
 
     /// The registers the row names.
-    pub(super) fn registers(&self) -> impl Iterator<Item = Register> {
+    pub(crate) fn registers(&self) -> impl Iterator<Item = Register> {
         [self.dst, self.also, self.a.and_then(register_of), self.b.and_then(register_of), self.base].into_iter().flatten()
     }
 }
 
 /// The Number a function's constant table holds at an index: the caller's for a region's own
 /// instructions, the callee's for an inlined body (`inline_plan`).
-pub(super) type Numbers<'a> = &'a dyn Fn(usize) -> Option<f64>;
+pub(crate) type Numbers<'a> = &'a dyn Fn(usize) -> Option<f64>;
 
-pub(super) fn source(numbers: Numbers, operand: quench_runtime::bytecode::Operand) -> Result<Source, String> {
+pub(crate) fn source(numbers: Numbers, operand: quench_runtime::bytecode::Operand) -> Result<Source, String> {
     match operand.kind() {
         Some(OperandKind::Register) => Ok(Source::Register(operand.payload())),
         Some(OperandKind::Constant) => numbers(usize::from(operand.payload()))
@@ -282,11 +282,11 @@ pub(super) fn source(numbers: Numbers, operand: quench_runtime::bytecode::Operan
 /// The staged operation `instruction` denotes, decoded from its own fields alone (`DecodeContext::EMPTY`):
 /// the dispatch key of the planner's rows. `None` where the opcode has no such operation without a table
 /// or no decoder; those rows keep their class arm (a derivation debt, marked where they are).
-pub(super) fn staged_of(instruction: WideInstruction) -> Option<Operation<(), ()>> {
+pub(crate) fn staged_of(instruction: WideInstruction) -> Option<Operation<(), ()>> {
     Operation::decode(instruction, quench_runtime::staged::DecodeContext::EMPTY)
 }
 
-pub(super) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
+pub(crate) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
     let operator = instruction.binary_operator();
     let kind = kind_of(BinaryClass::of_operator(operator)).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
     Ok(Decoded::number(
@@ -300,7 +300,7 @@ pub(super) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<D
 
 /// The row of a comparison jump that fails to its target (`Operation::CompareJump` with
 /// `negate`): its staged comparison as the row's relation; any other comparison is the step's.
-pub(super) fn relation_jump(numbers: Numbers, instruction: WideInstruction, comparison: quench_runtime::staged::compare::Comparison,
+pub(crate) fn relation_jump(numbers: Numbers, instruction: WideInstruction, comparison: quench_runtime::staged::compare::Comparison,
     (left, right): (quench_runtime::bytecode::Operand, quench_runtime::bytecode::Operand)) -> Result<Decoded, String> {
     use quench_runtime::staged::compare::Comparison;
     let kind = match comparison {
@@ -316,7 +316,7 @@ pub(super) fn relation_jump(numbers: Numbers, instruction: WideInstruction, comp
 /// `if (a & b)`, a loose test against `null` or `undefined` (`nullish_comparison`, the one derivation the lane
 /// shares), and `a === true` or `a === false` against a constant Boolean. The row runs the staged step of the same
 /// comparison, so each test reads only the operands it names.
-pub(super) fn test_row(numbers: Numbers, known: Known, instruction: WideInstruction) -> Option<Decoded> {
+pub(crate) fn test_row(numbers: Numbers, known: Known, instruction: WideInstruction) -> Option<Decoded> {
     use quench_runtime::staged::compare::Comparison;
     use quench_runtime::vm::operations::NumberBitwise;
     let Some(Operation::CompareJump { comparison, left, right, negate: true }) = staged_of(instruction) else { return None };
@@ -354,7 +354,7 @@ fn boolean_test(known: Known, (left, right): (quench_runtime::bytecode::Operand,
     }
 }
 
-pub(super) fn load_const(numbers: Numbers, destination: Register, index: usize) -> Result<Decoded, String> {
+pub(crate) fn load_const(numbers: Numbers, destination: Register, index: usize) -> Result<Decoded, String> {
     let number = numbers(index).ok_or_else(|| "LoadConst: not a Number".to_string())?;
     let word = Source::Constant(Value::number(number).to_bits());
     Ok(Decoded::number(Kind::Move, Some(destination), Some(word), None, None))
@@ -441,7 +441,7 @@ fn switch_row(instruction: WideInstruction) -> Option<Decoded> {
 
 /// The heap instructions: a capture, a dense element read or store, the proof that a base is an
 /// array, the activation's `this` and its local slots, and the named ones (`named_row`).
-pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+pub(crate) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match staged_of(instruction) {
         Some(Operation::LoadCapture { .. }) => capture_load_row(facts, instruction),
         Some(Operation::StoreCapture { .. }) => capture_store_row(facts, instruction),
@@ -480,7 +480,7 @@ fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
 
 /// The row of `instruction` at `pc`: a numeric or heap row where one takes it, else the step the
 /// interpreter's own operation makes (`steps`), so no instruction is refused.
-pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+pub(crate) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
         .or_else(|| test_row(&|index| region.number_constant(index), known, instruction))
@@ -502,11 +502,11 @@ fn names(known: Known, row: Decoded) -> Decoded {
 }
 
 /// Bits in a word's high half.
-pub(super) const HALF: u32 = 32;
+pub(crate) const HALF: u32 = 32;
 /// The high 32 bits of an int word.
-pub(super) const INT_HIGH: u64 = quench_runtime::value::ValueLayout::INT_TAG >> HALF;
+pub(crate) const INT_HIGH: u64 = quench_runtime::value::ValueLayout::INT_TAG >> HALF;
 
-pub(super) fn register_of(source: Source) -> Option<Register> {
+pub(crate) fn register_of(source: Source) -> Option<Register> {
     match source {
         Source::Register(register) => Some(register),
         Source::Constant(_) | Source::Value(_) => None,

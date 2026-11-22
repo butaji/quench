@@ -27,18 +27,18 @@
 //! distance. Chunks also end at the run's safepoint (`script_below_floor`).
 use super::*;
 
-mod machine;
-mod recur;
-mod run;
-mod typed;
-mod shape;
+pub(crate) mod machine;
+pub(crate) mod recur;
+pub(crate) mod run;
+pub(crate) mod typed;
+pub(crate) mod shape;
 
-pub(super) use shape::Shape;
+pub(crate) use shape::Shape;
 
 use quench_runtime::vm::engine_types::KERNELS;
 
 use crate::compiled::tier_policy::KERNEL_SHORT_DECLINES;
-pub(super) use quench_runtime::vm::engine_types::LoopKernel;
+pub(crate) use quench_runtime::vm::engine_types::LoopKernel;
 
 /// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
 /// that interprets its recurrences per iteration is not under `--b-jit`: the loop's stencils run
@@ -103,7 +103,7 @@ fn never_number_scalar(shape: &Shape, decoded: &[WideInstruction], constants: &[
 impl LoopKernel {
     /// Whether the loop `header..=backedge` has a kernel: `--b-jit` leaves such a loop to it, as
     /// its stencils run it slower (`install_loop_sites`).
-    pub(super) fn accepts(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> bool {
+    pub(crate) fn accepts(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> bool {
         Shape::of(decoded, constants, usize::from(function.registers), header, backedge)
             .is_some_and(|shape| shape.guarded.is_empty() && pass(&shape).is_some())
     }
@@ -186,7 +186,7 @@ fn register(kernel: &LoopKernel) -> Option<u16> {
 /// Gives each loop that has a kernel its kernel record (`loop_kernel_head`) on the loop's test
 /// record. Runs after every other pass: the kernel keeps the record's final handler and
 /// leaves the record's operand to it.
-pub(super) fn install_loop_kernels(
+pub(crate) fn install_loop_kernels(
     decoded: &[WideInstruction],
     constants: &[Value],
     function: &Function,
@@ -224,7 +224,7 @@ pub(super) fn install_loop_kernels(
 /// # Safety
 /// `ip` is a live record of the running view.
 #[inline(always)]
-pub(super) unsafe fn requicken_kernel(ip: Ip, handler: Handler) -> bool {
+pub(crate) unsafe fn requicken_kernel(ip: Ip, handler: Handler) -> bool {
     // SAFETY: the caller's contract.
     let record = unsafe { &*ip };
     if record.handler != loop_kernel_head as Handler as *const () {

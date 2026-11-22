@@ -6,7 +6,7 @@ use super::*;
 
 impl Lowering<'_, '_> {
     /// Starts the trip count of a loop region at zero. A lane body (`Coverage::Prefix`) counts nothing.
-    pub(super) fn begin_trips(&mut self) {
+    pub(crate) fn begin_trips(&mut self) {
         if !matches!(self.coverage, Coverage::Loop { .. }) { return; }
         let trips = self.builder.declare_var(types::I64);
         let zero = self.raw_const(Lane::I64, 0);
@@ -15,7 +15,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Counts one taken execution of the region's backward edge.
-    pub(super) fn count_trip(&mut self) {
+    pub(crate) fn count_trip(&mut self) {
         let Some(trips) = self.trips else { return };
         let count = self.builder.use_var(trips);
         let next = self.raw_binary_imm(Binary::Add, count, 1);
@@ -23,7 +23,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Adds the run's trips to its loop entry record, in the block the run leaves through.
-    pub(super) fn flush_trips(&mut self) {
+    pub(crate) fn flush_trips(&mut self) {
         let Some(trips) = self.trips else { return };
         let offset = i32::try_from(std::mem::offset_of!(super::super::JsStepDispatch, head.loop_entry))
             .expect("dispatch offset fits i32");

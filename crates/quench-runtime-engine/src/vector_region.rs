@@ -40,7 +40,7 @@ use quench_runtime::vm::engine_types::Row;
 
 use quench_runtime::vm::engine_types::Step;
 
-pub(super) use quench_runtime::vm::engine_types::VectorRegion;
+pub(crate) use quench_runtime::vm::engine_types::VectorRegion;
 
 use quench_runtime::vm::engine_types::RegionLoop;
 
@@ -211,7 +211,7 @@ fn run_row(stage: &mut staged::Concrete, frame: &mut RegionFrame<'_>, operation:
 
 #[quench_macros::ext(VectorRegionOps1)]
 impl VectorRegion {
-    pub(super) fn first(&self) -> usize {
+    pub(crate) fn first(&self) -> usize {
         self.first
     }
 
@@ -362,7 +362,7 @@ lane_handler! {
 }
 
 /// The handler of a region's first record.
-pub(super) fn region_handler() -> Handler {
+pub(crate) fn region_handler() -> Handler {
     vector_region_row
 }
 
@@ -697,7 +697,7 @@ impl Builder<'_> {
 /// least `REGION_MIN_VECTORS` vectors. A run holds no record the general path executes
 /// (`exits`); `produced` is each record's carried accumulator register, as the view
 /// selected it.
-pub(super) fn vector_regions(
+pub(crate) fn vector_regions(
     decoded: &[WideInstruction],
     constants: &[Value],
     heap: &quench_runtime::heap::Heap,

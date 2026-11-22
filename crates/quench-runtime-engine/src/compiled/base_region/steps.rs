@@ -60,12 +60,12 @@ use quench_runtime::bytecode::Traits;
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
-mod lowering;
-pub(super) use lowering::{calls_in_place, decode_step, lowering, unplaced, STEP_WRITES};
+pub(crate) mod lowering;
+pub(crate) use lowering::{calls_in_place, decode_step, lowering, unplaced, STEP_WRITES};
 
 /// How the b-jit runs an instruction no row takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Step {
+pub(crate) enum Step {
     /// `LaneHelper::Step` makes the record in place and the region continues.
     Helper,
     /// The heap row is the record's fast arm over its operand's frame slot, with `Helper` behind it
@@ -103,19 +103,19 @@ impl Step {
     /// Whether a lane helper makes the record (the step helper alone, as the slow arm of a fast row or
     /// as the raising step, or the VM step helper's call-out): it may allocate or run guest code, which
     /// no heap snapshot a region took sees.
-    pub(super) fn runs_helper(self) -> bool {
+    pub(crate) fn runs_helper(self) -> bool {
         matches!(self, Self::Helper | Self::CallOut | Self::Allocate | Self::Fast(_) | Self::Throw | Self::Generic)
     }
 
     /// Whether the run reads the dispatch payload: a helper step calls through it, and a guarded
     /// fast row reads the tables its heap row names.
-    pub(super) fn reads_payload(self) -> bool {
+    pub(crate) fn reads_payload(self) -> bool {
         self.runs_helper() || matches!(self, Self::Guard(_))
     }
 
     /// Whether control continues at the next instruction: a leave, a return, a throw and a catch
     /// end the run or go elsewhere.
-    pub(super) fn falls(self) -> bool {
+    pub(crate) fn falls(self) -> bool {
         !matches!(self, Self::Leave | Self::Return | Self::Throw | Self::Catch)
     }
 }
@@ -124,12 +124,12 @@ impl Step {
 /// catalog marks (`Traits::WASM_OPCODE`). A Wasm function has its own compiler (`dispatch_wasm`, the
 /// Wasm tiers), which owns the linear memory, tables and typed registers these opcodes read, so a
 /// function holding one is not a b-jit body, and a loop region holding one leaves at it.
-pub(in crate::compiled) fn covers(code: &[WideInstruction]) -> bool {
+pub(crate) fn covers(code: &[WideInstruction]) -> bool {
     code.iter().all(|instruction| !instruction.op().traits().has(Traits::WASM_OPCODE))
 }
 
 /// The stencil of a control row: it reads and writes no operand.
-pub(super) fn control(kind: Kind) -> Result<&'static Stencil, String> {
+pub(crate) fn control(kind: Kind) -> Result<&'static Stencil, String> {
     numeric::stencil(numeric::Row { kind, dst: Place::Mem, a: Place::Mem, b: Place::Mem, speculate: true })
 }
 
@@ -155,7 +155,7 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Vec<Box<quench_bjit::call
 
 /// The plan of a step at `pc`: the leave row, the helper chain, a fast arm's run, the completion of
 /// the activation or the call's chain.
-pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
+pub(crate) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => leave(pc),
         Step::Helper => plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers)),
@@ -192,7 +192,7 @@ fn plan_guarded(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, chain: 
 }
 
 /// The row that ends the region at row `pc`, where the interpreter runs the instruction.
-pub(super) fn leave(pc: u32) -> Result<Planned, String> {
+pub(crate) fn leave(pc: u32) -> Result<Planned, String> {
     Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc)))
 }
 
@@ -200,7 +200,7 @@ pub(super) fn leave(pc: u32) -> Result<Planned, String> {
 /// completed, branched or missed (nothing ran: the leave at the record), or left, where the step ran in frames it made
 /// of the lane's activations (a frame-needing step of a native callee) and the body leaves past it: the row's
 /// (status, word) exit.
-pub(super) fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers), packed: Option<[u64; 2]>) -> Result<Planned, String> {
+pub(crate) fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers), packed: Option<[u64; 2]>) -> Result<Planned, String> {
     // A step the planner decoded runs the packed helper (`LaneHelper::StepPacked`), which takes its instruction as is.
     let packed = packed.filter(|_| helper == LaneHelper::Step).and_then(|words| call_plan::helper_address(helpers, LaneHelper::StepPacked).map(|address| (address, words)));
     let (address, packed) = match packed {
@@ -219,7 +219,7 @@ fn reloads(layout: &Layout, decoded: &Decoded, pc: u32) -> Vec<(Place, Register)
 
 /// The chain of a step at `pc` that `helper` makes, which also branches to the target of its instruction where
 /// it jumps.
-pub(super) fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
+pub(crate) fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
     let row = helper_chain(layout, pc, &reloads(layout, decoded, pc), helper, decoded.packed)?;
     match decoded.target {
         Some(target) => branching(row, layout, (pc, target)),
@@ -232,7 +232,7 @@ pub(super) fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (
 /// first (a leave writes back only the registers live at the instruction, and the result is the
 /// instruction's own definition), then the row that completes with that slot, recording the
 /// instruction's PC as the completion, as a body's `Return` does.
-pub(super) fn completing(mut run: Planned, layout: &Layout, pc: u32, result: Option<Register>) -> Result<Planned, String> {
+pub(crate) fn completing(mut run: Planned, layout: &Layout, pc: u32, result: Option<Register>) -> Result<Planned, String> {
     let web = result.ok_or("completion: the instruction writes no result")?;
     run.post.extend(completion(layout, pc, web)?);
     Ok(run)
@@ -319,7 +319,7 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Opti
 
 /// `fast` with the run `slow` laid out behind it: the slow run's parts follow the fast row, so the
 /// parts that name another part of their run are renumbered past it.
-pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
+pub(crate) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
     let (lead, tail) = (std::mem::take(&mut slow.pre), std::mem::take(&mut slow.post));
     fast.owned = std::mem::take(&mut slow.owned);
     fast.post = lead.into_iter().chain(std::iter::once(slow)).chain(tail).map(|mut part| {
@@ -348,7 +348,7 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read, chain, builtin: layout.builtin(shape.call_pc) };
     let CallChain { mut parts, records: record, choice } = call_plan::plan_call(&plan)?;
     // An image's direct rows name the site's record (`name_records`).
-    if helpers == LaneHelpers::Ahead { name_records(&mut parts, &record, quench_runtime::vm::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc }); }
+    if helpers == LaneHelpers::Ahead { name_records(&mut parts, &record, crate::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc }); }
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
     if choice == Choice::Direct { super::note_fast(shape.op); }
@@ -356,14 +356,14 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
 }
 
 #[path = "steps/misses.rs"]
-mod misses;
-pub(super) use misses::stepped_misses;
+pub(crate) mod misses;
+pub(crate) use misses::stepped_misses;
 #[path = "steps/branches.rs"]
-mod branches;
+pub(crate) mod branches;
 use branches::{branching, jump_to};
 #[path = "steps/generic.rs"]
-mod generic;
-pub(super) use generic::{Semantic, ahead_miss, generic_row};
+pub(crate) mod generic;
+pub(crate) use generic::{Semantic, ahead_miss, generic_row};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

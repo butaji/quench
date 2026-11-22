@@ -15,10 +15,10 @@ use cranelift_frontend::FunctionBuilder;
 use quench_regexp::backtrack::matcher::{admits, ascii_units_are_words, assertion_holds, takes_unit, word_assertion_given, Admission};
 use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeRestarts, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
-mod look;
-mod machine;
-mod repeats;
-mod stage;
+pub(crate) mod look;
+pub(crate) mod machine;
+pub(crate) mod repeats;
+pub(crate) mod stage;
 
 use quench_runtime::vm::tier_policy::REGEXP_NATIVE_MAX_CODE_BYTES;
 const WORD: i32 = std::mem::size_of::<usize>() as i32;
@@ -36,7 +36,7 @@ const PARAMETERS: usize = 8;
 const REGISTER_SHIFT: i64 = 3;
 
 /// Whether this thread's hot regexp programs run natively: only under a compiling mode.
-pub(super) fn enable(enabled: bool, runs: u32) {
+pub(crate) fn enable(enabled: bool, runs: u32) {
     quench_regexp::backtrack::native::set_native_compiler(compiler(runs));
     quench_regexp::backtrack::native::enable_native_search(enabled);
 }
@@ -396,4 +396,4 @@ impl<'a, M: RegexpMachine> Emit<'a, M> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

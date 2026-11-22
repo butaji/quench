@@ -16,7 +16,7 @@ pub(crate) use quench_runtime::vm::engine_types::ActivationView;
 impl ActivationView {
     /// The record it becomes (a spill's, a materialization's): a record's own again.
     #[inline(always)]
-    pub(super) fn record(&self) -> Activation {
+    pub(crate) fn record(&self) -> Activation {
         Activation {
             callee: self.callee, this: self.this, body: self.body, window: self.window,
             function: self.function, call: self.call, caller_base: self.caller_base, caller_registers: self.caller_registers,
@@ -24,24 +24,24 @@ impl ActivationView {
         }
     }
     /// The caller's call record, which its return completes.
-    #[inline(always)] pub(super) fn call(&self) -> Ip { self.call }
+    #[inline(always)] pub(crate) fn call(&self) -> Ip { self.call }
     /// The caller's records base.
-    #[inline(always)] pub(super) fn caller_base(&self) -> Ip { self.caller_base }
+    #[inline(always)] pub(crate) fn caller_base(&self) -> Ip { self.caller_base }
     /// What its completion carries (`SidePayload`).
-    #[inline(always)] pub(super) fn payload(&self) -> SidePayload { self.payload }
+    #[inline(always)] pub(crate) fn payload(&self) -> SidePayload { self.payload }
 
     /// What its return yields to its call; `None` for Wasm and an unlinked native frame.
     #[inline(always)]
-    pub(super) fn completion(&self) -> Option<Completion> { self.script().map(|script| script.completion) }
+    pub(crate) fn completion(&self) -> Option<Completion> { self.script().map(|script| script.completion) }
 
     /// A script frame's callee (a generator's, `lane_generator_returned`); `undefined` for any other.
     #[inline(always)]
-    pub(super) fn callee(&self) -> Value { self.script().map_or(Value::UNDEFINED, |script| script.callee) }
+    pub(crate) fn callee(&self) -> Value { self.script().map_or(Value::UNDEFINED, |script| script.callee) }
 
     /// The memory view its caller runs with: a Wasm callee's caller's memory, else the script
     /// view (`ActivationKind::Wasm`).
     #[inline(always)]
-    pub(super) fn caller_memory(&self, cx: *mut LaneContext) -> MemoryView {
+    pub(crate) fn caller_memory(&self, cx: *mut LaneContext) -> MemoryView {
         match self.kind {
             ActivationKind::Wasm { memory, .. } => memory,
             ActivationKind::Native | ActivationKind::Script(_) | ActivationKind::WasmEntry { .. } => MemoryView::script(cx),
@@ -51,7 +51,7 @@ impl ActivationView {
     /// An export's frame's result type, which its JavaScript caller takes
     /// (`ActivationKind::WasmEntry`); `None` for any other frame.
     #[inline(always)]
-    pub(super) fn export_result(&self) -> Option<Option<quench_runtime::WasmType>> {
+    pub(crate) fn export_result(&self) -> Option<Option<quench_runtime::WasmType>> {
         match self.kind {
             ActivationKind::WasmEntry { result, .. } => Some(result),
             ActivationKind::Native | ActivationKind::Script(_) | ActivationKind::Wasm { .. } => None,
@@ -59,28 +59,28 @@ impl ActivationView {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::Side;
+pub(crate) use quench_runtime::vm::engine_types::Side;
 
-pub(super) use quench_runtime::vm::engine_types::NO_NATIVE;
+pub(crate) use quench_runtime::vm::engine_types::NO_NATIVE;
 
-pub(super) use quench_runtime::vm::engine_types::SidePayload;
+pub(crate) use quench_runtime::vm::engine_types::SidePayload;
 
 #[quench_macros::ext(SidePayloadOps1)]
 impl SidePayload {
     /// A settling frame's promise.
-    pub(super) fn settles(self) -> Option<quench_runtime::heap::RootId> {
+    pub(crate) fn settles(self) -> Option<quench_runtime::heap::RootId> {
         let Self::Settles(rooted) = self else { unreachable!("each settling activation has its entry") };
         rooted
     }
 
     /// An import's callee's Wasm caller.
-    pub(super) fn to_wasm(self) -> ToWasmCall {
+    pub(crate) fn to_wasm(self) -> ToWasmCall {
         let Self::ToWasm(call) = self else { unreachable!("each import activation has its entry") };
         call
     }
 
     /// A trap's check.
-    pub(super) fn trap(self) -> quench_runtime::vm::activation::TrapCheck {
+    pub(crate) fn trap(self) -> quench_runtime::vm::activation::TrapCheck {
         let Self::Trapped(check) = self else { unreachable!("each trapped activation has its entry") };
         check
     }
@@ -91,7 +91,7 @@ impl Side {
     /// The side record of a script activation pushed as a header with `flags`, `None` where the
     /// header is all of it. Its payload comes after the push (`LaneStack::attach_payload`).
     #[inline(always)]
-    pub(super) fn of(script: &ScriptActivation, caller_program: ProgramId, flags: u64) -> Option<Self> {
+    pub(crate) fn of(script: &ScriptActivation, caller_program: ProgramId, flags: u64) -> Option<Self> {
         (flags != 0).then_some(Self {
             native: NO_NATIVE,
             completion: script.completion,
@@ -107,20 +107,20 @@ impl Side {
     /// The side record of a header that had none: it completes as `completion` and keeps,
     /// carries and owns nothing.
     #[inline(always)]
-    pub(super) fn plain(completion: Completion, caller_program: ProgramId) -> Self {
+    pub(crate) fn plain(completion: Completion, caller_program: ProgramId) -> Self {
         Self { native: NO_NATIVE, completion, forwards: false, kept: 0, environment: false, caller_program, record: std::ptr::null_mut(), payload: SidePayload::None }
     }
 
     /// The side-record flags its header carries (`flags_of` of the activation it describes).
     #[inline(always)]
-    pub(super) fn flags(&self) -> u64 {
+    pub(crate) fn flags(&self) -> u64 {
         Self::flags_for(self.forwards || self.kept != 0, self.environment, self.completion, self.record)
     }
 
     /// The side-record flags a script activation's header carries (`frame::SIDE_FLAGS`): 0 for
     /// one that completes plainly and keeps, forwards and owns nothing.
     #[inline(always)]
-    pub(super) fn flags_of(script: &ScriptActivation) -> u64 {
+    pub(crate) fn flags_of(script: &ScriptActivation) -> u64 {
         Self::flags_for(script.forwards || script.kept != 0, script.environment, script.completion, script.record)
     }
 
@@ -137,7 +137,7 @@ impl Side {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::header_sided;
+pub(crate) use quench_runtime::vm::engine_types::header_sided;
 
 #[quench_macros::ext(LaneStackOps3)]
 impl LaneStack {
@@ -163,7 +163,7 @@ impl LaneStack {
     /// The side record of the innermost activation, where it is a plain one whose header
     /// carries one.
     #[inline(always)]
-    pub(super) fn innermost_side(&self) -> Option<Side> {
+    pub(crate) fn innermost_side(&self) -> Option<Side> {
         if self.plain.depth.get() == 0 || !header_sided(Registers(self.plain.registers.get())) {
             return None;
         }
@@ -175,7 +175,7 @@ impl LaneStack {
     /// activations' words: at depth 0, or where the innermost's caller runs it, or where the
     /// innermost carries a side record (whose own caller program `PlainFrames::program` names
     /// once it crosses, until a plain push over it names the running one).
-    pub(super) fn plain_program_holds(&self, program: ProgramId) -> bool {
+    pub(crate) fn plain_program_holds(&self, program: ProgramId) -> bool {
         self.plain.depth.get() == 0 || self.plain.program.get() == program || self.innermost_side().is_some()
     }
 
@@ -188,7 +188,7 @@ impl LaneStack {
     ///
     /// # Safety
     /// A plain activation runs (`plain.depth > 0`).
-    pub(super) unsafe fn pop_plain_frame(&mut self) -> ActivationView {
+    pub(crate) unsafe fn pop_plain_frame(&mut self) -> ActivationView {
         debug_assert!(self.plain.depth.get() != 0, "a plain activation runs");
         let window = Registers(self.plain.registers.get());
         let packed = quench_runtime::staged::call_complete::frame_packed(
@@ -216,7 +216,7 @@ impl LaneStack {
     /// store, a proxy trap, a native's callback, a Wasm import's callee), where it is
     /// (one-frame-one-call.md F4): a plain header's side record and its flags
     /// (`edit_top_side`), else the innermost record. No spill.
-    pub(super) fn recomplete_top(&mut self, completion: Completion) {
+    pub(crate) fn recomplete_top(&mut self, completion: Completion) {
         if self.edit_top_side(|side| side.completion = completion) { return; }
         if let Some(ActivationKind::Script(script)) = self.records_mut().last_mut().map(|activation| activation.kind_mut()) {
             script.completion = completion;
@@ -226,7 +226,7 @@ impl LaneStack {
     /// Name `record`, an eval record the innermost activation now owns (`lane_eval`), from the
     /// activation where it is: a plain header's side record, which `frame::OWNS_FLAG` tags
     /// (`edit_top_side`), else the innermost record's `ScriptActivation::record`. No spill.
-    pub(super) fn name_top_record(&mut self, record: *mut quench_runtime::vm::activation::FrameRecord) {
+    pub(crate) fn name_top_record(&mut self, record: *mut quench_runtime::vm::activation::FrameRecord) {
         if self.edit_top_side(|side| side.record = record) { return; }
         if let Some(ActivationKind::Script(script)) = self.records_mut().last_mut().map(|activation| activation.kind_mut()) {
             script.record = record;
@@ -265,7 +265,7 @@ impl LaneStack {
     /// # Safety
     /// An activation runs, and it holds no Wasm storage (`Activation::frame_storage_bytes`).
     #[inline(always)]
-    pub(super) unsafe fn discard_top_frame(&mut self) {
+    pub(crate) unsafe fn discard_top_frame(&mut self) {
         if self.plain.depth.get() != 0 {
             // SAFETY: a plain activation runs, tested above.
             let _ = unsafe { self.pop_plain_frame() };
@@ -282,7 +282,7 @@ impl LaneStack {
     /// The records alone, for writing where they are: no spill. The proved calls' bound
     /// (`PlainFrames::bound`) names neither the records' count nor the values' place any more.
     #[inline(always)]
-    pub(super) fn records_mut(&mut self) -> &mut LaneActivations {
+    pub(crate) fn records_mut(&mut self) -> &mut LaneActivations {
         self.plain.bound.set(0);
         self.frames_changed();
         self.activation_records.get_mut()
@@ -291,7 +291,7 @@ impl LaneStack {
     /// How many records there are (native, Wasm and heap-window frames, and prepared ones
     /// emitted code's entry spilled): a record's index bound.
     #[inline(always)]
-    pub(super) fn record_count(&self) -> usize {
+    pub(crate) fn record_count(&self) -> usize {
         // SAFETY: reads the length alone.
         unsafe { self.records_unspilled() }.len()
     }
@@ -325,7 +325,7 @@ impl LaneStack {
 
     /// The native record frames in the run that continues into the records: only when every plain header
     /// is native (`headers`), since the records under a header that is not native are not in the run.
-    pub(super) fn record_native_depth_in_run(&self, headers: usize) -> usize {
+    pub(crate) fn record_native_depth_in_run(&self, headers: usize) -> usize {
         if headers != self.plain.depth.get() { return 0; }
         // SAFETY: the reference ends here.
         unsafe { self.records_unspilled() }.native_depth()

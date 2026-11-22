@@ -7,8 +7,8 @@ use super::*;
 ///
 /// The analysis is flat arrays: the registers the rows name are columns, the definitions of a
 /// column the bits of a state, one state per row and per branch target outside the region.
-pub(super) struct Webs {
-    pub(super) orig: Vec<Register>,
+pub(crate) struct Webs {
+    pub(crate) orig: Vec<Register>,
     /// The registers the rows name, ascending: the columns of `at` and `leaf_at`.
     named: Vec<Register>,
     /// Per row and column: the web of the definition reaching the row (`NO_WEB` at a row control
@@ -27,21 +27,21 @@ const NO_WEB: WebId = WebId::MAX;
 
 /// A set of small numbers, one bit each.
 #[derive(Default)]
-pub(super) struct Bits(Vec<u64>);
+pub(crate) struct Bits(Vec<u64>);
 
 impl Bits {
-    pub(super) fn insert(&mut self, member: usize) {
+    pub(crate) fn insert(&mut self, member: usize) {
         if self.0.len() <= member / WORD {
             self.0.resize(member / WORD + 1, 0);
         }
         self.0[member / WORD] |= 1 << (member % WORD);
     }
 
-    pub(super) fn contains(&self, member: usize) -> bool {
+    pub(crate) fn contains(&self, member: usize) -> bool {
         self.0.get(member / WORD).is_some_and(|word| word >> (member % WORD) & 1 != 0)
     }
 
-    pub(super) fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.0.iter().map(|word| word.count_ones() as usize).sum()
     }
 }
@@ -49,7 +49,7 @@ impl Bits {
 /// Where control goes after a row: a row of the region, or a PC outside it (which includes
 /// falling off its last row).
 #[derive(Clone, Copy)]
-pub(super) enum Next {
+pub(crate) enum Next {
     Row(usize),
     Leave(Pc),
 }
@@ -66,7 +66,7 @@ impl Decoded {
     }
 
     /// Where control goes after row `k` of `count`.
-    pub(super) fn successors(&self, k: usize, count: usize, span: &Span) -> impl Iterator<Item = Next> {
+    pub(crate) fn successors(&self, k: usize, count: usize, span: &Span) -> impl Iterator<Item = Next> {
         let fall = (self.kind != Kind::Jump && !self.completes && self.step.is_none_or(Step::falls)).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(span.backedge + 1) });
         let branch = self.target.map(|target| row_at(span, target).map_or(Next::Leave(target), Next::Row));
         // A switch's entries are the `Jump`s after it: slots `0..=hole`, the last the no-match entry.
@@ -271,7 +271,7 @@ impl Renamer<'_> {
 
 impl Webs {
     /// The rows renamed to webs. A register in `merged` is one web.
-    pub(super) fn split(span: &Span, decoded: &[Decoded], merged: &Bits) -> (Self, Vec<Decoded>) {
+    pub(crate) fn split(span: &Span, decoded: &[Decoded], merged: &Bits) -> (Self, Vec<Decoded>) {
         let defs = Defs::of(decoded);
         let flow = flow(span, decoded, &defs);
         let sets = joined(span, decoded, merged, &defs, &flow);
@@ -279,13 +279,13 @@ impl Webs {
     }
 
     /// The webs of `register`.
-    pub(super) fn count(&self, register: Register) -> usize {
+    pub(crate) fn count(&self, register: Register) -> usize {
         self.orig.iter().filter(|orig| **orig == register).count()
     }
 
     /// The webs live at `pc`: in the region, the ones reaching its row; outside, the ones reaching
     /// that branch target.
-    pub(super) fn live_at(&self, span: &Span, pc: u32) -> Vec<usize> {
+    pub(crate) fn live_at(&self, span: &Span, pc: u32) -> Vec<usize> {
         let columns = self.named.len();
         let table = match row_at(span, pc) {
             Some(k) => self.at.get(k * columns..(k + 1) * columns),
@@ -299,7 +299,7 @@ impl Webs {
 
     /// For each web, the webs that may not share its pin: those live where it is live, or where
     /// it is defined.
-    pub(super) fn clashes(&self, span: &Span, decoded: &[Decoded]) -> Vec<Vec<usize>> {
+    pub(crate) fn clashes(&self, span: &Span, decoded: &[Decoded]) -> Vec<Vec<usize>> {
         let mut clash: Vec<Vec<usize>> = vec![Vec::new(); self.orig.len()];
         for (k, row) in decoded.iter().enumerate() {
             let mut held = self.live_at(span, span.header + k as Pc);
@@ -316,7 +316,7 @@ impl Webs {
     }
 
     /// The webs the region is entered with: those live at the header that reach its first row.
-    pub(super) fn entry_live(&self, span: &Span) -> Vec<usize> {
+    pub(crate) fn entry_live(&self, span: &Span) -> Vec<usize> {
         self.live_at(span, span.header)
     }
 }

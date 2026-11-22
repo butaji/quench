@@ -80,7 +80,7 @@ fn membership_keys(code: &[WideInstruction], constants: &[Value]) -> Vec<Option<
 }
 
 /// The facts rows hold, each once, in order.
-pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
+pub(crate) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
     let mut facts: Vec<T> = facts.collect();
     facts.sort_unstable();
     facts.dedup();
@@ -90,7 +90,7 @@ pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
 /// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`) or whose native
 /// functions they stand on (`Decoded::holder`): the Stable facts the code takes, which a change of a value
 /// a prototype of that shape holds, or of its own layout, retires it.
-pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
+pub(crate) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
     let natives = decoded.iter().filter_map(|row| row.holder);
     distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(natives))
 }
@@ -98,27 +98,27 @@ pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
 /// The prototype chains the folded rows read their answers through (`Folded::chain`) and the adding stores'
 /// chain proofs hold for (`adds::Add::chain`): the Stable facts the code takes, which a layout change or the
 /// death of a prototype on one retires it (`Heap::subscribe_prototype_chain`).
-pub(super) fn held_chains(decoded: &[Decoded]) -> Box<[quench_runtime::code_dependencies::PrototypeChain]> {
+pub(crate) fn held_chains(decoded: &[Decoded]) -> Box<[quench_runtime::code_dependencies::PrototypeChain]> {
     let added = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain));
     distinct(decoded.iter().filter_map(|row| row.folded.map(Folded::chain)).chain(added))
 }
 
 /// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code
 /// takes, which a cache naming one retires it.
-pub(super) fn held_atoms(decoded: &[Decoded]) -> Box<[Atom]> {
+pub(crate) fn held_atoms(decoded: &[Decoded]) -> Box<[Atom]> {
     distinct(decoded.iter().filter_map(|row| row.atom))
 }
 
 /// The exact shapes of the holders the rows' `instanceof`s inherit the native `@@hasInstance` from, with the slots and
 /// shapes of their constructors' `prototype`s (`Decoded::instanceof`): the Stable facts the code takes, which a write
 /// of a `prototype`, a departure of a constructor's shape or a change of a holder's values retires it.
-pub(super) fn held_instanceofs(decoded: &[Decoded]) -> Box<[InstanceofFact]> {
+pub(crate) fn held_instanceofs(decoded: &[Decoded]) -> Box<[InstanceofFact]> {
     distinct(decoded.iter().filter_map(|row| row.instanceof.map(|(_, fact)| fact)))
 }
 
 /// The constructors whose identity the rows' `instanceof`s name (`Decoded::instanceof`): the code holds each
 /// one, which a collection that frees it retires the code over (`LaneMethod::constructors`).
-pub(super) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
+pub(crate) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
     distinct(decoded.iter().filter_map(|row| row.instanceof.map(|(constructor, _)| constructor.to_bits()))).iter().map(|bits| Value::from_bits(*bits)).collect()
 }
 
@@ -126,7 +126,7 @@ pub(super) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
 /// key (`Known::presences`): the boolean it answered to the register `dst`, while the object has that exact shape and prototype
 /// link (`Heap::Held`, the folded read's row over a constant), under the dependency on the layouts of the prototypes
 /// `Folded::chain` names, the whole chain the answer read.
-pub(super) fn membership_row(known: Known, pc: u32, instruction: WideInstruction, dst: Register) -> Option<Decoded> {
+pub(crate) fn membership_row(known: Known, pc: u32, instruction: WideInstruction, dst: Register) -> Option<Decoded> {
     let fact = known.presences?.get(pc as usize).copied().flatten().filter(|_| is_membership(instruction))?;
     let object = Some(Source::Register(instruction.operand_c().register_index()?));
     let row = Decoded::heap(Heap::Held, Some(dst), object, None);
@@ -151,7 +151,7 @@ fn standing_on(row: Decoded, (value, constructor, proved): InstanceofArm) -> Dec
 
 /// The step `row` of the `instanceof` at `pc` as the fast arm of a constructor the VM proved steady, with the helper step behind it as
 /// the slow arm. Any other row is as it is.
-pub(super) fn instanceof_arm(known: Known, pc: u32, instruction: WideInstruction, row: Decoded) -> Decoded {
+pub(crate) fn instanceof_arm(known: Known, pc: u32, instruction: WideInstruction, row: Decoded) -> Decoded {
     match instanceof_operands(known, pc, instruction).filter(|_| row.step == Some(Step::Helper) && row.dst.is_some()) {
         Some(operands) => standing_on(Decoded { step: Some(Step::Fast(Heap::Instanceof)), ..row }, operands),
         None => row,
@@ -167,7 +167,7 @@ fn instanceof_jump(known: Known, pc: u32, instruction: WideInstruction, dst: Reg
 
 /// The rows of a `JumpBinaryFalse` of `instanceof` or `in` the VM remembers an answer for: the comparison's row, writing its boolean to
 /// the register `scratch`, then the jump to the instruction's target where that boolean is false.
-pub(super) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, scratch: Register) -> Option<Vec<Decoded>> {
+pub(crate) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, scratch: Register) -> Option<Vec<Decoded>> {
     matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::CompareJump { .. })).then_some(())?;
     let compared = instanceof_jump(known, pc, instruction, scratch).or_else(|| membership_row(known, pc, instruction, scratch))?;
     let jump = Decoded::number(Kind::JumpFalse, None, Some(Source::Register(scratch)), None, Some(instruction.jump_target()));
@@ -178,7 +178,7 @@ pub(super) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, 
 impl Vm {
     /// The constructor each `instanceof` of `code` names, by PC, where the VM can tell now: the global a by-name load
     /// just before it reads, or the entry parameter its register still holds (`parameters`, one per register from 0).
-    pub(in crate::compiled) fn instanceof_constructors(&mut self, program: &ResidualProgram, code: &[WideInstruction], parameters: &[Value]) -> Vec<Option<Value>> {
+    pub(crate) fn instanceof_constructors(&mut self, program: &ResidualProgram, code: &[WideInstruction], parameters: &[Value]) -> Vec<Option<Value>> {
         let joins = joins(code);
         (0..code.len()).map(|pc| {
             let register = Some(code[pc]).filter(|instruction| is_instanceof(*instruction))?.operand_c().register_index()?;
@@ -194,7 +194,7 @@ impl Vm {
 
     /// What `key in object` answered at each `in` of `code`, by PC, where its key is a constant string and exactly one
     /// receiver layout answered that key (`Vm::presence_fact`).
-    pub(in crate::compiled) fn membership_facts(&mut self, code: &[WideInstruction]) -> Vec<Option<InPresence>> {
+    pub(crate) fn membership_facts(&mut self, code: &[WideInstruction]) -> Vec<Option<InPresence>> {
         let keys = membership_keys(code, self.programs.constants(self.active_program));
         keys.into_iter().map(|key| {
             let atom = self.string_key_atom(key?)?;

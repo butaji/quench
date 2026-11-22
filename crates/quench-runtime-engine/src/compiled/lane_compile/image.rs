@@ -5,10 +5,10 @@ use super::*;
 
 /// The code of a lane body, and where its scalar entry and its proven entry lie in it, with the entry types the
 /// proven entry's guards are skipped at (`lane_region::LoweredRegion::entry_types`).
-pub(super) struct LaneImage {
-    pub(super) code: Vec<u8>,
-    pub(super) scalar: Option<usize>,
-    pub(super) proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>,
+pub(crate) struct LaneImage {
+    pub(crate) code: Vec<u8>,
+    pub(crate) scalar: Option<usize>,
+    pub(crate) proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>,
 }
 
 /// The alignment each function's code starts at.
@@ -46,7 +46,7 @@ fn append(code: &mut Vec<u8>, function: ir::Function, level: super::super::jit_b
 /// The code of one lane body and of its `scalar` entry, compiled on the calling thread: where the
 /// entry does not compile, neither does the image, as its body calls it. A proven entry that does not
 /// compile is dropped: the body's own entry runs every guard.
-pub(super) fn compile(function: ir::Function, scalar: Option<ir::Function>, proven: Option<(ir::Function, Box<[quench_runtime::typed_ir::Type]>)>,
+pub(crate) fn compile(function: ir::Function, scalar: Option<ir::Function>, proven: Option<(ir::Function, Box<[quench_runtime::typed_ir::Type]>)>,
     level: super::super::jit_backend::CompileLevel) -> super::LaneCode {
     let mut code = function_code(function, level)?;
     let scalar = match scalar {

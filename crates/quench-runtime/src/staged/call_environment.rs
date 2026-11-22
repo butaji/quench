@@ -23,14 +23,14 @@ use crate::Value;
 /// word, which holds the address of the header word, and the header word, which holds the slot
 /// count). The locals, the storage's slots, follow at `ENTRY_WORDS`. The interpreter asserts
 /// these against `dispatch_fast::WINDOW_*` and `heap::IN_PLACE_SLOTS_WORDS`.
-pub(crate) const ENTRY_ENVIRONMENT: u16 = 0;
-pub(crate) const ENTRY_SLOTS: u16 = 1;
-pub(crate) const ENTRY_CAPTURED: u16 = 2;
-pub(crate) const ENTRY_STORAGE: u16 = 3;
+pub const ENTRY_ENVIRONMENT: u16 = 0;
+pub const ENTRY_SLOTS: u16 = 1;
+pub const ENTRY_CAPTURED: u16 = 2;
+pub const ENTRY_STORAGE: u16 = 3;
 /// The in-place storage's words: the storage word, then the header word (`ThinBoxSlice::IN_PLACE_WORDS`).
-pub(crate) const STORAGE_WORDS: u16 = 2;
+pub const STORAGE_WORDS: u16 = 2;
 /// Where the locals start, counted from the first entry (`crate::vm::engine_types::WINDOW_LOCALS`).
-pub(crate) const ENTRY_WORDS: u16 = ENTRY_STORAGE + STORAGE_WORDS;
+pub const ENTRY_WORDS: u16 = ENTRY_STORAGE + STORAGE_WORDS;
 
 /// The byte offset of word `index` from a base, for indices past `u16` (locals plus values).
 #[inline(always)]
@@ -56,7 +56,7 @@ pub(crate) fn admit_environment<S: Stage>(stage: &mut S, (activations, limit): (
 
 /// `admit_environment` on machine words: the interpreter's admission of an environment window.
 #[inline(always)]
-pub(crate) fn concrete_admit_environment(activations: u64, limit: u64, free: u64, needed: u64) -> bool {
+pub fn concrete_admit_environment(activations: u64, limit: u64, free: u64, needed: u64) -> bool {
     admit_environment(&mut super::Concrete::new(std::ptr::null()), (activations, limit), (free, needed), ()).is_some()
 }
 
@@ -121,7 +121,7 @@ pub(crate) fn bind_context<S: Stage>(stage: &mut S, registers: S::Word, context:
 
 /// The frame context a callee runs with: its receiver, its closure's environment and captures.
 #[derive(Clone, Copy)]
-pub(crate) struct WindowContext<W> {
+pub struct WindowContext<W> {
     pub(crate) this: W,
     pub(crate) env: W,
     /// The captures' address (`ScriptCallTarget::capture`), as a word.
@@ -130,7 +130,7 @@ pub(crate) struct WindowContext<W> {
 
 /// The shape of an environment window, from the target and its view (`EnvironmentWindow`).
 #[derive(Clone, Copy)]
-pub(crate) struct EnvironmentShape {
+pub struct EnvironmentShape {
     /// The callee's registers (`ScriptCallTarget::registers`), after which the entries start.
     pub(crate) registers: u16,
     /// The registers live at entry, which start `undefined` (`ScriptCallTarget::entry_registers`).
@@ -153,7 +153,7 @@ impl EnvironmentShape {
 /// the first `bound` are parameters, plus the locals the call binds itself: the rest array at its
 /// parameter's local and the callee at a named function expression's own local.
 #[derive(Clone, Copy)]
-pub(crate) struct EnvironmentPassed<W> {
+pub struct EnvironmentPassed<W> {
     pub(crate) arguments: W,
     pub(crate) count: u16,
     pub(crate) bound: u16,
@@ -179,7 +179,7 @@ pub(crate) struct EnvironmentPassed<W> {
 /// local. The tier then moves the values' top past `shape.held() + count` and the frame context,
 /// and pushes the activation record (environment activations are never plain).
 #[inline(always)]
-pub(crate) fn enter_environment<S: Stage>(stage: &mut S, registers: S::Word, shape: EnvironmentShape, passed: EnvironmentPassed<S::Word>,
+pub fn enter_environment<S: Stage>(stage: &mut S, registers: S::Word, shape: EnvironmentShape, passed: EnvironmentPassed<S::Word>,
     context: WindowContext<S::Word>) -> S::Word {
     // The parameters promoted in place start as their arguments, every other live register
     // `undefined`; a promoted parameter's register past the live ones is dead at entry.

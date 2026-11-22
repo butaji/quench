@@ -11,9 +11,9 @@ use quench_runtime::staged::Form;
 use quench_runtime::typed_ir::Representation;
 
 /// What one access's frame proved: the plan of its read and of its store.
-pub(super) struct LanePlans<'p> {
-    pub(super) read: Option<FieldPlan<'p>>,
-    pub(super) store: Option<StorePlan<'p>>,
+pub(crate) struct LanePlans<'p> {
+    pub(crate) read: Option<FieldPlan<'p>>,
+    pub(crate) store: Option<StorePlan<'p>>,
 }
 
 impl PlanSource for LanePlans<'_> {
@@ -23,16 +23,16 @@ impl PlanSource for LanePlans<'_> {
 
 impl LanePlans<'static> {
     /// The plans of a step that reads or stores no named field of its own.
-    pub(super) const NONE: Self = Self { read: None, store: None };
+    pub(crate) const NONE: Self = Self { read: None, store: None };
 }
 
 /// One link of a lookup: the site it reads through and what its cache proved.
-pub(super) struct LinkInput {
-    pub(super) atom: Atom,
-    pub(super) site: u16,
-    pub(super) loads: Vec<NativeFieldLoad>,
+pub(crate) struct LinkInput {
+    pub(crate) atom: Atom,
+    pub(crate) site: u16,
+    pub(crate) loads: Vec<NativeFieldLoad>,
     /// Whether a miss of the link's fast read asks the VM's caches before it leaves.
-    pub(super) probed: bool,
+    pub(crate) probed: bool,
 }
 
 type Group = (NativeFieldLoad, Vec<u32>);
@@ -80,7 +80,7 @@ impl Fast {
 }
 
 /// Whether a link's value comes from its loads' native reads, as the VM's own read does not.
-pub(super) fn reads_natively(loads: &[NativeFieldLoad]) -> bool {
+pub(crate) fn reads_natively(loads: &[NativeFieldLoad]) -> bool {
     !matches!(Fast::of(loads), Fast::Host)
 }
 
@@ -95,7 +95,7 @@ fn inherited_pairs(load: &NativeFieldLoad, folds_stable: bool) -> Vec<(u32, u64)
 /// roots, which the publication keeps alive (`FoldedRoots::embed_heap_identity`), and the chains
 /// they were read through with its chains, whose prototypes' layouts it holds
 /// (`StableFacts::chains`); `inherited_pairs` then names the values by their bits.
-pub(super) fn embed_inherited(links: &[LinkInput], stable: &mut super::stable::StableUses) {
+pub(crate) fn embed_inherited(links: &[LinkInput], stable: &mut super::stable::StableUses) {
     for constant in links.iter().flat_map(|link| Fast::of(&link.loads).loads()).filter_map(|load| load.inherited) {
         for (_, value) in constant.values() {
             stable.roots.embed_heap_identity(*value);
@@ -181,7 +181,7 @@ fn family_arms<'a>(groups: &'a [Group], ops: &'a [Vec<IcOp<'a>>], pairs: &'a [Ve
 /// The plans of a lookup's `links`, one per site and chained where there are several, for
 /// `then`. A division that folds Stable facts takes a holder's inherited constants; where the
 /// first field's value is `known`, its link is that value.
-pub(super) fn with_read_plan<R>(links: &[LinkInput], (folds_stable, known): (bool, bool),
+pub(crate) fn with_read_plan<R>(links: &[LinkInput], (folds_stable, known): (bool, bool),
     then: impl FnOnce(&LanePlans<'_>) -> R) -> R {
     let fasts: Vec<Fast> = links.iter().map(|link| Fast::of(&link.loads)).collect();
     let pairs: Vec<Vec<Vec<(u32, u64)>>> = fasts.iter().map(|fast|

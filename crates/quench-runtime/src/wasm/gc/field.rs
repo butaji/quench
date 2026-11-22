@@ -7,12 +7,12 @@ use wasmparser::{StorageType, ValType};
 /// re-checks what validation proved. Layout, low bits first: the storage, the value class, the
 /// index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct GcField(u32);
+pub struct GcField(u32);
 
 /// The Wasm kind of a field's word, which a tier gives its register: a 32-bit word (`i32`, `f32`
 /// and every packed storage), a 64-bit number (`i64`, `f64`), a reference, or a vector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GcFieldValue {
+pub enum GcFieldValue {
     Narrow,
     Wide,
     Reference,
@@ -123,11 +123,11 @@ impl GcField {
 
 /// The `c` operand of a struct read when the lowering cannot carry the field's payload offset in it
 /// (the offset does not fit): the read finds the field by its index instead.
-pub(crate) const NO_STATIC_OFFSET: u16 = u16::MAX;
+pub const NO_STATIC_OFFSET: u16 = u16::MAX;
 
 /// The static payload offset a struct read's `c` operand carries (`FieldLayout::StaticOffset`), or
 /// `None` for `NO_STATIC_OFFSET`.
 #[inline(always)]
-pub(crate) fn static_offset(operand: u16) -> Option<u32> {
+pub fn static_offset(operand: u16) -> Option<u32> {
     (operand != NO_STATIC_OFFSET).then_some(u32::from(operand))
 }

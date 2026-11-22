@@ -41,7 +41,7 @@ script_handler! {
 
 /// The handler of a `String.prototype.replace` site whose result only `.length` reads
 /// (`native_call_handler`): `string_replace_length_miss`.
-pub(super) fn replace_length_handler() -> Handler {
+pub(crate) fn replace_length_handler() -> Handler {
     string_replace_length_miss as Handler
 }
 
@@ -54,7 +54,7 @@ const AFTER_CALL_READ: usize = CALL_READ_RECORD + 1;
 /// right after it, which nothing reads the string again after (`native_call_handler`'s
 /// `length_only`): the site may answer the call with that length alone. Proved once, when the
 /// site resolves its native.
-pub(super) fn length_read(cx: *mut LaneContext, ip: Ip, i: &LaneInstruction) -> bool {
+pub(crate) fn length_read(cx: *mut LaneContext, ip: Ip, i: &LaneInstruction) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };

@@ -9,28 +9,28 @@ use super::{
     MAX_INLINE_PARAMS, MAX_REGION_FIELDS,
 };
 use super::super::lane_unit::{inlinable, InlineScope};
-mod pc_map;
-pub(super) use pc_map::PcMap;
+pub(crate) mod pc_map;
+pub(crate) use pc_map::PcMap;
 use quench_runtime::bitset::BitSet;
 use quench_runtime::compile::liveness::{register_in, RegisterMasks};
 
 /// One inlined call: its frame, its callee and where leaving in its setup resumes.
-pub(super) struct Site<'b> {
-    pub(super) frame: InlineFrame,
-    pub(super) callee: InlineCallee<'b>,
+pub(crate) struct Site<'b> {
+    pub(crate) frame: InlineFrame,
+    pub(crate) callee: InlineCallee<'b>,
     /// The path the callee's read reads it through, from a root the region does not
     /// write (a receiver given its own register reads through its path).
-    pub(super) callee_path: Option<FieldPath>,
+    pub(crate) callee_path: Option<FieldPath>,
     /// Where leaving in the call's setup resumes: the receiver's own read, else the
     /// callee's.
-    pub(super) resume: u32,
-    pub(super) window: Register,
-    pub(super) result: Register,
-    pub(super) reached: BitSet,
+    pub(crate) resume: u32,
+    pub(crate) window: Register,
+    pub(crate) result: Register,
+    pub(crate) reached: BitSet,
 }
 
 /// The names the loop stores: a receiver read through one changes in the loop.
-pub(super) fn stored_names(caller: &[WideInstruction], sites: &[FieldSite]) -> BitSet {
+pub(crate) fn stored_names(caller: &[WideInstruction], sites: &[FieldSite]) -> BitSet {
     let mut names = BitSet::new(0);
     caller
         .iter()
@@ -56,7 +56,7 @@ fn body<'s>(callee: &'s InlineCallee<'_>, reached: &'s BitSet) -> impl Iterator<
 
 /// The callee as the read finds it now, with the instructions its entry reaches, when the
 /// region can run it in place.
-pub(super) fn admitted_callee<'a>(
+pub(crate) fn admitted_callee<'a>(
     resolve: &mut dyn FnMut(&[FieldUse], CalleeSource) -> Option<InlineCallee<'a>>,
     path: Option<&FieldPath>,
     source: CalleeSource,
@@ -91,7 +91,7 @@ pub(super) fn admitted_callee<'a>(
 /// A parameter read as an object is bound to the caller register its argument was
 /// moved from in the setup `run` (starting at PC `first`), which the region never writes;
 /// any other is a Number it copies. Each such move drops out.
-pub(super) fn bound_parameters(
+pub(crate) fn bound_parameters(
     run: &[WideInstruction],
     first: u32,
     window: Register,
@@ -118,10 +118,10 @@ pub(super) fn bound_parameters(
 /// Region PCs: each kept caller instruction takes one, a call its numeric parameters'
 /// moves and its callee's reached instructions, each `Return` two (the result's move and
 /// the jump past the call). A dropped instruction's PC is the next instruction's.
-pub(super) struct Layout {
-    pub(super) caller: Vec<u32>,
-    pub(super) callee: PcMap<Vec<u32>>,
-    pub(super) length: u32,
+pub(crate) struct Layout {
+    pub(crate) caller: Vec<u32>,
+    pub(crate) callee: PcMap<Vec<u32>>,
+    pub(crate) length: u32,
 }
 
 fn set_this_length(instruction: WideInstruction, sites: &[FieldSite]) -> u32 {
@@ -159,7 +159,7 @@ impl Layout {
     }
 }
 
-pub(super) fn layout(
+pub(crate) fn layout(
     caller: &[WideInstruction],
     header: u32,
     dropped: &PcMap<()>,
@@ -188,20 +188,20 @@ pub(super) fn layout(
 
 /// What emitting the region's instructions reads: the loop, its calls and their layout.
 #[derive(Clone, Copy)]
-pub(super) struct Plan<'c, 'a> {
-    pub(super) header: u32,
-    pub(super) backedge: u32,
-    pub(super) caller: &'c [WideInstruction],
-    pub(super) sites: &'c [FieldSite],
-    pub(super) live: &'c RegisterMasks,
-    pub(super) calls: &'c PcMap<Site<'a>>,
+pub(crate) struct Plan<'c, 'a> {
+    pub(crate) header: u32,
+    pub(crate) backedge: u32,
+    pub(crate) caller: &'c [WideInstruction],
+    pub(crate) sites: &'c [FieldSite],
+    pub(crate) live: &'c RegisterMasks,
+    pub(crate) calls: &'c PcMap<Site<'a>>,
     /// The caller PCs whose instructions drop out.
-    pub(super) dropped: &'c PcMap<()>,
+    pub(crate) dropped: &'c PcMap<()>,
     /// The setup PCs by the PC they resume at.
-    pub(super) setup: &'c PcMap<u32>,
+    pub(crate) setup: &'c PcMap<u32>,
     /// The caller instructions the region runs rewritten.
-    pub(super) rewritten: &'c PcMap<WideInstruction>,
-    pub(super) layout: &'c Layout,
+    pub(crate) rewritten: &'c PcMap<WideInstruction>,
+    pub(crate) layout: &'c Layout,
 }
 
 impl Plan<'_, '_> {
@@ -211,13 +211,13 @@ impl Plan<'_, '_> {
 }
 
 /// The region's instructions with each one's origin and live registers.
-pub(super) struct Emission<'c, 'a> {
+pub(crate) struct Emission<'c, 'a> {
     plan: Plan<'c, 'a>,
-    pub(super) instructions: Vec<WideInstruction>,
-    pub(super) origins: Vec<Origin>,
-    pub(super) masks: Vec<RegisterSet>,
+    pub(crate) instructions: Vec<WideInstruction>,
+    pub(crate) origins: Vec<Origin>,
+    pub(crate) masks: Vec<RegisterSet>,
     leaves: Vec<u32>,
-    pub(super) callee_captures: Vec<(usize, u16)>,
+    pub(crate) callee_captures: Vec<(usize, u16)>,
 }
 
 /// One call's callee in the region: its registers renamed past the caller's.
@@ -257,7 +257,7 @@ impl CallView<'_, '_> {
 }
 
 impl<'c, 'a> Emission<'c, 'a> {
-    pub(super) fn new(plan: Plan<'c, 'a>) -> Self {
+    pub(crate) fn new(plan: Plan<'c, 'a>) -> Self {
         let length = plan.layout.length as usize;
         Self {
             plan,
@@ -277,7 +277,7 @@ impl<'c, 'a> Emission<'c, 'a> {
 
     /// Emits every kept caller instruction and each call's callee, then the jumps leaving
     /// the region.
-    pub(super) fn run(&mut self) -> Option<()> {
+    pub(crate) fn run(&mut self) -> Option<()> {
         let plan = self.plan;
         for (offset, instruction) in plan.caller.iter().copied().enumerate() {
             let pc = plan.header + offset as u32;
@@ -449,7 +449,7 @@ fn field_guard<'h>(
 
 /// Each call's frame with its guard: the callee's field, which the entry reads and guards
 /// still holds it, read through the region's held registers.
-pub(super) fn guarded_frames<'h>(
+pub(crate) fn guarded_frames<'h>(
     calls: PcMap<Site<'_>>,
     checked_reads: &PcMap<u32>,
     held: &'h dyn Fn(Register) -> Option<&'h FieldPath>,

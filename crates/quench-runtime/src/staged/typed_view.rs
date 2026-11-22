@@ -15,7 +15,7 @@ use crate::heap::{TypedArrayKind, NATIVE_TYPED_ARRAY_LAYOUT as VIEW};
 /// stage holds as words: the directory of the pages of record addresses by legacy slot, its page
 /// count, and the address of the count.
 #[derive(Clone, Copy)]
-pub(crate) struct TypedRecords<W> {
+pub struct TypedRecords<W> {
     pub(crate) directory: W,
     pub(crate) pages: W,
     pub(crate) relocations: W,
@@ -24,7 +24,7 @@ pub(crate) struct TypedRecords<W> {
 /// What an access asks of a view: the kind its site observed, `None` where any kind serves and
 /// the access dispatches on the record's, and whether it stores.
 #[derive(Clone, Copy)]
-pub(crate) struct ViewAccess {
+pub struct ViewAccess {
     pub(crate) kind: Option<NativeKind>,
     pub(crate) writable: bool,
 }
@@ -58,7 +58,7 @@ pub(crate) fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word
 /// other value, another kind than the one asked, a stale or detached record, or (to store) bytes
 /// another buffer shares.
 #[inline(always)]
-pub(crate) fn prove_typed_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word,
+pub fn prove_typed_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word,
     access: ViewAccess, miss: S::Miss) -> Option<TypedView<S::Word>> {
     let record = view_record(stage, records, base, miss)?;
     let kind_word = stage.load_u8(Region::Records.mutable(), record, VIEW.kind_offset as i32);
@@ -100,7 +100,7 @@ pub(crate) fn concrete_typed_view(directory: (*const usize, usize), base: crate:
 /// and whether it stores), among the record pages of `directory`: the element row's proof without
 /// a frame, a store's `unshared` test included.
 #[inline(always)]
-pub(crate) fn concrete_typed_access((directory, pages): (*const usize, usize), base: crate::Value, access: ViewAccess)
+pub fn concrete_typed_access((directory, pages): (*const usize, usize), base: crate::Value, access: ViewAccess)
     -> Option<TypedView<u64>> {
     let relocations = crate::heap::buffer_relocations_address();
     let records = TypedRecords { directory: directory.addr() as u64, pages: pages as u64, relocations: relocations.addr() as u64 };

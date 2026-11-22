@@ -29,32 +29,32 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of a body's call sites, by unit PC.
 /// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
 /// (`Lowering::polymorphic_call`); one for a site that is not polymorphic.
-pub(super) type DirectSites = BTreeMap<usize, Vec<*const DirectCallee>>;
+pub(crate) type DirectSites = BTreeMap<usize, Vec<*const DirectCallee>>;
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
 
 #[path = "lane_region/known_branches.rs"]
-mod known_branches;
+pub(crate) mod known_branches;
 #[path = "lane_region/clif_census.rs"]
-mod clif_census;
+pub(crate) mod clif_census;
 #[path = "lane_region/packed_ranges.rs"]
-mod packed_ranges;
+pub(crate) mod packed_ranges;
 #[path = "lane_region/int_ranges.rs"]
-mod int_ranges;
+pub(crate) mod int_ranges;
 #[cfg(test)]
 #[path = "lane_region/int_ranges_tests.rs"]
-mod int_ranges_tests;
+pub(crate) mod int_ranges_tests;
 #[path = "lane_region/global_reads.rs"]
-mod global_reads;
+pub(crate) mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
 #[path = "lane_region/data_view_calls.rs"] mod data_view_calls;
 pub(crate) use native_calls::{inlines_in_loop, inlines_in_loop_call, native_method_call, IN_PLACE_CALL};
 #[path = "lane_region/stable.rs"]
-mod stable;
+pub(crate) mod stable;
 #[path = "lane_region/polls.rs"]
-mod polls;
-#[path = "lane_region/scalar.rs"] pub(super) mod scalar;
+pub(crate) mod polls;
+#[path = "lane_region/scalar.rs"] pub(crate) mod scalar;
 #[path = "lane_region/trips.rs"] mod trips;
 #[path = "lane_region/function_names.rs"] mod function_names;
 #[path = "lane_region/literals.rs"] mod literals;
@@ -74,8 +74,8 @@ pub(crate) use store_domains::store_domains;
 #[path = "lane_region/arguments.rs"] mod arguments;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/compare_jumps.rs"] mod compare_jumps;
-#[path = "lane_region/relocs.rs"] pub(super) mod relocs;
-use relocs::RelocKind; pub(super) use relocs::{atom_symbol, helper_symbol, numeric_symbol};
+#[path = "lane_region/relocs.rs"] pub(crate) mod relocs;
+use relocs::RelocKind; pub(crate) use relocs::{atom_symbol, helper_symbol, numeric_symbol};
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/virtual_objects.rs"] mod virtual_objects;
@@ -97,7 +97,7 @@ use captures::RootedRead;
 #[path = "lane_region/call_frames.rs"] mod call_frames;
 #[path = "lane_region/declared.rs"] mod declared;
 use call_frames::{CallSite, DirectSite, Leave, ReturnSite, Site};
-pub(super) use call_frames::ProvenCall;
+pub(crate) use call_frames::ProvenCall;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/general_steps.rs"] mod general_steps;
 #[path = "lane_region/jumps.rs"] mod jumps;
@@ -124,8 +124,8 @@ use quench_runtime::staged::machine::{Binary, Extend, Lane, MachineAccess, Machi
 use super::emit_machine::Builds;
 
 /// The call context, step dispatch and result words a lane body or trampoline reads and writes.
-pub(super) const DISPATCH: quench_runtime::staged::Access = quench_runtime::staged::Region::Dispatch.mutable();
-pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
+pub(crate) const DISPATCH: quench_runtime::staged::Access = quench_runtime::staged::Region::Dispatch.mutable();
+pub(crate) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Inline scratch capacity for the small field-site sets typical of native units;
 /// larger units spill normally, without a semantic or compilation limit.
 const INLINE_FIELD_BINDINGS: usize = 4;
@@ -146,10 +146,10 @@ const INLINE_EDGE_REFINEMENTS: usize = 2;
 const TRUNCATION_CHAIN: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
-pub(super) use quench_runtime::vm::tier_policy::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+pub(crate) use quench_runtime::vm::tier_policy::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 /// The machine bytes an IR instruction of a lane body costs at most, measured over the V8-v7
 /// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
-pub(super) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
+pub(crate) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -261,13 +261,13 @@ struct LocalProofs {
 impl LocalProofs {
     /// Notes that tagged `bits` read as the double `number`: the most recent views win a full
     /// list (a loop body that proves many Numbers keeps the ones its next reads name).
-    pub(super) fn note_number(&mut self, bits: ir::Value, number: ir::Value) {
+    pub(crate) fn note_number(&mut self, bits: ir::Value, number: ir::Value) {
         if self.numbers.len() >= 4 * INLINE_NUMBER_PROJECTIONS { self.numbers.remove(0); }
         self.numbers.push((bits, number));
     }
 
     /// Notes the dense capture view `callee`'s admission gave; the oldest view goes once the list is full.
-    pub(super) fn note_admitted_captures(&mut self, callee: ir::Value, view: (ir::Value, ir::Value)) {
+    pub(crate) fn note_admitted_captures(&mut self, callee: ir::Value, view: (ir::Value, ir::Value)) {
         if self.admitted_captures.len() >= INLINE_CAPTURE_ADMISSIONS { self.admitted_captures.remove(0); }
         self.admitted_captures.push((callee, view));
     }
@@ -396,21 +396,21 @@ struct Entry {
 
 /// A lane body lowered for the code generator, which may run it on another thread.
 #[derive(Default)]
-pub(super) struct LoweredLane {
-    pub(super) region: LoweredRegion,
-    pub(super) clif: Option<String>,
+pub(crate) struct LoweredLane {
+    pub(crate) region: LoweredRegion,
+    pub(crate) clif: Option<String>,
     /// The function's scalar entry (`scalar`), which its direct calls of itself call: compiled beside the body.
-    pub(super) scalar: Option<ir::Function>,
+    pub(crate) scalar: Option<ir::Function>,
     /// The body's proven entry (`ProvenEntry`): the same body past its parameter guards, and the entry types those guards
     /// test (`LoweredRegion::entry_types`). Its code must be the body's dependencies (`LoweredRegion::stable`).
-    pub(super) proven: Option<(ir::Function, Box<[Type]>)>,
+    pub(crate) proven: Option<(ir::Function, Box<[Type]>)>,
 }
 
 /// The direct calls whose result a published callee's summary types (`TypeSummary::result`), as the
 /// facts' observed reads: each candidate's summary joins the result, and a candidate without one
 /// types none. A returning call (its result is its activation's) and a construction are not typed: the
 /// first completes the body with a value its completion does not check, and a construction's result is its receiver.
-pub(super) fn call_results(direct: &DirectSites, instructions: &[WideInstruction]) -> Vec<super::facts::ObservedRead> {
+pub(crate) fn call_results(direct: &DirectSites, instructions: &[WideInstruction]) -> Vec<super::facts::ObservedRead> {
     direct.iter().filter_map(|(&pc, callees)| {
         let instruction = *instructions.get(pc)?;
         let Some(quench_runtime::staged::Operation::Call(quench_runtime::staged::CallOperation::Site(site))) = crate::compiled::decoded(instruction) else { return None };
@@ -481,7 +481,7 @@ struct LoopStore {
     domain: Type,
 }
 
-pub(super) struct LoweredRegion {
+pub(crate) struct LoweredRegion {
     pub number_result: Option<NativeNumberResult>,
     pub function: ir::Function,
     pub native: usize,
@@ -731,7 +731,7 @@ enum Liveness<'a> {
 /// How much of the unit must run natively: a prefix (a lane body, which leaves to the lane
 /// anywhere), or all of it (a numeric region).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Coverage {
+pub(crate) enum Coverage {
     Prefix,
     Full,
     /// One loop of the function's unit, from its header through its backward jump. Only
@@ -744,7 +744,7 @@ pub(super) enum Coverage {
 }
 
 impl Coverage {
-    pub(super) fn entry(self) -> usize {
+    pub(crate) fn entry(self) -> usize {
         match self { Self::Loop { header, .. } => header, Self::PrefixFrom(pc) => pc, _ => 0 }
     }
     fn full(self) -> bool { self == Self::Full }
@@ -772,7 +772,7 @@ impl Coverage {
 /// How a run ends. Every kind runs the lane body ABI (`body_signature_in_lane`): it takes its
 /// inputs in the register window and returns its status and result word in registers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Completion {
+pub(crate) enum Completion {
     /// A status and a PC (`LaneExit`): a lane body, or a loop region.
     Body,
     /// Pure, restartable scalar entry: borrowed inputs in the window's first slots, proved
@@ -785,7 +785,7 @@ pub(super) enum Completion {
 
 impl Completion {
     /// Whether a run completes with a status and a PC (a lane body or a loop region).
-    pub(super) fn status_and_pc(self) -> bool { self == Self::Body }
+    pub(crate) fn status_and_pc(self) -> bool { self == Self::Body }
 }
 
 pub(crate) use quench_runtime::vm::engine_types::ElementViews;
@@ -812,7 +812,7 @@ impl ElementViews {
     }
 }
 
-pub(super) fn restartable_numeric_function(program: &ResidualProgram, function: &quench_runtime::bytecode::Function,
+pub(crate) fn restartable_numeric_function(program: &ResidualProgram, function: &quench_runtime::bytecode::Function,
     instructions: impl IntoIterator<Item = WideInstruction>) -> bool {
     crate::js_compiled::function_candidate(function, program) && numeric_instructions(program, instructions)
 }
@@ -837,32 +837,32 @@ fn register_offset(register: Register) -> i32 {
     i32::from(register) * std::mem::size_of::<u64>() as i32
 }
 
-pub(super) fn int_tagged(builder: &mut FunctionBuilder<'_>, int: ir::Value) -> ir::Value {
+pub(crate) fn int_tagged(builder: &mut FunctionBuilder<'_>, int: ir::Value) -> ir::Value {
     let mut stage = emit(builder);
     let payload = stage.raw_unary(Unary::ZeroExtend(Lane::I64), int);
     quench_runtime::staged::value::int_word(&mut stage, payload)
 }
 
-pub(super) fn is_int_tagged(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
+pub(crate) fn is_int_tagged(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
     quench_runtime::staged::value::is_int(&mut emit(builder), bits)
 }
 
 /// The tagged Boolean a predicate `holds` selects: the boxed `true` where it holds, else the boxed `false`.
-pub(super) fn boolean_word(builder: &mut FunctionBuilder<'_>, holds: ir::Value) -> ir::Value {
+pub(crate) fn boolean_word(builder: &mut FunctionBuilder<'_>, holds: ir::Value) -> ir::Value {
     let yes = builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64);
     let no = builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64);
     builder.ins().select(holds, yes, no)
 }
 
 /// A block marked cold before any code is lowered into it, for the exits and slow paths the hot path leaves to.
-pub(super) fn cold_block(builder: &mut FunctionBuilder<'_>) -> ir::Block {
+pub(crate) fn cold_block(builder: &mut FunctionBuilder<'_>) -> ir::Block {
     let block = builder.create_block();
     builder.set_cold_block(block);
     block
 }
 
 /// The registers an instruction writes, by its operand layouts.
-pub(super) fn writes(instruction: WideInstruction) -> super::facts::Writes {
+pub(crate) fn writes(instruction: WideInstruction) -> super::facts::Writes {
     instruction.written_registers().collect()
 }
 
@@ -1336,7 +1336,7 @@ struct PendingUnit {
 
 /// The PCs that begin basic blocks: the entry, every jump target and every instruction
 /// after a jump.
-pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
+pub(crate) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
     let mut leaders = CompoundBitSet::with_capacity(instructions.len());
     if !instructions.is_empty() { leaders.insert(0); }
     for (pc, instruction) in instructions.iter().enumerate() {
@@ -1685,13 +1685,13 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
 /// runs end, and which element views it may assume. The division and the facts it folds are
 /// `VmFacts`, so AOT (`Frozen`) and JIT (`Online`) are two plans over one lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RegionPlan {
-    pub(super) coverage: Coverage,
-    pub(super) completion: Completion,
-    pub(super) views: ElementViews,
+pub(crate) struct RegionPlan {
+    pub(crate) coverage: Coverage,
+    pub(crate) completion: Completion,
+    pub(crate) views: ElementViews,
     /// Whether loops may version their bounds on entry (`int_ranges::prove_loops`): an OSR site
     /// whose entries kept missing compiles again without (`LoopTier::missed_entry`).
-    pub(super) entry_bounds: bool,
+    pub(crate) entry_bounds: bool,
 }
 
 /// Futamura's first projection for one region: the same `lower` a lane body, a static typed
@@ -1699,21 +1699,21 @@ pub(super) struct RegionPlan {
 /// this specializer; only the plan and the `VmFacts` division differ.
 /// No entry-snapshot field reads: a lane body or a static typed region reads its fields
 /// from the registers and caches, not from an OSR entry record.
-pub(super) static NO_ENTRY_FIELDS: [Option<u32>; 0] = [];
+pub(crate) static NO_ENTRY_FIELDS: [Option<u32>; 0] = [];
 
 /// The proved loads of each field-cache site, flat and indexed by the site (`site_loads`).
-pub(super) type FieldSites = [Option<Vec<NativeFieldLoad>>];
+pub(crate) type FieldSites = [Option<Vec<NativeFieldLoad>>];
 /// The entry-record word of each unit PC whose field read the record answers, flat and
 /// indexed by the PC.
-pub(super) type EntryWords = [Option<u32>];
+pub(crate) type EntryWords = [Option<u32>];
 
 /// The loads of field-cache `site`, if it has any.
-pub(super) fn site_loads(fields: &FieldSites, site: u16) -> Option<&Vec<NativeFieldLoad>> {
+pub(crate) fn site_loads(fields: &FieldSites, site: u16) -> Option<&Vec<NativeFieldLoad>> {
     fields.get(usize::from(site))?.as_ref()
 }
 
 /// The flat table holding each `(key, value)` at its key, sized to the largest key.
-pub(super) fn flat_table<T>(entries: impl IntoIterator<Item = (usize, T)>) -> Vec<Option<T>> {
+pub(crate) fn flat_table<T>(entries: impl IntoIterator<Item = (usize, T)>) -> Vec<Option<T>> {
     let entries: Vec<(usize, T)> = entries.into_iter().collect();
     let mut table: Vec<Option<T>> = Vec::new();
     table.resize_with(entries.iter().map(|(key, _)| key + 1).max().unwrap_or(0), || None);
@@ -1721,37 +1721,37 @@ pub(super) fn flat_table<T>(entries: impl IntoIterator<Item = (usize, T)>) -> Ve
     table
 }
 
-pub(super) struct RegionSpecializer<'p> {
-    pub(super) function_id: u32,
-    pub(super) unit: &'p super::lane_unit::Unit,
-    pub(super) helpers: LaneHelpers,
-    pub(super) fields: &'p FieldSites,
-    pub(super) global_reads: &'p quench_runtime::vm::global_facts::GlobalReads,
-    pub(super) facts: VmFacts<'p>,
-    pub(super) generic: &'p [usize],
-    pub(super) direct: &'p DirectSites,
-    pub(super) frame_captures: &'p [(usize, usize)],
-    pub(super) isa: &'p dyn cranelift_codegen::isa::TargetIsa,
+pub(crate) struct RegionSpecializer<'p> {
+    pub(crate) function_id: u32,
+    pub(crate) unit: &'p super::lane_unit::Unit,
+    pub(crate) helpers: LaneHelpers,
+    pub(crate) fields: &'p FieldSites,
+    pub(crate) global_reads: &'p quench_runtime::vm::global_facts::GlobalReads,
+    pub(crate) facts: VmFacts<'p>,
+    pub(crate) generic: &'p [usize],
+    pub(crate) direct: &'p DirectSites,
+    pub(crate) frame_captures: &'p [(usize, usize)],
+    pub(crate) isa: &'p dyn cranelift_codegen::isa::TargetIsa,
     /// An OSR region's field reads answered from the entry record, by unit PC and entry
     /// word (`osr_loop::field_word`).
-    pub(super) entry_fields: &'p EntryWords,
+    pub(crate) entry_fields: &'p EntryWords,
     /// The unit PCs of element reads observed to hold Numbers (sorted): each leaves where its
     /// element is not one, and its result is typed a Number.
-    pub(super) number_reads: &'p [super::facts::ObservedRead],
+    pub(crate) number_reads: &'p [super::facts::ObservedRead],
     /// The registers whose values at entry were int32s: candidates for an int32 entry contract
     /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
-    pub(super) int_entries: &'p [(Register, IntRange)],
+    pub(crate) int_entries: &'p [(Register, IntRange)],
     /// The registers whose values at entry were doubles: with `int_entries`, candidates for a
     /// Number entry contract (`refine_inductive_inputs`) where an int32 one fails.
-    pub(super) number_entries: &'p [Register],
+    pub(crate) number_entries: &'p [Register],
     /// The registers whose values at entry were strings: a loop array they hold is no view, its
     /// reads take the string row (`Lowering::string_or_row`), which reads any value.
-    pub(super) string_entries: &'p [Register],
+    pub(crate) string_entries: &'p [Register],
     /// The capture slots that held typed arrays at compilation (`Observation::typed_captures`).
-    pub(super) typed_captures: &'p [u16],
+    pub(crate) typed_captures: &'p [u16],
     /// The capture slots that held int32s at compilation (`Observation::int_captures`).
-    pub(super) int_captures: &'p [u16],
-    pub(super) plan: RegionPlan,
+    pub(crate) int_captures: &'p [u16],
+    pub(crate) plan: RegionPlan,
 }
 
 impl Specializer for RegionSpecializer<'_> {
@@ -1780,7 +1780,7 @@ fn declined(why: &'static str, pc: usize) {
 /// Lowers `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
 /// gives the proved shapes and slots of; `None` where it does not lower.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn lower_body(
+pub(crate) fn lower_body(
     program: &ResidualProgram,
     function_id: u32,
     unit: &super::lane_unit::Unit,
@@ -1827,24 +1827,24 @@ pub(super) fn lower_body(
 /// do: a base body is entered only at its start (a record inside it has no resume stub to load
 /// its pinned registers), and a base body leaves the same way.
 #[derive(Clone, Copy)]
-pub(super) struct AheadLeaves<'a> {
+pub(crate) struct AheadLeaves<'a> {
     /// By unit PC, the calls the closed world proves whose records the body reads (`ProvenCall`).
-    pub(super) calls: &'a BTreeMap<usize, ProvenCall>,
+    pub(crate) calls: &'a BTreeMap<usize, ProvenCall>,
     /// By constant pool slot, the heap value key (`HeapValueRecipe::String`) of each string
     /// constant the unit loads.
-    pub(super) strings: &'a BTreeMap<usize, u32>,
+    pub(crate) strings: &'a BTreeMap<usize, u32>,
 }
 
 /// The position a failed entry contract takes in a lane body's leave set
 /// (`LaneExit::Entry`): past every instruction, so it names none of them. A plan with it
 /// proves no input contract.
-pub(super) fn entry_leave(unit: &super::lane_unit::Unit) -> usize {
+pub(crate) fn entry_leave(unit: &super::lane_unit::Unit) -> usize {
     unit.instructions.len()
 }
 
 /// Build the typed residual and validate every value/CFG edge before publication.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn lower(
+pub(crate) fn lower(
     program: &ResidualProgram,
     function_id: u32,
     unit: &super::lane_unit::Unit,
@@ -2392,7 +2392,7 @@ impl Lowering<'_, '_> {
     /// (`Add` or `Subtract`) whose own result only its ToInt32 is read of (`truncated`), and `register`
     /// is dead past that sum unless the sum writes it. ToInt32 reads a `-0` and a `0` alike, and a sum
     /// with either differs from the other in the sign of a zero only, so the remainder's sign is unread.
-    pub(super) fn truncated_sum_operand(&self, pc: usize, register: Register) -> bool {
+    pub(crate) fn truncated_sum_operand(&self, pc: usize, register: Register) -> bool {
         let (at, reader) = self.reader(pc + 1, register);
         let Some(next) = self.unit.instructions.get(at).copied() else { return false };
         if !quench_runtime::staged::meaning::means(next, quench_runtime::staged::meaning::Meaning::Binary) || next.returns_from_frame()
@@ -2409,7 +2409,7 @@ impl Lowering<'_, '_> {
     /// value under 2^52 keeps every double exact, and ToInt32 of an exact integer is its low 32
     /// bits: the wrapping int32 steps compute it. Only int32 constants join the chain: a
     /// non-integer would not commute with ToInt32 (`truncated`).
-    pub(super) fn truncated_through_sums(&self, pc: usize, register: Register) -> bool {
+    pub(crate) fn truncated_through_sums(&self, pc: usize, register: Register) -> bool {
         let (mut pc, mut register) = (pc, register);
         for _ in 0..=TRUNCATION_CHAIN {
             if self.truncated(pc, register) { return true; }
@@ -2425,7 +2425,7 @@ impl Lowering<'_, '_> {
     /// through `truncated_through_sums`. Each added int32 keeps the chain's sums exact in binary64
     /// as an int32 constant does, so the wrapping product and sum give the low 32 bits of the
     /// exact sum: its ToInt32, as `(a * 3 + i) | 0` (`int_mul`).
-    pub(super) fn truncated_through_int32_sum(&self, state: &State, pc: usize, register: Register) -> bool {
+    pub(crate) fn truncated_through_int32_sum(&self, state: &State, pc: usize, register: Register) -> bool {
         let (at, reader) = self.reader(pc + 1, register);
         if at != pc + 1 || reader != register { return false; }
         let Some(next) = self.unit.instructions.get(at).copied() else { return false };
@@ -2983,7 +2983,7 @@ impl Lowering<'_, '_> {
     /// Admits at entry the writes `writes` to `slot` of `shape`, failing through `exit`; a slot whose
     /// words are raw doubles where `raw_double`, which the unit's in-place arms store as such
     /// (`Heap::admit_slot_writes_as`).
-    pub(super) fn admit_slot_writes_as(&mut self, (shape, slot): (ir::Value, ir::Value), writes: Type, raw_double: bool, exit: ir::Block) {
+    pub(crate) fn admit_slot_writes_as(&mut self, (shape, slot): (ir::Value, ir::Value), writes: Type, raw_double: bool, exit: ir::Block) {
         let (admitted, _) = self.slot_writes_admitted_as(shape, slot, writes, raw_double);
         emit_js_guard(&mut self.builder, admitted, exit);
     }
@@ -3968,7 +3968,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Leaves with `status`, and with `word` as the result word where a run publishes one.
-    pub(super) fn leave_with(&mut self, status: ir::Value, word: Option<ir::Value>) {
+    pub(crate) fn leave_with(&mut self, status: ir::Value, word: Option<ir::Value>) {
         self.leave_site().with(&mut self.builder, status, word);
     }
 
@@ -5197,15 +5197,15 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 
 #[cfg(test)]
 #[path = "lane_region/tests.rs"]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 #[path = "lane_region/lowering_tests.rs"]
-mod lowering_tests;
+pub(crate) mod lowering_tests;
 #[path = "lane_region/kept_shapes.rs"] mod kept_shapes;
 #[path = "lane_region/loop_receivers.rs"] mod loop_receivers;
 #[cfg(test)]
 #[path = "lane_region/slot_proof_tests.rs"]
-mod slot_proof_tests;
+pub(crate) mod slot_proof_tests;
 
 /// A loop's entry types the function's bytecode proves: a register the loop reads but never writes,
 /// whose every definition before or after the loop loads a constant that is no Number (a string,

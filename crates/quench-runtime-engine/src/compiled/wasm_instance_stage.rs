@@ -41,7 +41,7 @@ impl WasmInstance for Emitter<'_, '_> {
 
 impl Emitter<'_, '_> {
     /// Lowers a register, constant, binding or global step.
-    pub(super) fn instance(&mut self, pc: usize, instruction: WideInstruction, step: Instance) {
+    pub(crate) fn instance(&mut self, pc: usize, instruction: WideInstruction, step: Instance) {
         let (a, b) = (instruction.a(), instruction.b());
         if let Some(registers) = step.constant_registers(instruction) {
             self.define_constants(registers, instruction);
@@ -134,7 +134,7 @@ impl Analysis<'_> {
     /// Checks a register, constant, binding or global step has a compiled denotation in `state`
     /// and applies its register writes. A global is admitted where its type is a scalar the
     /// tier holds in a register: a reference or a vector stays interpreted.
-    pub(super) fn transfer_instance(
+    pub(crate) fn transfer_instance(
         &self,
         function: &Function,
         instruction: WideInstruction,
@@ -229,7 +229,7 @@ impl Analysis<'_> {
 }
 
 /// The machine kind a register's slot holds; a validated memory address is a 64-bit value.
-pub(super) fn value_kind(slot: Slot) -> Option<Kind> {
+pub(crate) fn value_kind(slot: Slot) -> Option<Kind> {
     match slot {
         Slot::Value(kind) => Some(kind),
         Slot::Memory32Address => Some(Kind::I64),

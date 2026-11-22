@@ -13,7 +13,7 @@ use quench_runtime::staged::wasm_memory::Memory;
 
 /// The rows of a bulk step on the frame's memory, or `None` for a step these rows do not run:
 /// `memory.grow`, a load or a store.
-pub(super) fn bulk(instruction: WideInstruction, step: Memory) -> Option<Vec<Planned>> {
+pub(crate) fn bulk(instruction: WideInstruction, step: Memory) -> Option<Vec<Planned>> {
     let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
     let planned = match step {
         // `a = memory.size b`: the memory in `b` is not read; the result goes to hole 0.

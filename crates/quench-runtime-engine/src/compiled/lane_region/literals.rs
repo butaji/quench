@@ -6,7 +6,7 @@ use crate::compiled::regions;
 impl Lowering<'_, '_> {
     /// A constant's value and type: an immediate, or in online code the string or BigInt the
     /// VM made of it (`OnlineFacts::constants`).
-    pub(super) fn constant_value(&self, index: usize) -> Option<(Value, Type)> {
+    pub(crate) fn constant_value(&self, index: usize) -> Option<(Value, Type)> {
         let constant = self.program.constants.get(index)?;
         let value = super::super::facts::immediate(constant).or_else(|| self.vm.online.as_ref()?.constants.get(index).copied())?;
         Some((value, super::super::facts::constant_type(constant)))
@@ -14,7 +14,7 @@ impl Lowering<'_, '_> {
 
     /// `LoadConst` of `constant` at `pc`: a string a frozen image holds, read from the image
     /// under its invalidation word, or the constant's value (`constant_value`).
-    pub(super) fn load_constant(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
+    pub(crate) fn load_constant(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
         constant: &quench_runtime::bytecode::Constant) -> Option<bool> {
         let index = instruction.constant_index();
         // An image names the string by its recipe; the loader allocates it once (`HeapValueRecipe::String`).
@@ -49,7 +49,7 @@ impl Lowering<'_, '_> {
 
     /// The result type of a binary operator a string or BigInt operand takes
     /// (`facts::heap_primitive_binary`), by its operands' facts here.
-    pub(super) fn heap_primitive_binary(&self, state: &State, instruction: WideInstruction) -> Option<Type> {
+    pub(crate) fn heap_primitive_binary(&self, state: &State, instruction: WideInstruction) -> Option<Type> {
         let operand = |operand| super::super::facts::operand_type(&self.program.constants, operand, |register|
             state.values.get(usize::from(register)).map_or(Type::ANY, |fact| fact.value.ty));
         super::super::facts::heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c()))
@@ -60,7 +60,7 @@ impl Lowering<'_, '_> {
     /// (`compiled::binary_in_lane`); an object operand, a throw or a due collection leaves first.
     /// A `+` whose result is a string is the concatenation of its two operands (`concat_pair_in_lane`),
     /// which runs no generic operator.
-    pub(super) fn binary_by_definition(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, ty: Type) -> Option<bool> {
+    pub(crate) fn binary_by_definition(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, ty: Type) -> Option<bool> {
         let left = self.operand_tagged(state, instruction.operand_b())?;
         let right = self.operand_tagged(state, instruction.operand_c())?;
         let exit = self.guard_exit(state, pc as u32);
@@ -81,7 +81,7 @@ impl Lowering<'_, '_> {
 
     /// A numeric binary operator: by the interpreter's definition where a string or BigInt
     /// operand takes it, natively on Numbers otherwise (`Lowering::binary`).
-    pub(super) fn operator(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn operator(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         // A frameless Number region has no VM helper capability (`LaneHelpers::Numeric`): a string operand leaves there.
         let heap = (!self.helpers.is_numeric()).then(|| self.heap_primitive_binary(state, instruction)).flatten();
         match heap.filter(|_| !instruction.returns_from_frame()) {
@@ -92,7 +92,7 @@ impl Lowering<'_, '_> {
 
     /// Whether `register` holds `ty` at an edge to `target`: proved, or guarded there as a
     /// string or BigInt (`guard_heap_primitive`).
-    pub(super) fn proves(&mut self, state: &mut State, register: Register, ty: Type, target: usize) -> bool {
+    pub(crate) fn proves(&mut self, state: &mut State, register: Register, ty: Type, target: usize) -> bool {
         if state.values[usize::from(register)].value.ty.is_subtype(ty.machine()) { return true; }
         let exit = self.guard_exit(state, target as u32);
         self.guard_heap_primitive(state, register, ty, exit)
@@ -100,7 +100,7 @@ impl Lowering<'_, '_> {
 
     /// Guards a string or BigInt fact an edge does not prove (`Lowering::conform`) by the VM's
     /// own `typeof` test (`compiled::typeof_is_in_lane`); `false` for any other fact.
-    pub(super) fn guard_heap_primitive(&mut self, state: &mut State, register: Register, ty: Type, exit: ir::Block) -> bool {
+    pub(crate) fn guard_heap_primitive(&mut self, state: &mut State, register: Register, ty: Type, exit: ir::Block) -> bool {
         let Some(name) = [(quench_runtime::ValueType::String, "string"), (quench_runtime::ValueType::BigInt, "bigint")].into_iter()
             .find(|(kind, _)| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))).map(|(_, name)| name) else { return false };
         let bits = self.tagged(state, register);
@@ -115,7 +115,7 @@ impl Lowering<'_, '_> {
 
 /// The binary operators a string or BigInt takes (`facts::heap_primitive_binary`) by the facts
 /// from `entry`, which ask no Number of the function's parameters.
-pub(super) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &[WideInstruction], leaders: &CompoundBitSet,
+pub(crate) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[quench_runtime::bytecode::Constant], native_calls: bool, raises: &[super::super::facts::Raise]) -> CompoundBitSet {
     // A unit with no generic operator has none to find, and needs no analysis to say so.
     if !instructions.iter().any(|instruction| super::super::facts::heap_operator(*instruction)) { return CompoundBitSet::new(); }

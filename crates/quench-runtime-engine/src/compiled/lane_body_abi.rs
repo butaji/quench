@@ -20,7 +20,7 @@ pub(crate) fn body_signature_in_lane(
 ///
 /// # Safety
 /// As `enter_wasm`, for a body of the lane body ABI.
-pub(super) unsafe fn enter_body(context: &mut CallContext, this: u64, captures: u64, registers: *const u64, entry: BodyEntry) -> BodyReturn {
+pub(crate) unsafe fn enter_body(context: &mut CallContext, this: u64, captures: u64, registers: *const u64, entry: BodyEntry) -> BodyReturn {
     /// The trampoline typed for a body: its fifth argument is unused.
     type BodyTrampoline = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64, BodyEntry) -> BodyReturn;
     let pointer: *mut CallContext = context;

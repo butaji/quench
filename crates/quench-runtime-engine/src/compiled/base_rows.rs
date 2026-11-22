@@ -59,11 +59,11 @@ macro_rules! heap_code_of {
 /// runtime's own: each is a `const` check against the runtime's `offset_of!`, `size_of` or layout const.
 /// The stencils are x86-64 only, so the checks are too.
 #[cfg(target_arch = "x86_64")]
-mod layout_checks;
+pub(crate) mod layout_checks;
 
 /// What a heap row does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Heap {
+pub(crate) enum Heap {
     /// Depth-0 capture `slot` of the running activation. It continues at TAKEN (`continues_at_taken`), as a fast arm
     /// of a body's `LoadCapture` whose helper step answers a slot the dense run does not hold (a root binding's shared slot).
     Capture(u16),
@@ -264,23 +264,23 @@ pub(super) enum Heap {
 }
 
 /// The storage forms an add row exists for, in the order of the catalog's add rows (packed, arena, either).
-pub(super) const FORMS: [Form; 3] = [Form::Packed, Form::Arena, Form::Either];
+pub(crate) const FORMS: [Form; 3] = [Form::Packed, Form::Arena, Form::Either];
 
 /// A heap row: its operation and where its operands and destination live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) struct HeapRow {
-    pub(super) heap: Heap,
-    pub(super) dst: Place,
-    pub(super) a: Place,
-    pub(super) b: Place,
+pub(crate) struct HeapRow {
+    pub(crate) heap: Heap,
+    pub(crate) dst: Place,
+    pub(crate) a: Place,
+    pub(crate) b: Place,
     /// The row's variant: an array's backing is the entry record's (the offset at the array hole), not
     /// looked up per access (`Index`, `Store`); a site read is a chain of two reads (`SiteChain`).
-    pub(super) entry: bool,
+    pub(crate) entry: bool,
 }
 
 impl Heap {
     /// The row's code in `quench_bjit::numeric::library`: the catalog line of the row names its variant (`row_catalog.rs`).
-    pub(super) fn code(self) -> u8 {
+    pub(crate) fn code(self) -> u8 {
         match self {
             Heap::Staged(code) => code,
             _ => heap_code_of!(self),
@@ -289,44 +289,44 @@ impl Heap {
 
     /// Whether a hit continues at the row's TAKEN exit, not its NEXT: the rows of one convention with the fast arms, whose
     /// hit hops past the step laid out after them (`base_region::steps::plan_fast`).
-    pub(super) fn continues_at_taken(self) -> bool {
+    pub(crate) fn continues_at_taken(self) -> bool {
         matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_))
     }
 
     /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live, and the rows that read no heap.
-    pub(super) fn reads_snapshot(self) -> bool {
+    pub(crate) fn reads_snapshot(self) -> bool {
         !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
-    pub(super) fn reads_frame_word(self) -> bool {
+    pub(crate) fn reads_frame_word(self) -> bool {
         matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
     /// the activation holds, not a Number the region proved.
     /// Whether the row's result is a Number a double holds (a typed element), whatever the site's feedback.
-    pub(super) fn yields_double(self) -> bool {
+    pub(crate) fn yields_double(self) -> bool {
         matches!(self, Heap::TypedIndex(_))
     }
 
-    pub(super) fn yields_tagged(self) -> bool {
+    pub(crate) fn yields_tagged(self) -> bool {
         matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::CharCodeAt | Heap::ParseInt)
     }
 }
 
 impl HeapRow {
     /// The row's canonical code in `quench_bjit::numeric::library`.
-    pub(super) fn code(self) -> library::HeapCode {
+    pub(crate) fn code(self) -> library::HeapCode {
         library::heap_canonical((self.heap.code(), self.entry, self.dst.code(), self.a.code(), self.b.code()))
     }
 }
 
 /// The stencil of `row`, built at compile time by rustc; a row the library lacks declines the region.
-pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
+pub(crate) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
     static TABLE: quench_bjit::rustc::Memo<library::HeapCode> = std::sync::OnceLock::new();
     let code = row.code();
     quench_bjit::rustc::memoized(&TABLE, code, || quench_bjit::rustc::stencil(&library::heap_name(code)).ok_or_else(|| format!("no stencil row {row:?}")))
@@ -380,4 +380,4 @@ mod catalog_tests {
 }
 
 #[cfg(all(test, target_arch = "x86_64"))]
-mod tests;
+pub(crate) mod tests;

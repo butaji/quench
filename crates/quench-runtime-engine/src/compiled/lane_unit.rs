@@ -16,7 +16,7 @@ use quench_runtime::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Iden
 use quench_runtime::typed_ir::BindingTime;
 use quench_runtime::value::Value;
 #[path = "lane_unit/admission.rs"] mod admission;
-pub(super) use admission::{inlinable, InlineScope};
+pub(crate) use admission::{inlinable, InlineScope};
 use admission::{restartable, returns_or_keeps};
 use super::admission::{admit_callee, CalleeUse};
 #[path = "lane_unit/weights.rs"] mod weights;
@@ -164,7 +164,7 @@ impl Unit {
     }
 }
 
-pub(super) use crate::compiled::tier_policy::MAX_UNIT_INLINED_INSTRUCTIONS;
+pub(crate) use crate::compiled::tier_policy::MAX_UNIT_INLINED_INSTRUCTIONS;
 /// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
 const MAX_INLINING_DEPTH: usize = 5;
 
@@ -628,4 +628,4 @@ pub(crate) fn with_trips<'f>(
 
 #[cfg(test)]
 #[path = "lane_unit/tests.rs"]
-mod tests;
+pub(crate) mod tests;

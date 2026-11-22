@@ -25,21 +25,21 @@ use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::value::Value;
 use quench_runtime::vm::operations::binary_operator as code;
 
-pub(super) use quench_runtime::vm::engine_types::Kind;
+pub(crate) use quench_runtime::vm::engine_types::Kind;
 
 /// The kinds of a function's registers below the width the analysis covered.
-pub(super) struct IntKinds {
+pub(crate) struct IntKinds {
     kinds: Vec<Kind>,
 }
 
 impl IntKinds {
     /// `register`'s kind; `Tagged` past the covered registers.
-    pub(super) fn of(&self, register: u16) -> Kind {
+    pub(crate) fn of(&self, register: u16) -> Kind {
         self.kinds.get(usize::from(register)).copied().unwrap_or(Kind::Tagged)
     }
 
     /// Whether `register` holds an int32 at every read while speculation stands.
-    pub(super) fn proven(&self, register: u16) -> bool {
+    pub(crate) fn proven(&self, register: u16) -> bool {
         self.of(register) != Kind::Tagged
     }
 }
@@ -50,7 +50,7 @@ impl IntKinds {
 static SPECULATION_RETIRED: std::cell::Cell<bool> = std::cell::Cell::new(false);
 
 /// Whether a view may speculate: none overflowed on this thread yet.
-pub(super) fn speculation_allowed() -> bool {
+pub(crate) fn speculation_allowed() -> bool {
     !SPECULATION_RETIRED.get()
 }
 
@@ -61,12 +61,12 @@ pub(crate) fn note_retired() -> bool {
 
 /// Whether views select proven forms at all: only the interpreter alone runs them, so no tier's
 /// code writes a register under a kind it does not know.
-pub(super) fn proven_forms_enabled() -> bool {
+pub(crate) fn proven_forms_enabled() -> bool {
     quench_runtime::jit_mode::JitMode::process() == quench_runtime::jit_mode::JitMode::Interp
 }
 
 /// The registers `masks` covers per pc, `None` for a windowed mask.
-pub(super) fn covered(masks: &RegisterMasks) -> Option<usize> {
+pub(crate) fn covered(masks: &RegisterMasks) -> Option<usize> {
     match masks {
         RegisterMasks::Narrow(_) => Some(u64::BITS as usize),
         RegisterMasks::Half(_) => Some(u128::BITS as usize),
@@ -78,7 +78,7 @@ pub(super) fn covered(masks: &RegisterMasks) -> Option<usize> {
 /// The kinds of the registers of the function decoded as `decoded`, over its program's
 /// `constants`, with its liveness `masks`; `None` where the function admits no kinds (see the
 /// module documentation). `speculate` admits `Speculative` kinds.
-pub(super) fn analyze(decoded: &[WideInstruction], constants: &[Value], masks: Option<&RegisterMasks>, registers: usize,
+pub(crate) fn analyze(decoded: &[WideInstruction], constants: &[Value], masks: Option<&RegisterMasks>, registers: usize,
     dynamic_scope: bool, speculate: bool) -> Option<IntKinds> {
     if dynamic_scope || decoded.is_empty() {
         return None;

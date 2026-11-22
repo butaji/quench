@@ -81,7 +81,7 @@ fn recorded_field(region: &LoopRegion, pc: u32, instruction: WideInstruction) ->
 /// The row of a field read: an array's `length`, the value a loop's entry recorded, or the site's
 /// cache entry (`site_row`), which also answers a loop's read its entry did not record, or that
 /// reads through a register the loop redefines.
-pub(super) fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+pub(crate) fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     if let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
         && known.names_length(atom)
     {
@@ -99,13 +99,13 @@ pub(super) fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32
 /// The row of a plain named field read of the object in register `object` through cache site `site`, with no
 /// facts about the site: what `cached_read` decodes for an unknown site (`Heap::Site`, no `ic`). The entry answers
 /// where the object is a direct object the site names; any other read leaves to the interpreter.
-pub(in crate::compiled::base_region) fn site_read_row(object: Register, site: u16, dst: Register) -> Decoded {
+pub(crate) fn site_read_row(object: Register, site: u16, dst: Register) -> Decoded {
     Decoded { hole: entry_offset(site), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(object)), None) }
 }
 
 /// The row of a named field store to a register's object, or to `this`, through the site's cache
 /// entry (`entry::site_store`), where the store may run in place (`Known::stores_in_place`).
-pub(super) fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
+pub(crate) fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
     let atom = instruction.atom_index();
     if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() || adds::of(known, instruction).is_some() {
         return None;
@@ -170,7 +170,7 @@ fn own_slot_load(known: Known, site: u16) -> Option<crate::compiled::object_slot
 }
 
 /// Whether `instruction` is a field store a row makes (`field_store_row`).
-pub(in crate::compiled::base_region) fn stores_field(known: Known, instruction: WideInstruction) -> bool {
+pub(crate) fn stores_field(known: Known, instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0
         && matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. }))
         && field_store_row(known, instruction).is_some()

@@ -9,28 +9,28 @@ const MAX_NODES: usize = 96;
 /// Most recurrences, scalars and affine values a kernel keeps.
 const MAX_SLOTS: usize = 32;
 
-pub(super) use quench_runtime::vm::engine_types::Arg;
+pub(crate) use quench_runtime::vm::engine_types::Arg;
 
 /// `register + offset + step * k` at iteration `k`, `register` an induction (with its step)
 /// or an unwritten register (step 0); the register holds an int32 at entry.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Affine {
-    pub(super) register: u16,
-    pub(super) offset: i32,
-    pub(super) step: Stride,
+pub(crate) struct Affine {
+    pub(crate) register: u16,
+    pub(crate) offset: i32,
+    pub(crate) step: Stride,
 }
 
 /// An induction's step: a constant, or an unwritten register's int32 value at entry, maybe
 /// negated (`i -= height`).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Stride {
+pub(crate) enum Stride {
     Const(i32),
     Register(u16, bool),
 }
 
 impl Stride {
     /// The constant step, if it is one.
-    pub(super) fn constant(self) -> Option<i32> {
+    pub(crate) fn constant(self) -> Option<i32> {
         match self {
             Stride::Const(step) => Some(step),
             Stride::Register(..) => None,
@@ -39,7 +39,7 @@ impl Stride {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) enum NodeOp {
+pub(crate) enum NodeOp {
     Arith(NumberArithmetic),
     Bits(NumberBitwise),
     /// `bases[base][affines[index]]`, decoded.
@@ -52,31 +52,31 @@ pub(super) enum NodeOp {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Node {
-    pub(super) op: NodeOp,
-    pub(super) a: Arg,
-    pub(super) b: Arg,
+pub(crate) struct Node {
+    pub(crate) op: NodeOp,
+    pub(crate) a: Arg,
+    pub(crate) b: Arg,
     /// Reads a recurrence, directly or through another node: runs in the scalar pass.
-    pub(super) seq: bool,
+    pub(crate) seq: bool,
     /// Reads only scalars: computed once at entry as a scalar, never as a column.
-    pub(super) hoisted: bool,
+    pub(crate) hoisted: bool,
     /// No recurrence, store or final value reads it: never computed (a branch's untaken
     /// predicate, a select's unused half).
-    pub(super) dead: bool,
+    pub(crate) dead: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Store {
-    pub(super) base: u8,
-    pub(super) index: u8,
-    pub(super) value: Arg,
+pub(crate) struct Store {
+    pub(crate) base: u8,
+    pub(crate) index: u8,
+    pub(crate) value: Arg,
     /// Its position among the body's accesses.
-    pub(super) order: u16,
+    pub(crate) order: u16,
 }
 
 /// Where a scalar comes from.
 #[derive(Clone, Copy, Debug)]
-pub(super) enum Scalar {
+pub(crate) enum Scalar {
     Const(f64),
     Register(u16),
     /// A captured binding, read once at entry (`Sym::Capture`).
@@ -91,32 +91,32 @@ pub(super) enum Scalar {
 /// A loop kernel's shape (module documentation).
 pub(crate) struct Shape {
     /// `affines[counter] REL scalars[bound]` is the loop's test.
-    pub(super) counter: u8,
-    pub(super) relation: NumberRelation,
-    pub(super) bound: u8,
-    pub(super) scalars: Vec<Scalar>,
-    pub(super) affines: Vec<Affine>,
-    pub(super) bases: Vec<u16>,
-    pub(super) nodes: Vec<Node>,
+    pub(crate) counter: u8,
+    pub(crate) relation: NumberRelation,
+    pub(crate) bound: u8,
+    pub(crate) scalars: Vec<Scalar>,
+    pub(crate) affines: Vec<Affine>,
+    pub(crate) bases: Vec<u16>,
+    pub(crate) nodes: Vec<Node>,
     /// Which nodes depend on a recurrence, in body order: the scalar pass.
-    pub(super) seq: Vec<u16>,
-    pub(super) stores: Vec<Store>,
+    pub(crate) seq: Vec<u16>,
+    pub(crate) stores: Vec<Store>,
     /// Loads (node, access order).
-    pub(super) loads: Vec<(u16, u16)>,
+    pub(crate) loads: Vec<(u16, u16)>,
     /// Recurrence registers and their values at an iteration's end.
-    pub(super) phis: Vec<(u16, Arg)>,
+    pub(crate) phis: Vec<(u16, Arg)>,
     /// Inductions and their steps.
-    pub(super) inductions: Vec<(u16, Stride)>,
+    pub(crate) inductions: Vec<(u16, Stride)>,
     /// The other registers the body writes, with their values at an iteration's end.
-    pub(super) temps: Vec<(u16, Arg)>,
+    pub(crate) temps: Vec<(u16, Arg)>,
     /// Registers the body writes on some paths only (under a branch) and no path past it reads:
     /// they keep no final value, so the kernel holds only where they are dead past the loop.
-    pub(super) guarded: Vec<u16>,
+    pub(crate) guarded: Vec<u16>,
 }
 
 impl Shape {
     /// The constant scalar `slot` holds, if it holds a constant.
-    pub(super) fn scalar_constant(&self, slot: u8) -> Option<f64> {
+    pub(crate) fn scalar_constant(&self, slot: u8) -> Option<f64> {
         match self.scalars[usize::from(slot)] {
             Scalar::Const(value) => Some(value),
             _ => None,
@@ -690,4 +690,4 @@ impl<'a> Lowering<'a> {
     }
 }
 
-mod lower;
+pub(crate) mod lower;

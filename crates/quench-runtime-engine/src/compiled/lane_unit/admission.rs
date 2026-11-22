@@ -8,7 +8,7 @@ use quench_runtime::bytecode::Traits;
 /// alone (its own admission checks the operands), while the lane body also reads the instruction's
 /// result flags and the decoded row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(in crate::compiled) enum InlineScope {
+pub(crate) enum InlineScope {
     /// An OSR loop region's inlined callee (`osr_loop::inlining`).
     Loop,
     /// A lane body's inlined callee (`lane_unit::Planner::inline_body`).
@@ -20,7 +20,7 @@ pub(in crate::compiled) enum InlineScope {
 /// environment only, no fusion but a returning one, which splits into the computation and the
 /// return (`osr_loop::inlined_returning`). A lane call is the plan's to admit: only one it inlines
 /// in turn.
-pub(in crate::compiled) fn inlinable(instruction: WideInstruction, scope: InlineScope) -> bool {
+pub(crate) fn inlinable(instruction: WideInstruction, scope: InlineScope) -> bool {
     match scope {
         InlineScope::Loop => instruction.op().traits().has(Traits::INLINABLE),
         InlineScope::Lane => lane_inlinable(instruction),
@@ -66,7 +66,7 @@ fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
 
 /// The shared lowering performs only guarded, non-guest operations for an inlinable pure
 /// leaf. A miss may restart that call without replaying effects.
-pub(super) fn restartable(program: &quench_runtime::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
+pub(crate) fn restartable(program: &quench_runtime::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::super::lane_region::restartable_numeric_function(program, function, code.iter().copied()) { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match () {
         _ if matches!(crate::compiled::decoded_completed(instruction), Some(quench_runtime::staged::Operation::ElementWrite { .. })) => false,
@@ -82,6 +82,6 @@ pub(super) fn restartable(program: &quench_runtime::ResidualProgram, function: &
 }
 
 /// Whether a call keeps its result in its register or returns it: the two a unit inlines.
-pub(super) fn returns_or_keeps(instruction: WideInstruction) -> bool {
+pub(crate) fn returns_or_keeps(instruction: WideInstruction) -> bool {
     matches!(instruction.result_flags(), 0 | quench_runtime::bytecode::RETURN_REGISTER)
 }

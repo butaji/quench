@@ -15,7 +15,7 @@ pub const V128_BYTES: usize = core::mem::size_of::<u128>();
 
 /// The integer width an operation runs at; an i32 operator is its i64 namesake at `I32`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Width {
+pub enum Width {
     I32,
     I64,
 }
@@ -108,7 +108,7 @@ const fn divides(operator: Binary) -> bool {
 /// `operator` on `left` and `right`: a division by zero traps, then a signed quotient that
 /// overflows traps. The one place these rules are written.
 #[inline(always)]
-pub(crate) fn integer_binary<S: WasmStage>(
+pub fn integer_binary<S: WasmStage>(
     stage: &mut S,
     operator: Binary,
     width: Width,

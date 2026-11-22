@@ -213,7 +213,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 }
 
 /// The `NumberOperation` variants as numbers, for `step_of`'s compile-time choice of arm: `ANY` runs every arm.
-pub(crate) mod kind {
+pub mod kind {
     pub(crate) const ANY: u8 = 0;
     pub(crate) const ARITHMETIC: u8 = 1;
     pub(crate) const RELATION: u8 = 2;
@@ -234,7 +234,7 @@ pub(crate) mod kind {
 /// unresolved in a `const` test, which rustc drops before code generation, so a stencil row instantiates only its
 /// own arm. `kind::ANY` is `step`.
 #[inline(always)]
-pub(crate) fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: NumberOperation) -> Step<S::Word, F::Control> {
     // The general operator is decoded only once the words leave the row, so a decided row pays nothing for it.
     #[cfg(not(stencil_build))]
@@ -618,7 +618,7 @@ fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 /// tables are the operations' own (`NumberArithmetic::from_operator` and its siblings).
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
+pub fn binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
     if let Some(operation) = NumberArithmetic::from_operator(operator) {
         return Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Float64,
             overflow: Overflow::Widen, zero: NegativeZero::Ignore });
@@ -640,7 +640,7 @@ pub(crate) fn binary_operation(operator: u32, destination: Register, left: Opera
 /// `binary_operation`'s own.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn int32_binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
+pub fn int32_binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
     let int32 = match NumberArithmetic::from_operator(operator) {
         Some(NumberArithmetic::Divide) => None,
         Some(operation) => Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Int32,

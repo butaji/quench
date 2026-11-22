@@ -245,7 +245,7 @@ fn constants(program: &ResidualProgram, unit: &Unit, instructions: &[WideInstruc
     Constants { heads: flow.heads, rows }
 }
 
-pub(super) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -> Option<Vec<WideInstruction>> {
+pub(crate) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -> Option<Vec<WideInstruction>> {
     let mut residual: Option<Vec<WideInstruction>> = None;
     for (latch, instruction) in unit.instructions.iter().copied().enumerate() {
         if !matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Jump)) || instruction.result_flags() != 0 { continue; }

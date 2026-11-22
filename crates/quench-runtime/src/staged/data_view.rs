@@ -15,7 +15,7 @@ use crate::heap::{NATIVE_TYPED_ARRAY_LAYOUT as VIEW, NO_KIND};
 
 /// The fixed-width element kinds a DataView reads and writes in place (Float16 and BigInt stay on the general path).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum DataViewElement {
+pub enum DataViewElement {
     Int8,
     Uint8,
     Int16,
@@ -45,7 +45,7 @@ impl DataViewElement {
 
 /// A DataView's bytes as an access reads them, once proved: the address of its first byte and its byte length (below 2^31).
 #[derive(Clone, Copy)]
-pub(crate) struct DataViewWords<W> {
+pub struct DataViewWords<W> {
     pub(crate) values: W,
     pub(crate) length: W,
 }

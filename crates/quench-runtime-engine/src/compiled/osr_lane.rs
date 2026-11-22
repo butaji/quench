@@ -8,7 +8,7 @@ use super::*;
 ///
 /// # Safety
 /// `lane_context` is the running lane's context for `H`.
-pub(super) unsafe fn bind_loop(dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize) {
+pub(crate) unsafe fn bind_loop(dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize) {
     dispatch.lane_context = lane_context;
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
@@ -31,7 +31,7 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry, captures: &mut Vec<que
 }
 
 /// Whether `region`'s instructions call (`bind_captures`'s `calls`).
-pub(super) fn region_calls(region: &LoopRegion) -> bool {
+pub(crate) fn region_calls(region: &LoopRegion) -> bool {
     region.instructions().iter().any(|instruction| instruction.op().control_flow_layout() == quench_runtime::bytecode::ControlFlowLayout::Call)
 }
 
@@ -43,7 +43,7 @@ pub(super) fn region_calls(region: &LoopRegion) -> bool {
 /// # Safety
 /// `lane_context` is the running lane's context for `H`; `registers` is the live window the run
 /// executes in, whose header is its own.
-pub(super) unsafe fn bind_captures(
+pub(crate) unsafe fn bind_captures(
     region: &LoopRegion, entry: &LoopEntry, lane_context: usize, registers: *mut quench_runtime::value::Value, calls: bool,
     captures: &mut Vec<quench_runtime::Value>,
 ) {
@@ -72,7 +72,7 @@ pub(super) unsafe fn bind_captures(
 /// # Safety
 /// `registers` is the activation's live register file; `lane_context` the running lane's
 /// context for `H`.
-pub(super) unsafe fn bind_frame(
+pub(crate) unsafe fn bind_frame(
     dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm, (program, function, lane_context): (ProgramId, u32, usize),
     registers: *mut quench_runtime::value::Value, rebound: bool,
 ) {
@@ -119,7 +119,7 @@ unsafe fn payload_for(vm: &mut Vm, dispatch: &mut JsStepDispatch, lend: Option<b
 /// # Safety
 /// As `CompiledOsrRegion::run`: `registers` is the live register file, and `vm` and
 /// `interrupt` belong to this lane activation.
-pub(super) unsafe fn enter(
+pub(crate) unsafe fn enter(
     dispatch: &mut JsStepDispatch, vm: &mut Vm, program: ProgramId,
     (code, resume): (BodyEntry, u64), registers: *mut quench_runtime::value::Value,
     interrupt: *const quench_runtime::execution_interrupt::ExecutionInterrupt, (lane_context, lend): (usize, Option<bool>),

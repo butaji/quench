@@ -44,7 +44,7 @@ impl NativeCallBinding {
 /// What a lane body compiles from: its program and function, the entry it starts at, and its
 /// plan (`LanePlan::key`). Equal keys make equal code, so a body published under one serves
 /// every later request of it while it holds.
-pub(in crate::vm) type LaneKey = (u32, u32, Option<u32>, u64);
+pub type LaneKey = (u32, u32, Option<u32>, u64);
 
 impl ProgramStore {
     /// The loaded ahead-of-time bodies of `id`, which is `program`.

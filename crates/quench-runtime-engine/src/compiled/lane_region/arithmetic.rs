@@ -14,7 +14,7 @@ type Operands = (Register, [Operand; 2]);
 impl Lowering<'_, '_> {
     /// The arithmetic `instruction` at `pc` runs, into its result register; the exit it leaves at
     /// is `exit`. `None` where an operand has no proof the lowering can make.
-    pub(super) fn arithmetic(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
+    pub(crate) fn arithmetic(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
         operation: NumberArithmetic, exit: ir::Block) -> Option<()> {
         let operands = (instruction.result_register(), [instruction.operand_b(), instruction.operand_c()]);
         let words = if operation == NumberArithmetic::Divide { None } else { self.index_math(state, pc, instruction) };

@@ -33,7 +33,7 @@ impl ExternalConversion {
 /// A shared non-null check retains the operation's diagnostic contract.
 #[derive(Clone, Copy, Debug)]
 #[repr(u32)]
-pub(crate) enum NonNullCheck {
+pub enum NonNullCheck {
     Reference,
     Function,
 }
@@ -79,7 +79,7 @@ pub(crate) fn module_type_index(heap: HeapType) -> Option<(u32, bool)> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ReferenceTarget(u32);
+pub struct ReferenceTarget(u32);
 
 /// The heap type a cast target names.
 #[derive(Clone, Copy, Debug)]

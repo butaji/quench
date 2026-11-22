@@ -18,7 +18,7 @@ fn unwinds_to_handlers(function: &Function) -> bool {
 /// the activation (a local needs the binding rules, which only the interpreter makes). A catch that
 /// binds nothing is the jump; one that binds is the `Step::Catch` row, which moves the thrown value
 /// first. `None` for any other `throw`, which raises (`Step::Throw`).
-pub(super) fn caught(function: &Function, (pc, registers): (u32, Register), instruction: WideInstruction) -> Option<Decoded> {
+pub(crate) fn caught(function: &Function, (pc, registers): (u32, Register), instruction: WideInstruction) -> Option<Decoded> {
     if instruction.result_flags() != 0 || instruction.register_a() >= registers || !unwinds_to_handlers(function) {
         return None;
     }

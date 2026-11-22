@@ -4,7 +4,7 @@ use super::*;
 use quench_runtime::bytecode::Class;
 use cranelift_codegen::{dominator_tree::DominatorTree, flowgraph::ControlFlowGraph, loop_analysis::LoopAnalysis};
 
-pub(super) const SUM: &str = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i]; } return s; }";
+pub(crate) const SUM: &str = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i]; } return s; }";
 const FILL: &str = "function fill(a, n) { for (var i = 0; i < n; i++) { a[i] = i; } }";
 
 /// The loop region of the function `source` declares, over dense views; `observed` types its element

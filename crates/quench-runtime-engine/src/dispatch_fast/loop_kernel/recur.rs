@@ -10,15 +10,15 @@ use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRela
 use super::run::{CHUNK, apply, arith};
 use super::shape::{Arg, NodeOp, Shape};
 
-pub(super) use quench_runtime::vm::engine_types::Fold;
+pub(crate) use quench_runtime::vm::engine_types::Fold;
 
 /// The inductions of a chunk: each affine slot's value at iteration 0 and its step, and the
 /// chunk's first iteration.
 #[derive(Clone, Copy)]
-pub(super) struct Iotas<'a> {
-    pub(super) firsts: &'a [i64],
-    pub(super) steps: &'a [i64],
-    pub(super) done: u64,
+pub(crate) struct Iotas<'a> {
+    pub(crate) firsts: &'a [i64],
+    pub(crate) steps: &'a [i64],
+    pub(crate) done: u64,
 }
 
 /// The longest chain a kernel runs.
@@ -26,11 +26,11 @@ const MAX_LINKS: usize = 24;
 
 use quench_runtime::vm::engine_types::Link;
 
-pub(super) use quench_runtime::vm::engine_types::Code;
+pub(crate) use quench_runtime::vm::engine_types::Code;
 
 #[quench_macros::ext(CodeOps1)]
 impl Code {
-    pub(super) fn of(op: NodeOp, left: bool) -> Self {
+    pub(crate) fn of(op: NodeOp, left: bool) -> Self {
         match (op, left) {
             (NodeOp::Arith(NumberArithmetic::Add), _) => Self::Add,
             (NodeOp::Arith(NumberArithmetic::Multiply), _) => Self::Multiply,
@@ -44,7 +44,7 @@ impl Code {
     }
 
     #[inline(always)]
-    pub(super) fn apply(self, v: f64, x: f64) -> f64 {
+    pub(crate) fn apply(self, v: f64, x: f64) -> f64 {
         match self {
             Self::Add => v + x,
             Self::Multiply => v * x,
@@ -58,11 +58,11 @@ impl Code {
     }
 }
 
-pub(super) use quench_runtime::vm::engine_types::Chain;
+pub(crate) use quench_runtime::vm::engine_types::Chain;
 
 use quench_runtime::vm::engine_types::Pass;
 
-pub(super) use quench_runtime::vm::engine_types::Recurrence;
+pub(crate) use quench_runtime::vm::engine_types::Recurrence;
 
 /// Whether node `id`'s whole column is read: by a store or a side node.
 fn read_as_column(shape: &Shape, side: &[u16], id: u16) -> bool {
@@ -73,7 +73,7 @@ fn read_as_column(shape: &Shape, side: &[u16], id: u16) -> bool {
 
 /// Whether node `id`'s column is read by a store, a side node or a written register's final
 /// value.
-pub(super) fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
+pub(crate) fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
     read_as_column(shape, side, id) || shape.temps.iter().any(|&(_, arg)| arg == Arg::Col(id))
 }
 
@@ -115,7 +115,7 @@ fn recurrent(shape: &Shape, arg: Arg) -> bool {
 
 #[quench_macros::ext(RecurrenceOps1)]
 impl Recurrence {
-    pub(super) fn of(shape: &Shape) -> Option<Self> {
+    pub(crate) fn of(shape: &Shape) -> Option<Self> {
         if shape.phis.is_empty() {
             return Some(Self { pass: Pass::None, side: Vec::new() });
         }
@@ -149,7 +149,7 @@ impl Recurrence {
     }
 
     /// The pass's name, for the kernel trace.
-    pub(super) fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match &self.pass {
             Pass::None => "kernel (no recurrence)",
             Pass::Fold(fold) if fold.int32 => "kernel (int32 fold)",
@@ -164,7 +164,7 @@ impl Recurrence {
 
     /// Whether the pass interprets its recurrences per iteration (`Machine`) rather than
     /// running them as fused or chained loops.
-    pub(super) fn interprets(&self) -> bool {
+    pub(crate) fn interprets(&self) -> bool {
         matches!(self.pass, Pass::Machine(_))
     }
 
@@ -222,7 +222,7 @@ impl Recurrence {
     }
 
     /// The scratch columns a run needs.
-    pub(super) fn columns(&self, shape: &Shape) -> usize {
+    pub(crate) fn columns(&self, shape: &Shape) -> usize {
         shape.nodes.len()
             + match &self.pass {
                 Pass::Chain(chain) => chain.columns(),
@@ -232,13 +232,13 @@ impl Recurrence {
     }
 
     /// Side nodes, in body order.
-    pub(super) fn side(&self) -> &[u16] {
+    pub(crate) fn side(&self) -> &[u16] {
         &self.side
     }
 
     /// The pass over a chunk of `len` iterations: updates `phis`, writes the columns read later.
     /// Whether node `id`'s column is never read: the pass reads it as an induction in a register.
-    pub(super) fn unread_column(&self, id: usize) -> bool {
+    pub(crate) fn unread_column(&self, id: usize) -> bool {
         match &self.pass {
             Pass::Fold(Fold { words: Some((_, n)), .. }) => usize::from(*n) == id,
             Pass::Fold(Fold { exact: Some(words), .. }) => words.contains(id),
@@ -247,7 +247,7 @@ impl Recurrence {
         }
     }
 
-    pub(super) fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) {
+    pub(crate) fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize, iotas: Iotas) {
         match &self.pass {
             Pass::None => {}
             Pass::Fold(fold) => {
@@ -923,7 +923,7 @@ fn sequence<const WRITE: bool>(mut value: i32, len: usize, a: impl Fn(usize) -> 
     value
 }
 
-pub(super) use quench_runtime::vm::engine_types::Fusion;
+pub(crate) use quench_runtime::vm::engine_types::Fusion;
 
 #[quench_macros::ext(FusionOps1)]
 impl Fusion {
@@ -1068,7 +1068,7 @@ fn within_int32((lo, hi): Range) -> bool {
 
 use quench_runtime::vm::engine_types::WordNode;
 
-pub(super) use quench_runtime::vm::engine_types::Words;
+pub(crate) use quench_runtime::vm::engine_types::Words;
 
 #[quench_macros::ext(WordsOps1)]
 impl Words {

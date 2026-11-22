@@ -11,7 +11,7 @@ use quench_runtime::staged::{Stage, add::Edge, naming::{name_form, site_name}};
 impl Lowering<'_, '_> {
     /// The staged naming of the function `instruction` names, or `None` (nothing emitted, so the
     /// instruction leaves) where the site recorded none or the register is outside the unit.
-    pub(super) fn function_name(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn function_name(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_a();
         let names = self.vm.online?.names?;
         if source >= self.unit.registers {

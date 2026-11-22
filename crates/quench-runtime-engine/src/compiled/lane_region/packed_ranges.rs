@@ -5,7 +5,7 @@ use super::super::facts::ranges::{self, Edge};
 use quench_runtime::vm::operations::NumberRelation;
 
 #[derive(Clone)]
-pub(super) struct State {
+pub(crate) struct State {
     field: IntRange,
     ranges: Vec<Option<IntRange>>,
     /// Registers equal to the current field, invalidated by every field write.
@@ -13,7 +13,7 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn new(ranges: Vec<Option<IntRange>>) -> Self {
+    pub(crate) fn new(ranges: Vec<Option<IntRange>>) -> Self {
         let registers = ranges.len();
         Self { field: IntRange::packed(), current: CompoundBitSet::with_capacity(registers), ranges }
     }
@@ -127,7 +127,7 @@ fn forward(incoming: &mut [Option<State>], state: State, program: &ResidualProgr
     }
 }
 
-pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
+pub(crate) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
     field: &LoopField, back: usize) -> smallvec::SmallVec<[Option<IntRange>; INLINE_FIELD_BINDINGS]> {
     let mut stores: smallvec::SmallVec<[Option<IntRange>; INLINE_FIELD_BINDINGS]> = smallvec::smallvec![None; field.stores.len()];
     let mut incoming = vec![None; back - field.header + 1];

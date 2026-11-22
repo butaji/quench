@@ -16,7 +16,7 @@ use crate::Value;
 /// and the element count (below 2^31, so an int32 index below zero is no index), in one width,
 /// and the kind.
 #[derive(Clone, Copy)]
-pub(crate) struct TypedView<W> {
+pub struct TypedView<W> {
     pub(crate) values: W,
     pub(crate) length: W,
     pub(crate) kind: ViewKind<W>,
@@ -29,14 +29,14 @@ pub(crate) struct TypedView<W> {
 /// The kind of a proved view: the kind the proof compared the record's with, or the record's
 /// `TypedArrayKind` discriminant, which an access dispatches on.
 #[derive(Clone, Copy)]
-pub(crate) enum ViewKind<W> {
+pub enum ViewKind<W> {
     Static(NativeKind),
     Dynamic(W),
 }
 
 /// A kind whose elements native code reads and writes in place, with what its element is.
 #[derive(Clone, Copy)]
-pub(crate) struct NativeKind {
+pub struct NativeKind {
     pub(crate) kind: TypedArrayKind,
     element: Element,
 }
@@ -103,13 +103,13 @@ const ELEMENTS: [NativeKind; 9] = [
 
 /// The position of `kind` among the native kinds: the index a typed element record keeps in its
 /// immediate, which `native_kind_at` reads back (`None` for Float16 and the BigInt kinds).
-pub(crate) fn native_kind_index(kind: TypedArrayKind) -> Option<u32> {
+pub fn native_kind_index(kind: TypedArrayKind) -> Option<u32> {
     ELEMENTS.iter().position(|native| native.kind == kind).map(|index| index as u32)
 }
 
 /// The native kind at `index` (`native_kind_index`).
 #[inline(always)]
-pub(crate) fn native_kind_at(index: u32) -> NativeKind { ELEMENTS[index as usize] }
+pub fn native_kind_at(index: u32) -> NativeKind { ELEMENTS[index as usize] }
 
 /// The int32 word of the `integer` element at `address`.
 #[inline(always)]
@@ -269,7 +269,7 @@ pub(crate) fn typed_read_value<S: NumericStage>(stage: &mut S, view: TypedView<S
 /// are int32s (`NativeKind::is_int32`): the load itself, with no Number made of it. Past the
 /// elements leaves at `miss`; any other view reads no such word (`None`, nothing emitted).
 #[inline(always)]
-pub(crate) fn typed_read_integer<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+pub fn typed_read_integer<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let ViewKind::Static(native @ NativeKind { kind, element: Element::Integer(integer) }) = view.kind else { return None };
     if !native.is_int32() { return None; }

@@ -4,7 +4,7 @@
 use super::*;
 
 /// The jump to `pc`, a part of a run whose NEXT is not where the run goes on.
-pub(super) fn jump_to(pc: u32) -> Result<Planned, String> {
+pub(crate) fn jump_to(pc: u32) -> Result<Planned, String> {
     Ok(Planned::single(control(Kind::Jump)?, [0; HOLES], Some(pc), None))
 }
 
@@ -19,7 +19,7 @@ fn landing(layout: &Layout, pc: u32) -> Result<Vec<Planned>, String> {
 /// registers) jumps to the next instruction, and the TAKEN exit of the helper row (a step that took
 /// its jump, `LANE_CALL_BRANCHED`) lands at `target` after the fall-through, as a part's NEXT is the
 /// part laid out after it.
-pub(super) fn branching(mut row: Planned, layout: &Layout, (pc, target): (u32, u32)) -> Result<Planned, String> {
+pub(crate) fn branching(mut row: Planned, layout: &Layout, (pc, target): (u32, u32)) -> Result<Planned, String> {
     row.post.push(jump_to(pc + 1)?);
     let taken = row.pre.len() + 1 + row.post.len();
     row.post.extend(landing(layout, target)?);

@@ -76,7 +76,7 @@ fn is_target(instruction: WideInstruction) -> bool {
 /// The rows of the indirect target at `pc` (`Call::IndirectTarget`): a move of its element index
 /// (register `c`) into its register `a`, which the call after it (`call_of`) reads as `b`. The checks are
 /// the call's row's, so the target places nothing else.
-pub(super) fn target(pc: usize, instructions: &[WideInstruction]) -> Option<Vec<Planned>> {
+pub(crate) fn target(pc: usize, instructions: &[WideInstruction]) -> Option<Vec<Planned>> {
     let instruction = instructions[pc];
     call_of(pc, instructions)?;
     Some(vec![row((codes::MOVE, 0, codes::W64, codes::REGISTER), [slot(instruction.a()), slot(instruction.c()), 0], None)])
@@ -84,7 +84,7 @@ pub(super) fn target(pc: usize, instructions: &[WideInstruction]) -> Option<Vec<
 
 /// The row of the indirect call at `pc` (`Call::Reference`): the target before it, past
 /// constants, must feed this call (`call_of`).
-pub(super) fn reference(pc: usize, instructions: &[WideInstruction], world: &World<'_>) -> Option<Vec<Planned>> {
+pub(crate) fn reference(pc: usize, instructions: &[WideInstruction], world: &World<'_>) -> Option<Vec<Planned>> {
     let instruction = instructions[pc];
     // The target this call reads: the nearest target before it, past constants only.
     let target_pc = (0..pc).rev().find(|&at| !is_constant(instructions[at]))?;
@@ -114,7 +114,7 @@ fn pack(low: u32, high: u32) -> u64 {
 /// binding and type the function's full plan gives the reference (`Slot::IndirectReference`), the
 /// site id the artifact numbered for it (`reference_site_ids`, sorted by pc), and the canonical word
 /// of the program's type (`canonical`). `None` where any of them is missing.
-pub(in crate::compiled) fn site(
+pub(crate) fn site(
     plan: &Plan,
     sites: &[(usize, usize)],
     canonical: &dyn Fn(u32) -> Option<u64>,

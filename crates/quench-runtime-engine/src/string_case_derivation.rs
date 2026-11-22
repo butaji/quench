@@ -71,7 +71,7 @@ impl StringCaseFilter {
 
 /// Replaces each string-case selector of `records` (decoded as `decoded`) whose constants
 /// admit a filter with the filtered selector, and returns the filters the records point into.
-pub(in super::super) fn specialize(
+pub(crate) fn specialize(
     heap: &quench_runtime::heap::Heap,
     constants: &[Value],
     decoded: &[WideInstruction],

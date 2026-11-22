@@ -12,7 +12,7 @@ use super::*;
 
 impl LocalProofs {
     /// Notes the exact shape each of `values` has, which a call retires.
-    pub(super) fn keep_shapes(&mut self, values: &[RegisterFact]) {
+    pub(crate) fn keep_shapes(&mut self, values: &[RegisterFact]) {
         for (register, fact) in values.iter().enumerate() {
             if let Some(shape) = fact.value.ty.object_shape() {
                 self.kept_shapes.insert(register as Register, shape);
@@ -33,7 +33,7 @@ impl State {
     /// The kept shapes of this state past a join with `incoming`, before their registers' facts
     /// are joined: a register keeps a shape both arrivals gave its object, which needs holding
     /// where either gave it as kept; any other register keeps none.
-    pub(super) fn join_kept_shapes(&mut self, incoming: &State) {
+    pub(crate) fn join_kept_shapes(&mut self, incoming: &State) {
         let registers: BTreeSet<Register> = self.proofs.kept_shapes.keys().chain(incoming.proofs.kept_shapes.keys()).copied().collect();
         for register in registers {
             let typed = |state: &State| state.values[usize::from(register)].value.ty.object_shape();
@@ -50,7 +50,7 @@ impl State {
 impl EmitFrame<'_> {
     /// `headers::object_header` of `owner`'s object, after the shape its register's object had
     /// before the last call is held again.
-    pub(super) fn object_header(&mut self, builder: &mut FunctionBuilder<'_>, entry: &Entry, owner: Option<Register>,
+    pub(crate) fn object_header(&mut self, builder: &mut FunctionBuilder<'_>, entry: &Entry, owner: Option<Register>,
         read: bool, miss: ir::Block) -> ObjectHeader {
         if let Some(register) = owner { self.hold_kept_shape(builder, register, miss); }
         headers::object_header(builder, self.registers, self.state, (entry, self.payload), owner, read, miss)

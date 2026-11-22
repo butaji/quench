@@ -1,19 +1,19 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 use super::*;
 use crate::compiled::regions;
-#[path = "frame_calls.rs"] pub(super) mod calls;
-#[path = "frame_call_out.rs"] pub(super) mod call_out;
+#[path = "frame_calls.rs"] pub(crate) mod calls;
+#[path = "frame_call_out.rs"] pub(crate) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
 pub(crate) use operands::{held_long, known_number, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The lane's register file.
-pub(super) const FRAME: quench_runtime::staged::Access = quench_runtime::staged::Region::Frame.mutable();
+pub(crate) const FRAME: quench_runtime::staged::Access = quench_runtime::staged::Region::Frame.mutable();
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
-pub(super) enum Edges {
+pub(crate) enum Edges {
     /// A value operation: no control transfer.
     Value,
     /// A value operation whose operand proofs and guards leave at `miss`.
@@ -28,70 +28,70 @@ pub(super) enum Edges {
 /// What a step's slow cases need of the lowering, where it made them: a call-out's record, a
 /// capture access's reach.
 #[derive(Clone, Copy, Default)]
-pub(super) struct Sites<'a> {
-    pub(super) call_out: Option<&'a call_out::CallOutSite>,
-    pub(super) capture: Option<&'a super::captures::CaptureSite>,
+pub(crate) struct Sites<'a> {
+    pub(crate) call_out: Option<&'a call_out::CallOutSite>,
+    pub(crate) capture: Option<&'a super::captures::CaptureSite>,
     /// The Stable `prototype` link of an `instanceof`'s constructor (`Lowering::hold_instanceof`).
-    pub(super) prototype: Option<u32>,
+    pub(crate) prototype: Option<u32>,
 }
 
 /// The lane specializer's register frame (`quench_runtime::staged::Frame`): the SSA homes and the facts
 /// `State` keeps, with the stage's builder emitting each operation's IR.
-pub(super) struct EmitFrame<'a> {
-    pub(super) registers: &'a mut Registers,
-    pub(super) written: &'a mut CompoundBitSet,
-    pub(super) state: &'a mut State,
-    pub(super) edges: Edges,
-    pub(super) constants: &'a [quench_runtime::bytecode::Constant],
+pub(crate) struct EmitFrame<'a> {
+    pub(crate) registers: &'a mut Registers,
+    pub(crate) written: &'a mut CompoundBitSet,
+    pub(crate) state: &'a mut State,
+    pub(crate) edges: Edges,
+    pub(crate) constants: &'a [quench_runtime::bytecode::Constant],
     /// The entry's `this` binding, where the lowering has entry facts.
-    pub(super) this: Option<Variable>,
+    pub(crate) this: Option<Variable>,
     /// Whether this region may read or write the activation's local slots
     /// (`JsStepDispatch::native_locals`); a numeric region's activation has none.
-    pub(super) locals: bool,
+    pub(crate) locals: bool,
     /// The running body's dispatch payload, which semantic helpers take.
-    pub(super) payload: ir::Value,
+    pub(crate) payload: ir::Value,
     /// The helper table a callout addresses.
-    pub(super) helpers: LaneHelpers,
+    pub(crate) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
-    pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+    pub(crate) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
     /// The heap identities the emitted code names (`FoldedRoots::embed_heap_identity`).
-    pub(super) roots: &'a mut quench_runtime::folded_roots::FoldedRoots,
+    pub(crate) roots: &'a mut quench_runtime::folded_roots::FoldedRoots,
     /// The Number return edges, joined at the end of the body.
-    pub(super) number_returns: &'a mut smallvec::SmallVec<[NumberReturn; 1]>,
+    pub(crate) number_returns: &'a mut smallvec::SmallVec<[NumberReturn; 1]>,
     /// What a named field access is proved under (`PropertyFrame`); none for any other step.
-    pub(super) fields: Option<super::frame_fields::FieldFacts<'a>>,
+    pub(crate) fields: Option<super::frame_fields::FieldFacts<'a>>,
     /// The record a call-out calls for, where the lowering made one (`call_outs`).
-    pub(super) call_out: Option<&'a call_out::CallOutSite>,
+    pub(crate) call_out: Option<&'a call_out::CallOutSite>,
     /// The view of a loop's hoisted dense array the element row reads through, proved at the loop's
     /// entering edge (`ElementFrame::kept_view`).
-    pub(super) held: Option<super::frame_elements::Held>,
+    pub(crate) held: Option<super::frame_elements::Held>,
     /// Whether a read through `held` leaves at a hole or past the backing instead of calling
     /// the VM's read, whose call would spill every value live across the loop.
-    pub(super) hole_leaves: bool,
+    pub(crate) hole_leaves: bool,
     /// Whether no operation of the unit may move an array's backing or the record table
     /// (`fixed_arrays`), so the table's base word is read-only.
-    pub(super) arrays_fixed: bool,
+    pub(crate) arrays_fixed: bool,
     /// The call or return a step of the call family runs for (`call_frames`).
-    pub(super) site: Option<super::call_frames::Site<'a>>,
+    pub(crate) site: Option<super::call_frames::Site<'a>>,
     /// Whether the call `call_entry` last planned passes arguments proved to have its callee's proven entry's
     /// parameter types (`call_frames::EmitFrame::arguments_proven`), which `call_enter` reads.
-    pub(super) proven_arguments: std::cell::Cell<bool>,
+    pub(crate) proven_arguments: std::cell::Cell<bool>,
     /// What a capture access reaches, where the lowering made it (`captures`).
-    pub(super) capture: Option<&'a super::captures::CaptureSite>,
+    pub(crate) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
-    pub(super) html_dda: bool,
+    pub(crate) html_dda: bool,
     /// The compiling VM's thresholds (`VmFacts::tiers`).
-    pub(super) tiers: &'static super::super::tier_policy::Tiers,
+    pub(crate) tiers: &'static super::super::tier_policy::Tiers,
     /// The Stable `prototype` link of the step's `instanceof` constructor.
-    pub(super) prototype: Option<u32>,
+    pub(crate) prototype: Option<u32>,
     /// The region's entry proofs, whose object record table a prototype walk addresses where the
     /// step carries no field facts.
-    pub(super) table_entry: Option<&'a Entry>,
+    pub(crate) table_entry: Option<&'a Entry>,
 }
 
 /// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
 /// instruction or a handler's entry reads or writes.
-pub(super) fn local_slot_address(builder: &mut FunctionBuilder<'_>, payload: ir::Value, slot: u16) -> ir::Value {
+pub(crate) fn local_slot_address(builder: &mut FunctionBuilder<'_>, payload: ir::Value, slot: u16) -> ir::Value {
     let locals = super::super::emit_js_payload_word(builder, payload,
         std::mem::offset_of!(super::super::JsStepDispatch, head.native_locals));
     emit(builder).raw_binary_imm(Binary::Add, locals, i64::from(slot) * std::mem::size_of::<Value>() as i64)
@@ -308,28 +308,28 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
 /// `register`'s int32 view (`Registers::int`).
 #[inline(always)]
-pub(super) fn register_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+pub(crate) fn register_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     register: usize) -> Variable {
     *registers.int[register].get_or_insert_with(|| builder.declare_var(types::I32))
 }
 
 /// `register`'s 64-bit integer view (`Registers::long`).
 #[inline(always)]
-pub(super) fn register_long(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+pub(crate) fn register_long(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     register: usize) -> Variable {
     *registers.long[register].get_or_insert_with(|| builder.declare_var(types::I64))
 }
 
 /// `register`'s float64 view (`Registers::float`).
 #[inline(always)]
-pub(super) fn register_float(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+pub(crate) fn register_float(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     register: usize) -> Variable {
     *registers.float[register].get_or_insert_with(|| builder.declare_var(types::F64))
 }
 
 /// `register`'s tagged bits, materializing them from its unboxed view where needed.
 #[inline(always)]
-pub(super) fn register_tagged(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+pub(crate) fn register_tagged(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register) -> ir::Value {
     let index = usize::from(register);
     let fact = state.values[index];
@@ -363,7 +363,7 @@ fn defined_here(builder: &FunctionBuilder<'_>, value: ir::Value) -> bool {
 
 /// `register`'s word in its fact's representation.
 #[inline(always)]
-pub(super) fn register_read(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+pub(crate) fn register_read(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register) -> ir::Value {
     let index = usize::from(register);
     match state.values[index].value.representation {
@@ -385,7 +385,7 @@ pub(super) fn register_read(builder: &mut FunctionBuilder<'_>, registers: &mut R
 
 /// Define `register` with `value` and `fact`, retiring the proofs it carried.
 #[inline(always)]
-pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     written: &mut CompoundBitSet, state: &mut State, register: Register, value: ir::Value,
     mut fact: RegisterFact) {
     let index = usize::from(register);
@@ -409,7 +409,7 @@ pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
 
 /// `source`'s value into `destination`, with every fact proved of it.
 #[inline(always)]
-pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     written: &mut CompoundBitSet, state: &mut State, destination: Register, source: Register) -> ir::Value {
     let source_index = usize::from(source);
     let fact = state.values[source_index];

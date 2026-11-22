@@ -42,27 +42,27 @@ use super::super::super::base_rows::Heap;
 use quench_bjit::numeric::Kind;
 
 /// A callee the stitcher may inline, as its function and the call site's records show it.
-pub(in super::super) struct Callee<'f> {
-    pub(in super::super) function: u32,
-    pub(in super::super) identity: Value,
-    pub(in super::super) code: &'f [WideInstruction],
-    pub(in super::super) registers: u16,
+pub(crate) struct Callee<'f> {
+    pub(crate) function: u32,
+    pub(crate) identity: Value,
+    pub(crate) code: &'f [WideInstruction],
+    pub(crate) registers: u16,
     /// Each parameter an argument passes to, as (argument index, home register).
-    pub(in super::super) homes: &'f [(u16, Register)],
+    pub(crate) homes: &'f [(u16, Register)],
     /// The callee's constant table's Numbers.
-    pub(in super::super) numbers: Numbers<'f>,
+    pub(crate) numbers: Numbers<'f>,
     /// The callee's live registers before each instruction (`compile::liveness`).
-    pub(in super::super) live: &'f RegisterMasks,
+    pub(crate) live: &'f RegisterMasks,
     /// The Stable fact the callee register's by-name read took: the global cell holding `identity`.
-    pub(in super::super) stable: Option<GlobalFact>,
+    pub(crate) stable: Option<GlobalFact>,
     /// The address and length of the closure's own capture slots (its environment's dense run), which
     /// the site's proof fixes with `identity`: a depth-0 capture read is a read of one slot's address.
-    pub(in super::super) captures: (usize, usize),
+    pub(crate) captures: (usize, usize),
 }
 
 /// The activations around a call being planned, and what is left of the stitch's budget.
 #[derive(Clone)]
-pub(in super::super) struct Context {
+pub(crate) struct Context {
     /// The functions making the call, outermost first.
     chain: Vec<u32>,
     /// The first register above the registers of the innermost.
@@ -76,7 +76,7 @@ pub(in super::super) struct Context {
 
 impl Context {
     /// The context of `caller`, which has `registers` registers.
-    pub(in super::super) fn root(caller: u32, registers: u16, policy: &'static Stitch) -> Self {
+    pub(crate) fn root(caller: u32, registers: u16, policy: &'static Stitch) -> Self {
         let limit = (u32::from(registers) + policy.window_registers).min(u32::from(REGISTER_MASK) + 1);
         Self { chain: vec![caller], top: u32::from(registers), limit, budget: policy.max_total_instructions, policy }
     }
@@ -88,7 +88,7 @@ impl Context {
 
 /// Why a call keeps its call chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in super::super) enum Refused {
+pub(crate) enum Refused {
     /// The call is not a direct-cell call (`call_plan::choose`).
     NotDirect,
     /// The callee is not the function the call's record names.
@@ -117,7 +117,7 @@ pub(in super::super) enum Refused {
 
 /// What proves a call runs the function its site was stitched for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in super::super) enum Proof {
+pub(crate) enum Proof {
     /// The global cell holding it, which a change of retires the code.
     Held(GlobalFact),
     /// The callee register holds exactly this word, tested at the call.
@@ -125,30 +125,30 @@ pub(in super::super) enum Proof {
 }
 
 /// A row of an inlined site.
-pub(in super::super) struct SiteRow {
-    pub(in super::super) decoded: Decoded,
+pub(crate) struct SiteRow {
+    pub(crate) decoded: Decoded,
     /// The callee instruction the row is part of; `None` for the copy of an argument, which
     /// runs before the callee's first instruction.
-    pub(in super::super) pc: Option<u32>,
+    pub(crate) pc: Option<u32>,
     /// The registers the interpreter resumed in the callee at this row would read before writing,
     /// renamed into the caller's registers and the window.
-    pub(in super::super) live: Vec<Register>,
+    pub(crate) live: Vec<Register>,
 }
 
 /// A call planned as its callee's rows, each over registers of the caller or its window.
-pub(in super::super) struct InlineSite {
-    pub(in super::super) shape: CallShape,
-    pub(in super::super) proof: Proof,
-    pub(in super::super) rows: Vec<SiteRow>,
+pub(crate) struct InlineSite {
+    pub(crate) shape: CallShape,
+    pub(crate) proof: Proof,
+    pub(crate) rows: Vec<SiteRow>,
     /// The first register above the callee's window.
-    pub(in super::super) top: u32,
+    pub(crate) top: u32,
     /// The (parameter register, argument register) copies a leave inside the callee runs first:
     /// each parameter the callee never writes is read from its argument register, where the
     /// interpreter's activation expects it in its own.
-    pub(in super::super) copies: Vec<(Register, Register)>,
+    pub(crate) copies: Vec<(Register, Register)>,
     /// The call as the method's inlined frame, which a leave inside the callee recovers
     /// (`Vm::body_inlined_activation_in_lane`).
-    pub(in super::super) frame: InlinedCall,
+    pub(crate) frame: InlinedCall,
 }
 
 /// The first reason `callee` does not inline at `shape`.
@@ -373,7 +373,7 @@ fn frame(shape: &CallShape, callee: &Callee, base: Register) -> InlinedCall {
 impl InlineSite {
     /// `callee` spliced in at `shape` in `context`, reserving its registers and budget; the first
     /// reason it does not (`Refused`) leaves the context as it was.
-    pub(in super::super) fn plan(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &mut Context) -> Result<Self, Refused> {
+    pub(crate) fn plan(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &mut Context) -> Result<Self, Refused> {
         admit(shape, facts, callee, context)?;
         let base = Register::try_from(context.top).map_err(|_| Refused::Registers)?;
         let reached = quench_runtime::bytecode::reachable_from(callee.code, [0]);

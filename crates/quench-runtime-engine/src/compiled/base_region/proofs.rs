@@ -75,7 +75,7 @@ fn clears_stores(row: &Decoded) -> bool {
 }
 
 /// The receiver register an inline-cache access names.
-pub(super) fn receiver(row: &Decoded) -> Option<Register> {
+pub(crate) fn receiver(row: &Decoded) -> Option<Register> {
     row.ic?;
     match row.heap? {
         Heap::Site => row.a.and_then(register_of),
@@ -245,7 +245,7 @@ fn rechecks(rows: &[Decoded], span: &Span, before: &[Option<Proved>]) -> Vec<boo
 /// in flat form too (`Known::shapes`): a proven access of one of them is `Decoded::flat`, with no compare. Each proven store the run-level stores test admits, with no
 /// call since the entry, is marked `Decoded::admitted`; a store a call cleared the test for re-reads the word (`Decoded::recheck`)
 /// where a proven store follows it before the next such clear.
-pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register], shaped: &[Register], loops: &[Register], flat: &[Register]) {
+pub(crate) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register], shaped: &[Register], loops: &[Register], flat: &[Register]) {
     let count = rows.len();
     // `None`: no path reaches the row yet (the top of the meet).
     let mut before: Vec<Option<Proved>> = vec![None; count];

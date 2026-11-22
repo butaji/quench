@@ -9,21 +9,21 @@ impl Lowering<'_, '_> {
     /// Whether the closed world proves that inlined `frame`'s call always calls its target: its
     /// admission then compares nothing, and the block holds the fact under the image's invalidation
     /// word instead (`hold_stable`), read once, never per call.
-    pub(super) fn closed_call(&mut self, state: &mut State, exit: ir::Block, frame: usize) -> bool {
+    pub(crate) fn closed_call(&mut self, state: &mut State, exit: ir::Block, frame: usize) -> bool {
         let proved = self.closed_proves(frame);
         if proved { self.hold_stable(state, exit); }
         proved
     }
 
     /// Whether the closed world proves inlined `frame`'s target (`closed_call`), which no entry admits either.
-    pub(super) fn closed_proves(&self, frame: usize) -> bool {
+    pub(crate) fn closed_proves(&self, frame: usize) -> bool {
         let Some(closed) = self.vm.closed else { return false };
         let call = self.unit.frames[frame];
         let caller = call.parent.map_or(self.function_id, |parent| self.unit.frames[parent].target.function);
         call.target.callee == CalleeBinding::Function && closed.function_facts(caller).call_target(call.call) == Some(call.target.function)
     }
 
-    pub(super) fn function_binding(&mut self, callee: ir::Value, function: u32) -> ir::Value {
+    pub(crate) fn function_binding(&mut self, callee: ir::Value, function: u32) -> ir::Value {
         let program = self.raw_load(Lane::I32, regions::dispatch(), self.payload, std::mem::offset_of!(JsStepDispatch, program_id) as i32);
         let program = self.raw_unary(Unary::ZeroExtend(Lane::I64), program);
         let probed = function != super::super::ROOT_FUNCTION_ID;

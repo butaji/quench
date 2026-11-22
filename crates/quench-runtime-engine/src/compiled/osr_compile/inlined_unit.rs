@@ -6,7 +6,7 @@ use super::*;
 use quench_runtime::bytecode::Op;
 
 /// The lane unit's frames for an inlining region's inlined callees.
-pub(super) fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) -> Vec<lane_unit::InlinedCall> {
+pub(crate) fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) -> Vec<lane_unit::InlinedCall> {
     inlining.frames.iter().map(|frame| lane_unit::InlinedCall {
         recovery: lane_unit::CallRecovery::Materialize,
         parent: None,
@@ -33,7 +33,7 @@ pub(super) fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) ->
 
 /// Where each inlined frame's call marker goes: its first instruction's position and the PC
 /// to resume at, where a failed identity guard must rerun the callee's read too.
-pub(super) fn marker_sites(origins: &[lane_unit::Origin], frames: &[lane_unit::InlinedCall]) -> Vec<(usize, u32)> {
+pub(crate) fn marker_sites(origins: &[lane_unit::Origin], frames: &[lane_unit::InlinedCall]) -> Vec<(usize, u32)> {
     (0..frames.len()).filter_map(|frame| {
         let at = origins.iter().position(|origin|
             matches!(origin, lane_unit::Origin::Inlined { frame: at, .. } if *at == frame))?;
@@ -48,7 +48,7 @@ pub(super) fn marker_sites(origins: &[lane_unit::Origin], frames: &[lane_unit::I
 }
 
 /// The region's instructions with each jump target a region-local PC (one past the end where it leaves).
-pub(super) fn localized_jumps(region: &LoopRegion) -> Vec<WideInstruction> {
+pub(crate) fn localized_jumps(region: &LoopRegion) -> Vec<WideInstruction> {
     let count = region.instructions().len();
     let header = region.header as usize;
     let mut instructions = region.instructions().to_vec();
@@ -65,7 +65,7 @@ pub(super) fn localized_jumps(region: &LoopRegion) -> Vec<WideInstruction> {
 /// The region's static field reads, by the unit PC each instruction took, answered from
 /// the entry record: an instruction at region offset `o` moved past every marker at or
 /// before it (`inserted`).
-pub(super) fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgram, inserted: &[(usize, u32)]) -> Vec<Option<u32>> {
+pub(crate) fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgram, inserted: &[(usize, u32)]) -> Vec<Option<u32>> {
     let unit_pc = |offset: usize| offset + inserted.iter().filter(|(at, _)| *at <= offset).count();
     super::super::lane_region::flat_table(region.field_reads().iter()
         .filter(|(_, index)| entry_read(region, **index, program))
@@ -77,7 +77,7 @@ pub(super) fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgra
 /// callee and passes the call's arguments, as `lane_unit::unit` emits it. The region's own
 /// parameter moves precede the marker and write the same registers. Returns the insertions
 /// (position, resume PC) and the markers' unit PCs.
-pub(super) fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lane_unit::Origin>,
+pub(crate) fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lane_unit::Origin>,
     frames: &[lane_unit::InlinedCall]) -> (Vec<(usize, u32)>, Vec<usize>) {
     let mut inserted = marker_sites(origins, frames);
     inserted.sort_unstable_by_key(|(at, _)| *at);
@@ -118,7 +118,7 @@ pub(super) fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &
 /// Map an inlining loop region onto the lane unit: its instructions' jump targets become
 /// unit PCs, its origins name the caller/inlined frame of each instruction, and its frames
 /// carry the callee identity, function, call window and result.
-pub(super) fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane_unit::Unit, Vec<Option<u32>>)> {
+pub(crate) fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane_unit::Unit, Vec<Option<u32>>)> {
     let inlining = region.inlining.as_deref()?;
     let count = region.instructions().len();
     let mut instructions = localized_jumps(region);

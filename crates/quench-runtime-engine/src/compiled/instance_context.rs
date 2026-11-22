@@ -15,17 +15,17 @@ use quench_runtime::heap::{Cell, TableWords};
 use cranelift_codegen::ir::{self, types};
 use std::rc::Rc;
 
-pub(super) use quench_runtime::vm::engine_types::ABI_NOT_DIRECT;
+pub(crate) use quench_runtime::vm::engine_types::ABI_NOT_DIRECT;
 
 pub use quench_runtime::vm::engine_types::InstanceContext;
 
 /// The memory an artifact is entered with in an instance: its binding, base, current length and
 /// guard reservation.
-pub(super) struct MemoryBinding {
-    pub(super) binding: Value,
-    pub(super) base: u64,
-    pub(super) length: u64,
-    pub(super) guard: Option<(*mut u8, usize)>,
+pub(crate) struct MemoryBinding {
+    pub(crate) binding: Value,
+    pub(crate) base: u64,
+    pub(crate) length: u64,
+    pub(crate) guard: Option<(*mut u8, usize)>,
 }
 
 /// Declares the fields a call context and a record share by name and type: `SWITCHED`, their
@@ -35,7 +35,7 @@ macro_rules! switched {
     (head: { $($field:ident: $ty:expr),+ $(,)? }, tail: { $($tail:ident: $tail_ty:expr),+ $(,)? } $(,)?) => {
         /// The offset in a call context, the offset in a record and the machine type of each
         /// field that belongs to an instance.
-        pub(super) const SWITCHED: &[(i32, i32, ir::Type)] = &[
+        pub(crate) const SWITCHED: &[(i32, i32, ir::Type)] = &[
             $((
                 std::mem::offset_of!(CallContext, head.$field) as i32,
                 std::mem::offset_of!(InstanceContext, $field) as i32,
@@ -51,7 +51,7 @@ macro_rules! switched {
         #[quench_macros::ext(CallContextOps2)]
         impl CallContext {
             /// Enters the instance of `record`: the context takes its words.
-            pub(super) fn enter(&mut self, record: &InstanceContext) {
+            pub(crate) fn enter(&mut self, record: &InstanceContext) {
                 $(self.$field = record.$field;)+
                 $(self.$tail = record.$tail;)+
             }
@@ -82,10 +82,10 @@ switched! {
 
 #[quench_macros::ext(InstanceContextOps1)]
 impl InstanceContext {
-    pub(super) const MEMORY_BASE: i32 = std::mem::offset_of!(Self, memory_base) as i32;
-    pub(super) const ABI: i32 = std::mem::offset_of!(Self, abi) as i32;
-    pub(super) const TABLE: i32 = std::mem::offset_of!(Self, table) as i32;
-    pub(super) const ENV: i32 = std::mem::offset_of!(Self, env) as i32;
+    pub(crate) const MEMORY_BASE: i32 = std::mem::offset_of!(Self, memory_base) as i32;
+    pub(crate) const ABI: i32 = std::mem::offset_of!(Self, abi) as i32;
+    pub(crate) const TABLE: i32 = std::mem::offset_of!(Self, table) as i32;
+    pub(crate) const ENV: i32 = std::mem::offset_of!(Self, env) as i32;
 
     /// The address a mirror row names the instance by.
     pub(crate) fn address(&self) -> usize {
@@ -93,7 +93,7 @@ impl InstanceContext {
     }
 
     /// Fills the areas from the bindings of the environment, by slot.
-    pub(super) fn bind(
+    pub(crate) fn bind(
         &mut self,
         globals: impl IntoIterator<Item = (usize, *mut u64)>,
         tables: impl IntoIterator<Item = (usize, *const TableWords)>,
@@ -110,7 +110,7 @@ impl InstanceContext {
     /// the artifact's words are written when it differs from the last, the memory's each time,
     /// as it may have grown.
     /// Returns whether the artifact changed, so the rows that name this instance take its bodies.
-    pub(super) fn publish(&mut self, compiled: &Rc<CompiledProgram>, memory: &MemoryBinding) -> bool {
+    pub(crate) fn publish(&mut self, compiled: &Rc<CompiledProgram>, memory: &MemoryBinding) -> bool {
         let changed = !std::ptr::eq(self.compiled, Rc::as_ptr(compiled));
         if changed {
             self.compiled = Rc::as_ptr(compiled);
@@ -159,7 +159,7 @@ impl MemoryArguments {
     const LENGTH: u64 = 2;
 
     /// The arguments as the word a record publishes and a call site compares.
-    pub(super) fn word(self) -> u64 {
+    pub(crate) fn word(self) -> u64 {
         (if self.base { Self::BASE } else { 0 }) | (if self.length { Self::LENGTH } else { 0 })
     }
 }
@@ -244,7 +244,7 @@ impl Vm {
     /// The memory `compiled` is entered with in the instance `env`: its binding, base, length
     /// and guard reservation, none where the memory cannot be entered with this artifact (its
     /// code relies on a guard or a base the memory does not have).
-    pub(super) fn memory_binding(&self, compiled: &CompiledProgram, env: Value) -> Option<MemoryBinding> {
+    pub(crate) fn memory_binding(&self, compiled: &CompiledProgram, env: Value) -> Option<MemoryBinding> {
         let Some(slot) = compiled.memory_slot else {
             return Some(MemoryBinding { binding: Value::UNDEFINED, base: 0, length: 0, guard: None });
         };
@@ -264,7 +264,7 @@ impl Vm {
 
     /// Publishes `compiled` in the record of the instance `env` of `program` and refreshes its
     /// memory: the record the call context enters, and the memory's base and length.
-    pub(super) fn publish_wasm_instance(
+    pub(crate) fn publish_wasm_instance(
         &mut self,
         compiled: &Rc<CompiledProgram>,
         env: Value,
@@ -302,21 +302,21 @@ pub use quench_runtime::vm::engine_types::NativeRoots;
 // SAFETY: the record owns its buffer outright and no other holder reads or writes it, so moving the
 // record to another thread moves the buffer with it.
 
-pub(super) use quench_runtime::vm::engine_types::NATIVE_ROOT_CAPACITY;
+pub(crate) use quench_runtime::vm::engine_types::NATIVE_ROOT_CAPACITY;
 
 #[quench_macros::ext(NativeRootsOps1)]
 impl NativeRoots {
-    pub(super) const DEPTH: i32 = std::mem::offset_of!(Self, depth) as i32;
-    pub(super) const CAPACITY: i32 = std::mem::offset_of!(Self, capacity) as i32;
+    pub(crate) const DEPTH: i32 = std::mem::offset_of!(Self, depth) as i32;
+    pub(crate) const CAPACITY: i32 = std::mem::offset_of!(Self, capacity) as i32;
     /// The base address of the buffer: root `k` is `size_of::<Value>()` bytes past it, `k` times.
-    pub(super) const SLOTS: i32 = std::mem::offset_of!(Self, slots) as i32;
+    pub(crate) const SLOTS: i32 = std::mem::offset_of!(Self, slots) as i32;
 
     /// The depth an entry restores when it ends, whatever left native frames unreturned.
-    pub(super) fn depth(&self) -> u64 {
+    pub(crate) fn depth(&self) -> u64 {
         self.depth
     }
 
-    pub(super) fn set_depth(&mut self, depth: u64) {
+    pub(crate) fn set_depth(&mut self, depth: u64) {
         self.depth = depth;
     }
 }

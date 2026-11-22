@@ -24,7 +24,7 @@ use crate::WasmValue;
 /// What one scalar access moves: the type of its register value, the bytes it touches and
 /// whether a narrow load sign-extends them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Access {
+pub struct Access {
     pub(crate) ty: WasmType,
     pub(crate) bytes: usize,
     pub(crate) signed: bool,
@@ -119,7 +119,7 @@ impl Access {
 /// The linear-memory opcodes a function body runs.
 #[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Memory {
+pub enum Memory {
     /// `a = load[b][c + imm]`: the memory in `b`, a 32-bit address in `c`, a static offset.
     Load(Access),
     /// `store[b][c + imm] = a`.
@@ -171,7 +171,7 @@ impl Memory {
 }
 
 /// The linear memory of the instance a function runs in, as far as reading it goes.
-pub(crate) trait WasmMemory: WasmStage {
+pub trait WasmMemory: WasmStage {
     /// The word a v128 access moves: the 16 bytes, little-endian.
     type Vector: Copy;
     /// Whether the machine faults on an access past the memory by itself, a guard region
@@ -198,7 +198,7 @@ pub(crate) trait WasmMemory: WasmStage {
 }
 
 /// The linear memory a function writes: stores and the bulk movers.
-pub(crate) trait WasmMemoryWrite: WasmMemory {
+pub trait WasmMemoryWrite: WasmMemory {
     fn memory_store(&mut self, access: Access, index: Self::Word, offset: u32, value: Self::Word);
     /// Writes the vector `value` over the 16 bytes at `index + offset`, which the rule has checked.
     fn memory_store_vector(&mut self, index: Self::Word, offset: u32, value: Self::Vector);
@@ -212,7 +212,7 @@ pub(crate) trait WasmMemoryWrite: WasmMemory {
 /// The linear memory a function grows: the machine grows it, as the VM does for the
 /// interpreter (`LinearBytes::grow_pages`), and the length every later access reads is the new
 /// one.
-pub(crate) trait WasmMemoryGrow: WasmStage {
+pub trait WasmMemoryGrow: WasmStage {
     /// Grows the memory by the `I32` word `pages` of pages: the `I32` word of its size in
     /// pages before, or -1 where it cannot grow (past its maximum, or refused by the host).
     /// Trap-free; a failed growth changes nothing.
@@ -251,7 +251,7 @@ pub(crate) fn check_access<S: WasmMemory>(
 /// (`WasmMemory::memory_index`): out of bounds traps. The one place the check of an access is
 /// written.
 #[inline(always)]
-pub(crate) fn load<S: WasmMemory>(
+pub fn load<S: WasmMemory>(
     stage: &mut S,
     access: Access,
     index: S::Word,
@@ -263,7 +263,7 @@ pub(crate) fn load<S: WasmMemory>(
 }
 
 #[inline(always)]
-pub(crate) fn store<S: WasmMemoryWrite>(
+pub fn store<S: WasmMemoryWrite>(
     stage: &mut S,
     access: Access,
     index: S::Word,
@@ -279,7 +279,7 @@ pub(crate) fn store<S: WasmMemoryWrite>(
 /// The effective address of a vector access: the 32-bit `address` plus its static `offset`, as an
 /// `I64` word that cannot wrap.
 #[inline(always)]
-pub(crate) fn effective_address<S: WasmMemory>(
+pub fn effective_address<S: WasmMemory>(
     stage: &mut S,
     address: S::Word,
     offset: u64,
@@ -300,7 +300,7 @@ pub(crate) fn pages<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
 
 /// `memory.size`: the length in pages of `1 << page_bits` bytes, an `I32` word.
 #[inline(always)]
-pub(crate) fn size<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
+pub fn size<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
     let count = pages(stage, page_bits);
     stage.convert(ScalarConversionOperator::WrapI64, count)
 }
@@ -323,7 +323,7 @@ pub(crate) fn scalar_address<S: WasmStage>(
 
 /// `memory.fill`: the range checks before any byte is written.
 #[inline(always)]
-pub(crate) fn fill<S: WasmMemoryWrite>(
+pub fn fill<S: WasmMemoryWrite>(
     stage: &mut S,
     destination: S::Word,
     byte: S::Word,
@@ -337,7 +337,7 @@ pub(crate) fn fill<S: WasmMemoryWrite>(
 
 /// `memory.copy`: both ranges check, the destination first, before any byte moves.
 #[inline(always)]
-pub(crate) fn copy<S: WasmMemoryWrite>(
+pub fn copy<S: WasmMemoryWrite>(
     stage: &mut S,
     destination: S::Word,
     source: S::Word,

@@ -28,7 +28,7 @@ fn fit(ty: ir::Type, value: u64) -> i64 {
 /// a variable read in an unsealed block is still a parameter). The edges not taken leave their
 /// blocks unreachable, which the compile removes before any analysis visits them. The count of
 /// branches it decided.
-pub(super) fn decide(function: &mut ir::Function) -> usize {
+pub(crate) fn decide(function: &mut ir::Function) -> usize {
     use ir::condcodes::IntCC;
     let mut decided = 0;
     let blocks: Vec<ir::Block> = function.layout.blocks().collect();

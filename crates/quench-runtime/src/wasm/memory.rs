@@ -378,7 +378,7 @@ macro_rules! define_memory_loads {
     ($($name:ident $family:ident),* $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum MemoryLoad { $($name,)* }
+        pub enum MemoryLoad { $($name,)* }
         impl MemoryLoad {
             const ALL: &'static [Self] = &[$(Self::$name,)*];
         }
@@ -449,7 +449,7 @@ macro_rules! stores {
     (scalar { $($scalar:ident, $swidth:ty, $variant:ident;)+ } vector { $($name:ident, $word:ty;)+ }) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum MemoryStore { $($scalar,)+ $($name,)+ }
+        pub enum MemoryStore { $($scalar,)+ $($name,)+ }
         impl MemoryStore {
             const ALL: &'static [Self] = &[$(Self::$scalar,)+ $(Self::$name,)+];
             pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }

@@ -84,12 +84,12 @@ impl NumericImage {
 
 #[cfg(test)]
 #[path = "numeric_image/ahead.rs"]
-mod ahead;
+pub(crate) mod ahead;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quench_runtime::vm::direct_call::direct_call;
+    use crate::compiled::direct_call::direct_call;
 
     #[test]
     fn numeric_image_loads_as_the_function_the_jit_publishes() {

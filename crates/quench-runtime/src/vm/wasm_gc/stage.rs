@@ -10,7 +10,7 @@ use crate::wasm::gc::GcField;
 use crate::wasm::reference::{ReferenceTarget, TargetHeap};
 
 /// The VM's heap, as a stage the GC rules run on.
-pub(in crate::vm) struct HeapStage<'a> {
+pub struct HeapStage<'a> {
     pub(in crate::vm) vm: &'a mut Vm,
 }
 

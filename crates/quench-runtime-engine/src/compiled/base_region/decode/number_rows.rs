@@ -5,7 +5,7 @@ use super::*;
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
 /// is one a row cannot take.
-pub(in super::super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
+pub(crate) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
     use quench_runtime::staged::{NumberOperation, Operation};
     let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
     let plain = instruction.result_flags() == 0;
@@ -70,7 +70,7 @@ fn unary_row(instruction: WideInstruction, operation: quench_runtime::vm::operat
 
 /// The staged row (`staged_rows.rs`) of a `Binary` that no numeric row takes: `%`, and a relation or an equality as its
 /// value. `kind_of` names none of them for a value form, so they reach the lowering (`steps::fast_arm`).
-pub(in super::super) fn staged_binary(operator: u32) -> Option<u8> {
+pub(crate) fn staged_binary(operator: u32) -> Option<u8> {
     [
         (BinaryOperator::Remainder, numeric::row_names::STAGED_REMAINDER),
         (BinaryOperator::LessThan, numeric::row_names::STAGED_RELVAL_LT),
@@ -85,7 +85,7 @@ pub(in super::super) fn staged_binary(operator: u32) -> Option<u8> {
 }
 
 /// The staged row of a `Unary` that no unary row takes: `~` and `void`.
-pub(in super::super) fn staged_unary(operator: u32) -> Option<u8> {
+pub(crate) fn staged_unary(operator: u32) -> Option<u8> {
     [
         (UnaryOperator::BitwiseNot, numeric::row_names::STAGED_BITWISE_NOT),
         (UnaryOperator::Void, numeric::row_names::STAGED_VOID),

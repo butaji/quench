@@ -17,7 +17,7 @@ fn jump_edge(step: Step<u64, LaneControl>) -> Option<Edge> {
 /// The `typeof` name index of `source` into `destination` by the staged operation; false,
 /// writing nothing, where a heap value's cell decides the name.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_typeof_index(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
+pub(crate) fn staged_typeof_index(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     match quench_runtime::staged::step(&mut stage, &mut frame, Operation::TypeofIndex { destination, source }) {
@@ -30,7 +30,7 @@ pub(in crate::dispatch_fast) fn staged_typeof_index(r: Registers, view: Carried,
 /// Whether `register` is coercible to an object (neither `null` nor `undefined`), by the
 /// staged RequireObjectCoercible.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_require_object_coercible(r: Registers, view: Carried, register: u16) -> bool {
+pub(crate) fn staged_require_object_coercible(r: Registers, view: Carried, register: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     match quench_runtime::staged::step(&mut stage, &mut frame, Operation::RequireObjectCoercible { register }) {
@@ -43,7 +43,7 @@ pub(in crate::dispatch_fast) fn staged_require_object_coercible(r: Registers, vi
 /// Whether the staged RequireIteratorResult accepts `register` as it is (a direct object or
 /// array record); false where the full operation decides.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_require_iterator_result(r: Registers, view: Carried, register: u16) -> bool {
+pub(crate) fn staged_require_iterator_result(r: Registers, view: Carried, register: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     matches!(quench_runtime::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
@@ -52,7 +52,7 @@ pub(in crate::dispatch_fast) fn staged_require_iterator_result(r: Registers, vie
 /// ToNumeric of a Number register `source` into `destination`, by the staged operation;
 /// false, writing nothing, where `source` is not a Number.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
+pub(crate) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     match quench_runtime::staged::step(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination, source })) {
@@ -65,7 +65,7 @@ pub(in crate::dispatch_fast) fn staged_to_numeric(r: Registers, view: Carried, d
 /// ToPropertyKey of the direct string in `source` into `destination`, by the staged operation;
 /// false, writing nothing, where the value is no direct string.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_property_key(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
+pub(crate) fn staged_property_key(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     matches!(quench_runtime::staged::step(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
@@ -74,7 +74,7 @@ pub(in crate::dispatch_fast) fn staged_property_key(r: Registers, view: Carried,
 /// The activation's `this` into `destination` by the staged LoadThis; false, writing
 /// nothing, where the lane does not hold it (`this` is `Value::DELETED`).
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
+pub(crate) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.this = this;
@@ -88,7 +88,7 @@ pub(in crate::dispatch_fast) fn staged_load_this(r: Registers, view: Carried, th
 /// `LoadLocalPlain` of `slot` into `destination` by the staged operation; false, writing
 /// nothing, where the activation has no such local slot.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_load_local_plain<const ACC: u8>(cx: *mut LaneContext,
+pub(crate) fn staged_load_local_plain<const ACC: u8>(cx: *mut LaneContext,
     r: Registers, view: Carried, destination: u16, slot: u16) -> bool {
     let vm = unsafe { vm(cx) };
     let frame = &mut vm.frames[unsafe { (*cx).frame() }];
@@ -102,7 +102,7 @@ pub(in crate::dispatch_fast) fn staged_load_local_plain<const ACC: u8>(cx: *mut 
 /// `StoreLocalPlain` of `source` to `slot`, and to `result` where the instruction has one,
 /// by the staged operation; false, writing nothing, where the activation has no such slot.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_store_local_plain<const ACC: u8>(cx: *mut LaneContext,
+pub(crate) fn staged_store_local_plain<const ACC: u8>(cx: *mut LaneContext,
     r: Registers, view: Carried, source: u16, slot: u16, result: Option<u16>) -> bool {
     let vm = unsafe { vm(cx) };
     let frame = &mut vm.frames[unsafe { (*cx).frame() }];
@@ -117,7 +117,7 @@ pub(in crate::dispatch_fast) fn staged_store_local_plain<const ACC: u8>(cx: *mut
 /// dense slots, by the staged operation and the lane's own store (`lane_capture_store`); false,
 /// storing nothing, where the binding does not take the direct store.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_store_capture(cx: *mut LaneContext, r: Registers, view: Carried,
+pub(crate) fn staged_store_capture(cx: *mut LaneContext, r: Registers, view: Carried,
     source: u16, (depth, slot): (u16, u16)) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
@@ -129,7 +129,7 @@ pub(in crate::dispatch_fast) fn staged_store_capture(cx: *mut LaneContext, r: Re
 /// interpreter's own path decides it. The jump's backward poll is `lane_jump`'s, the one copy
 /// every jump takes through `jump_on_edge!`.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_compare_jump(cx: *mut LaneContext, r: Registers, view: Carried,
+pub(crate) fn staged_compare_jump(cx: *mut LaneContext, r: Registers, view: Carried,
     comparison: Comparison, [left, right]: [u16; 2]) -> Option<Edge> {
     staged_comparison_jump(cx, r, view, comparison, [RecordOperand::Register(left), RecordOperand::Register(right)])
 }
@@ -148,7 +148,7 @@ fn observed(operator: u32, [left, right]: [Value; 2]) -> Comparison {
 /// The edge the staged jump of `operator` over the record's `operands` takes: the comparison the
 /// observed operands select (`observed`), or `None` where the interpreter's cold path decides it.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_record_jump(cx: *mut LaneContext, r: Registers, view: Carried, operator: u32,
+pub(crate) fn staged_record_jump(cx: *mut LaneContext, r: Registers, view: Carried, operator: u32,
     operands: [RecordOperand; 2]) -> Option<Edge> {
     let values = [operands[0].value(cx, r)?, operands[1].value(cx, r)?];
     staged_comparison_jump(cx, r, view, observed(operator, values), operands)
@@ -157,7 +157,7 @@ pub(in crate::dispatch_fast) fn staged_record_jump(cx: *mut LaneContext, r: Regi
 /// The edge the staged jump of `comparison` over the record's `operands` takes, or `None` where
 /// the interpreter's own path decides it.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_comparison_jump(cx: *mut LaneContext, r: Registers, view: Carried, comparison: Comparison,
+pub(crate) fn staged_comparison_jump(cx: *mut LaneContext, r: Registers, view: Carried, comparison: Comparison,
     operands: [RecordOperand; 2]) -> Option<Edge> {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
@@ -175,7 +175,7 @@ pub(in crate::dispatch_fast) fn staged_comparison_jump(cx: *mut LaneContext, r: 
 /// reads to call nothing of the frame escapes, so it stays in registers. The remembered walks
 /// run the row again with them (`staged_load_capture_walked`), out of line.
 #[inline(always)]
-pub(in crate::dispatch_fast) fn staged_load_capture(cx: *mut LaneContext, r: Registers, view: Carried,
+pub(crate) fn staged_load_capture(cx: *mut LaneContext, r: Registers, view: Carried,
     destination: u16, at: (u16, u16), root: bool) -> bool {
     load_capture_with(cx, r, view, (destination, at, root), Reads::NONE)
         || staged_load_capture_walked(cx, r, view, destination, at, root)
@@ -205,7 +205,7 @@ fn load_capture_with(cx: *mut LaneContext, r: Registers, view: Carried,
 /// its host so the frame names no `H`: whether a value is an object, and PromiseResolve where it
 /// observes nothing (`Vm::intrinsic_promise_resolve`).
 #[derive(Clone, Copy)]
-pub(in crate::dispatch_fast) struct AwaitSource {
+pub(crate) struct AwaitSource {
     object_like: fn(*mut (), Value) -> bool,
     resolve: fn(*mut (), Value) -> Option<Value>,
 }
@@ -213,7 +213,7 @@ pub(in crate::dispatch_fast) struct AwaitSource {
 impl AwaitSource {
     /// The conversion of a lane context of host `H`.
     #[inline(always)]
-    pub(in crate::dispatch_fast) fn of() -> Self {
+    pub(crate) fn of() -> Self {
         Self {
             object_like: |context, value| unsafe { vm(context.cast::<LaneContext>()) }.is_object_like(value),
             resolve: |context, value| {
@@ -229,7 +229,7 @@ impl AwaitSource {
 /// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
 /// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
 /// conversion that could run guest code, or throw into the frame's handlers, to the general path.
-pub(in crate::dispatch_fast) fn awaited_value_in_lane(cx: *mut LaneContext, r: Registers, awaited: Value) -> Option<Value> {
+pub(crate) fn awaited_value_in_lane(cx: *mut LaneContext, r: Registers, awaited: Value) -> Option<Value> {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::hosted(r, Carried::script(cx), cx);
     quench_runtime::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)
@@ -240,11 +240,11 @@ pub(in crate::dispatch_fast) fn awaited_value_in_lane(cx: *mut LaneContext, r: R
 /// (`tier_prologue_resumed`, `body_entry_resumed`), each answering where the lane resumes. `ip` is the
 /// body entry's record.
 #[derive(Clone, Copy)]
-pub(in crate::dispatch_fast) struct EntryHost {
-    pub(in crate::dispatch_fast) cx: *mut (),
-    pub(in crate::dispatch_fast) ip: super::super::Ip,
-    pub(in crate::dispatch_fast) tier: unsafe fn(*mut (), Registers, Carried, u32, usize) -> super::super::Resumed,
-    pub(in crate::dispatch_fast) body: unsafe fn(*mut (), super::super::Ip, Registers, Carried, u32, bool) -> super::super::Resumed,
+pub(crate) struct EntryHost {
+    pub(crate) cx: *mut (),
+    pub(crate) ip: super::super::Ip,
+    pub(crate) tier: unsafe fn(*mut (), Registers, Carried, u32, usize) -> super::super::Resumed,
+    pub(crate) body: unsafe fn(*mut (), super::super::Ip, Registers, Carried, u32, bool) -> super::super::Resumed,
 }
 
 impl<const ACC: u8> quench_runtime::staged::PrologueFrame<Concrete> for LaneFrame<ACC> {

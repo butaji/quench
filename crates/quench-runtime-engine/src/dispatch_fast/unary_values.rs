@@ -8,7 +8,7 @@ use super::*;
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
 #[inline(always)]
-pub(super) unsafe fn unary_value(
+pub(crate) unsafe fn unary_value(
     cx: *mut LaneContext,
     r: Registers,
     i: &LaneInstruction,
@@ -22,7 +22,7 @@ pub(super) unsafe fn unary_value(
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(always)]
-pub(super) unsafe fn unary_values(cx: *mut LaneContext, operator: u32, operand: Value) -> Option<Value> {
+pub(crate) unsafe fn unary_values(cx: *mut LaneContext, operator: u32, operand: Value) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // A Number operand of a Number operator (negation, plus, increments): its result made
     // here, where `Vm::unary` would be a call (Box2D's `-x` on doubles).

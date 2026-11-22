@@ -8,7 +8,7 @@ fn function_matches_in_lane(vm: &Vm, program: u64, callee: u64, function: u64) -
 }
 
 /// Admit the actual closure and complete call depth without entering it.
-pub(super) unsafe extern "C" fn function_binding_in_lane(vm: u64, _residual: u64, program: u64, callee: u64, function: u64, depth: u64) -> u64 {
+pub(crate) unsafe extern "C" fn function_binding_in_lane(vm: u64, _residual: u64, program: u64, callee: u64, function: u64, depth: u64) -> u64 {
     // SAFETY: the linked unit owns this VM/program throughout the no-GC operation.
     let vm = unsafe { &*(vm as *const Vm) };
     u64::from(function_matches_in_lane(vm, program, callee, function)
@@ -18,7 +18,7 @@ pub(super) unsafe extern "C" fn function_binding_in_lane(vm: u64, _residual: u64
 
 /// The same binding after closed-loop entry has admitted complete call depth. A match warms
 /// the in-loop call target the body's binding probes first (`JsStepDispatch::call_targets`).
-pub(super) unsafe extern "C" fn admitted_function_binding_in_lane(vm: u64, residual: u64, program: u64, callee: u64, function: u64) -> u64 {
+pub(crate) unsafe extern "C" fn admitted_function_binding_in_lane(vm: u64, residual: u64, program: u64, callee: u64, function: u64) -> u64 {
     // SAFETY: the region owns the VM; only termination can change asynchronously.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
     let matches = function_matches_in_lane(vm, program, callee, function);

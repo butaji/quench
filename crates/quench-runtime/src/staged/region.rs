@@ -47,7 +47,7 @@ pub enum Region {
 
 /// Whether any operation can change the memory an access reads while compiled code runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Mutability {
+pub enum Mutability {
     Mutable,
     /// Nothing changes it while code runs, so a load of it may move and merge freely.
     Readonly,

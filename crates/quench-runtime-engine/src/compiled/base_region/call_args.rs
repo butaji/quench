@@ -16,7 +16,7 @@ use quench_runtime::typed_ir::Type;
 
 /// The frame registers of the pinned int32 and double webs the body's entry guards at its header (`entry_rows`'s pin
 /// rows, which every entry runs): `(int32s, doubles)`.
-pub(super) fn entry_pins(homes: &Homes, webs: &Webs, span: &Span) -> (Vec<Register>, Vec<Register>) {
+pub(crate) fn entry_pins(homes: &Homes, webs: &Webs, span: &Span) -> (Vec<Register>, Vec<Register>) {
     let entered = webs.entry_live(span);
     let held = |web: &Register| entered.contains(&usize::from(*web));
     let ints = homes.pins.iter().filter(|(_, web)| held(web)).map(|(_, web)| homes.orig[usize::from(*web)]).collect();
@@ -27,7 +27,7 @@ pub(super) fn entry_pins(homes: &Homes, webs: &Webs, span: &Span) -> (Vec<Regist
 /// Per PC of `function`, the mask of its call's arguments proven Numbers (bit `k`: argument `k`) and int32s (bit
 /// `INT32_BIT + k`, which implies bit `k`), zero where no call is
 /// or no argument is proven; `None` where the analysis models less than the function does (`exact::exact_pcs`'s conditions).
-pub(super) fn proven_arguments(function: &Function, constants: &[Constant], numbers: &[Register], ints: &[Register]) -> Option<Box<[u64]>> {
+pub(crate) fn proven_arguments(function: &Function, constants: &[Constant], numbers: &[Register], ints: &[Register]) -> Option<Box<[u64]>> {
     if !function.handlers.is_empty() || function.is_generator || function.is_async || function.has_dynamic_scope_access() || function.arguments_slot.is_some() {
         return None;
     }

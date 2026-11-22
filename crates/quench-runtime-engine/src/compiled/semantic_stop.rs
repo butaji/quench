@@ -11,7 +11,7 @@ use quench_bjit::call_record::TERMINATED_STATUS;
 
 /// The (status, word) the entry returns for `step`, the payload's activation's, recording what the
 /// status's reader takes from the payload and the VM.
-pub(super) fn settle(vm: &mut Vm, dispatch: &mut JsStepDispatch, step: JsNativeStep) -> (i64, u64) {
+pub(crate) fn settle(vm: &mut Vm, dispatch: &mut JsStepDispatch, step: JsNativeStep) -> (i64, u64) {
     let pc = step.instruction_pc;
     match step.result {
         Ok(StepResult::Return(value)) => {
@@ -34,7 +34,7 @@ pub(super) fn settle(vm: &mut Vm, dispatch: &mut JsStepDispatch, step: JsNativeS
 
 /// The step a run that ended with `status` and `word` made, where `settle` made the status: a
 /// completion or an exception; `None` for any other status.
-pub(super) fn unsettle(vm: &mut Vm, dispatch: &JsStepDispatch, (status, word): (u32, u64)) -> Option<JsNativeStep> {
+pub(crate) fn unsettle(vm: &mut Vm, dispatch: &JsStepDispatch, (status, word): (u32, u64)) -> Option<JsNativeStep> {
     let pc = dispatch.head.returned_pc;
     let result = match status {
         LANE_BODY_RETURNED => Ok(StepResult::Return(Value::from_bits(word))),

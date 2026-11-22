@@ -8,7 +8,7 @@ use quench_runtime::bytecode::{FieldLayout, InstructionField};
 impl Analysis<'_> {
     /// Each function's full plan from `allowed`, `None` outside the callable set, and the
     /// memory slot those plans compile against.
-    pub(super) fn settle_callable(&self, allowed: &BitSet) -> (Vec<Option<Plan>>, Option<u32>) {
+    pub(crate) fn settle_callable(&self, allowed: &BitSet) -> (Vec<Option<Plan>>, Option<u32>) {
         let mut memory_slot = None;
         let mut plans: Vec<Option<Plan>> = (0..allowed.len())
             .map(|index| allowed.contains(index).then(|| self.plan(index, allowed, &mut memory_slot)).flatten())

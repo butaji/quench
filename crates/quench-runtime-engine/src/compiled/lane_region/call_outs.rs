@@ -21,14 +21,14 @@ impl Lowering<'_, '_> {
 
     /// Whether `instruction` calls out and nothing else lowers it: every call-out row but a
     /// `Binary`, which `Lowering::operator` lowers natively first.
-    pub(super) fn is_call_out(&self, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_call_out(&self, instruction: WideInstruction) -> bool {
         self.call_out_row(instruction).is_some_and(|row| !is_binary(&row))
     }
 
     /// A `Binary` the native lowering (`Lowering::operator`) leaves (a string or BigInt relation,
     /// `instanceof`, `in`, an equality of other than numbers): its row, whose slow case is the
     /// VM's operation. `None` for any other instruction.
-    pub(super) fn binary_call_out(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    pub(crate) fn binary_call_out(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         self.call_out_row(instruction).filter(is_binary).map(|_| self.call_out_step(state, pc, instruction))
     }
 
@@ -36,7 +36,7 @@ impl Lowering<'_, '_> {
     /// are canonical first, and its slow case stores them to the lane's file before the helper
     /// reads them (`frame::call_out::vm_step`). A raised error leaves at `pc`; a for-in step that
     /// finds no key takes its jump. Whether control falls through.
-    pub(super) fn call_out_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn call_out_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(Origin::Caller(record)) = self.unit.origins.get(pc).copied() else {
             self.exit(state, pc as u32);
             return false;
@@ -69,14 +69,14 @@ impl Lowering<'_, '_> {
 
     /// The site of the call-out record at `pc`: where the helper decodes it, the registers the body
     /// wrote, and where a status other than completion or a miss ends the body.
-    pub(super) fn call_out_site(&mut self, pc: usize, record: u32, cell: Option<GlobalSlot>) -> frame::call_out::CallOutSite {
+    pub(crate) fn call_out_site(&mut self, pc: usize, record: u32, cell: Option<GlobalSlot>) -> frame::call_out::CallOutSite {
         frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
             properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc), cell }
     }
 
     /// The record of the comparison jump at `pc` where the VM can decide it in place: a body with
     /// the helper, a record of its own, and registers of the unit for operands.
-    pub(super) fn decide_record(&self, pc: usize, operands: [Operand; 2]) -> Option<u32> {
+    pub(crate) fn decide_record(&self, pc: usize, operands: [Operand; 2]) -> Option<u32> {
         let Some(Origin::Caller(record)) = self.unit.origins.get(pc).copied() else { return None };
         (self.completion.status_and_pc() && operands.iter()
             .all(|operand| operand.register_index().is_some_and(|register| register < self.unit.registers)))
@@ -85,7 +85,7 @@ impl Lowering<'_, '_> {
 
     /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
     /// status: made at the first, filled once at the region's end (`fill_call_out_stop`).
-    pub(super) fn call_out_stop(&mut self) -> ir::Block {
+    pub(crate) fn call_out_stop(&mut self) -> ir::Block {
         let builder = &mut self.builder;
         *self.call_out_stop.get_or_insert_with(|| {
             let block = super::cold_block(builder);
@@ -95,7 +95,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Fill the call-outs' shared stop (`call_out_stop`), once every site that reaches it is lowered.
-    pub(super) fn fill_call_out_stop(&mut self) {
+    pub(crate) fn fill_call_out_stop(&mut self) {
         let Some(block) = self.call_out_stop else { return };
         self.switch_to(block, true);
         let status = self.builder.block_params(block)[0];

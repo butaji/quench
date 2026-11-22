@@ -53,7 +53,7 @@ fn entry_state(span: &Span, homes: &Homes, webs: &Webs, reads: &EntryReads, row:
 /// `reached` marks the rows control reaches, `kinds` is each row's site feedback (`variant_of`), `reads`
 /// the entry guards the rows keep (`entry_reads`), and `entries` the first row of each caller PC a resume
 /// stub enters at (none for a body, which only its entry enters).
-pub(super) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
+pub(crate) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
     reads: &EntryReads, kinds: &[Option<OperandKinds>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
     let state = solve(span, decoded, ending, entries, |row| entry_state(span, homes, webs, reads, row),
         |k, held| transfer(homes, &decoded[k], kinds.get(k).and_then(Option::as_ref), held));
@@ -71,7 +71,7 @@ pub(super) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, 
 /// web, which the entry holds as an int32 word), or where the last write to it stored an int32 word: a copy or
 /// constant of an int32, or a row whose result is always an int32 and which continues in its stencil
 /// (`yields_int32`). Every other write kills the fact, and a meet keeps only the slots all paths hold.
-pub(super) fn proven_int_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
+pub(crate) fn proven_int_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
     ending: Ending, entries: &[(u32, u32)]) -> Vec<(bool, bool)> {
     let state = solve(span, decoded, ending, entries, |row| int_entry_state(span, homes, webs, row),
         |k, held| int_transfer(homes, &decoded[k], held));
@@ -230,7 +230,7 @@ fn meet(known: &mut Held, other: &Held) -> bool {
 /// A Number guard checks the entry value of its slot. Its check is redundant where no row reads that value
 /// natively before writing the slot (`entry_reads`). `kept` slots keep theirs whatever the rows read: a declared
 /// Number parameter's rows rely on its guard, and an inlined frame's copies run at a leave.
-pub(super) struct EntryReads {
+pub(crate) struct EntryReads {
     /// The number-register slots (`Span::number_registers`), the only ones a Number guard checks.
     numbers: Held,
     kept: Held,
@@ -240,7 +240,7 @@ pub(super) struct EntryReads {
 
 impl EntryReads {
     /// Whether the entry at row `row` emits the Number guard of frame slot `slot`. A row past the analysis keeps it.
-    pub(super) fn guards(&self, row: usize, slot: usize) -> bool {
+    pub(crate) fn guards(&self, row: usize, slot: usize) -> bool {
         self.numbers.contains(slot) && (self.kept.contains(slot) || self.live.get(row).is_none_or(|live| live.contains(slot)))
     }
 }
@@ -248,7 +248,7 @@ impl EntryReads {
 /// Whether the row checks each operand it reads, so it reads no fact an entry guard provides: a bare numeric
 /// row (`Decoded::number`, nothing else set) whose stencil leaves on any other operand (`leaves_on_other`), and
 /// which is no `Concat` variant.
-pub(super) fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
+pub(crate) fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
     let bare = row.heap.is_none() && row.step.is_none() && row.global.is_none() && row.base.is_none() && row.also.is_none()
         && row.atom.is_none() && row.folded.is_none() && row.instanceof.is_none() && row.lexical.is_none() && row.add.is_none()
         && row.name.is_none() && row.ic.is_none() && row.declined.is_none() && row.holder.is_none() && row.cell.is_none() && !row.class_read
@@ -266,7 +266,7 @@ fn union(into: &mut Held, from: &Held) {
 /// The entry reads of a region's rows: a backward analysis of the slots a native read reaches before a write.
 /// A self-checking row reads nothing an entry must prove; any other row reads all its registers, and a row writes
 /// its destinations, which end the entry value there.
-pub(super) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, kinds: &[Option<OperandKinds>], kept: &[Register]) -> EntryReads {
+pub(crate) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, kinds: &[Option<OperandKinds>], kept: &[Register]) -> EntryReads {
     let count = decoded.len();
     let capacity = homes.orig.len().max(1);
     let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);

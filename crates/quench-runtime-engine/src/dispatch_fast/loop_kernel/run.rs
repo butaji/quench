@@ -7,7 +7,7 @@ use quench_runtime::heap::TypedArrayKind;
 use super::*;
 
 /// Iterations per chunk: each column holds this many f64s.
-pub(super) const CHUNK: usize = 256;
+pub(crate) const CHUNK: usize = 256;
 use crate::compiled::tier_policy::KERNEL_MIN_TRIP;
 /// The shortest chunk a load/store distance may impose.
 const MIN_CHUNK: usize = 16;
@@ -18,11 +18,11 @@ use quench_runtime::vm::engine_types::Span;
 
 const NO_SPAN: Span = Span { base: Value::UNDEFINED, values: std::ptr::null_mut(), readable: 0, writable: 0, typed: None };
 
-pub(super) use quench_runtime::vm::engine_types::State;
+pub(crate) use quench_runtime::vm::engine_types::State;
 
 #[quench_macros::ext(StateOps1)]
 impl State {
-    pub(super) const EMPTY: Self = Self {
+    pub(crate) const EMPTY: Self = Self {
         scalars: [0.0; SLOTS],
         firsts: [0; SLOTS],
         steps: [0; SLOTS],
@@ -141,7 +141,7 @@ fn bits_column(operation: NumberBitwise, out: &mut [f64], a: Column, b: Column) 
 /// `operation` of two Numbers as the staged Number row computes it: the interpreter's stage
 /// (`Concrete`) runs `NumericStage::float_arithmetic` on the binary64 words.
 #[inline(always)]
-pub(super) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
+pub(crate) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
     let mut stage = quench_runtime::staged::Concrete::new(std::ptr::null());
     f64::from_bits(quench_runtime::staged::NumericStage::float_arithmetic(&mut stage, operation, a.to_bits(), b.to_bits()))
 }
@@ -175,7 +175,7 @@ fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
 /// (a fraction rounds, a NaN never compares equal). A magnitude of 2^51 or more is tested
 /// apart: one past 2^53 absorbs the constant and round-trips with other low bits.
 #[inline(always)]
-pub(super) fn exact_int32(x: f64) -> Option<i32> {
+pub(crate) fn exact_int32(x: f64) -> Option<i32> {
     const MAGIC: f64 = 6755399441055744.0;
     const LIMIT: f64 = 2251799813685248.0;
     let shifted = x + MAGIC;
@@ -191,7 +191,7 @@ fn compare(relation: NumberRelation, a: f64, b: f64) -> f64 {
 }
 
 #[inline(always)]
-pub(super) fn apply(op: NodeOp, a: f64, b: f64) -> f64 {
+pub(crate) fn apply(op: NodeOp, a: f64, b: f64) -> f64 {
     match op {
         NodeOp::Arith(operation) => arith(operation, a, b),
         NodeOp::Bits(operation) => bits(operation, a, b),
@@ -272,7 +272,7 @@ const WORK_PER_ITERATION: u64 = 4;
 #[quench_macros::ext(LoopKernelOps2)]
 impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
-    pub(super) unsafe fn run(&self, cx: *mut LaneContext, r: Registers, ip: Ip) {
+    pub(crate) unsafe fn run(&self, cx: *mut LaneContext, r: Registers, ip: Ip) {
         // SAFETY: the kernel's state, used by one run at a time (the body calls nothing).
         let state: &mut State = unsafe { &mut **(*self.state.get()).get_or_insert_with(|| Box::new(State::EMPTY)) };
         let Some(()) = self.enter(cx, r, state) else {

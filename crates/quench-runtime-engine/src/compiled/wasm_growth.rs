@@ -34,7 +34,7 @@ fn grows_directly(step: Step) -> bool {
 
 /// The defined functions `0..count` of `code` that may grow the memory (see the module's docs).
 /// `shared` says the memory is shared between threads, which makes every function one that may.
-pub(super) fn growing_functions(code: &ResidualProgram, count: usize, shared: bool) -> BitSet {
+pub(crate) fn growing_functions(code: &ResidualProgram, count: usize, shared: bool) -> BitSet {
     if shared {
         return BitSet::from_fn(count, |_| true);
     }

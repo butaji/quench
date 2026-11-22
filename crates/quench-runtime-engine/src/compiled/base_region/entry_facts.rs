@@ -8,7 +8,7 @@ use quench_runtime::staged::typed_elements::NativeKind;
 /// How a loop region's arrays are viewed on entry: not at all (each access proves its array's word), as
 /// dense arrays' backings or as typed arrays' elements, which the entry record holds (`ElementViews`).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::compiled) enum Views {
+pub(crate) enum Views {
     Frame,
     Dense,
     /// Typed arrays of this native kind, which the entry proved.
@@ -30,7 +30,7 @@ impl From<ElementViews> for Views {
 /// through it where the views are not `Frame`), or nowhere, as a whole function's rows read the heap
 /// by its tables (an array word's record, a field's cache entry).
 #[derive(Clone, Copy)]
-pub(super) enum Facts {
+pub(crate) enum Facts {
     /// A loop region: `views` say how its arrays are read, `writes` where it
     /// stores a field through a row, which may stale a field value the entry record holds
     /// (`stores_field`), so its field reads are the site's, live. A region that makes a call by a
@@ -54,7 +54,7 @@ fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
 /// The row of an element access of the array `register` under `facts`, over the typed row of the kind the
 /// entry viewed the array as (`typed`) where it did, else the dense `heap` row: with the record offset of its
 /// entry words (0 where it has none).
-pub(super) fn element_heap(region: &LoopRegion, facts: Facts, register: Register, (dense, typed): (Heap, fn(u8) -> Heap)) -> (Heap, u64) {
+pub(crate) fn element_heap(region: &LoopRegion, facts: Facts, register: Register, (dense, typed): (Heap, fn(u8) -> Heap)) -> (Heap, u64) {
     let hole = entry_array(region, facts, register);
     match facts {
         Facts::Entry { views: Views::Typed(kind), .. } if hole != 0 => (typed(kind as u8), hole),

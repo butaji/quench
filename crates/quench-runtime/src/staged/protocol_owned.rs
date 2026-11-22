@@ -8,7 +8,7 @@ use crate::bytecode::{InstructionField, Op, WideInstruction};
 
 /// An activation-variable (local, var binding, TDZ, argument) step the host makes by the interpreter's own definition.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum OwnedVarStep {
+pub enum OwnedVarStep {
     /// The binding of local `slot`, defined into the result register (`LoadLocal`).
     LoadLocal { slot: usize },
     /// Store the first operand to the `var` binding of local `slot` (`StoreVarBinding`); defines nothing.

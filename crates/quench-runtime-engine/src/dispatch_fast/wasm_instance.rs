@@ -12,7 +12,7 @@ lane_handler! {
     /// Load the memory binding of the function's memory register and install its memory view:
     /// the row answers the value, but the carried view and the lane context's memory are this
     /// handler's to update, so the memory binding keeps its own body.
-    pub(super) fn lane_instance_binding_memory<>(cx, r, ip, i, view) {
+    pub(crate) fn lane_instance_binding_memory<>(cx, r, ip, i, view) {
         let env = instance_env_in_lane(cx);
         let (known, storage) = unsafe { (*cx).instance_slots };
         let slot = i.imm();
@@ -40,7 +40,7 @@ lane_handler! {
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn wasm_global_load(context: *mut (), binding: Value) -> Option<Value> {
+pub(crate) unsafe fn wasm_global_load(context: *mut (), binding: Value) -> Option<Value> {
     let vm = unsafe { vm(context.cast::<LaneContext>()) };
     vm.wasm_global_load(binding).ok()
 }
@@ -49,7 +49,7 @@ lane_handler! {
     /// A generic Wasm memory load (`quench_runtime::wasm::memory::MemoryLoad`), as vectors and the
     /// accesses no direct op names take: in place when it reads in bounds; a trap, or an
     /// operand of another representation, takes the general path, which raises it.
-    pub(super) fn lane_wasm_memory_load<>(cx, r, ip, i, view) {
+    pub(crate) fn lane_wasm_memory_load<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(operator) = quench_runtime::wasm::memory::MemoryLoad::from_tag(i.imm()) else {
             return exit(ip);
@@ -76,7 +76,7 @@ lane_handler! {
     /// `lane_wasm_memory_load` reads: the staged `write_memory` over the memory's bytes. A store
     /// checks its bounds before writing, so one that traps leaves memory as it was for the general
     /// path to raise. The memory's lock is released before the next record runs.
-    pub(super) fn lane_wasm_memory_store<>(cx, r, ip, i, view) {
+    pub(crate) fn lane_wasm_memory_store<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(operator) = quench_runtime::wasm::memory::MemoryStore::from_tag(i.imm()) else {
             return exit(ip);
@@ -119,7 +119,7 @@ fn lane_simd_operand(vm: &Vm, value: Value, ty: quench_runtime::WasmType) -> Opt
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn wasm_global_store(context: *mut (), binding: Value, value: Value) -> bool {
+pub(crate) unsafe fn wasm_global_store(context: *mut (), binding: Value, value: Value) -> bool {
     let vm = unsafe { vm(context.cast::<LaneContext>()) };
     vm.wasm_global_store(binding, value).is_ok()
 }
@@ -130,7 +130,7 @@ pub(super) unsafe fn wasm_global_store(context: *mut (), binding: Value, value: 
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn wasm_instance_slot(context: *mut (), slot: u32) -> Option<Value> {
+pub(crate) unsafe fn wasm_instance_slot(context: *mut (), slot: u32) -> Option<Value> {
     let cx = context.cast::<LaneContext>();
     let env = instance_env_in_lane(cx);
     let (known, storage) = unsafe { (*cx).instance_slots };
@@ -149,7 +149,7 @@ pub(super) unsafe fn wasm_instance_slot(context: *mut (), slot: u32) -> Option<V
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn wasm_vector_read(context: *mut (), value: Value) -> Option<[u8; 16]> {
+pub(crate) unsafe fn wasm_vector_read(context: *mut (), value: Value) -> Option<[u8; 16]> {
     let vm = unsafe { vm(context.cast::<LaneContext>()) };
     vm.heap.v128(value)
 }
@@ -159,7 +159,7 @@ pub(super) unsafe fn wasm_vector_read(context: *mut (), value: Value) -> Option<
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn wasm_vector_alloc(context: *mut (), bytes: [u8; 16]) -> Option<Value> {
+pub(crate) unsafe fn wasm_vector_alloc(context: *mut (), bytes: [u8; 16]) -> Option<Value> {
     let vm = unsafe { vm(context.cast::<LaneContext>()) };
     let value = vm.heap.alloc_v128(bytes);
     note_allocation(vm);
@@ -170,7 +170,7 @@ pub(super) unsafe fn wasm_vector_alloc(context: *mut (), bytes: [u8; 16]) -> Opt
 lane_handler! {
     /// `i8x16.shuffle` of two vectors by the record's constant lane indices, as
     /// `lane_wasm_simd` runs an operator.
-    pub(super) fn lane_wasm_simd_shuffle<>(cx, r, ip, i, view) {
+    pub(crate) fn lane_wasm_simd_shuffle<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(indices) = vm.heap.v128(i.constant()) else {
             return exit(ip);
@@ -191,7 +191,7 @@ lane_handler! {
     /// A global's load: the staged `global_get` over the global's native slot on
     /// `ConcreteInstance`, its word encoded as a register. Anything but a global binding takes
     /// the general path.
-    pub(super) fn lane_global_get<>(cx, r, ip, i, view) {
+    pub(crate) fn lane_global_get<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(Cell::WasmGlobal { bits, ty, .. }) = vm.heap.get(r.get(i.b)) else {
             return exit(ip);
@@ -213,7 +213,7 @@ lane_handler! {
     /// A global's store: the staged `global_set` over the mutable global's native slot. A
     /// binding that is no mutable global, or a value of another representation, takes the
     /// general path, which raises.
-    pub(super) fn lane_global_set<>(cx, r, ip, i, view) {
+    pub(crate) fn lane_global_set<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(Cell::WasmGlobal { ty, mutable: true, .. }) = vm.heap.get(r.get(i.b)) else {
             return exit(ip);

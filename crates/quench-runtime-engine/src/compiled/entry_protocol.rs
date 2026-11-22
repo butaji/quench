@@ -31,7 +31,7 @@ pub(crate) enum EntryKind {
 /// the return.
 pub(crate) struct EntryDescriptor {
     /// The driver that built the descriptor, which says how its result is read.
-    pub(super) kind: EntryKind,
+    pub(crate) kind: EntryKind,
     /// The receiver word the entry takes (`THIS`): a lane body's, an OSR region's and a body
     /// entry's (`Completion::Body`), which the entry reads as its argument. 0 where the entry has none
     /// (a bare stencil region, a numeric entry). Remaining difference: the AOT trampoline
@@ -39,21 +39,21 @@ pub(crate) struct EntryDescriptor {
     /// no receiver word, so it reads the receiver from the window header its caller wrote and passes
     /// it to the body as the argument. Changing that would change the call rows' emitted entry
     /// protocol, so it is left as is.
-    pub(super) receiver: u64,
+    pub(crate) receiver: u64,
     /// The capture word the entry takes: the activation's captures, or a resume stub's address
     /// for a region entered mid-run; 0 where neither applies.
-    pub(super) captures: u64,
+    pub(crate) captures: u64,
     /// The register file, or the argument window, the entry reads.
-    pub(super) registers: *const u64,
+    pub(crate) registers: *const u64,
     /// The entry's code, as the body ABI types it.
-    pub(super) entry: BodyEntry,
+    pub(crate) entry: BodyEntry,
 }
 
 /// Enters `descriptor` through the body ABI's trampoline, on `context`.
 ///
 /// # Safety
 /// As `enter_body`, for `descriptor.entry` and the registers it names.
-pub(super) unsafe fn enter(context: &mut CallContext, descriptor: &EntryDescriptor) -> BodyReturn {
+pub(crate) unsafe fn enter(context: &mut CallContext, descriptor: &EntryDescriptor) -> BodyReturn {
     // SAFETY: as the caller promises.
     unsafe { enter_body(context, descriptor.receiver, descriptor.captures, descriptor.registers, descriptor.entry) }
 }
@@ -61,14 +61,14 @@ pub(super) unsafe fn enter(context: &mut CallContext, descriptor: &EntryDescript
 /// Reads the return of a non-numeric entry as its run's exit: the one reader of a status and
 /// result word (`LaneExit::read`). `returned_pc` names the record that completes the
 /// activation, read only then.
-pub(super) fn exit(descriptor: &EntryDescriptor, returned: BodyReturn, returned_pc: impl FnOnce() -> usize) -> LaneExit {
+pub(crate) fn exit(descriptor: &EntryDescriptor, returned: BodyReturn, returned_pc: impl FnOnce() -> usize) -> LaneExit {
     debug_assert!(descriptor.kind != EntryKind::Numeric, "a numeric entry's result is read by `numeric_result`, not as a leave");
     LaneExit::read(returned.status, returned.value, returned_pc)
 }
 
 /// The result of a numeric entry, returned as its body wrote it: status 0 is success and the
 /// word is the value. Numeric semantics are not a leave, so no `LaneExit` is made.
-pub(super) fn numeric_result(descriptor: &EntryDescriptor, returned: BodyReturn) -> BodyReturn {
+pub(crate) fn numeric_result(descriptor: &EntryDescriptor, returned: BodyReturn) -> BodyReturn {
     debug_assert!(descriptor.kind == EntryKind::Numeric, "only a numeric entry's result is returned untouched");
     returned
 }

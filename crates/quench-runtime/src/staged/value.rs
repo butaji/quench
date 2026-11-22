@@ -19,13 +19,13 @@ fn family_is<S: Stage>(stage: &mut S, bits: S::Word, tag: u64) -> S::Cond {
 /// Whether `bits` is a direct object reference, whose low half names its record
 /// (`Value::as_direct_object`).
 #[inline(always)]
-pub(crate) fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
 }
 
 /// The id of the object record a direct object reference names, its low half (`Value::direct_object_index`).
 #[inline(always)]
-pub(crate) fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
+pub fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     stage.and_imm(bits, u64::from(u32::MAX))
 }
 
@@ -102,14 +102,14 @@ impl<M: MachineScalar> TagOps for MachineTags<'_, M> {
 /// Whether `bits` is an int32 (`Value::as_int`); an int32 has one tagged form, so two
 /// distinct int-tagged words are two distinct values. At a machine it is a flag word.
 #[inline(always)]
-pub(crate) fn is_int<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
+pub fn is_int<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
     let tag = ops.and_imm(bits, ValueLayout::TAG_MASK);
     ops.eq_imm(tag, ValueLayout::INT_TAG)
 }
 
 /// Whether `bits` is a heap reference (`Value::is_heap`).
 #[inline(always)]
-pub(crate) fn is_heap<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_heap<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     stage.eq_imm(tag, ValueLayout::HEAP_TAG)
 }
@@ -117,7 +117,7 @@ pub(crate) fn is_heap<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 /// The language bits of a declared parameter's mask (`quench_bjit::shared_words::language`, the
 /// order of `ValueType`'s discriminants; the runtime's `vm/compiled/base_region/declared.rs` asserts
 /// they are these types' bits).
-pub(crate) mod language {
+pub mod language {
     pub(crate) const UNDEFINED: u16 = 1 << 0;
     pub(crate) const NULL: u16 = 1 << 1;
     pub(crate) const BOOLEAN: u16 = 1 << 2;
@@ -168,32 +168,32 @@ pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
 
 /// Whether `bits` is `true` or `false` (`Value::as_bool`).
 #[inline(always)]
-pub(crate) fn is_boolean<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_boolean<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     let (truthy, falsy) = (stage.eq_imm(bits, crate::Value::TRUE.to_bits()), stage.eq_imm(bits, crate::Value::FALSE.to_bits()));
     stage.any(truthy, falsy)
 }
 
 /// Whether `bits` is `undefined`.
 #[inline(always)]
-pub(crate) fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits())
 }
 
 /// Whether `bits` is `null`.
 #[inline(always)]
-pub(crate) fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.eq_imm(bits, crate::Value::NULL.to_bits())
 }
 
 /// The value word of an int32 whose 64-bit `payload` is its zero-extended bits (`Value::int`).
 #[inline(always)]
-pub(crate) fn int_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
+pub fn int_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
     stage.or_imm(payload, ValueLayout::INT_TAG)
 }
 
 /// Whether `bits` is a direct string reference (`Value::as_direct_string`).
 #[inline(always)]
-pub(crate) fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
     stage.eq_imm(family, ValueLayout::DIRECT_STRING_TAG)
 }
@@ -201,7 +201,7 @@ pub(crate) fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Con
 /// The int32 value word of a `length`: `None` (leaving at `miss`) past int32, which
 /// `Value::length` holds as a double.
 #[inline(always)]
-pub(crate) fn length_value<S: Stage>(stage: &mut S, length: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn length_value<S: Stage>(stage: &mut S, length: S::Word, miss: S::Miss) -> Option<S::Word> {
     let beyond = stage.ugt_imm(length, i32::MAX as u64);
     let within = stage.not(beyond);
     stage.guard(within, miss)?;
@@ -210,7 +210,7 @@ pub(crate) fn length_value<S: Stage>(stage: &mut S, length: S::Word, miss: S::Mi
 
 /// Whether `bits` is a direct array reference (`Value::as_direct_array`).
 #[inline(always)]
-pub(crate) fn is_direct_array<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_direct_array<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG)
 }
 
@@ -223,14 +223,14 @@ pub(crate) fn is_legacy_slot<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond 
 
 /// Whether `bits` is a direct function reference (`Value::as_direct_function`).
 #[inline(always)]
-pub(crate) fn is_direct_function<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_direct_function<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG)
 }
 
 /// Whether `bits` is a binary64 Number: past the span of the tag fields the immediates use. At a
 /// machine it is a flag word.
 #[inline(always)]
-pub(crate) fn is_double<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
+pub fn is_double<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
     let field = ops.shr_imm(bits, u64::from(ValueLayout::TAG_SHIFT));
     let offset = ops.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
     ops.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
@@ -247,7 +247,7 @@ const TRUTHY: u64 = 2;
 /// int32 or Number, or an immediate but `null`, `undefined`, `false` and the deleted marker.
 /// `Value::truthiness` is this at `Concrete`, so every stage decides the same cases.
 #[inline(always)]
-pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond) {
+pub fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond) {
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
     // The word's truth state: a heap word is decided by its record's test alone (its record is truthy,
@@ -284,13 +284,13 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
 
 /// ToBoolean of a Boolean's `bits`: `true` alone is truthy.
 #[inline(always)]
-pub(crate) fn boolean_truthy<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn boolean_truthy<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.eq_imm(bits, crate::Value::TRUE.to_bits())
 }
 
 /// ToBoolean of an integer word (an int32 or a 64-bit integer, as held): nonzero.
 #[inline(always)]
-pub(crate) fn int_truthy<S: Stage>(stage: &mut S, word: S::Word) -> S::Cond {
+pub fn int_truthy<S: Stage>(stage: &mut S, word: S::Word) -> S::Cond {
     stage.ne_imm(word, 0u32)
 }
 
@@ -322,7 +322,7 @@ pub(crate) const TYPEOF_NUMBER: u64 = typeof_name_index("number");
 /// set `languages` (the `language` bits), where the set decides one: a set of functions is `function`, a
 /// set of Numbers is `number`, and a set of direct objects and arrays (or none) is `object`. A set that
 /// may name either (a generic object, or a mix of kinds) has none, so a fold built on it leaves at its test.
-pub(crate) const fn language_typeof_index(languages: u16) -> Option<u64> {
+pub const fn language_typeof_index(languages: u16) -> Option<u64> {
     if languages == language::FUNCTION {
         Some(typeof_name_index("function"))
     } else if languages == language::NUMBER {
@@ -350,7 +350,7 @@ pub(crate) fn typeof_classes<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond
 /// The kind a heap value's `typeof` name follows from its cell (a string, a BigInt, a symbol, an
 /// object or a function), as its index in `bytecode::TYPEOF_NAMES`: what `Frame::type_of` proves.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct TypeofKind(u64);
+pub struct TypeofKind(u64);
 
 impl TypeofKind {
     /// The kind whose `typeof` name is `bytecode::TYPEOF_NAMES[index]`.
@@ -411,7 +411,7 @@ pub(crate) fn int32_as_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> 
 /// saturating truncation, and whether that truncation round-trips to the same bits, which rejects
 /// fractions, nonfinite values, saturation and -0. Returns `(integer, exact)`.
 #[inline(always)]
-pub(crate) fn exact_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
+pub fn exact_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
     let integer = machine.raw_unary(Unary::ToSignedSaturating(Lane::I32), number);
     let round_trip = machine.raw_unary(Unary::FromSigned(Lane::F64), integer);
     let bits = machine.raw_unary(Unary::Bitcast(Lane::I64), number);
@@ -423,7 +423,7 @@ pub(crate) fn exact_int32<M: MachineScalar>(machine: &mut M, number: M::Word) ->
 /// The tagged word of the binary64 `number` under `Value::number`'s encoding, without a branch: an
 /// exact int32 takes the int tag, a NaN the canonical NaN, and anything else its own bits.
 #[inline(always)]
-pub(crate) fn number_word<M: MachineScalar>(machine: &mut M, number: M::Word) -> M::Word {
+pub fn number_word<M: MachineScalar>(machine: &mut M, number: M::Word) -> M::Word {
     let (integer, is_integer) = exact_int32(machine, number);
     let bits = machine.raw_unary(Unary::Bitcast(Lane::I64), number);
     let integer_bits = machine.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
@@ -438,7 +438,7 @@ pub(crate) fn number_word<M: MachineScalar>(machine: &mut M, number: M::Word) ->
 /// The binary64 value of a Number the caller proved numeric, whose tagged word is `bits`: an int32
 /// converts (`int32_as_f64`), any other word is its own double.
 #[inline(always)]
-pub(crate) fn known_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
+pub fn known_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
     let integer = is_int(&mut MachineTags(&mut *machine), bits);
     let int = int32_as_f64(machine, bits);
     let double = machine.raw_unary(Unary::Bitcast(Lane::F64), bits);
@@ -466,7 +466,7 @@ pub(crate) fn tagged_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word
 /// The double bits of `number` and whether they are its cold encoding: a whole, signed-zero or NaN
 /// result takes `number_word` (`truncated == number`, or unordered). Returns `(cold, bits)`.
 #[inline(always)]
-pub(crate) fn number_bits_unless_whole<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
+pub fn number_bits_unless_whole<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
     let bits = machine.raw_unary(Unary::Bitcast(Lane::I64), number);
     let truncated = machine.raw_unary(Unary::Truncate, number);
     let cold = machine.raw_compare(Relation::FloatUnorderedEqual, truncated, number);
@@ -478,7 +478,7 @@ pub(crate) fn number_bits_unless_whole<M: MachineScalar>(machine: &mut M, number
 /// saturating I64 truncation, and whether `number` lies inside the exact range
 /// (`EXACT_I64_TRUNCATION_LIMIT`); a caller leaves when the range does not hold. Returns `(int32, exact)`.
 #[inline(always)]
-pub(crate) fn truncate_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
+pub fn truncate_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
     let magnitude = machine.raw_unary(Unary::FloatAbsolute, number);
     let bound = machine.raw_const(Lane::F64, crate::value::EXACT_I64_TRUNCATION_LIMIT.to_bits() as i64);
     let exact = machine.raw_compare(Relation::FloatLess, magnitude, bound);

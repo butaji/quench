@@ -2,7 +2,7 @@
 //! (`quench_bjit::copy_patch`), the exit stubs and routines behind them, and the symbolic fields
 //! a loader fills.
 use super::*;
-use quench_runtime::vm::aot_image::Symbol;
+use crate::aot_image::Symbol;
 use quench_bjit::EXIT_STUB_LEN;
 
 /// A run-time address a linked body names by symbol: the code offset of its absolute word, which the
@@ -32,7 +32,7 @@ fn symbol_sites(rows: &[Placed], symbols: &[Symbolic], head: usize) -> Result<Ve
 /// in layout order: the hot rows first, so nothing cold sits between them. Also the code offset of
 /// each row and, for a loop region, of the resume thunk (`entry_resume`), which follows the stubs;
 /// each resume stub's `jumps` is patched to its row.
-pub(in super::super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize, symbols: &[Symbolic]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
+pub(crate) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize, symbols: &[Symbolic]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
     let head = thunk_len(ending)?;
     let resume: &[u8] = if ending == Ending::Region { &routine("entry_resume")?.code } else { &[] };
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();

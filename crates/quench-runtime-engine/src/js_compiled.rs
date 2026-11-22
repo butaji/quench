@@ -7,12 +7,12 @@
 use quench_runtime::bytecode::{Function, LazyFlag, ProgramKind, ResidualProgram, Traits};
 
 /// Native code and its result interpretation for a JavaScript function.
-pub(super) struct JsJitArtifact {
+pub(crate) struct JsJitArtifact {
     /// Machine code of the lane body ABI.
-    pub(super) code: Vec<u8>,
+    pub(crate) code: Vec<u8>,
     /// The number of formal parameters read from the argument array.
-    pub(super) params: usize,
-    pub(super) result: crate::compiled::NativeNumberResult,
+    pub(crate) params: usize,
+    pub(crate) result: crate::compiled::NativeNumberResult,
 }
 
 use crate::compiled::tier_policy::{JS_COMPILED_MAX_INSTRUCTIONS, JS_COMPILED_MAX_REGISTERS};
@@ -21,14 +21,14 @@ const MAX_PARAMETERS: usize = 8;
 /// Compile `function_id` as a numeric function through the shared semantic SSA specializer;
 /// any function it does not cover stays with the interpreter and the lane.
 #[cfg(test)]
-pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJitArtifact> {
+pub(crate) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJitArtifact> {
     admitted(program, function_id)?;
     crate::compiled::compile_js_typed_numeric_region(program, function_id)
 }
 
 /// The numeric function's image, compiling on the code generator's thread (`NumericImage::start`);
 /// `None` where `compile` would decline before compiling.
-pub(super) fn start(program: &ResidualProgram, function_id: u32) -> Option<quench_runtime::vm::jit_backend::OffThread<Option<crate::compiled::NumericImage>>> {
+pub(crate) fn start(program: &ResidualProgram, function_id: u32) -> Option<quench_runtime::vm::jit_backend::OffThread<Option<crate::compiled::NumericImage>>> {
     admitted(program, function_id)?;
     crate::compiled::NumericImage::start(program, function_id)
 }
@@ -41,7 +41,7 @@ fn admitted(program: &ResidualProgram, function_id: u32) -> Option<()> {
     (function_candidate(function, program) && !function.code.iter().any(|instruction| instruction.is_wide())).then_some(())
 }
 
-pub(super) fn candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str {
+pub(crate) fn candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str {
     let Some(function) = program.function_get(function_id as usize) else {
         return "invalid-function-id";
     };
@@ -63,7 +63,7 @@ pub(super) fn candidate_rejection_reason(program: &ResidualProgram, function_id:
     "unsupported-lowering-shape-or-codegen-failure"
 }
 
-pub(super) fn function_candidate(function: &Function, program: &ResidualProgram) -> bool {
+pub(crate) fn function_candidate(function: &Function, program: &ResidualProgram) -> bool {
     function.lazy_flag(LazyFlag::JsTierCandidate, || scanned_function_candidate(function, program))
 }
 
@@ -76,7 +76,7 @@ fn scanned_function_candidate(function: &Function, program: &ResidualProgram) ->
         && eligible(function, program)
 }
 
-pub(super) fn eligible(function: &Function, program: &quench_runtime::bytecode::ResidualProgram) -> bool {
+pub(crate) fn eligible(function: &Function, program: &quench_runtime::bytecode::ResidualProgram) -> bool {
     // An arrow's `this` is its environment's, which this tier does not bind.
     if function.parent.is_none()
         || function.is_arrow
@@ -121,6 +121,6 @@ fn activation_is_irrelevant(function: &Function) -> bool {
         && function.code.iter().all(|packed| packed.as_wide().op().traits().has(Traits::ACTIVATION_FREE))
 }
 
-pub(super) use quench_runtime::vm::engine_types::JsEntryFacts;
+pub(crate) use quench_runtime::vm::engine_types::JsEntryFacts;
 
 

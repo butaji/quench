@@ -11,7 +11,7 @@
 use super::*;
 
 /// Whether the innermost activation is an async generator's in-place request.
-pub(super) fn running_request(vm: &Vm) -> bool {
+pub(crate) fn running_request(vm: &Vm) -> bool {
     vm.lane_stack.top_frame().and_then(|frame| frame.script()).is_some_and(|script| script.completion == Completion::AsyncRequest)
 }
 
@@ -19,7 +19,7 @@ pub(super) fn running_request(vm: &Vm) -> bool {
 /// place with the value the call passes (`resume_request_in_lane`). `None`, before any effect,
 /// leaves the call to the native.
 #[inline(never)]
-pub(super) fn async_generator_next_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
+pub(crate) fn async_generator_next_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let generator = r.get(i.c);
     if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 || !vm.requests_in_place(generator) {
@@ -37,7 +37,7 @@ pub(super) fn async_generator_next_in_lane(cx: *mut LaneContext, r: Registers, i
 /// the request (`settle_abandoned_call`). `None`, before any effect, leaves the call to the
 /// native.
 #[inline(never)]
-pub(super) fn async_generator_throw_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
+pub(crate) fn async_generator_throw_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let generator = r.get(i.c);
     if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 {
@@ -84,7 +84,7 @@ fn take_request_promise(vm: &mut Vm, frame: &ActivationView) -> Value {
 /// into the generator's record, resuming at `pc` with the value it is resumed with in
 /// `destination`, the activation pops, and the caller goes on with the request's promise.
 #[inline(never)]
-pub(super) fn suspend_request_in_lane(cx: *mut LaneContext, (pc, destination): (usize, quench_runtime::bytecode::Register),
+pub(crate) fn suspend_request_in_lane(cx: *mut LaneContext, (pc, destination): (usize, quench_runtime::bytecode::Register),
     yielded: bool, value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
@@ -104,7 +104,7 @@ pub(super) fn suspend_request_in_lane(cx: *mut LaneContext, (pc, destination): (
 
 /// The return of the in-place request's `activation`, popped with its caller restored
 /// (`memory`), with `value`: the generator completes and the caller goes on with the promise.
-pub(super) fn request_returned_in_lane(cx: *mut LaneContext, activation: &ActivationView, memory: MemoryView, value: Value) -> Resumed {
+pub(crate) fn request_returned_in_lane(cx: *mut LaneContext, activation: &ActivationView, memory: MemoryView, value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
     let script = activation.script().expect("a request runs as a script activation");
     vm.finish_request_window(script.callee);

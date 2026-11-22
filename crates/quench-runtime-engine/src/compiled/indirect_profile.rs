@@ -11,11 +11,11 @@ use std::cell::RefCell;
 
 use quench_runtime::vm::engine_types::TargetHits;
 
-pub(super) use quench_runtime::vm::engine_types::SiteHits;
+pub(crate) use quench_runtime::vm::engine_types::SiteHits;
 
 #[quench_macros::ext(SiteHitsOps1)]
 impl SiteHits {
-    pub(super) fn new(sites: usize) -> Self {
+    pub(crate) fn new(sites: usize) -> Self {
         Self(RefCell::new(vec![Vec::new(); sites]))
     }
 
@@ -43,7 +43,7 @@ fn table_rows(vm: &Vm, env: Value, slot: u32) -> Option<&[TableTarget]> {
 #[quench_macros::ext(CompiledProgramOps2)]
 impl CompiledProgram {
     /// Counts a resolution of `function` at the call site `site`.
-    pub(super) fn note_indirect_target(&self, site: usize, function: u32) {
+    pub(crate) fn note_indirect_target(&self, site: usize, function: u32) {
         self.indirect_hits.note(site, function);
     }
 

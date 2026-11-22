@@ -45,7 +45,7 @@ pub(crate) fn heap_operator(instruction: WideInstruction) -> bool {
 }
 
 /// `transfer` of a numeric binary operator.
-pub(super) fn numeric_binary(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
+pub(crate) fn numeric_binary(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> super::Writes) -> Flow {
     let operand = |operand| operand_type(constants, operand, |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
     let heap = heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c()))

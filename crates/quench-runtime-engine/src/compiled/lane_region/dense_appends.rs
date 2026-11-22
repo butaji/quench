@@ -15,7 +15,7 @@ impl Lowering<'_, '_> {
     /// every view it may have moved. Both continue at `done`. Any other index, a view another
     /// hoisted register may alias, or a declined reserve continues at the block left
     /// current: the store's general path.
-    pub(super) fn dense_append(&mut self, array: LoopArray, pc: u32, index: ir::Value, value: ir::Value,
+    pub(crate) fn dense_append(&mut self, array: LoopArray, pc: u32, index: ir::Value, value: ir::Value,
         base: ir::Value, done: ir::Block) {
         let (reserve, attempt, general) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         for block in [reserve, attempt, general] { self.builder.set_cold_block(block); }
@@ -81,7 +81,7 @@ impl Lowering<'_, '_> {
 
     /// Unproves the append room of every dense view hoisted around `pc`, after a helper that
     /// may have changed a prototype or a backing: the next append reserves again.
-    pub(super) fn forget_append_rooms(&mut self, pc: usize) {
+    pub(crate) fn forget_append_rooms(&mut self, pc: usize) {
         let arrays: Vec<LoopArray> = self.loop_arrays.iter()
             .filter(|array| array.views == ElementViews::Dense && (array.header..=array.back).contains(&pc)).copied().collect();
         for array in arrays {

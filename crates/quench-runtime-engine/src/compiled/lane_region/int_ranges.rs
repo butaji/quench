@@ -15,7 +15,7 @@ use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Tex
 use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
 
 /// The facts one analysis proves, by unit PC.
-pub(super) struct IntRanges {
+pub(crate) struct IntRanges {
     overflow_free: CompoundBitSet,
     in_bounds: CompoundBitSet,
     /// The string reads whose index the point proves below the string's length (`string_in_bounds`), by PC.
@@ -48,7 +48,7 @@ pub(super) struct IntRanges {
 }
 
 impl IntRanges {
-    pub(super) fn new(instructions: usize) -> Self {
+    pub(crate) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
             string_bounds: CompoundBitSet::with_capacity(instructions),
             versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions),
@@ -57,55 +57,55 @@ impl IntRanges {
     }
 
     /// Whether the remainder at `pc` has a dividend no negative: its `-0` is no zero it can make.
-    pub(super) fn non_negative_dividend(&self, pc: usize) -> bool { self.non_negative_dividend.contains(pc) }
+    pub(crate) fn non_negative_dividend(&self, pc: usize) -> bool { self.non_negative_dividend.contains(pc) }
 
     /// Whether the element store at `pc` stores a Number, by the facts' type of its value at `pc` (a
     /// point the analysis never visits proves none).
-    pub(super) fn numeric_store(&self, pc: usize) -> bool { self.numeric_stores.contains(pc) }
+    pub(crate) fn numeric_store(&self, pc: usize) -> bool { self.numeric_stores.contains(pc) }
 
     /// Whether the remainder at `pc` has a divisor no zero: its zero-divisor test is redundant.
-    pub(super) fn nonzero_divisor(&self, pc: usize) -> bool { self.nonzero_divisor.contains(pc) }
+    pub(crate) fn nonzero_divisor(&self, pc: usize) -> bool { self.nonzero_divisor.contains(pc) }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
     /// negative zero of it, or no consumer reads its sign.
-    pub(super) fn ignores_negative_zero(&self, pc: usize) -> bool {
+    pub(crate) fn ignores_negative_zero(&self, pc: usize) -> bool {
         self.zero_free.contains(pc) || self.signless.binary_search(&pc).is_ok()
     }
 
     /// The range of the int64 result of the arithmetic at `pc`, where it leaves int32 but is an
     /// integer Number of `IntRange::WORD`.
-    pub(super) fn index_range(&self, pc: usize) -> Option<IntRange> {
+    pub(crate) fn index_range(&self, pc: usize) -> Option<IntRange> {
         self.index_ranges.binary_search_by_key(&pc, |(at, _)| *at).ok().map(|found| self.index_ranges[found].1)
     }
 
     /// Whether the int32 addition, subtraction, product or step at `pc` has an exact int32
     /// result, whatever int32 operands reach it.
-    pub(super) fn overflow_free(&self, pc: usize) -> bool { self.overflow_free.contains(pc) }
+    pub(crate) fn overflow_free(&self, pc: usize) -> bool { self.overflow_free.contains(pc) }
 
     /// Whether the index of the element access at `pc` lies in `0..length` of its array: proved
     /// at the access, or by its loop's entry (`versioned`).
-    pub(super) fn in_bounds(&self, pc: usize) -> bool {
+    pub(crate) fn in_bounds(&self, pc: usize) -> bool {
         self.in_bounds.contains(pc) || self.versioned.binary_search_by_key(&pc, |version| version.pc).is_ok()
     }
 
     /// Whether the string read at `pc` (a `charCodeAt` call or a `base[index]` of a string) has an
     /// index below its string's length, so its row takes no bounds test (`Point::string_index_proven`).
-    pub(super) fn string_in_bounds(&self, pc: usize) -> bool { self.string_bounds.contains(pc) }
+    pub(crate) fn string_in_bounds(&self, pc: usize) -> bool { self.string_bounds.contains(pc) }
 
     /// The accesses whose indices their loop's entry compares with the array's length, by PC.
-    pub(super) fn versioned(&self) -> &[Version] { &self.versioned }
+    pub(crate) fn versioned(&self) -> &[Version] { &self.versioned }
 
     /// The pure integer operations hoisted to a loop's entry, by PC.
-    pub(super) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
+    pub(crate) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
 
     /// The relations decided once at a loop's entry, by PC.
-    pub(super) fn decisions(&self) -> &[Decision] { &self.decisions }
+    pub(crate) fn decisions(&self) -> &[Decision] { &self.decisions }
 
     /// The registers the loops' entries prove int32 once (`Lowering::hoist_bounds`).
-    pub(super) fn bounds(&self) -> &[Bound] { &self.bounds }
+    pub(crate) fn bounds(&self) -> &[Bound] { &self.bounds }
 
     /// The products an entry holds and advances.
-    pub(super) fn inductions(&self) -> &[Induction] { &self.inductions }
+    pub(crate) fn inductions(&self) -> &[Induction] { &self.inductions }
 
     /// Keeps what a loop's entry proves of an access: its proof, the sum of its index bounded by it
     /// (an index below its array's length, which every layout stores in 32 bits), and its product's
@@ -155,7 +155,7 @@ impl Lowering<'_, '_> {
     /// entry `entry` once its backedges join in. An entry sample is one value; where the loop
     /// writes the register out of the range (a hash, say), the header's fact is the whole int32
     /// range and the guard proves nothing, yet it leaves every later entry the sample misses.
-    pub(super) fn kept_entering(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
+    pub(crate) fn kept_entering(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
         if self.entering.is_empty() { return Vec::new(); }
         let dense = |pc: usize| self.hoisted_access(pc);
@@ -174,7 +174,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The proofs of the unit entered at `entry` with the checked inputs `initial`, over `loops`, its local loops.
-    pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
+    pub(crate) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
         let typed = |pc: usize| self.typed_access(pc);

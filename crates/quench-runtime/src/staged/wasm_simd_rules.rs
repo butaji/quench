@@ -12,12 +12,12 @@ use crate::WasmType;
 use crate::WasmValue;
 use crate::wasm::V128_BYTES;
 
-pub(crate) const SELECTOR_LANE_BITS: u32 = u8::BITS;
+pub const SELECTOR_LANE_BITS: u32 = u8::BITS;
 const SELECTOR_LANE_MASK: u32 = u8::MAX as u32;
 
 /// The selector of the operator with tag `tag` and lane immediate `lane`: the tag above the lane bits.
 #[inline(always)]
-pub(crate) const fn selector_of(tag: u32, lane: u8) -> u32 {
+pub const fn selector_of(tag: u32, lane: u8) -> u32 {
     (tag << SELECTOR_LANE_BITS) | lane as u32
 }
 
@@ -39,7 +39,7 @@ impl SimdOperator {
 
 /// An operator as an execution needs it (`SimdKernel::of`): its operand and result types, its lane
 /// count, and the operator whose bits body computes it.
-pub(crate) struct SimdKernel {
+pub struct SimdKernel {
     pub(crate) left: WasmType,
     pub(crate) right: Option<WasmType>,
     /// How many lanes a lane immediate may name: one for an operator without one.
@@ -103,7 +103,7 @@ crate::staged::wasm_simd_lanes::simd_operator_list!(simd_kernels);
 
 /// How the lanes of a vector are cut for a lane-wise operation.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Lanes {
+pub enum Lanes {
     /// One lane of the whole vector: the bitwise operators.
     Bits,
     I8x16,
@@ -127,7 +127,7 @@ impl Lanes {
 /// A lane-wise operation a machine computes in its vector registers. A shift's count is a
 /// scalar, reduced modulo the lane width as Wasm does.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum NativeOp {
+pub enum NativeOp {
     Not,
     And,
     Or,
@@ -143,7 +143,7 @@ pub(crate) enum NativeOp {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Native {
+pub struct Native {
     pub(crate) op: NativeOp,
     pub(crate) lanes: Lanes,
 }
@@ -201,13 +201,13 @@ const fn native_rows_by_operator() -> [Option<Native>; SimdOperator::ALL.len()] 
 
 /// The native row of `operator`, or none where its kernel runs.
 #[inline(always)]
-pub(crate) fn native(operator: SimdOperator) -> Option<Native> {
+pub fn native(operator: SimdOperator) -> Option<Native> {
     NATIVE_BY_OPERATOR[operator as usize]
 }
 
 /// The vector registers of a machine. A value is a 128-bit vector or a scalar in its low bits,
 /// the representation of `SimdKernel::apply_bits`; a scalar result is the `Scalar` word.
-pub(crate) trait WasmSimd {
+pub trait WasmSimd {
     type Value: Copy;
     /// The word of an operator whose result is a scalar (i32, i64, f32 or f64).
     type Scalar: Copy;
@@ -242,7 +242,7 @@ pub(crate) trait WasmSimd {
 /// The operator `selector` names on its operands: the machine's own instruction where it has
 /// one with exactly the operator's semantics, else the kernel. The one place that is decided.
 #[inline(always)]
-pub(crate) fn simd<S: WasmSimd>(
+pub fn simd<S: WasmSimd>(
     stage: &mut S,
     selector: u32,
     left: S::Value,
@@ -258,7 +258,7 @@ pub(crate) fn simd<S: WasmSimd>(
 /// The scalar result of the operator `selector` names (an i32 extract, bitmask or any/all test),
 /// its word of the stage's `Scalar` type: the kernel, the one body of such an operator.
 #[inline(always)]
-pub(crate) fn simd_scalar<S: WasmSimd>(
+pub fn simd_scalar<S: WasmSimd>(
     stage: &mut S,
     selector: u32,
     left: S::Value,
@@ -269,14 +269,14 @@ pub(crate) fn simd_scalar<S: WasmSimd>(
 
 /// The v128 constant `bits`, the stage's vector.
 #[inline(always)]
-pub(crate) fn vector_constant<S: WasmSimd>(stage: &mut S, bits: u128) -> S::Value {
+pub fn vector_constant<S: WasmSimd>(stage: &mut S, bits: u128) -> S::Value {
     stage.constant_vector(bits)
 }
 
 /// A vector moved from one bank to another: the value itself, so the move is the copy of the
 /// stage's word and nothing else.
 #[inline(always)]
-pub(crate) fn vector_move<S: WasmSimd>(_: &mut S, source: S::Value) -> S::Value {
+pub fn vector_move<S: WasmSimd>(_: &mut S, source: S::Value) -> S::Value {
     source
 }
 
@@ -317,7 +317,7 @@ fn lane_wise(native: Native, left: u128, right: u128) -> u128 {
 
 /// The bits of the native row `native` on `left` and `right` (a shift count, or a vector; zero
 /// where it takes none): the whole-vector operators, the widening multiply, or a lane-wise row.
-pub(crate) fn native_bits(native: Native, left: u128, right: u128) -> u128 {
+pub fn native_bits(native: Native, left: u128, right: u128) -> u128 {
     match (native.op, native.lanes) {
         (NativeOp::Not, _) => !left,
         (NativeOp::And, _) => left & right,
@@ -339,7 +339,7 @@ pub(crate) fn native_bits(native: Native, left: u128, right: u128) -> u128 {
 /// The bits of operator `selector` on `left` and `right` by its kernel, the scalar in the low bits
 /// where its result is one.
 #[inline(always)]
-pub(crate) fn kernel_bits(selector: u32, left: u128, right: Option<u128>) -> u128 {
+pub fn kernel_bits(selector: u32, left: u128, right: Option<u128>) -> u128 {
     // Validation admitted the selector, so its operator names a table entry and its lane is in
     // range; a lane immediate that reaches here as a row hole is taken as given, so no check
     // (and no panic path) is left in a stencil.
@@ -352,7 +352,7 @@ pub(crate) fn kernel_bits(selector: u32, left: u128, right: Option<u128>) -> u12
 /// The value of type `ty` that `bits` hold: a vector whole, a scalar in the low bits.
 #[inline(always)]
 #[cfg(not(stencil_build))]
-pub(crate) fn value_of(ty: WasmType, bits: u128) -> WasmValue {
+pub fn value_of(ty: WasmType, bits: u128) -> WasmValue {
     match ty {
         WasmType::V128 => WasmValue::V128(bits),
         ty => WasmValue::from_bits(ty, bits as u64),
@@ -362,7 +362,7 @@ pub(crate) fn value_of(ty: WasmType, bits: u128) -> WasmValue {
 /// The bits of `value`: a vector whole, a scalar in the low bits (the inverse of `value_of`).
 #[inline(always)]
 #[cfg(not(stencil_build))]
-pub(crate) fn bits_of(value: WasmValue) -> u128 {
+pub fn bits_of(value: WasmValue) -> u128 {
     match value {
         WasmValue::V128(bits) => bits,
         WasmValue::I32(value) => u128::from(value as u32),
@@ -377,7 +377,7 @@ pub(crate) fn bits_of(value: WasmValue) -> u128 {
 /// holds: a v128 from its `bytes` (little-endian), any other type from its `decoded` scalar.
 #[inline(always)]
 #[cfg(not(stencil_build))]
-pub(crate) fn simd_operand(
+pub fn simd_operand(
     ty: WasmType,
     bytes: impl FnOnce() -> Option<[u8; V128_BYTES]>,
     decoded: impl FnOnce() -> Option<WasmValue>,
@@ -390,6 +390,6 @@ pub(crate) fn simd_operand(
 
 /// The byte shuffle of `left` and `right` (the operands' bytes, `left` first) by `lanes`.
 #[inline(always)]
-pub(crate) fn shuffle_bits(left: u128, right: u128, lanes: [u8; V128_BYTES]) -> u128 {
+pub fn shuffle_bits(left: u128, right: u128, lanes: [u8; V128_BYTES]) -> u128 {
     super::wasm_simd_lanes::shuffle(left, right, u128::from_le_bytes(lanes))
 }

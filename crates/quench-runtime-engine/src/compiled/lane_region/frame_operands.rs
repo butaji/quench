@@ -1,6 +1,6 @@
 //! A staged operand's value: a register's proved one, or a constant's, statically.
 use super::*;
-use quench_runtime::vm::object_slots::emit;
+use crate::compiled::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};
 use quench_runtime::staged::{NumericStage, Stage};
@@ -16,7 +16,7 @@ pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Reg
             let constant = constants.get(usize::from(operand.payload()))?;
             let value = super::super::facts::immediate(constant)?;
             let int32 = super::super::facts::is_int32(value);
-            let mut stage = quench_runtime::vm::object_slots::emit(builder);
+            let mut stage = crate::compiled::object_slots::emit(builder);
             if !int32 {
                 let zero = stage.constant(0);
                 let never = stage.ne_imm(zero, 0u32);
@@ -60,7 +60,7 @@ pub(crate) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut 
         quench_runtime::bytecode::OperandKind::Constant => {
             let value = constants.get(usize::from(operand.payload()))
                 .and_then(super::super::facts::immediate)?.as_number()?;
-            Some(quench_runtime::vm::object_slots::emit(builder).f64_constant(value))
+            Some(crate::compiled::object_slots::emit(builder).f64_constant(value))
         }
         _ => None,
     }
@@ -159,7 +159,7 @@ pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &
             let bits = register_tagged(builder, registers, state, register);
             let integer = is_int_tagged(builder, bits);
             guard_unless(builder, integer, fact.value.ty.is_subtype(Type::INT32), otherwise);
-            quench_runtime::vm::object_slots::emit(builder).narrow(bits)
+            crate::compiled::object_slots::emit(builder).narrow(bits)
         }
     };
     let variable = register_int(builder, registers, index);
@@ -188,7 +188,7 @@ pub(crate) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers
         Representation::Int32 => {
             let variable = register_int(builder, registers, index);
             let int = builder.use_var(variable);
-            quench_runtime::vm::object_slots::emit(builder).i32_to_f64(int)
+            crate::compiled::object_slots::emit(builder).i32_to_f64(int)
         }
         Representation::Int64 => {
             let variable = register_long(builder, registers, index);

@@ -8,7 +8,7 @@
 
 use quench_runtime::bytecode::{Op, Register, WideInstruction};
 use quench_runtime::staged::{CallOperation, Callee, Invocation, NumberOperation, Operation, Passing, Protocol, Receiver};
-use quench_runtime::vm::compiled::{decoded, decoded_completed};
+use crate::compiled::{decoded, decoded_completed};
 
 /// The form a call-family record makes (`Operation::Call`, `SpreadCall`, `SuperCall`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

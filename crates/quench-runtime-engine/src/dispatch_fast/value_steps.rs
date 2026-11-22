@@ -43,7 +43,7 @@ fn make(vm: &mut Vm, code: &ResidualProgram, (step, instruction): (ValueStep, Wi
 ///
 /// # Safety
 /// As `body_general_step`; `record` is the record at `call_pc`.
-pub(super) unsafe fn activation_value_step(cx: *mut LaneContext, call_pc: u64, record: WideInstruction) -> Option<u64> {
+pub(crate) unsafe fn activation_value_step(cx: *mut LaneContext, call_pc: u64, record: WideInstruction) -> Option<u64> {
     let instruction = record.without_return();
     if let Some(status) = unsafe { activation_field_read(cx, call_pc, instruction) } { return Some(status); }
     if let Some(status) = unsafe { activation_field_write(cx, call_pc, instruction) } { return Some(status); }

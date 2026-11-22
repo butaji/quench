@@ -82,11 +82,11 @@ impl EntryCell {
     pub(crate) fn note_completions(&self, runs: u64) -> u64 { self.add_half(EVIDENCE.half_bits, runs) }
 }
 
-pub(super) use quench_bjit::shared_words::CAPTURE_ADDRESS_BITS;
+pub(crate) use quench_bjit::shared_words::CAPTURE_ADDRESS_BITS;
 /// The bit of the address a store tag takes: slots are aligned past it (`CAPTURE_STORES`).
 const CAPTURE_STORES_BIT: u64 = crate::dispatch_fast::CAPTURE_STORES as u64;
 /// The mask of the address bits.
-pub(super) const CAPTURE_ADDRESS_MASK: i64 = ((1 << CAPTURE_ADDRESS_BITS) - 1) & !(CAPTURE_STORES_BIT as i64);
+pub(crate) const CAPTURE_ADDRESS_MASK: i64 = ((1 << CAPTURE_ADDRESS_BITS) - 1) & !(CAPTURE_STORES_BIT as i64);
 
 /// The one word a body's entry takes its captures in: the dense slots' address and count, and
 /// whether they admit every direct store (`dispatch_fast::capture_stores`).
@@ -98,7 +98,7 @@ pub(crate) fn capture_word(values: *const Value, len: usize, stores: bool) -> u6
 
 /// Grows the scratch window to `width` registers for a body a run may enter: an inlined leave
 /// inside it fills its window. A run finds the window sized by its body's publication.
-pub(super) fn reserve_lane_scratch(width: usize) {
+pub(crate) fn reserve_lane_scratch(width: usize) {
     let frame = super::frame_in_lane();
     // SAFETY: as `lane_frame`; native code reads the window's address from the dispatch
     // record at each use, so the record follows a resize.

@@ -35,10 +35,10 @@ fn nullish_value(kind: ValueType) -> Value {
 }
 
 /// The `instanceof` operator.
-pub(crate) const INSTANCEOF_OPERATOR: u32 = crate::vm::operations::binary_operator::Instanceof;
+pub const INSTANCEOF_OPERATOR: u32 = crate::vm::operations::binary_operator::Instanceof;
 
 /// The `in` operator.
-pub(crate) const IN_OPERATOR: u32 = crate::vm::operations::binary_operator::In;
+pub const IN_OPERATOR: u32 = crate::vm::operations::binary_operator::In;
 
 /// What a `CompareJump` compares.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

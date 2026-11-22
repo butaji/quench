@@ -30,7 +30,7 @@ const WORD: usize = size_of::<u64>();
 /// The value operands an exception construction reads: its payload registers of its window. The
 /// tag is the window's first register, which holds the tag binding (`Slot::Binding`), not a value.
 /// `None` for any other operation.
-pub(super) fn reads(instruction: WideInstruction) -> Option<Vec<u16>> {
+pub(crate) fn reads(instruction: WideInstruction) -> Option<Vec<u16>> {
     if Exception::of(instruction.op()) != Some(Exception::New) {
         return None;
     }
@@ -46,7 +46,7 @@ fn holds_reference(state: &AnalysisState, registers: u16, register: u16) -> Opti
 impl Analysis<'_> {
     /// Checks an exception step: the operands it reads hold the kinds it needs, and its result takes
     /// the kind it returns. A payload read has no lowering (see the module docs).
-    pub(super) fn transfer_exception(
+    pub(crate) fn transfer_exception(
         &self,
         function: &Function,
         instruction: WideInstruction,
@@ -194,7 +194,7 @@ unsafe extern "C" fn exception_throw_callout(context: *mut CallContext, exceptio
 
 impl Emitter<'_, '_> {
     /// Lowers an exception step; whether control falls through to the next instruction.
-    pub(super) fn exception_op(&mut self, pc: usize, instruction: WideInstruction, op: Exception) -> bool {
+    pub(crate) fn exception_op(&mut self, pc: usize, instruction: WideInstruction, op: Exception) -> bool {
         match op {
             Exception::New => {
                 self.exception_new(pc, instruction);

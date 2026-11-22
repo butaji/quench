@@ -3,25 +3,25 @@
 use super::super::*;
 
 /// `DefineField`'s miss (`define_field_miss`).
-pub(in crate::dispatch_fast) const DEFINE_FIELD: u8 = 0;
+pub(crate) const DEFINE_FIELD: u8 = 0;
 /// `DefinePrivateField`'s miss (`define_private_field_miss`).
-pub(in crate::dispatch_fast) const DEFINE_PRIVATE_FIELD: u8 = 1;
+pub(crate) const DEFINE_PRIVATE_FIELD: u8 = 1;
 /// `MarkPrivateName`'s miss (`mark_private_name_miss`).
-pub(in crate::dispatch_fast) const MARK_PRIVATE_NAME: u8 = 2;
+pub(crate) const MARK_PRIVATE_NAME: u8 = 2;
 /// `DefinePropertyRecord`'s miss (`define_property_record_miss`).
-pub(in crate::dispatch_fast) const DEFINE_PROPERTY_RECORD: u8 = 3;
+pub(crate) const DEFINE_PROPERTY_RECORD: u8 = 3;
 /// `CheckPrivate`'s miss (`check_private_miss`).
-pub(in crate::dispatch_fast) const CHECK_PRIVATE: u8 = 4;
+pub(crate) const CHECK_PRIVATE: u8 = 4;
 /// `CopyDataProperties`'s miss (`copy_data_properties_miss`).
-pub(in crate::dispatch_fast) const COPY_DATA_PROPERTIES: u8 = 5;
+pub(crate) const COPY_DATA_PROPERTIES: u8 = 5;
 /// `PrivateIn`'s miss (`private_in_miss`).
-pub(in crate::dispatch_fast) const PRIVATE_IN: u8 = 6;
+pub(crate) const PRIVATE_IN: u8 = 6;
 /// `GetField` of a private name's miss (`get_private_field_miss`).
-pub(in crate::dispatch_fast) const GET_PRIVATE_FIELD: u8 = 7;
+pub(crate) const GET_PRIVATE_FIELD: u8 = 7;
 
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row::<OP, ACC, { protocol_family::PRIVATE | parameters }>`).
-pub(in crate::dispatch_fast) const fn private_miss_of(parameters: u8) -> Handler {
+pub(crate) const fn private_miss_of(parameters: u8) -> Handler {
     match parameters {
         DEFINE_FIELD => super::super::define_field_miss as Handler,
         DEFINE_PRIVATE_FIELD => super::super::define_private_field_miss as Handler,

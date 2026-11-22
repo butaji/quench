@@ -277,6 +277,8 @@ impl MachineStage for ConcreteWasm {
 }
 
 /// Methods that are `ConcreteWasm`'s: one definition, delegated.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! delegated {
     ($($name:ident($($argument:ident: $ty:ty),*) -> $result:ty;)+) => {$(
         #[inline(always)]
@@ -285,13 +287,16 @@ macro_rules! delegated {
         }
     )+};
 }
+#[allow(unused_imports)]
 pub(crate) use delegated;
 
 /// The operators of a `MachineStage` over `ConcreteWasm`: every method but `trap_when`, whose trap
 /// the stage's own `Exit` makes. `scalar_stage` and the VM's heap stage both expand it.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! scalar_operators {
     () => {
-        $crate::staged::wasm_concrete::delegated! {
+        $crate::delegated! {
                 constant(width: $crate::staged::wasm::Width, value: i64) -> u64;
                 operate(operator: $crate::wasm::integer::I64BinaryOperator, width: $crate::staged::wasm::Width, left: u64, right: u64) -> u64;
                 operate_unary(operator: $crate::wasm::integer::I64UnaryOperator, width: $crate::staged::wasm::Width, value: u64) -> u64;
@@ -318,9 +323,9 @@ macro_rules! scalar_stage {
         impl $crate::staged::machine::MachineStage for $stage {
             type Exit = $crate::WasmTrap;
 
-            $crate::staged::wasm_concrete::scalar_operators! {}
+            $crate::scalar_operators! {}
 
-            $crate::staged::wasm_concrete::delegated! {
+            $crate::delegated! {
                 trap_when(flag: u64, trap: $crate::WasmTrap) -> Result<(), $crate::WasmTrap>;
             }
         }

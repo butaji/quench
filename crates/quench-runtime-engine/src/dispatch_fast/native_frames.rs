@@ -51,7 +51,7 @@ impl Vm {
     /// Links the native frames on top of the activations, if any: the one test a helper
     /// that observes the lane stack makes before it does.
     #[inline(always)]
-    pub(super) fn link_natives(&mut self, cx: *mut LaneContext) {
+    pub(crate) fn link_natives(&mut self, cx: *mut LaneContext) {
         if self.lane_stack.top_is_native() { link_unlinked(cx); }
     }
 }
@@ -71,7 +71,7 @@ fn link_unlinked(cx: *mut LaneContext) {
 
 /// The NATIVE_FLAG bit of a plain header's packed word, read through `window`.
 #[inline(always)]
-pub(super) fn header_packed(window: Registers) -> u64 {
+pub(crate) fn header_packed(window: Registers) -> u64 {
     // SAFETY: a plain header's words lie below its window, which the lane stack holds.
     unsafe { *window.0.sub(CONTEXT_PACKED).cast::<u64>() }
 }
@@ -80,7 +80,7 @@ pub(super) fn header_packed(window: Registers) -> u64 {
 impl LaneStack {
     /// The native headers not yet linked, the top run of the plain headers, outermost first, each with
     /// its table index: the frames below the plain headers plus the header's place in the plain run.
-    pub(super) fn unlinked_native_headers(&self) -> Vec<(Registers, usize)> {
+    pub(crate) fn unlinked_native_headers(&self) -> Vec<(Registers, usize)> {
         let (depth, base) = (self.plain.depth.get(), self.frames_below_plain());
         let mut window = Registers(self.plain.registers.get());
         let mut found = Vec::new();
@@ -96,7 +96,7 @@ impl LaneStack {
 
     /// How many native headers run on top, linked or not (`native_depth` above a plain header): a
     /// header is a native frame while its NATIVE_FLAG is set, or its side record names a descriptor.
-    pub(super) fn header_native_depth(&self) -> usize {
+    pub(crate) fn header_native_depth(&self) -> usize {
         // SAFETY: the sides are read, not written, here.
         let sides = unsafe { &*self.sides.get() };
         let mut window = Registers(self.plain.registers.get());
@@ -154,7 +154,7 @@ fn link_header(cx: *mut LaneContext, window: Registers, index: usize) {
 /// Links the native frame at `depth`: the `Script` activation its call would have made. Its
 /// caller is the frame below it where that one has a descriptor, else the running context,
 /// which is the state of the activation the body runs in. A link never advances the context.
-pub(super) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
+pub(crate) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
     let vm = unsafe { vm(cx) };
     // SAFETY: each slot below the top holds at least its prefix.
     let below = depth.checked_sub(1).map(|below| unsafe { let record = &*vm.lane_stack.records_mut().slot(below); (record.callee, record.window) }).filter(|&(callee, _)| !callee.is_null());
@@ -200,7 +200,7 @@ pub(super) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
 /// is that activation's, not the frame below it. The owner's state returns unless the helper left
 /// the lane in an activation of its own or ended the run.
 #[inline(always)]
-pub(super) fn in_innermost_frame(cx: *mut LaneContext, helper: impl FnOnce() -> u64) -> u64 {
+pub(crate) fn in_innermost_frame(cx: *mut LaneContext, helper: impl FnOnce() -> u64) -> u64 {
     in_innermost_frame_of(cx, helper)
 }
 
@@ -227,7 +227,7 @@ fn in_innermost_frame_of(cx: *mut LaneContext, helper: impl FnOnce() -> u64) -> 
 
 /// The environment a running body's captures resolve in when it runs as a native callee: its
 /// closure's, which no lane activation holds; `None` in the activation's own.
-pub(super) fn innermost_callee_env(cx: *mut LaneContext) -> Option<Value> {
+pub(crate) fn innermost_callee_env(cx: *mut LaneContext) -> Option<Value> {
     // SAFETY: a frame names the caller-owned callee, whose descriptor outlives the run.
     unsafe { vm(cx) }.lane_stack.top_native().map(|frame| unsafe { (*frame.callee).target.env })
 }
@@ -237,7 +237,7 @@ pub(super) fn innermost_callee_env(cx: *mut LaneContext) -> Option<Value> {
 /// forwarding constructor rides in its side record, `SidePayload::Forwarder`), and the context becomes the
 /// innermost's. Its view and the body it ran, where the run left inside frames.
 #[inline(always)]
-pub(super) fn advance_into_frames(cx: *mut LaneContext) -> Option<(&'static LaneView, &'static crate::compiled::LaneMethod)> {
+pub(crate) fn advance_into_frames(cx: *mut LaneContext) -> Option<(&'static LaneView, &'static crate::compiled::LaneMethod)> {
     // A run that left no native frame, the common completion, has nothing to link or advance.
     if !left_native_frames(cx) { return None; }
     advance_into_native_frames(cx)
@@ -245,7 +245,7 @@ pub(super) fn advance_into_frames(cx: *mut LaneContext) -> Option<(&'static Lane
 
 /// Whether the run that just ended left native frames on the lane stack, linked or not.
 #[inline(always)]
-pub(super) fn left_native_frames(cx: *mut LaneContext) -> bool {
+pub(crate) fn left_native_frames(cx: *mut LaneContext) -> bool {
     let stack = &unsafe { vm(cx) }.lane_stack;
     stack.top_is_native() || stack.native_depth() != 0
 }
@@ -302,7 +302,7 @@ fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView
 }
 
 /// Drops the native frames a terminated run left, with their windows.
-pub(super) fn discard_frames(cx: *mut LaneContext) {
+pub(crate) fn discard_frames(cx: *mut LaneContext) {
     let vm = unsafe { vm(cx) };
     let headers = vm.lane_stack.header_native_depth();
     let (count, len) = (vm.lane_stack.record_native_depth_in_run(headers), vm.lane_stack.record_count());
@@ -323,7 +323,7 @@ pub(super) fn discard_frames(cx: *mut LaneContext) {
 
 /// Retires the bodies of the native headers the lane continues in, innermost out, as `retire_bodies` does for
 /// records: their table entries name no body after this (one-frame-one-call.md F5).
-pub(super) fn retire_header_bodies(cx: *mut LaneContext) {
+pub(crate) fn retire_header_bodies(cx: *mut LaneContext) {
     let stack = &mut unsafe { vm(cx) }.lane_stack;
     let headers = stack.header_native_depth();
     let (depth, base) = (stack.plain.depth.get(), stack.frames_below_plain());

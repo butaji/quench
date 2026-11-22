@@ -8,12 +8,12 @@ use super::lane_stack_growth::LaneStackFull;
 use quench_runtime::vm::JsError;
 
 /// The known call's handler, for the shared handler table.
-pub(super) const fn known_call_handler() -> Handler {
+pub(crate) const fn known_call_handler() -> Handler {
     lane_call_known
 }
 
 /// The reference call's handler, for Wasm views.
-pub(super) const fn reference_call_handler() -> Handler {
+pub(crate) const fn reference_call_handler() -> Handler {
     lane_call_wasm_reference
 }
 
@@ -56,7 +56,7 @@ impl Machine for LaneCall<'_> {
 impl MachineStage for LaneCall<'_> {
     type Exit = JsError;
 
-    quench_runtime::staged::wasm_concrete::scalar_operators! {}
+    quench_runtime::scalar_operators! {}
 
     fn trap_when(&mut self, flag: u64, trap: quench_runtime::WasmTrap) -> Result<(), JsError> {
         if flag == 0 { Ok(()) } else { Err(JsError::wasm_trap_error(trap)) }

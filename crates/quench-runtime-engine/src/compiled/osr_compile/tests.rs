@@ -265,7 +265,7 @@ fn a_capture_loop_keeps_its_capture_value() {
 }
 /// Runs `source` interpreted and compiled with lane OSR, and returns the compiled output,
 /// equal to the interpreter's, and the OSR diagnostics of the function named `function`.
-pub(super) fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::dispatch_fast::OsrDiagnostics) {
+pub(crate) fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::dispatch_fast::OsrDiagnostics) {
     let program = quench_runtime::Engine::specialize(source, "lane-osr-admission.js").unwrap();
     let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(expected.clone()))

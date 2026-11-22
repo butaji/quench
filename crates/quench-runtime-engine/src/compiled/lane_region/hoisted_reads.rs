@@ -5,7 +5,7 @@ use super::*;
 impl Lowering<'_, '_> {
     /// `instruction`, whose value `read` holds since the loop's preheader: its register
     /// takes the held value and facts, and the receiver the facts the read proved.
-    pub(super) fn hoisted_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, read: LoopRead) {
+    pub(crate) fn hoisted_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, read: LoopRead) {
         let LoopRead { value: variable, ty, representation, receiver, header, .. } = read;
         if let Some(receiver) = receiver {
             prove_receiver(state, instruction, receiver, header);

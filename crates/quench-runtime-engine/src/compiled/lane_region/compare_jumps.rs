@@ -15,13 +15,13 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether `instruction` is a comparison jump.
-    pub(super) fn is_compare_jump(&self, instruction: WideInstruction) -> bool {
+    pub(crate) fn is_compare_jump(&self, instruction: WideInstruction) -> bool {
         self.compare_row(instruction).is_some()
     }
 
     /// The comparison jump at `pc`; whether it lowered, which ends the block (the jump's edges
     /// continue the lowering themselves).
-    pub(super) fn compare_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    pub(crate) fn compare_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(Operation::CompareJump { comparison, .. }) = self.compare_row(instruction) else {
             unreachable!("a comparison jump decodes")
         };
@@ -87,14 +87,14 @@ impl Lowering<'_, '_> {
 
     /// Whether neither constant operand is anything but a Number: a register's type is for the
     /// facts to prove, a constant's is known.
-    pub(super) fn numbers_supported(&self, left: Operand, right: Operand) -> bool {
+    pub(crate) fn numbers_supported(&self, left: Operand, right: Operand) -> bool {
         [left, right].iter().all(|operand| operand.kind() != Some(OperandKind::Constant)
             || super::super::facts::operand_type(&self.program.constants, *operand, |_| Type::ANY).is_subtype(Type::NUMBER))
     }
 
     /// The Number domain the facts prove of two operands: int32 where both are, binary64 where a
     /// register holds an unboxed one; `None` where only their tags type them.
-    pub(super) fn number_domain(&self, state: &State, left: Operand, right: Operand) -> Option<Domain> {
+    pub(crate) fn number_domain(&self, state: &State, left: Operand, right: Operand) -> Option<Domain> {
         let integer = [left, right].iter().all(|operand| super::super::facts::operand_type(
             &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
             .is_subtype(Type::INT32));

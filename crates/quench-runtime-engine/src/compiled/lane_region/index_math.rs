@@ -16,13 +16,13 @@ use super::super::operations::NumberArithmetic;
 use quench_runtime::staged::number_machine;
 
 /// The span of integers an index word holds of an arithmetic result of `range`: the Numbers it agrees with.
-pub(super) fn held(range: IntRange) -> IntRange { range.intersect(IntRange::EXACT).unwrap_or(IntRange::EXACT) }
+pub(crate) fn held(range: IntRange) -> IntRange { range.intersect(IntRange::EXACT).unwrap_or(IntRange::EXACT) }
 
 impl Lowering<'_, '_> {
     /// The range of the arithmetic `instruction` at `pc` where it runs in 64-bit words: its proved
     /// result leaves int32 within `IntRange::WORD`, its operands are int32 or already words, and
     /// only an index reads it.
-    pub(super) fn index_math(&self, state: &State, pc: usize, instruction: WideInstruction) -> Option<IntRange> {
+    pub(crate) fn index_math(&self, state: &State, pc: usize, instruction: WideInstruction) -> Option<IntRange> {
         let range = self.ranges.index_range(pc)?;
         let integral = |operand: Operand| match operand.kind() {
             Some(OperandKind::Register) => matches!(state.values[usize::from(operand.payload())].value.representation,
@@ -38,7 +38,7 @@ impl Lowering<'_, '_> {
     /// `operation` of the integer `operands` in 64-bit words, into the result register: where
     /// its `range` passes what a Number holds exactly, it leaves at `exit` before the register is
     /// defined.
-    pub(super) fn index_arithmetic(&mut self, state: &mut State, (destination, operands): (Register, [Operand; 2]),
+    pub(crate) fn index_arithmetic(&mut self, state: &mut State, (destination, operands): (Register, [Operand; 2]),
         (operation, range): (NumberArithmetic, IntRange), exit: ir::Block) -> Option<()> {
         let result = self.index_word(state, operands, (operation, range), exit)?;
         self.define(state, destination, result, RegisterFact::definition(Type::int(held(range)), Representation::Int64));
@@ -47,7 +47,7 @@ impl Lowering<'_, '_> {
 
     /// The word `operation` of the integer `operands` computes: where its `range` passes what a
     /// Number holds exactly, it leaves at `exit`.
-    pub(super) fn index_word(&mut self, state: &mut State, [left, right]: [Operand; 2],
+    pub(crate) fn index_word(&mut self, state: &mut State, [left, right]: [Operand; 2],
         (operation, range): (NumberArithmetic, IntRange), exit: ir::Block) -> Option<ir::Value> {
         let left = self.operand_long(state, left, exit)?;
         let right = self.operand_long(state, right, exit)?;
@@ -58,7 +58,7 @@ impl Lowering<'_, '_> {
 
     /// An element index's word: a register's held 64-bit word, else its int32 (`operand_int`),
     /// which the element rows zero-extend.
-    pub(super) fn operand_index(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
+    pub(crate) fn operand_index(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
         let long = operand.register_index()
             .and_then(|register| frame::held_long(&mut self.builder, &mut self.registers, state, register));
         long.or_else(|| self.operand_int(state, operand, otherwise))
@@ -76,7 +76,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether the word lies within `IntRange::EXACT` (`number_machine::within_word`).
-    pub(super) fn within_exact(&mut self, word: ir::Value) -> ir::Value {
+    pub(crate) fn within_exact(&mut self, word: ir::Value) -> ir::Value {
         number_machine::within_word(&mut emit(&mut self.builder), word, IntRange::EXACT.min, IntRange::EXACT.max)
     }
 }

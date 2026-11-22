@@ -18,7 +18,7 @@ use crate::compiled::{emit_js_guard, emit_unlogged_property_store_guard};
 /// The view of a loop's hoisted array an element row reads and writes through, which the loop's
 /// entering edge proved once: a dense array's backing, or a typed array's elements.
 #[derive(Clone, Copy)]
-pub(super) enum Held {
+pub(crate) enum Held {
     /// A dense array's view, and what its access proves (`DenseView::packed`, `DenseView::within`).
     Dense(super::super::DenseArrayView, (bool, bool)),
     Typed(TypedView<ir::Value>),
@@ -31,7 +31,7 @@ pub(super) enum Held {
 /// `value` passes the test inline, as `emit_unlogged_property_store_guard` decides it, while old
 /// records keep no counts; under counts every store into a marked record logs, so the gate word's
 /// counts bit leaves at `miss` first.
-pub(super) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir::Value, value: ir::Value,
+pub(crate) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir::Value, value: ir::Value,
     miss: ir::Block) -> Option<()> {
     let uncounted = stage.counts_clear(payload);
     emit_js_guard(stage.builder, uncounted, miss);
@@ -49,7 +49,7 @@ pub(super) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir:
 /// The VM's element read of the tagged `base` and `key` (`JsStepDispatch::element_get`): the
 /// element the array and its prototypes give a hole or an index past them; the sentinel it answers
 /// where the VM's own step must (`Vm::absent_array_element` declines) leaves at `miss`.
-pub(super) fn index_get(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, (base, key): (ir::Value, ir::Value),
+pub(crate) fn index_get(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, (base, key): (ir::Value, ir::Value),
     miss: ir::Block) -> ir::Value {
     let helper = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, element_get));
     let read = emit_lane_helper_call(stage.builder, frame.payload, helper, &[base, key]);

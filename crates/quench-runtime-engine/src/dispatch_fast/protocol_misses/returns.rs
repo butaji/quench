@@ -4,23 +4,23 @@ use super::super::*;
 
 /// Kinds of the RETURN family's parameter codes: a returning record's kind (`RETURNING_*`, 0..=12),
 /// then a `Return` (`RETURN_KIND`) and a `LoadConst` fused into its `Return` (`CONSTANT_KIND`).
-pub(in crate::dispatch_fast) const RETURN_KIND: u8 = 13;
-pub(in crate::dispatch_fast) const CONSTANT_KIND: u8 = 14;
+pub(crate) const RETURN_KIND: u8 = 13;
+pub(crate) const CONSTANT_KIND: u8 = 14;
 /// Leaf forms a return record takes (`LeafForm`, 0..=4).
-pub(in crate::dispatch_fast) const LEAF_FORMS: u8 = 5;
+pub(crate) const LEAF_FORMS: u8 = 5;
 /// Kinds of a returning constant-right `Binary` (`returning_operator_row`): `OPERATOR_KIND` plus the
 /// operator's `BinaryOperator` value, so each operator is its own kind (values up to 21 fit the byte).
-pub(in crate::dispatch_fast) const OPERATOR_KIND: u8 = 15;
+pub(crate) const OPERATOR_KIND: u8 = 15;
 
 /// The RETURN family's parameter code of a record of `kind` at leaf form `leaf`:
 /// `kind * LEAF_FORMS + leaf`, which fits the byte for every kind above.
-pub(in crate::dispatch_fast) const fn returning_code(kind: u8, leaf: u8) -> u8 {
+pub(crate) const fn returning_code(kind: u8, leaf: u8) -> u8 {
     kind * LEAF_FORMS + leaf
 }
 
 /// The RETURN family's parameter of a returning constant-right `Binary` of operator `operator` at leaf
 /// form `leaf` (`returning_operator_row`'s MISS).
-pub(in crate::dispatch_fast) const fn operator_return_code(operator: u8, leaf: u8) -> u16 {
+pub(crate) const fn operator_return_code(operator: u8, leaf: u8) -> u16 {
     protocol_family::RETURN | (returning_code(OPERATOR_KIND + operator, leaf) as u16)
 }
 
@@ -41,7 +41,7 @@ macro_rules! leaf_arms {
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row::<OP, ACC, { protocol_family::RETURN | parameters }>`), where `parameters` is
 /// `returning_code(kind, leaf)`.
-pub(in crate::dispatch_fast) const fn return_miss_of(parameters: u8) -> Handler {
+pub(crate) const fn return_miss_of(parameters: u8) -> Handler {
     let kind = parameters / LEAF_FORMS;
     let leaf = parameters % LEAF_FORMS;
     match kind {

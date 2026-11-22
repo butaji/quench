@@ -6,7 +6,7 @@ use super::*;
 /// Per block leader, its forward edges (`forward_edges`), and the leaders lowering may seal
 /// on arrival: those only forward edges enter, but a loop body its rotated header test
 /// enters from the latch (`rotated_bodies`).
-pub(super) fn leader_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize)
+pub(crate) fn leader_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize)
     -> (Vec<Option<usize>>, CompoundBitSet) {
     let forward = forward_edges(instructions, leaders, start);
     let rotated = rotated_bodies(instructions);
@@ -48,7 +48,7 @@ fn rotated_bodies(instructions: &[WideInstruction]) -> CompoundBitSet {
 
 /// Whether no lowered instruction transfers to `start`: only the native entry reaches it, so
 /// the entry's registers, read from the lane frame, hold there.
-pub(super) fn entered_once(instructions: &[WideInstruction], start: usize, lowered: impl Fn(usize) -> bool) -> bool {
+pub(crate) fn entered_once(instructions: &[WideInstruction], start: usize, lowered: impl Fn(usize) -> bool) -> bool {
     instructions.iter().enumerate().filter(|(pc, _)| lowered(*pc))
         .all(|(pc, instruction)| successors(pc, *instruction).into_iter().all(|target| target != start))
 }

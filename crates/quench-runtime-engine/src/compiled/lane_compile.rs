@@ -10,20 +10,20 @@ type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileReject
 #[path = "lane_compile/image.rs"] mod image;
 
 /// A lowered lane body: the method it becomes once its code exists.
-pub(super) struct LanePlan {
-    pub(super) unit: lane_unit::Unit,
-    pub(super) lowered: lane_region::LoweredLane,
-    pub(super) fields: Vec<Option<Vec<NativeFieldLoad>>>,
-    pub(super) direct: Box<[DirectCallee]>,
+pub(crate) struct LanePlan {
+    pub(crate) unit: lane_unit::Unit,
+    pub(crate) lowered: lane_region::LoweredLane,
+    pub(crate) fields: Vec<Option<Vec<NativeFieldLoad>>>,
+    pub(crate) direct: Box<[DirectCallee]>,
     /// Whether every call of it that has run is inlined or direct (`LaneMethod::closed`).
-    pub(super) closed: bool,
-    pub(super) function: u32,
+    pub(crate) closed: bool,
+    pub(crate) function: u32,
     /// The word its publication sets when one of its Stable facts changes.
-    pub(super) invalidation: quench_runtime::code_dependencies::Invalidation,
+    pub(crate) invalidation: quench_runtime::code_dependencies::Invalidation,
     /// The callee instructions its unit inlined at most (`lane_unit::with_budget`).
-    pub(super) budget: usize,
+    pub(crate) budget: usize,
     /// The thresholds of the VM that planned it, which its publication reads (`amortizes_entry`).
-    pub(super) tiers: &'static Tiers,
+    pub(crate) tiers: &'static Tiers,
 }
 
 /// The VM's facts a lane body's lowering may ask (`OnlineFacts`), answered when it is planned for
@@ -89,7 +89,7 @@ fn construction_sites(unit: &lane_unit::Unit, function: u32) -> impl Iterator<It
 }
 
 /// The scalar plans of `unit`'s constructions that `plan` answers, by (function, PC).
-pub(super) fn construction_plans(unit: &lane_unit::Unit, function: u32, plan: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>)
+pub(crate) fn construction_plans(unit: &lane_unit::Unit, function: u32, plan: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>)
     -> std::collections::BTreeMap<(u32, u32), ScalarConstructPlan> {
     construction_sites(unit, function).filter_map(|site| Some((site, plan(site.0, site.1)?))).collect()
 }
@@ -129,7 +129,7 @@ impl FactTables {
         tables
     }
 
-    pub(super) fn own_constant(&self, atom: Atom) -> Option<OwnConstant> {
+    pub(crate) fn own_constant(&self, atom: Atom) -> Option<OwnConstant> {
         self.own_constants.get(&atom).copied()
     }
 
@@ -137,27 +137,27 @@ impl FactTables {
         self.construct_plans.get(&(function, pc)).cloned()
     }
 
-    pub(super) fn instanceof(&self, constructor: Value) -> Option<quench_runtime::code_dependencies::InstanceofFact> {
+    pub(crate) fn instanceof(&self, constructor: Value) -> Option<quench_runtime::code_dependencies::InstanceofFact> {
         self.instanceofs.get(&constructor.to_bits()).copied()
     }
 
-    pub(super) fn shape_stable(&self, shape: u32) -> bool {
+    pub(crate) fn shape_stable(&self, shape: u32) -> bool {
         self.stable_shapes.contains(&shape)
     }
 
-    pub(super) fn name(&self, site: u16, atom: Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)> {
+    pub(crate) fn name(&self, site: u16, atom: Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)> {
         self.names.get(&(site, atom)).copied()
     }
 
     /// The root constant the capture read at `pc` takes (`root_constants`), with its program.
-    pub(super) fn root_constant(&self, pc: usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)> {
+    pub(crate) fn root_constant(&self, pc: usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)> {
         self.root_constants.get(&pc).map(|value| (self.root_program, *value))
     }
 }
 
 /// The program a lowering reads: the running one, on the program's thread, or a copy of it that
 /// shares nothing with it (`ResidualProgram::detached`), on the code generator's.
-pub(super) enum LoweringProgram<'p> {
+pub(crate) enum LoweringProgram<'p> {
     #[cfg_attr(not(test), allow(dead_code))]
     Running(&'p ResidualProgram),
     Detached(quench_runtime::bytecode::DetachedProgram),
@@ -175,7 +175,7 @@ impl std::ops::Deref for LoweringProgram<'_> {
 
 /// Everything a lane body's lowering reads, owned: it reads nothing of the VM, so it runs where
 /// its program does (`LoweringProgram`), on the program's thread or the code generator's.
-pub(super) struct LoweringJob<'p> {
+pub(crate) struct LoweringJob<'p> {
     program: LoweringProgram<'p>,
     function: u32,
     unit: lane_unit::Unit,
@@ -199,7 +199,7 @@ pub(super) struct LoweringJob<'p> {
 
 impl LoweringJob<'_> {
     /// The lowered body, `None` where it does not lower.
-    pub(super) fn run(&self) -> Option<lane_region::LoweredLane> {
+    pub(crate) fn run(&self) -> Option<lane_region::LoweredLane> {
         let instanceofs = |constructor: Value| self.tables.instanceof(constructor);
         let names = |site: u16, atom| self.tables.name(site, atom);
         let shape_stable = |shape: u32| self.tables.shape_stable(shape);
@@ -239,7 +239,7 @@ pub(crate) struct PendingLaneMethod {
 
 
 /// What a lowering and its code generation came to.
-pub(super) enum Lowered {
+pub(crate) enum Lowered {
     /// Nothing of the unit lowers natively.
     Nothing,
     /// Its IR would make more code than a body may take (`LANE_BODY_MAX_CODE_BYTES`).
@@ -795,7 +795,7 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    pub(super) fn finish(mut self, code: &[u8], scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>) -> Option<LaneMethod> {
+    pub(crate) fn finish(mut self, code: &[u8], scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
@@ -850,7 +850,7 @@ impl LaneMethod {
 }
 
 #[path = "lane_compile/dependencies.rs"]
-mod dependencies;
+pub(crate) mod dependencies;
 pub(crate) use dependencies::LaneDependencies;
 
 #[cfg(test)] #[path = "lane_compile/tests.rs"] mod tests;

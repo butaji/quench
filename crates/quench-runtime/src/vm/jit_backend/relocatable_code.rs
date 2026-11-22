@@ -19,7 +19,7 @@ pub(in crate::vm) fn patchable(kind: Reloc) -> bool {
 /// One relocation of compiled code: the field at `offset` takes the address of symbol
 /// `(namespace, key)` plus `addend`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::vm) struct Relocation {
+pub struct Relocation {
     pub(in crate::vm) offset: usize,
     pub(in crate::vm) kind: Reloc,
     pub(in crate::vm) namespace: u32,
@@ -29,7 +29,7 @@ pub(in crate::vm) struct Relocation {
 
 /// Position-independent machine code and the relocations that link it.
 #[derive(Debug)]
-pub(in crate::vm) struct RelocatableCode {
+pub struct RelocatableCode {
     pub(in crate::vm) code: Box<[u8]>,
     pub(in crate::vm) relocations: Box<[Relocation]>,
 }

@@ -3,7 +3,7 @@
 use super::*;
 
 /// Specializes the interrupt owner at the polls no reentry reaches (`retain_closed_polls`).
-pub(super) fn specialize_closed_polls(native: &mut ir::Function, reentries: &[ir::Block],
+pub(crate) fn specialize_closed_polls(native: &mut ir::Function, reentries: &[ir::Block],
     polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>, helpers: LaneHelpers, context: ir::Value,
     isa: &dyn cranelift_codegen::isa::TargetIsa) {
     if polls.is_empty() { return; }
@@ -13,7 +13,7 @@ pub(super) fn specialize_closed_polls(native: &mut ir::Function, reentries: &[ir
 
 /// A callback retires ownership only on paths reachable from its completion. A callback
 /// after a closed loop cannot invalidate that loop's entry proof retroactively.
-pub(super) fn retain_closed_polls(function: &ir::Function, reentries: &[ir::Block], polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>) {
+pub(crate) fn retain_closed_polls(function: &ir::Function, reentries: &[ir::Block], polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>) {
     if reentries.is_empty() { return; }
     let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
     let mut possible: CompoundBitSet = CompoundBitSet::with_capacity(function.dfg.num_blocks());
@@ -84,7 +84,7 @@ fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers,
 }
 
 impl Lowering<'_, '_> {
-    pub(super) fn interrupt_check(&mut self, state: &mut State, pc: u32) {
+    pub(crate) fn interrupt_check(&mut self, state: &mut State, pc: u32) {
         if self.fault_poll {
             let interrupt = self.interrupt;
             let proof = super::super::EmitProof::Safepoint { interrupt, miss: None, fault_poll: true };
@@ -98,7 +98,7 @@ impl Lowering<'_, '_> {
         quench_runtime::staged::poll::back_edge_poll(&mut super::super::object_slots::emit(&mut self.builder), interrupt, exit).expect("a guard always emits");
     }
 
-    pub(super) fn emit_fault_poll(&mut self) {
+    pub(crate) fn emit_fault_poll(&mut self) {
         frame::calls::safepoint_parts(&mut self.builder, &mut self.polls,
             super::super::EmitProof::Safepoint { interrupt: self.interrupt, miss: None, fault_poll: true });
     }
@@ -106,7 +106,7 @@ impl Lowering<'_, '_> {
     /// Joining edges must not move a guard, conversion or recovery across the
     /// interrupt check. Only already-conforming SSA views may share this latch;
     /// flag-based checks retain their exact-PC recovery on the original edge.
-    pub(super) fn shared_backedge(&mut self, state: &State, target: usize) -> bool {
+    pub(crate) fn shared_backedge(&mut self, state: &State, target: usize) -> bool {
         if !self.fault_poll || !self.shared_headers.contains(target) || !self.entered.contains(target) { return false; }
         let Some(block) = self.blocks.get(target).copied().flatten() else { return false };
         let Some(types) = self.facts.at(target) else { return false };

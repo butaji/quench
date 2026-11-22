@@ -33,7 +33,7 @@ impl Lowering<'_, '_> {
     /// Takes each input of the loop's index arithmetic (`index_inputs`) for an int32 contract of
     /// its entering edge: proved once there, the loop's index arithmetic runs on integers instead
     /// of converting a Number per use. Whether it took any.
-    pub(super) fn seed_loop_ints(&self, initial: &mut [Type], loops: &[(usize, usize)]) -> bool {
+    pub(crate) fn seed_loop_ints(&self, initial: &mut [Type], loops: &[(usize, usize)]) -> bool {
         let mut seeded = false;
         for register in self.index_inputs(loops) {
             let slot = &mut initial[usize::from(register)];
@@ -48,7 +48,7 @@ impl Lowering<'_, '_> {
     /// The observed int32 entries live at `entry` (a dead register's value is stale, and nothing
     /// conforms it) whose range is narrower than int32 and whose entry fact is int32: what the
     /// entry guards once (`guard_entering_ranges`) and the ranges pass assumes.
-    pub(super) fn entering_ranges(&self, entry: usize) -> Vec<(Register, IntRange)> {
+    pub(crate) fn entering_ranges(&self, entry: usize) -> Vec<(Register, IntRange)> {
         let types = self.facts.at(entry);
         self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL && self.is_live(entry, register)
             && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
@@ -56,7 +56,7 @@ impl Lowering<'_, '_> {
 
     /// Leaves at `pc` where an entering register is outside its range: the guard the ranges pass's
     /// entry state relies on, of each bound tighter than int32's.
-    pub(super) fn guard_entering_ranges(&mut self, state: &mut State, pc: usize) {
+    pub(crate) fn guard_entering_ranges(&mut self, state: &mut State, pc: usize) {
         for (register, range) in self.entering.clone() {
             let exit = self.guard_exit(state, pc as u32);
             let value = self.int(state, register, exit);
@@ -84,7 +84,7 @@ fn is_integral_arithmetic(instruction: WideInstruction) -> bool {
 /// Numbers at every read and write (`AotFacts::numbers`): an int32 or a Number, as a declared
 /// parameter's type enters (`scalar::declared_entry_types`), so the entry proves each once and the
 /// body holds it unboxed. Nothing without a closed world (`VmFacts::closed`).
-pub(super) fn closed_entry_types(vm: VmFacts<'_>, function_id: u32, function: &quench_runtime::bytecode::Function, initial: &mut [Type]) {
+pub(crate) fn closed_entry_types(vm: VmFacts<'_>, function_id: u32, function: &quench_runtime::bytecode::Function, initial: &mut [Type]) {
     let Some(numbers) = vm.closed.and_then(|closed| closed.function_facts(function_id).numbers()) else { return };
     for index in 0..usize::from(function.params) {
         let Some(register) = super::scalar::parameter_register(function, index).map(usize::from) else { continue };

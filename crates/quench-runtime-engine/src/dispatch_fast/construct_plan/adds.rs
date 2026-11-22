@@ -7,7 +7,7 @@ use super::*;
 /// adds made so far are the body's own first stores of the same values, which an activation
 /// of the body then makes again as stores, leaving the object as the activation alone would.
 #[inline(always)]
-pub(in super::super) fn add_initializer_fields_in_lane(
+pub(crate) fn add_initializer_fields_in_lane(
     vm: &mut Vm,
     code: &ResidualProgram,
     this: Value,
@@ -24,7 +24,7 @@ pub(in super::super) fn add_initializer_fields_in_lane(
 
 /// `add_initializer_fields_in_lane` of `stores`, a body's or a class chain's (`chain_stores`).
 #[inline(always)]
-pub(in super::super) fn add_stores_in_lane(
+pub(crate) fn add_stores_in_lane(
     vm: &mut Vm,
     code: &ResidualProgram,
     this: Value,

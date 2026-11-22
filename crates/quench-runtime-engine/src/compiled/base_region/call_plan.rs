@@ -36,11 +36,11 @@
 //! validity word becomes the row's expected word, so a republish or withdrawal that bumps the
 //! validity sends the call to the helper row, which resolves the target anew.
 
-pub(super) mod inline;
-mod chain;
-pub(super) mod builtin;
+pub(crate) mod inline;
+pub(crate) mod chain;
+pub(crate) mod builtin;
 use builtin::BuiltinCall;
-pub(super) use chain::ChainRead;
+pub(crate) use chain::ChainRead;
 use chain::chained_reads;
 use super::{Exit, NO_SYMBOLS, SLOT, Symbolic};
 use super::super::direct_callee::DirectCallee;
@@ -52,11 +52,11 @@ use quench_bjit::call::{self, CallRow, ThisRow};
 use quench_bjit::call_record::{CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
-use quench_runtime::vm::aot_image::Symbol;
+use crate::aot_image::Symbol;
 
 /// How a body makes a call, by the instruction's operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CallForm {
+pub(crate) enum CallForm {
     /// `Call`, through its callee register and argument window: direct through the callee's entry
     /// cell where its site recorded a stable callee, else the call helper (`body_call_helper`).
     Plain,
@@ -77,9 +77,9 @@ pub(super) enum CallForm {
 /// A method call's site read (`plan::method_read`): the cache entry that answers the method, and the scratch register
 /// the read writes the callee to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Method {
-    pub(super) cache: u16,
-    pub(super) scratch: Register,
+pub(crate) struct Method {
+    pub(crate) cache: u16,
+    pub(crate) scratch: Register,
 }
 
 impl CallForm {
@@ -89,7 +89,7 @@ impl CallForm {
     /// `this` (`SET_THIS_REGISTER`, a `super()` call) or has an `eval` flag (which declares bindings in the
     /// caller's scope) is the step helper's own step made in place, a helper call row whatever its form: the
     /// helper binds the frame's `this` and publishes the receiver, or runs the eval in the frame.
-    pub(super) fn of(instruction: WideInstruction) -> Option<Self> {
+    pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
         let bound_this = if instruction.writes_current_this() { quench_runtime::bytecode::SET_THIS_REGISTER } else { 0 };
         let op = instruction.op();
         let calls = op.makes_script_call() && !crate::compiled::meaning_compiled::is_call_known(instruction) && instruction.result_flags() & !bound_this == 0;
@@ -110,7 +110,7 @@ impl CallForm {
     }
 
     /// The helper whose row makes the call.
-    pub(super) fn helper(self) -> LaneHelper {
+    pub(crate) fn helper(self) -> LaneHelper {
         match self {
             Self::Plain => LaneHelper::Call,
             Self::Construct => LaneHelper::ConstructCall,
@@ -124,26 +124,26 @@ impl CallForm {
 /// registers, the first argument register and the argument count (zero for the other forms, whose
 /// helpers read their own operands from the record).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct CallShape {
-    pub(super) call_pc: u32,
-    pub(super) callee: Register,
-    pub(super) this: Register,
-    pub(super) window: Register,
-    pub(super) argc: u16,
-    pub(super) result: Register,
+pub(crate) struct CallShape {
+    pub(crate) call_pc: u32,
+    pub(crate) callee: Register,
+    pub(crate) this: Register,
+    pub(crate) window: Register,
+    pub(crate) argc: u16,
+    pub(crate) result: Register,
     /// The call completes its caller's activation with its result (`return f(x)`): the row that
     /// follows it does (`steps::completing`), and nothing is live after it.
-    pub(super) returning: bool,
-    pub(super) form: CallForm,
+    pub(crate) returning: bool,
+    pub(crate) form: CallForm,
     /// The method site read a `Method` call makes before its direct row (`None` for the other forms).
-    pub(super) method: Option<Method>,
+    pub(crate) method: Option<Method>,
     /// The opcode of the call record, which keys the fast-row counter of a planned direct call (`note_fast`).
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) op: quench_runtime::bytecode::Op,
+    pub(crate) op: quench_runtime::bytecode::Op,
 }
 
 impl CallShape {
-    pub(super) fn of(call_pc: u32, instruction: WideInstruction, form: CallForm) -> Self {
+    pub(crate) fn of(call_pc: u32, instruction: WideInstruction, form: CallForm) -> Self {
         let imm = instruction.imm();
         let (result, returning, op) = (instruction.result_register(), instruction.returns_from_frame(), instruction.op());
         match form {
@@ -168,7 +168,7 @@ impl CallShape {
 /// `Method` chain: its receiver is the direct row's `this`, its callee the `scratch` register the site read writes,
 /// its arguments a window of consecutive registers the direct row reads. `None` for any other call, or one whose
 /// arguments are not consecutive (`Arguments::List` is a list of registers, not a window).
-pub(super) fn method_shape(program: &quench_runtime::bytecode::ResidualProgram, instruction: WideInstruction, call_pc: u32, scratch: Register, returning: bool) -> Option<CallShape> {
+pub(crate) fn method_shape(program: &quench_runtime::bytecode::ResidualProgram, instruction: WideInstruction, call_pc: u32, scratch: Register, returning: bool) -> Option<CallShape> {
     if instruction.op() != quench_runtime::bytecode::Op::CallMethod || instruction.writes_current_this() || instruction.resolves_dynamic_scope()
         || instruction.direct_eval() || instruction.parameter_eval() {
         return None;
@@ -193,35 +193,35 @@ pub(super) fn method_shape(program: &quench_runtime::bytecode::ResidualProgram, 
 
 /// What the call site's target record says of its callee, read once (`DirectFacts::of`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct DirectFacts {
-    pub(super) callee: u64,
-    pub(super) cell: usize,
-    pub(super) validity: u64,
-    pub(super) facts: CellFacts,
+pub(crate) struct DirectFacts {
+    pub(crate) callee: u64,
+    pub(crate) cell: usize,
+    pub(crate) validity: u64,
+    pub(crate) facts: CellFacts,
     /// The caller's call record and base, and the callee's function: the header words (`CallRecord::call`,
     /// `caller_base`, `packed`).
-    pub(super) call: u64,
-    pub(super) caller_base: u64,
-    pub(super) function: u32,
-    pub(super) captures: u64,
+    pub(crate) call: u64,
+    pub(crate) caller_base: u64,
+    pub(crate) function: u32,
+    pub(crate) captures: u64,
     /// The callee's closure environment and captures pointer (`CallRecord::env`, `capture`).
-    pub(super) env: u64,
-    pub(super) capture: u64,
+    pub(crate) env: u64,
+    pub(crate) capture: u64,
     /// The global object a sloppy callee binds an `undefined` or `null` receiver to.
-    pub(super) global_this: Option<u64>,
+    pub(crate) global_this: Option<u64>,
     /// An arrow, which binds no receiver (`DirectCallee::lexical`).
-    pub(super) lexical: bool,
-    pub(super) registers: u16,
+    pub(crate) lexical: bool,
+    pub(crate) registers: u16,
     /// A construction site's forwarding record: not a plain call.
-    pub(super) construction: bool,
+    pub(crate) construction: bool,
     /// The site's callee register holds this callee by a Stable fact (`Callees::stable`): the body
     /// subscribes to the fact, so its change retires the body, and the row need not check the register.
-    pub(super) held: bool,
+    pub(crate) held: bool,
     /// The address of the callee's `DirectCallee`, which the body owns (`Callees::owned`, moved into the
     /// published method or region whole, so the address holds): the native header's descriptor word
     /// (`CallRecord::descriptor`), as the u-jit's `push_native` writes it. Zero where none is known yet
     /// (an AOT record before its binding, `aot_image::bound`), which the row refuses to the helper.
-    pub(super) descriptor: u64,
+    pub(crate) descriptor: u64,
 }
 
 impl DirectFacts {
@@ -230,7 +230,7 @@ impl DirectFacts {
     ///
     /// # Safety
     /// `callee.cell` is the address of the callee function's live entry cell.
-    pub(super) unsafe fn of(callee: &DirectCallee, held: bool) -> Self {
+    pub(crate) unsafe fn of(callee: &DirectCallee, held: bool) -> Self {
         // SAFETY: the caller's contract; the words are at the designed cell's offsets.
         let word = |offset: i32| unsafe { ((callee.cell + offset as usize) as *const u64).read() };
         Self {
@@ -263,7 +263,7 @@ impl DirectFacts {
 
 /// Why a call takes the helper row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Declined {
+pub(crate) enum Declined {
     /// The site recorded no stable target.
     NoTarget,
     /// More arguments than the direct rows pass (`MAX_DIRECT_ARGC`).
@@ -283,14 +283,14 @@ pub(super) enum Declined {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Choice {
+pub(crate) enum Choice {
     Direct,
     Helper(Declined),
 }
 
 /// The row class of a call: direct when its target's cell is stable and describes the callee,
 /// else the helper row, with the first reason it cannot be direct.
-pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice {
+pub(crate) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice {
     let method = shape.form == CallForm::Method && shape.method.is_some();
     if shape.form != CallForm::Plain && !method {
         return Choice::Helper(Declined::Form);
@@ -308,58 +308,58 @@ pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice 
 }
 
 /// One stencil of a chain with its hole values, chain-local `taken` successor and exits by kind.
-pub(super) struct CallPart {
-    pub(super) stencil: &'static Stencil,
-    pub(super) holes: [u64; HOLES],
-    pub(super) taken: Option<usize>,
-    pub(super) exits: Vec<Exit>,
+pub(crate) struct CallPart {
+    pub(crate) stencil: &'static Stencil,
+    pub(crate) holes: [u64; HOLES],
+    pub(crate) taken: Option<usize>,
+    pub(crate) exits: Vec<Exit>,
     /// The holes whose run-time addresses are symbols the loader resolves, each with its symbol
     /// (`HelperHole::Symbol`, the generic row's entry and operand record).
-    pub(super) symbols: Symbolic,
+    pub(crate) symbols: Symbolic,
 }
 
 /// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
 /// the choice that made them.
-pub(super) struct CallChain {
-    pub(super) parts: Vec<CallPart>,
-    pub(super) records: Vec<Box<CallRecord>>,
-    pub(super) choice: Choice,
+pub(crate) struct CallChain {
+    pub(crate) parts: Vec<CallPart>,
+    pub(crate) records: Vec<Box<CallRecord>>,
+    pub(crate) choice: Choice,
 }
 
 /// Everything a call is planned from: the pinned registers live at the call (spilled before it)
 /// and live after it (reloaded after it), each with the register whose frame slot it uses.
-pub(super) struct CallPlan<'a> {
-    pub(super) shape: CallShape,
+pub(crate) struct CallPlan<'a> {
+    pub(crate) shape: CallShape,
     /// Each callee the site reached, latest first (`Layout::callees`).
-    pub(super) direct: &'a [DirectFacts],
+    pub(crate) direct: &'a [DirectFacts],
     /// The address of `body_call_helper` (`helper_address`).
-    pub(super) helper: HelperPlace,
-    pub(super) spills: &'a [(Place, Register)],
-    pub(super) reloads: &'a [(Place, Register)],
+    pub(crate) helper: HelperPlace,
+    pub(crate) spills: &'a [(Place, Register)],
+    pub(crate) reloads: &'a [(Place, Register)],
     /// The arguments the caller proves Numbers (bit `k`: argument `k`, `call_args::proven_arguments`), which the direct row
     /// passes on to the callee's proven-arguments entry where its guards are covered (`CallRecord::proven_args`).
-    pub(super) proven_args: u64,
+    pub(crate) proven_args: u64,
     /// The site read a `Method` call's direct rows follow (`plan::method_read`): its stencil and holes. Planned only
     /// where a direct row is, after the spills; its miss goes to the helper row behind the direct rows.
-    pub(super) read: Option<(&'static Stencil, [u64; HOLES])>,
+    pub(crate) read: Option<(&'static Stencil, [u64; HOLES])>,
     /// The prototype-held entries of a method site (`plan::chain_reads`), each a read of the method at a receiver shape
     /// with the value its holder held when planned. Where one pairs with a callee the site reached, the chain is its reads
     /// and direct rows (`chained_reads`), and `read` is not planned.
-    pub(super) chain: Vec<ChainRead>,
+    pub(crate) chain: Vec<ChainRead>,
     /// The builtin the callee is, where the site's native callee is one the b-jit runs on a row (`builtin::of`).
-    pub(super) builtin: Option<BuiltinCall>,
+    pub(crate) builtin: Option<BuiltinCall>,
 }
 
 /// Where a helper row's address goes: the address itself in a process helper table, or the symbol
 /// an image's loader resolves to it (`LaneHelpers::Ahead`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum HelperPlace {
+pub(crate) enum HelperPlace {
     Address(usize),
     Symbol(LaneHelper),
 }
 
 /// The helper's place for `helper` under `helpers`: none for a linked or a frameless one.
-pub(super) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<HelperPlace> {
+pub(crate) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<HelperPlace> {
     match helpers {
         LaneHelpers::Process(table) => Some(HelperPlace::Address(table[helper as usize].addr())),
         LaneHelpers::Ahead => Some(HelperPlace::Symbol(helper)),
@@ -375,12 +375,12 @@ fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> Cal
     CallPart { stencil, holes, taken: None, exits, symbols: NO_SYMBOLS }
 }
 
-pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
+pub(crate) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
     let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: place, b: Place::Mem, speculate: false };
     Ok(part(numeric::stencil(row)?, padded_holes([slot(register)]), Vec::new()))
 }
 
-pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, String> {
+pub(crate) fn reload_part(place: Place, register: Register) -> Result<CallPart, String> {
     Ok(part(call::stencil(CallRow::Reload(place))?, padded_holes([slot(register)]), Vec::new()))
 }
 
@@ -474,7 +474,7 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
 
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
 /// the spills, the helper row, the reloads.
-pub(super) fn plan_step(pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+pub(crate) fn plan_step(pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
     let mut parts = spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
     parts.push(helper_part(pc, helper, packed)?);
     for &(place, register) in reloads {
@@ -487,7 +487,7 @@ pub(super) fn plan_step(pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>, 
 /// holds one direct row per callee it reached, latest first: each refuses another callee to the next
 /// (NEXT), the last to the helper row, so a site alternating between known callees calls each by its
 /// entry, as the interpreter's own link does, and only an unknown one takes the helper.
-pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
+pub(crate) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     if let Some(chain) = chained_reads(plan)? {
         return Ok(chain);
     }
@@ -535,4 +535,4 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
 
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

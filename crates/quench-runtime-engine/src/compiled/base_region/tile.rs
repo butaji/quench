@@ -44,11 +44,11 @@ fn key_of(row: &Decoded) -> Option<Key> {
 }
 
 /// What the matcher asks of the block around a position.
-pub(super) struct Block<'a> {
+pub(crate) struct Block<'a> {
     /// Indices of the rows some branch targets.
-    pub(super) targets: &'a BitSet,
+    pub(crate) targets: &'a BitSet,
     /// Whether the web a row `k` wrote is dead once row `k` has run, on every way out of it.
-    pub(super) dead_after: &'a dyn Fn(usize, Register) -> bool,
+    pub(crate) dead_after: &'a dyn Fn(usize, Register) -> bool,
 }
 
 /// The operand of `consumer` that reads the value `producer` writes; none when neither or both do.
@@ -65,7 +65,7 @@ fn fed_operand(producer: &Decoded, consumer: &Decoded) -> Option<Operand> {
 /// The operand of the last row that reads the first row's value, when `shape` matches the rows
 /// from `at`: the kinds agree, no branch enters past the first row, the first row is no branch
 /// and its value is dead after the last.
-pub(super) fn match_at(shape: &Shape, rows: &[Decoded], at: usize, facts: &Block) -> Option<Operand> {
+pub(crate) fn match_at(shape: &Shape, rows: &[Decoded], at: usize, facts: &Block) -> Option<Operand> {
     let window = rows.get(at..at + shape.keys.len())?;
     let (producer, consumer) = (window.first()?, window.last()?);
     let keyed = window.iter().zip(&shape.keys).all(|(row, key)| key_of(row) == Some(*key));
@@ -151,7 +151,7 @@ fn tile_at(layout: &Layout, decoded: &[Decoded], singles: &[Planned], facts: &Bl
 
 /// The plan of every row of the program, one entry per row: a tile at its first row, `skipped` rows
 /// after it, a single row's plan elsewhere. `singles` are the rows' plans on their own.
-pub(super) fn tiled(layout: &Layout, decoded: &[Decoded], mut singles: Vec<Planned>) -> Vec<Planned> {
+pub(crate) fn tiled(layout: &Layout, decoded: &[Decoded], mut singles: Vec<Planned>) -> Vec<Planned> {
     let targets = branch_targets(layout, decoded);
     let dead = |k: usize, web: Register| dead_after(layout, decoded, k, web);
     let facts = Block { targets: &targets, dead_after: &dead };
