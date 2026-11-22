@@ -314,7 +314,7 @@ impl Stage for Emit<'_, '_> {
                 (None, None) => panic!("an operation addressing the arena has its base"),
             },
             // The table is a static that never moves; in-process code embeds its address.
-            Table::Layouts => self.builder.ins().iconst(types::I64, quench_runtime::heap::layouts::table_base() as i64),
+            Table::Layouts => self.constant(quench_runtime::heap::layouts::table_base() as u64),
         }
     }
     /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's
