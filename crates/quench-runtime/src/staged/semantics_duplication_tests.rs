@@ -74,9 +74,9 @@ const FINGERPRINTS: &[Fingerprint] = &[
     },
 ];
 
-/// The directories scanned, relative to `crates/`: the interpreter and the compiled tiers under `vm/`,
-/// and the b-jit stencils.
-const TIER_DIRECTORIES: &[&str] = &["quench-runtime/src/vm", "quench-bjit/stencils"];
+/// The directories scanned, relative to `crates/`: the interpreter under `vm/`, the engine crate that
+/// holds the lane and compiled tiers, and the b-jit stencils.
+const TIER_DIRECTORIES: &[&str] = &["quench-runtime/src/vm", "quench-runtime-engine/src", "quench-bjit/stencils"];
 
 /// The allowances: one `fingerprint path:text` line per hit that is allowed to stand.
 const DEBT_FILE: &str = include_str!("semantics_debt.txt");
@@ -109,7 +109,8 @@ fn source_files(crates: &Path) -> Vec<(String, PathBuf)> {
     let mut pending: Vec<PathBuf> = TIER_DIRECTORIES.iter().map(|directory| crates.join(directory)).collect();
     let mut files = Vec::new();
     while let Some(directory) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else { continue };
+        let entries = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("semantics scan directory {}: {error}", directory.display()));
         for entry in entries.map(Result::unwrap) {
             let path = entry.path();
             if path.is_dir() { pending.push(path); continue; }
