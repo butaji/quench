@@ -29,6 +29,9 @@ mod edits;
 mod elf;
 #[path = "build/layout.rs"]
 mod layout;
+#[allow(dead_code, unused_macros)]
+#[path = "../quench-stack/src/projection.rs"]
+mod projection;
 #[macro_use]
 #[path = "stencils/row_catalog.rs"]
 mod row_catalog;
