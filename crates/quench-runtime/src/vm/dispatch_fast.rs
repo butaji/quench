@@ -3290,11 +3290,11 @@ impl LaneStack {
         self.wasm_storage_bytes += frame_storage_bytes;
     }
 
-    /// An emitted call's native header that a nested entry made a record (`spill_plain`) pops as
-    /// that record: the innermost one, with no plain activation above it.
+    /// An emitted call's native header that Rust observed pops as the activation Rust keeps: the record a
+    /// nested entry made of it (`spill_plain`), or the linked plain header (`native_frames::link_header`)
+    /// with its side record.
     #[cold]
-    pub(in crate::vm) fn pop_spilled_header(&mut self) {
-        debug_assert!(self.plain.depth.get() == 0, "a spilled header leaves no plain activation above it");
+    pub(in crate::vm) fn pop_observed_header(&mut self) {
         let _ = self.pop_activation();
     }
 

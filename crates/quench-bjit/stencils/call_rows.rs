@@ -50,11 +50,11 @@
 
 use crate::layout::call_record::{helper_outcome, CallRecord, DirectHole, HelperHole, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
-use crate::heap_rows::{payload, set_context_word, word_at};
-use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_ACTIVATION_COUNT, JS_STEP_BODY_TABLE, JS_STEP_NATIVE_TABLE, JS_STEP_POP_SPILLED_HEADER, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::heap_rows::{context_word, payload, set_context_word, word_at};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_ACTIVATION_COUNT, JS_STEP_BODY_TABLE, JS_STEP_NATIVE_TABLE, JS_STEP_POP_OBSERVED_HEADER, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
 use crate::stage::StencilStage;
-use crate::staged::frame::{PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
+use crate::staged::frame::{CONTEXT_PACKED, NATIVE_FLAG, PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
 use crate::staged::region::Region;
 use crate::staged::{call::admit_native, protocol, value, word_offset, CallFrame, CallOperation, Passed, Stage, Step};
 use crate::words::{Out, S, dead, hole64};
@@ -315,17 +315,18 @@ struct Admitted {
 }
 
 /// Pops the frame the call pushed: the plain depth, innermost window and body top it found, and the values' top.
-/// A nested entry to emitted code under the callee (`Vm::stack_words_in_lane`) may have made its native header a
-/// record (`LaneStack::spill_plain`), leaving no plain header: the record pops instead, where Rust keeps it
-/// (`LaneStack::pop_spilled_header`), as the u-jit's `pop_native` pops it.
+/// Where Rust observed the frame, the activation pops where Rust keeps it (`LaneStack::pop_observed_header`), as the
+/// u-jit's `pop_native` pops it: a nested entry to emitted code under the callee (`Vm::stack_words_in_lane`) made its
+/// native header a record (`LaneStack::spill_plain`), leaving no plain header, or a helper linked it
+/// (`native_frames::link_header`), which cleared its NATIVE flag and gave it a side record that pops with it.
 #[inline(always)]
 fn pop(a: &Admitted) {
     let mut stage = StencilStage::from_hole(0);
-    if word_at(a.tops.plain_at as usize, PLAIN_DEPTH_AT) == 0 {
+    if word_at(a.tops.plain_at as usize, PLAIN_DEPTH_AT) == 0 || context_word(a.top, CONTEXT_PACKED) & NATIVE_FLAG == 0 {
         core::hint::cold_path();
-        // SAFETY: the payload's helper is `pop_spilled_header_in_lane`, which takes the VM and residual words.
+        // SAFETY: the payload's helper is `pop_observed_header_in_lane`, which takes the VM and residual words.
         unsafe {
-            let helper: unsafe extern "C" fn(u64, u64) -> u64 = transmute(word_at(a.payload, JS_STEP_POP_SPILLED_HEADER) as usize);
+            let helper: unsafe extern "C" fn(u64, u64) -> u64 = transmute(word_at(a.payload, JS_STEP_POP_OBSERVED_HEADER) as usize);
             helper(word_at(a.payload, JS_STEP_VM), word_at(a.payload, JS_STEP_RESIDUAL));
         }
     } else {
