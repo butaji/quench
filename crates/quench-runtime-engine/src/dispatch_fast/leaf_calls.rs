@@ -39,7 +39,6 @@ script_handler! {
         {
             sibling!(script_call_leaf_prove_miss::<LEAF, ARGC>, r, ip, Carried::script(cx))
         }
-        debug_assert!(!vm.programs.js_jit_diagnostics_enabled());
         // SAFETY: the target's view lives with its program.
         debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
         debug_assert!(!crosses_in_lane::<true>(cx, target));
@@ -59,6 +58,8 @@ script_handler! {
         if !vm.lane_stack.plain_room(vm.lane_stack.plain.depth.get(), target.room) {
             sibling!(script_call_full_miss, r, ip, Carried::script(cx))
         }
+        // The tier's diagnostics count the entry a proved leaf call skips (`record_js_jit_lane_entry`).
+        if vm.programs.js_jit_diagnostics_enabled() { super::count_proved_entry_in_lane(vm, target); }
         // SAFETY: as `script_call_leaf_prove_miss`'s.
         let (registers, base) = unsafe { lane_run_leaf::<LEAF, ARGC>(cx, r, ip, i, target, this) };
         next!(cx, registers, base, Carried::script(cx))
@@ -67,8 +68,8 @@ script_handler! {
 
 script_handler! {
     /// `script_call_leaf_miss` of a site whose link is not proved: the target it links, whose
-    /// entry, where it is this form's leaf, is proved (`Admission::UNPROVEN` cleared) unless the
-    /// tier's diagnostics count entries or its cell holds a body; then the call as the unproved
+    /// entry, where it is this form's leaf, is proved (`Admission::UNPROVEN` cleared) unless its
+    /// cell holds a body; then the call as the unproved
     /// leaf call always made it. A plain activation's entry takes it in place, another leaf
     /// form's call its handler, any other the full form.
     #[cold]
@@ -97,7 +98,7 @@ script_handler! {
         // The proof: a leaf entry activates as `Activates` (`CallEntry::activates`), so a proved
         // plain call that lands on it may activate it too; neither proves a published body's.
         // SAFETY: the target's view lives with its program.
-        if !vm.programs.js_jit_diagnostics_enabled() && !unsafe { (*target.view).entry_published() } {
+        if !unsafe { (*target.view).entry_published() } {
             let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
             let entry = &mut vm.lane_stack.script_targets.entries[index];
             debug_assert!(std::ptr::eq(entry, resolved), "the link names the entry it resolved");

@@ -1,6 +1,8 @@
 //! Test262 capability adapter for the canonical shared runtime.
 
 use std::path::Path;
+#[allow(unused_imports)]
+use quench_layers::engine::NativeJsProgramOps1 as _;
 
 use quench_runtime::{
     CapabilityId, Engine, ExecutionMode, ExecutionRequest, NativeImageSupport, Host, HostFunction, HostFunctionId,

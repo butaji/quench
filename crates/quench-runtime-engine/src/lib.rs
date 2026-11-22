@@ -326,4 +326,5 @@ pub mod api {
     };
     pub use crate::compiled::ahead_images::AheadImagesOps1;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1;
+    pub use crate::native_program::NativeJsProgramOps1;
 }

@@ -2920,6 +2920,7 @@ miss_reasons! {
     CallReturningNotAdmitted => "call:returning-not-admitted",
     Receiver => "receiver",
     Callee => "callee",
+    CalleeDeclined => "callee:declined",
     EntryNotActivation => "entry-not-activation",
     NoActivationRoom => "no-activation-room",
     CallReadAnswer => "call:read-answer",
@@ -5341,6 +5342,11 @@ impl LaneView {
     /// Whether a loop region called it while it had no body (`note_native_caller`).
     #[inline]
     pub fn called_by_regions(&self) -> bool { self.tier().history.get().region_called }
+
+    /// Whether a body compiled a call of this function (`note_caller`): native callers want its
+    /// body whatever its length, which only the lane's own entries ask to amortize.
+    #[inline]
+    pub fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
     /// A specialized body that went at a lifecycle edge warms again from the start, keeping
     /// where it and its predecessors left, and its recompiles, as its successor's feedback: a call site's behavior

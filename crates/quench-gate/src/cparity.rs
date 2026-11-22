@@ -23,14 +23,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use quench_tier_corpus::residuals::Tier;
 
 use crate::{
     build::NODE,
     config::Config,
     process::{self, Finished},
     step::Verdict,
-    tiers::{self, INTERPRETER},
+    tiers::{INTERPRETER, TRUNK_MODES},
 };
 use asm::Instruction;
 use classes::Fields;
@@ -72,15 +71,15 @@ fn fresh_directory(config: &Config, name: &str) -> io::Result<PathBuf> {
     Ok(directory)
 }
 
-fn node(config: &Config, host: &Path, kernel: &Path, flag: &str, dumps: Option<&Path>) -> Result<Finished, String> {
+fn node(config: &Config, host: &Path, kernel: &Path, flag: Option<&str>, dumps: Option<&Path>) -> Result<Finished, String> {
     let mut command = config.command(host);
-    command.arg(flag).arg(kernel);
+    command.args(flag).arg(kernel);
     if let Some(directory) = dumps {
         command.env(TRACE_VARIABLE, format!("{TRACE_CHANNELS}{}", directory.display())).env(DEV_VARIABLE, SYNCHRONOUS_COMPILE);
     }
     // A kernel runs in seconds; one past the deadline is hung (a sync compile that never returns) and fails the step.
     let run = process::run_within(&command, RUN_SECONDS)?;
-    if run.success { Ok(run) } else { Err(format!("{} {flag} failed:\n{}", kernel.display(), run.excerpt())) }
+    if run.success { Ok(run) } else { Err(format!("{} {} failed:\n{}", kernel.display(), flag.unwrap_or("(default)"), run.excerpt())) }
 }
 
 /// The disassembled code of `dump`.
@@ -129,21 +128,23 @@ fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Measured,
     Ok(scalar_call(directory, &dumps)?.map_or(Measured::Nothing, Measured::Code))
 }
 
-/// Runs one kernel on every tier and settles each measurement against the ratchet.
+/// Runs one kernel in each compiling mode Quench ships (b-jit only, and the default with every
+/// tier on; user, 2026-11-22) and settles each measurement against the ratchet. A forced `--u-jit`
+/// is not a shipped mode, so it does not decide the gate (TOD-2068 flaw 9).
 fn measure(config: &Config, host: &Path, kernel: &Path, table: &mut Table, tally: &mut Tally) -> Result<(), String> {
     let name = kernel.file_stem().and_then(|stem| stem.to_str()).ok_or("a kernel has no name")?;
-    let expected = node(config, host, kernel, INTERPRETER, None)?.stdout;
+    let expected = node(config, host, kernel, Some(INTERPRETER), None)?.stdout;
     let mut hot = None;
-    for tier in Tier::ALL {
-        let directory = fresh_directory(config, &format!("{name}-{}", tier.name())).map_err(|error| error.to_string())?;
-        let run = node(config, host, kernel, &tiers::flag(tier), Some(&directory))?;
+    for (mode, flag) in TRUNK_MODES.into_iter().filter(|(_, flag)| *flag != Some(INTERPRETER)) {
+        let directory = fresh_directory(config, &format!("{name}-{mode}")).map_err(|error| error.to_string())?;
+        let run = node(config, host, kernel, flag, Some(&directory))?;
         if run.stdout != expected {
-            tally.failures.push(format!("{name} {}: printed {:?}, the interpreter {expected:?}", tier.name(), run.stdout));
+            tally.failures.push(format!("{name} {mode}: printed {:?}, the interpreter {expected:?}", run.stdout));
             continue;
         }
         hot = stats::hot_loop(&run.stderr).or(hot);
         let measured = hottest(&directory, &run.stderr, hot)?;
-        table.settle(name, tier.name(), measured, config.record, tally);
+        table.settle(name, mode, measured, config.record, tally);
     }
     Ok(())
 }

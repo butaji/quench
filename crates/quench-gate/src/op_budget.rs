@@ -16,7 +16,7 @@ pub const BUDGETS: &str = "crates/quench-tier-corpus/op_budgets.txt";
 pub const OVER: [(&str, &str); 3] = [
     ("no-jit", "crates/quench-tier-corpus/op_over_budget_no_jit.txt"),
     ("b-jit", "crates/quench-tier-corpus/op_over_budget_b_jit.txt"),
-    ("u-jit", "crates/quench-tier-corpus/op_over_budget_u_jit.txt"),
+    ("default", "crates/quench-tier-corpus/op_over_budget_default.txt"),
 ];
 /// The op whose count is the loop's own step, which every other op's count is taken net of.
 pub const LOOP: &str = "empty";
@@ -142,8 +142,8 @@ mod tests {
     fn a_run_without_the_loop_is_not_judged() {
         let budgets = parse(FILE).unwrap();
         let runs = [Run { op: "int_add", count: 99.0, split: &[] }];
-        let (verdicts, report) = judge(&[("u-jit", &runs)], &budgets);
+        let (verdicts, report) = judge(&[("default", &runs)], &budgets);
         assert!(verdicts.is_empty());
-        assert!(report.contains("u-jit not judged"));
+        assert!(report.contains("default not judged"));
     }
 }

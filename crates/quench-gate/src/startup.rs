@@ -1,5 +1,5 @@
 //! Step `startup`: what starting the JavaScript host costs, in each execution mode (`--no-jit`,
-//! `--b-jit`, `--u-jit`). For each mode it measures the instructions of three runs under callgrind
+//! `--b-jit`, and the default with no flag). For each mode it measures the instructions of three runs under callgrind
 //! (an empty script, `console.log("hi")`, and a CommonJS `require` of a generated 200-function
 //! module, written into the scratch directory by this step), and the peak resident set of the
 //! first two: `wait4`'s `ru_maxrss` of the child (Linux, in kilobytes).
@@ -31,7 +31,10 @@ use crate::{build::NODE, config::Config, process, step::Verdict, tiers::INTERPRE
 const BUDGETS: &str = "crates/quench-tier-corpus/startup_budgets.txt";
 /// The scratch directory under the cargo target directory: generated scripts, callgrind output.
 const SCRATCH: &str = "startup";
-const MODES: [&str; 3] = [INTERPRETER, "--b-jit", "--u-jit"];
+/// The three shipped modes (user, 2026-11-22): interpreter only, b-jit only, and the default
+/// (no flag: every tier on), keyed in the budget file by flag, `default` for the default.
+const MODES: [&str; 3] = [INTERPRETER, "--b-jit", DEFAULT];
+const DEFAULT: &str = "default";
 /// The cases measured under callgrind, and the cases whose peak resident set is measured.
 const CASES: [&str; 3] = ["empty", "hello", "module"];
 const RSS_CASES: [&str; 2] = ["empty", "hello"];
@@ -185,7 +188,8 @@ fn write_scripts(scratch: &Path) -> Result<BTreeMap<&'static str, PathBuf>, Stri
 /// The environment every measured run starts with: the mode's JIT flags, no caches, a fresh
 /// cache directory.
 fn environment(command: &mut Command, mode: &str, scratch: &Path) {
-    if mode != INTERPRETER {
+    // The forced tier compiles synchronously; the default mode runs as users run it.
+    if mode != INTERPRETER && mode != DEFAULT {
         command.env("QUENCH_DEV", "sync-compile");
     }
     command.env("QUENCH_COMPILE_CACHE", "").env("QUENCH_STARTUP_SNAPSHOT", "off").env("XDG_CACHE_HOME", scratch);
@@ -202,7 +206,7 @@ fn instructions(config: &Config, host: &Path, mode: &str, script: &Path, scratch
         // JIT tiers patch the code they emit: valgrind must see each write.
         .args((mode != INTERPRETER).then_some("--smc-check=all"))
         .arg(host)
-        .arg(mode)
+        .args((mode != DEFAULT).then_some(mode))
         .arg(script);
     environment(&mut command, mode, scratch);
     let run = process::run(&mut command)?;
@@ -233,7 +237,7 @@ unsafe extern "C" {
 fn peak_rss_kb(config: &Config, host: &Path, mode: &str, script: &Path, scratch: &Path) -> Result<u64, String> {
     let open = |name: &str| File::create(scratch.join(name)).map_err(|error| format!("{}: {error}", scratch.join(name).display()));
     let mut command = config.command(host);
-    command.arg(mode).arg(script).stdout(open("stdout")?).stderr(open("stderr")?);
+    command.args((mode != DEFAULT).then_some(mode)).arg(script).stdout(open("stdout")?).stderr(open("stderr")?);
     environment(&mut command, mode, scratch);
     let child = command.spawn().map_err(|error| format!("cannot run {}: {error}", host.display()))?;
     let (mut status, mut usage): (c_int, Rusage) = (0, Rusage::default());

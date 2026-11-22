@@ -3,7 +3,6 @@
 # must be removed (`QUENCH_DEBT_WRITE=1` on a full run removes it). Never add an entry by hand.
 # Seeded with every budgeted op (TOD-2033: trunk runs far past the recorded ceilings); the first
 # QUENCH_DEBT_WRITE=1 run shrinks it to the true overruns.
-arr_length
 arr_load_dbl
 arr_load_int
 arr_store_dbl
@@ -15,16 +14,11 @@ call_method
 cmp_int
 dbl_add
 dbl_mul
-empty
 eq_int
 eq_undef_null
 field_read
 field_store
 inc_local
-int_add
-int_add_noor
-int_mul
-int_sub
 mixed_int_dbl
 neg_op
 not_op

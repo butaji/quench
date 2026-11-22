@@ -3,8 +3,8 @@
 //! and judges every bench in every mode against its peers. The step never runs a benchmark.
 //!
 //! Targets, one rule for every bench:
-//! - score: Quench >= 1.5 x the best peer (no-jit and no-jit-mf: node-jitless and bun-nojit; b-jit
-//!   and u-jit: node and bun). A peer that FAILed is skipped.
+//! - score: Quench >= 1.5 x the best peer (no-jit: node-jitless and bun-nojit; b-jit and the
+//!   default: node and bun). A peer that FAILed is skipped.
 //! - RSS: Quench <= 0.5 x the lowest peer RSS, the same peers.
 //! - any Quench FAIL, or a Quench run with no RSS, is a failure and is never listed.
 //! - Ir (no-jit callgrind): no growth past the recorded ceiling.
@@ -53,7 +53,9 @@ const DONE: &str = "DONE";
 const FAIL: &str = "FAIL";
 /// The RSS a run prints when it printed none.
 const UNMEASURED: &str = "?";
-const MODES: [&str; 4] = ["no-jit", "no-jit-mf", "b-jit", "u-jit"];
+/// The three shipped modes (user, 2026-11-22): interpreter only, b-jit only, and the default (every
+/// tier on), as `sweep3.sh` names them.
+const MODES: [&str; 3] = ["no-jit", "b-jit", "default"];
 const ENGINES: [&str; 4] = ["node", "bun", "node-jitless", "bun-nojit"];
 const SCORE_TARGET: f64 = 1.5;
 const RSS_TARGET: f64 = 0.5;
@@ -273,7 +275,7 @@ fn header(text: &str) -> String {
 /// modes against the engines with their JIT.
 fn peers(mode: &str) -> [&'static str; 2] {
     match mode {
-        "no-jit" | "no-jit-mf" => ["node-jitless", "bun-nojit"],
+        "no-jit" => ["node-jitless", "bun-nojit"],
         _ => ["node", "bun"],
     }
 }
@@ -791,9 +793,9 @@ mod tests {
 
     #[test]
     fn the_debt_list_round_trips_and_rejects_duplicates() {
-        let text = "# header\nb no-jit score 12.5\nc u-jit rss 300\nir b 100\n";
+        let text = "# header\nb no-jit score 12.5\nc default rss 300\nir b 100\n";
         let parsed = parse_debt(text).unwrap();
-        assert_eq!(parsed, debt(&[("b", "no-jit", Metric::Score, 12.5), ("c", "u-jit", Metric::Rss, 300.0)], &[("b", 100.0)]));
+        assert_eq!(parsed, debt(&[("b", "no-jit", Metric::Score, 12.5), ("c", "default", Metric::Rss, 300.0)], &[("b", 100.0)]));
         assert_eq!(render_debt("# header\n", &parsed), text);
         assert!(parse_debt("b no-jit score 1\nb no-jit score 2\n").is_err());
         assert!(parse_debt("b xx score 1\n").is_err());
