@@ -9158,7 +9158,7 @@ pub(crate) fn body_may_amortize_in_lane(tiers: &Tiers, body: &quench_runtime::by
 /// `body_may_amortize_in_lane` for the body of `tier`, whose length that tier must reach.
 pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: quench_runtime::jit_mode::Tier) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
-        || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(crate::dispatch_fast::decoded_instruction(body, *packed)))
+        || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(body.widened(*packed)))
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
@@ -10786,7 +10786,7 @@ mod tests {
         let mut program = quench_runtime::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
         let pc = body.instructions().position(|instruction| quench_runtime::staged::Operation::<u64, ()>::is_throw(instruction)).unwrap();
-        let instruction = quench_runtime::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let instruction = body.widened(body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);
         body.code[pc] = quench_runtime::bytecode::Instr::wide(wide_index).unwrap();

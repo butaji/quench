@@ -3830,7 +3830,7 @@ fn row_set_index_activation(cx: *mut LaneContext, r: Registers, ip: Ip, i: &Lane
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[pc]);
+    let instruction = body.widened(body.code[pc]);
     if !quench_runtime::staged::writes_element(instruction.op()) {
         return Resumed::Exit(exit(ip));
     }
@@ -7355,7 +7355,7 @@ fn loop_trace_exit_in_lane(cx: *mut LaneContext, r: Registers, site: &LoopSite, 
             // native execution has returned and restored the canonical registers.
             let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
             if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
-                let instruction = decoded_instruction(body, packed);
+                let instruction = body.widened(packed);
                 if quench_runtime::staged::writes_element(instruction.op()) {
                     let key = r.get(instruction.register_c());
                     let base = r.get(instruction.register_b());
@@ -8632,7 +8632,7 @@ impl Vm {
                 && body
                     .code
                     .iter()
-                    .any(|packed| quench_runtime::staged::constructs(decoded_instruction(body, *packed).op()))
+                    .any(|packed| quench_runtime::staged::constructs(body.widened(*packed).op()))
         {
             None
         } else {
@@ -12949,7 +12949,7 @@ impl Vm {
 fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, body: &quench_runtime::bytecode::Function) -> Vec<crate::compiled::DirectCandidates> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
     body.code.iter().enumerate().map(|(pc, packed)| {
-        let instruction = decoded_instruction(body, *packed);
+        let instruction = body.widened(*packed);
         let direct = quench_runtime::staged::calls(instruction.op()) && !instruction.direct_eval() && !instruction.parameter_eval()
             && !(tail_calls && instruction.returns_from_frame());
         let mut callees = crate::compiled::DirectCandidates::new();
@@ -15875,7 +15875,7 @@ fn frame_entry_census(vm: &Vm, program: ProgramId, function: u32) -> Option<Stri
             body.is_generator, body.local_registers.len(), body.locals, body.simple_parameters, body.selective_capture_slots.is_some(),
             body.self_binding_slot.is_some(), plan.plain, plan.in_loop, plan.legacy_reflection, plan.live_parameters,
             plan.addresses_locals, body.initial_register,
-            body.code.iter().map(|packed| decoded_instruction(body, *packed)).filter(|instruction|
+            body.code.iter().map(|packed| body.widened(*packed)).filter(|instruction|
                 quench_runtime::staged::names_binding(instruction.op()))
                 .map(|instruction| format!("{:?}:{}", instruction.op(), { let atom = instruction.atom_index() as usize; if atom < callee_code.atoms.len() { callee_code.atoms[atom].replace('\0', "~") } else { "?".into() } }))
                 .collect::<Vec<_>>(),
@@ -18445,7 +18445,7 @@ fn specialize_returning_operator(instruction: WideInstruction, constants: &[Valu
 /// backward jump, or a branch table, whose entries may jump back.
 fn may_loop(function: &Function) -> bool {
     function.code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = decoded_instruction(function, *packed);
+        let instruction = function.widened(*packed);
         quench_runtime::staged::wasm_branch_table(instruction.op())
             || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
                 && instruction.imm() as usize <= pc)
@@ -18580,17 +18580,6 @@ fn entered_records(instructions: &[WideInstruction], parameter_end_pc: u32) -> I
         targets.insert(parameter_end_pc as usize);
     }
     targets
-}
-
-pub(crate) fn decoded_instruction(
-    function: &Function,
-    packed: quench_runtime::bytecode::Instr,
-) -> WideInstruction {
-    if packed.is_wide() {
-        function.wide[packed.wide_index()]
-    } else {
-        packed.as_wide()
-    }
 }
 
 #[quench_macros::ext(DispatchFastVm6)]

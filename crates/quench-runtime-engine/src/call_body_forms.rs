@@ -90,7 +90,7 @@ fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function
 /// Each parameter, in order, moved to its place in the call window at `window`.
 fn moves_parameters(body: &Function, moves: &[quench_runtime::bytecode::Instr], window: u16) -> bool {
     moves.iter().zip(0..body.params).all(|(&packed, parameter)| {
-        let moved = decoded_instruction(body, packed);
+        let moved = body.widened(packed);
         quench_runtime::staged::copies_register(moved.op()) && moved.b() == parameter && moved.a() == window + parameter
     })
 }
@@ -111,7 +111,7 @@ fn element_read_body(body: &Function) -> bool {
     let [field, element, done, ..] = body.code.as_slice() else {
         return false;
     };
-    let [field, element, done] = [field, element, done].map(|packed| decoded_instruction(body, *packed));
+    let [field, element, done] = [field, element, done].map(|packed| body.widened(*packed));
     quench_runtime::staged::reads_named_field(field.op())
         && !field.returns_from_frame()
         && reads_this_or_parameter(FieldBase(field.b()), body)

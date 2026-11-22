@@ -2175,6 +2175,12 @@ pub(crate) fn widen(packed: Instr, wide: &[WideInstruction]) -> WideInstruction 
     if packed.is_wide() { wide[packed.wide_index()] } else { packed.as_wide() }
 }
 
+/// The wide-table entry that the wide packed instruction `packed` names, for a writer of the entry.
+#[inline]
+pub(crate) fn wide_entry_mut(wide: &mut [WideInstruction], packed: Instr) -> &mut WideInstruction {
+    &mut wide[packed.wide_index()]
+}
+
 impl Function {
     /// Releases the spare capacity of the tables a compilation grew, once it is finished.
     pub(crate) fn shrink_to_fit(&mut self) {
