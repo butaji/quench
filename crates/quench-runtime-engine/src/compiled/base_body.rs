@@ -174,6 +174,7 @@ impl Vm {
             super::admission::Decision::Compile(unit) => Ok(unit),
             super::admission::Decision::Short => { refuse(self, Refusal::NotAmortized); Err(LaneBodyOutcome::Short) }
             super::admission::Decision::Declined => Err(LaneBodyOutcome::Declined),
+            super::admission::Decision::Unpaid | super::admission::Decision::Base => unreachable!("a stencil body's gate decides only Short or Declined"),
         }
     }
 

@@ -7649,10 +7649,11 @@ impl Vm {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils.
-        let claims = self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT)
-            || (self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[quench_runtime::jit_mode::Tier::Base]));
-        if !claims || program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
+        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
+        if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
+            cranelift_allowed: self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT),
+            base_lane_allowed: self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[quench_runtime::jit_mode::Tier::Base]),
+            wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
             return false;
         }
         // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size: its

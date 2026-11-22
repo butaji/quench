@@ -527,7 +527,6 @@ impl Vm {
         // from it did not pay at its size is not planned again until its entries would pay for that size.
         let site = (self.active_program.raw(), function, entry);
         let tiers = self.programs.tiers();
-        if !self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some())) { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
         // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
         // each, the loop region's measure): inlining only adds to it.
         let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
@@ -535,25 +534,30 @@ impl Vm {
         let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
         // A quick body whose runs repaid the optimizing compile was priced at that (`LaneView::optimize_due`).
         let optimize = entry.is_none() && caller.optimize_due();
+        // The pure reads phase A decides on: the pick the observed entries price, and the level the pick leaves.
         let mut level = super::jit_backend::CompileLevel::run_default();
+        let mut pick = None;
         if let Some(entries) = observed && !optimize {
             let ir = estimated;
-            match pays_compile(tiers, program, function, entries, ir, caller, true, false) {
-                super::tier_model::Pick::Ultra => {}
-                // A function a loop region calls (`LaneView::called_by_regions`) pays per call a crossing the model's
-                // entries do not count (the region leaves to run it in the lane): its body is wanted whatever its length.
-                super::tier_model::Pick::Interpreter if !caller.called_by_regions() => { record(Refusal::NotAmortized); return Err(Unstarted::Unpaid); }
-                super::tier_model::Pick::Interpreter => {}
-                // A function whose u-jit body would never get ahead of a b-jit body's takes the b-jit body (`LaneBodyOutcome::Base`).
-                super::tier_model::Pick::Base => return Err(Unstarted::Base),
-            }
-            // Few entries to come take the quick compile, which an optimizing one follows once they repay it.
+            pick = Some(pays_compile(tiers, program, function, entries, ir, caller, true, false));
             if level == super::jit_backend::CompileLevel::Optimized {
                 level = super::admission::compile_level(tiers, program, function, entries, ir, caller);
             }
         }
+        let looped_taken = looped.is_none_or(|(span, taken)| taken >= super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true));
+        // Phase A: the compile bound, the pick and the looped iterations, in that order (`admission::LanePlan`).
+        let compiles_left = self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some()));
+        let plan_unit = match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LanePlan,
+            facts: super::admission::UnitFacts { compiles_left, pick, called_by_regions: caller.called_by_regions(), looped_taken, ..Default::default() } }) {
+            super::admission::Decision::Compile(unit) => unit,
+            super::admission::Decision::Declined => { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
+            super::admission::Decision::Base => return Err(Unstarted::Base),
+            super::admission::Decision::Unpaid => return Err(Unstarted::Unpaid),
+            super::admission::Decision::Short => return Err(Unstarted::Short),
+        };
+        // The effect the plan leaves: the level its body's compile takes, noted for the body (`LaneView::note_compile_level`).
+        // A looped attempt has an entry, so this never notes for one whose looped check declines.
         if entry.is_none() { caller.note_compile_level(level == super::jit_backend::CompileLevel::Quick, estimated); }
-        if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
         super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
         // A unit too short to amortize its entry, or whose key a published body holds, is known
@@ -574,7 +578,12 @@ impl Vm {
         let targets: &dyn Fn(u32, u32) -> Vec<CallTarget> = if others.is_empty() { targets } else { &cycle_targets };
         let stopped: std::cell::RefCell<Option<Unstarted>> = std::cell::RefCell::new(None);
         let gate = |vm: &Self, unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug, direct: &[DirectCallee]| {
-            if entry.is_none() && !called && !recursive && !amortizes_entry(tiers, unit, function, direct) { *stopped.borrow_mut() = Some(Unstarted::Short); return false; }
+            // Phase B during planning: the entry gate, on the planned unit (`LaneEntry`). Its amortization is read only where the gate reads it.
+            let entry_facts = super::admission::UnitFacts { entry_none: entry.is_none(), called_by_bodies: called, recursive,
+                amortizes_entry: entry.is_some() || called || recursive || amortizes_entry(tiers, unit, function, direct), ..Default::default() };
+            if super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LaneEntry(plan_unit), facts: entry_facts }).compiled().is_none() {
+                *stopped.borrow_mut() = Some(Unstarted::Short); return false;
+            }
             let key: LaneKey = (vm.active_program.raw(), function, entry, plan_key(unit, fields, direct.len(), generic, entry, budget, arrays));
             if let Some(published) = vm.programs.installed_lane(&key) { *stopped.borrow_mut() = Some(Unstarted::Installed(published)); return false; }
             true
@@ -597,7 +606,13 @@ impl Vm {
         // than compile code no caller may ever run.
         // A recurrent compile (no observed entries to price) still repays only where one entry of
         // its unit amortizes it (`amortizes_entry`, the same test as above, inlined callees included).
-        if entry.is_none() && !caller.called_by_regions() && observed.is_none() && looped.is_none() && !recursive && !amortizes_entry(tiers, &unit, function, &direct) { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
+        // Phase B after planning: the install gate on the plan's unit (`LaneInstall`). The callees bind, and the
+        // installed and admission checks run, only with that unit.
+        let install_facts = super::admission::UnitFacts { entry_none: entry.is_none(), called_by_regions: caller.called_by_regions(), observed_none: observed.is_none(),
+            looped_none: looped.is_none(), recursive, amortizes_entry: entry.is_some() || recursive || amortizes_entry(tiers, &unit, function, &direct), ..Default::default() };
+        let Some(_install) = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LaneInstall(plan_unit), facts: install_facts }).compiled() else {
+            refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short);
+        };
         bind_callees(&direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&unit, &fields, direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
