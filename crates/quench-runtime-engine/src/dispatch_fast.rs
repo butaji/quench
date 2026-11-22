@@ -9009,8 +9009,8 @@ script_handler! {
         // Every fact of the target the link settled is in its entry's admission word, which
         // the lane's must equal whole (link-proofs.md): the generation, the program, the
         // run's conditions (`REFUSED`: a pending construction or `with`; `NO_SCRIPT_CALLS`),
-        // the tier's diagnostics (`DIAGNOSED`) and the proof (`UNPROVEN`: an `Activates` entry
-        // whose cell body is unpublished, taken back when one publishes). The index is the
+        // the tier's diagnostics (`DIAGNOSED`) and the proof (`UNPROVEN`: an entry no plain call
+        // proved yet, taken back when its cell publishes). The index is the
         // link masked to the cache, so it needs no bounds test: any entry it lands on is
         // tested whole. What stays per call: the callee's identity (entries are shared by
         // every site and callee), the argument count against the entry's parameters (a
@@ -9032,8 +9032,6 @@ script_handler! {
         // A leaf entry its own call form proved (`script_call_leaf_prove_miss`) activates as
         // `Activates` from any other call (`CallEntry::activates`).
         debug_assert!(target.entry.activates());
-        // SAFETY: the target's view lives with its program.
-        debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
         debug_assert!(!vm.programs.js_jit_diagnostics_enabled());
         debug_assert!(target.program() == unsafe { (*cx).program });
         #[cfg(feature = "profile-lane-exits")]
@@ -9047,8 +9045,7 @@ script_handler! {
     /// takes its entry's form where that is not a plain activation
     /// (`script_call_requicken_miss`) and the out-of-line form where the site's arguments are
     /// more than it takes, else the entry is proved (`Admission::UNPROVEN` cleared) and the
-    /// call runs plainly. A callee whose cell holds a body is never proved: its calls run the
-    /// unproved activation from here, which enters the body.
+    /// call runs plainly, a callee whose cell holds a body too (the activation tests the cell).
     #[cold]
     #[inline(never)]
     fn script_call_prove_miss<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
@@ -9073,13 +9070,11 @@ script_handler! {
         if vm.programs.js_jit_diagnostics_enabled() {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
-        // A callee whose cell holds a body is entered through it (`enter_cell_body_in_lane`), which
-        // a proved call never tests: its entry stays unproved, so every call of it comes here
-        // and takes the unproved activation, until a withdrawal lets the proof below hold.
-        // SAFETY: the target's view lives with its program.
-        if unsafe { (*target.view).entry_published() } {
-            lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN)
-        }
+        // A callee whose cell holds a body is proved too: the plain activation tests the cell
+        // on every call, proved or not (`lane_plain_activation!`), and enters the body through
+        // it (`enter_cell_body_in_lane`) or, for a call completing its caller, through the
+        // activation's `BodyEntry` record. Only a leaf entry's proved form skips the cell, and
+        // this proves no leaf entry (`CallEntry::Activates` above).
         // The proof (`Admission::UNPROVEN`): the entry, which the link names, now admits proved
         // calls from every site whose arguments it takes (`script_call_miss`'s compare).
         let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
