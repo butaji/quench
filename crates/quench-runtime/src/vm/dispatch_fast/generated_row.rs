@@ -362,6 +362,12 @@ lane_handler! {
                 // The form the VM's own-field store left for the record (`field_store_host`).
                 if let Some(hint) = frame.stored {
                     set_field_hint(ip, hint);
+                    // A tracked runtime's own store completes through the VM's own-field hit each time from the
+                    // plain row (its layout store observes no representation): the record takes the tracked
+                    // site's hinted store, as a refused one does (`store_miss!`), and stops asking the site.
+                    if const { FLAG == FLAG_UNREAD } && unsafe { vm(script) }.heap.tracks_slot_representations() {
+                        requicken(ip, generated_row!(OP, ACC_NONE, crate::vm::dispatch_fast::TRACKED_SITE));
+                    }
                     // A store the VM made into a narrow run moves the site to the narrow row (`NARROW_SITE`);
                     // a narrow site whose object is no longer narrow goes back to the own store.
                     if const { FLAG == FLAG_UNREAD || FLAG == crate::vm::dispatch_fast::NARROW_SITE } && !unsafe { vm(script) }.heap.tracks_slot_representations() {
