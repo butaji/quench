@@ -64,9 +64,14 @@ pub(crate) struct LoopKernel {
 
 /// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
 /// that interprets its recurrences per iteration is not under `--b-jit`: the loop's stencils run
-/// it faster (crc), while a fold or chain runs faster than they do (sum, dot).
+/// it faster (crc), while a fold or chain runs faster than they do (sum, dot). Where a Cranelift
+/// tier may compile the loop, the kernel keeps it only if it outruns compiled code
+/// (`Recurrence::outruns_compiled`); else the loop keeps its tier site and the u-jit takes it.
 fn pass(shape: &Shape) -> Option<recur::Recurrence> {
-    recur::Recurrence::of(shape).filter(|recurrence| !(quench_runtime::jit_mode::base_only() && recurrence.interprets()))
+    use quench_runtime::jit_mode::{base_only, tiers_allowed, Tier};
+    recur::Recurrence::of(shape).filter(|recurrence| {
+        !(base_only() && recurrence.interprets()) && !(tiers_allowed(Tier::CRANELIFT) && !recurrence.outruns_compiled())
+    })
 }
 
 /// Drops the temps (registers the body writes before it reads them) dead where the loop exits:
