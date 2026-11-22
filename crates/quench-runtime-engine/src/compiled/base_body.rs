@@ -168,6 +168,7 @@ impl Vm {
             amortizes: super::body_may_amortize(self.programs.tiers(), body, quench_runtime::jit_mode::Tier::Base),
             called_by_bodies: caller.called_by_bodies(),
             indexes_typed: indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))),
+            ..Default::default()
         };
         match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Base, facts }) {
             super::admission::Decision::Compile(unit) => Ok(unit),

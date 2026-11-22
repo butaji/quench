@@ -1794,6 +1794,12 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_module_selective())
     }
 
+    /// Whether Wasm modules compile whole at their first entry: not under a selective A/B arm that
+    /// keeps modules to their hot roots (`WasmModuleCompile::NEVER`).
+    pub fn wasm_modules_compile_at_first_entry(&self) -> bool {
+        self.wasm_module_compile != WasmModuleCompile::NEVER
+    }
+
     /// Compile every Wasm module whole at its first entry (`WasmModuleCompile::EAGER`), unless
     /// a selective A/B arm keeps modules to their hot roots (`WasmModuleCompile::NEVER`).
     pub fn compile_wasm_modules_at_first_entry(&mut self) {

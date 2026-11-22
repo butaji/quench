@@ -154,8 +154,12 @@ pub(crate) enum UnitKind {
     Ahead(u32),
     /// A b-jit (stencil) body: its facts decide it (`specialize`).
     Base,
-    /// The Wasm module's whole-module compile at its first entry; the runtime's flag decides when.
+    /// A Wasm function's specialization (its lowered body and entry): always cleared.
     Wasm,
+    /// A Wasm module compiled whole at its first entry, when the runtime's first-entry flag allows it.
+    WasmEager,
+    /// A JavaScript function's numeric or lane compile at an entry, when the Cranelift tiers run here.
+    Entry,
 }
 
 /// What the gate's decisions read of the unit, computed by the entry that asks, and carried by the
@@ -170,6 +174,10 @@ pub(crate) struct UnitFacts {
     pub(crate) called_by_bodies: bool,
     /// The body indexes a parameter that is a typed array (`indexes_typed_parameter`).
     pub(crate) indexes_typed: bool,
+    /// The Cranelift function tiers run in this VM (`Vm::tier_may_run`), for `UnitKind::Entry`.
+    pub(crate) cranelift_allowed: bool,
+    /// The runtime compiles Wasm modules whole at their first entry (`wasm_modules_compile_at_first_entry`).
+    pub(crate) wasm_first_entry: bool,
 }
 
 /// Whether a unit of `kind` may compile at all, under the process's JIT mode and, for a loop
@@ -181,6 +189,7 @@ fn may_compile(kind: UnitKind) -> bool {
         UnitKind::Aot => true,
         UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
         UnitKind::Wasm | UnitKind::Base => true,
+        UnitKind::WasmEager | UnitKind::Entry => unreachable!("facts decide these kinds, in `specialize`"),
     }
 }
 
@@ -221,9 +230,16 @@ impl<T> Decision<T> {
 }
 
 /// A unit cleared to compile. Its only field is private to this module, so `specialize` is the
-/// only way to obtain one.
+/// only way to obtain one; copies of it are the same proof.
+#[derive(Clone, Copy)]
 pub(crate) struct CompiledUnit {
     _sealed: (),
+}
+
+/// A unit minted for a test, through `specialize` (an AOT unit, which no mode gates).
+#[cfg(test)]
+pub(crate) fn test_unit() -> CompiledUnit {
+    specialize(UnitRequest { kind: UnitKind::Aot, facts: UnitFacts::default() }).compiled().expect("an AOT unit always compiles")
 }
 
 /// The one specializer entry: whether the request's unit may compile, under the process's JIT
@@ -236,7 +252,11 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         if !facts.covers { return Decision::Declined; }
         if !facts.amortizes && !facts.called_by_bodies { return Decision::Short; }
         if facts.indexes_typed { return Decision::Declined; }
-    } else if !may_compile(kind) {
+    } else if match kind {
+        UnitKind::WasmEager => !facts.wasm_first_entry,
+        UnitKind::Entry => !facts.cranelift_allowed,
+        _ => !may_compile(kind),
+    } {
         return Decision::Declined;
     }
     Decision::Compile(CompiledUnit { _sealed: () })
