@@ -57,7 +57,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::{CallSource, Profile, TerminalCall};
 use crate::value::number_to_u32;
-use activation::{CallCompletion, CallContext, ConstructionTarget};
+pub use activation::{CallCompletion, CallContext, ConstructionTarget};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -76,7 +76,7 @@ fn fresh_random_seed() -> u64 {
 }
 pub(super) use crate::units::MAX_SAFE_INTEGER;
 pub(crate) use crate::bytecode::MAX_ARRAY_LENGTH;
-pub(super) const ROOT_FUNCTION_ID: u32 = 0;
+pub const ROOT_FUNCTION_ID: u32 = 0;
 /// The values a call roots besides its arguments: the callee and the receiver.
 const CALL_ROOTS_BESIDE_ARGUMENTS: usize = 2;
 /// The arguments a prepared callback's call keeps rooted in its loop's reused slots
@@ -246,11 +246,11 @@ use call_arguments::CallArguments;
 use object::AtomClass;
 pub(crate) use json::json_literal_length;
 pub(crate) use object_static::array_index;
-pub(crate) use program_store::ProgramId;
+pub use program_store::ProgramId;
 pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
-use property_key::PropertyKey;
+pub use property_key::PropertyKey;
 use root_bindings::RootBinding;
 use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
@@ -276,7 +276,7 @@ pub mod value_serializer;
 pub mod owned_clone_native;
 pub mod symbol;
 pub mod well_known_symbols;
-pub(crate) use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
+pub use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
 pub mod type_predicates;
 pub mod typed_array;
 pub mod typed_array_access;
@@ -320,7 +320,7 @@ enum CallbackProof {
 }
 
 #[derive(Clone)]
-pub(super) struct Frame {
+pub struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
     context: CallContext,
     /// Leading actual arguments that legacy `f.arguments` reflects live from the parameter
@@ -638,7 +638,7 @@ impl Frame {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ActiveIterator {
+pub struct ActiveIterator {
     pub(crate) iterator: u16,
     pub(crate) done: u16,
 }
@@ -768,7 +768,7 @@ const REALM_FOLLOWING_PROTOTYPES: [Native; 8] = [
     Native::Map, Native::Set, Native::RegExp,
 ];
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct FieldCache {
+pub struct FieldCache {
     receiver: u32,
     holder: u32,
     slot: u16,
@@ -789,7 +789,7 @@ impl FieldCache {
 const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
-const NO_FIELD_HOLDER: u32 = field_cache_layout::NO_HOLDER;
+pub const NO_FIELD_HOLDER: u32 = field_cache_layout::NO_HOLDER;
 /// The holder layout id an entry holds where no holder object was at hand (`FieldCache::holder_id`).
 const NO_FIELD_HOLDER_LAYOUT: u32 = field_cache_layout::NO_HOLDER_LAYOUT;
 use crate::staged::field_cache_layout::{self, FieldCacheWords};
@@ -840,7 +840,7 @@ struct AccessorFieldCache {
 /// fixed slot, a constant, or the receiver itself. `None` is no forward: the call runs (a
 /// store site's `None` beside its setter records that the setter's body forwards nothing).
 #[derive(Clone, Copy)]
-enum AccessorForward {
+pub enum AccessorForward {
     None,
     /// `return this.f` or `return this.#f`: that read's field entry, which proves the
     /// receiver's shape itself (an own or holder entry of a public name; a private name's
@@ -868,7 +868,7 @@ const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
 /// leaves the lane at each miss and evicts an entry another shape needs next.
 const ACCESSOR_FIELD_CACHE_WAYS: usize = 16;
 use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
-const NO_FIELD_RECEIVER: u32 = field_cache_layout::NO_RECEIVER;
+pub const NO_FIELD_RECEIVER: u32 = field_cache_layout::NO_RECEIVER;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
 const NO_INHERITED_FIELD: u32 = object::MRU_CHAIN_END;
 // A cached add proves every prototype up to this depth. Node's stream objects (an
@@ -909,7 +909,7 @@ impl site_table::SiteEntry for FieldCache {
 // SAFETY: four `u32` words, with no padding, and every bit pattern valid.
 unsafe impl site_table::StoredWords for FieldCacheWords {}
 /// The layout generated code reads a field cache entry by (`staged::layout_offsets`).
-pub(crate) use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
+pub use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
 
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
 /// prototype chain still has exactly the `prototype_depth` shapes interned at `chain`
@@ -1084,7 +1084,7 @@ impl FieldAddCacheSet {
         self.len = len as u8;
     }
 }
-const NO_FIELD_ADD_SET: u32 = u32::MAX;
+pub const NO_FIELD_ADD_SET: u32 = u32::MAX;
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
 /// `object_shapes` entry of an object literal site that has recorded no shape.
 const NO_OBJECT_SHAPE: u32 = u32::MAX;
@@ -1175,14 +1175,14 @@ impl ProgramCacheLayout {
     }
 }
 /// Entries of the in-loop call target cache, indexed by the callee's heap index.
-const CALL_TARGET_CACHE_SIZE: usize = 64;
+pub const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
 /// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), or construct
 /// in place (`construct`), valid for `callee` until collection, realm transition or heap reset
 /// clears the cache. Its function kind, environment, realm and body are immutable during that
 /// lifetime, so its classifications are computed once, when the entry is filled.
 #[derive(Clone, Copy)]
-struct InLoopCallTarget {
+pub struct InLoopCallTarget {
     callee: Value,
     program: ProgramId,
     function: u32,
@@ -1238,7 +1238,7 @@ const CONSTRUCT_DERIVED: u8 = 2;
 const EMPTY_CONSTRUCT_TARGET: ConstructTarget =
     ConstructTarget { callee: Value::UNDEFINED, program: ProgramId::MAIN, function: 0, env: Value::UNDEFINED, admits: 0 };
 /// A table of empty targets, which no binding matches: its function is the root, never a callee.
-static NO_CALL_TARGETS: [InLoopCallTarget; CALL_TARGET_CACHE_SIZE] = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
+pub static NO_CALL_TARGETS: [InLoopCallTarget; CALL_TARGET_CACHE_SIZE] = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
 /// The code units below which a unit is ASCII.
 #[derive(Clone, Copy)]
 enum ShapeTransition {
@@ -1303,7 +1303,7 @@ struct ShapeAttributes {
 /// property created non-enumerable (as builtin methods are) costs no second, `Descriptor`
 /// shape.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct DataAttributes {
+pub struct DataAttributes {
     writable: bool,
     enumerable: bool,
     configurable: bool,
@@ -1910,7 +1910,7 @@ enum CallTarget {
     User(ProgramId, u32, Value),
     Native(Native),
 }
-pub(super) enum StepResult {
+pub enum StepResult {
     Continue,
     TailCall,
     #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
@@ -1926,7 +1926,7 @@ pub(super) enum StepResult {
 }
 /// The facts of one suspension point, shared by `StepResult::Suspend` and
 /// `FrameOutcome::Suspend`: the value handed out and the register that receives the resumption.
-pub(super) enum Suspended {
+pub enum Suspended {
     Await {
         value: Value,
         destination: Register,
@@ -1937,7 +1937,7 @@ pub(super) enum Suspended {
         delegated_result: Option<Value>,
     },
 }
-pub(super) enum FrameOutcome {
+pub enum FrameOutcome {
     Complete(Value),
     ConstructComplete {
         value: Value,

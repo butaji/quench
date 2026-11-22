@@ -2,7 +2,7 @@ use super::{Op, Register, Traits, WideInstruction};
 
 /// Where a named field store finds its receiver: field B's register, or the frame's `this`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StoreReceiver {
+pub enum StoreReceiver {
     Register,
     This,
 }
@@ -10,7 +10,7 @@ pub(crate) enum StoreReceiver {
 /// A named field store's receiver and whether a rejected write throws. The opcode table owns
 /// this, so the interpreter and every tier decode a store from one definition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FieldStore {
+pub struct FieldStore {
     pub(crate) receiver: StoreReceiver,
     pub(crate) strict: bool,
 }

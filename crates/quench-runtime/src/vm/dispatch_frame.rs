@@ -75,7 +75,7 @@ impl HotLoop {
 
 use crate::vm::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
-pub(super) struct PendingGeneralCall {
+pub struct PendingGeneralCall {
     pub(super) caller: usize,
     /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
     /// decoding, once built, never moves; a cold caller simply keeps reading packed code.
@@ -107,7 +107,7 @@ pub(crate) struct RecoveredCalls {
 /// Where a lane run that no general loop started left its frames (`Vm::native_callback_in_lane`):
 /// the program the innermost executes and the error a call the lane made raised there, which
 /// the general loop resumes with as it does after its own lane run.
-pub(super) struct LaneExit {
+pub struct LaneExit {
     pub(super) executing: ExecutingProgram,
     pub(super) raised: Option<JsError>,
 }
@@ -123,7 +123,7 @@ pub(super) enum GeneralResume {
 
 /// The general loop's executing program: its id and the residual keeping it alive (`None`
 /// for the loop's entry program).
-pub(super) struct ExecutingProgram {
+pub struct ExecutingProgram {
     pub(super) id: ProgramId,
     pub(super) retained: Option<Rc<ResidualProgram>>,
 }
@@ -163,7 +163,7 @@ pub(super) fn this_is_fixed(inherits_this: bool, this: Value) -> bool {
 }
 
 /// An executing program set aside while an in-loop callee of another program runs.
-pub(super) struct SavedProgram {
+pub struct SavedProgram {
     pub(super) id: ProgramId,
     /// The residual that kept it alive, `None` for the loop's entry program.
     pub(super) retained: Option<Rc<ResidualProgram>>,
@@ -173,7 +173,7 @@ pub(super) struct SavedProgram {
 /// stack. A Wasm call in the loop pushes a heap frame instead of recursing
 /// natively, so the native stack guard does not bound it; the guest call
 /// depth does.
-pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
+pub const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
 
 impl GeneralCodeCursor {
     #[inline(always)]

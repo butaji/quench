@@ -235,5 +235,5 @@ pub(super) const fn wasm_gc_handler(op: Op) -> Option<Handler> {
     macro_rules! handlers {
         ($($name:ident)*) => { match op { $(Op::$name => Some(lane_wasm_gc_step::<{ Op::$name as u16 }>),)* _ => None } };
     }
-    quench_runtime::vm::dispatch_wasm::wasm_gc_value_ops!(handlers)
+    quench_runtime::wasm_gc_value_ops!(handlers)
 }

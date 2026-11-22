@@ -34,10 +34,12 @@ pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 mod collection_steps;
 #[path = "iterator_in_place.rs"]
 mod iterator_in_place;
+#[allow(unused_imports)]
+pub use iterator_in_place::InPlaceStep;
 
 /// The stores `Vm::intact_iteration_kind` proves iterate by their own contents.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum IterationSource {
+pub enum IterationSource {
     Array,
     Set,
     Map,
@@ -47,7 +49,7 @@ pub(super) enum IterationSource {
 /// What an iteration step's call is (`Vm::iteration_step`): one the lane makes in place, of
 /// an array iterator or a generator, or any other call.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum IterationStep {
+pub enum IterationStep {
     Array,
     Generator,
     /// A String, Map or Set iterator's (`collection_steps`).

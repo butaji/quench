@@ -5,17 +5,17 @@ mod frame_cold;
 pub(crate) mod frame_record;
 mod generator_record;
 mod suspension_live;
-pub(crate) use frame_record::FrameRecord;
-pub(in crate::vm) use frame_record::extend_this_env_roots;
+pub use frame_record::FrameRecord;
+pub use frame_record::extend_this_env_roots;
 #[cfg(test)]
 pub(in crate::vm) use frame_record::{frames_made, note_frame_made};
-pub(crate) use generator_record::GeneratorRecord;
+pub use generator_record::GeneratorRecord;
 
 /// The only state that crosses an activation boundary. The value is kept as a
 /// child of the suspension's owner and is consumed by the resumer according
 /// to its completion kind.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Completion {
+pub enum Completion {
     GeneratorStart,
     Return(Value),
     Yield(Value),
@@ -26,7 +26,7 @@ pub(crate) enum Completion {
 /// (`JobRoot`): an async function's await state, or a generator's record, async or the native
 /// `next` of a sync one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SuspendKind {
+pub enum SuspendKind {
     Generator,
     AsyncFunction,
     AsyncGenerator,
@@ -35,7 +35,7 @@ pub(crate) enum SuspendKind {
 /// The root of a lane run that resumes a suspended activation (`Vm::run_lane_job`): the
 /// object that owns its frame, the await state or the generator, and what kind it is.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct JobRoot {
+pub struct JobRoot {
     pub(crate) object: Value,
     pub(crate) kind: SuspendKind,
 }
@@ -43,7 +43,7 @@ pub(crate) struct JobRoot {
 /// How a promise job or a request resumes the activation its owner suspended
 /// (`Vm::run_job`).
 #[derive(Debug)]
-pub(crate) enum JobResume {
+pub enum JobResume {
     /// With the value its `await` or `yield` evaluates to.
     Sends(Value),
     /// Throwing the error where it suspended, which a handler of its bytecode may catch.

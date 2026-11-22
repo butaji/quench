@@ -6,12 +6,12 @@ use crate::Value;
 /// The context words below each window's register 0 (`register_file::FRAME_CONTEXT`): `top`
 /// always has them free beneath it, so a window starts at `top` and the next at its end plus
 /// these, and a return stores the window's address back as the top.
-pub(super) const CONTEXT: usize = super::register_file::FRAME_CONTEXT;
+pub const CONTEXT: usize = super::register_file::FRAME_CONTEXT;
 
 /// The low bit of an activation's `WINDOW` word when its window is not the lane stack's: a
 /// suspended frame's register file (a generator's, `FrameRecord`), which a return leaves
 /// alone. A `Value` is word aligned, so the bit is free in an address.
-pub(crate) const HEAP_WINDOW: usize = 1;
+pub const HEAP_WINDOW: usize = 1;
 const _: () = assert!(std::mem::align_of::<Value>() > HEAP_WINDOW);
 
 /// The values of a lane stack's windows, `base..top`, in an allocation of room up to `end`.

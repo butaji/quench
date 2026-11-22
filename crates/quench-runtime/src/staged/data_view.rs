@@ -54,7 +54,7 @@ pub(crate) struct DataViewWords<W> {
 /// value, a record that is no DataView (its kind is not `NO_KIND`), a stale or detached record, or (to store) bytes another
 /// buffer shares.
 #[inline(always)]
-pub(crate) fn prove_data_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, writable: bool,
+pub fn prove_data_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, writable: bool,
     miss: S::Miss) -> Option<DataViewWords<S::Word>> {
     let record = view_record(stage, records, base, miss)?;
     let kind_word = stage.load_u8(Region::Records.mutable(), record, VIEW.kind_offset as i32);
@@ -141,7 +141,7 @@ fn sign_extend<S: Stage>(stage: &mut S, unsigned: S::Word, width: usize) -> S::W
 /// The Number at byte offset `index` of `view` for `element`, the bytes read in the order `little` names. A big-endian
 /// float leaves at `miss`; an offset the element does not fit inside leaves too.
 #[inline(always)]
-pub(crate) fn data_view_read<S: NumericStage>(stage: &mut S, view: DataViewWords<S::Word>, index: S::Word,
+pub fn data_view_read<S: NumericStage>(stage: &mut S, view: DataViewWords<S::Word>, index: S::Word,
     element: DataViewElement, little: S::Cond, miss: S::Miss) -> Option<S::Word> {
     if element.is_float() {
         stage.guard(little, miss)?;
@@ -178,7 +178,7 @@ pub(crate) fn data_view_read<S: NumericStage>(stage: &mut S, view: DataViewWords
 /// A big-endian float, an offset the element does not fit inside, or a ToInt32 the stage cannot make leaves at `miss`, before
 /// any byte is written.
 #[inline(always)]
-pub(crate) fn data_view_write<S: NumericStage>(stage: &mut S, view: DataViewWords<S::Word>, index: S::Word,
+pub fn data_view_write<S: NumericStage>(stage: &mut S, view: DataViewWords<S::Word>, index: S::Word,
     element: DataViewElement, little: S::Cond, number: S::Word, miss: S::Miss) -> Option<()> {
     if element.is_float() {
         stage.guard(little, miss)?;

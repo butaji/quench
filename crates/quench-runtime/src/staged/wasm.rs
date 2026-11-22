@@ -11,7 +11,7 @@ use crate::{WasmTrap, WasmType};
 
 /// The bytes of a v128: the one definition, which the runtime's and the stencil's `crate::wasm`
 /// re-export.
-pub(crate) const V128_BYTES: usize = core::mem::size_of::<u128>();
+pub const V128_BYTES: usize = core::mem::size_of::<u128>();
 
 /// The integer width an operation runs at; an i32 operator is its i64 namesake at `I32`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

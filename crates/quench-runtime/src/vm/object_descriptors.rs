@@ -24,7 +24,7 @@ pub(super) enum TypedArrayIndexKey {
 
 #[path = "object_descriptors/record.rs"]
 mod record;
-pub(super) use record::PropertyDescriptorRecord;
+pub use record::PropertyDescriptorRecord;
 
 impl Vm {
     /// ToPropertyDescriptor's fields' keys, in the order it reads them.

@@ -225,7 +225,7 @@ fn native_outcome<S: WasmActivation>(stage: &mut S, native: NativeCall) -> Optio
 /// `word`: an i32 or f32 as its number, an f64 as its bits (ToJSValue, which allocates nothing for
 /// these types). The lane reads the word from the register, which may be a Value's payload.
 #[inline(always)]
-pub(crate) fn import_argument(ty: WasmType, word: u64) -> f64 {
+pub fn import_argument(ty: WasmType, word: u64) -> f64 {
     match ty {
         WasmType::I32 => f64::from(word as u32 as i32),
         WasmType::F32 => f64::from(f32::from_bits(word as u32)),

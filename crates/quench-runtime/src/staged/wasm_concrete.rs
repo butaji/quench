@@ -11,7 +11,7 @@ use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unar
 use crate::wasm::numeric::{canonical_nan_bits, sign_mask};
 use crate::WasmTrap;
 
-pub(crate) struct ConcreteWasm;
+pub struct ConcreteWasm;
 
 /// `value`'s low `bits` bits, sign-extended: shifted to the top and back down arithmetically.
 macro_rules! sign_extend {

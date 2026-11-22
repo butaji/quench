@@ -7,7 +7,7 @@ use super::wasm_jump::WasmJump;
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
-pub(crate) enum Operation<W, P> {
+pub enum Operation<W, P> {
     /// Copy register `source` into `destination` with its facts.
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
@@ -306,7 +306,7 @@ pub(crate) enum Operation<W, P> {
 /// Each `Operation` variant as a number, for the dispatchers' compile-time choice of arm (`step_of` and the other
 /// `*_of` steps): a caller that knows its variant passes it, and every other arm is dropped before code generation
 /// (an `if const` test); `ANY` runs every arm, as the interpreter does.
-pub(crate) mod kind {
+pub mod kind {
     pub(crate) const ANY: u16 = 0;
     pub(crate) const MOVE: u16 = 1;
     pub(crate) const LOAD_CONST: u16 = 2;

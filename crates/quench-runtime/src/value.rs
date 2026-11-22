@@ -12,7 +12,7 @@ mod number_conversion;
 pub use number_conversion::{number_to_i32, number_to_u32, number_to_uint8_clamp};
 pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
 use number_conversion::truncate_to_i32;
-pub(crate) use crate::vm::operations::WORD32_SHIFT_MASK;
+pub use crate::vm::operations::WORD32_SHIFT_MASK;
 
 /// The table `NARROW_UPPER_WORDS` sits in at a fixed address, which compiled code indexes by code.
 static NARROW_UPPER_WORD_TABLE: [u64; NARROW_LOOKUP_CODES] = NARROW_UPPER_WORDS;
@@ -139,7 +139,7 @@ pub struct Value(u64);
 /// with one bitwise or instead of first materializing the tag constant.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub(crate) struct IntegerEncoding(u64);
+pub struct IntegerEncoding(u64);
 
 impl IntegerEncoding {
     pub(crate) const TAG: Self = Self(TAG_INT);
@@ -151,7 +151,7 @@ impl IntegerEncoding {
 
 /// Two operands classified by one pass over their tags: both int32, both Numbers (an int32 widened), or not both Numbers.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum NumericPair { Ints(i32, i32), Numbers(f64, f64), Other }
+pub enum NumericPair { Ints(i32, i32), Numbers(f64, f64), Other }
 
 impl NumericPair {
     /// Both operands as doubles: an int32 widened (exact), a double as it is. `None` for

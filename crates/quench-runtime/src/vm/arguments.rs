@@ -153,7 +153,7 @@ impl Vm {
     }
 }
 
-pub(super) fn mapped_arguments_slot(
+pub fn mapped_arguments_slot(
     function: &crate::bytecode::Function,
     parameter: usize,
 ) -> Option<usize> {

@@ -41,7 +41,7 @@ pub(crate) struct WindowFill {
 /// checked or produced; a failed guard leaves at the frame's miss edge.
 #[derive(Clone, Copy)]
 #[cfg_attr(not(test), allow(dead_code))] // the guards and the window are rows for the form-generic lane helpers
-pub(crate) enum CallOperation<W> {
+pub enum CallOperation<W> {
     /// The operands of a call instruction, which no row runs alone (`Invocation::of`).
     Site(Invocation),
     /// Continue where `held` is the callee identity `expected` (a per-site operand).

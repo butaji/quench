@@ -471,7 +471,7 @@ impl Vm {
 
 /// Whether `native` is a DataView element `get` or `set` method.
 #[inline(always)]
-pub(super) const fn data_view_element(native: Native) -> bool {
+pub const fn data_view_element(native: Native) -> bool {
     data_view_setter(native)
         || matches!(
             native,

@@ -19,7 +19,7 @@ use crate::Value;
 
 /// A step of the delegation the frame makes (`CallFrame::delegation`), on the words the row read.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum DelegationStep<W> {
+pub enum DelegationStep<W> {
     /// GetIterator of `source`, sync or `asynchronous` (`Vm::get_iterator`, `Vm::get_async_iterator`).
     Iterator { source: W, asynchronous: bool },
     /// The `next` method of `iterator`, read from an async-from-sync iterator's source, which a

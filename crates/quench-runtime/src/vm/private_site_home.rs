@@ -60,7 +60,7 @@ const BRAND_SLOT: u32 = u32::MAX;
 
 /// A private name's method or accessor, which an object carrying its brand reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum PrivateElement {
+pub enum PrivateElement {
     /// A private method: the read's value.
     Method(Value),
     /// A private accessor's getter, which the read calls with the object.

@@ -5,11 +5,11 @@
 
 
 use super::{Allocation, CallOperation, Operation};
-pub(crate) use super::region::Region;
+pub use super::region::Region;
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) struct RegionSet(pub(crate) u16);
+pub struct RegionSet(pub(crate) u16);
 
 impl RegionSet {
     pub(crate) const NONE: Self = Self(0);
@@ -34,7 +34,7 @@ impl RegionSet {
 /// An operation's effect row. `may_collect` is separate from `may_alloc`: an allocation whose
 /// fast path is inline does not collect; only a slow helper and a safepoint do.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) struct Effects {
+pub struct Effects {
     pub(crate) reads: RegionSet,
     pub(crate) writes: RegionSet,
     pub(crate) may_alloc: bool,

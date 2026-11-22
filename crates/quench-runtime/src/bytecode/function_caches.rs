@@ -8,7 +8,7 @@ use super::{DeclaredAtomSets, Function, InitializerStore};
 /// atoms and initializer, a collection its register masks. Most functions never fill one, so
 /// they share a box that the first fill allocates (`Function::caches`).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct FunctionCaches {
+pub struct FunctionCaches {
     /// Lazily derived `declared_atoms`; never serialized.
     pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
     /// Lazily derived `initializer_stores`; never serialized.
@@ -23,7 +23,7 @@ pub(crate) struct FunctionCaches {
 /// A boolean a function derives on its first ask and keeps (`Function::lazy_flag`). Each owns a
 /// bit pair of `Function::lazy_flags`: its known bit, and its value bit above that.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LazyFlag {
+pub enum LazyFlag {
     ActivationBindings,
     MakerBindings,
     ArrowReads,

@@ -9,7 +9,7 @@ use super::activation::FrameRecord;
 /// What a lookup reads of the activation it runs for. Whatever else is derived of these (the
 /// function's strictness, its home atom, its private names) is read of the function's metadata
 /// by `function`, and of the dynamic bindings by `Vm::dynamic_binding`.
-pub(in crate::vm) trait CallerView {
+pub trait CallerView {
     /// The program the activation runs.
     fn program(&self) -> ProgramId;
 

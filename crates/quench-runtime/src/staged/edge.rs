@@ -2,7 +2,7 @@
 
 /// Which of an instruction's two control edges it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Edge {
+pub enum Edge {
     /// The jump target.
     Target,
     /// The record leaves the lane run: its activation suspended into its job (`Frame::suspend_await`).

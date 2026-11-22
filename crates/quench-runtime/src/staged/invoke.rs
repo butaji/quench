@@ -75,7 +75,7 @@ pub(crate) const fn general_call_form(op: Op) -> Option<CallForm> {
 /// The stacks a direct call is admitted to: the callee's entry cell, its window at `top` (its
 /// end at `next`), and the frame below at `shadow`.
 #[derive(Clone, Copy)]
-pub(crate) struct Room<W> {
+pub struct Room<W> {
     pub(crate) cell: W,
     pub(crate) top: W,
     pub(crate) next: W,
@@ -84,7 +84,7 @@ pub(crate) struct Room<W> {
 
 /// A callee's entry: its `status` and result `word`, and where a status other than returned goes.
 #[derive(Clone, Copy)]
-pub(crate) struct Entered<W, M> {
+pub struct Entered<W, M> {
     pub(crate) status: W,
     pub(crate) word: W,
     pub(crate) unfinished: M,
@@ -92,7 +92,7 @@ pub(crate) struct Entered<W, M> {
 
 /// The call hooks of a frame. Each defaults to a frame with no direct entry, whose every call is
 /// the VM's own.
-pub(crate) trait CallFrame<S: Stage>: Frame<S> {
+pub trait CallFrame<S: Stage>: Frame<S> {
     /// How the call of `site` reaches its callee, by what the frame fixed.
     #[inline(always)]
     fn call_entry(&self, _site: &Invocation) -> CallEntry {

@@ -17,7 +17,7 @@ pub(crate) const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 pub(crate) const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 pub(crate) const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 /// The high dword of every int32's word (`Registers::int` compares it in memory).
-pub(crate) const INT_TAG_HIGH: u32 = (TAG_INT >> 32) as u32;
+pub const INT_TAG_HIGH: u32 = (TAG_INT >> 32) as u32;
 /// The `true` word: the `false` tag with bit 0 set.
 pub(crate) const TAG_TRUE: u64 = TAG_BOOL | 1;
 /// A tag field is the bits at and above this shift: the payload's width.
@@ -172,7 +172,7 @@ const _: () = assert!(NARROW_UPPER_WORDS[NARROW_HEAP_FAMILIES + 1] == TAG_NULL);
 const _: () = assert!(NARROW_UPPER_WORDS[DIRECT_OBJECT_NARROW_CODE as usize] == DIRECT_OBJECT_UPPER);
 
 /// The encoding facts compiled code tests and builds values with (`Value::number`, `Value::is_tagged`).
-pub(crate) struct ValueLayout;
+pub struct ValueLayout;
 
 impl ValueLayout {
     pub(crate) const TAG_MASK: u64 = TAG_MASK;
@@ -199,7 +199,7 @@ impl ValueLayout {
 
 /// The narrow-value facts compiled code decodes an inline property slot with, as `Value::from_narrow`
 /// does: an integer below the flag, else an upper word by code with the lower word above the code.
-pub(crate) struct NarrowLayout;
+pub struct NarrowLayout;
 
 impl NarrowLayout {
     pub(crate) const INTEGER_FLAG: u32 = NARROW_INTEGER_FLAG;

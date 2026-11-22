@@ -2499,12 +2499,12 @@ fn root_binding_store(
 /// is its own name's binding (`Function::self_binding_slot`) or a parameter a mapped
 /// `arguments` object aliases. A mapped object aliases every parameter or none, so parameter 0
 /// answers for all of them.
-pub(super) fn owner_admits_every_direct_store(owner: &crate::bytecode::Function) -> bool {
+pub fn owner_admits_every_direct_store(owner: &crate::bytecode::Function) -> bool {
     owner.self_binding_slot.is_none()
         && (owner.params == 0 || super::arguments::mapped_arguments_slot(owner, 0).is_none())
 }
 
-pub(super) fn direct_store_owner<'p>(
+pub fn direct_store_owner<'p>(
     p: &'p ResidualProgram,
     program: super::ProgramId,
     function: u32,

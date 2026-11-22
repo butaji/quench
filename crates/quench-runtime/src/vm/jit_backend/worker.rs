@@ -69,7 +69,7 @@ unsafe impl<T> Send for AssertSend<T> {}
 /// lowering and code generation, runs on the code generator's thread from owned inputs, and the
 /// program polls for the result between runs. Where the work reads data the program owns by
 /// pointer (a plan's direct callees), dropping the driver waits for it (`guarded`).
-pub(in crate::vm) struct OffThread<T> {
+pub struct OffThread<T> {
     /// The work's end, which a drop waits for. First, so it drops before what the work reads.
     done: Option<Done>,
     result: Pending<AssertSend<T>>,
@@ -107,7 +107,7 @@ impl<T: 'static> OffThread<T> {
 }
 
 /// Runs `work` on the code generator's thread, started on the first call.
-pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Pending<T> {
+pub fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Pending<T> {
     static QUEUE: std::sync::OnceLock<Option<Sender<Work>>> = std::sync::OnceLock::new();
     let (deliver, result) = std::sync::mpsc::sync_channel(1);
     let job: Work = Box::new(move || {

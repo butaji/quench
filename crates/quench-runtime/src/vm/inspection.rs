@@ -8,7 +8,7 @@ fn constructor_name_is_specific(name: &JsString) -> bool {
 }
 
 /// The `QUENCH_TRACE=bytecode` value that prints lane views in place of the bytecode.
-pub(super) const LANE_PLAN: &str = "lanes";
+pub const LANE_PLAN: &str = "lanes";
 
 impl Vm {
     /// Prints every loaded program's finished bytecode when `QUENCH_TRACE=bytecode` is set.

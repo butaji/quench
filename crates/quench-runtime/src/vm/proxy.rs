@@ -3,7 +3,7 @@ use super::*;
 /// The internal methods a Proxy handler's trap replaces, each named by its trap (ECMA-262
 /// 10.5): the one list the trap atoms (`Vm::trap_atom`) derive from.
 #[derive(Clone, Copy)]
-pub(super) enum ProxyTrap {
+pub enum ProxyTrap {
     Get,
     Set,
     GetPrototypeOf,

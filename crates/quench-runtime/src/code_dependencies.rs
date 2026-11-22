@@ -4,7 +4,7 @@
 use std::{num::NonZeroU32, rc::{Rc, Weak}};
 use crate::{folded_roots::{FoldedRoots, RootedCode}, typed_ir::Type};
 
-pub(crate) trait DependentCode {
+pub trait DependentCode {
     fn is_published(&self) -> bool;
     fn retire(&self);
 }
@@ -15,7 +15,7 @@ pub(crate) trait DependentCode {
 /// once at entry and again only after a call that may have changed the assumption's subject,
 /// and leaves at the exact PC where it is set.
 #[derive(Clone, Default)]
-pub(crate) struct Invalidation(Rc<std::cell::Cell<u64>>);
+pub struct Invalidation(Rc<std::cell::Cell<u64>>);
 
 impl Invalidation {
     /// The word's address, which lives as long as any holder of this invalidation.
@@ -27,11 +27,11 @@ impl Invalidation {
 
 /// A dependency with no code behind it: published until something it was subscribed to
 /// retires it (`PublishedCode::retire`), for proofs held as data rather than as code.
-pub(crate) fn new_dependency() -> Rc<PublishedCode<()>> { Rc::new(PublishedCode::new(())) }
+pub fn new_dependency() -> Rc<PublishedCode<()>> { Rc::new(PublishedCode::new(())) }
 
 /// Publication owns future entry; execution and recovery own independent leases.
 /// No borrow of the publication survives acquiring a lease or retiring it.
-pub(crate) struct PublishedCode<T> {
+pub struct PublishedCode<T> {
     code: std::cell::RefCell<Option<Rc<T>>>,
     /// Whether `code` still holds it: read on every cache hit, so a plain flag rather than a
     /// borrow of `code`.
@@ -97,7 +97,7 @@ impl<T> RootedCode for PublishedCode<T> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SlotDependency {
+pub struct SlotDependency {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub(crate) ty: Type,
@@ -109,7 +109,7 @@ pub(crate) struct SlotDependency {
 /// shape, its prototype link, its integrity, a descriptor its shape does not record) or its death
 /// retires the code, and a change to a prototype off the chain leaves it standing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct PrototypeChain {
+pub struct PrototypeChain {
     pub(crate) link: u32,
     pub(crate) depth: u8,
 }
@@ -123,7 +123,7 @@ pub(crate) struct PrototypeChain {
 /// lookup a new prototype or an `@@hasInstance` added on the way would change (a layout change of
 /// one retires the code).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct InstanceofFact {
+pub struct InstanceofFact {
     pub(crate) link: u32,
     pub(crate) shape: u32,
     pub(crate) slot: u16,
@@ -145,7 +145,7 @@ struct Reader {
 }
 
 #[derive(Default)]
-pub(crate) struct CodeReaders {
+pub struct CodeReaders {
     heads: Vec<Link>,
     readers: Vec<Reader>,
     free: Link,

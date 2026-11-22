@@ -3,7 +3,7 @@
 use super::*;
 
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct PropertyDescriptorRecord {
+pub struct PropertyDescriptorRecord {
     pub(in crate::vm) value: Option<Value>,
     pub(in crate::vm) writable: Option<bool>,
     pub(in crate::vm) enumerable: Option<bool>,

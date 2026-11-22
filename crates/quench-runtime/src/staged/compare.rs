@@ -14,7 +14,7 @@ use crate::vm::operations::{equality_binary_operator, equality_operator, NumberB
 use crate::{Value, ValueType};
 
 /// The nullish `value` (`null` or `undefined`) a nullish test compares with, where it is one.
-pub(crate) fn nullish_of(value: Value) -> Option<ValueType> {
+pub fn nullish_of(value: Value) -> Option<ValueType> {
     if value == Value::NULL {
         Some(ValueType::Null)
     } else if value == Value::UNDEFINED {
@@ -42,7 +42,7 @@ pub(crate) const IN_OPERATOR: u32 = crate::vm::operations::binary_operator::In;
 
 /// What a `CompareJump` compares.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Comparison {
+pub enum Comparison {
     /// A Number relation of two operands the frame proves Numbers, in the `domain` it proves (the
     /// decode names the widest, `Float64`): statically where its facts do, else by the tag test
     /// `NumericFrame::number_operand` makes once at the miss edge, so an operand that is no Number

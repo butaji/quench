@@ -56,7 +56,7 @@ pub(in crate::vm) struct Audit {
 
 /// The audit's epochs: when the running one began, and each side's booked durations.
 #[derive(Clone, Copy, Default)]
-pub(in crate::vm) struct Epochs {
+pub struct Epochs {
     started: Option<u64>,
     nanos: [[u32; MAX_EPOCHS]; SIDES],
     filled: [u8; SIDES],
@@ -180,7 +180,7 @@ impl LaneView {
 
 /// What an audit concluded: each side's median epoch and whether the body retires.
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct Verdict {
+pub struct Verdict {
     body_nanos: u64,
     interpreter_nanos: u64,
     pub(in crate::vm) retire: bool,

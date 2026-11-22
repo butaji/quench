@@ -3,7 +3,7 @@ use super::*;
 /// What a global name read finds (`Vm::global_name_read`): a value, with the hint naming the
 /// global object's own data field that held it, an uninitialized lexical binding, or nothing
 /// the lane's read takes.
-pub(super) enum GlobalNameRead {
+pub enum GlobalNameRead {
     Value(Value, Option<FieldCache>),
     Uninitialized,
     Miss,
@@ -226,7 +226,7 @@ enum ReceiverKind {
 }
 
 /// What the inline field caches know about one read.
-pub(super) enum FieldCacheProbe {
+pub enum FieldCacheProbe {
     Hit(Value),
     /// An ordinary object the caches do not cover yet.
     OrdinaryMiss,

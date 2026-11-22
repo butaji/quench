@@ -35,13 +35,15 @@ mod object_layout;
 mod object_payload_tests;
 mod object_state;
 mod object_storage;
-pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
-pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmTableElements};
+pub use await_state::{AwaitKind, AwaitRole, AwaitState};
+pub use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmTableElements};
 pub use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use typed_array_kind::for_each_typed_array;
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
-pub(crate) use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, watch_prototype_values};
-pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write};
+#[allow(unused_imports)]
+pub use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
+#[allow(unused_imports)]
+pub use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
 #[cfg(test)]
 pub(crate) use global_values::new_table;
 
@@ -838,7 +840,7 @@ pub enum IteratorConsumer {
 /// `Object::with_property_storage` sets them: derived once by a construct plan, so each
 /// planned construction allocates without encoding the prototype or the storage again.
 #[derive(Clone, Copy)]
-pub(crate) struct InlineObjectHeader {
+pub struct InlineObjectHeader {
     /// The interned header (`Object::layout`).
     layout: u32,
 }
@@ -1064,7 +1066,7 @@ const EMPTY_POSITION: u32 = ValueVec::new().into_parts().0 & VALUE_VEC_START_BIT
 /// Storage forms whose complete layout is in the ordinary object's record.
 /// This is an observation until a native receiver guard establishes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PlainPropertyStorage {
+pub enum PlainPropertyStorage {
     PackedInline,
     Arena,
 }
@@ -1370,7 +1372,7 @@ impl StackData {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PrivateBrand {
+pub struct PrivateBrand {
     pub home: Value,
     pub name: Atom,
 }
@@ -1459,7 +1461,7 @@ impl EnvironmentSlot {
 /// An environment: a function activation's captured bindings (`slots`), its parent's link,
 /// its function and its scope. A record of its own family (`Value::direct_environment`).
 #[derive(Debug)]
-pub(crate) struct EnvironmentRecord {
+pub struct EnvironmentRecord {
     pub(crate) parent: Value,
     pub(crate) function: u32,
     pub(crate) slots: EnvironmentSlots,
@@ -1478,7 +1480,7 @@ const _: () = assert!(std::mem::size_of::<EnvironmentScopeRef>() == std::mem::si
 /// An environment's provenance and dynamic-scope state: consulted for eval, `with` and
 /// name resolution, while slot reads only need `parent`, `function` and `slots`.
 #[derive(Debug, Clone)]
-pub(crate) struct EnvironmentScope {
+pub struct EnvironmentScope {
     pub(crate) program: Option<u32>,
     pub(crate) root_eval_scope: bool,
     // A captured lexical scope selects its names from the owning function's
@@ -1501,7 +1503,7 @@ impl EnvironmentScope {
 /// An environment's `EnvironmentScope` in one word. Most environments are a function's
 /// activation, whose scope names only its program: that scope is the word itself, tagged by
 /// `INLINE_SCOPE_TAG`, and needs no allocation. Any other scope is a box the word points to.
-pub(crate) struct EnvironmentScopeRef(std::num::NonZeroUsize);
+pub struct EnvironmentScopeRef(std::num::NonZeroUsize);
 
 /// The low bit, never set in a box pointer, marks an inline program-only scope.
 const INLINE_SCOPE_TAG: usize = 1;
@@ -1636,10 +1638,10 @@ impl std::fmt::Debug for EnvironmentScopeRef {
 /// with the default owner, sorted by index; every other slot is shared with that owner. The
 /// slice header's mark tells the two apart, so a dense read tests one bit it loads anyway.
 #[repr(transparent)]
-pub(crate) struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>);
+pub struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>);
 
 /// Words an `EnvironmentSlots::lay_out_in_place` storage takes before its slots.
-pub(crate) const IN_PLACE_SLOTS_WORDS: usize =
+pub const IN_PLACE_SLOTS_WORDS: usize =
     super::thin_slice::ThinBoxSlice::<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>::IN_PLACE_WORDS;
 
 /// Words before an environment's slot storage header (`ThinBoxSlice`'s prefix): the capture

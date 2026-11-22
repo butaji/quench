@@ -12,7 +12,7 @@ use crate::typed_ir::Type;
 /// per use but the realm. For a store, no code holds the slot's value (the cell is `Mutable`,
 /// so its writes notify nothing) and no inheritor reads the global object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct GlobalSlot {
+pub struct GlobalSlot {
     pub(crate) slot: u16,
     /// The slot count of the global object's shape.
     pub(crate) storage_len: usize,
@@ -31,7 +31,7 @@ pub(crate) struct GlobalSlot {
 /// declaration moves them, which retires every holder of the global layout (`Vm::note_global_shadowing`), so the address is
 /// held under that layout, with the realm that owns the record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LexicalSlot {
+pub struct LexicalSlot {
     pub(crate) address: usize,
     pub(crate) layout: GlobalLayoutFact,
     pub(crate) global: Value,
@@ -42,7 +42,7 @@ pub(crate) struct LexicalSlot {
 /// object and realm offset it is of (`GlobalRead::Stable`). A row that folds the read carries it, so its body subscribes to the
 /// fact (a reassignment retires the body) and proves the realm once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StableCell {
+pub struct StableCell {
     pub(crate) fact: GlobalFact,
     pub(crate) global: Value,
     pub(crate) realm_offset: i32,
@@ -50,7 +50,7 @@ pub(crate) struct StableCell {
 
 /// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GlobalRead {
+pub enum GlobalRead {
     /// An immutable global's value (`builtins::immutable_globals`), which no binding changes.
     Constant(Value),
     /// A global cell's value, of type `ty`, held under `fact` by code that runs while the realm
@@ -88,7 +88,7 @@ pub(crate) enum GlobalRead {
 /// run no guest code, change no array and observe no frame (`dispatch_fast::in_place_natives::primitive_leaf`, with a
 /// Number or Boolean result), and the Math functions of Numbers (`number::math_call`), which a loop calling one
 /// (`sin`, `cos`, ...) otherwise declines to run natively. A global cell holding one of them is read as a `GlobalRead::NativeSlot`.
-pub(in crate::vm) fn scalar_native(native: super::Native) -> bool {
+pub fn scalar_native(native: super::Native) -> bool {
     matches!(native, super::Native::ParseInt | super::Native::NumberParseFloat) || super::number::math_call(native).is_some()
 }
 
@@ -96,7 +96,7 @@ pub(in crate::vm) fn scalar_native(native: super::Native) -> bool {
 /// folds a cell's value as a Stable fact; the b-jit's rows read a global object's own data
 /// property from its slot live, under the object's layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GlobalTable {
+pub enum GlobalTable {
     Lane,
     Base,
 }
@@ -104,7 +104,7 @@ pub(crate) enum GlobalTable {
 /// What each by-name global access of a function or unit takes, by PC: a flat table, empty at
 /// a PC that is no such access (`Vm::global_reads_in_lane`).
 #[derive(Clone, Default, PartialEq)]
-pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
+pub struct GlobalReads(Box<[Option<GlobalRead>]>);
 
 impl GlobalReads {
     /// The read at `pc`, if the instruction there is a by-name global read.

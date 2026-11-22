@@ -130,18 +130,19 @@ macro_rules! reset_record_spaces {
 mod access;
 mod array_elements;
 pub(crate) mod growth;
-pub(crate) mod layouts;
+pub mod layouts;
 mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
 mod typed_view;
-pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
+pub use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
 use typed_view::TypedViewTable;
-pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
-pub(crate) use array_proofs::{
-    ArrayStorageProofs, NO_INDEX_FREE_CHAIN_LINK,
+#[allow(unused_imports)]
+pub use array_proofs::{
+    ArrayStorageProofs, LaneProofScope, NO_INDEX_FREE_CHAIN_LINK, armed_proofs_address, index_free_chain_link_address,
     retire_array_storage_proofs, set_index_free_chain_link,
 };
 mod cell;
@@ -169,9 +170,9 @@ mod pacing;
 mod parallel_mark; mod planned;
 mod prototypes;
 mod promise_record;
-pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
+pub use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
 mod rc_drop;
-pub(crate) mod rc;
+pub mod rc;
 mod record_children;
 mod records;
 mod root;
@@ -181,18 +182,19 @@ mod string_alloc;
 mod string_atoms;
 mod native_layout;
 mod record_layouts;
-pub(crate) use record_layouts::{
-    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT,
-    PropertyStoreLayout,
+#[allow(unused_imports)]
+pub use record_layouts::{
+    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
+    PropertyStoreLayout, absent_environment_storage,
 };
 mod string_parts;
 mod small_strings;
-pub(crate) use small_strings::{FlatText, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, SmallParts, is_small_string};
+pub use small_strings::{FlatText, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, SmallParts, is_small_string};
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub use cell::*;
-pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
+pub use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{

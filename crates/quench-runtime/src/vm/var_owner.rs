@@ -9,7 +9,7 @@ use super::*;
 /// The owner of a variable environment. A record's pointer is its activation's own, which the
 /// activation's slot or its generator or async owner keeps until the activation ends.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::vm) enum VarOwner {
+pub enum VarOwner {
     Frame(usize),
     Record(*mut FrameRecord),
     /// The innermost activation of a lane native call's frameless activations, whose scope

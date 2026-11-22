@@ -8,7 +8,7 @@
 use crate::jit_mode::Tier;
 
 /// The thresholds every tier controller reads.
-pub(crate) struct Tiers {
+pub struct Tiers {
     pub(crate) loops: Loops,
     pub(crate) lane_body: LaneBody,
     pub(crate) js_function: JsFunction,
@@ -50,11 +50,11 @@ pub(crate) const TIER0_BLOCKED_RUNS: u8 = 16;
 /// 249 -> 365, hash-map 30.8 -> 39.4, richards 47.9 -> 44.3; V8-v7 default/no-JIT CPU: earley
 /// 1.76 -> 1.21, regexp 1.56 -> 1.08, raytrace 1.43 -> 1.19, crypto 1.10 -> 0.85, deltablue
 /// 1.12 -> 0.96, richards 1.09 -> 1.04.
-pub(crate) const LOOP_BODIES: bool = false;
+pub const LOOP_BODIES: bool = false;
 
 /// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
 /// (`base_region::inline_plan`).
-pub(crate) struct Stitch {
+pub struct Stitch {
     /// The longest callee body, in bytecodes: the accessors and arithmetic helpers whose call
     /// costs more than their work.
     pub(crate) max_instructions: usize,
@@ -70,11 +70,11 @@ pub(crate) struct Stitch {
 }
 
 /// Parts per thousand, the unit of a prior's share.
-pub(crate) const PER_MILLE: u64 = 1000;
+pub const PER_MILLE: u64 = 1000;
 
 /// The priors the tier model starts from, each a statement about the world until the engine's own
 /// measurements replace it (`tier-decision-rule-v1`): nothing here is fitted to a benchmark row.
-pub(crate) struct Priors {
+pub struct Priors {
     /// Nanoseconds an interpreted lane bytecode takes.
     pub(crate) interpreter_ns: u64,
     /// A u-jit body's per-bytecode time as a share of the interpreter's, in thousandths: bodies
@@ -113,7 +113,7 @@ pub(crate) struct Priors {
 }
 
 /// The loop tier (OSR regions at backward jumps).
-pub(crate) struct Loops {
+pub struct Loops {
     /// The backward jumps a loop takes in the interpreter before the tier model weighs its
     /// compile (`loop_model`): a resource and correctness floor, enough that the call sites of
     /// its body have linked their targets (which the region inlines) and its entry facts are
@@ -228,12 +228,12 @@ pub(crate) struct Wasm {
 /// The prototype links a specializer unrolls a staged walk over (`Stage::walk_prototypes`): an
 /// instance, its class chain and `Object.prototype` end within it, and each link is a block of
 /// code, so a longer chain is the VM's residual rather than more code.
-pub(crate) const PROTOTYPE_UNROLL_LINKS: u32 = 4;
+pub const PROTOTYPE_UNROLL_LINKS: u32 = 4;
 
 /// The distinct cases (shapes, callees, targets) a site's feedback keeps before it widens to
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
-pub(crate) const POLYMORPHISM: usize = 4;
+pub const POLYMORPHISM: usize = 4;
 /// What a speculated fact costs and saves, in nanoseconds, from which a site's break-even rate
 /// derives (`site_posterior::break_even`) with the posterior's quantile (`tier-decision-rule-v1`
 /// section 4). Per execution a speculating read pays `guard_read_ns` when the fact holds and
@@ -253,12 +253,12 @@ pub(crate) struct Speculation {
 /// A guarded read is a load and a compare; the probe is the VM cache's hit path; an exit costs
 /// the region entry and exit plumbing (`Priors::region_entry_ns`, 140 ns) and the replayed
 /// instructions of the leave.
-pub(crate) const SPECULATION: Speculation =
+pub const SPECULATION: Speculation =
     Speculation { guard_read_ns: 1, probe_read_ns: 6, guard_exit_ns: 200, lower_quantile_z: 1.645 };
 /// The trips a loop is assumed to take, in weighing the call sites it holds (`lane_unit`'s
 /// inlining plan), before a native run of it has measured its mean: enough that a site in a loop
 /// outweighs one outside it, and that nesting orders deeper sites first.
-pub(crate) const ASSUMED_LOOP_TRIP: u64 = 8;
+pub const ASSUMED_LOOP_TRIP: u64 = 8;
 
 #[cfg(test)]
 thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
@@ -356,7 +356,7 @@ impl Priors {
 
 /// The tier that compiles and publishes lane bodies in this process's mode: `--b-jit`'s stencil
 /// bodies, `--q-jit`'s Quick lowering, or the Ultra lowering of every mode with it.
-pub(crate) fn body_tier_in_lane() -> Tier {
+pub fn body_tier_in_lane() -> Tier {
     if crate::jit_mode::base_only() {
         Tier::Base
     } else if crate::jit_mode::quick_only() {
@@ -367,7 +367,7 @@ pub(crate) fn body_tier_in_lane() -> Tier {
 }
 
 /// The base a share in percent is a share of.
-pub(crate) const PERCENT: u64 = 100;
+pub const PERCENT: u64 = 100;
 
 
 const MEASURED: Tiers = Tiers {
@@ -406,7 +406,7 @@ const MEASURED: Tiers = Tiers {
 };
 
 /// The rows code compiled for no particular VM is compiled under (`VmFacts::STATIC`).
-pub(crate) const STATIC_ROWS: &Tiers = &MEASURED;
+pub const STATIC_ROWS: &Tiers = &MEASURED;
 
 /// The measured rows admitting every eligible compile: for tests of what compiled code does, on
 /// fixtures too small to repay one (`force_admission`).
@@ -455,12 +455,12 @@ const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
 /// The one tier predicate: whether any of `tiers` may run for a function under `policy` and the
 /// process's JIT mode (`jit_mode::tiers_allowed`).
 #[inline]
-pub(crate) fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]) -> bool {
+pub fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]) -> bool {
     by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
 }
 
 /// What `policy` lets the tiers compile.
-pub(crate) const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
+pub const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
     &BY_POLICY[policy as usize]
 }
 
@@ -471,38 +471,38 @@ pub(crate) const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTie
 /// JavaScript benchmark within one percent of the general path or better
 /// (one and two cost DeltaBlue three percent), and leaves Wasm loops,
 /// whose runs are long, unchanged.
-pub(crate) const LANE_ENTRY_MIN_RUN: usize = 3;
+pub const LANE_ENTRY_MIN_RUN: usize = 3;
 
 /// `LANE_ENTRY_MIN_RUN` in a function with no loop the lane runs whole: each call the
 /// general loop makes into it enters the lane anew, so a run must repay a fresh lane
 /// context.
-pub(crate) const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
+pub const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
 
 // Loop sites (dispatch_fast/loop_body, loop_runs, loop_kernel): body planning, entry backoff, kernel floor
 /// The bodies a loop site plans, each from its predecessors' leaves.
-pub(crate) const LOOP_BODY_ATTEMPTS: u8 = 4;
+pub const LOOP_BODY_ATTEMPTS: u8 = 4;
 
 /// The runs of a loop's body that leave inside the loop before the next body plans around them.
-pub(crate) const LOOP_BODY_REOPTIMIZE: u16 = 16;
+pub const LOOP_BODY_REOPTIMIZE: u16 = 16;
 
 /// The share of a loop body's runs, in percent, that may leave inside the loop for it to stay.
-pub(crate) const LOOP_BODY_KEEP_SHARE: u64 = 10;
+pub const LOOP_BODY_KEEP_SHARE: u64 = 10;
 
 /// The backedges between looks for a loop body's compiling code.
-pub(crate) const LOOP_BODY_POLL: u16 = 16;
+pub const LOOP_BODY_POLL: u16 = 16;
 
 /// The widest backoff after declined entries: `2^16 - 1` entries pass untried between attempts.
-pub(crate) const MAX_ENTRY_BACKOFF: u32 = 16;
+pub const MAX_ENTRY_BACKOFF: u32 = 16;
 
 /// The fewest iterations worth a kernel's entry.
-pub(crate) const KERNEL_MIN_TRIP: u64 = 16;
+pub const KERNEL_MIN_TRIP: u64 = 16;
 
 /// Entries declined for too few iterations before the kernel stands down for good.
-pub(crate) const KERNEL_SHORT_DECLINES: u32 = 64;
+pub const KERNEL_SHORT_DECLINES: u32 = 64;
 
 // Lane bodies: compile admission (compiled/lane_compile, lane_region, lane_unit)
 /// A replanned body inlines with this fraction of the budget whose compile failed.
-pub(crate) const REPLAN_BUDGET_DIVISOR: usize = 2;
+pub const REPLAN_BUDGET_DIVISOR: usize = 2;
 
 /// The IR size above which a lane body's registers are allocated in one pass. The backtracking
 /// allocator's scratch memory grows with the function, and a body this large (JetStream-scale
@@ -511,18 +511,18 @@ pub(crate) const REPLAN_BUDGET_DIVISOR: usize = 2;
 /// deltablue, whose largest bodies are 17k, keep it and the speed it buys (2026-11-11, lane
 /// mode, 5 interleaved runs). Smaller bodies keep backtracking: single-pass for all lost 20-30%
 /// on richards and deltablue.
-pub(crate) const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
+pub const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 
 /// The executable memory a lane body may take, a resource limit: the code and compile time a
 /// hot loop's inlined call graph (Richards' ~900 instructions) costs. A larger body is planned
 /// again with less inlined (`Vm::compile_lane_method`).
-pub(crate) const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
+pub const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
 
 /// The callee instructions one unit inlines in all, the region's budget: what a lane body's
 /// code-size budget holds (`LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
 /// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
 /// sites by weight per instruction (`weights::select`).
-pub(crate) const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
+pub const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
     LANE_BODY_MAX_CODE_BYTES / LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 
 // Lane bodies: history, recurrence and loop views (body_tier_in_lane, dispatch_frame, program_store)
@@ -565,39 +565,39 @@ pub(crate) const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
 // OSR loop regions: compile admission (compiled/osr_loop, osr_compile)
 /// The most instructions a region spans. Native code polls termination only at backward
 /// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
-pub(crate) const MAX_REGION_INSTRUCTIONS: usize = 512;
+pub const MAX_REGION_INSTRUCTIONS: usize = 512;
 
 /// The most registers, captures and arrays a region names, bounding entry guards and the
 /// entry record.
-pub(crate) const MAX_REGION_REGISTERS: usize = 128;
+pub const MAX_REGION_REGISTERS: usize = 128;
 
-pub(crate) const MAX_REGION_ARRAYS: usize = 8;
+pub const MAX_REGION_ARRAYS: usize = 8;
 
-pub(crate) const MAX_REGION_CAPTURES: usize = 16;
+pub const MAX_REGION_CAPTURES: usize = 16;
 
-pub(crate) const MAX_REGION_FIELDS: usize = 16;
+pub const MAX_REGION_FIELDS: usize = 16;
 
-pub(crate) const MAX_REGION_FIELD_STORES: usize = 16;
+pub const MAX_REGION_FIELD_STORES: usize = 16;
 
 /// A lane region carries each inlined callee's full body and its guards, so a loop
 /// that inlines two calls may legitimately exceed one function's code budget. The code
 /// is published once per hot loop and retires with its site, so the larger per-site
 /// bound stays bounded by the lane plan's own admission.
-pub(crate) const REGION_CODE_BUDGET: usize = 2 * JS_COMPILED_MAX_CODE_BYTES;
+pub const REGION_CODE_BUDGET: usize = 2 * JS_COMPILED_MAX_CODE_BYTES;
 
 // Compiled code budgets (compiled.rs): roots, threaded copies, unrolling, Wasm in flight, lane entry
-pub(crate) const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
+pub const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 
-pub(crate) const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
+pub const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 
-pub(crate) const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 
 /// A selective root may include a few hot callees learned from earlier
 /// indirect-call executions. Keep the profile-guided closure bounded so one
 /// polymorphic module cannot turn a tier promotion into eager compilation.
-pub(crate) const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
+pub const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 
-pub(crate) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+pub const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
 /// Instructions a threaded copy may repeat between a constant's jump and the
 /// branch table the constant decides; bounds the code each copy adds. A
@@ -605,16 +605,16 @@ pub(crate) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 /// 290-way state table, copied at each of its 503 jumps, compiled one
 /// function to 10.6 MB of edge moves (3.5 s, 220 MiB peak); charged by its
 /// edges it compiles in 0.1 s.
-pub(crate) const THREAD_BUDGET: usize = 16;
+pub const THREAD_BUDGET: usize = 16;
 
 /// Instructions all copies of an unrolled loop body may hold together, and the most copies.
 /// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
 /// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
 /// small innermost Wasm loops for the same reasons); a body of more than half of it is not
 /// unrolled.
-pub(crate) const UNROLL_BUDGET: usize = 48;
+pub const UNROLL_BUDGET: usize = 48;
 
-pub(crate) const MAX_UNROLL_FACTOR: usize = 4;
+pub const MAX_UNROLL_FACTOR: usize = 4;
 
 /// The Cranelift IR instructions the compile workers may hold at once, queued and compiling,
 /// under each memory policy (`MemoryPolicy`). Every worker holds its function's whole IR and
@@ -627,7 +627,7 @@ pub(crate) const MAX_UNROLL_FACTOR: usize = 4;
 /// 2026-10-27: tsf-wasm max RSS 46.6 -> 42.0 MB, Score 23.2 -> 22.1, First 11.2 -> 10.0;
 /// sqlite3-wasm 73.6 -> 58.4 MB, Score 16.7 -> 16.2, First 2.96 -> 2.80. Throughput keeps
 /// every worker fed (unbounded; the same rows, median of 8, were unchanged).
-pub(crate) const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
+pub const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
     [None, Some(50_000)];
 
 /// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
@@ -638,7 +638,7 @@ pub(crate) const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::Mem
 /// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
 /// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
-pub(crate) const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
+pub const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 
 // Program JIT admission and clocks (program_store): artifact and mapped-byte budgets, Wasm module compiles
 pub(crate) const JS_JIT_MAX_FUNCTIONS: usize = 64;
@@ -688,14 +688,14 @@ pub(crate) const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 pub(crate) const DEFAULT_REGION_INSTRUCTION_BUDGET: std::num::NonZeroUsize = std::num::NonZeroUsize::new(1024).unwrap();
 
 /// The largest native search, in bytes of machine code.
-pub(crate) const REGEXP_NATIVE_MAX_CODE_BYTES: usize = 256 * 1024;
+pub const REGEXP_NATIVE_MAX_CODE_BYTES: usize = 256 * 1024;
 
 // Keep native regions short so an interpreter interrupt cannot be delayed by a large body.
-pub(crate) const JS_COMPILED_MAX_INSTRUCTIONS: usize = 256;
+pub const JS_COMPILED_MAX_INSTRUCTIONS: usize = 256;
 
-pub(crate) const JS_COMPILED_MAX_REGISTERS: usize = 256;
+pub const JS_COMPILED_MAX_REGISTERS: usize = 256;
 
-pub(crate) const JS_COMPILED_MAX_CODE_BYTES: usize = 64 * 1024;
+pub const JS_COMPILED_MAX_CODE_BYTES: usize = 64 * 1024;
 
 #[cfg(test)]
 mod tests {
@@ -737,7 +737,7 @@ mod tests {
 /// The call depth a recursion is followed to: `lane_facts::recursion_cycle` weighs a cycle through
 /// more functions than this as straight-line code, and the audit counts an entry made within this
 /// many activations of another of its function as a recursive one (`LaneView::audit_entry`).
-pub(crate) const RECURSION_DEPTH: usize = 4;
+pub const RECURSION_DEPTH: usize = 4;
 
 /// The uncounted entries other bodies make while one body's audit runs, after which that audit,
 /// if its body is no longer entered, gives way (`lane_body_audit`): a few audit epochs' worth.

@@ -58,7 +58,7 @@ const _: () = assert!(VIEW_COLLECTION_LIMIT < NO_VIEW && 48 - TEXT_ALIGN_BITS + 
 /// `extra`; a Number beside one string may be any double, in `tail` and `extra`. Once read, the
 /// record owns its text instead (`WRITTEN`).
 #[repr(C)]
-pub(crate) struct SmallParts {
+pub struct SmallParts {
     head: u32,
     tail: u32,
     extra: u32,
@@ -214,7 +214,7 @@ impl SmallParts {
 
 /// A string's existing flat units (`Heap::flat_text`): borrowed from its record, or a small
 /// string's shared text.
-pub(crate) enum FlatText<'a> {
+pub enum FlatText<'a> {
     Record(Units<'a>),
     Small(Rc<str>),
 }
@@ -239,7 +239,7 @@ impl Drop for SmallParts {
 
 /// A string id is small when its bits under this mask are `SMALL_STRING_ID_BASE`: native
 /// readers, which read string records in place, leave at their miss for one.
-pub(crate) use crate::staged::layout_offsets::{SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK};
+pub use crate::staged::layout_offsets::{SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK};
 
 /// The local id of the string `record_id` when it is small.
 #[inline(always)]
@@ -253,7 +253,7 @@ pub(crate) const fn small_string_local(record_id: u32) -> Option<u32> {
 
 /// Whether the string `record_id` is small: a string id no string record has.
 #[inline(always)]
-pub(crate) const fn is_small_string(record_id: u32) -> bool {
+pub const fn is_small_string(record_id: u32) -> bool {
     small_string_local(record_id).is_some()
 }
 

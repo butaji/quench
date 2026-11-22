@@ -42,7 +42,7 @@ pub(super) enum GeneratorStep {
 /// whether the step's result is the object an iteration step reuses
 /// (`Vm::reused_iterator_result`) rather than a fresh one. The generator is the receiver of
 /// the step's native activation, which keeps it alive while its frame runs.
-pub(crate) struct GeneratorResume {
+pub struct GeneratorResume {
     reuses_result: bool,
 }
 
@@ -60,7 +60,7 @@ impl GeneratorResume {
 /// How the frame a generator's activation became stopped running: a `yield` of a value, which
 /// suspends the frame back into its generator at its resume register (or a `yield*` passing its
 /// delegate's result on), or a return.
-pub(super) enum MaterializedStop {
+pub enum MaterializedStop {
     Yielded { destination: crate::bytecode::Register, delegated_result: Option<Value> },
     /// An async generator's frame awaiting in place (`Completion::AsyncRequest`).
     Awaited { destination: crate::bytecode::Register },

@@ -2,7 +2,7 @@ use super::*;
 use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue, ObjectLayout};
 
 mod window;
-pub(in crate::vm) mod stage;
+pub mod stage;
 
 /// The error of a struct whose storage no room is left for.
 fn wasm_struct_allocation_failed() -> JsError {
@@ -20,7 +20,7 @@ pub(super) enum ArrayInitialization {
     Fixed(Vec<Value>),
 }
 
-pub(super) enum GcFieldIndex {
+pub enum GcFieldIndex {
     Struct(u32),
     Array(u32),
 }

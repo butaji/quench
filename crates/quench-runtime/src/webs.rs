@@ -12,7 +12,7 @@ use crate::bitset::BitRows;
 
 /// Union-find over definition nodes, numbered from 0.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct DefSets {
+pub struct DefSets {
     parent: Vec<u32>,
 }
 
@@ -75,13 +75,13 @@ impl DefSets {
 
 /// Where control goes after a row: a row of the region, or a PC outside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Next {
+pub enum Next {
     Row(usize),
     Leave(u32),
 }
 
 /// The definitions reaching each row, and each PC outside the region control leaves to.
-pub(crate) struct Reaching {
+pub struct Reaching {
     pub(crate) rows: BitRows,
     /// The PCs outside the region control leaves to, ascending.
     pub(crate) leaf_pcs: Vec<u32>,
@@ -99,17 +99,17 @@ impl Reaching {
 }
 
 /// Whether `bit` is set in `words`.
-pub(crate) fn has(words: &[u64], bit: usize) -> bool {
+pub fn has(words: &[u64], bit: usize) -> bool {
     crate::bitset::words_contain(words, bit)
 }
 
 /// Sets `bit` in `words`.
-pub(crate) fn set(words: &mut [u64], bit: usize) {
+pub fn set(words: &mut [u64], bit: usize) {
     words[bit / crate::bitset::WORD_BITS] |= 1 << (bit % crate::bitset::WORD_BITS);
 }
 
 /// The set bits of `words`, ascending.
-pub(crate) fn members(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
+pub fn members(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
     words.iter().enumerate().flat_map(|(index, word)| crate::bitset::word_members(index, *word))
 }
 
@@ -118,7 +118,7 @@ pub(crate) fn members(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
 /// definitions), and `successors` names where control goes after a row. Where `reseed` holds, a
 /// row control never reaches is taken as entered with `seed` (its definitions must exist though
 /// they never run), and so are the rows it reaches; `reached` stays false for them.
-pub(crate) fn solve(
+pub fn solve(
     count: usize,
     bits: usize,
     seed: &[u64],

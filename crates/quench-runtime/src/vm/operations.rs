@@ -4,11 +4,11 @@ use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 mod number_operators;
 mod primitive_comparison;
-pub(crate) use number_operators::static_number_binary;
+pub use number_operators::static_number_binary;
 pub(super) use number_operators::immediate_number_pair;
 use number_operators::*;
 mod number_rows;
-pub(crate) use number_rows::*;
+pub use number_rows::*;
 
 // The operator codes the shared rows name (`number_rows::binary_operator`, `unary_operator`) are the parser's.
 const _: () = assert!(binary_operator::Equality == BinaryOperator::Equality as u32
@@ -51,7 +51,7 @@ pub(super) enum ArrayLikeElementKind {
 }
 
 /// The comparison operators occupy the binary operator discriminants up to this one.
-pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
+pub const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
 
 macro_rules! number_arithmetic_operators {
@@ -195,7 +195,7 @@ pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32
 /// `operation` of int32 operands as a value: the int32 result as it is, but for a zero-fill
 /// shift above `i32::MAX`, which is the Number of its unsigned bits.
 #[inline(always)]
-pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
+pub fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);
     if operation.keeps_int32(bits) {
         Value::integer(bits)
@@ -205,7 +205,7 @@ pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: 
 }
 
 #[inline(always)]
-pub(super) fn number_unary_result(operator: u32, value: f64) -> Option<f64> {
+pub fn number_unary_result(operator: u32, value: f64) -> Option<f64> {
     Some(NumberUnary::from_operator(operator)?.apply(&mut NumberF64Stage, value))
 }
 
@@ -219,7 +219,7 @@ fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) 
 /// result (`numeric_integer_result`); `None` for any other operator and for a result the
 /// integer case leaves to Numbers.
 #[inline(always)]
-pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
+pub fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
     if let Some(relation) = NumberRelation::from_operator(op) {
         return Some(if relation.apply(&mut PartialOrderStage, left, right) {
             Value::TRUE
@@ -233,7 +233,7 @@ pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
 /// A comparison operator on two Numbers, comparing integers as integers, with the value path
 /// that decided it; `None` for any other operator or value.
 #[inline(always)]
-pub(super) fn number_relation(
+pub fn number_relation(
     op: u32,
     left: Value,
     right: Value,
@@ -441,23 +441,23 @@ mod integer_arithmetic_tests {
 
 /// An arithmetic operator on two Numbers: `integer` when both are integers, else `number` on
 /// their IEEE 754 values.
-pub(super) const ADDITION: u32 = BinaryOperator::Addition as u32;
-pub(super) const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
-pub(super) const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
-pub(super) const DIVISION: u32 = BinaryOperator::Division as u32;
+pub const ADDITION: u32 = BinaryOperator::Addition as u32;
+pub const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
+pub const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
+pub const DIVISION: u32 = BinaryOperator::Division as u32;
 
-pub(super) const REMAINDER: u32 = BinaryOperator::Remainder as u32;
-pub(super) const SHIFT_LEFT: u32 = BinaryOperator::ShiftLeft as u32;
-pub(super) const SHIFT_RIGHT: u32 = BinaryOperator::ShiftRight as u32;
-pub(super) const SHIFT_RIGHT_ZERO_FILL: u32 = BinaryOperator::ShiftRightZeroFill as u32;
-pub(super) const BITWISE_OR: u32 = BinaryOperator::BitwiseOR as u32;
-pub(super) const BITWISE_XOR: u32 = BinaryOperator::BitwiseXOR as u32;
-pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
+pub const REMAINDER: u32 = BinaryOperator::Remainder as u32;
+pub const SHIFT_LEFT: u32 = BinaryOperator::ShiftLeft as u32;
+pub const SHIFT_RIGHT: u32 = BinaryOperator::ShiftRight as u32;
+pub const SHIFT_RIGHT_ZERO_FILL: u32 = BinaryOperator::ShiftRightZeroFill as u32;
+pub const BITWISE_OR: u32 = BinaryOperator::BitwiseOR as u32;
+pub const BITWISE_XOR: u32 = BinaryOperator::BitwiseXOR as u32;
+pub const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 
 /// Operator `OP` on two Numbers through their double values, as ECMA-262 defines it (an
 /// immediate primitive as its ToNumeric, `immediate_number_pair`); `None` for any other.
 #[inline(always)]
-pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+pub fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     let pair = Value::numeric_pair(left, right);
     if let Some(value) = bitwise_value_operator::<OP>(pair) {
         return Some(value);
@@ -498,7 +498,7 @@ fn bitwise_value_operator<const OP: u32>(pair: NumericPair) -> Option<Value> {
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
 /// `None` otherwise, leaving other Numbers to `number_binary`.
 #[inline(always)]
-pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+pub fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     // One operand at a time: each tag test needs a single scratch register, which keeps the
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
@@ -2170,7 +2170,7 @@ impl Vm {
 }
 
 /// `Number ** Number` (`Math.pow`), the value `staged::math::power` computes.
-pub(super) fn exponentiate(base: f64, exponent: f64) -> f64 {
+pub fn exponentiate(base: f64, exponent: f64) -> f64 {
     crate::staged::math::power(base, exponent)
 }
 

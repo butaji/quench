@@ -50,13 +50,13 @@ pub(crate) struct NativeFunctionLayout {
     pub(crate) object_offset: usize,
 }
 
-pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
+pub const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
     record_size: cell::NATIVE_FUNCTION_RECORD_SIZE,
     object_offset: cell::NATIVE_FUNCTION_OBJECT_OFFSET,
 };
 
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
-pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
+pub const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: records::ARRAY_RECORD_CAPACITY,
     record_size: cell::NATIVE_ARRAY_RECORD_SIZE,
     record_align: cell::NATIVE_ARRAY_RECORD_ALIGN,
@@ -86,7 +86,7 @@ pub(crate) struct NativeRecordCursorLayout {
     pub(crate) limit_offset: usize,
 }
 
-pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
+pub const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
     next_offset: std::mem::offset_of!(records::RecordCursor, next),
     limit_offset: std::mem::offset_of!(records::RecordCursor, limit),
 };
@@ -99,7 +99,7 @@ const _: () = assert!(
 /// Which invariants an existing-slot store must preserve. Native views cannot
 /// replace property storage; typed native regions also leave on content widening.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PropertyStoreLayout {
+pub enum PropertyStoreLayout {
     Preserve,
     /// Native code leaves before a store that retires its content observations.
     PreserveNative,
@@ -153,7 +153,7 @@ pub(crate) struct NativeObjectLayout {
 }
 
 /// Layout facts for code generators which emit read-only ordinary-object field accesses.
-pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
+pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     record_capacity: records::OBJECT_RECORD_CAPACITY,
     record_size: cell::NATIVE_OBJECT_RECORD_SIZE,
     record_align: cell::NATIVE_OBJECT_RECORD_ALIGN,
@@ -201,7 +201,7 @@ pub(crate) struct NativeEnvironmentLayout {
     pub(crate) slot_size: u64,
 }
 
-pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
+pub const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
     header_pointer_offset: 0,
     sparse_mark: thin_slice::NATIVE_MARK_BIT,
     slots_offset: thin_slice::NATIVE_WORD_ELEMENTS_OFFSET as u64,
@@ -215,7 +215,7 @@ static ABSENT_ENVIRONMENT_STORAGE: &u64 = &ABSENT_ENVIRONMENT_HEADER;
 
 /// The address of storage every native environment read misses at (`staged::environment::environment_slot`): the word
 /// a payload holds where its running body has no environment window.
-pub(crate) fn absent_environment_storage() -> u64 {
+pub fn absent_environment_storage() -> u64 {
     std::ptr::from_ref(&ABSENT_ENVIRONMENT_STORAGE).addr() as u64
 }
 

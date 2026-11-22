@@ -6,7 +6,7 @@ use crate::vm::activation::{Continuation, FrameRecord, JobRoot, SuspendKind};
 /// async generator, whose frame stays parked in its record (`GeneratorRecord::await_with`)
 /// for an await inside its body and for a `yield`'s, so the reaction holds the generator.
 #[derive(Clone, Debug)]
-pub(crate) enum AwaitKind {
+pub enum AwaitKind {
     AsyncFunction(Continuation),
     /// The await of an async generator's activation inside its body, which resumes the frame.
     AsyncGeneratorAwait { generator: Value },
@@ -20,7 +20,7 @@ pub(crate) enum AwaitKind {
 /// around its boxed frame, held in place: an await allocates nothing, and the spent state
 /// waits for a sweep, or for the activation's next await (`AwaitState::arm`).
 #[derive(Clone, Debug)]
-pub(crate) enum AwaitState {
+pub enum AwaitState {
     Pending {
         kind: AwaitKind,
         /// The realm global that awaited, which the continuation resumes in.
@@ -164,7 +164,7 @@ impl AwaitState {
 
 /// Which activation an await reaction resumes, as `AwaitKind` says without its frame.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum AwaitRole {
+pub enum AwaitRole {
     AsyncFunction,
     AsyncGeneratorAwait(Value),
     /// The await of an async generator's `yield`.

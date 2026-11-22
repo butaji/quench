@@ -998,7 +998,7 @@ fn store_element(store: &mut [u8], start: usize, width: usize, encoded: &[u8; MA
 }
 
 /// `typed_element_quick`'s `KIND` for a site that has seen more than one kind.
-pub(super) const ANY_TYPED_KIND: usize = usize::MAX;
+pub const ANY_TYPED_KIND: usize = usize::MAX;
 
 /// `kind` where it is the site's `KIND`, as a constant the element access is compiled for;
 /// any kind under `ANY_TYPED_KIND`.

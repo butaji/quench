@@ -11,14 +11,14 @@ use crate::vm::operations::{
 
 /// The representation both operands and the result of a Number operation have.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Domain {
+pub enum Domain {
     Int32,
     Float64,
 }
 
 /// What an int32 operation does at an overflow or a negative zero.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Overflow {
+pub enum Overflow {
     /// Leave at the frame's miss edge.
     Exit,
     /// Keep the wrapping int32 result.
@@ -31,7 +31,7 @@ pub(crate) enum Overflow {
 
 /// What an int32 product does at a zero whose sign is negative, which no int32 holds.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum NegativeZero {
+pub enum NegativeZero {
     /// Leave at the frame's miss edge.
     Exit,
     /// Keep the int32 zero: a tier that proved no consumer reads its sign, or that no operand
@@ -44,7 +44,7 @@ pub(crate) enum NegativeZero {
 
 /// A frame whose operands a numeric operation proves in its representation and whose result
 /// it defines with that representation's fact.
-pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> + super::CallFrame<S> {
+pub trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> + super::CallFrame<S> {
     /// The int32 word of `operand`, proved here; `None` where it is none (a frame whose
     /// facts prove it, or whose guard branches away at `miss`, always answers `Some`).
     fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
@@ -139,7 +139,7 @@ const LEAVES: (Overflow, NegativeZero) = (Overflow::Exit, NegativeZero::Exit);
 
 /// A Number operation `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
-pub(crate) enum NumberOperation {
+pub enum NumberOperation {
     /// Number x Number arithmetic with both operands in `domain`.
     Arithmetic { destination: Register, left: Operand, right: Operand,
         operation: NumberArithmetic, domain: Domain, overflow: Overflow, zero: NegativeZero },
@@ -1014,7 +1014,7 @@ fn negative_zero<S: NumericStage>(stage: &mut S, operation: NumberArithmetic,
 
 #[path = "numeric/stage.rs"]
 mod stage;
-pub(crate) use stage::NumericStage;
+pub use stage::NumericStage;
 #[path = "numeric/concrete.rs"]
 mod concrete;
 

@@ -12,7 +12,7 @@ use std::ops::Range;
 /// the slice. The accessors take the layout the object's declarations give; the collector follows
 /// only the reference words (`for_each_reference`).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct WasmGcFields(crate::heap::thin_slice::ThinBoxSlice<u8>);
+pub struct WasmGcFields(crate::heap::thin_slice::ThinBoxSlice<u8>);
 
 /// The bytes of a word: an array's length and a descriptor take one.
 const WORD: usize = 8;
@@ -130,7 +130,7 @@ impl WasmGcFields {
 /// declarations its layout comes from and its payload. The head names the payload's bytes: it is
 /// written whenever the payload is installed (`new`, `set_fields`), and the bytes change only in place.
 #[repr(C)]
-pub(crate) struct WasmGcRecord {
+pub struct WasmGcRecord {
     head: WasmGcHead,
     declarations: crate::WasmTypes,
     fields: WasmGcFields,
@@ -217,7 +217,7 @@ impl WasmGcRecord {
 /// publication rewrites the rows that name it (`WasmTableElements::refresh_bodies`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub(crate) struct TableTarget {
+pub struct TableTarget {
     pub(crate) signature: CanonicalSignature,
     pub(crate) entry: u32,
     pub(crate) instance: u64,
@@ -266,7 +266,7 @@ impl TableWords {
 /// row of the mirror (`TableTarget`), which an indirect call's check compares and calls through,
 /// and the words that publish the mirror (`TableWords`).
 #[derive(Debug, Default)]
-pub(crate) struct WasmTableElements {
+pub struct WasmTableElements {
     pub(crate) values: Vec<Value>,
     pub(crate) maximum: Option<u64>,
     targets: Vec<TableTarget>,

@@ -5,7 +5,7 @@
 /// field left out of the list does not compile.
 macro_rules! call_plan_bits {
     ($($field:ident),* $(,)?) => {
-        pub(crate) const CALL_PLAN_FLAG_COUNT: u32 = [$(stringify!($field)),*].len() as u32;
+        pub const CALL_PLAN_FLAG_COUNT: u32 = [$(stringify!($field)),*].len() as u32;
 
         impl CallPlan {
             pub(super) fn to_bits(self) -> u32 {
@@ -44,7 +44,7 @@ call_plan_bits!(
 );
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct CallPlan {
+pub struct CallPlan {
     /// `plain_activation`.
     pub(crate) plain: bool,
     /// The dispatch loop may push the activation in place: an ordinary body that is no

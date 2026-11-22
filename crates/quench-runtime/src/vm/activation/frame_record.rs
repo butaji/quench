@@ -20,7 +20,7 @@ use crate::Value;
 /// so it names no address of its own; the receiver lives in the record alone (`receiver`,
 /// `THIS`). The program is the one the frame resumes in, and the realm the owner's
 /// (`GeneratorRecord::realm`, the await state's).
-pub(crate) struct FrameRecord {
+pub struct FrameRecord {
     /// The receiver, as value bits (the frame prefix's THIS word, `staged::frame`).
     receiver: u64,
     pub(in crate::vm) context: CallContext,
@@ -430,7 +430,7 @@ impl Snap for FrameRecord {
 /// Appends the receiver and environment of an activation to `out`, the two context words every
 /// activation holds beside its registers, which a collection traces as roots.
 #[inline]
-pub(in crate::vm) fn extend_this_env_roots(out: &mut Vec<Value>, this: Value, env: Value) {
+pub fn extend_this_env_roots(out: &mut Vec<Value>, this: Value, env: Value) {
     out.extend([this, env]);
 }
 

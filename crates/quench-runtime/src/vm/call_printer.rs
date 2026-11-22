@@ -30,7 +30,7 @@ const NOT_A_CONSTRUCTOR: &str = " is not a constructor";
 const CALL_SOURCE_GOALS: [SourceType; 2] = [SourceType::script(), SourceType::mjs()];
 
 /// The messages the call paths give a non-callable callee before its call site is known.
-pub(super) const NOT_CALLABLE_MESSAGE: &str = "value is not callable";
+pub const NOT_CALLABLE_MESSAGE: &str = "value is not callable";
 pub const NOT_CONSTRUCTOR_MESSAGE: &str = "value is not a constructor";
 
 /// How a call instruction names its callee.

@@ -16,12 +16,12 @@ use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, WideInstruction, 
 use crate::bytecode::Register;
 
 /// A function of the running program, by its index (`CallKnown`).
-pub(crate) type FunctionId = u16;
+pub type FunctionId = u16;
 
 /// The registers a method call passes: `count` entries of the program's method arguments from
 /// `start`, in the order the arguments are passed, not necessarily consecutive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct RegisterList {
+pub struct RegisterList {
     pub(crate) start: u32,
     pub(crate) count: u16,
 }
@@ -36,7 +36,7 @@ impl RegisterList {
 
 /// Where a call's arguments are.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Arguments {
+pub enum Arguments {
     /// `count` consecutive registers from `first`.
     Window { first: Register, count: u16 },
     /// The registers of a call record's list.
@@ -72,7 +72,7 @@ impl Arguments {
 
 /// Where a call's callee comes from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Callee {
+pub enum Callee {
     /// The value of a register, whose identity the call binds to or checks.
     Register(Register),
     /// A function of the program the record names: its identity is a static operand.
@@ -83,7 +83,7 @@ pub(crate) enum Callee {
 
 /// Where a call's receiver comes from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Receiver {
+pub enum Receiver {
     Register(Register),
     /// The activation's `this`, or the field of it a path reads (an atom and its cache site).
     This { path: Option<(u32, u16)> },
@@ -96,7 +96,7 @@ pub(crate) enum Receiver {
 /// The static operands of a call instruction: its callee, receiver and arguments, and where its
 /// result goes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Invocation {
+pub struct Invocation {
     pub(crate) callee: Callee,
     pub(crate) receiver: Receiver,
     pub(crate) arguments: Arguments,
@@ -113,7 +113,7 @@ pub(crate) struct Invocation {
 /// values a forwarding call keeps, and whether its VM call reads the forms beyond a register
 /// window (a known function, a method site).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct CallFacts {
+pub struct CallFacts {
     pub(crate) registers: u16,
     pub(crate) activates: bool,
     pub(crate) forwarding: bool,

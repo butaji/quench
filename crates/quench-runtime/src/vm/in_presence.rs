@@ -12,7 +12,7 @@ pub(crate) const IN_PRESENCES: usize = 64;
 
 /// What `key in object` answered for receivers of one exact shape and prototype link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct InPresence {
+pub struct InPresence {
     pub(crate) atom: Atom,
     pub(crate) shape: u32,
     pub(crate) link: u32,

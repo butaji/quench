@@ -1,5 +1,5 @@
 /// Joins at one program point before a range that keeps growing widens (`IntRange::widen`).
-pub(crate) const WIDENING_ROUNDS: u8 = 6;
+pub const WIDENING_ROUNDS: u8 = 6;
 
 /// The magnitude bits within which a signed 64-bit word holds an integer Number and the sum,
 /// difference or product of two int32s without wrapping: the span of `IntRange::WORD`.
@@ -13,7 +13,7 @@ pub(crate) const EXACT_BITS: u32 = f64::MANTISSA_DIGITS;
 /// mathematical, not wrapping, and a result `None` where it leaves even `i64`. Whether a range
 /// fits int32 (`fits_int32`) is the caller's question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct IntRange {
+pub struct IntRange {
     pub(crate) min: i64,
     pub(crate) max: i64,
 }

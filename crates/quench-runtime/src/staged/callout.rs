@@ -43,7 +43,7 @@ pub(crate) const TAG_GLOBAL_LEXICAL_STORE: u8 = 28;
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub(crate) enum CallOut {
+pub enum CallOut {
     /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
     /// equality: strings and BigInts compare by contents, a conversion may run guest code.
     Equality { left: Operand, right: Operand, strict: bool, negated: bool } = TAG_EQUALITY,
@@ -140,7 +140,7 @@ pub(crate) struct Operands {
 }
 
 /// The values of a `CallOut`'s operands, read by the tier from its own registers or constants.
-pub(crate) struct OperandValues<V> {
+pub struct OperandValues<V> {
     pub(crate) fixed: [Option<V>; 2],
     #[cfg(not(stencil_build))]
     pub(crate) list: Vec<V>,

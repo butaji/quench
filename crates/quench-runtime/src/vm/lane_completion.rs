@@ -5,7 +5,7 @@ use crate::{JsError, Value};
 
 /// The completion a lane run left for the code it exits to (`Vm::lane_completion`).
 #[derive(Debug, Default)]
-pub(crate) enum LaneCompletion {
+pub enum LaneCompletion {
     /// No completion waits.
     #[default]
     None,

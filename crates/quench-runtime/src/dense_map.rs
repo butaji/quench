@@ -3,7 +3,7 @@
 
 /// Values by dense `u32` id; an id with no entry holds `None`.
 #[derive(Clone, Debug)]
-pub(crate) struct DenseMap<V> {
+pub struct DenseMap<V> {
     slots: Vec<Option<V>>,
     len: usize,
 }

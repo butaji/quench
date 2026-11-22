@@ -2,7 +2,7 @@ use super::property_key::PropertyKey;
 use std::ops::ControlFlow;
 use super::*;
 use crate::heap::PrivateBrand;
-pub(super) mod ordinary_chain;
+pub mod ordinary_chain;
 mod function_reflection;
 mod plain_key_set;
 mod proxy_get;

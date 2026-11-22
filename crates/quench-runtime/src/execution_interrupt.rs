@@ -6,7 +6,7 @@ use std::sync::{
 
 /// The lane floor (`ExecutionInterrupt::floor_in_lane`) that sends a run's next safepoint jump
 /// through its slow path: no stack address lies at or above it.
-pub(crate) const LANE_FLOOR_RAISED: usize = usize::MAX;
+pub const LANE_FLOOR_RAISED: usize = usize::MAX;
 type NativeWaker = dyn Fn() + Send + Sync;
 
 /// The process-wide attention byte compiled code polls first: nonzero while any state's attention
@@ -20,9 +20,9 @@ static ATTENTION_STATES: AtomicUsize = AtomicUsize::new(0);
 
 /// The address of the process-wide attention byte, which a b-jit poll reads before its run's flag.
 /// The symbol an object names the attention byte by (`attention_address`).
-pub(crate) const ATTENTION_SYMBOL: &str = "quench_execution_attention";
+pub const ATTENTION_SYMBOL: &str = "quench_execution_attention";
 
-pub(crate) fn attention_address() -> u64 {
+pub fn attention_address() -> u64 {
     std::ptr::addr_of!(ATTENTION) as usize as u64
 }
 

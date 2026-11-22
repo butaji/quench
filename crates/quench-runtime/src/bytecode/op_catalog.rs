@@ -5,12 +5,12 @@
 //! tier traits (`Traits`). The table expands into `Op::class`, `Op::staged`,
 //! `Op::generic_step` and `Op::traits`.
 use super::Op;
-pub(crate) use super::opcode_table::{OPCODE_COUNT, opcode_name};
+pub use super::opcode_table::{OPCODE_COUNT, opcode_name};
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[allow(dead_code)]
-pub(crate) enum Class {
+pub enum Class {
     Other,
     Move,
     LoadConst,
@@ -173,7 +173,7 @@ impl Class {
 /// says which opcodes have a staged operation and which family builds it. An opcode with no
 /// decoder is the interpreter's hand path alone (a tier leaves at its exact PC).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Decoder {
+pub enum Decoder {
     /// A register move, a constant, a jump, a return or a suspension (`await`, `yield`, `yield*`).
     Flow,
     /// A frame local's load or store.
@@ -220,7 +220,7 @@ pub(crate) enum Decoder {
 /// An opcode's general step a lane or a body makes in place, by one helper of the
 /// interpreter's own definition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GenericStep {
+pub enum GenericStep {
     /// A body's helper only: it may replace the frame's environment, which the lane's own
     /// dispatch caches (the scope, operator, constant, name, literal, element, field and class steps).
     Body,
@@ -235,7 +235,7 @@ pub(crate) enum GenericStep {
 /// The step of an activation's own variables an opcode makes, over the `VarOwner` that runs it
 /// (`Vm::owner_step`): a frame in the interpreter, the window of a frameless activation in a lane's body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OwnedStep {
+pub enum OwnedStep {
     LoadLocal,
     StoreVarBinding,
     StoreLocal,
@@ -255,7 +255,7 @@ pub(crate) enum OwnedStep {
 /// activation with no frame of its own makes as a frame does (`Vm::binary`, `Vm::unary`,
 /// `Vm::binary_truthy`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ValueStep {
+pub enum ValueStep {
     Binary,
     Unary,
     CompareJump,
@@ -264,7 +264,7 @@ pub(crate) enum ValueStep {
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
 /// Two words: the first 128 traits, then the rest (`Self(0, 1 << n)`).
-pub(crate) struct Traits(pub(crate) u128, pub(crate) u64);
+pub struct Traits(pub(crate) u128, pub(crate) u64);
 
 impl Traits {
     pub(crate) const NONE: Self = Self(0, 0);
@@ -581,7 +581,7 @@ impl Traits {
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0, self.1 | other.1) }
 }
 
-pub(crate) use super::denotation::JsDenotation;
+pub use super::denotation::JsDenotation;
 
 /// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
 /// table load (unlike `Op::class()`), for per-instruction loops.

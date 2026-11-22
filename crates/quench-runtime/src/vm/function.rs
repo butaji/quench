@@ -511,7 +511,7 @@ fn native_function_source(name: &str) -> String {
 
 /// The call a forwarding call makes (`Vm::forwarded_call`), with the facts the walk read on
 /// the way, so no caller reads them again.
-pub(super) struct Forwarded<A> {
+pub struct Forwarded<A> {
     pub(super) callee: Value,
     pub(super) receiver: Value,
     pub(super) args: A,
@@ -543,7 +543,7 @@ impl ForwardedArgs for &[Value] {
 /// A forwarded call's arguments read where the caller's window holds them until a bound
 /// prefix must lead them, then filled once, prefix then window, into an owned list: no copy
 /// of the window before the walk, and none moved again by the prepend.
-pub(super) enum WindowArgs<'a, const N: usize> {
+pub enum WindowArgs<'a, const N: usize> {
     Window(&'a [Value]),
     Owned(smallvec::SmallVec<[Value; N]>),
 }

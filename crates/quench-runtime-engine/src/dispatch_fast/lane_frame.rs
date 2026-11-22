@@ -3753,13 +3753,13 @@ pub(in crate::dispatch_fast) const fn binary_number_kind(operator: u32) -> u8 {
     macro_rules! relation {
         ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $a:ident;)+) => { false $($(|| operator == code::$operator)+)+ };
     }
-    if quench_runtime::vm::operations::number_arithmetic_rows!(arithmetic) {
+    if quench_runtime::number_arithmetic_rows!(arithmetic) {
         kind::ARITHMETIC
     } else if operator == code::Remainder {
         kind::REMAINDER
-    } else if quench_runtime::vm::operations::number_bitwise_rows!(bitwise) {
+    } else if quench_runtime::number_bitwise_rows!(bitwise) {
         kind::BITWISE
-    } else if quench_runtime::vm::operations::number_relation_rows!(relation) {
+    } else if quench_runtime::number_relation_rows!(relation) {
         kind::RELATION_VALUE
     } else {
         kind::ANY

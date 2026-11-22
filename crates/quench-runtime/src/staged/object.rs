@@ -14,7 +14,7 @@ pub(crate) const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 /// What a site proved about where an object of an exact shape keeps its values. It is a
 /// static input: a specializer reads no word to learn it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum Form {
+pub enum Form {
     /// Packed narrow values in the payload word (`PlainPropertyStorage::PackedInline`).
     Packed,
     /// A flat run in the property arena (`PlainPropertyStorage::Arena`).
@@ -51,7 +51,7 @@ pub(crate) enum Packed<W> {
 
 /// Where an object of a proved exact shape keeps its named values.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Slots<W, C> {
+pub enum Slots<W, C> {
     Packed(Packed<W>),
     /// The address of value zero of a flat run of wide values: the arena's, or the inline
     /// values extras displaced.
@@ -67,7 +67,7 @@ pub(crate) enum Slots<W, C> {
 
 /// The layout of one object record and how many values its shape holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Layout<W, C> {
+pub struct Layout<W, C> {
     pub(crate) slots: Slots<W, C>,
     pub(crate) storage_len: usize,
 }
@@ -428,7 +428,7 @@ fn layout_of<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, inline:
 /// its extras (`Object::extras_storage_start`), as a global object by name does, `inline` being
 /// its `inline_storage`: a record without extras, or with its values inline, leaves at `miss`.
 #[inline(always)]
-pub(crate) fn arena_extras_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, storage_len: usize,
+pub fn arena_extras_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, storage_len: usize,
     miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
@@ -683,7 +683,7 @@ pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, up
 /// `object` is a live record whose exact shape covers `slot`, and `property_values` is the
 /// base of the arena that holds its run.
 #[inline(always)]
-pub(crate) unsafe fn concrete_own_read(object: &crate::heap::Object, property_values: *const crate::Value, slot: usize) -> crate::Value {
+pub unsafe fn concrete_own_read(object: &crate::heap::Object, property_values: *const crate::Value, slot: usize) -> crate::Value {
     let mut stage = Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
     let word = header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);

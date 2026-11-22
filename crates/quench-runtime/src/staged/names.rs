@@ -15,7 +15,7 @@ use crate::Value;
 /// frame answers it with a callout; and the test of a receiver's constant fields, whose
 /// answer is VM state (a cache entry), which a frame answers the same way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Protocol {
+pub enum Protocol {
     /// The iterator of the operand (`GetIterator`).
     GetIterator,
     /// The for-in state over the operand's key snapshot (`ForInStart`).

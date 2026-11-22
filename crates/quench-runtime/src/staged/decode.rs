@@ -8,7 +8,7 @@ use crate::bytecode::{MethodSite, Op, Register, ResidualProgram, WideInstruction
 /// The tables a decode reads: the constants a `LoadConst` names and the method sites a method call
 /// names (whose argument registers the call's own record holds).
 #[derive(Clone, Copy)]
-pub(crate) struct DecodeContext<'a> {
+pub struct DecodeContext<'a> {
     pub(crate) constants: &'a [Constant],
     /// The constant at an index `constants` does not hold, as the tier types it (a region's Number
     /// table, the compiling VM's values): `None` where `constants` is the whole table.
@@ -49,7 +49,7 @@ impl<'a> DecodeContext<'a> {
 /// `WideInstruction`, whose constants index the context, or a tier's own pre-resolved record (the
 /// lane's `LaneInstruction`). One decoder per row family serves every record, so a record format
 /// is never a second definition of what an instruction means.
-pub(crate) trait Fields: Copy {
+pub trait Fields: Copy {
     fn op(self) -> Op;
     fn result_register(self) -> Register;
     fn register_a(self) -> Register;

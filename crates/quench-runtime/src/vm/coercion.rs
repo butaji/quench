@@ -11,14 +11,14 @@ mod strict_equality;
 const BIGINT_TO_NUMBER: &str = "Cannot convert a BigInt value to a number";
 const UNARY_PLUS: u32 = UnaryOperator::UnaryPlus as u32;
 const UNARY_NEGATION: u32 = UnaryOperator::UnaryNegation as u32;
-pub(super) const LOGICAL_NOT: u32 = UnaryOperator::LogicalNot as u32;
+pub const LOGICAL_NOT: u32 = UnaryOperator::LogicalNot as u32;
 const BITWISE_NOT: u32 = UnaryOperator::BitwiseNot as u32;
-pub(super) const TYPEOF: u32 = UnaryOperator::Typeof as u32;
+pub const TYPEOF: u32 = UnaryOperator::Typeof as u32;
 const VOID: u32 = UnaryOperator::Void as u32;
 
 /// The unary operators that convert their operand to a numeric value; on a Number they
 /// run no guest code.
-#[inline] pub(super) fn numeric_unary(op: u32) -> bool {
+#[inline] pub fn numeric_unary(op: u32) -> bool {
     matches!(op, UNARY_PLUS | UNARY_NEGATION | BITWISE_NOT)
 }
 
@@ -415,7 +415,7 @@ impl Vm {
 }
 
 /// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`.
-#[inline] pub(crate) fn typeof_name_index(kind: crate::ValueType) -> usize {
+#[inline] pub fn typeof_name_index(kind: crate::ValueType) -> usize {
     use crate::ValueType as T;
     match kind {
         T::Undefined => 0,
@@ -430,14 +430,14 @@ impl Vm {
 }
 
 /// The text `typeof` yields for a value of `kind`.
-pub(super) fn typeof_text(kind: crate::ValueType) -> &'static str {
+pub fn typeof_text(kind: crate::ValueType) -> &'static str {
     crate::bytecode::TYPEOF_NAMES[typeof_name_index(kind)]
 }
 
 /// ToString where the value alone decides it: `undefined` (the deleted marker reads as it),
 /// `null`, a Boolean or a Number. `None` for a heap value, whose conversion reads its cell and
 /// may run guest code. A Number's digits are written straight into the string.
-pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
+pub fn immediate_to_string(value: Value) -> Option<JsString> {
     match value.as_bool() {
         _ if value.is_undefined() || value.is_deleted() => Some(JsString::from_str("undefined")),
         _ if value.is_null() => Some(JsString::from_str("null")),
@@ -450,7 +450,7 @@ pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
 /// which its tag alone decides (`staged::value::immediate_typeof_index`, which the tiers run as
 /// well); `None` for a heap value. None of these kinds is the `[[IsHTMLDDA]]` object's.
 #[inline(always)]
-pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
+pub fn immediate_typeof_index(value: Value) -> Option<usize> {
     crate::staged::value::concrete_immediate_typeof_index(value)
 }
 
@@ -458,7 +458,7 @@ pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
 /// string's or another cell's ToBoolean in place: a string's length from its record, a BigInt's
 /// zero, the IsHTMLDDA object, and every other cell truthy.
 #[inline(never)]
-pub(crate) fn heap_cell_truthy_in(heap: &crate::heap::Heap, v: Value) -> bool {
+pub fn heap_cell_truthy_in(heap: &crate::heap::Heap, v: Value) -> bool {
     if let Some(length) = heap.string_record_base().and_then(|records| crate::staged::string_length::concrete_string_length(records, v)) {
         return length != Value::integer(0);
     }

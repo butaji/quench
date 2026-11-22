@@ -503,7 +503,7 @@ impl Vm {
 /// time (`call_array_callback_miss`), and a frame of such a callback, once materialized,
 /// finishes it on the general path (`CallCompletion::ArrayStep`).
 #[derive(Clone, Copy)]
-pub(crate) struct ArrayIteration {
+pub struct ArrayIteration {
     pub(super) native: Native,
     pub(super) receiver: Value,
     pub(super) callback: Value,

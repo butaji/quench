@@ -5,7 +5,7 @@
 /// An alias region of memory: an access to one never aliases an access to another, so two
 /// regions own disjoint words. A word has one region wherever it is read or written.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Region {
+pub enum Region {
     /// The activation's register and local slots, and the call records on the lane stack.
     Frame,
     /// Property values of objects: a run in the arena, or the values an extras block holds.
@@ -56,7 +56,7 @@ pub(crate) enum Mutability {
 /// What a specializer proves of a memory access: the region it belongs to and whether the
 /// memory is read-only.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Access {
+pub struct Access {
     pub(crate) region: Region,
     pub(crate) mutability: Mutability,
 }

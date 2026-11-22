@@ -7,7 +7,7 @@ use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
 /// The class of one `Binary` operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BinaryClass {
+pub enum BinaryClass {
     Arithmetic(NumberArithmetic),
     Bitwise(NumberBitwise),
     /// `%`, the staged Number remainder.

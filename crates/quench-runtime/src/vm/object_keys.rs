@@ -7,7 +7,7 @@ pub(super) type EnumerableKeys<T> = smallvec::SmallVec<[T; INLINE_ENUMERABLE_KEY
 const INLINE_ENUMERABLE_KEYS: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum EnumerableOwnPropertyKind {
+pub enum EnumerableOwnPropertyKind {
     Key,
     Value,
     KeyValue,

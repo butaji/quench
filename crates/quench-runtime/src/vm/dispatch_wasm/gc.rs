@@ -15,7 +15,7 @@ use super::super::wasm_gc::stage::HeapStage;
 
 /// Whether the GC value opcode `op` can allocate a heap cell, which can make a collection due:
 /// its step's group's `allocates`. A call target has no step and is taken to allocate, as before.
-#[inline(always)] pub(in crate::vm) const fn wasm_gc_allocates(op: Op) -> bool {
+#[inline(always)] pub const fn wasm_gc_allocates(op: Op) -> bool {
     match GcStep::of(op) {
         Some(step) => step.group().allocates(),
         None => true,
@@ -23,7 +23,7 @@ use super::super::wasm_gc::stage::HeapStage;
 }
 
 /// Whether the GC value opcode `op` reads or writes a struct field or an array element.
-#[inline(always)] pub(in crate::vm) const fn wasm_gc_field_op(op: Op) -> bool {
+#[inline(always)] pub const fn wasm_gc_field_op(op: Op) -> bool {
     match GcStep::of(op) {
         Some(step) => step.field().is_some(),
         None => false,
@@ -78,7 +78,7 @@ impl Vm {
 
 /// Whether the GC value opcode `op` reads the running instance's environment: the
 /// operations that name one of its functions or tables' targets.
-#[inline(always)] pub(in crate::vm) const fn wasm_gc_reads_instance(op: Op) -> bool {
+#[inline(always)] pub const fn wasm_gc_reads_instance(op: Op) -> bool {
     matches!(Call::of(op), Some(Call::IndirectTarget | Call::RefFunc))
 }
 

@@ -19,7 +19,7 @@ use crate::bytecode::{Op, WideInstruction};
 
 /// What suspends the activation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Suspension {
+pub enum Suspension {
     /// `await`: the awaited value, converted as PromiseResolve converts it.
     Await,
     /// `yield`: the yielded value, converted first in an async generator as `conversion` says.
@@ -38,7 +38,7 @@ pub(crate) enum Suspension {
 /// same value in the same job. The difference stays an explicit parameter of the row until a test
 /// pins that equivalence; a decoded row resolves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum YieldConversion {
+pub enum YieldConversion {
     /// PromiseResolve(%Promise%, value) of every value.
     Resolve,
     /// An object resolved, any other value as it is (`await_source`).
@@ -47,7 +47,7 @@ pub(crate) enum YieldConversion {
 
 /// The control effect of a suspension: the activation awaits or yields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SuspendEffect {
+pub enum SuspendEffect {
     Await,
     Yield,
 }
@@ -57,7 +57,7 @@ pub(crate) enum SuspendEffect {
 /// `yield*` passes on as its own (`delegated`), and whether the activation resumes at this
 /// instruction (`again`, a `yield*` step) rather than after it.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Suspending<W> {
+pub struct Suspending<W> {
     pub(crate) effect: SuspendEffect,
     pub(crate) value: W,
     pub(crate) destination: Register,
@@ -94,7 +94,7 @@ impl<W, P> Operation<W, P> {
 /// conversion, then the frame's effect. Unresolved where the frame answers no call-out, or a
 /// call-out raised.
 #[inline(always)]
-pub(crate) fn suspend<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, kind: Suspension, destination: Register,
+pub fn suspend<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, kind: Suspension, destination: Register,
     value: Register) -> Step<S::Word, F::Control> {
     let suspended = match kind {
         Suspension::Await => await_value(stage, frame, destination, value),
@@ -143,7 +143,7 @@ fn yield_value<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, (destina
 /// and unreachable (the resume reads the value itself, `Vm::enqueue_async_resume`). `None` where
 /// the frame cannot tell an object or resolve it, or the resolution raised.
 #[inline(always)]
-pub(crate) fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awaited: S::Word) -> Option<S::Word> {
+pub fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awaited: S::Word) -> Option<S::Word> {
     let object = frame.object_test(stage, awaited)?;
     stage.choose_leaving(object, #[inline(always)] |stage| frame.promise_resolve(stage, awaited), |_| Some(awaited))
 }

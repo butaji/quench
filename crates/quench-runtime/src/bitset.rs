@@ -6,12 +6,12 @@
 
 use smallvec::SmallVec;
 
-pub(crate) const WORD_BITS: usize = u64::BITS as usize;
+pub const WORD_BITS: usize = u64::BITS as usize;
 /// Words kept inline: 128 members without allocation.
 pub(crate) const INLINE_WORDS: usize = 2;
 
 /// The members of the bits of word `index`, ascending.
-pub(crate) fn word_members(index: usize, mut word: u64) -> impl Iterator<Item = usize> {
+pub fn word_members(index: usize, mut word: u64) -> impl Iterator<Item = usize> {
     std::iter::from_fn(move || {
         (word != 0).then(|| {
             let bit = word.trailing_zeros() as usize;
@@ -53,7 +53,7 @@ fn words_for(len: usize) -> usize {
 
 /// A set of indices below `len`, which `grow` raises.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct BitSet {
+pub struct BitSet {
     words: SmallVec<[u64; INLINE_WORDS]>,
     len: usize,
 }

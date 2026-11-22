@@ -6,7 +6,7 @@ use super::*;
 
 /// What an iteration step calling `method` of an iterator is (`Vm::step_in_place`).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::vm) enum InPlaceStep {
+pub enum InPlaceStep {
     /// A values step over a plain array, made: the element, or `None` once the iterator is
     /// done. It allocated nothing.
     Element(Option<Value>),

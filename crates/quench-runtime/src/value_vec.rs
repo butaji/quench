@@ -8,6 +8,8 @@ use rustc_hash::FxHashMap;
 mod buffer; mod plan_values;
 mod subscribe;
 use buffer::PropertyBuffer;
+#[allow(unused_imports)]
+pub use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
 
 /// The word of an arena slot that holds `value`, where the slot's owner has type `owner`: the one
 /// place a stored word is encoded. A slot of `Representation::Float64` holds its Number as the IEEE double (an
@@ -44,7 +46,7 @@ pub(crate) fn decode_slot(owner: SlotType, word: Value) -> Value {
 /// The `Value` of a word a staged read took from an arena run, whose owner the reader does not know
 /// (`decode_slot` of `read_type`).
 #[inline(always)]
-pub(crate) fn decode_staged_word(word: u64) -> Value {
+pub fn decode_staged_word(word: u64) -> Value {
     decode_slot(read_type(), Value::from_bits(word))
 }
 
@@ -57,8 +59,8 @@ fn read_type() -> SlotType {
 }
 
 // The storage-form and integrity bits are the shared object encoding (`staged::object_encoding`).
-pub(crate) use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
-pub(crate) const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
+pub use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
+pub const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
 /// An object whose values code holds as constants (`Object::mark_constant`, an own-constant
 /// read): set by the read that takes a value as a constant, cleared by the first write to any
 /// value or any change of the object's layout or storage, which retires that code
@@ -95,7 +97,7 @@ const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
 /// Properties an object keeps in its record (`staged::object_encoding`). The Score lane runs three for
 /// RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration branch keeps
 /// memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
-pub(crate) use crate::staged::object_encoding::INLINE_PROPERTY_COUNT;
+pub use crate::staged::object_encoding::INLINE_PROPERTY_COUNT;
 /// The smallest arena range. An object reaches the arena by outgrowing its inline slots, or
 /// by storing a value they cannot hold before that; a range for its first values would regrow
 /// as it grows past them.

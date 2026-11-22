@@ -337,9 +337,11 @@ pub(crate) enum GcStep {
 /// `GcStep::op`'s reverse match, `wasm_gc_names` the bare names the lane's handler table and
 /// `wasm_gc_value_ops!` apply their macro to. The list is written
 /// here once; nothing else names these opcodes as a set.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_table {
     ($projector:ident $extra:ident) => {
-        $crate::staged::wasm_gc::$projector! {
+        $crate::$projector! {
             $extra ;
             WasmStructGet => Some(GcStep::StructGet { signed: None }),
             WasmStructGetS => Some(GcStep::StructGet { signed: Some(true) }),
@@ -384,6 +386,8 @@ macro_rules! wasm_gc_table {
 }
 
 /// Projects `wasm_gc_table!`'s entries to the match of `GcStep::of`, over the opcode `$op`.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_step_of {
     ($op:ident ; $($name:ident => $step:expr,)*) => {
         match $op {
@@ -392,10 +396,11 @@ macro_rules! wasm_gc_step_of {
         }
     };
 }
-pub(crate) use wasm_gc_step_of;
 
 /// Projects `wasm_gc_table!`'s entries to the reverse map `GcStep::op`: the opcode whose entry is
 /// the step `$step`. Each value step has one entry, so the first match is the one.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_op_of {
     ($step:ident ; $($name:ident => $entry:expr,)*) => {
         {
@@ -404,10 +409,10 @@ macro_rules! wasm_gc_op_of {
         }
     };
 }
-pub(crate) use wasm_gc_op_of;
 
 /// Projects `wasm_gc_table!`'s entries to the bare opcode names, applying `$then!` to them.
-#[allow(unused_macros)]
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_names {
     ($then:ident ; $($name:ident => $group:expr,)*) => {
         $then!($($name)*)
@@ -416,13 +421,13 @@ macro_rules! wasm_gc_names {
 
 /// Applies `$then!` to the names of every Wasm GC value opcode: the one list (`wasm_gc_table!`)
 /// that `GcOp::of` and the lane's handlers both derive from.
-#[allow(unused_macros)]
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_value_ops {
     ($then:ident) => {
-        $crate::staged::wasm_gc::wasm_gc_table!(wasm_gc_names $then)
+        $crate::wasm_gc_table!(wasm_gc_names $then)
     };
 }
-pub(crate) use wasm_gc_value_ops;
 
 /// The access of a plain or packed read: `signed` as `GcStep::StructGet` and `ArrayGet` carry it.
 const fn read_access(signed: Option<bool>) -> GcFieldAccess {

@@ -21,7 +21,7 @@ pub(crate) struct NativeId {
 /// `this` and arguments folded in (`Bound`), and any callee the frame has no plan for takes the
 /// VM's call (`CallEntry::Helper`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CalleeKind {
+pub enum CalleeKind {
     /// A script function called with a receiver.
     Script,
     /// A forwarding class constructor: the construction runs its initializer with the receiver
@@ -43,7 +43,7 @@ impl CalleeKind {
 
 /// How a direct call knows its callee is the one its plan was made for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Identity {
+pub enum Identity {
     /// The identity varies per execution: the call checks it once (`guard_callee`).
     Guarded(u64),
     /// The identity is a constant of the call: a function the record names (Static), or a callee
@@ -90,7 +90,7 @@ pub(crate) struct Bound {
 /// What a frame knows of a site's callee at the time it is compiled: for a bound function, its
 /// target's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct DirectPlan {
+pub struct DirectPlan {
     pub(crate) kind: CalleeKind,
     /// The identity of the callee the site names, which the site was bound to.
     pub(crate) identity: Identity,
@@ -106,7 +106,7 @@ pub(crate) struct DirectPlan {
 
 /// How a call reaches its callee.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CallEntry {
+pub enum CallEntry {
     Direct(DirectPlan),
     /// The callee's body in the caller, where the frame can inline it (`CallFrame::inline`); the
     /// direct entry where it cannot.
@@ -118,7 +118,7 @@ pub(crate) enum CallEntry {
 /// A callee a frame resolved at plan time, with the binding time of the value the site names.
 #[cfg(not(stencil_build))]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Resolved {
+pub struct Resolved {
     pub(crate) plan: DirectPlan,
     pub(crate) binding: BindingTime,
     /// The instructions of the callee's body where a script body is known to the frame.
@@ -137,7 +137,7 @@ impl Resolved {
 /// The entry of a call to `callee`, by binding time. A folded identity checks nothing; any other is
 /// guarded once. A bound function whose identity is not folded is the VM's call. A folded script
 /// function whose body fits `inline_budget` instructions inlines, with its direct entry behind it.
-pub(crate) fn plan_entry(callee: Option<Resolved>, inline_budget: usize) -> CallEntry {
+pub fn plan_entry(callee: Option<Resolved>, inline_budget: usize) -> CallEntry {
     let Some(callee) = callee else { return CallEntry::Helper };
     if callee.plan.bound.is_some() && !callee.folds() { return CallEntry::Helper; }
     let word = callee.plan.identity.word();

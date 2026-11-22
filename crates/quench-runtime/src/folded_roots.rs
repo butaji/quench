@@ -11,7 +11,7 @@ use std::rc::{Rc, Weak};
 
 /// The heap values one body of code embeds, ordered by their bits and without repeats.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct FoldedRoots(Vec<Value>);
+pub struct FoldedRoots(Vec<Value>);
 
 impl FoldedRoots {
     /// The word code names `value` by. The only way to embed a value in generated code: a
@@ -37,7 +37,7 @@ impl FoldedRoots {
 }
 
 /// A publication whose code embeds heap identities (`PublishedCode::hold_roots`).
-pub(crate) trait RootedCode {
+pub trait RootedCode {
     fn is_published(&self) -> bool;
     fn extend_roots(&self, roots: &mut Vec<Value>);
 }

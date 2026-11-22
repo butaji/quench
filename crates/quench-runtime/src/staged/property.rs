@@ -242,7 +242,7 @@ impl<P: PlanSource> PlanSource for &P {
 
 /// The plans of a frame that proved none.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct NoPlans;
+pub struct NoPlans;
 
 impl PlanSource for NoPlans {
     fn field_plan(&self, _lookup: FieldLookup) -> Option<FieldPlan<'_>> { None }
@@ -251,7 +251,7 @@ impl PlanSource for NoPlans {
 
 /// A frame's property callouts. Every default declines, leaving the operation to the host
 /// path; a miss edge of the stage is each callout's failure.
-pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
+pub trait PropertyFrame<S: Stage>: Frame<S> {
     /// The handle to the plans, copied out so a row holds a plan while it calls the frame.
     type Plans: PlanSource + Copy;
 

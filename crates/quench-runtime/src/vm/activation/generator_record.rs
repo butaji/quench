@@ -42,7 +42,7 @@ mod state_tag {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct GeneratorRecord {
+pub struct GeneratorRecord {
     pub(crate) life: GeneratorLife,
     /// The parked continuation: present exactly while `life` is `Suspended`, `Windowed` or
     /// `Busy`. A windowed run's completion and resume register are stale until it parks again.

@@ -42,7 +42,7 @@ pub(crate) struct NativePropertyBufferLayout {
     pub(crate) length: usize,
 }
 
-pub(crate) const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = NativePropertyBufferLayout {
+pub const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = NativePropertyBufferLayout {
     base: std::mem::offset_of!(PropertyBuffer, head) + std::mem::offset_of!(PropertyBufferHead<NonNull<Value>>, base),
     length: std::mem::offset_of!(PropertyBuffer, head) + std::mem::offset_of!(PropertyBufferHead<NonNull<Value>>, length),
 };

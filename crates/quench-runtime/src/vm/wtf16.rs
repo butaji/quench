@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 mod append_buffer;
 mod short_ascii;
-pub(crate) mod native_string;
+pub mod native_string;
 mod concat_all;
 mod parts;
 mod payload;
@@ -927,7 +927,7 @@ const FLAT_PREFIX_MAX_UNITS: usize = 2048;
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
 /// V8's public String::kMaxLength on the supported 64-bit host is this limit;
 /// Node exposes it as buffer.constants.MAX_STRING_LENGTH.
-pub(crate) const MAX_STRING_UNITS: usize = 536_870_888;
+pub const MAX_STRING_UNITS: usize = 536_870_888;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StringBuildError {

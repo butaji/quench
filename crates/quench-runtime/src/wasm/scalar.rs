@@ -2,7 +2,7 @@
 
 use crate::bytecode::Constant;
 
-pub(crate) use crate::staged::wasm::V128_BYTES;
+pub use crate::staged::wasm::V128_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WasmType {
@@ -374,7 +374,7 @@ pub struct WasmFunctionBody<I> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ScalarBits {
+pub enum ScalarBits {
     Bits32(u32),
     Bits64(u64),
     Bits128([u8; V128_BYTES]),
@@ -403,11 +403,11 @@ pub(crate) struct CallableImport {
 
 mod canonical;
 mod interning;
-pub(crate) use canonical::CanonicalSignature;
+pub use canonical::CanonicalSignature;
 
 /// One signature pool; function indices project into its type-index domain.
 #[derive(Clone)]
-pub(crate) struct WasmSignatures {
+pub struct WasmSignatures {
     pub(crate) declarations: super::WasmTypes,
     types: Vec<CallableSignature>,
     /// The type indices of `types`, by their declarations' fingerprints.

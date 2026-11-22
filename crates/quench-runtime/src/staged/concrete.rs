@@ -6,7 +6,7 @@ use super::region::Access;
 /// The interpreter's stage: machine words, read from live memory. It knows every condition,
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
-pub(crate) struct Concrete {
+pub struct Concrete {
     tables: [u64; 1],
     /// The heap whose store barrier `store_gate` reads; null where no store runs.
     heap: *const crate::heap::Heap,

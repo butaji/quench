@@ -24,7 +24,7 @@ pub struct ObjectHead {
 /// slot as `payload + offset`, bounded by `length`, so a field access takes no callout, box or barrier.
 /// The record writes this head whenever it stores the payload; the payload stays owned by the record.
 #[repr(C)]
-pub(crate) struct WasmGcHead {
+pub struct WasmGcHead {
     /// The first byte of the payload, or 0 where the payload is not allocated.
     pub(crate) payload: u64,
     /// The payload's length in bytes.
@@ -35,7 +35,7 @@ pub(crate) struct WasmGcHead {
 
 /// A dense element backing's header (`heap::array_elements::Header`), the words before its values.
 #[repr(C)]
-pub(crate) struct ArrayHeaderHead {
+pub struct ArrayHeaderHead {
     /// Owners of this backing; zero where no owner counts it.
     pub(crate) owners: u32,
     /// The number of values the backing holds.
@@ -50,7 +50,7 @@ pub(crate) struct ArrayHeaderHead {
 /// element's address, the publication stamp, the element count, the kind, and the three flags.
 #[repr(C)]
 #[derive(Debug)]
-pub(crate) struct NativeViewHead {
+pub struct NativeViewHead {
     /// The first element's address.
     pub(crate) data: usize,
     /// The buffer's relocation count when `data` and `length` were published.
@@ -73,7 +73,7 @@ pub(crate) struct NativeViewHead {
 /// the parameters with words of the same size and alignment (`layout_offsets::NATIVE_FUNCTION_LAYOUT`).
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct FunctionRecord<O, K, V> {
+pub struct FunctionRecord<O, K, V> {
     /// The function's own ordinary object (its properties); first, so its words are at offset 0.
     pub(crate) object: O,
     /// Beside the object, whose 12 bytes it fills to the words after: after them, its 12

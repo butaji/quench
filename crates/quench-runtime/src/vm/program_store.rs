@@ -8,7 +8,7 @@ use crate::heap::{PromotionAge, WeakHandle};
 use rustc_hash::FxHashMap;
 use residual::{EncodedResidual, Residual};
 
-pub(in crate::vm) mod lane_publication;
+pub mod lane_publication;
 mod chunks;
 mod eval_cache;
 mod js_jit_report;
@@ -104,7 +104,7 @@ const JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL: u64 = 256;
 
 #[derive(Clone, Copy)]
 #[repr(usize)]
-pub(super) enum JsJitCallOutcome {
+pub enum JsJitCallOutcome {
     Continue = 0,
     TailCall = 1,
     PushFrame = 2,
@@ -287,7 +287,7 @@ impl JitCodeCacheBudget {
 }
 
 #[derive(Clone)]
-pub(super) enum JsTierState {
+pub enum JsTierState {
     Hot { observations: u8, numeric: u8 },
     /// The numeric profile passed its look, so wait for a numeric entry before
     /// compiling the specialized artifact.
@@ -3064,7 +3064,7 @@ impl Drop for LaneViewTable {
 pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<crate::vm::engine_types::LaneView>>;
 
 /// The view a cell holds, if its function's was derived.
-#[inline(always)] pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&crate::vm::engine_types::LaneView> {
+#[inline(always)] pub fn derived_lane_view(cell: &LaneViewCell) -> Option<&crate::vm::engine_types::LaneView> {
     // SAFETY: a cell points into its table's arena (`LaneViews::store`), which outlives it.
     cell.get().map(|view| unsafe { view.as_ref() })
 }

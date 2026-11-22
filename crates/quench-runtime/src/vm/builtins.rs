@@ -86,7 +86,7 @@ impl NativeTable {
 
 /// How much of a realm a VM installs when it initializes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RealmScope {
+pub enum RealmScope {
     /// Every builtin: the VM will run JavaScript.
     Complete,
     /// The prototypes, native functions and error intrinsics Wasm instances,
@@ -917,6 +917,6 @@ mod math_function_tests {
 
 /// The global object's value properties that are neither writable nor configurable (ECMA-262 19.1): no global
 /// lexical declaration may shadow them (`HasRestrictedGlobalProperty`), so a read the global scope resolves is its constant.
-pub(crate) fn immutable_globals() -> [(&'static str, Value); 3] {
+pub fn immutable_globals() -> [(&'static str, Value); 3] {
     [("undefined", Value::UNDEFINED), ("NaN", Value::number(f64::NAN)), ("Infinity", Value::number(f64::INFINITY))]
 }

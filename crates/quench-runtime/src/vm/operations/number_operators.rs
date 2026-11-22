@@ -64,7 +64,7 @@ pub(super) fn numeric_number_result(operator: BinaryOperator, left: f64, right: 
 /// Operator `op` on two Numbers known before run time, as the interpreter computes it: a
 /// comparison's boolean, or a numeric operator's Number; `None` for any other operator. The
 /// compiler folds static operands through this (`compile::binding_time`).
-pub(crate) fn static_number_binary(op: u32, left: f64, right: f64) -> Option<Constant> {
+pub fn static_number_binary(op: u32, left: f64, right: f64) -> Option<Constant> {
     if op <= LAST_COMPARISON_OPERATOR {
         return Some(Constant::Boolean(number_comparison(op, left, right)));
     }

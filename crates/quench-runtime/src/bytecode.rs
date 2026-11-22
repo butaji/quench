@@ -24,13 +24,16 @@ mod control_flow;
 pub(crate) mod initialization;
 mod initializer_stores;
 mod super_initializer;
-pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue, NESTED_ARGUMENTS, NESTED_CHAIN};
+#[allow(unused_imports)]
+pub use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
 mod environment_clone;
 pub use environment_clone::{EnvironmentClone, EnvironmentClones};
 pub(crate) use environment_clone::Resets;
 mod field_store;
+#[allow(unused_imports)]
+pub use field_store::{FieldStore, StoreReceiver};
 mod call_plan;
-pub(crate) use call_plan::{CALL_PLAN_FLAG_COUNT, CallPlan};
+pub use call_plan::{CALL_PLAN_FLAG_COUNT, CallPlan};
 mod instruction;
 mod register_list;
 mod name_bindings;
@@ -40,7 +43,7 @@ pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::{SourcePositions, SourcePositionsBuilder};
 mod function_caches;
-pub(crate) use function_caches::{FunctionCaches, LazyFlag};
+pub use function_caches::{FunctionCaches, LazyFlag};
 pub use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
@@ -73,12 +76,13 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
     name.starts_with(HOME_BINDING_PREFIX)
         || (local_name_requires_environment(name) && declared_in_environment())
 }
-pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor, may_repeat};
+#[allow(unused_imports)]
+pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, for_each_instruction_successor, may_repeat, reachable_from};
 pub use instruction::Instr;
 pub use instruction::WideInstruction;
-pub(crate) use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
+pub use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
 pub(crate) use numeric_ops::specialized_numeric_op;
-pub(crate) const RETURN_REGISTER: Register = 1 << 15;
+pub const RETURN_REGISTER: Register = 1 << 15;
 /// Property cache sites are 16-bit. A program with more sites than that gives every site
 /// past the range this last one, for which the VM never records a cache entry, so those
 /// sites always take the uncached lookup.
@@ -99,7 +103,7 @@ pub(crate) const NO_REALM_BINDING: u16 = u16::MAX;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
 pub use crate::units::MAX_ARRAY_LENGTH;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
-pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
+pub const OPTIONAL_REGISTER_BIAS: Register = 1;
 
 /// The field encoding of an optional register operand.
 pub(crate) const fn encode_optional_register(register: Option<Register>) -> Register {
@@ -112,7 +116,7 @@ pub(crate) const SINGLE_ARGUMENT_CALL_ARGUMENT_COUNT: u16 = 1;
 pub(crate) const NUMERIC_LOCAL_DECREMENT_FLAG: Register = RETURN_REGISTER;
 pub(crate) const NUMERIC_LOCAL_INC_STORE: u16 = 1;
 pub(crate) const NO_NUMERIC_LOCAL_STORE_MARKER: u16 = 0;
-pub(crate) const NUMERIC_LOCAL_TARGET: u16 = SET_THIS_REGISTER;
+pub const NUMERIC_LOCAL_TARGET: u16 = SET_THIS_REGISTER;
 pub(crate) const FUNCTION_NAME_PREFIX_NONE: u32 = 0;
 pub(crate) const FUNCTION_NAME_PREFIX_GETTER: u32 = 1;
 pub(crate) const FUNCTION_NAME_PREFIX_SETTER: u32 = 2;
@@ -155,7 +159,7 @@ impl Effect {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ImmediateLayout {
+pub enum ImmediateLayout {
     Scalar,
     CaptureDepthAndSlot,
     CallWindow,
@@ -178,7 +182,7 @@ pub(crate) enum ResultLayout {
 /// i32 zero, the default of i32 and f32 locals, so those locals need no
 /// prologue fill; both values are non-references, which collection skips.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum InitialRegister {
+pub enum InitialRegister {
     #[default]
     Undefined,
     I32Zero,
@@ -194,7 +198,7 @@ impl InitialRegister {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ControlFlowLayout {
+pub enum ControlFlowLayout {
     Fallthrough,
     Call,
     Jump,
@@ -206,7 +210,7 @@ pub(crate) enum ControlFlowLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FieldLayout {
+pub enum FieldLayout {
     ResultRegister,
     Unused,
     Register,
@@ -405,7 +409,7 @@ impl Op {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InstructionField {
+pub enum InstructionField {
     #[allow(dead_code)]
     A,
     B,
@@ -417,7 +421,7 @@ impl InstructionField {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ImmediateRole {
+pub enum ImmediateRole {
     LayoutEncoded,
     Unused,
     ConstantIndex,
@@ -477,7 +481,7 @@ macro_rules! property_definition_modes {
     ($($mode:ident),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum PropertyDefinitionMode { $($mode),+ }
+        pub enum PropertyDefinitionMode { $($mode),+ }
 
         impl PropertyDefinitionMode {
             pub(crate) const ALL: &'static [Self] = &[$(Self::$mode),+];
@@ -706,7 +710,7 @@ impl ImmediateLayout {
 
 
 mod op_catalog; mod op_roles; mod denotation; mod opcode_table;
-pub(crate) use op_catalog::{Class, Decoder, GenericStep, JsDenotation, OwnedStep, Traits, ValueStep, OPCODE_COUNT, opcode_name};
+pub use op_catalog::{Class, Decoder, GenericStep, JsDenotation, OwnedStep, Traits, ValueStep, OPCODE_COUNT, opcode_name};
 pub(crate) use op_roles::{CALL_INVOKE, ELEMENT_STORE, JUMP_IF_FALSE, OBJECT_FIELD_STORE, OpSet, REGISTER_MOVE, RETURN_OP, negated_jump, op_table, row_ops, strict_variant, the_op};
 
 macro_rules! opcodes {
@@ -718,7 +722,7 @@ macro_rules! opcodes {
 
         /// The catalog's opcode indices, generated here so tiers never spell an opcode name.
         #[allow(non_upper_case_globals, dead_code)]
-        pub(crate) mod index {
+        pub mod index {
             $(pub(crate) const $name: u16 = super::Op::$name as u16;)+
         }
 
@@ -841,7 +845,7 @@ macro_rules! opcodes {
 /// and never spell an opcode.
 macro_rules! representative {
     ($($name:ident => $class:ident),+ $(,)?) => {$(
-        pub(crate) const $name: Op = {
+        pub const $name: Op = {
             let mut index = 0;
             loop {
                 match Op::from_index(index) {
@@ -1358,7 +1362,7 @@ impl HotDecoding {
 /// The back edges of a sequence of fixed-width instructions, in source order: each jump whose
 /// target is its own or an earlier instruction, as (source pc, target pc). The one definition
 /// of a loop's back edge; handler edges are not jumps and are not listed here.
-pub(crate) fn back_edges_of(instructions: impl Iterator<Item = WideInstruction>) -> impl Iterator<Item = (usize, usize)> {
+pub fn back_edges_of(instructions: impl Iterator<Item = WideInstruction>) -> impl Iterator<Item = (usize, usize)> {
     instructions.enumerate().filter_map(|(pc, instruction)| {
         instruction.op().control_flow_layout().jumps()
             .then(|| instruction.jump_target() as usize)
@@ -1397,7 +1401,7 @@ const LOCAL_SLOT_SCAN: usize = 32;
 /// Whether a local slot's name is among `global_var_atoms` and `global_lexical_atoms`.
 /// What a root environment slot holds for the reads through it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RootSlotRule {
+pub enum RootSlotRule {
     /// The binding itself.
     Binding,
     /// A Script's global lexical binding of this name: the slot itself until the realm
@@ -1949,7 +1953,7 @@ const FORWARDED_WINDOW_COPY: usize = 1;
 /// What a constructor that only constructs its parent passes on
 /// (`Function::super_forwarding`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SuperForwarded {
+pub enum SuperForwarded {
     /// Every value it was passed.
     Passed,
     /// Its parameters, those not passed `undefined`.
@@ -1959,7 +1963,7 @@ pub(crate) enum SuperForwarded {
 /// How an activation keeps its `arguments` binding as the values it was passed
 /// (`Function::kept_arguments`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum KeptArguments {
+pub enum KeptArguments {
     /// Every read answers from the values or forwards them, as an unmaterialized binding.
     Forwards,
     /// Such reads, then a read that makes the object, which no read of the binding follows.
@@ -3728,13 +3732,13 @@ impl Superinstruction {
 /// Where a handler stores the value thrown to it: a frame local, or the register late
 /// frame-register promotion moved that local into (`compile::frame_registers`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ThrownValueSlot {
+pub enum ThrownValueSlot {
     Local(u16),
     Register(Register),
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Handler {
+pub struct Handler {
     pub start: u32,
     pub end: u32,
     pub target: u32,
@@ -3745,7 +3749,7 @@ pub(crate) struct Handler {
 }
 
 /// The argument count of a forwarding `apply` call: the receiver and `arguments`.
-pub(crate) const FORWARDED_APPLY_ARGUMENTS: u16 = 2;
+pub const FORWARDED_APPLY_ARGUMENTS: u16 = 2;
 
 /// The record index of a `ForwardedThisMethod` body's forwarding call: after the reads of
 /// the method and `apply` and the loads of `this` and `arguments`.
@@ -3755,7 +3759,7 @@ pub(crate) const FORWARDED_THIS_METHOD_CALL: u32 = 4;
 /// (`Function::forwarded_this_method`): the atom and cache site of each read, and the
 /// forwarding call's record index and result register.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ForwardedThisMethod {
+pub struct ForwardedThisMethod {
     pub(crate) method: (Atom, u16),
     pub(crate) apply: (Atom, u16),
     pub(crate) call_pc: u32,
@@ -3770,7 +3774,7 @@ pub(crate) enum FieldPart {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct FieldSite {
+pub struct FieldSite {
     pub base: FieldBase,
     pub first: (Atom, u16),
     pub second: Option<(Atom, u16)>,
@@ -3811,7 +3815,7 @@ impl FieldSite {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ProgramKind {
+pub enum ProgramKind {
     Script,
     Module,
     Eval,
@@ -4792,6 +4796,8 @@ impl ResidualProgram {
 mod binary;
 mod tier0;
 mod detached;
+#[allow(unused_imports)]
+pub use detached::DetachedProgram;
 #[cfg(feature = "native-execution")]
 mod native_metadata;
 #[cfg(feature = "native-execution")]
@@ -4811,13 +4817,15 @@ mod validate;
 mod operands;
 pub use operands::{ConstructArguments, FieldBase, FieldLookup, Operand, OperandKind, RegisterWindow, REGISTER_MASK, SET_THIS_REGISTER};
 mod this_reads;
+#[allow(unused_imports)]
+pub use this_reads::activation_reads_this;
 mod written_once;
 
 /// Whether function `id` of `code`, an arrow, or an arrow it makes through arrows alone,
 /// reads an implicit binding of the activation it would resolve in: `this`, `arguments`,
 /// `new.target`, a home object or any by-name binding (bounded at eight levels, past which
 /// it answers `true`). A non-arrow binds its own.
-pub(crate) fn arrow_chain_reads_implicit_bindings(code: &ResidualProgram, id: u32) -> bool {
+pub fn arrow_chain_reads_implicit_bindings(code: &ResidualProgram, id: u32) -> bool {
     fn reads(code: &ResidualProgram, id: u32, depth: u8) -> bool {
         let Some(depth) = depth.checked_sub(1) else { return true };
         let Some(function) = code.function_get(id as usize) else { return true };

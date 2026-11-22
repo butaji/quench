@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(crate) trait NumericStage: Stage {
+pub trait NumericStage: Stage {
     /// `relation` of two words in `domain`.
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
         left: Self::Word, right: Self::Word) -> Self::Cond;

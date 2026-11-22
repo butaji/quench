@@ -12,11 +12,12 @@ mod int_range;
 mod int_type;
 mod lattice;
 mod representation;
-pub(crate) use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
-pub(crate) use representation::Representation;
+pub use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
+pub use representation::Representation;
 mod slot_type;
-pub(crate) use slot_type::SlotType;
-pub(crate) use int_range::IntRange;
+pub use slot_type::SlotType;
+#[allow(unused_imports)]
+pub use int_range::{IntRange, WIDENING_ROUNDS};
 
 /// An element index is below its array's length, which every layout stores in 32 bits: it
 /// lies within `IntRange::EXACT`, so an index word and the Number it came from agree on it.
@@ -24,10 +25,10 @@ const _: () = assert!((crate::bytecode::MAX_ARRAY_LENGTH as u64) <= (1 << int_ra
 
 /// Whether residual execution can export ownership or enter another guest activation.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Reentry { Closed, Possible }
+pub enum Reentry { Closed, Possible }
 
 mod binding;
-pub(crate) use binding::{BindingTime, Division, Proof};
+pub use binding::{BindingTime, Division, Proof};
 
 impl Type {
     /// A function identity protected by a published weak binding and a
@@ -65,14 +66,14 @@ impl Type {
 /// A checked machine projection is an obligation for the backend, not an
 /// int32 semantic refinement. Publication must discharge its defining checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Projection {
+pub enum Projection {
     Exact,
     #[cfg(test)]
     CheckedDefinitions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Fact {
+pub struct Fact {
     pub(crate) ty: Type,
     pub(crate) representation: Representation,
     pub(crate) binding: BindingTime,
@@ -83,7 +84,7 @@ pub(crate) struct Fact {
 /// Immutable, consistent semantic type and representation evidence. Entry guards
 /// and checked-definition obligations must still be discharged before publication.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct VerifiedFact(Fact);
+pub struct VerifiedFact(Fact);
 
 impl std::ops::Deref for VerifiedFact {
     type Target = Fact;

@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 /// A store of an initializing body (`Function::initializer_stores`): the field `atom`, at
 /// cache site `site`, takes `value`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct InitializerStore {
+pub struct InitializerStore {
     pub(crate) atom: u32,
     pub(crate) site: u16,
     pub(crate) value: InitializerValue,
@@ -13,7 +13,7 @@ pub(crate) struct InitializerStore {
 
 /// What an initializer store gives its field.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum InitializerValue {
+pub enum InitializerValue {
     /// Parameter `parameter` as passed, or the Number `fallback` where it is falsy.
     Parameter { parameter: u16, fallback: Option<f64> },
     /// A primitive constant, whatever is passed: `this.id = 0`, `this.parent = void 0`.
@@ -29,15 +29,15 @@ pub(crate) enum InitializerValue {
 }
 
 /// The most properties a nested construction's constructor is read through.
-pub(crate) const NESTED_CHAIN: usize = 2;
+pub const NESTED_CHAIN: usize = 2;
 /// The most constant arguments a nested construction passes.
-pub(crate) const NESTED_ARGUMENTS: usize = 4;
+pub const NESTED_ARGUMENTS: usize = 4;
 
 /// `new <capture>.<chain>(<constants>)`: the constructor read from the captured binding
 /// `capture` (a `LoadCapture` immediate) through `chain[..depth]`, called with
 /// `arguments[..count]`; or `<capture>.<chain>` itself where it does not `constructs`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct NestedConstruct {
+pub struct NestedConstruct {
     pub(crate) capture: u32,
     pub(crate) chain: [u32; NESTED_CHAIN],
     pub(crate) depth: u8,
@@ -58,7 +58,7 @@ impl InitializerStore {
 
 /// The constants an initializer store writes: those whose value needs no heap cell.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum InitializerConstant {
+pub enum InitializerConstant {
     Number(f64),
     Boolean(bool),
     Null,

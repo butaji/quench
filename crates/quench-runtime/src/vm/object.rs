@@ -2,7 +2,7 @@ use super::property_key::PropertyKey;
 use super::dispatch_frame::this_is_fixed;
 use super::*;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
-pub(super) use super::field_cache::FieldCacheProbe;
+pub use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
 mod mru_chain;
 mod shape_edits;
@@ -12,7 +12,7 @@ use mru_chain::record_mru_entry;
 /// (`general_store`), and in byte 3 how many places of a lane body's leaves named the site
 /// (`Vm::note_field_leave`), written on that path only and kept across refills.
 pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
-pub(super) const FIELD_BYTE: u32 = 0xff;
+pub const FIELD_BYTE: u32 = 0xff;
 
 #[cfg(test)]
 mod tests {
@@ -134,7 +134,7 @@ struct FieldCacheHit {
 
 /// Which of a polymorphic site's entries answered a read (`Vm::hinted_polymorphic_field_hit`).
 #[derive(Clone, Copy)]
-pub(super) enum PolymorphicHit {
+pub enum PolymorphicHit {
     /// The own entry the reading record keeps as its hint.
     Hint,
     /// Another own entry, of the receiver's exact shape.

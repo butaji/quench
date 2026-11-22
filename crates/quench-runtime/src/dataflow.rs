@@ -6,7 +6,7 @@
 use cranelift_codegen::bitset::CompoundBitSet;
 
 /// A dataflow problem over `blocks()` basic blocks.
-pub(crate) trait Dataflow {
+pub trait Dataflow {
     /// The state on entry to a block, or the output of one.
     type State: Clone + PartialEq;
     /// The number of blocks.
@@ -45,7 +45,7 @@ pub(crate) trait Dataflow {
 /// Solves `analysis` to its fixpoint and returns each block's input state, `None` where no
 /// seed or output reaches the block. Blocks run lowest index first; the queue is a bitset, so
 /// a block waits in it at most once.
-pub(crate) fn solve<D: Dataflow>(analysis: &mut D) -> Vec<Option<D::State>> {
+pub fn solve<D: Dataflow>(analysis: &mut D) -> Vec<Option<D::State>> {
     let count = analysis.blocks();
     let mut states: Vec<Option<D::State>> = (0..count).map(|block| analysis.entry_state(block)).collect();
     let mut work: CompoundBitSet = CompoundBitSet::with_capacity(count);

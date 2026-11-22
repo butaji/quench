@@ -27,10 +27,30 @@ pub(crate) mod engine_prelude {
     pub use crate::lifted::*;
     pub use quench_runtime::vm::*;
     // The names the VM core's modules import (`quench-runtime/src/vm.rs`), which its submodules saw.
-    pub use quench_runtime::vm::compiled::InstanceRecord;
+    #[cfg(feature = "native-execution")]
+    pub use quench_runtime::vm::native_operands::NativeJsOperands;
+    #[cfg(unix)]
+    pub use quench_runtime::vm::engine_types::NativeFaultHandler;
+    pub use quench_runtime::vm::jit_backend::{IsaBaseline, NativeTarget};
+    pub use quench_runtime::vm::engine_types::{AheadImages, ExecutionMode};
+    pub use quench_runtime::vm::engine_types::InstanceRecord;
+    pub use quench_runtime::vm::date::local_timezone_changed;
     pub use quench_runtime::vm::wasm_exception::{js_tag_cell, js_tag_type};
     pub use quench_runtime::Value;
-    pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
+    pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING, NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
+    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
+    #[cfg(feature = "profile-memory")]
+    pub use quench_runtime::heap::CellKind;
+    pub use quench_runtime::heap::{ CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle, };
+    pub use quench_runtime::host::{CapabilityId, Host, HostContext};
+    pub use quench_runtime::profile::{CallSource, Profile, TerminalCall};
+    pub use quench_runtime::value::number_to_u32;
+    pub use quench_runtime::vm::activation::{CallCompletion, CallContext, ConstructionTarget};
+    pub use quench_runtime::vm::atomics::Test262AgentState;
+    pub use rustc_hash::{FxHashMap, FxHashSet};
+    pub use std::cell::OnceCell;
+    pub use std::hash::{Hash, Hasher};
+    pub use std::rc::Rc;
     pub use crate::dispatch_fast;
     pub use crate::compiled;
     pub use crate::js_compiled;

@@ -15,7 +15,7 @@ use crate::heap::Native;
 
 /// The object whose own property a row's function is.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Holder {
+pub enum Holder {
     /// `Array.prototype`.
     ArrayPrototype,
     /// The `Array` constructor.
@@ -233,13 +233,13 @@ pub(super) fn shared_array_native(native: Native) -> Option<Native> {
 }
 
 /// The rows a compiled lane runs inline by name (`LANE_METHOD`).
-pub(super) fn lane_method(name: &str) -> Option<NativeRow> {
+pub fn lane_method(name: &str) -> Option<NativeRow> {
     NATIVE_ROWS.iter().copied().find(|row| row.flags & LANE_METHOD != 0 && row.name == name)
 }
 
 /// The first row named `name` of a collection prototype that installs a native a compiled loop calls in
 /// place (`crate::vm::engine_calls::in_place_in_loop`).
-pub(super) fn in_place_method(name: &str) -> Option<NativeRow> {
+pub fn in_place_method(name: &str) -> Option<NativeRow> {
     NATIVE_ROWS.iter().copied().find(|row| row.name == name && crate::vm::engine_calls::in_place_in_loop(row.native)
         && matches!(row.holder, Holder::MapPrototype | Holder::SetPrototype | Holder::WeakMapPrototype | Holder::WeakSetPrototype))
 }

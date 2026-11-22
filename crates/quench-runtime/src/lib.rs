@@ -1,7 +1,7 @@
 #![deny(warnings)]
 // The v2-merged sync left items both sides added in different places, one copy unused, and AOT items
 // named in wider interfaces than their types: allowed until the merge's dead copies are removed.
-#![allow(dead_code, private_interfaces, private_bounds)]
+#![allow(dead_code, private_interfaces, private_bounds, unused_features)]
 #![feature(rust_preserve_none_cc)]
 // Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
 // whatever the handler body keeps on its stack (`vm::dispatch_fast`).
@@ -202,7 +202,7 @@ pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, ST
 /// Ordinary builds and producers (with the JIT) support dynamic compilation and execution.
 /// Execution-only native support (a static AOT image's, built without the JIT) requires
 /// linked code and archived records.
-pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(feature = "jit");
+pub const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(feature = "jit");
 
 /// Whether this build requires linked native code and archived program facts.
 pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;

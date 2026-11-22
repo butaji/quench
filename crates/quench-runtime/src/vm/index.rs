@@ -8,7 +8,7 @@ const ARRAY_INDEX_GET_DENSE: usize = 0;
 const ARRAY_INDEX_GET_SPARSE: usize = 1;
 
 #[inline(always)]
-pub(super) fn mutable_array_elements(
+pub fn mutable_array_elements(
     elements: &mut crate::heap::ArrayElements,
 ) -> &mut crate::heap::UniqueElements {
     elements.make_mut()

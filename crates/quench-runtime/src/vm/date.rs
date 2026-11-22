@@ -498,7 +498,7 @@ fn date_utc_constructor_value(
 /// Whether `native` is a Date getter (`date_getter`): it reads its receiver's time value and
 /// the host's time zone rules, and runs no guest code.
 #[inline]
-pub(super) const fn date_reads(native: Native) -> bool {
+pub const fn date_reads(native: Native) -> bool {
     matches!(
         native,
         Native::DateGetTime

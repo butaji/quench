@@ -17,7 +17,7 @@ const CELL: u32 = 0;
 /// The environment of a running instance, as the interpreter's stage for its binding rule: the
 /// fields the heap holds in `env`. The lane's binding loads run the same rule on it
 /// (`dispatch_fast/wasm_instance.rs`).
-pub(super) struct InstanceBindings<'a> {
+pub struct InstanceBindings<'a> {
     pub(super) vm: &'a Vm,
     pub(super) env: Value,
 }

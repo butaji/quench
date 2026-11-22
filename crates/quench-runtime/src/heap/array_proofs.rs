@@ -44,7 +44,7 @@ pub(crate) const ARRAY_PROOF_SLOTS: usize = 8;
 /// a run starts by writing; a slot's base and values are read only below a nonzero bound,
 /// which `ArrayStorageProofs::prove` writes with them.
 #[repr(C)]
-pub(crate) struct ArrayStorageProofs {
+pub struct ArrayStorageProofs {
     /// Elements a read may reach: the array's length, zero for an unproved slot.
     readable: [usize; ARRAY_PROOF_SLOTS],
     /// Elements a store may replace in place: the length, or zero where the array admits
@@ -278,13 +278,13 @@ static ARMED_PROOFS: std::cell::Cell<*mut ArrayStorageProofs> = std::cell::Cell:
 /// through `JsStepDispatch::armed_array_proofs`: the word is null while no lane run's proofs
 /// are armed. The address is stable for the thread's life, so the row sees each arm and
 /// retirement as it happens.
-pub(crate) fn armed_proofs_address() -> usize {
+pub fn armed_proofs_address() -> usize {
     ARMED_PROOFS.as_ptr().addr()
 }
 
 /// The word that holds no index-free chain link: the mirror's value while no proof covers the
 /// chain of `Array.prototype`.
-pub(crate) const NO_INDEX_FREE_CHAIN_LINK: u64 = 0;
+pub const NO_INDEX_FREE_CHAIN_LINK: u64 = 0;
 
 /// The encoded link of `Array.prototype` while the held index-free chain proof covers its chain,
 /// else `NO_INDEX_FREE_CHAIN_LINK`: the word a push row matches a dense array's prototype link
@@ -297,13 +297,13 @@ static INDEX_FREE_CHAIN_LINK: std::cell::Cell<u64> = std::cell::Cell::new(NO_IND
 /// The address of the thread's index-free chain link word (`INDEX_FREE_CHAIN_LINK`), which a
 /// stencil row reads through `JsStepDispatch::array_chain_index_free_address`. The address is
 /// stable for the thread's life, so the row sees each set and clear as it happens.
-pub(crate) fn index_free_chain_link_address() -> usize {
+pub fn index_free_chain_link_address() -> usize {
     INDEX_FREE_CHAIN_LINK.as_ptr().addr()
 }
 
 /// Sets the index-free chain link word to `link`, an encoded prototype link, or to
 /// `NO_INDEX_FREE_CHAIN_LINK`.
-pub(crate) fn set_index_free_chain_link(link: u64) {
+pub fn set_index_free_chain_link(link: u64) {
     INDEX_FREE_CHAIN_LINK.set(link);
 }
 
@@ -311,7 +311,7 @@ pub(crate) fn set_index_free_chain_link(link: u64) {
 /// happen, or the lane run that made them enters a nested run or ends. Where no proof is
 /// held this only reads the thread's pointer.
 #[inline(always)]
-pub(crate) fn retire_array_storage_proofs() {
+pub fn retire_array_storage_proofs() {
     let proofs = ARMED_PROOFS.get();
     if !proofs.is_null() {
         retire_armed(proofs);
@@ -330,7 +330,7 @@ fn retire_armed(proofs: *mut ArrayStorageProofs) {
 /// A lane run's span for its proofs: entering retires the enclosing run's, which does not
 /// see what changes while this one runs, and leaving (also by unwinding) retires the run's
 /// own, which end with it. Declared after the run's context, so it leaves first.
-pub(crate) struct LaneProofScope(());
+pub struct LaneProofScope(());
 
 impl LaneProofScope {
     pub(crate) fn enter() -> Self {

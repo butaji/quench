@@ -8,7 +8,7 @@
 use super::*;
 
 /// A program copy whose parts no other value counts: `Send`, though `ResidualProgram` is not.
-pub(crate) struct DetachedProgram(ResidualProgram);
+pub struct DetachedProgram(ResidualProgram);
 
 // SAFETY: `ResidualProgram::detached` builds it of owned parts only: its `Rc` fields are
 // `None`, its constants, atoms and functions are deep copies whose counted parts (string

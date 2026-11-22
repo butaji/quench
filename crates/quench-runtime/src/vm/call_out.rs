@@ -39,7 +39,7 @@ pub(super) enum Loaded {
 /// function whose code holds the instruction (the strictness a refusal throws by), and the PC
 /// after its instruction, which the binding rules of a name read for their error site.
 #[derive(Clone, Copy)]
-pub(super) struct CallSite {
+pub struct CallSite {
     pub(super) owner: VarOwner,
     pub(super) function: u32,
     pub(super) resume: usize,

@@ -8,7 +8,7 @@ use crate::{Value, ValueType};
 /// One authority for a semantic type. Refined cases determine their language
 /// bits; storing those bits alongside the payload would duplicate the fact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TypeKind {
+pub enum TypeKind {
     Language(u16),
     Int(IntRange),
     DirectObjectFamily,
@@ -20,7 +20,7 @@ pub(crate) enum TypeKind {
 
 /// Every language type: the set `Type::ANY` holds, and the declared set of a type with no
 /// closed set of language types.
-pub(crate) const ANY_LANGUAGES: u16 = u16::MAX;
+pub const ANY_LANGUAGES: u16 = u16::MAX;
 
 /// A set of language types as a bit map: bit `kind as u16` names `kind`. The one owner of the
 /// bit map that `Type::language`, `Type::languages` and declared TypeScript types share.
@@ -62,14 +62,14 @@ impl core::ops::BitOr for Languages {
 }
 
 /// The language bit of `kind` in a language set: `Languages::of(kind).bits()`.
-pub(crate) const fn language_bit(kind: ValueType) -> u16 {
+pub const fn language_bit(kind: ValueType) -> u16 {
     Languages::of(kind).bits()
 }
 
 /// A set of language types, with an optional semantic refinement.
 /// Reserved bits in ANY also cover internal markers: a TDZ/hole is not Number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Type(pub(super) TypeKind);
+pub struct Type(pub(super) TypeKind);
 
 impl Type {
     pub(crate) const NEVER: Self = Self(TypeKind::Language(0));

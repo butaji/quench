@@ -4,7 +4,7 @@ use crate::{Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum SlotType {
+pub enum SlotType {
     None,
     Int32,
     Number,

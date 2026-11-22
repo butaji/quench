@@ -13,7 +13,7 @@ use crate::bytecode::{ConstructArguments, Op, WideInstruction};
 
 /// What the argument registers of a call-out call hold.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Passing {
+pub enum Passing {
     /// The values to pass, in the registers of the window.
     Values,
     /// One register holding an array whose elements are the arguments.

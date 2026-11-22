@@ -12,7 +12,7 @@ use crate::bytecode::{Register, RegisterList, RegisterWindow};
 /// What an allocation row makes. Every operand is static: the registers it reads are named by
 /// a window, never passed as words, so each tier reads them from its own register homes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Allocation {
+pub enum Allocation {
     /// An empty ordinary object (`Vm::object`).
     Empty,
     /// An array of `length` holes (`Vm::hole_array`); its elements, defined after it, are
@@ -61,7 +61,7 @@ fn literal_elements(make: WideInstruction, following: &[WideInstruction]) -> Opt
 
 /// The empty allocations both JIT tiers make inline from a space's cursor and captured template.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum InlineEmpty {
+pub enum InlineEmpty {
     /// `Allocation::Empty`: an empty ordinary object.
     Object,
     /// `Allocation::Array { length: 0 }`: a zero-length array, whose elements are the static empty header.

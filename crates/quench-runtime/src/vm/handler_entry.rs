@@ -9,7 +9,7 @@ use crate::bytecode::{Handler, ThrownValueSlot};
 /// Where the state a handler's entry settles lives: a frame of the VM's stack, or the window of
 /// a lane activation (a suspended function's, an ordinary one's) over the lane stack's scope chain.
 #[derive(Clone, Copy)]
-pub(in crate::vm) enum HandlerHome {
+pub enum HandlerHome {
     Frame(usize),
     Window(WindowHome),
 }
@@ -19,7 +19,7 @@ pub(in crate::vm) enum HandlerHome {
 /// register, after whose function's registers its environment entries and locals follow
 /// (`activate_environment_in_lane`).
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct WindowHome {
+pub struct WindowHome {
     pub(in crate::vm) depth: usize,
     pub(in crate::vm) program: ProgramId,
     pub(in crate::vm) function: u32,

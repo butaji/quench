@@ -11,7 +11,8 @@
 #[cfg_attr(stencil_build, path = "machine/rows.rs")]
 mod rows;
 
-pub(crate) use rows::{Binary, Extend, Lane, MachineOperator, Relation, Unary};
+#[allow(unused_imports)]
+pub(crate) use rows::{Binary, Extend, Lane, MachineOperator, Order, Relation, Unary};
 
 use super::wasm::Width;
 #[cfg(not(stencil_build))]
