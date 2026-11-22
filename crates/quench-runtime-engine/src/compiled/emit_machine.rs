@@ -25,7 +25,7 @@ use cranelift_frontend::FunctionBuilder;
 /// a blanket impl over `Builds` is not allowed for the core's machine traits.
 macro_rules! for_each_builder {
     ($tr:path { $($body:tt)* }) => {
-        impl<'b> $tr for cranelift_frontend::FunctionBuilder<'b> { $($body)* }
+        impl<'b> $tr for crate::compiled::emit_machine::Raw<'b> { $($body)* }
         impl<'b> $tr for crate::compiled::RegionCore<'b> { $($body)* }
         impl<'b> $tr for crate::compiled::Body<'b> { $($body)* }
         impl<'a, 'b> $tr for crate::compiled::object_slots::Emit<'a, 'b> { $($body)* }
@@ -42,11 +42,34 @@ pub(crate) trait Builds<'b> {
     fn function_builder(&mut self) -> &mut FunctionBuilder<'b>;
 }
 
-/// A bare builder is a backend: the emitters of a function that no tier owns (a stencil, a
-/// regexp search, a dispatch shell) compose the primitives on the function builder itself.
-impl<'b> Builds<'b> for FunctionBuilder<'b> {
+/// A bare builder as a backend: the emitters of a function that no tier owns (a stencil, a
+/// regexp search, a dispatch shell) compose the primitives on the function builder itself, seen
+/// through `raw` (the core owns the machine traits and Cranelift the builder, so the engine
+/// implements them for its own view of it).
+#[repr(transparent)]
+pub(crate) struct Raw<'b>(pub(crate) FunctionBuilder<'b>);
+
+/// `builder` as a backend (`Raw`).
+#[inline(always)]
+pub(crate) fn raw<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> &'a mut Raw<'b> {
+    // SAFETY: `Raw` is a transparent wrapper of the builder.
+    unsafe { &mut *(builder as *mut FunctionBuilder<'b>).cast::<Raw<'b>>() }
+}
+
+impl<'b> std::ops::Deref for Raw<'b> {
+    type Target = FunctionBuilder<'b>;
+    #[inline(always)]
+    fn deref(&self) -> &FunctionBuilder<'b> { &self.0 }
+}
+
+impl<'b> std::ops::DerefMut for Raw<'b> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut FunctionBuilder<'b> { &mut self.0 }
+}
+
+impl<'b> Builds<'b> for Raw<'b> {
     fn function_builder(&mut self) -> &mut FunctionBuilder<'b> {
-        self
+        &mut self.0
     }
 }
 

@@ -9,7 +9,7 @@ pub(crate) use declared_types::{
 };
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
-pub(crate) use internal_bindings::*;
+pub use internal_bindings::*;
 pub const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 pub const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
@@ -39,7 +39,7 @@ mod register_list;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops; mod op_classes; mod op_scan; mod typeof_names; mod unary_operators; mod rest_alias;
-pub(crate) use unary_operators::*;
+pub use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::{SourcePositions, SourcePositionsBuilder};
 mod function_caches;

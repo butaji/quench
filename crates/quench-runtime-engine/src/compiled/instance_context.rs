@@ -10,7 +10,7 @@
 use crate::ext_traits::*;
 use super::{
     CallContext, CompiledProgram, DiagnosticReferenceCallout, MemoryArguments,
-    ProgramId, ReferenceCallSiteDiagnostics, Vm, diagnostic_reference_callout, displacement_base,
+    ProgramId, Vm, diagnostic_reference_callout, displacement_base,
 };
 use quench_runtime::Value;
 use quench_runtime::heap::{Cell, TableWords};
@@ -304,7 +304,6 @@ pub use quench_runtime::vm::engine_types::NativeRoots;
 // SAFETY: the record owns its buffer outright and no other holder reads or writes it, so moving the
 // record to another thread moves the buffer with it.
 
-pub(crate) use quench_runtime::vm::engine_types::NATIVE_ROOT_CAPACITY;
 
 #[quench_macros::ext(NativeRootsOps1)]
 impl NativeRoots {

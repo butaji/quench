@@ -36,8 +36,7 @@ pub(crate) mod file;
 
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::compile::aot_facts::AotFacts;
-use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
-pub(crate) use symbols::{HeapValueRecipe, ShapeRecipe, Symbol};
+pub(crate) use symbols::{HeapValueRecipe, Symbol};
 
 pub(crate) use quench_runtime::vm::engine_types::AotImage;
 

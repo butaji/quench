@@ -278,7 +278,6 @@ pub(crate) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, 
     emit(builder).raw_binary(Binary::And, in_span, member)
 }
 
-pub(crate) use quench_runtime::vm::engine_types::INHERITED_PROTOTYPES;
 
 pub(crate) use quench_runtime::vm::engine_types::InheritedConstant;
 

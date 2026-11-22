@@ -1,7 +1,7 @@
 use std::fmt;
 
 // The encoding core (tags, handle bits, narrow layout) is one file shared with the stencils.
-pub(crate) use crate::staged::value_encoding::*;
+pub use crate::staged::value_encoding::*;
 
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "value/encoding_bench.rs"]

@@ -139,7 +139,7 @@ fn emit(plan: &NativePlan, isa: &dyn TargetIsa) -> ir::Function {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     let parameters: [ir::Value; PARAMETERS] = builder.block_params(entry).try_into().unwrap_or_else(|_| unreachable!("`PARAMETERS` parameters"));
-    let mut emit = Emit::<FunctionBuilder<'_>>::start(plan, builder, MemFlagsData::trusted(), entry, parameters);
+    let mut emit = Emit::<crate::compiled::emit_machine::Raw<'_>>::start(plan, crate::compiled::emit_machine::Raw(builder), MemFlagsData::trusted(), entry, parameters);
     for (pc, inst) in plan.insts.iter().enumerate() {
         emit.b.enter_open(emit.instructions[pc]);
         emit.instruction(pc as u32, inst);

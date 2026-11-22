@@ -6,7 +6,6 @@
 use crate::ext_traits::*;
 use super::{emit_js_payload_word, emit_lane_helper_call, JsStepDispatch};
 use crate::compiled::regions;
-use quench_runtime::Value;
 use cranelift_codegen::ir::{self, types};
 use super::object_slots::emit;
 use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};

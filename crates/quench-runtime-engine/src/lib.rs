@@ -313,5 +313,4 @@ pub(crate) mod ext_traits {
     pub use crate::native_program::NativeJsProgramOps1 as _;
     pub use crate::native_program::NativeProgramVm as _;
     pub use crate::dispatch_fast::operand_feedback::OperandFeedbackVm as _;
-    pub use crate::dispatch_fast::InstructionFieldOps as _;
 }

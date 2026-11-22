@@ -25,9 +25,9 @@ use crate::WasmValue;
 /// whether a narrow load sign-extends them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Access {
-    pub(crate) ty: WasmType,
-    pub(crate) bytes: usize,
-    pub(crate) signed: bool,
+    pub ty: WasmType,
+    pub bytes: usize,
+    pub signed: bool,
 }
 
 impl Access {

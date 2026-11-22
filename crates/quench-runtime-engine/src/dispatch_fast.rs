@@ -146,7 +146,6 @@ const fn leaf_binds_this(form: LeafForm) -> bool {
 
 pub(crate) use quench_runtime::vm::engine_types::LaneInstruction;
 
-use quench_runtime::vm::engine_types::INLINE_SITE_TARGETS;
 use quench_runtime::vm::engine_types::NOTED_SITE_CALLEES;
 
 /// The `LaneStack::noted` entry of a link address and callee function.
@@ -312,11 +311,8 @@ impl IndirectSlot {
 
 pub(crate) use quench_runtime::vm::engine_types::LaneView;
 
-pub(crate) use quench_runtime::vm::engine_types::OsrDiagnostics;
 
-pub(crate) use quench_runtime::vm::engine_types::OsrSiteStatus;
 
-pub(crate) use quench_runtime::vm::engine_types::OsrSiteDiagnostics;
 
 #[quench_macros::ext(LaneViewOps1)]
 impl LaneView {
@@ -395,7 +391,6 @@ pub(crate) use quench_runtime::vm::engine_types::WINDOW_SLOTS;
 pub(crate) const WINDOW_CAPTURED: u16 = 2;
 pub(crate) use quench_runtime::vm::engine_types::WINDOW_STORAGE;
 pub(crate) use quench_runtime::vm::engine_types::WINDOW_LOCALS;
-pub(crate) use quench_runtime::vm::engine_types::INLINED_WINDOW_ROOM;
 
 use quench_runtime::vm::engine_types::TargetBody;
 
@@ -413,7 +408,7 @@ use window_records::{window_local_handler, window_record, WindowRecord};
 pub(crate) mod lane_stack_growth;
 pub(crate) mod lane_generations;
 pub(crate) mod native_frames;
-use quench_runtime::vm::lane_values::{self, LaneValues, HEAP_WINDOW};
+use quench_runtime::vm::lane_values::{self, HEAP_WINDOW};
 use quench_runtime::vm::lane_activations::LaneActivations;
 pub(crate) mod this_binding;
 use this_binding::ThisBinding;
@@ -464,11 +459,8 @@ use operand_feedback::{has_operand_feedback, note_operands, seed_declared_feedba
 pub(crate) mod body_tier_in_lane;
 #[path = "loop_tier.rs"]
 pub(crate) mod loop_tier;
-use loop_tier::{loop_compile_in_lane, LoopTier};
-use body_tier_in_lane::LaneBodyHistory;
-pub(crate) use lane_body_stats::{miss_report as lane_miss_report, unlowered_report as lane_unlowered_report};
+use loop_tier::loop_compile_in_lane;
 use lane_leaves::LaneLeaves;
-pub(crate) use lane_body_stats::LaneBodyStats;
 
 /// Conservative lane-stack admission room for `count` registers: whole blocks, at
 /// least one. Only the logical range is initialized and made live.
@@ -481,10 +473,7 @@ use quench_runtime::vm::engine_types::FIXED_ARGUMENT_COPIES;
 
 pub use quench_runtime::vm::engine_types::copy_arguments;
 
-use quench_runtime::vm::engine_types::WINDOW_FILL_PAIR;
-use quench_runtime::vm::engine_types::WINDOW_FILL_HALF;
 use quench_runtime::vm::engine_types::WINDOW_FILL_BLOCK;
-use quench_runtime::vm::engine_types::WINDOW_INLINE_FILL_LIMIT;
 
 pub use quench_runtime::vm::engine_types::fill_window;
 
@@ -578,7 +567,6 @@ impl LaneRecoverySpace {
 use quench_runtime::vm::engine_types::LaneBody;
 
 
-pub(crate) use quench_runtime::vm::engine_types::LaneTier;
 
 
 
@@ -897,11 +885,6 @@ use quench_runtime::vm::engine_types::Slot;
 #[quench_macros::ext(SlotOps1)]
 impl<T: Copy> Slot<T> {
     #[inline(always)]
-    const fn of(value: T) -> Self {
-        Self(std::mem::MaybeUninit::new(value))
-    }
-
-    #[inline(always)]
     const fn unset() -> Self {
         Self(std::mem::MaybeUninit::uninit())
     }
@@ -916,7 +899,7 @@ impl<T: Copy> Slot<T> {
 use quench_runtime::vm::engine_types::MemoryView;
 
 /// The widest access a lane record makes directly.
-const WIDEST_DIRECT_ACCESS: usize = size_of::<u64>();
+use quench_runtime::vm::engine_types::WIDEST_DIRECT_ACCESS;
 
 #[quench_macros::ext(MemoryViewOps1)]
 impl MemoryView {
@@ -931,13 +914,6 @@ impl MemoryView {
         Self {
             bytes: cx.cast(),
             reach: Slot::unset(),
-        }
-    }
-
-    const fn new(bytes: *mut u8, len: usize) -> Self {
-        Self {
-            bytes,
-            reach: Slot::of(len as isize - WIDEST_DIRECT_ACCESS as isize),
         }
     }
 
@@ -1021,7 +997,6 @@ impl Carried {
     }
 }
 
-use quench_runtime::vm::engine_types::LANE_STACK_VALUES;
 use quench_runtime::vm::engine_types::LANE_STACK_ACTIVATIONS;
 
 pub(crate) use quench_runtime::vm::engine_types::Activation;
@@ -1041,8 +1016,6 @@ const _: () = {
     assert!(frame::WINDOW + std::mem::size_of::<usize>() == frame::PREFIX_BYTES);
     assert!(std::mem::size_of::<Activation>().is_power_of_two());
 };
-use quench_runtime::vm::engine_types::KIND_SCRIPT;
-use quench_runtime::vm::engine_types::KIND_WASM;
 
 use quench_runtime::vm::engine_types::ActivationKind;
 
@@ -1716,7 +1689,6 @@ impl LaneStack {
     }
 }
 
-use quench_runtime::vm::engine_types::NO_SCRIPT_GENERATION;
 
 
 
@@ -2594,25 +2566,16 @@ macro_rules! return_handler {
 const ACC_NONE: u8 = 0;
 /// `LaneView::accumulator_registers` of a record that reads no accumulator.
 const NO_ACCUMULATOR: u16 = u16::MAX;
-const ACC_A: u8 = 1;
-const ACC_B: u8 = 2;
-const ACC_C: u8 = 3;
+use quench_runtime::vm::engine_types::ACC_A;
+use quench_runtime::vm::engine_types::ACC_B;
+use quench_runtime::vm::engine_types::ACC_C;
 /// The first register of the immediate's register pair: a select's
 /// condition.
 const ACC_PAIR: u8 = 4;
 /// Accumulator positions a record may read: none, A, B, C and the pair.
 const ACC_POSITIONS: usize = 5;
 
-#[quench_macros::ext(InstructionFieldOps)]
-impl InstructionField {
-    const fn accumulator(self) -> u8 {
-        match self {
-            Self::A => ACC_A,
-            Self::B => ACC_B,
-            Self::C => ACC_C,
-        }
-    }
-}
+
 
 /// The value of register field `FIELD` of a record whose accumulator field
 /// is `ACC`.
@@ -10920,15 +10883,14 @@ pub(crate) mod lane_stack_trace;
 pub(crate) mod lane_frames; use lane_frames::{ActivationView, SidePayload};
 pub(crate) mod frame_walk;
 pub(crate) mod with_scopes;
-pub mod scoped_names; pub(crate) mod window_owner; pub(crate) use window_owner::WindowScope;
+pub mod scoped_names; pub(crate) mod window_owner; 
 pub(crate) mod lane_eval;
 use lane_roots::{LaneRoot, LaneStart};
-pub(crate) use lane_roots::{JobEnd, ParkedLane};
 pub(crate) mod async_requests;
-pub(crate) mod generator_windows; use generator_windows::{generator_returned_in_lane, resume_generator_step_in_lane}; pub(crate) use generator_windows::WindowPlan;
+pub(crate) mod generator_windows; use generator_windows::{generator_returned_in_lane, resume_generator_step_in_lane}; 
 pub(crate) mod raised_windows;
 pub(crate) mod array_steps;
-pub(crate) mod name_probe; use name_probe::probe_handler; pub(crate) use name_probe::settle_name_record;
+pub(crate) mod name_probe; use name_probe::probe_handler; 
 pub(crate) mod vm_steps;
 pub(crate) mod family_helpers;
 pub(crate) mod value_steps;
@@ -17748,7 +17710,6 @@ fn specialize_constant_returns(records: &mut [LaneInstruction]) {
 
 pub(crate) mod loop_kernel;
 pub(crate) mod int_kinds;
-pub(crate) use int_kinds::note_retired as note_int_speculation_retired;
 
 /// The proved row of the element record running `handler` (`specialize_proved_arrays`): the row of
 /// the same opcode with `FLAG_SET`, which reads or replaces its base's element through the proof of
@@ -18976,7 +18937,6 @@ impl PreparedShape {
 
 use quench_runtime::vm::engine_types::CallbackHeader;
 
-use quench_runtime::vm::engine_types::CALLBACK_RESULT;
 
 use quench_runtime::vm::engine_types::CallbackTrampoline;
 

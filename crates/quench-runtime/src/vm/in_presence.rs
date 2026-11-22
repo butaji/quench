@@ -70,7 +70,7 @@ impl Vm {
     /// What `key in object` answered for the key `atom` where exactly one receiver layout answered it and its answer
     /// still holds (no prototype has changed its layout since): the fact a code may hold under the dependency on the
     /// prototypes' values and layouts.
-    pub(in crate::vm) fn presence_fact(&self, atom: Atom) -> Option<InPresence> {
+    pub fn presence_fact(&self, atom: Atom) -> Option<InPresence> {
         let mut answers = self.in_presences.iter().flatten().filter(|entry| entry.atom == atom);
         let only = answers.next().copied().filter(|entry| entry.cell.holds())?;
         answers.next().is_none().then_some(only)

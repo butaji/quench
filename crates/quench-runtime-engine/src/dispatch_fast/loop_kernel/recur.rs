@@ -129,7 +129,7 @@ enum Pass {
 
 /// A kernel's recurrence pass, and the nodes that read the recurrence without feeding it
 /// (`side`, in body order), which run as columns after the pass.
-pub(crate) struct Recurrence {
+pub struct Recurrence {
     pub pass: Pass,
     pub side: Vec<u16>,
 }
@@ -1133,6 +1133,8 @@ enum WordOp {
 }
 
 use quench_runtime::vm::engine_types::WordSource as Source;
+use quench_runtime::vm::engine_types::WordSource;
+use super::machine::Machine;
 
 /// The int32 words of an operand over a chunk: a column, or one broadcast word.
 #[derive(Clone, Copy)]

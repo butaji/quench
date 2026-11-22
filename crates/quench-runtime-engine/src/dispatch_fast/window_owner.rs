@@ -7,11 +7,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::with_scopes::WithChain;
-use quench_runtime::vm::activation::FrameRecord;
-use quench_runtime::vm::caller_view::CallerView;
 use quench_runtime::vm::var_owner::VarOwner;
-use quench_runtime::bytecode::Atom;
 
 pub(crate) use quench_runtime::vm::engine_types::WindowScope;
 

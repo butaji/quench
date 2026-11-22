@@ -14,7 +14,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use crate::compiled::{CONTEXT_CALL_REFERENCE, CONTEXT_INSTANCE, CONTEXT_MEMORY_LENGTH, CONTEXT_TABLE_WORDS};
-use quench_runtime::vm::{Plan, Slot};
+use crate::compiled::{Plan, Slot};
 use super::{IndirectSite, Planned, World, leak, row, slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::heap::{TableTarget, TableWords};

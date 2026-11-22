@@ -22,7 +22,7 @@ pub type FunctionId = u16;
 /// `start`, in the order the arguments are passed, not necessarily consecutive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RegisterList {
-    pub(crate) start: u32,
+    pub start: u32,
     pub(crate) count: u16,
 }
 

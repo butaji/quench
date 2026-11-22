@@ -5,7 +5,7 @@
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::tier_policy::PERCENT;
-use crate::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit, PendingLaneMethod, PublishedLaneMethod};
+use crate::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit};
 
 pub(crate) use quench_runtime::vm::engine_types::LoopBody;
 
@@ -149,7 +149,7 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
         if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }
     }));
     let work = match pending {
-        Some(pending) => LaneBodyWork::Poll(pending, own),
+        Some(pending) => LaneBodyWork::Poll(crate::compiled::pending_lane(pending), own),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
     };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),

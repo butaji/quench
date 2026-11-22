@@ -2,7 +2,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::vm::engine_types::LANE_LEAVE_SITES;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneLeaves;
 

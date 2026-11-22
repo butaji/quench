@@ -21,10 +21,7 @@ use std::collections::HashMap;
 pub(crate) use quench_runtime::vm::engine_types::ExitKind;
 
 #[quench_macros::ext(ExitKindOps1)]
-impl ExitKind {
-    const KINDS: [Self; 4] = [Self::At, Self::Inlined, Self::Callee, Self::Entry];
-    const SHIFT: u32 = u64::BITS - Self::KINDS.len().trailing_zeros();
-    const PLACE_MASK: u64 = (1 << Self::SHIFT) - 1;
+impl ExitKind {    const PLACE_MASK: u64 = (1 << Self::SHIFT) - 1;
     /// An inlined leave's frame index sits above its callee PC.
     const FRAME_SHIFT: u32 = u32::BITS;
     const PC_MASK: u64 = u32::MAX as u64;
@@ -32,10 +29,6 @@ impl ExitKind {
     #[inline]
     fn of(word: u64) -> Self {
         Self::KINDS[(word >> Self::SHIFT) as usize]
-    }
-
-    const fn word(self, place: u64) -> u64 {
-        (self as u64) << Self::SHIFT | place
     }
 }
 

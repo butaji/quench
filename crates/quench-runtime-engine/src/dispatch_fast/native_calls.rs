@@ -406,6 +406,7 @@ fn in_place_handler(native: Native) -> Option<Handler> {
 
 use quench_runtime::vm::engine_types::IDENTITY_SLOTS;
 const _: () = assert!(BUILTIN_ROWS + MATH_ROWS + IN_PLACE_ROWS <= IDENTITY_SLOTS, "raise engine_types::IDENTITY_SLOTS");
+const _: [(); 0] = [(); BUILTIN_ROWS + MATH_ROWS + IN_PLACE_ROWS];
 
 /// The identity slot of lean row `row`. A row past the derived ones (`in_place_row_native`),
 /// never installed, reads the first slot, so its handler stays in bounds.
@@ -418,9 +419,7 @@ const fn math_slot(row: u8) -> usize {
     BUILTIN_ROWS + row as usize
 }
 
-use quench_runtime::vm::engine_types::UNPROVEN;
 
-pub(crate) use quench_runtime::vm::engine_types::NativeIdentities;
 
 
 

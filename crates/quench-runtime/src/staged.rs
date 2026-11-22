@@ -139,7 +139,7 @@ pub(crate) mod holder;
 pub(crate) mod iteration;
 pub mod array_iteration;
 pub mod naming;
-pub mod call; pub(crate) mod frame;
+pub mod call; pub mod frame;
 pub mod forms;
 pub mod protocol;
 pub mod call_keeping;

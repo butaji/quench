@@ -15,7 +15,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{AotImage, unbound_callee};
-use quench_runtime::folded_roots::{FoldedRoots, RootedCode};
+use quench_runtime::folded_roots::RootedCode;
 use crate::compiled::{tier_policy::POLYMORPHISM, DirectCallee};
 use quench_bjit::call_record::CallRecord;
 use std::cell::{Cell, RefCell, UnsafeCell};

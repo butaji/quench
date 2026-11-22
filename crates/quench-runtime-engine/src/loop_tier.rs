@@ -79,7 +79,7 @@ impl LoopTier {
     /// Makes the compile under way stale where its code names shape ids, which a shape
     /// compaction renumbers.
     pub(crate) fn retire_named_shapes(&self) {
-        if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
+        if let Some(pending) = &self.pending { crate::compiled::pending_osr_ref(&**pending).retire_named_shapes(); }
     }
 
     /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
@@ -165,7 +165,7 @@ impl LoopTier {
         }
         use crate::compiled::OsrCompile;
         let program = vm.programs.get(vm.active_program);
-        match pending.poll(vm, program.as_deref()) {
+        match crate::compiled::pending_osr(pending).poll(vm, program.as_deref()) {
             Err(pending) => {
                 self.wait = site.tiers.lane_body.compile_poll_interval;
                 self.pending = Some(pending);
@@ -190,7 +190,7 @@ impl LoopTier {
     /// Holds the compile `started`, while the facts its code names hold, and looks for its
     /// code at once.
     fn start(&mut self, started: Option<crate::compiled::PendingOsrRegion>, vm: &mut Vm, site: &LoopSite) {
-        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs)).map(Box::new);
+        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs)).map(|pending| Box::new(pending) as Box<dyn std::any::Any>);
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = site.tiers.loops.max_compilations;

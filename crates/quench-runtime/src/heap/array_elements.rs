@@ -1117,7 +1117,7 @@ impl UniqueElements {
 
     /// The first value, for native code that writes the backing and keeps its count of
     /// other values (`OTHERS_FROM_VALUES`).
-    pub(crate) fn as_mut_ptr(&mut self) -> *mut Value {
+    pub fn as_mut_ptr(&mut self) -> *mut Value {
         self.0.values()
     }
 

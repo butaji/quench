@@ -36,6 +36,8 @@ pub(crate) mod typed;
 pub(crate) mod shape;
 
 pub(crate) use shape::Shape;
+use recur::Recurrence;
+use run::State;
 
 /// Live kernels by slot: a kernel's test record names its slot in `call_link`, which a test
 /// record holds no call link in.

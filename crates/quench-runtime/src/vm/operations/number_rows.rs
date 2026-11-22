@@ -399,8 +399,8 @@ pub mod binary_operator {
     pub const StrictInequality: u32 = 3;
     pub const LessThan: u32 = 4;
     pub const LessEqualThan: u32 = 5;
-    pub(crate) const GreaterThan: u32 = 6;
-    pub(crate) const GreaterEqualThan: u32 = 7;
+    pub const GreaterThan: u32 = 6;
+    pub const GreaterEqualThan: u32 = 7;
     pub const Addition: u32 = 8;
     pub const Subtraction: u32 = 9;
     pub const Multiplication: u32 = 10;

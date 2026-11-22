@@ -148,7 +148,6 @@ const INLINE_EDGE_REFINEMENTS: usize = 2;
 const TRUNCATION_CHAIN: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
-pub(crate) use quench_runtime::vm::tier_policy::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 /// The machine bytes an IR instruction of a lane body costs at most, measured over the V8-v7
 /// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
 pub(crate) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
@@ -3508,7 +3507,7 @@ impl Lowering<'_, '_> {
     /// unequal; any other pair (a string, a Boolean, a function, which may be the IsHTMLDDA
     /// object) leaves at `pc`.
     fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
-        use quench_runtime::value::ValueLayout;
+        pub use quench_runtime::value::ValueLayout;
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
         let [identical, distinct, numbers, others, cells, join] = std::array::from_fn(|_| self.builder.create_block());

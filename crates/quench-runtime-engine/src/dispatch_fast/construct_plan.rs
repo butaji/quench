@@ -6,7 +6,7 @@ use quench_runtime::staged::plan_fields::{field_value, FieldClass};
 pub(crate) mod nested;
 pub(crate) mod adds;
 pub(crate) use adds::{add_initializer_fields_in_lane, add_stores_in_lane};
-pub(crate) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds, NestedField};
+pub(crate) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds};
 
 pub(crate) use quench_runtime::vm::engine_types::ConstructPlan;
 

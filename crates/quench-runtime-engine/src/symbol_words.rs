@@ -8,6 +8,7 @@ use cranelift_frontend::FunctionBuilder;
 
 /// `(atom << 16) | site`: the word the field helpers take, from the atom symbol's value.
 pub(crate) fn atom_site_word(builder: &mut FunctionBuilder<'_>, atom: ir::Value, site: u16) -> ir::Value {
+    let builder = crate::compiled::emit_machine::raw(builder);
     let shifted = builder.raw_binary_imm(Binary::ShiftLeft, atom, i64::from(u16::BITS));
     builder.raw_binary_imm(Binary::Or, shifted, i64::from(site))
 }
@@ -15,6 +16,7 @@ pub(crate) fn atom_site_word(builder: &mut FunctionBuilder<'_>, atom: ir::Value,
 /// Whether no method cache names `atom` (a run-time value): the bit of its word in `words`, a
 /// bitset of `words_len` words; an atom past them is unnamed.
 pub(crate) fn atom_unnamed(builder: &mut FunctionBuilder<'_>, (words, words_len): (ir::Value, ir::Value), atom: ir::Value) -> ir::Value {
+    let builder = crate::compiled::emit_machine::raw(builder);
     let word_bits = u64::BITS.trailing_zeros() as i64;
     let index = builder.raw_binary_imm(Binary::ShiftRightUnsigned, atom, word_bits);
     let covered = builder.raw_compare(Relation::UnsignedGreater, words_len, index);
@@ -37,9 +39,9 @@ pub(crate) fn atom_unnamed(builder: &mut FunctionBuilder<'_>, (words, words_len)
 }
 
 /// The address of symbol `(namespace, key)`, as a 64-bit value built at `builder`.
-pub(crate) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
+pub fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
     use quench_runtime::staged::machine::MachineAccess;
     let symbol = quench_runtime::vm::jit_backend::declare_symbol(builder.func, namespace, key);
-    builder.symbol_address(symbol)
+    crate::compiled::emit_machine::raw(builder).symbol_address(symbol)
 }
 

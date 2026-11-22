@@ -62,7 +62,7 @@ fn kind(code: Code, a: u32, b: u32) -> Kind {
     Kind(op * ARITH_FORMS + forms)
 }
 
-pub(crate) struct Machine {
+pub struct Machine {
     pub steps: Vec<Step>,
     /// (register, scalar slot) for each scalar a step reads.
     pub scalars: Vec<(u8, u8)>,

@@ -2,6 +2,7 @@
 //! and compiled tiers). Their behaviour stays in the engine, as extension traits on them.
 #![allow(unused_imports)]
 use super::*;
+use crate::bytecode::InstructionField;
 use std::cell::{RefCell, UnsafeCell};
 use std::ops::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -1535,7 +1536,7 @@ pub struct ExitTable {
 /// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
 /// then one per lean row.
 /// An upper bound the engine checks (`native_calls`): the builtin, Math and lean rows it derives.
-pub const IDENTITY_SLOTS: usize = 128;
+pub const IDENTITY_SLOTS: usize = 256;
 
 /// An inlined call. Its registers are the unit's: the caller's are its first, and each
 /// callee's start at its `base`.
@@ -6075,4 +6076,57 @@ impl Completion {
 impl Activation {
     /// The caller's call record, which its return completes.
     #[inline(always)] pub fn call(&self) -> Ip { self.call }
+}
+
+impl ExitKind {
+
+    #[inline]
+
+    pub const fn word(self, place: u64) -> u64 {
+        (self as u64) << Self::SHIFT | place
+    }
+}
+
+impl MemoryView {
+
+    #[inline]
+
+    pub const fn new(bytes: *mut u8, len: usize) -> Self {
+        Self {
+            bytes,
+            reach: Slot::of(len as isize - WIDEST_DIRECT_ACCESS as isize),
+        }
+    }
+}
+
+impl InstructionField {
+
+    #[inline]
+
+    pub const fn accumulator(self) -> u8 {
+        match self {
+            Self::A => ACC_A,
+            Self::B => ACC_B,
+            Self::C => ACC_C,
+        }
+    }
+}
+
+pub const WIDEST_DIRECT_ACCESS: usize = size_of::<u64>();
+pub const ACC_A: u8 = 1;
+pub const ACC_B: u8 = 2;
+pub const ACC_C: u8 = 3;
+
+impl ExitKind {
+
+    pub const KINDS: [Self; 4] = [Self::At, Self::Inlined, Self::Callee, Self::Entry];
+    pub const SHIFT: u32 = u64::BITS - Self::KINDS.len().trailing_zeros();
+}
+
+impl<T: Copy> Slot<T> {
+
+    #[inline(always)]
+    pub const fn of(value: T) -> Self {
+        Self(std::mem::MaybeUninit::new(value))
+    }
 }

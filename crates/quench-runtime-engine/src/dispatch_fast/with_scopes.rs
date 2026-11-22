@@ -8,7 +8,6 @@ use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::WithChain;
-use quench_runtime::vm::engine_types::WITH_CHAIN_INLINE_OBJECTS;
 
 #[quench_macros::ext(LaneStackOps7)]
 impl LaneStack {

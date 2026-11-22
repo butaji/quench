@@ -4,8 +4,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::vm::program_store::ProgramStore;
-use quench_runtime::vm::activation::extend_this_env_roots;
 
 #[quench_macros::ext(LaneStackOps12)]
 impl LaneStack {

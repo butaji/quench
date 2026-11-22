@@ -302,7 +302,7 @@ use super::super::math::{f64_to_half, half_to_f64};
 use super::super::Concrete;
 
 /// The byte order of the host, which a typed array's elements are read and written in.
-pub(crate) const NATIVE_LITTLE_ENDIAN: bool = cfg!(target_endian = "little");
+pub const NATIVE_LITTLE_ENDIAN: bool = cfg!(target_endian = "little");
 
 /// The Stage row of the element of `kind`; `None` for Float16 and the BigInt kinds, which have
 /// none (Float16 converts through `staged::math`'s binary16, the BigInt kinds take BigInts).
@@ -344,7 +344,7 @@ fn native_word(field: &[u8], little_endian: bool) -> [u8; 8] {
 /// binary16 for Float16. Both the typed array reads and the DataView gets (`staged::typed_view`)
 /// are this body. Panics for the BigInt kinds, which are no Number.
 #[inline(always)]
-pub(crate) fn element_number(kind: TypedArrayKind, field: &[u8], little_endian: bool) -> f64 {
+pub fn element_number(kind: TypedArrayKind, field: &[u8], little_endian: bool) -> f64 {
     if little_endian == NATIVE_LITTLE_ENDIAN
         && let Some(element) = element_of(kind)
     {
@@ -530,7 +530,7 @@ unsafe fn write_raw<T>(target: *mut u8, element: T) {
 /// # Safety
 /// `target` is valid for a write of one element of `kind`.
 #[inline(always)]
-pub(crate) unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
+pub unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
     macro_rules! store {
         ($element:expr) => {
             // SAFETY: the caller's contract.
@@ -562,7 +562,7 @@ pub(crate) unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8,
 /// # Safety
 /// As `store_number_element`.
 #[inline(always)]
-pub(crate) unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
+pub unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
     use crate::value::{number_to_u32, number_to_uint8_clamp};
     let Some(number) = value.as_number() else { return false };
     // SAFETY: the caller's contract, for each arm.
@@ -580,4 +580,4 @@ pub(crate) unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8,
 
 }
 #[cfg(not(stencil_build))]
-pub(crate) use runtime::*;
+pub use runtime::*;

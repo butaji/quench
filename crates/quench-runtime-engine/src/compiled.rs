@@ -51,7 +51,6 @@ use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use quench_runtime::staged::js_step_head::JsStepHead;
-use quench_runtime::staged::record_heads::CallContextHead;
 
 /// The staged operation a record decodes to, with no constants or sites resolved: what a
 /// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
@@ -119,7 +118,6 @@ pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
 pub(crate) use lane_region::ElementViews;
 pub(crate) use lane_region::{inlines_in_loop, inlines_in_loop_call, native_method_call};
-use osr_compile::OsrFacts;
 use quench_runtime::typed_ir;
 
 #[path = "compiled/facts.rs"]
@@ -250,14 +248,14 @@ fn forced_or(ok: ir::Block, fail: ir::Block) -> ir::Block {
 }
 pub(crate) mod object_slots;
 pub(crate) mod regions;
-pub(crate) use object_slots::{InheritedConstant, NativeFieldLoad};
+pub(crate) use object_slots::NativeFieldLoad;
 pub(crate) mod residuals;
 pub(crate) mod code_heap;
-pub(crate) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
+pub(crate) use code_heap::CodeMemory;
 #[path = "compiled/direct_call.rs"]
 pub(crate) mod direct_call;
 pub(crate) mod direct_callee;
-pub(crate) use direct_callee::{frames_window, names_dead_callee, window_width, DirectCallee, DirectCandidates};
+pub(crate) use direct_callee::{frames_window, window_width, DirectCallee, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
 pub(crate) mod lane_storage;
 pub(crate) mod lane_body_run;
@@ -271,7 +269,6 @@ pub(crate) mod constructions;
 pub(crate) mod function_binding;
 use function_binding::{admitted_function_binding_in_lane, function_binding_in_lane};
 pub(crate) mod general_store;
-pub(crate) use frameless::CalleeAdmissions;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 pub(crate) mod guard_aarch64;
@@ -927,7 +924,7 @@ fn emit_unlogged_property_store_guard(
     value: ir::Value, fallback: ir::Block,
 ) {
     use quench_runtime::staged::barrier::unmarked;
-    use quench_runtime::value::ValueLayout;
+    pub use quench_runtime::value::ValueLayout;
     // An immediate value names no heap record and joins no log; a heap value's owner is
     // tested in its mark block. Marks and block bases are refreshed after each callout.
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
@@ -1662,7 +1659,7 @@ fn counterpart(ty: quench_runtime::WasmType) -> quench_runtime::WasmType {
 
 /// What a register holds at an instruction, as the analysis derives it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Slot {
+pub(crate) enum Slot {
     Value(Kind),
     /// An unsigned memory32 index plus a validated memory32 offset, without wrapping.
     /// Moves preserve this proof; arithmetic and mixed joins discard it.
@@ -2219,9 +2216,7 @@ unsafe fn note_import_callout_target(
     counter.set(counter.get().saturating_add(1));
 }
 
-use quench_runtime::vm::engine_types::json_string;
 
-use quench_runtime::vm::engine_types::format_import_callout_targets;
 
 use quench_runtime::vm::engine_types::ReferenceCallSiteCounts;
 
@@ -5128,7 +5123,7 @@ impl CompiledJsFunction {
 }
 
 /// A function's derived compilation facts.
-struct Plan {
+pub(crate) struct Plan {
     params: Vec<quench_runtime::WasmType>,
     result: Option<quench_runtime::WasmType>,
     /// Per instruction, `None` when unreachable, else the denotation's operand
@@ -11190,4 +11185,28 @@ mod tests {
             .expect("register in range");
         assert_eq!(loop_state.get(0, 1), Some(Slot::DEFAULT));
     }
+}
+
+/// The lane body compile a core record holds type-erased (`LaneBody::Compiling`, `LoopBody::Compiling`).
+#[inline]
+pub(crate) fn pending_lane(pending: Box<dyn std::any::Any>) -> Box<PendingLaneMethod> {
+    pending.downcast().unwrap_or_else(|_| unreachable!("a lane body compile is a `PendingLaneMethod`"))
+}
+
+/// `pending_lane`, borrowed.
+#[inline]
+pub(crate) fn pending_lane_ref(pending: &dyn std::any::Any) -> &PendingLaneMethod {
+    pending.downcast_ref().unwrap_or_else(|| unreachable!("a lane body compile is a `PendingLaneMethod`"))
+}
+
+/// The loop region compile a core record holds type-erased (`LoopTier::pending`).
+#[inline]
+pub(crate) fn pending_osr(pending: Box<dyn std::any::Any>) -> Box<PendingOsrRegion> {
+    pending.downcast().unwrap_or_else(|_| unreachable!("a loop region compile is a `PendingOsrRegion`"))
+}
+
+/// `pending_osr`, borrowed.
+#[inline]
+pub(crate) fn pending_osr_ref(pending: &dyn std::any::Any) -> &PendingOsrRegion {
+    pending.downcast_ref().unwrap_or_else(|| unreachable!("a loop region compile is a `PendingOsrRegion`"))
 }

@@ -12,7 +12,6 @@ pub(crate) use quench_runtime::vm::engine_types::PlainSegment;
 
 pub(crate) use quench_runtime::vm::engine_types::Walked;
 
-pub(crate) use quench_runtime::vm::engine_types::Walk;
 
 
 

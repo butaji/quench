@@ -2,7 +2,7 @@ use super::program_store::ProgramId;
 use crate::Value;
 
 mod frame_cold;
-pub(crate) mod frame_record;
+pub mod frame_record;
 mod generator_record;
 mod suspension_live;
 pub use frame_record::FrameRecord;

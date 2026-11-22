@@ -3,11 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use crate::dispatch_fast::LaneRecoverySpace;
 
-/// The status of a call that entered no body (`LaneStatus::NotEntered`): its callee's entry cell held the
-/// stub, so the caller takes its helper path at the call.
-pub(crate) use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
 
 pub(crate) use quench_runtime::vm::engine_types::EntryCell;
 
@@ -31,17 +27,12 @@ const _: () = {
 
 pub(crate) use quench_runtime::vm::engine_types::EVIDENCE;
 
-pub(crate) use quench_runtime::vm::engine_types::Evidence;
 
 
 
-use quench_runtime::vm::engine_types::entry_stub_in_lane;
 
-pub(crate) use quench_runtime::vm::engine_types::ScalarEntry;
 
-use quench_runtime::vm::engine_types::scalar_entry_stub;
 
-use quench_runtime::vm::engine_types::NO_RECOVERY;
 
 /// One completion in `EntryCell::counters` (its high word): a run of the body that ended by
 /// an exception through a native caller (`Lowering::direct_finish`), which no Rust code sees.
