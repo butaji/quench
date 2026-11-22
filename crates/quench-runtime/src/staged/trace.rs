@@ -36,6 +36,8 @@ impl Trace {
     }
 }
 
+crate::stage!(Trace);
+
 impl Stage for Trace {
     type Word = u32;
     type Proof = ();

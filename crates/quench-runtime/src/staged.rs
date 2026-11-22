@@ -232,6 +232,8 @@ pub use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
 pub use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
+#[doc(hidden)]
+pub use stage::__sealed;
 
 mod register_frame;
 #[allow(unused_imports)]

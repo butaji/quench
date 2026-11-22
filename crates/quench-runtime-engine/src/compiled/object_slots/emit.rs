@@ -60,6 +60,8 @@ impl Emit<'_, '_> {
     fn widen(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::ZeroExtend(Lane::I64), a) }
 }
 
+quench_runtime::stage!(Emit<'_, '_>);
+
 impl Stage for Emit<'_, '_> {
     type Proof = super::super::EmitProof;
     type Word = ir::Value;

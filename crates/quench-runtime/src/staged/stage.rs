@@ -72,9 +72,62 @@ pub enum StagedRecordSpace {
     Function,
 }
 
+/// The seal of `Stage`. Only `stage!` implements `Sealed`, and `stage!` accepts only the three
+/// projections (`Concrete`, `StencilStage`, `Emit`) plus the test-only `Trace`. Any other type is
+/// not a `Stage`: a second projection is a compile error, not a new impl.
+///
+/// Rust cannot seal a trait against other crates by visibility, so the enforcement is the closed
+/// `Projection` enum plus this rule: nothing writes `impl Sealed` or `impl Stage` for a new
+/// domain. A new language or sub-domain is a type parameter of one of the three projections.
+#[doc(hidden)]
+pub mod __sealed {
+    /// The projections a staged row can run on. Each crate names only the ones it defines, so
+    /// variants a crate never names are allowed.
+    #[allow(dead_code)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Projection {
+        /// The interpreter: machine words of live memory.
+        Concrete,
+        /// The b-jit: rustc/LLVM stencils that the stitcher patches.
+        StencilStage,
+        /// The u-jit and AOT: Cranelift IR.
+        Emit,
+        /// The recording stage the trace tests use.
+        #[cfg(test)]
+        Trace,
+    }
+
+    /// Implemented only by `stage!`, which sets the projection the type is. Direct impls are
+    /// forbidden: they would make a fourth projection with no compile error.
+    #[allow(dead_code)] // set by `stage!`, read by no code yet: the record of which projection a type is
+    pub trait Sealed {
+        /// The projection this type is.
+        const PROJECTION: Projection;
+    }
+}
+
+/// Declares a type to be one of the three projections, which is the only way to make it a
+/// `Stage`. `stage!(Concrete)`, `stage!(StencilStage)`, `stage!(Emit<'_, '_>)`, and the test-only
+/// `stage!(Trace)` implement the seal; any other name is a compile error.
+#[macro_export]
+macro_rules! stage {
+    (Concrete $($args:tt)*) => { $crate::stage!(@seal Concrete $($args)*); };
+    (StencilStage $($args:tt)*) => { $crate::stage!(@seal StencilStage $($args)*); };
+    (Emit $($args:tt)*) => { $crate::stage!(@seal Emit $($args)*); };
+    (Trace $($args:tt)*) => { $crate::stage!(@seal Trace $($args)*); };
+    ($other:ident $($args:tt)*) => {
+        compile_error!(concat!("stage!: `", stringify!($other), "` is not one of the three projections (Concrete, StencilStage, Emit)"));
+    };
+    (@seal $projection:ident $($args:tt)*) => {
+        impl $crate::staged::__sealed::Sealed for $projection $($args)* {
+            const PROJECTION: $crate::staged::__sealed::Projection = $crate::staged::__sealed::Projection::$projection;
+        }
+    };
+}
+
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
-/// a failed guard goes. A 32-bit load zero-extends.
-pub trait Stage {
+/// a failed guard goes. A 32-bit load zero-extends. Sealed: see `__sealed`.
+pub trait Stage: __sealed::Sealed {
     type Word: Copy;
     /// The layout proof a field operation carries (a projection for Emit, `()` for Concrete).
     type Proof: Copy;
