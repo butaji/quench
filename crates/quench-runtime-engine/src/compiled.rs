@@ -3243,7 +3243,7 @@ pub(crate) fn analyze_osr_region_detailed(
 
 /// Whether the loop tier compiles regions under `policy`: `admission::may_compile` for a region.
 pub(crate) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
-    admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Region(policy) }).compiled().is_some()
+    admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Region(policy), facts: Default::default() }).compiled().is_some()
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.

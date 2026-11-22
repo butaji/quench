@@ -152,6 +152,24 @@ pub(crate) enum UnitKind {
     Aot,
     /// An ahead image's body of this function, under the `AotBodies` trace range.
     Ahead(u32),
+    /// A b-jit (stencil) body: its facts decide it (`specialize`).
+    Base,
+    /// The Wasm module's whole-module compile at its first entry; the runtime's flag decides when.
+    Wasm,
+}
+
+/// What the gate's decisions read of the unit, computed by the entry that asks, and carried by the
+/// request so proven facts can flow through the same path.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct UnitFacts {
+    /// The body's rows cover the stencil tier (`base_region::covers`).
+    pub(crate) covers: bool,
+    /// The body amortizes its b-jit entry (`body_may_amortize` for `Tier::Base`).
+    pub(crate) amortizes: bool,
+    /// The caller is native code or a body that calls the function (`LaneView::called_by_bodies`).
+    pub(crate) called_by_bodies: bool,
+    /// The body indexes a parameter that is a typed array (`indexes_typed_parameter`).
+    pub(crate) indexes_typed: bool,
 }
 
 /// Whether a unit of `kind` may compile at all, under the process's JIT mode and, for a loop
@@ -162,6 +180,7 @@ fn may_compile(kind: UnitKind) -> bool {
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
         UnitKind::Aot => true,
         UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
+        UnitKind::Wasm | UnitKind::Base => true,
     }
 }
 
@@ -176,25 +195,28 @@ pub(crate) fn within_trace_range(setting: quench_runtime::trace::Dev, function: 
 
 /// The unit of an ahead image's body of `function`, where the trace range admits it.
 pub(crate) fn ahead_unit(function: u32) -> Option<CompiledUnit> {
-    specialize(UnitRequest { kind: UnitKind::Ahead(function) }).compiled()
+    specialize(UnitRequest { kind: UnitKind::Ahead(function), facts: UnitFacts::default() }).compiled()
 }
 
-/// One request to specialize a unit (`specialize`).
+/// One request to specialize a unit (`specialize`): what it is and the facts its decisions read.
 #[derive(Clone, Copy)]
 pub(crate) struct UnitRequest {
     pub(crate) kind: UnitKind,
+    pub(crate) facts: UnitFacts,
 }
 
-/// The outcome of `specialize`: a unit cleared to compile, or declined by the mode and policy.
+/// The outcome of `specialize`: a unit cleared to compile, a body too short to amortize its
+/// entry (`Short`, refused as `NotAmortized`), or declined by the mode, the policy or its facts.
 pub(crate) enum Decision<T> {
     Compile(T),
-    Decline,
+    Short,
+    Declined,
 }
 
 impl<T> Decision<T> {
     /// The unit, where the decision cleared it.
     pub(crate) fn compiled(self) -> Option<T> {
-        match self { Self::Compile(unit) => Some(unit), Self::Decline => None }
+        match self { Self::Compile(unit) => Some(unit), Self::Short | Self::Declined => None }
     }
 }
 
@@ -207,7 +229,17 @@ pub(crate) struct CompiledUnit {
 /// The one specializer entry: whether the request's unit may compile, under the process's JIT
 /// mode and memory policy. Every compile entry obtains its unit here.
 pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
-    if may_compile(request.kind) { Decision::Compile(CompiledUnit { _sealed: () }) } else { Decision::Decline }
+    let UnitRequest { kind, facts } = request;
+    // A b-jit body's gates, in order: its rows must cover it, it must repay its entry (or be
+    // called by bodies), and it must not index a typed parameter. Other kinds are `may_compile` alone.
+    if let UnitKind::Base = kind {
+        if !facts.covers { return Decision::Declined; }
+        if !facts.amortizes && !facts.called_by_bodies { return Decision::Short; }
+        if facts.indexes_typed { return Decision::Declined; }
+    } else if !may_compile(kind) {
+        return Decision::Declined;
+    }
+    Decision::Compile(CompiledUnit { _sealed: () })
 }
 
 /// How a callee would run: inlined into a lane unit under the call's `CalleeBinding`, or called

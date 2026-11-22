@@ -24,7 +24,7 @@ pub use quench_runtime::vm::engine_types::NativeJsProgram;
 impl NativeJsProgram {
     /// Compile every function before execution as one AOT image. No hotness or fallback tier.
     pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
-        let unit = crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Aot })
+        let unit = crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Aot, facts: Default::default() })
             .compiled().ok_or_else(|| "eager publication was declined".to_string())?;
         crate::compiled::compile_eager_native(program, unit)
     }

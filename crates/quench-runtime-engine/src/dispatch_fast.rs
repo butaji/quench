@@ -7059,7 +7059,8 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         if quench_runtime::jit_mode::base_only() {
             let crate::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
-            return vm.base_body_work(code, function, generic, parameters, own, &direct);
+            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
+            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
         }
         if matches!(work, crate::compiled::LaneBodyWork::Start { .. })
             && let Some(outcome) = body_tier_in_lane::start_gate(vm, own, code.function_get(function as usize))
@@ -7071,7 +7072,8 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
         // b-jit, so a function it would not beat takes the stencil body, stitched at once.
         if let (crate::compiled::LaneBodyOutcome::Base, Some(generic)) = (&outcome, &started) {
-            return vm.base_body_work(code, function, generic, parameters, own, &direct);
+            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
+            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
         }
         if diagnostics && let crate::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }

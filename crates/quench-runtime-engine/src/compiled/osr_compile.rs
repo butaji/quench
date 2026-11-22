@@ -409,7 +409,7 @@ pub(crate) fn start_osr_region(
     base: bool,
     mut online: Option<OsrOnline<'_>>,
 ) -> Option<PendingOsrRegion> {
-    let isa = quench_runtime::vm::jit_backend::target_isa().filter(|_| super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Region(policy) }).compiled().is_some())?;
+    let isa = quench_runtime::vm::jit_backend::target_isa().filter(|_| super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Region(policy), facts: Default::default() }).compiled().is_some())?;
     // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
     let invalidation = Invalidation::default();
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
