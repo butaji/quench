@@ -3,7 +3,7 @@
 // `#[quench_macros::operation_semantics]`: `resolve_step_operation` (compiled.rs) selects each opcode's semantic
 // from it, and the attribute takes only a `match` on the opcode, so that match holds the wildcard alone. (The
 // attribute rejects match guards.) The runners, in `runner_of`'s priority order:
-// - `NO_STEP` (Nop; the wide marker is never dispatched).
+// - `NO_STEP` (Nop; the wide prefix `Wide` is never dispatched).
 // - `REGISTER_ROW` (Move, LoadLocalPlain, StoreLocalPlain, Jump, JumpFalse, JumpTrue): `register_row_step`.
 // - A call-family record (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
 //   CallKnown, CallMethod, CallThisMethod, Construct, CallFirstChunk): its staged row, then the call's general form
@@ -813,7 +813,6 @@ impl Vm {
     fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
         match RUNNERS[i.op() as usize] {
             Runner::Nop => Ok(StepResult::Continue),
-            Runner::WideMarker => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Runner::RegisterRow => self.register_row_step(p, f, i, pc, allow_inline_calls),
             // A suspension runs its suspension row on the frame (`staged_suspend`).
             Runner::Suspend => {
@@ -1049,10 +1048,8 @@ impl Vm {
 /// catalog tests used to run in, and `RUNNERS` holds the result, so a step reads one table entry and matches it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Runner {
-    /// `NO_STEP` (`Nop`): nothing to do.
+    /// `NO_STEP` (`Nop`, and the wide prefix `Wide`, which validated dispatch never runs): nothing to do.
     Nop,
-    /// `NO_STEP` on the wide marker, which validated dispatch never runs.
-    WideMarker,
     /// A register move, a local slot access or a jump: its staged row on the running frame (`register_row_step`).
     RegisterRow,
     /// A suspension (`Await`, `Yield`, `YieldStar`): its suspension row (`staged_suspend`).
@@ -1082,11 +1079,7 @@ enum Runner {
 const fn runner_of(op: Op) -> Runner {
     let traits = op.traits();
     if traits.has(crate::bytecode::Traits::NO_STEP) {
-        return if op.is_wide_marker() {
-            Runner::WideMarker
-        } else {
-            Runner::Nop
-        };
+        return Runner::Nop;
     }
     if traits.has(crate::bytecode::Traits::REGISTER_ROW) {
         return Runner::RegisterRow;

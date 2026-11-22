@@ -231,10 +231,12 @@ fn derivation_debt() -> std::collections::BTreeMap<(String, String), usize> {
         count_decisions(code, &file, &words, &mut debt);
     }
     // Opcodes with no staged row: a JS opcode the catalog gives no staged decoder, a Wasm opcode
-    // no `wasm_step::Step` describes.
+    // no `wasm_step::Step` describes. An op the catalog marks `NO_STEP` has no meaning to derive:
+    // the wide prefix (`Wide`) is never dispatched, and `Nop` does nothing.
     for index in 0..crate::bytecode::Op::COUNT {
         let op = crate::bytecode::Op::from_index(index).unwrap();
-        let staged = op.staged().is_some() || (0..1024).any(|tag| super::wasm_step::Step::of(op, tag).is_some());
+        let staged = op.staged().is_some() || op.traits().has(crate::bytecode::Traits::NO_STEP)
+            || (0..1024).any(|tag| super::wasm_step::Step::of(op, tag).is_some());
         if !staged { debt.insert(("<catalog>".to_owned(), format!("unstaged:{}", crate::bytecode::Op::NAMES[index])), 1); }
     }
     debt
