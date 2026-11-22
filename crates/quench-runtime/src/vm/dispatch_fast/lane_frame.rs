@@ -3013,6 +3013,22 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
     table.get(operator as usize).copied()
 }
 
+/// The plain comparison jump row (`jump_row`) of `handler` where it is an instance its first run moved to
+/// (`compare_jump_row`, either direction); `None` for any other handler. A record moved back to its plain row
+/// takes its instance again at its next run, so the move undoes only what the run learned.
+pub(in crate::vm::dispatch_fast) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
+    fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len()] {
+        macro_rules! row { ($flag:expr) => { row_jump::<{ crate::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler } }
+        macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
+        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33)
+    }
+    const _: () = assert!(COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() == 34);
+    const JUMP_BINARY_FALSE: u16 = crate::bytecode::Op::JumpBinaryFalse as u16;
+    if instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<JUMP_BINARY_FALSE>(false)) }
+    if instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<JUMP_BINARY_FALSE>(true)) }
+    None
+}
+
 lane_handler! {
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
