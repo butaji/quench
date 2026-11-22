@@ -12985,23 +12985,7 @@ fn call_native_out_in_lane(
     if vm.lane_stack.has_frames()
         && (vm.runs_beside_activations(native, callee) || vm.steps_beside_activations(native, receiver))
     {
-        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-        let result = call(vm, unsafe { &*(*cx).code });
-        note_allocation(vm);
-        vm.lane_stack.refresh_activation_limit();
-        let unobserved = vm.lane_deferred.take().is_some();
-        return match result {
-            Ok(value) => Some(value),
-            Err(error) => {
-                // The general path raises it from the frames its activations become.
-                if unobserved {
-                    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-                    vm.materialize_deferred_lane();
-                }
-                vm.lane_completion.raise(error);
-                None
-            }
-        };
+        return call_deferred_native_in_lane(cx, call_pc, call);
     }
     #[cfg(feature = "profile-lane-exits")]
     if vm.lane_stack.has_frames() {
@@ -13011,6 +12995,36 @@ fn call_native_out_in_lane(
         });
     }
     call_from_frame_in_lane(cx, ip, call)
+}
+
+/// Runs a native call beside the lane's activations as a deferred call (`DeferredLaneCall`),
+/// whose frames the first observer makes; an error is raised for the general path as the
+/// call's own frames would raise it.
+#[cold]
+#[inline(never)]
+fn call_deferred_native_in_lane(
+    cx: *mut LaneContext,
+    call_pc: usize,
+    call: impl FnOnce(&mut Vm, &ResidualProgram) -> Result<Value, JsError>,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+    let result = call(vm, unsafe { &*(*cx).code });
+    note_allocation(vm);
+    vm.lane_stack.refresh_activation_limit();
+    let unobserved = vm.lane_deferred.take().is_some();
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            // The general path raises it from the frames its activations become.
+            if unobserved {
+                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+                vm.materialize_deferred_lane();
+            }
+            vm.lane_completion.raise(error);
+            None
+        }
+    }
 }
 
 /// Whether `args` lie in the running function's registers, as its call record's window does:

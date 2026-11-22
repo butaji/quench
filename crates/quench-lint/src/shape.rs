@@ -50,7 +50,7 @@ struct Functions<'a> {
 }
 
 impl Functions<'_> {
-    fn function(&mut self, ident: &syn::Ident, whole: proc_macro2::Span, body: &syn::Block) {
+    fn function(&mut self, ident: &syn::Ident, attrs: &[syn::Attribute], whole: proc_macro2::Span, body: &syn::Block) {
         self.scope.push(ident.to_string());
         let name = self.scope.join("::");
         let occurrence = self.seen.entry(name.clone()).and_modify(|count| *count += 1).or_insert(0);
@@ -71,6 +71,7 @@ impl Functions<'_> {
             crate::hot_path::scan(&subject, body, self.measures);
         }
         if !self.test {
+            crate::fast_paths::scan(&subject, lines, attrs, body, self.measures);
             crate::guest_names::scan(&subject, body, self.measures);
             crate::fingerprints::scan(&subject, body, self.measures);
             crate::magic::scan(&subject, body, self.measures);
@@ -92,17 +93,17 @@ impl<'ast> Visit<'ast> for Functions<'_> {
         let (hot, test) = (self.hot, self.test);
         self.test |= is_test(&item.attrs);
         self.hot &= !self.test;
-        self.function(&item.sig.ident, item.span(), &item.block);
+        self.function(&item.sig.ident, &item.attrs, item.span(), &item.block);
         (self.hot, self.test) = (hot, test);
     }
 
     fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
-        self.function(&item.sig.ident, item.span(), &item.block);
+        self.function(&item.sig.ident, &item.attrs, item.span(), &item.block);
     }
 
     fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
         if let Some(body) = &item.default {
-            self.function(&item.sig.ident, item.span(), body);
+            self.function(&item.sig.ident, &item.attrs, item.span(), body);
         }
     }
 
@@ -185,7 +186,7 @@ pub fn lower(listing: &str, current: &Measures) -> (String, Vec<String>) {
 
 /// The rule a measure is born with: `--update` records the first baseline of such a measure that
 /// the list has never held, where any other new measure fails until it is fixed.
-const BORN_WITH_RULE: &[&str] = &["native_", "concept_"];
+const BORN_WITH_RULE: &[&str] = &["native_", "concept_", "inline_always_"];
 
 /// Adds the measures of a newly born rule that the baseline has never recorded to `baseline`.
 pub fn first_baseline(found: &Measures, recorded: &Measures, baseline: &mut Measures) {
@@ -217,6 +218,8 @@ fn remedy(subject: &str) -> &'static str {
         "a cache hides a slow core path: make the core path cheap and delete the cache"
     } else if subject.starts_with("concept_") {
         "one concept, one definition: call the concept's home (`quench-lint/src/concepts.rs`) or read the fact computed once"
+    } else if subject.starts_with("inline_always_") {
+        "keep only the hit test and load inline: move the fallback into a #[cold] #[inline(never)] function (staged/: inline(never) only outside stencil_build)"
     } else if subject.starts_with("hot-") {
         "hot paths do O(1) work and allocate nothing: decide earlier, index a flat array, reuse a buffer"
     } else {

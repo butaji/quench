@@ -238,9 +238,10 @@ impl DoubleDivisor {
 }
 
 /// `a / b` into `quotient` (zeroed, at least `a.len() - b.len() + 1` long) and `a % b` into
-/// `remainder` (at least `b.len()` long), `b` nonzero and `a >= b`: both lengths. Divisors
-/// of up to four digits (256 bits), by dividends up to twice as long, take a copy of the
-/// loops for their lengths, which the compiler unrolls.
+/// `remainder` (at least `b.len()` long), `b` nonzero and `a >= b`: both lengths. The three
+/// smallest shapes, a one-digit divisor and two-digit operands, take a copy of the loops for
+/// their lengths, which the compiler unrolls; every other shape runs the runtime-sized loops
+/// (`div_rem_digits::<0, 0>`), one copy instead of a copy per shape.
 pub(crate) fn div_rem(a: &[Digit], b: &[Digit], quotient: &mut [Digit], remainder: &mut [Digit]) -> (usize, usize) {
     macro_rules! fixed {
         ($(($m:literal, $n:literal)),*) => {
@@ -250,8 +251,7 @@ pub(crate) fn div_rem(a: &[Digit], b: &[Digit], quotient: &mut [Digit], remainde
             }
         };
     }
-    fixed!((1, 1), (2, 1), (2, 2), (3, 2), (4, 2), (3, 3), (4, 3), (5, 3), (6, 3), (4, 4), (5, 4), (6, 4), (7, 4),
-        (8, 4))
+    fixed!((1, 1), (2, 1), (2, 2))
 }
 
 /// `div_rem` of an `M`-digit dividend by an `N`-digit divisor, or of any lengths for 0.

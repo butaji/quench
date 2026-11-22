@@ -2487,9 +2487,73 @@ unsafe extern "C" fn diagnostic_reference_callout(
     }
 }
 
+/// Builds the validation error of a failed Wasm callout check, out of line.
+#[cold]
+#[inline(never)]
+fn wasm_callout_error(message: &'static str) -> JsError {
+    JsError::validation(message.into())
+}
+
+/// Calls an indirect target with no direct native entry and stores its scalar result at `out`.
+#[cold]
+#[inline(never)]
+unsafe fn reference_callout_fallback<const DIAGNOSTICS: bool>(
+    vm: &mut Vm,
+    program: ProgramId,
+    caller: *const CompiledProgram,
+    callee: Value,
+    same_program_function: Option<(ProgramId, u32, Value)>,
+    params: &[crate::WasmType],
+    result_type: Option<crate::WasmType>,
+    reference_target_function: Option<usize>,
+    args: *const u64,
+    out: *mut u64,
+    native_target_hit: &mut bool,
+    target_same_artifact_native: &mut bool,
+) -> Result<(), JsError> {
+    let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+    for (offset, ty) in params.iter().enumerate() {
+        Kind::of(*ty).ok_or_else(|| JsError::validation("unsupported Wasm call parameter".into()))?;
+        // SAFETY: the generated call frame stores one word per parameter.
+        let bits = unsafe { *args.add(offset) };
+        values.push(wasm_word_value(vm, *ty, bits));
+    }
+    let compiled_result = same_program_function.and_then(|(target_program, function, env)| {
+        vm.run_compiled(target_program, env, function, &values)
+    });
+    *native_target_hit = compiled_result.is_some();
+    if DIAGNOSTICS
+        && *native_target_hit
+        && let Some(function) = reference_target_function
+    {
+        let target_compiled = compiled_reference_target(vm, program, function, caller);
+        *target_same_artifact_native = !caller.is_null()
+            && target_compiled
+                .as_ref()
+                .is_some_and(|compiled| std::ptr::eq(caller, Rc::as_ptr(compiled)));
+    }
+    let result = match compiled_result {
+        Some(result) => result?,
+        None => {
+            let code = vm
+                .programs
+                .get(program)
+                .ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
+            let receiver = vm
+                .programs
+                .constant(program, VOID_RESULT_CONSTANT)
+                .ok_or_else(|| JsError::validation("missing Wasm void constant".into()))?;
+            vm.call_value(&code, callee, receiver, &values)?
+        }
+    };
+    let bits = wasm_call_vm::result_bits(vm, program, result, result_type)?;
+    // SAFETY: `out` points into the result word emitted for this helper.
+    unsafe { *out = bits };
+    Ok(())
+}
+
 /// Shared implementation, monomorphized so ordinary callouts have no
 /// diagnostic counter branch or extra site lookup.
-#[inline(always)]
 unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
     context: *mut CallContext,
     table_slot: u64,
@@ -2519,20 +2583,20 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             // across that boundary.
             let vm = unsafe { &mut *vm_pointer };
             let table_slot = u32::try_from(table_slot)
-                .map_err(|_| JsError::validation("invalid Wasm table binding".into()))?;
+                .map_err(|_| wasm_callout_error("invalid Wasm table binding"))?;
             let signature_index = u32::try_from(signature_index)
-                .map_err(|_| JsError::validation("invalid Wasm signature index".into()))?;
+                .map_err(|_| wasm_callout_error("invalid Wasm signature index"))?;
             let table = vm
                 .heap
                 .environment_slot(context.env, table_slot as usize)
-                .ok_or_else(|| JsError::validation("invalid Wasm table binding".into()))?;
+                .ok_or_else(|| wasm_callout_error("invalid Wasm table binding"))?;
             let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
             let (params, result_type) = {
                 let signature = vm
                     .programs
                     .wasm_signatures(program)
                     .and_then(|signatures| signatures.type_signature(signature_index))
-                    .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
+                    .ok_or_else(|| wasm_callout_error("invalid Wasm signature index"))?;
                 (
                     signature
                         .params
@@ -2630,9 +2694,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
                     Some(Raised::Error(error)) => return Err(error),
                     Some(Raised::Panic(panic)) => std::panic::resume_unwind(panic),
                     None => {
-                        return Err(JsError::validation(
-                            "compiled indirect callee raised without an error".into(),
-                        ));
+                        return Err(wasm_callout_error("compiled indirect callee raised without an error"));
                     }
                 }
             }
@@ -2641,45 +2703,24 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
         }
 
         let vm = unsafe { &mut *vm_pointer };
-        let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
-        for (offset, ty) in params.iter().enumerate() {
-            Kind::of(*ty).ok_or_else(|| JsError::validation("unsupported Wasm call parameter".into()))?;
-            // SAFETY: the generated call frame stores one word per parameter.
-            let bits = unsafe { *args.add(offset) };
-            values.push(wasm_word_value(vm, *ty, bits));
-        }
-        let compiled_result = same_program_function.and_then(|(target_program, function, env)| {
-            vm.run_compiled(target_program, env, function, &values)
-        });
-        native_target_hit = compiled_result.is_some();
-        if DIAGNOSTICS
-            && native_target_hit
-            && let Some(function) = reference_target_function
-        {
-            let target_compiled =
-                compiled_reference_target(vm, program, function, context.compiled);
-            target_same_artifact_native = !context.compiled.is_null()
-                && target_compiled
-                    .as_ref()
-                    .is_some_and(|compiled| std::ptr::eq(context.compiled, Rc::as_ptr(compiled)));
-        }
-        let result = match compiled_result {
-            Some(result) => result?,
-            None => {
-                let code = vm
-                    .programs
-                    .get(program)
-                    .ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
-                let receiver = vm
-                    .programs
-                    .constant(program, VOID_RESULT_CONSTANT)
-                    .ok_or_else(|| JsError::validation("missing Wasm void constant".into()))?;
-                vm.call_value(&code, callee, receiver, &values)?
-            }
-        };
-        let bits = wasm_call_vm::result_bits(vm, program, result, result_type)?;
-        // SAFETY: `out` points into the result word emitted for this helper.
-        unsafe { *out = bits };
+        // SAFETY: the generated call passes one argument word per parameter of `params` and
+        // a result word for `result_type`, the shape the fallback reads and writes.
+        unsafe {
+            reference_callout_fallback::<DIAGNOSTICS>(
+                vm,
+                program,
+                context.compiled,
+                callee,
+                same_program_function,
+                &params,
+                result_type,
+                reference_target_function,
+                args,
+                out,
+                &mut native_target_hit,
+                &mut target_same_artifact_native,
+            )
+        }?;
         Ok(())
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
