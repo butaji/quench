@@ -116,9 +116,10 @@ pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32,
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
-    // A body that polls by fault keeps the poll's code offset: the VM enters it through the
-    // resuming trampoline and binds the page at that offset (`call_polling_body`), as it does a
-    // lane body the JIT compiled with a poll.
+    // A polling body's resumption needs the poll's offset, which the image does not carry. A lane
+    // body enabled without it still runs, but miscomputes: stanford-crypto-sha256's hash came out
+    // rotated by one 32-bit word on 116 of 120 iterations. The base body runs such a function.
+    if fault_poll { return Err("polls for faults"); }
     Ok(LaneImage { code, fault_poll })
 }
 
@@ -327,8 +328,8 @@ impl Vm {
         let code = &images.image.functions.get(function as usize)?.lane.as_ref()?.code;
         let mut linked = None;
         let memory = match super::code_heap::publishing("u-jit-lane", function as usize, || {
-            // The body's atom-id table follows its code in the block (`live::link_lane_at`).
-            let atom_bytes = images.image.atoms.len() * std::mem::size_of::<u32>();
+            // The body's value table follows its code in the block (`live::link_lane_at`).
+            let atom_bytes = super::aot_image::live::value_words(&images.image) * std::mem::size_of::<u64>();
             super::code_heap::CodeMemory::assemble(code.code.len() + atom_bytes, |address, out| {
                 let roots = live::link_lane_at(&images.image, self, linked_live, function, address.addr() as u64, out)?;
                 linked = Some(roots);

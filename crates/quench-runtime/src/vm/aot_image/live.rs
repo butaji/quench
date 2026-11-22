@@ -57,11 +57,12 @@ struct Places<'a> {
     invalidation: usize,
     operands: &'a [[u64; 2]],
     calls: &'a [UnsafeCell<CallRecord>],
-    /// The address of the atom-id table `vm.intern_atom` fills (`Symbol::Atom`): one `u32` per
-    /// `image.atoms`, placed beside the code so an `adrp` reaches it.
-    atoms: u64,
-    /// How many words that table holds.
-    atom_count: usize,
+    /// The address of the value table (`Symbol::Atom`, `HeapValue`, `Shape`): one 64-bit word per
+    /// atom (its id), heap value (its bits) and shape (its id), placed beside the code so an
+    /// `adrp` reaches it and a value relocation can load it.
+    values: u64,
+    /// How many words that table holds, per section.
+    value_counts: (usize, usize, usize),
 }
 
 /// Links `image` into `vm`: its code placed, every symbol resolved.
@@ -71,12 +72,13 @@ pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String
     let operands: Box<[[u64; 2]]> = image.operands.iter().map(|record| record.words).collect();
     let calls = BoundCalls::of(image);
     let mut linked = vec![false; image.functions.len()];
-    let atom_bytes = image.atoms.len() * std::mem::size_of::<u32>();
-    let code = CodeMemory::assemble(layout.length + atom_bytes, |pointer, out| {
+    let value_bytes = value_words(image) * std::mem::size_of::<u64>();
+    let code = CodeMemory::assemble(layout.length + value_bytes, |pointer, out| {
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
-        let atoms = pointer.addr() + layout.length;
-        place_atoms(image, vm, out, layout.length)?;
-        let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands, calls: calls.records(), atoms: atoms as u64, atom_count: image.atoms.len() };
+        let values = pointer.addr() + layout.length;
+        place_values(image, vm, out, layout.length)?;
+        let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands, calls: calls.records(),
+            values: values as u64, value_counts: (image.atoms.len(), image.heap_values.len(), image.shapes.len()) };
         place(image, vm, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()))
     })?;
     let start = code.pointer().addr();
@@ -150,13 +152,13 @@ pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, func
     let lane = image.functions.get(function as usize).and_then(|function| function.lane.as_ref())
         .ok_or_else(|| "no lane body".to_owned())?;
     let code_len = lane.code.code.len();
-    let atom_bytes = image.atoms.len() * std::mem::size_of::<u32>();
-    if out.len() < code_len + atom_bytes { return Err("lane body is larger than its placement".to_owned()) }
-    // The atom-id table follows the code in the same block, so its `adrp` is in range.
-    place_atoms(image, vm, out, code_len)?;
+    let value_bytes = value_words(image) * std::mem::size_of::<u64>();
+    if out.len() < code_len + value_bytes { return Err("lane body is larger than its placement".to_owned()) }
+    // The value table follows the code in the same block, so its `adrp` is in range.
+    place_values(image, vm, out, code_len)?;
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
     let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: live.calls.records(),
-        atoms: address + code_len as u64, atom_count: image.atoms.len() };
+        values: address + code_len as u64, value_counts: (image.atoms.len(), image.heap_values.len(), image.shapes.len()) };
     let mut roots = FoldedRoots::default();
     // The body is linked at the address it will run at: its `adrp`/`add` pairs and branches are
     // page- and displacement-relative to it, so a copy linked anywhere else faults (or refuses to
@@ -172,14 +174,41 @@ pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, func
     Ok(roots.settled())
 }
 
-/// Writes the running VM's atom ids into `out` at `at`: one `u32` per `image.atoms`, the table
-/// `Symbol::Atom` addresses. `image.atoms` are the build's texts; a VM interns them under its own
-/// numbers, so the words are written at load and the code reads them.
-fn place_atoms(image: &AotImage, vm: &mut Vm, out: &mut [u8], at: usize) -> Result<(), String> {
-    let size = std::mem::size_of::<u32>();
-    let table = out.get_mut(at..at + image.atoms.len() * size).ok_or("AOT image block is too small for its atoms")?;
-    for (slot, text) in table.chunks_exact_mut(size).zip(&image.atoms) {
-        slot.copy_from_slice(&u32::from(vm.intern_atom(text)).to_le_bytes());
+/// The words the value table holds: one per atom, heap value and shape.
+pub(in crate::vm) fn value_words(image: &AotImage) -> usize {
+    image.atoms.len() + image.heap_values.len() + image.shapes.len()
+}
+
+/// The slot number of value `index` in `places`' table.
+fn value_slot(places: &Places<'_>, index: u32) -> Option<u64> {
+    let (atoms, heap, shapes) = places.value_counts;
+    let index = index as usize;
+    let bound = match index {
+        _ if index < atoms => atoms,
+        _ if index < atoms + heap => atoms + heap,
+        _ => atoms + heap + shapes,
+    };
+    (index < bound).then(|| places.values + index as u64 * std::mem::size_of::<u64>() as u64)
+}
+
+/// Writes the running VM's words for `image`'s atoms (their ids), heap values (their bits) and
+/// shapes (their ids) into `out` at `at`, the table `Symbol::Atom`, `HeapValue` and `Shape`
+/// address: the image's numbers are its build's, so a VM that loads it resolves them here and the
+/// code loads them (`lane_region::relocs::address`).
+fn place_values(image: &AotImage, vm: &mut Vm, out: &mut [u8], at: usize) -> Result<(), String> {
+    let size = std::mem::size_of::<u64>();
+    let table = out.get_mut(at..at + value_words(image) * size).ok_or("AOT image block is too small for its values")?;
+    let mut words = table.chunks_exact_mut(size);
+    for text in &image.atoms {
+        words.next().expect("the table holds every atom").copy_from_slice(&u64::from(vm.intern_atom(text)).to_le_bytes());
+    }
+    for key in 0..image.heap_values.len() as u32 {
+        let value = symbols::resolve_recipe(Symbol::HeapValue(key), image, vm).ok_or("an AOT image heap value does not resolve")?;
+        words.next().expect("the table holds every heap value").copy_from_slice(&value.to_le_bytes());
+    }
+    for key in 0..image.shapes.len() as u32 {
+        let shape = symbols::resolve_recipe(Symbol::Shape(key), image, vm).ok_or("an AOT image shape does not resolve")?;
+        words.next().expect("the table holds every shape").copy_from_slice(&shape.to_le_bytes());
     }
     Ok(())
 }
@@ -222,22 +251,21 @@ fn link_into(out: &mut [u8], start: usize, at: usize, code: &RelocatableCode, re
 }
 
 /// The address of symbol `(namespace, key)` in this process, or `None` where it resolves to none yet.
-fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, key: u32) -> Option<u64> {
+fn resolve(image: &AotImage, _vm: &mut Vm, places: &Places<'_>, namespace: u32, key: u32) -> Option<u64> {
     let symbol = SymbolTable::decode(image, namespace, key)?;
     match symbol {
         Symbol::Helper(helper) => LaneHelper::addresses().get(helper as usize).map(|address| *address as usize as u64),
         Symbol::SemanticEntry(op) => semantic_entry(op),
         Symbol::Operands { .. } => places.operands.get(key as usize).map(|record| record.as_ptr().addr() as u64),
         Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),
-        Symbol::Atom(atom) => {
-            let _ = image.atoms.get(atom as usize)?;
-            (places.atom_count > atom as usize).then(|| places.atoms + u64::from(atom) * std::mem::size_of::<u32>() as u64)
-        }
+        Symbol::Atom(atom) => value_slot(places, image.atoms.get(atom as usize).map(|_| u32::from(atom))?),
+        Symbol::HeapValue(key) => value_slot(places, u32::from(key) + image.atoms.len() as u32),
+        Symbol::Shape(key) => value_slot(places, u32::from(key) + (image.atoms.len() + image.heap_values.len()) as u32),
         Symbol::Invalidation => Some(places.invalidation as u64),
         Symbol::NarrowUpperWords => Some(crate::value::NarrowLayout::upper_words() as u64),
         Symbol::Attention => Some(crate::execution_interrupt::attention_address()),
         Symbol::BasePc { function, pc } => base_pc(image, places.bases, function, pc),
-        Symbol::HeapValue(_) | Symbol::Shape(_) => symbols::resolve_recipe(symbol, image, vm),
+        // A heap value's or shape's word is in the table (`value_slot`), not the symbol itself.
         Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
     }
 }

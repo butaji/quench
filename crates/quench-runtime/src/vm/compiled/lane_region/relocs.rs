@@ -29,6 +29,15 @@ pub(in crate::vm) enum RelocKind {
     Shape,
 }
 
+impl RelocKind {
+    /// Whether `kind` names a *word* the code reads (`Atom`'s number, a heap value's bits, a shape's
+    /// id) rather than an address. AArch64's page-relative reference cannot carry a value, so a
+    /// linking lowering loads one from the table the loader fills beside the code.
+    pub(in crate::vm) const fn is_value(self) -> bool {
+        matches!(self, Self::Atom | Self::HeapValue | Self::Shape)
+    }
+}
+
 /// The address in this process of the symbol `(namespace, key)` a numeric image names, which is
 /// all an image of a frameless Number region can name.
 pub(in crate::vm::compiled) fn numeric_symbol(namespace: u32, key: u32) -> Option<u64> {
@@ -84,5 +93,11 @@ pub(super) fn address(helpers: LaneHelpers, builder: &mut FunctionBuilder<'_>, k
     if !helpers.links() {
         return emit(builder).raw_const(Lane::I64, live as i64);
     }
-    crate::vm::jit_backend::symbol_address(builder, kind as u32, key)
+    let symbol = crate::vm::jit_backend::symbol_address(builder, kind as u32, key);
+    // A value's symbol is the address of its word in the loader's table (`live::place_values`).
+    if kind.is_value() {
+        let mut stage = emit(builder);
+        return stage.raw_load(Lane::I64, super::super::invariant(), symbol, 0);
+    }
+    symbol
 }
