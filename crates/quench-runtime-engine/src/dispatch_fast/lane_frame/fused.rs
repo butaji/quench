@@ -15,7 +15,7 @@ fn raw_word(raw: bool, value: u64) -> Value {
     if raw && double.is_nan() { Value::number(double) } else { Value::from_bits(value) }
 }
 
-lane_handler! {
+sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler;
     /// Two adjacent rows as one record, generated from their staged rows (`staged::FUSED_ROWS`):
     /// row `A` steps over this record, then row `B` over the next one, with no dispatch between
     /// them. Neither row is written for the pair: each is its own row's decode and step, so the
@@ -106,10 +106,10 @@ lane_handler! {
                             target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST, { CMP & !PROVEN_STEP })
                         }
                     } else {
-                        resume!(cx, super::super::take_jump(cx, r, ip, backward, carried, None))
+                        resume!(cx, crate::dispatch_fast::take_jump(cx, r, ip, backward, carried, None))
                     }
                 }
-                Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
+                Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, crate::dispatch_fast::take_jump(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
                 Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
                 Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
                 Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following(ip), carried),
@@ -156,7 +156,7 @@ lane_handler! {
     }
 }
 
-lane_handler! {
+sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler;
     /// Three or four adjacent rows as one record, generated from their staged rows
     /// (`staged::FUSED_CHAINS`): each link is its row's own decode and step over its record,
     /// with no dispatch between links, as `fused_rows` does for two. A link's miss takes its
@@ -244,8 +244,8 @@ lane_handler! {
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::past_result(view) } else { view };
                 let mut frame = row_frame::<$L, ACC_NONE, FLAG_UNREAD>(cx, r, $ip, $i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
-                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump(cx, r, $ip, backward, carried, None)),
-                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump(cx, r, unsafe { $ip.add(1 + k as usize) }, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, crate::dispatch_fast::take_jump(cx, r, $ip, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, crate::dispatch_fast::take_jump(cx, r, unsafe { $ip.add(1 + k as usize) }, backward, carried, None)),
                     Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
                     Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
                     Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following($ip), carried),
@@ -284,7 +284,7 @@ lane_handler! {
 
 /// Chain `(L0, L1, L2, L3)`'s record handler: one for both jump directions of its last link, which reads its own distance.
 pub(crate) const fn chain_row<const L0: u16, const L1: u16, const L2: u16, const L3: u16, const FAMILY: u8>() -> Handler {
-    chain_rows::<L0, L1, L2, L3, FAMILY>
+    chain_rows!(L0, L1, L2, L3, FAMILY)
 }
 
 /// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
@@ -463,9 +463,9 @@ pub(crate) fn fuse_chains(records: &mut [LaneInstruction], decoded: &[quench_run
 /// both directions name one record and one instance.
 pub(crate) fn fused_row<const A: u16, const B: u16, const FAMILY: u8>(backward: bool) -> Handler {
     if const { quench_runtime::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } {
-        if backward { fused_rows::<A, B, true, FAMILY, B, { quench_runtime::staged::NO_LINK }, 0> } else { fused_rows::<A, B, false, FAMILY, B, { quench_runtime::staged::NO_LINK }, 0> }
+        if backward { fused_rows!(A, B, true, FAMILY, B, { quench_runtime::staged::NO_LINK }, 0) } else { fused_rows!(A, B, false, FAMILY, B, { quench_runtime::staged::NO_LINK }, 0) }
     } else {
-        fused_rows::<A, B, false, FAMILY, B, { quench_runtime::staged::NO_LINK }, 0>
+        fused_rows!(A, B, false, FAMILY, B, { quench_runtime::staged::NO_LINK }, 0)
     }
 }
 

@@ -2709,9 +2709,9 @@ pub(crate) const fn jumps_by_row(op: Op) -> bool {
 /// Opcode `OP`'s jump row in direction `backward`.
 pub(crate) const fn jump_row<const OP: u16>(backward: bool) -> Handler {
     if backward {
-        row_jump::<OP, true, FLAG_UNREAD, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }>
+        row_jump!(OP, true, FLAG_UNREAD, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK })
     } else {
-        row_jump::<OP, false, FLAG_UNREAD, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }>
+        row_jump!(OP, false, FLAG_UNREAD, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK })
     }
 }
 
@@ -2988,7 +2988,7 @@ const fn compare_operands(flag: u8) -> Option<bool> {
 /// Whether `handler`, a `compare_jump_row` instance, fixes its right operand as a constant: one of the
 /// formed register-constant instances (`compare_operands`).
 fn compare_operands_of<const BACKWARD: bool>(handler: Handler) -> Option<bool> {
-    macro_rules! row { ($flag:expr) => { row_jump::<{ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }> as Handler } }
+    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
     macro_rules! constant_formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
     let constant: [Handler; FORMED_COMPARISONS.len()] = constant_formed!(1 3 5 7 9 11);
     Some(constant.iter().any(|row| *row as *const () == handler as *const ()))
@@ -2999,7 +2999,7 @@ fn compare_operands_of<const BACKWARD: bool>(handler: Handler) -> Option<bool> {
 /// register or a constant; `None` past the codes.
 fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: Operand) -> Option<Handler> {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
-    macro_rules! row { ($flag:expr) => { row_jump::<{ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }> as Handler } }
+    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
     macro_rules! formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
     let form = match (left.kind(), right.kind()) {
         (Some(Register), Some(Register)) => Some(0),
@@ -3020,7 +3020,7 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
 /// takes its instance again at its next run, so the move undoes only what the run learned.
 pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len()] {
-        macro_rules! row { ($flag:expr) => { row_jump::<{ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }> as Handler } }
+        macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
         macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
         rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33)
     }
@@ -3031,7 +3031,7 @@ pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     None
 }
 
-lane_handler! {
+sharded_handler! { lane_handler, row_jump_shards, row_jump_handler;
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
@@ -3046,7 +3046,7 @@ lane_handler! {
         if const { FLAG == FLAG_LOOP } {
             let site = i.loop_site();
             if unsafe { (*cx).fuel } == 0 || !site.warm_backedge() {
-                sibling!(super::loop_jump_miss, r, ip, view)
+                sibling!(crate::dispatch_fast::loop_jump_miss, r, ip, view)
             }
             unsafe { (*cx).fuel -= 1 };
             let header = unsafe { ip.byte_offset(site.jump) };
@@ -3130,12 +3130,12 @@ lane_handler! {
                 if const { TEST != quench_runtime::staged::NO_LINK } {
                     target_run!(cx, r, ip, carried, PREFIX, COPY, TEST)
                 } else {
-                    resume!(cx, super::take_jump(cx, r, ip, BACKWARD, carried, None))
+                    resume!(cx, crate::dispatch_fast::take_jump(cx, r, ip, BACKWARD, carried, None))
                 }
             }
             // A table's entry is the jump record `k` places after the table record (validation places
             // `entries` of them after it), and the lane jumps from that record.
-            Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::take_jump(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+            Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, crate::dispatch_fast::take_jump(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
             Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
             Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
             Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following(ip), carried),
@@ -3381,11 +3381,11 @@ pub(crate) const fn protocol_handler<const OP: u16, const ACC: u8, const MISS: u
     if protocol_row_declines(LaneFields::<OP>::OPCODE) && call_form(MISS).is_none() {
         protocol_miss(MISS)
     } else {
-        protocol_row::<OP, ACC, MISS> as Handler
+        protocol_row!(OP, ACC, MISS) as Handler
     }
 }
 
-lane_handler! {
+sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler;
     /// The lane handler of a protocol record (a call, a construction, a return, an iterator or
     /// generator step, a frame or tier protocol record), generated from its staged row as
     /// `generated_row` is but with no site plan: the record decodes by its opcode's decoder, the row
@@ -3579,7 +3579,7 @@ fn call_frame<const OP: u16, const ACC: u8, const MISS: u16>(cx: *mut LaneContex
     frame
 }
 
-script_handler! {
+sharded_handler! { script_handler, returning_row_shards, returning_row_handler;
     /// The lane handler of a returning record of opcode `OP` at leaf form `LEAF`, whose RETURN
     /// parameter is `MISS` (`protocol_misses::returning_code`). It is generated from its staged row as
     /// `protocol_row` is, but its value completes the activation (`lane_return_value!`) instead of
@@ -3590,7 +3590,7 @@ script_handler! {
         let fields = LaneFields::<OP>(i);
         // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
         let decoded = if const { quench_runtime::staged::super_const_array_family(LaneFields::<OP>::OPCODE) } {
-            Operation::decode_literal_completed_with(quench_runtime::staged::Fields::wide(fields), unsafe { super::super_parts_in_lane(cx, i.imm() as usize) }, ())
+            Operation::decode_literal_completed_with(quench_runtime::staged::Fields::wide(fields), unsafe { crate::dispatch_fast::super_parts_in_lane(cx, i.imm() as usize) }, ())
         } else {
             Operation::decode_completed(quench_runtime::staged::Fields::wide(fields), quench_runtime::staged::DecodeContext::EMPTY)
         };
@@ -3602,10 +3602,10 @@ script_handler! {
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(value) => {
                 let value = Value::from_bits(value);
-                if let Some(resumed) = by_leaf!(LEAF, |L| super::complete_plain_activation_in_lane::<L>(cx, value)) {
+                if let Some(resumed) = by_leaf!(LEAF, |L| crate::dispatch_fast::complete_plain_activation_in_lane::<L>(cx, value)) {
                     resume!(cx, resumed)
                 }
-                resume!(cx, super::return_value_general_in_lane(cx, ip, value));
+                resume!(cx, crate::dispatch_fast::return_value_general_in_lane(cx, ip, value));
             }
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),
         }
@@ -4094,7 +4094,7 @@ pub(crate) fn staged_delete(cx: *mut LaneContext, r: Registers, [destination, ba
 // The fusion handlers and their install passes (`fuse_rows`, `fuse_chains`), in their own module.
 #[path = "lane_frame/fused.rs"]
 pub(crate) mod fused;
-pub(crate) use fused::{chain_row, fused_row, fused_rows, fuse_chains, fuse_rows, is_window_row};
+pub(crate) use fused::{chain_row, fused_row, fuse_chains, fuse_rows, is_window_row};
 
 /// The lane context's string-case index for a `StringCaseIndex` row (`case_index_in_lane`): the record's
 /// filter, null where the record has none.

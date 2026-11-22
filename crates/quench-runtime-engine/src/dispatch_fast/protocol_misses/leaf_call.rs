@@ -38,7 +38,7 @@ pub(crate) const fn leaf_of(parameters: u8) -> Option<(u8, u16)> {
 }
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::LEAF_CALL | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::LEAF_CALL | parameters })`).
 pub(crate) const fn leaf_call_miss_of(parameters: u8) -> Handler {
     let payload = parameters & PAYLOAD_MASK;
     match parameters & KIND_MASK {

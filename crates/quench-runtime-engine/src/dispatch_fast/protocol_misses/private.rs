@@ -22,7 +22,7 @@ pub(crate) const PRIVATE_IN: u8 = 6;
 pub(crate) const GET_PRIVATE_FIELD: u8 = 7;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::PRIVATE | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::PRIVATE | parameters })`).
 pub(crate) const fn private_miss_of(parameters: u8) -> Handler {
     match parameters {
         DEFINE_FIELD => super::super::define_field_miss as Handler,

@@ -15,7 +15,7 @@ pub(crate) const PLANNED_CONSTRUCT_RETURNED: u8 = 2;
 pub(crate) const SCRIPT_CONSTRUCT_KEEPING: u8 = 3;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::CONSTRUCT | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::CONSTRUCT | parameters })`).
 pub(crate) const fn construct_miss_of(parameters: u8) -> Handler {
     match parameters {
         SCRIPT_CONSTRUCT => super::super::script_construct_miss as Handler,

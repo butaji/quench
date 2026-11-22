@@ -12,7 +12,7 @@ pub(crate) const CALL_ARRAY: u8 = 1;
 pub(crate) const CALL_SPREAD: u8 = 2;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::NATIVE_CALL | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::NATIVE_CALL | parameters })`).
 pub(crate) const fn native_call_miss_of(parameters: u8) -> Handler {
     match parameters {
         NATIVE => native_call_miss as Handler,

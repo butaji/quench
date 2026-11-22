@@ -21,7 +21,7 @@ pub(crate) const TIER_PROLOGUE: u8 = 2;
 pub(crate) const BODY_ENTRY: u8 = 3;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::ENTRY | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::ENTRY | parameters })`).
 pub(crate) const fn entry_miss_of(parameters: u8) -> Handler {
     match parameters {
         SCRIPT_CALL_KEEPING => super::super::script_call_keeping_miss as Handler,

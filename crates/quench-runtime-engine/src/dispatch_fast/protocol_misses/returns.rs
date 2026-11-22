@@ -41,7 +41,7 @@ macro_rules! leaf_arms {
 }
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::RETURN | parameters }>`), where `parameters` is
+/// (`protocol_row!(OP, ACC, { protocol_family::RETURN | parameters })`), where `parameters` is
 /// `returning_code(kind, leaf)`.
 pub(crate) const fn return_miss_of(parameters: u8) -> Handler {
     let kind = parameters / LEAF_FORMS;

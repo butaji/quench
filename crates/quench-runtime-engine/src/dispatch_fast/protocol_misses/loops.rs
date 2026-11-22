@@ -16,7 +16,7 @@ pub(crate) const F64_SQRT_C: u8 = 3;
 pub(crate) const F64_SQRT_PAIR: u8 = 4;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::LOOP | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::LOOP | parameters })`).
 pub(crate) const fn loop_miss_of(parameters: u8) -> Handler {
     match parameters {
         F64_SQRT_NONE => f64_sqrt_miss::<ACC_NONE> as Handler,

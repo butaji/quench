@@ -53,7 +53,7 @@ pub(crate) const CROSS_PLAIN_3: u8 = 23;
 pub(crate) const CROSS_PLAIN_4: u8 = 24;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::SCRIPT_CALL | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::SCRIPT_CALL | parameters })`).
 pub(crate) const fn script_call_miss_of(parameters: u8) -> Handler {
     match parameters {
         ARGC_0 => script_call_miss::<0, false> as Handler,

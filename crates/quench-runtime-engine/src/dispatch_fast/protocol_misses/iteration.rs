@@ -16,7 +16,7 @@ pub(crate) const READS_THREADED: u8 = 2;
 pub(crate) const BINDING: u8 = 3;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::ITERATION | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::ITERATION | parameters })`).
 pub(crate) const fn iteration_miss_of(parameters: u8) -> Handler {
     match parameters {
         STEP => iterator_step_miss as Handler,

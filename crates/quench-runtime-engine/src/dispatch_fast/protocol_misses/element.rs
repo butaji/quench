@@ -18,7 +18,7 @@ pub(crate) const GET_FIELD_NESTED: u8 = 4;
 pub(crate) const GET_FIELD_GETTER: u8 = 5;
 
 /// The miss body of a record of this family with static parameters `parameters`
-/// (`protocol_row::<OP, ACC, { protocol_family::ELEMENT | parameters }>`).
+/// (`protocol_row!(OP, ACC, { protocol_family::ELEMENT | parameters })`).
 pub(crate) const fn element_miss_of(parameters: u8) -> Handler {
     match parameters {
         GET_INDEX => super::super::get_index_miss as Handler,

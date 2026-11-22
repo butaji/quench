@@ -25,6 +25,41 @@
 use crate::ext_traits::*;
 /// The handler of opcode `$op`'s generated row at accumulator field `$acc` and site fact `$flag`
 /// (`lane_frame::generated_row_handler`), chosen at compile time so each use names one shard's instance.
+/// The instance of `row_jump` with these const parameters (`sharded_handler!`).
+macro_rules! row_jump {
+    ($($param:tt)*) => {
+        const { crate::dispatch_fast::lane_frame::row_jump_handler::<$($param)*>() }
+    };
+}
+
+/// The instance of `protocol_row` with these const parameters (`sharded_handler!`).
+macro_rules! protocol_row {
+    ($($param:tt)*) => {
+        const { crate::dispatch_fast::lane_frame::protocol_row_handler::<$($param)*>() }
+    };
+}
+
+/// The instance of `returning_row` with these const parameters (`sharded_handler!`).
+macro_rules! returning_row {
+    ($($param:tt)*) => {
+        const { crate::dispatch_fast::lane_frame::returning_row_handler::<$($param)*>() }
+    };
+}
+
+/// The instance of `fused_rows` with these const parameters (`sharded_handler!`).
+macro_rules! fused_rows {
+    ($($param:tt)*) => {
+        const { crate::dispatch_fast::lane_frame::fused::fused_rows_handler::<$($param)*>() }
+    };
+}
+
+/// The instance of `chain_rows` with these const parameters (`sharded_handler!`).
+macro_rules! chain_rows {
+    ($($param:tt)*) => {
+        const { crate::dispatch_fast::lane_frame::fused::chain_rows_handler::<$($param)*>() }
+    };
+}
+
 macro_rules! generated_row {
     ($op:expr, $acc:expr, $flag:expr) => {
         const { crate::dispatch_fast::lane_frame::generated_row_handler::<{ $op }, { $acc }, { $flag }>() }
@@ -47,7 +82,7 @@ macro_rules! by_leaf {
 /// (`protocol_misses::returning_code`): the record runs its staged row, then its miss body.
 macro_rules! return_row {
     ($op:expr, $code:expr) => {
-        protocol_row::<{ $op as u16 }, ACC_NONE, { protocol_family::RETURN | ($code as u16) }>
+        protocol_row!({ $op as u16 }, ACC_NONE, { protocol_family::RETURN | ($code as u16) })
     };
 }
 
@@ -56,7 +91,7 @@ macro_rules! return_row {
 /// (`returning_miss` of `$kind`) completes.
 macro_rules! returning_row_of {
     ($op:expr, $kind:expr, $leaf:expr) => {
-        returning_row::<{ $op as u16 }, { $leaf }, { protocol_family::RETURN | (returning_code($kind, $leaf) as u16) }>
+        returning_row!({ $op as u16 }, { $leaf }, { protocol_family::RETURN | (returning_code($kind, $leaf) as u16) })
     };
 }
 
@@ -2548,6 +2583,82 @@ macro_rules! script_handler {
     };
 }
 
+/// `lane_handler!` (or `script_handler!`, `$kind`) for a handler with many const instances: rustc keeps all
+/// instances of one generic function in its module's codegen unit, so the body is defined in 8 shard modules
+/// (`$mods::s*`) and `$handler::<..>()` names the instance of the shard its parameters pick, as
+/// `generated_row_handler` does. Only constant evaluation may call `$handler` (a compiled call would name every
+/// shard's instance), so a use names it through its call-site macro (`protocol_row!` and the rest).
+macro_rules! sharded_handler {
+    ($kind:ident, $mods:ident, $handler:ident; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
+        #[allow(non_snake_case)]
+        pub(crate) mod $mods {
+        pub(crate) mod s0 {
+            #[allow(unused_imports)]
+            use super::super::*;
+            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
+        }
+        pub(crate) mod s1 {
+            #[allow(unused_imports)]
+            use super::super::*;
+            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
+        }
+        pub(crate) mod s2 {
+            #[allow(unused_imports)]
+            use super::super::*;
+            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
+        }
+        pub(crate) mod s3 {
+            #[allow(unused_imports)]
+            use super::super::*;
+            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
+        }
+        pub(crate) mod s4 {
+            #[allow(unused_imports)]
+            use super::super::*;
+            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
+        }
+        pub(crate) mod s5 {
+            #[allow(unused_imports)]
+            use super::super::*;
+            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
+        }
+        pub(crate) mod s6 {
+            #[allow(unused_imports)]
+            use super::super::*;
+            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
+        }
+        pub(crate) mod s7 {
+            #[allow(unused_imports)]
+            use super::super::*;
+            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
+        }
+        }
+        $vis const fn $handler<$(const $param: $ty),*>() -> Handler {
+            match crate::dispatch_fast::handler_shard(&[$($param as u64),*]) {
+            0 => $mods::s0::$name::<$($param),*>,
+            1 => $mods::s1::$name::<$($param),*>,
+            2 => $mods::s2::$name::<$($param),*>,
+            3 => $mods::s3::$name::<$($param),*>,
+            4 => $mods::s4::$name::<$($param),*>,
+            5 => $mods::s5::$name::<$($param),*>,
+            6 => $mods::s6::$name::<$($param),*>,
+            _ => $mods::s7::$name::<$($param),*>,
+            }
+        }
+    };
+}
+
+/// The shard (`sharded_handler!`) of a handler instance with const parameters `params`.
+pub(crate) const fn handler_shard(params: &[u64]) -> usize {
+    let mut hash = 0u64;
+    let mut index = 0;
+    while index < params.len() {
+        hash = hash.wrapping_mul(31).wrapping_add(params[index]);
+        index += 1;
+    }
+    (hash % 8) as usize
+}
+
 /// `lane_handler!` for a return record of any view that has a leaf form
 /// (`LaneView::specialize_leaf_returns`): a leaf's records are JavaScript, so its form takes
 /// the context as `script_handler!` does, and only the others load it.
@@ -2639,7 +2750,7 @@ use lane_reads::RecordOperand;
 pub(crate) mod loop_body;
 pub(crate) mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, operator_row, protocol_family, is_row, jump_row, row_jump, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 pub(crate) mod capture_append;
@@ -12553,13 +12664,13 @@ fn body_entry_resumed(cx: *mut LaneContext, ip: Ip, r: Registers, view: Carried,
 /// The protocol row of a frameless activation's tier prologue record (`TierPrologue`): the staged prologue
 /// row (`PrologueFrame::tier_prologue`), with `tier_prologue_in_lane` as the body it completes where it leaves.
 const fn tier_prologue_row() -> Handler {
-    protocol_row::<{ quench_runtime::bytecode::TIER_PROLOGUE as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::TIER_PROLOGUE as u16 }>
+    protocol_row!({ quench_runtime::bytecode::TIER_PROLOGUE as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::TIER_PROLOGUE as u16 })
 }
 
 /// The protocol row of a specialized body's prologue record (`BodyEntry`): the staged prologue row
 /// (`PrologueFrame::body_entry`), with `body_entry_in_lane` as the body it completes where it leaves.
 const fn body_entry_row() -> Handler {
-    protocol_row::<{ quench_runtime::bytecode::BODY_ENTRY as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::BODY_ENTRY as u16 }>
+    protocol_row!({ quench_runtime::bytecode::BODY_ENTRY as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::BODY_ENTRY as u16 })
 }
 
 script_handler! {
@@ -16342,7 +16453,7 @@ const fn handler_for<const OP: u16, const BACKWARD: bool, const ACC: u8>()
         return None;
     }
     if jumps_by_row(op) {
-        return Some(LaneHandler { handler: row_jump::<OP, BACKWARD, FLAG_UNREAD, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }>, produces: false });
+        return Some(LaneHandler { handler: row_jump!(OP, BACKWARD, FLAG_UNREAD, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }), produces: false });
     }
     if admits_row(op) {
         return Some(LaneHandler { handler: generated_row!(OP, ACC, FLAG_UNREAD), produces: row_produces(op) });
@@ -16362,10 +16473,10 @@ const fn handler_for<const OP: u16, const BACKWARD: bool, const ACC: u8>()
 /// definition, a method's brand, and the brand checks of a read and of `#x in`.
 const fn private_element_handler(opcode: Op) -> Option<Handler> {
     match opcode {
-        _ if quench_runtime::staged::private_field_definition_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::PRIVATE_FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PRIVATE_FIELD as u16 }> as Handler),
-        _ if quench_runtime::staged::private_name_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::PRIVATE_NAME_MARK as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::MARK_PRIVATE_NAME as u16 }> as Handler),
-        _ if quench_runtime::staged::private_check_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::PRIVATE_CHECK as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::CHECK_PRIVATE as u16 }> as Handler),
-        _ if quench_runtime::staged::private_in_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::PRIVATE_IN as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::PRIVATE_IN as u16 }> as Handler),
+        _ if quench_runtime::staged::private_field_definition_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::PRIVATE_FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PRIVATE_FIELD as u16 }) as Handler),
+        _ if quench_runtime::staged::private_name_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::PRIVATE_NAME_MARK as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::MARK_PRIVATE_NAME as u16 }) as Handler),
+        _ if quench_runtime::staged::private_check_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::PRIVATE_CHECK as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::CHECK_PRIVATE as u16 }) as Handler),
+        _ if quench_runtime::staged::private_in_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::PRIVATE_IN as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::PRIVATE_IN as u16 }) as Handler),
         _ => None,
     }
 }
@@ -16384,20 +16495,20 @@ const fn other_handler(opcode: Op) -> Option<Handler> {
         _ if quench_runtime::staged::field_read_family(opcode) => Some(row_get_field_first),
         // merge: theirs' `lane_set_object_field_own` / `lane_set_this_field_own` are undefined; HEAD's `field_store_row` serves both receivers.
         _ if opcode.field_store().is_some() => match opcode.field_store() { Some(store) => Some(field_store_row(store)), None => None },
-        _ if quench_runtime::staged::property_record_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::PROPERTY_RECORD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PROPERTY_RECORD as u16 }> as Handler),
-        _ if quench_runtime::staged::field_definition_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }> as Handler),
+        _ if quench_runtime::staged::property_record_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::PROPERTY_RECORD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PROPERTY_RECORD as u16 }) as Handler),
+        _ if quench_runtime::staged::field_definition_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }) as Handler),
         _ if private_element_handler(opcode).is_some() => private_element_handler(opcode),
-        _ if quench_runtime::staged::copy_properties_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::COPY_DATA_PROPERTIES as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::COPY_DATA_PROPERTIES as u16 }> as Handler),
+        _ if quench_runtime::staged::copy_properties_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::COPY_DATA_PROPERTIES as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::COPY_DATA_PROPERTIES as u16 }) as Handler),
         _ if opcode.steps_in_lane() => Some(general_step_in_lane),
-        _ if quench_runtime::staged::element_read_family(opcode) => Some(protocol_row::<ELEMENT_READ, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }> as Handler),
-        _ if quench_runtime::staged::element_write_family(opcode) => Some(protocol_row::<ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler),
+        _ if quench_runtime::staged::element_read_family(opcode) => Some(protocol_row!(ELEMENT_READ, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }) as Handler),
+        _ if quench_runtime::staged::element_write_family(opcode) => Some(protocol_row!(ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }) as Handler),
         _ if quench_runtime::staged::known_call_family(opcode) => Some(known_call_handler()),
         _ if quench_runtime::staged::call_family(opcode) => Some(script_call_row(ANY_ARGC)),
-        _ if quench_runtime::staged::call_array_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::CALL_ARRAY as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }> as Handler),
-        _ if quench_runtime::staged::call_spread_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::CALL_SPREAD as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_SPREAD as u16 }> as Handler),
-        _ if quench_runtime::staged::delete_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::DELETE_ROW as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::DELETE as u16 }> as Handler),
+        _ if quench_runtime::staged::call_array_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::CALL_ARRAY as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }) as Handler),
+        _ if quench_runtime::staged::call_spread_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::CALL_SPREAD as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_SPREAD as u16 }) as Handler),
+        _ if quench_runtime::staged::delete_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::DELETE_ROW as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::DELETE as u16 }) as Handler),
         _ if quench_runtime::staged::construction_family(opcode) => Some(protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>()),
-        _ if quench_runtime::staged::forwarded_call_family(opcode) => Some(protocol_row::<{ quench_runtime::bytecode::FORWARDED_CALL as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 }>),
+        _ if quench_runtime::staged::forwarded_call_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::FORWARDED_CALL as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 })),
         _ if quench_runtime::staged::return_family(opcode) => Some(return_row!(quench_runtime::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF))),
         _ if generator_yields::suspend_handler(opcode).is_some() => generator_yields::suspend_handler(opcode),
         _ => wasm_gc_handler(opcode),
@@ -17037,11 +17148,11 @@ fn derive_lane_view<'live>(
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
                     .and_then(|_| {
                         LaneHandler::producer(match acc {
-                            ACC_NONE => protocol_row::<{ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }> as Handler,
-                            ACC_A => protocol_row::<{ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_A, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_A as u16 }> as Handler,
-                            ACC_B => protocol_row::<{ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_B, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_B as u16 }> as Handler,
-                            ACC_C => protocol_row::<{ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_C, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_C as u16 }> as Handler,
-                            _ => protocol_row::<{ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_PAIR, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_PAIR as u16 }> as Handler,
+                            ACC_NONE => protocol_row!({ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }) as Handler,
+                            ACC_A => protocol_row!({ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_A, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_A as u16 }) as Handler,
+                            ACC_B => protocol_row!({ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_B, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_B as u16 }) as Handler,
+                            ACC_C => protocol_row!({ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_C, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_C as u16 }) as Handler,
+                            _ => protocol_row!({ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_PAIR, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_PAIR as u16 }) as Handler,
                         })
                     })
             } else if admits_row(op) && op.reads_arguments()
@@ -17424,7 +17535,7 @@ fn holds_no_call_link(op: Op) -> bool {
 /// The handler of a loop site's backward jump: the jump row in the loop's flag (`FLAG_LOOP`), which
 /// takes the jump while the site warms up and leaves any other to `loop_jump_miss`.
 fn loop_jump_row() -> Handler {
-    row_jump::<JUMP, true, FLAG_LOOP, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }> as Handler
+    row_jump!(JUMP, true, FLAG_LOOP, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler
 }
 
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
@@ -17724,7 +17835,7 @@ fn proved_row(handler: *const ()) -> Option<Handler> {
     }
     // A store keeps its generic record (`set_index_miss`) until a proof names it: the keyed store
     // has no row of its own in the lane, so this is the one place a store's row is installed.
-    if handler == protocol_row::<ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler as *const () {
+    if handler == protocol_row!(ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }) as Handler as *const () {
         return Some(generated_row!(ELEMENT_WRITE, ACC_NONE, FLAG_SET));
     }
     None
@@ -17845,15 +17956,15 @@ fn pair_target_form<const A: u16, const B: u16, const PREFIX: u16, const TEST: u
     (
         target_run_holds::<PREFIX, { quench_runtime::staged::NO_LINK }, TEST> as fn(*const (), &dyn Fn(usize) -> *const ()) -> bool,
         // `B` is a jump whose direction is its distance (`fused_rows` reads `BACKWARD` only for a branch table).
-        lane_frame::fused_rows::<A, B, false, { quench_runtime::staged::FUSED_TARGET }, TEST, PREFIX, 0> as Handler,
+        fused_rows!(A, B, false, { quench_runtime::staged::FUSED_TARGET }, TEST, PREFIX, 0) as Handler,
     )
 }
 
 /// The `(IncDec, Jump)` back edge whose target is its loop's test alone, `fused_rows` with the test's
 /// comparison fixed (`CMP`, `lane_frame::target_comparison`).
 const fn inc_dec_test_row<const CMP: u8>() -> Handler {
-    lane_frame::fused_rows::<{ quench_runtime::staged::INC_DEC_ROW }, { quench_runtime::staged::JUMP_ROW }, false, { quench_runtime::staged::FUSED_TARGET },
-        { quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, { quench_runtime::staged::NO_LINK }, CMP> as Handler
+    fused_rows!({ quench_runtime::staged::INC_DEC_ROW }, { quench_runtime::staged::JUMP_ROW }, false, { quench_runtime::staged::FUSED_TARGET },
+        { quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, { quench_runtime::staged::NO_LINK }, CMP) as Handler
 }
 
 /// The `(IncDec, Jump)` back edges whose step and test the registers' int32 kinds prove
@@ -17923,7 +18034,7 @@ fn fixed_comparison(handler: Handler, test: &LaneInstruction) -> Handler {
 fn lone_target_form<const PREFIX: u16, const TEST: u16>() -> TargetForm {
     (
         target_run_holds::<PREFIX, { quench_runtime::staged::NO_LINK }, TEST> as fn(*const (), &dyn Fn(usize) -> *const ()) -> bool,
-        lane_frame::row_jump::<JUMP, true, FLAG_UNREAD, PREFIX, { quench_runtime::staged::NO_LINK }, TEST> as Handler,
+        row_jump!(JUMP, true, FLAG_UNREAD, PREFIX, { quench_runtime::staged::NO_LINK }, TEST) as Handler,
     )
 }
 
@@ -17932,7 +18043,7 @@ fn lone_target_form<const PREFIX: u16, const TEST: u16>() -> TargetForm {
 fn lone_copy_target_form<const PREFIX: u16, const TEST: u16>() -> TargetForm {
     (
         target_run_holds::<PREFIX, { quench_runtime::staged::FUSED_TARGET_COPY_ROWS[0] }, TEST> as fn(*const (), &dyn Fn(usize) -> *const ()) -> bool,
-        lane_frame::row_jump::<JUMP, true, FLAG_UNREAD, PREFIX, { quench_runtime::staged::FUSED_TARGET_COPY_ROWS[0] }, TEST> as Handler,
+        row_jump!(JUMP, true, FLAG_UNREAD, PREFIX, { quench_runtime::staged::FUSED_TARGET_COPY_ROWS[0] }, TEST) as Handler,
     )
 }
 
