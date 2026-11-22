@@ -306,17 +306,23 @@ impl EmitFrame<'_> {
     /// window becomes the header's caller registers, the body top returns to the index, and the values' top
     /// returns to the window.
     fn pop_native(&self, stage: &mut Emit<'_, '_>, room: Room<ir::Value>) {
-        use quench_runtime::staged::frame::{CONTEXT_CALLER_REGISTERS, PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
+        use quench_runtime::staged::frame::{CONTEXT_CALLER_REGISTERS, CONTEXT_PACKED, NATIVE_FLAG, PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
         let caller = stage.load_u64(Region::Frame.mutable(), room.top, context_at(CONTEXT_CALLER_REGISTERS));
         let plain = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.plain_depth));
         let depth = stage.load_u64(Region::Payload.mutable(), plain, PLAIN_DEPTH_AT as i32);
-        // A nested entry to emitted code under the callee (`Vm::stack_words_in_lane`) made the header a
-        // record (`LaneStack::spill_plain`): the record pops instead, where Rust keeps it.
-        let (spilled, plain_header, popped) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
-        stage.builder.set_cold_block(spilled);
-        stage.builder.ins().brif(depth, plain_header, &[], spilled, &[]);
-        stage.builder.switch_to_block(spilled);
-        let helper = self.helpers.address(&mut stage.builder, LaneHelper::PopSpilledHeader);
+        // Where Rust observed the frame, the activation pops where Rust keeps it (`LaneStack::pop_observed_header`):
+        // a nested entry to emitted code under the callee (`Vm::stack_words_in_lane`) made the header a record
+        // (`LaneStack::spill_plain`), or a helper linked it (`native_frames::link_header`), which cleared its
+        // NATIVE flag and gave it a side record that pops with it.
+        let packed = stage.load_u64(Region::Frame.mutable(), room.top, context_at(CONTEXT_PACKED));
+        let native = stage.builder.ins().band_imm_u(packed, NATIVE_FLAG as i64);
+        let (observed, check_flag, plain_header, popped) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
+        stage.builder.set_cold_block(observed);
+        stage.builder.ins().brif(depth, check_flag, &[], observed, &[]);
+        stage.builder.switch_to_block(check_flag);
+        stage.builder.ins().brif(native, plain_header, &[], observed, &[]);
+        stage.builder.switch_to_block(observed);
+        let helper = self.helpers.address(&mut stage.builder, LaneHelper::PopObservedHeader);
         emit_lane_helper_call(stage.builder, self.payload, helper, &[]);
         stage.builder.ins().jump(popped, &[]);
         stage.builder.switch_to_block(plain_header);

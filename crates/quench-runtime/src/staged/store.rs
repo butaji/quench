@@ -4,7 +4,7 @@
 
 use super::narrow::{narrow_form, packed_form, storable_form, UPPER_WORD};
 use super::object::{inline_storage, HALF_BYTES};
-use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
+use super::slot_store::{admitted_payload, gate_open, store_flat};
 use super::Stage;
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -53,7 +53,9 @@ fn own_store_formed<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, 
 #[inline(always)]
 pub(crate) fn own_store_proved<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, slot: u16,
     value: (S::Word, Type), miss: S::Miss) -> Option<()> {
-    let payload = gated_payload(stage, record, record_id, value, miss)?;
+    // The arm proved the slot's type holds `value` (`fact`): the store observes nothing.
+    super::slot_store::held_gate_open(stage, record_id, value, miss)?;
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     own_store_with(stage, (record, payload, slot), value, miss)
 }
 

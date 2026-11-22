@@ -150,6 +150,20 @@ impl FieldPath {
     }
 }
 
+/// Whether `instruction` reads a field named `atom` at any step: its own name, or one of its nested
+/// site's (`this.state.pos` reads `state`, then `pos`). A region store of the name must see such a
+/// read too, or the read keeps its entry snapshot past the store (Babylon's `skipLineComment` read
+/// `this.state.pos` stale after `++this.state.pos` in u-jit and ran past the line's end).
+fn reads_name(instruction: WideInstruction, sites: &[FieldSite], atom: quench_runtime::bytecode::Atom) -> bool {
+    quench_runtime::staged::reads_named_field(instruction.op()) && match instruction.field_lookup() {
+        Some(FieldLookup::Atom { atom: read, .. }) => read == atom,
+        Some(FieldLookup::Site(index)) => sites.get(index).is_none_or(|site| {
+            site.first.0 == atom || site.second.is_some_and(|(read, _)| read == atom) || site.sink.is_some_and(|(read, _)| read == atom)
+        }),
+        None => false,
+    }
+}
+
 /// The base a `GetField` reads its first field from, its own or its nested site's.
 fn field_base(instruction: WideInstruction, sites: &[FieldSite]) -> Option<FieldBase> {
     match instruction.field_lookup()? {
@@ -1697,11 +1711,7 @@ fn admit_register_roles(
                             && matches!(path.root, FieldReceiver::Register(register) if defined_registers.contains(&register))
                     })
                 };
-                if instructions.iter().any(|candidate| {
-                    quench_runtime::staged::reads_named_field(candidate.op())
-                        && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
-                        && !current(candidate)
-                }) {
+                if instructions.iter().any(|candidate| reads_name(*candidate, sites, atom) && !current(candidate)) {
                     return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
                 }
                 dynamic_field_stores.insert(offset as u32, (atom, cache_site));
@@ -1712,8 +1722,7 @@ fn admit_register_roles(
                 // name on, which may be the same object; any other read of it could alias and
                 // keep a stale value.
                 if instructions.iter().any(|candidate| {
-                    quench_runtime::staged::reads_named_field(candidate.op())
-                        && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
+                    reads_name(*candidate, sites, atom)
                         && !field_path(*candidate, sites, &rooted).is_some_and(|path| path.steps.len() == 1
                             && (path.root == receiver || stored_fixed.contains(&(atom, path.root))))
                 }) {

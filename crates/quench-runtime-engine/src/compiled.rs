@@ -1182,8 +1182,8 @@ lane_helper_inventory! {
     Truthy => truthy_in_lane,
     /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
     RetireArrayProofs => retire_array_proofs_in_lane,
-    /// The native header a nested entry made a record pops as one (`pop_spilled_header_in_lane`).
-    PopSpilledHeader => pop_spilled_header_in_lane,
+    /// A native header Rust observed (spilled or linked) pops where Rust keeps it (`pop_observed_header_in_lane`).
+    PopObservedHeader => pop_observed_header_in_lane,
     /// An object literal over a register window (`new_object_literal_in_lane`).
     NewObjectLiteral => new_object_literal_in_lane,
     /// A closure over the frame's environment (`new_closure_in_lane`).
@@ -3700,10 +3700,10 @@ unsafe extern "C" fn index_set_in_lane(vm: u64, _residual: u64, object: u64, key
 /// native `pop` calls once it has shortened an array, as a heap change does.
 /// The return of an emitted call whose native header a nested entry to emitted code spilled
 /// (`LaneStack::spill_plain`): the header is the innermost record now, and pops as one.
-unsafe extern "C" fn pop_spilled_header_in_lane(vm: u64, _residual: u64) -> u64 {
+unsafe extern "C" fn pop_observed_header_in_lane(vm: u64, _residual: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    vm.lane_stack.pop_spilled_header();
+    vm.lane_stack.pop_observed_header();
     0
 }
 
@@ -4204,7 +4204,7 @@ impl JsStepDispatch {
                 armed_array_proofs: quench_runtime::heap::armed_proofs_address(),
                 array_chain_index_free_address: quench_runtime::heap::index_free_chain_link_address(),
                 plain_depth: 0, plain_depth_limit: 0, body_table: 0, activation_count: 0, body_top: 0, native_table: 0,
-                pop_spilled_header: pop_spilled_header_in_lane as *const () as usize,
+                pop_observed_header: pop_observed_header_in_lane as *const () as usize,
             },
             program_id: ProgramId::MAIN, frame: usize::MAX, allow_inline_calls: false, start_pc: 0,
             #[cfg(feature = "native-execution")]

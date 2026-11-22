@@ -82,6 +82,18 @@ pub(crate) fn gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fac
     stage.guard(open, miss)
 }
 
+/// `gate_open` of a store whose value the slot's type holds (`Stage::held_store_gate`): the
+/// barrier's log alone, no slot observation.
+#[inline(always)]
+pub(crate) fn held_gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+    if fact.is_subtype(Type::IMMEDIATE) {
+        let open = stage.immediate_store_open();
+        return stage.guard(open, miss);
+    }
+    let open = stage.held_store_gate(super::StagedRecordSpace::Object, record_id, value);
+    stage.guard(open, miss)
+}
+
 /// The payload word of the record at `record` once the gate admits `value` (of `fact`) and its
 /// values are plain (no extras); the exact shape is the caller's proof (`property_write::in_place`).
 #[inline(always)]

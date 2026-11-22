@@ -1597,7 +1597,10 @@ impl LaneStack {
         // Innermost first, the frames above the records floor alone (`frames_to_spill`); each
         // record keeps its side record where its completion carries a payload (`record_sided`),
         // which a header's carries exactly then.
-        let (floor, sides_below, frames) = self.frames_to_spill();
+        // Filled in place and read by reference: a spill moves a few frames, and a frame view is
+        // large, so neither a returned nor a consumed vector is copied whole.
+        let mut frames = frame_walk::SpilledFrames::new();
+        let (floor, sides_below) = self.frames_to_spill(&mut frames);
         // SAFETY: the walk above ended; no reference into the records or side records lives.
         let (records, sides) = unsafe { (&mut *self.activation_records.get(), &mut *self.sides.get()) };
         debug_assert!(floor + frames.len() <= records.capacity(), "the activation limit counts plain activations");
@@ -1605,7 +1608,7 @@ impl LaneStack {
         // SAFETY: records hold no drop glue; the activation limit keeps every frame within the
         // capacity, so each push has its slot.
         unsafe { records.set_len(floor) };
-        for frame in frames.into_iter().rev() {
+        for frame in frames.iter().rev() {
             let activation = frame.record();
             if Self::record_sided(&activation) { sides.push(Self::record_side(&activation, frame.payload())); }
             // SAFETY: as above.
@@ -1833,11 +1836,11 @@ impl LaneStack {
         self.wasm_storage_bytes += frame_storage_bytes;
     }
 
-    /// An emitted call's native header that a nested entry made a record (`spill_plain`) pops as
-    /// that record: the innermost one, with no plain activation above it.
+    /// An emitted call's native header that Rust observed pops as the activation Rust keeps: the record a
+    /// nested entry made of it (`spill_plain`), or the linked plain header (`native_frames::link_header`)
+    /// with its side record.
     #[cold]
-    pub(crate) fn pop_spilled_header(&mut self) {
-        debug_assert!(self.plain.depth.get() == 0, "a spilled header leaves no plain activation above it");
+    pub(crate) fn pop_observed_header(&mut self) {
         let _ = self.pop_activation();
     }
 
@@ -8827,11 +8830,16 @@ impl Vm {
         let stack = &mut self.lane_stack;
         let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activation_count() + 1));
         // The one spill left for emitted code (one-frame-one-call.md F5): its direct calls push
-        // native frames onto the records' top and read no header yet.
-        let frames_end = stack.activations().top_ptr().wrapping_add(frames).addr();
+        // native frames onto the records' top and read no header yet. A run admitting no frames
+        // pushes none (its bound is the top itself, so every push refuses to the helper row, which
+        // spills), so its plain frames stay where they are.
+        if frames != 0 { stack.activations(); }
+        // SAFETY: reads the records' top alone; no reference into them lives.
+        let records = unsafe { &mut *stack.activation_records.get() };
+        let frames_end = records.top_ptr().wrapping_add(frames).addr();
         // SAFETY: the values' capacity bounds the vector's own allocation.
         let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
-        let activations_top = stack.activations_mut().top_word().addr();
+        let activations_top = records.top_word().addr();
         let words = LaneStackWords {
             values_top: stack.values.top_word().addr(),
             values_end,
@@ -12632,8 +12640,7 @@ fn body_entry_resumed(cx: *mut LaneContext, ip: Ip, r: Registers, view: Carried,
     // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
     // The activation just pushed is this entry's: its caller runs this function's records
     // where it is a recursive call.
-    let recursive = vm.lane_stack.top_frame().is_some_and(|activation| activation.caller_base() == base);
-    if own.audit_entry(true, || recursive) {
+    if own.audit_entry(true, || vm.lane_stack.top_frame().is_some_and(|activation| activation.caller_base() == base)) {
         return Resumed::At(r, base, Carried::script_in(cx, view));
     }
     // A body a lifecycle edge retired gives its prologue back and warms again.

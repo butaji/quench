@@ -122,7 +122,11 @@ impl Vm {
             // frames onto the lane stack's own tops, which the dispatch points at. A body entered
             // through its cell has an activation pending, which a leave pushes first: it makes no
             // direct call, the frames of which would sit above that activation's room.
-            let words = self.stack_words_in_lane(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
+            // A body that names no direct callee pushes no frame of its own (its call rows refuse to the
+            // helper row, which spills first), so it binds no shadow frames: the plain frames stay
+            // where they are, and its entry pays no spill of them (~800 Ir a richards body entry).
+            let frames = run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS && !run.method.direct.is_empty();
+            let words = self.stack_words_in_lane(if frames { SHADOW_FRAMES } else { 0 });
             // A b-jit body's direct call rows push whether or not the run names direct calls (`run.direct_calls` sizes
             // only the shadow frames), so in a leaf's window they refuse to the helper row.
             crate::dispatch_fast::refuse_direct_calls_in_leaf(run.lane_context, run.registers);

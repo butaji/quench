@@ -8,6 +8,9 @@ use crate::ext_traits::*;
 use super::*;
 use super::lane_frames::{header_sided, ActivationView, Side};
 
+/// The frames a spill makes records, innermost first (`LaneStack::frames_to_spill`).
+pub(crate) type SpilledFrames = smallvec::SmallVec<[ActivationView; 8]>;
+
 pub(crate) use quench_runtime::vm::engine_types::PlainSegment;
 
 pub(crate) use quench_runtime::vm::engine_types::Walked;
@@ -139,15 +142,15 @@ impl LaneStack {
     /// record. The records below the floor are records already, and the side records left under
     /// the walked frames (the second count) are theirs, so the spill keeps both where they are
     /// and its cost follows the headers pushed since the last spill, not the stack's depth.
-    pub(crate) fn frames_to_spill(&self) -> (usize, usize, smallvec::SmallVec<[ActivationView; 16]>) {
+    pub(crate) fn frames_to_spill(&self, frames: &mut SpilledFrames) -> (usize, usize) {
         // SAFETY: reads the lengths alone.
         let records = unsafe { self.records_unspilled() }.len();
         // Seals are pushed innermost last over a records count that never falls below an outer one.
         let floor = unsafe { &*self.segments.get() }.first().map_or(records, |segment| segment.records);
         let count = records - floor + self.plain.depth.get() + self.sealed.get();
         let mut walk = self.walk_innermost();
-        let frames = walk.by_ref().take(count).map(|(frame, _)| frame).collect();
-        (floor, walk.left, frames)
+        frames.extend(walk.by_ref().take(count).map(|(frame, _)| frame));
+        (floor, walk.left)
     }
 
     /// Forget every seal, their headers made records or taken (`spill_plain`, `take_frames`).

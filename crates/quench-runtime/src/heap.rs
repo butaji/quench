@@ -4648,10 +4648,24 @@ impl Heap {
         if self.object_store_logs(record_id, value) {
             return false;
         }
-        if crate::staged::ic::layout_form(hint) == 0
+        let form = crate::staged::ic::layout_form(hint);
+        if form == 0
             // SAFETY: the matched layout's shape holds `slot`, in the arena form; the barrier admitted the store.
             && unsafe { self.held_arena_store(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
             return true;
+        }
+        // Packed inline values: where the slot's owner already holds the value's class, the store
+        // widens nothing, so it is the value's narrow form into its half of the payload word, which
+        // encodes no slot type (`store_exact_slot`'s packed arm, without the join). A widening or
+        // unnarrowable store, or a marked object, takes the joining store below.
+        if form == NATIVE_OBJECT_LAYOUT.inline_form && !record.holds_constant_mark()
+            // SAFETY: the matched layout's shape holds `slot`.
+            && unsafe { self.properties.held_slot_word(crate::staged::ic::layout_shape(hint), usize::from(slot), value) }.is_some() {
+            if let Some(narrow) = value.to_narrow() {
+                // SAFETY: the caller's contract; the layout's form is packed inline storage; the barrier admitted the store.
+                let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+                return data.store_packed_narrow(usize::from(slot), Some(narrow));
+            }
         }
         // SAFETY: as above; the barrier admitted the store.
         unsafe { self.record_property_set_unlogged(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
