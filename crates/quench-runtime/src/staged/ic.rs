@@ -204,13 +204,18 @@ pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, sl
         let run = super::object::arena_run(stage, payload);
         let layout = super::object::Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
         Some(read_slot(stage, layout, slot, Representation::Tagged))
-    }, #[inline(always)] |stage| {
-        let recorded = recorded_shape(stage, word);
-        let same = stage.eq_imm(recorded, expected);
-        stage.guard(same, miss)?;
-        let layout = formed_own_layout(stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, miss)?;
-        Some(read_slot(stage, layout, slot, Representation::Tagged))
-    })
+    }, |stage| own_field_miss(stage, record, word, expected, slot, miss))
+}
+
+/// The own field of a record whose shape is `expected` but whose storage form is not the exact-shape word's, read through its formed layout.
+#[cfg_attr(not(stencil_build), cold, inline(never))]
+#[cfg_attr(stencil_build, inline(always))]
+fn own_field_miss<S: Stage>(stage: &mut S, record: S::Word, word: S::Word, expected: S::Imm, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let recorded = recorded_shape(stage, word);
+    let same = stage.eq_imm(recorded, expected);
+    stage.guard(same, miss)?;
+    let layout = formed_own_layout(stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, miss)?;
+    Some(read_slot(stage, layout, slot, Representation::Tagged))
 }
 
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.

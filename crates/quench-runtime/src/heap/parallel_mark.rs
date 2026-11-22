@@ -245,8 +245,9 @@ impl<'heap> ParallelMarkView<'heap> {
     }
 
     /// `Heap::mark_value` on a worker: marks `value` if new and pushes what it keeps alive,
-    /// leaving to `batch` what the collector must apply (see the module documentation).
-    #[inline(always)]
+    /// leaving to `batch` what the collector must apply (see the module documentation). Objects,
+    /// arrays, functions and strings are visited here; the rarer kinds by `mark_rare_value`.
+    #[inline]
     fn mark_value(
         &self,
         value: Value,
@@ -330,6 +331,52 @@ impl<'heap> ParallelMarkView<'heap> {
                 self.note_marked_key(value, batch);
                 CellKind::Function
             }
+            // A string holds no edges but its parts': marking it and tracing them is the visit.
+            HeapReference::StringRecord(id) => {
+                if let Some(local) = super::small_strings::small_string_local(id) {
+                    if !self.small_strings.mark_if_new(local) {
+                        return;
+                    }
+                    super::small_strings::trace_small_if_new(&self.small_strings, &self.strings, local, work);
+                } else {
+                    if !self.strings.mark_if_new(id) {
+                        return;
+                    }
+                    super::string_parts::trace_parts_if_new(&self.strings, id, work);
+                }
+                CellKind::String
+            }
+            _ => {
+                self.mark_rare_value(value, reference, work, batch, parallel_object_roots, trace_kind, last_proto);
+                return;
+            }
+        };
+        batch.count_marked(kind);
+    }
+
+    /// `mark_value` for the kinds it does not visit inline (iterators, collections, promises,
+    /// awaits, vectors, environments, symbols, Wasm GC objects and legacy cells), with the same
+    /// visit. Out of line, so the common visit stays small.
+    #[inline(never)]
+    fn mark_rare_value(
+        &self,
+        value: Value,
+        reference: HeapReference,
+        work: &mut Vec<Value>,
+        batch: &mut ParallelMarkBatch,
+        parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
+        trace_kind: GcTraceKind,
+        last_proto: &mut PushedProtos,
+    ) {
+        let deferred_roots = &mut batch.object_roots;
+        let mut object_roots = |kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
+            match parallel_object_roots {
+                Some(trace) => trace.append(kind, owner, shape, prototype, roots),
+                None => deferred_roots.push((owner, shape, prototype)),
+            }
+        };
+        let properties = self.properties;
+        let kind = match reference {
             HeapReference::IteratorRecord(id) => {
                 if !self.iterators.mark_if_new(id) {
                     return;
@@ -371,21 +418,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 unsafe { self.awaits.get(id) }.extend_roots(work);
                 CellKind::AwaitState
             }
-            // A vector holds no heap edges: marking one is the whole visit; a string's are its parts.
-            HeapReference::StringRecord(id) => {
-                if let Some(local) = super::small_strings::small_string_local(id) {
-                    if !self.small_strings.mark_if_new(local) {
-                        return;
-                    }
-                    super::small_strings::trace_small_if_new(&self.small_strings, &self.strings, local, work);
-                } else {
-                    if !self.strings.mark_if_new(id) {
-                        return;
-                    }
-                    super::string_parts::trace_parts_if_new(&self.strings, id, work);
-                }
-                CellKind::String
-            }
+            // A vector holds no heap edges: marking one is the whole visit.
             HeapReference::V128Record(id) => {
                 if !self.v128s.mark_if_new(id) {
                     return;
@@ -447,6 +480,9 @@ impl<'heap> ParallelMarkView<'heap> {
                     self.note_marked_key(value, batch);
                 }
                 Heap::cell_kind(cell)
+            }
+            HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_) | HeapReference::FunctionRecord(_) | HeapReference::StringRecord(_) => {
+                unreachable!("mark_value visits objects, arrays, functions and strings inline")
             }
         };
         batch.count_marked(kind);
