@@ -30,7 +30,7 @@ pub mod temporal_zoned_date_time;
 
 /// What every layer module sees: the VM core, the layer's modules and its extension traits.
 #[allow(unused_imports)]
-pub(crate) mod prelude {
+pub(crate) mod intl_prelude {
     pub use quench_runtime::vm::*;
     pub use quench_runtime::vm::intl_core::Collation;
     // The names the VM core's modules import (`quench-runtime/src/vm.rs`), which its submodules saw.

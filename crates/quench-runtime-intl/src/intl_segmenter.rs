@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 
 const SEGMENTER_LOCALE_SLOT: &str = "\0quench:intl-segmenter-locale";

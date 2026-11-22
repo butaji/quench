@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 const DEFAULT_PLURAL_RULES_LOCALE: &str = "en-US";
 const PLURAL_RULES_LOCALE_SLOT: &str = "\0quench:intl-plural-rules-locale";

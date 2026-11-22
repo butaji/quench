@@ -110,7 +110,7 @@ fn a_forwarded_call_inlines_by_the_natives_identity_not_its_name() {
 /// with `p` a local held outside the loop) inlines into the loop's native region.
 #[test]
 fn a_loop_inlines_a_method_of_a_receiver_held_outside_it() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let source = r#"
       class P { constructor(x) { this.x = x; this.y = x + 1; } sum() { return this.x + this.y; } }
       function run(s) { const p = new P(s); let t = 0; for (let i = 0; i < 50000; i++) t += p.sum(); return t; }
@@ -135,7 +135,7 @@ fn a_loop_inlines_a_method_of_a_receiver_held_outside_it() {
 
 #[test]
 fn a_loop_inlines_an_inherited_method_of_a_captured_receiver() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let source = r#"
       class L0 { constructor() { this.k = 1; } m() { return this.k + 1; } } class L1 extends L0 {} class L2 extends L1 {} class L3 extends L2 {}
       const chained = new L3();
@@ -267,7 +267,7 @@ fn inlined_math_functions_match_the_interpreter_at_their_edges() {
 /// reach; its calls then run in the callees' bodies, and its results are the interpreter's.
 #[test]
 fn a_hot_loop_that_leaves_at_calls_specializes_its_function_before_the_entry_warm_up() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let source = r#"
       function Table() { this.keys = []; this.count = 0; }
       Table.prototype.put = function (key) {
@@ -435,7 +435,7 @@ fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
       globalThis.answer = bodies[0].x;
     })();"#;
     let program = Engine::specialize(source, "lane-loop-nbody.js").unwrap();
-    let mut vm = Vm::with_tier_rows(TestHost::default(), super::compiled::tier_policy::TierRows::Measured);
+    let mut vm = Vm::with_tier_rows(TestHost::default(), crate::vm::tier_policy::TierRows::Measured);
     vm.set_memory_policy(crate::MemoryPolicy::Throughput);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.enable_js_lane_methods();

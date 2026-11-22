@@ -1,5 +1,7 @@
 #[cfg(feature = "native-execution")]
 pub mod native_operands;
+pub mod jit_backend;
+pub mod tier_policy;
 pub mod intl_core;
 pub mod layer_hooks;
 pub mod realm_table;
@@ -14,13 +16,10 @@ pub mod specializer;
 pub mod specialize;
 #[cfg(feature = "native-execution")]
 pub mod native_program;
-pub mod compiled;
 #[cfg(unix)]
 pub use compiled::NativeFaultHandler;
 #[cfg(feature = "profile-native-ops")]
 pub mod native_op_profile;
-pub mod js_compiled;
-pub mod jit_backend;
 pub use jit_backend::{IsaBaseline, NativeTarget};
 pub mod tier_machine; pub mod tier_events;
 pub mod shape_stability;
@@ -163,7 +162,7 @@ pub mod construction;
 pub mod data_view;
 pub mod date;
 pub mod dispatch;
-pub mod dispatch_fast; mod lane_values; mod lane_activations;
+pub mod lane_values; mod lane_activations;
 pub(crate) use dispatch_fast::{copy_arguments, fill_window as fill_registers};
 pub mod dispatch_frame; mod tier0_promotion;
 pub mod dispatch_wasm;
@@ -1097,7 +1096,7 @@ struct FieldCacheSet {
     /// Whether any entry recorded an own field (`NO_FIELD_HOLDER`); a set without one names
     /// only prototype holders, so a read probes no own entry.
     holds_own: bool,
-    entries: [FieldCache; compiled::tier_policy::POLYMORPHISM],
+    entries: [FieldCache; crate::vm::tier_policy::POLYMORPHISM],
     overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
 #[derive(Clone, Copy)]
@@ -1119,7 +1118,7 @@ struct MethodGuard {
 struct MethodCacheSet {
     site: usize,
     len: u8,
-    entries: [MethodCache; compiled::tier_policy::POLYMORPHISM],
+    entries: [MethodCache; crate::vm::tier_policy::POLYMORPHISM],
 }
 /// What making a program the executing one reads (`Vm::program_context`): its residual, lane
 /// views, constants, cache layout and field cache entries, derived once and again only after

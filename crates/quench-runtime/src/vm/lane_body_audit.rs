@@ -14,7 +14,7 @@
 //! the interpreter, from the one statistic it is about.
 
 use super::{LaneBody, LaneView};
-use super::super::compiled::tier_policy::PER_MILLE;
+use crate::vm::tier_policy::PER_MILLE;
 
 /// The CPU time the calling thread has run, in nanoseconds (`CLOCK_THREAD_CPUTIME_ID`); where
 /// the clock cannot be read, the monotonic clock's time.
@@ -90,7 +90,7 @@ impl LaneView {
         let me = std::ptr::from_ref(self) as usize;
         if AUDITOR.get() != me {
             let waited = WAITED.get();
-            if AUDITOR.get() != 0 && waited < super::super::compiled::tier_policy::AUDIT_LEASE_ENTRIES {
+            if AUDITOR.get() != 0 && waited < crate::vm::tier_policy::AUDIT_LEASE_ENTRIES {
                 WAITED.set(waited + 1);
                 return false;
             }

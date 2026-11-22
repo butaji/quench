@@ -3,3 +3,4 @@
 //! core calls into a layer through symbols the layer defines. A binary that uses the runtime
 //! depends on this crate and names it (`extern crate quench_layers;`) so every layer is linked.
 extern crate quench_runtime_intl;
+extern crate quench_runtime_engine;

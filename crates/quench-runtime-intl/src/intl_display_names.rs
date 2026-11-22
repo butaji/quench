@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 const DISPLAY_NAMES_LOCALE_SLOT: &str = "\0quench:intl-display-names-locale";
 const DISPLAY_NAMES_TYPE_SLOT: &str = "\0quench:intl-display-names-type";

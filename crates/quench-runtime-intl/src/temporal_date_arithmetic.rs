@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 pub(crate) const DURATION_YEARS_FIELD: usize = 0;
 pub(crate) const DURATION_MONTHS_FIELD: usize = 1;

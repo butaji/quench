@@ -238,7 +238,7 @@ impl Vm {
                 .find(|entry| entry.records_same(&cache))
             {
                 *entry = cache;
-            } else if usize::from(set.len) < super::compiled::tier_policy::POLYMORPHISM {
+            } else if usize::from(set.len) < crate::vm::tier_policy::POLYMORPHISM {
                 set.entries[usize::from(set.len)] = cache;
                 set.len += 1;
             }
@@ -257,7 +257,7 @@ impl Vm {
         let mut set = MethodCacheSet {
             site,
             len: (METHOD_CACHE_WAYS + 1) as u8,
-            entries: [EMPTY_METHOD_CACHE; super::compiled::tier_policy::POLYMORPHISM],
+            entries: [EMPTY_METHOD_CACHE; crate::vm::tier_policy::POLYMORPHISM],
         };
         set.entries[..METHOD_CACHE_WAYS].copy_from_slice(entries);
         set.entries[METHOD_CACHE_WAYS] = cache;

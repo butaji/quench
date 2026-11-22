@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 pub(crate) const NANOSECONDS_PER_HOUR: i128 = 3_600_000_000_000;
 pub(crate) const NANOSECONDS_PER_MINUTE: i128 = 60_000_000_000;

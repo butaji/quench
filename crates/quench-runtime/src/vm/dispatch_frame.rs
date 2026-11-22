@@ -73,7 +73,7 @@ impl HotLoop {
     }
 }
 
-use crate::vm::compiled::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
+use crate::vm::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
     pub(super) caller: usize,
@@ -1850,7 +1850,7 @@ impl Vm {
             {
                 return Err(self.native_execution_rejected(p, frame, pc));
             }
-            if super::compiled::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed && pc == 0
+            if crate::vm::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed && pc == 0
                 && let Some(return_pc) = self.js_tier_frame_entry(p, frame)
             {
                 pc = return_pc;

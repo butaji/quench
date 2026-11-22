@@ -14,6 +14,7 @@ members = [
     "crates/quench-node-test",
     "crates/quench-runtime",
     "crates/quench-runtime-intl",
+    "crates/quench-runtime-engine",
     "crates/quench-layers",
     "crates/quench-stack",
     "crates/quench-tier-corpus",

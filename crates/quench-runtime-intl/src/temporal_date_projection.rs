@@ -1,7 +1,7 @@
 use crate::temporal_date::{
     ISO_MONTH_CODE_DIGITS, checked_iso_date, iso_days_in_month, iso_days_in_year, iso_is_leap_year,
 };
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 use crate::temporal_date_parse::DEFAULT_REFERENCE_ISO_YEAR;
 const DEFAULT_REFERENCE_ISO_DAY: u32 = 1;

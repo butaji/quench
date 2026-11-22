@@ -1,0 +1,43 @@
+[package]
+name = "quench-runtime-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+description = "The Quench runtime's lane handlers and compiled tiers: a layer crate above the VM core"
+
+[lib]
+doctest = false
+
+[features]
+default = ["jit", "native-execution"]
+# The same features as quench-runtime's, which quench-layers enables together with the core's.
+jit = ["quench-runtime/jit"]
+native-execution = ["quench-runtime/native-execution"]
+profile-field-primitives = ["quench-runtime/profile-field-primitives"]
+profile-lane-exits = ["quench-runtime/profile-lane-exits"]
+profile-native-ops = ["quench-runtime/profile-native-ops"]
+profile-aggregate = ["quench-runtime/profile-aggregate"]
+profile-trace = ["quench-runtime/profile-trace"]
+profile-memory = ["quench-runtime/profile-memory"]
+profile-gc-time = ["quench-runtime/profile-gc-time"]
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime", default-features = false }
+quench-macros = { path = "../quench-macros" }
+quench-bjit = { path = "../quench-bjit" }
+quench-alloc = { path = "../quench-alloc" }
+quench-stack = { path = "../quench-stack" }
+oxc_ast = { workspace = true }
+smallvec = "1.15.2"
+rustc-hash = "2.1"
+object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
+wasmparser = "0.247"
+cranelift-codegen = { version = "=0.137.1", default-features = false, features = ["std", "host-arch", "x86", "arm64"] }
+cranelift-frontend = { version = "=0.137.1", default-features = false, features = ["std"] }
+cranelift-native = { version = "=0.137.1", default-features = false }
+target-lexicon = "0.13.5"
+libc = "0.2"
+
+[lints]
+workspace = true

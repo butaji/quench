@@ -1,0 +1,435 @@
+//! Tests of the Cranelift emission of the staged operations.
+
+use super::*;
+use quench_runtime::heap::{Cell, Heap, Object, PlainPropertyStorage};
+use quench_runtime::staged::ic;
+use quench_runtime::staged::object::{own_layout, read_slot, Form, PackedAccess};
+use quench_runtime::staged::slot_store::store_flat;
+use quench_runtime::staged::Region;
+use quench_runtime::typed_ir::Representation;
+use quench_runtime::vm::switches::with_float_slots;
+
+/// Objects of every storage form, with their values: narrow and wide, inline and spilled,
+/// plain and marked as prototypes.
+fn objects_of_every_form(heap: &mut Heap) -> Vec<(Value, Vec<Value>)> {
+    let wide = quench_runtime::value_vec::INLINE_PROPERTY_COUNT + 2;
+    for shape in 1..=wide {
+        heap.register_property_shape(shape as u32, shape, None);
+    }
+    let reference = heap.alloc(Cell::Error("reference".into()));
+    let mut objects = Vec::new();
+    for prototype in [false, true] {
+        for values in [vec![Value::number(7.0), reference], vec![Value::number(0.5), Value::NULL],
+            (0..wide).map(|index| Value::number(index as f64)).collect()] {
+            let object = heap.alloc_object(Object::new(Value::NULL));
+            for (slot, value) in values.iter().enumerate() {
+                heap.property_add(object, *value, slot as u32 + 1);
+            }
+            if prototype { heap.object_record_mut(object).unwrap().mark_as_prototype(); }
+            objects.push((object, values));
+        }
+    }
+    objects
+}
+
+/// Native code reading `slot` of a record proved to be in `form`, or `DELETED` where it leaves.
+fn compiled_own_read(isa: &dyn cranelift_codegen::isa::TargetIsa, form: Form, slot: u16) -> CodeMemory {
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.params.extend([AbiParam::new(types::I64); 2]);
+    signature.returns.push(AbiParam::new(types::I64));
+    let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let [record, base] = builder.block_params(entry).try_into().unwrap();
+    let miss = builder.create_block();
+    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None};
+    let inline = quench_runtime::staged::object::inline_storage(&mut stage, record);
+    let layout = own_layout(&mut stage, record, inline, form,
+        usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();
+    let value = read_slot(&mut stage, layout, slot, Representation::Tagged);
+    builder.ins().return_(&[value]);
+    builder.switch_to_block(miss);
+    let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+    builder.ins().return_(&[deleted]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    compile_native_function(native, isa, usize::MAX, CodeMemory::new).unwrap()
+}
+
+/// Whether a site proved `form` reads an object stored as `storage` (`None`: values extras).
+fn handles(form: Form, storage: Option<PlainPropertyStorage>) -> bool {
+    match (form, storage) {
+        (_, None) => false,
+        (Form::Packed, Some(storage)) => storage == PlainPropertyStorage::PackedInline,
+        (Form::Arena, Some(storage)) => storage == PlainPropertyStorage::Arena,
+        (Form::Either, Some(_)) => true,
+    }
+}
+
+/// The residual of `staged::own_layout` and `read_slot` reads what the interpreter's
+/// reading of the same definition reads, for every form a site may prove, and leaves
+/// for the forms it does not handle (values extras displaced, or a form the site did not
+/// prove).
+#[test]
+fn emitted_own_reads_agree_with_the_interpreter_or_leave() {
+    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
+    let mut heap = Heap::new();
+    let objects = objects_of_every_form(&mut heap);
+    for form in [Form::Packed, Form::Arena, Form::Either] {
+        for slot in 0..2_u16 {
+            let memory = compiled_own_read(&*isa, form, slot);
+            // SAFETY: the function reads the record and the arena run it names, both live.
+            let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64) -> u64>(memory.pointer()) };
+            for (object, values) in &objects {
+                let data = heap.object(*object).unwrap();
+                let Some(expected) = values.get(usize::from(slot)) else { continue };
+                let read = Value::from_bits(unsafe { run(data as *const Object as u64, heap.property_values_base() as u64) });
+                let storage = data.plain_property_storage();
+                let expected = if handles(form, storage) { *expected } else { Value::DELETED };
+                assert_eq!(read, expected, "{form:?} slot {slot} {storage:?}");
+            }
+        }
+    }
+}
+/// Native code running `string_char_code_at` of the string value over the string records,
+/// or `DELETED` where a row leaves.
+fn compiled_char_code_at(isa: &dyn cranelift_codegen::isa::TargetIsa) -> CodeMemory {
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.params.extend([AbiParam::new(types::I64); 3]);
+    signature.returns.push(AbiParam::new(types::I64));
+    let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let [records, string, index] = builder.block_params(entry).try_into().unwrap();
+    let miss = builder.create_block();
+    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None , payload: None};
+    let flat = quench_runtime::staged::strings::flat_string(&mut stage, records, string, miss).unwrap();
+    let code = quench_runtime::staged::strings::string_char_code_at(&mut stage, flat, index, miss).unwrap();
+    builder.ins().return_(&[code]);
+    builder.switch_to_block(miss);
+    let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+    builder.ins().return_(&[deleted]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    compile_native_function(native, isa, usize::MAX, CodeMemory::new).unwrap()
+}
+
+/// The residual of `strings::flat_string` and `string_char_code_at` reads what the
+/// interpreter's reading of the same rows reads, for each form of string record, and leaves
+/// where the rows leave (a slice, a double index, a value that is no string).
+#[test]
+fn emitted_string_reads_agree_with_the_interpreter_or_leave() {
+    use quench_runtime::staged::{Concrete, strings};
+    use quench_runtime::vm::wtf16::{JsString, SHORT_ASCII_CAPACITY};
+    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
+    let memory = compiled_char_code_at(&*isa);
+    // SAFETY: the function reads the string record and the units its form names, all live.
+    let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, u64) -> u64>(memory.pointer()) };
+    let mut heap = Heap::new();
+    let long = JsString::from_str(&"q".repeat(SHORT_ASCII_CAPACITY + 4));
+    let strings_of_every_form = [
+        heap.alloc_string(JsString::from_str("")), heap.alloc_string(JsString::from_str("abc")),
+        heap.alloc_string(JsString::from_units(&[0x61, 0x20ac])), heap.alloc_string(long.substring(1..20)),
+        heap.alloc_string(long), Value::integer(1),
+    ];
+    let records = heap.string_record_base().map_or(0, |base| base as u64);
+    for string in strings_of_every_form {
+        for index in [Value::integer(0), Value::integer(1), Value::integer(2), Value::integer(-1), Value::number(0.5), Value::UNDEFINED] {
+            let mut stage = Concrete::new(std::ptr::null());
+            let expected = strings::flat_string(&mut stage, records, string.to_bits(), ())
+                .and_then(|flat| strings::string_char_code_at(&mut stage, flat, index.to_bits(), ()))
+                .map_or(Value::DELETED, Value::from_bits);
+            let read = Value::from_bits(unsafe { run(records, string.to_bits(), index.to_bits()) });
+            assert_eq!(read, expected, "{:#x} at {:#x}", string.to_bits(), index.to_bits());
+        }
+    }
+}
+
+/// A function summing the 32-bit word at offset 8 of its first parameter, read through
+/// `Emit` in the body of a counted loop over its second.
+fn word_summed_in_a_loop(isa: &dyn cranelift_codegen::isa::TargetIsa, at: Access) -> ir::Function {
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.params.extend([AbiParam::new(types::I64); 2]);
+    signature.returns.push(AbiParam::new(types::I64));
+    let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+    regions::declare_regions(&mut function);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut function, &mut context);
+    let (entry, header, body, exit) =
+        (builder.create_block(), builder.create_block(), builder.create_block(), builder.create_block());
+    builder.append_block_params_for_function_params(entry);
+    let (sum, index) = (builder.append_block_param(header, types::I64), builder.append_block_param(header, types::I64));
+    let total = builder.append_block_param(exit, types::I64);
+    builder.switch_to_block(entry);
+    let [base, count] = builder.block_params(entry).try_into().unwrap();
+    let zero = builder.ins().iconst(types::I64, 0);
+    builder.ins().jump(header, &[zero.into(), zero.into()]);
+    builder.switch_to_block(header);
+    let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, count);
+    builder.ins().brif(more, body, &[], exit, &[sum.into()]);
+    builder.switch_to_block(body);
+    let word = Emit { builder: &mut builder, property_values: None, gate: None , payload: None}.load_u32(at, base, 8);
+    let next_sum = builder.ins().iadd(sum, word);
+    let next_index = builder.ins().iadd_imm_u(index, 1);
+    builder.ins().jump(header, &[next_sum.into(), next_index.into()]);
+    builder.switch_to_block(exit);
+    builder.ins().return_(&[total]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    function
+}
+
+/// The opcode and flags of every memory access of `function`.
+fn accesses(function: &ir::Function) -> Vec<(ir::Opcode, MemFlagsData)> {
+    function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+        .filter_map(|inst| function.dfg.insts[inst].memflags_data(&function.dfg)
+            .map(|flags| (function.dfg.insts[inst].opcode(), flags)))
+        .collect()
+}
+
+/// A read-only word in a loop is a plain, trusted `load` tagged with its region and
+/// movable, the one kind of load the egraph hoists and merges.
+#[test]
+fn a_readonly_word_read_in_a_loop_is_a_movable_plain_load() {
+    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
+    let function = word_summed_in_a_loop(&*isa, Region::LoopEntry.readonly());
+    cranelift_codegen::verify_function(&function, &*isa).unwrap();
+    let [(opcode, flags)] = accesses(&function)[..] else { panic!("one access") };
+    assert_eq!(opcode, ir::Opcode::Load);
+    assert!(flags.readonly() && flags.can_move() && flags.notrap() && flags.aligned());
+    assert_eq!(flags.alias_region(), regions::flags(Region::LoopEntry.readonly()).alias_region());
+}
+
+/// A word a store can change keeps its place: not movable, still tagged with its region.
+#[test]
+fn a_mutable_word_read_in_a_loop_stays_in_the_loop() {
+    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
+    let function = word_summed_in_a_loop(&*isa, Region::ObjectSlots.mutable());
+    let [(opcode, flags)] = accesses(&function)[..] else { panic!("one access") };
+    assert_eq!(opcode, ir::Opcode::Uload32);
+    assert!(!flags.readonly() && !flags.can_move() && flags.notrap());
+    assert_eq!(flags.alias_region(), regions::flags(Region::ObjectSlots.mutable()).alias_region());
+}
+
+/// The barrier-log path of a store's gate is a guard failure: the only cold block the
+/// gate adds.
+#[test]
+fn the_barrier_log_path_of_a_store_gate_is_cold() {
+    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.params.extend([AbiParam::new(types::I64); 3]);
+    signature.returns.push(AbiParam::new(types::I64));
+    let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+    regions::declare_regions(&mut function);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut function, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let [payload, record, value] = builder.block_params(entry).try_into().unwrap();
+    let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) , payload: None}.store_gate(quench_runtime::staged::StagedRecordSpace::Object, record, value);
+    let open = builder.ins().uextend(types::I64, open);
+    builder.ins().return_(&[open]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    cranelift_codegen::verify_function(&function, &*isa).unwrap();
+    assert_eq!(function.layout.blocks().filter(|block| function.layout.is_cold(*block)).count(), 1);
+}
+/// A loop that reads the object record base in its body, with or without a helper call
+/// beside the read, optimized by Cranelift; the base loads it keeps, in the loop and out.
+fn record_base_loads_after_optimizing(isa: &dyn cranelift_codegen::isa::TargetIsa, with_call: bool) -> (usize, usize) {
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.params.extend([AbiParam::new(types::I64); 2]);
+    signature.returns.push(AbiParam::new(types::I64));
+    let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature.clone());
+    regions::declare_regions(&mut function);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut function, &mut context);
+    let helper = builder.import_signature(signature);
+    let (entry, header, body, exit) =
+        (builder.create_block(), builder.create_block(), builder.create_block(), builder.create_block());
+    builder.append_block_params_for_function_params(entry);
+    let (sum, index) = (builder.append_block_param(header, types::I64), builder.append_block_param(header, types::I64));
+    let total = builder.append_block_param(exit, types::I64);
+    builder.switch_to_block(entry);
+    let [payload, count] = builder.block_params(entry).try_into().unwrap();
+    let zero = builder.ins().iconst(types::I64, 0);
+    builder.ins().jump(header, &[zero.into(), zero.into()]);
+    builder.switch_to_block(header);
+    let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, count);
+    builder.ins().brif(more, body, &[], exit, &[sum.into()]);
+    builder.switch_to_block(body);
+    let base = super::super::emit_js_record_base(&mut builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.object_record_base));
+    let record = builder.ins().iadd(base, index);
+    let field = Emit { builder: &mut builder, property_values: None, gate: None , payload: None}.load_u64(Region::ObjectSlots.mutable(), record, 8);
+    let sum_next = builder.ins().iadd(sum, field);
+    if with_call {
+        let target = builder.ins().iconst(types::I64, 8);
+        builder.ins().call_indirect(helper, target, &[payload, index]);
+    }
+    let index_next = builder.ins().iadd_imm_u(index, 1);
+    builder.ins().jump(header, &[sum_next.into(), index_next.into()]);
+    builder.switch_to_block(exit);
+    builder.ins().return_(&[total]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    record_base_loads_kept(function, isa)
+}
+
+/// The record base loads of `function` once Cranelift optimizes it, in a loop and out.
+fn record_base_loads_kept(function: ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa) -> (usize, usize) {
+    let mut compiling = cranelift_codegen::Context::for_function(function);
+    compiling.optimize(isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
+    compiling.flowgraph();
+    compiling.compute_loop_analysis();
+    let record_base = regions::flags(Region::RecordBases.readonly()).alias_region();
+    let (mut inside, mut outside) = (0, 0);
+    for block in compiling.func.layout.blocks() {
+        for inst in compiling.func.layout.block_insts(block) {
+            let flags = compiling.func.dfg.insts[inst].memflags_data(&compiling.func.dfg);
+            if flags.is_some_and(|flags| flags.alias_region() == record_base) {
+                if compiling.loop_analysis.innermost_loop(block).is_some() { inside += 1 } else { outside += 1 }
+            }
+        }
+    }
+    (inside, outside)
+}
+
+/// The base of a record reservation is read once, before the loop, whether or not the
+/// loop calls a helper: a reservation does not move while a run executes, so there is
+/// no reload after the call.
+#[test]
+fn a_record_base_is_read_once_outside_a_loop_with_or_without_a_call() {
+    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
+    for with_call in [false, true] {
+        assert_eq!(record_base_loads_after_optimizing(&*isa, with_call), (0, 1), "call: {with_call}");
+    }
+}
+
+/// Native code running `record.slot0 -= dx * record.slot1 * mag` over a record whose arena values
+/// are raw doubles (`Representation::Float64`), and its CLIF.
+fn compiled_float_update(isa: &dyn cranelift_codegen::isa::TargetIsa) -> (CodeMemory, String) {
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.params.extend([AbiParam::new(types::I64), AbiParam::new(types::I64), AbiParam::new(types::F64), AbiParam::new(types::F64)]);
+    let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let [record, base, dx, mag] = builder.block_params(entry).try_into().unwrap();
+    let miss = builder.create_block();
+    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None};
+    let inline = quench_runtime::staged::object::inline_storage(&mut stage, record);
+    let layout = own_layout(&mut stage, record, inline, Form::Arena, 2, PackedAccess::Reload, miss).unwrap();
+    let velocity = read_slot(&mut stage, layout, 0, Representation::Float64);
+    let mass = read_slot(&mut stage, layout, 1, Representation::Float64);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, quench_runtime::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
+    let pull = stage.builder.ins().fmul(dx, mass);
+    let pull = stage.builder.ins().fmul(pull, mag);
+    let updated = stage.builder.ins().fsub(velocity, pull);
+    store_flat(&mut stage, payload, 0, (updated, Representation::Float64));
+    builder.ins().return_(&[]);
+    builder.switch_to_block(miss);
+    builder.ins().return_(&[]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let clif = native.display().to_string();
+    (compile_native_function(native, isa, usize::MAX, CodeMemory::new).unwrap(), clif)
+}
+
+/// A field update over raw-double slots (nbody's `a.vx -= dx * b.m * mag`) is a `load.f64` per
+/// operand, the arithmetic and one store, with no tag test or box, and it computes what the
+/// interpreter's reads and writes of the same slots do.
+#[test]
+fn a_float_slot_update_is_loads_arithmetic_and_a_store() {
+    with_float_slots(|| {
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
+        let (memory, clif) = compiled_float_update(&*isa);
+        assert_eq!(clif.matches("load.f64").count(), 2, "{clif}");
+        assert_eq!(clif.matches("fmul").count(), 2, "{clif}");
+        assert_eq!(clif.matches("fsub").count(), 1, "{clif}");
+        assert_eq!(clif.matches("store").count(), 1, "{clif}");
+        assert!(!clif.contains("bitcast"), "{clif}");
+        let mut heap = Heap::new();
+        heap.track_slot_representations(&[(0, None), (3, None)]);
+        let object = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::number(1.5), Value::number(2.0), Value::number(0.25)]);
+        let record = heap.object(object).unwrap() as *const Object as u64;
+        // SAFETY: the function reads and writes the record's arena run, which is live.
+        let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, f64, f64)>(memory.pointer()) };
+        unsafe { run(record, heap.property_values_base() as u64, 0.5, 4.0) };
+        let read = |slot| heap.property_get(heap.object(object).unwrap(), slot);
+        assert_eq!((read(0), read(1), read(2)), (Some(Value::number(-2.5)), Some(Value::integer(2)), Some(Value::number(0.25))));
+    });
+}
+
+/// How Cranelift writes an immediate in its CLIF text: decimal below ten thousand, else hex in
+/// groups of four digits from the right (`0x2000_0000`).
+fn clif_immediate(value: u64) -> String {
+    if value < 10_000 {
+        return value.to_string();
+    }
+    let digits = format!("{value:x}");
+    let mut groups = Vec::new();
+    let mut rest = digits.as_str();
+    while rest.len() > 4 {
+        let (head, tail) = rest.split_at(rest.len() - 4);
+        groups.push(tail);
+        rest = head;
+    }
+    groups.push(rest);
+    groups.reverse();
+    format!("0x{}", groups.join("_"))
+}
+
+/// The CLIF of a formed own read of `slot` through layout id `id`, as the lane lowers a
+/// single-shape field read with a hint: `IcOp::GuardLayout` of the id, then the slot read in
+/// the form the id names (`ic::form_of_layout`).
+fn formed_own_read_clif(isa: &dyn cranelift_codegen::isa::TargetIsa, id: u32, slot: u16) -> String {
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.params.extend([AbiParam::new(types::I64); 2]);
+    signature.returns.push(AbiParam::new(types::I64));
+    let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let [record, base] = builder.block_params(entry).try_into().unwrap();
+    let miss = builder.create_block();
+    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None};
+    let ops = [ic::IcOp::GuardLayout(id), ic::IcOp::LoadSlot { slot, form: ic::form_of_layout(id),
+        storage_len: usize::from(slot) + 1, rep: Representation::Tagged }];
+    let value = ic::run(&mut stage, &ops, ic::Reached::bare(record), None, miss).expect("a load ends the read");
+    builder.ins().return_(&[value]);
+    builder.switch_to_block(miss);
+    let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+    builder.ins().return_(&[deleted]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    native.display().to_string()
+}
+
+/// A formed own read of a record whose layout id names the arena form emits no inline-flag
+/// test: the id's one compare proves the form, so the run is the payload's, with no test of the
+/// inline bit or of the extras tag. The read is the form the id names, not the one a site saw.
+#[test]
+fn a_formed_arena_read_emits_no_inline_flag_test() {
+    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
+    let mut heap = Heap::new();
+    let objects = objects_of_every_form(&mut heap);
+    let arena_object = objects.iter().map(|(object, _)| *object)
+        .find(|object| heap.object(*object).unwrap().plain_property_storage() == Some(PlainPropertyStorage::Arena))
+        .expect("a wide object keeps its values in the arena");
+    let id = heap.object(arena_object).unwrap().hint_shape();
+    assert_eq!(ic::form_of_layout(id), Form::Arena);
+    let clif = formed_own_read_clif(&*isa, id, 0);
+    let inline_form = quench_runtime::heap::NATIVE_OBJECT_LAYOUT.inline_form as u64;
+    assert!(!clif.contains(&clif_immediate(inline_form)), "the arena form tests no inline flag: {clif}");
+}

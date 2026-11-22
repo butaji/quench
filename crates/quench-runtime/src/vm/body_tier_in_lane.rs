@@ -3,7 +3,7 @@
 
 use super::super::tier_machine::{TierEvent, TierState};
 use super::{Handler, LaneBody, LaneLeaves, LaneView, Tiers};
-use super::compiled::tier_policy::PERCENT;
+use crate::vm::tier_policy::PERCENT;
 use super::super::compiled::LaneExit;
 
 /// A view's lane-body record over the run, which a lifecycle edge keeps: the bodies such

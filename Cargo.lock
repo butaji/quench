@@ -2216,6 +2216,7 @@ name = "quench-layers"
 version = "0.1.0"
 dependencies = [
  "quench-runtime",
+ "quench-runtime-engine",
  "quench-runtime-intl",
 ]
 
@@ -2316,6 +2317,27 @@ dependencies = [
  "unicode-normalization",
  "unicode-segmentation",
  "utf8_iter",
+ "wasmparser",
+]
+
+[[package]]
+name = "quench-runtime-engine"
+version = "0.1.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-native",
+ "libc",
+ "object 0.39.1",
+ "oxc_ast",
+ "quench-alloc",
+ "quench-bjit",
+ "quench-macros",
+ "quench-runtime",
+ "quench-stack",
+ "rustc-hash",
+ "smallvec",
+ "target-lexicon",
  "wasmparser",
 ]
 

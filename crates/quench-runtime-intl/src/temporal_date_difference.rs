@@ -1,5 +1,5 @@
 use crate::temporal_date::{self, IsoDate};
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 use crate::temporal_date_arithmetic::{
     DURATION_DAYS_FIELD, DURATION_MONTHS_FIELD, DURATION_WEEKS_FIELD, DURATION_YEARS_FIELD,

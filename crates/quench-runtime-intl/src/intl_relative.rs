@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 const RELATIVE_LOCALE_SLOT: &str = "\0quench:intl-relative-locale";
 const RELATIVE_STYLE_SLOT: &str = "\0quench:intl-relative-style";

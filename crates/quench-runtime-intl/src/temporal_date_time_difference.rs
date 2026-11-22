@@ -1,5 +1,5 @@
 use crate::temporal_date::{self, IsoDate};
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 pub(super) const MAX_CALENDAR_DIFFERENCE_ROUNDING_INCREMENT: i128 = 100_000_000;
 const MAX_PLAIN_DATE_TIME_ROUNDING_INCREMENT: f64 = 1_000_000_000.0;

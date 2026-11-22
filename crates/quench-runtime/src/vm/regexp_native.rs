@@ -20,7 +20,7 @@ mod machine;
 mod repeats;
 mod stage;
 
-use crate::vm::compiled::tier_policy::REGEXP_NATIVE_MAX_CODE_BYTES;
+use crate::vm::tier_policy::REGEXP_NATIVE_MAX_CODE_BYTES;
 const WORD: i32 = std::mem::size_of::<usize>() as i32;
 const FRAME_BYTES: i64 = (NATIVE_FRAME_WORDS * std::mem::size_of::<usize>()) as i64;
 /// Frame ids below `FIRST_RESUME` are the frames the backtrack block handles itself.

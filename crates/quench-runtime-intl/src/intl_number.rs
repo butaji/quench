@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 const DEFAULT_NUMBER_FORMAT_LOCALE: &str = "en-US";
 const NUMBER_FORMAT_MAX_FRACTION_DIGITS: f64 = 100.0;

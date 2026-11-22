@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 const LIST_FORMAT_LOCALE_SLOT: &str = "\0quench:intl-list-format-locale";
 const LIST_FORMAT_TYPE_SLOT: &str = "\0quench:intl-list-format-type";

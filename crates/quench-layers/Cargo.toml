@@ -16,6 +16,7 @@ path = "src/bin/quench-runtime.rs"
 [dependencies]
 quench-runtime = { path = "../quench-runtime" }
 quench-runtime-intl = { path = "../quench-runtime-intl" }
+quench-runtime-engine = { path = "../quench-runtime-engine" }
 
 [lints]
 workspace = true

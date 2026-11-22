@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 pub(super) const ISO_MONTHS_PER_YEAR: i32 = 12;
 const HEBREW_LEAP_MONTH_FALLBACK: &str = "M06";
 pub(super) use quench_runtime::units::ISO_DAYS_PER_WEEK;

@@ -1,5 +1,5 @@
 use crate::temporal_date::{IsoDate, checked_iso_date};
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 const MONTH_CODE_DIGITS: usize = 2;
 const MILLISECOND_FIELD: usize = 3;

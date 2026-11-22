@@ -234,3 +234,8 @@ extern crate self as quench_runtime;
 mod intl_layer;
 #[cfg(test)]
 use intl_layer::*;
+#[cfg(test)]
+#[path = "../../quench-runtime-engine/src/lib.rs"]
+mod engine_layer;
+#[cfg(test)]
+use engine_layer::*;

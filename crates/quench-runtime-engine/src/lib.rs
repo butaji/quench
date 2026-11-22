@@ -1,0 +1,64 @@
+//! The interpreter's lane handlers (`dispatch_fast`) and the compiled tiers (`compiled`,
+//! `js_compiled`, `jit_backend`): a layer crate above the VM core (`quench_runtime::vm::layer_hooks`).
+//! They hold most of the runtime's generated code, so they build in their own crate.
+#![deny(warnings)]
+#![allow(dead_code, private_interfaces, private_bounds)]
+#![feature(rust_preserve_none_cc)]
+#![cfg_attr(quench_lane_tail_calls, feature(explicit_tail_calls))]
+#![cfg_attr(quench_lane_tail_calls, allow(incomplete_features))]
+#![feature(thread_local)]
+#![feature(stmt_expr_attributes)]
+
+pub mod dispatch_fast;
+pub mod compiled;
+pub mod js_compiled;
+
+/// What every layer module sees: the VM core, the layer's modules and its extension traits.
+#[allow(unused_imports)]
+pub(crate) mod engine_prelude {
+    pub use quench_runtime::vm::*;
+    // The names the VM core's modules import (`quench-runtime/src/vm.rs`), which its submodules saw.
+    pub use quench_runtime::vm::compiled::InstanceRecord;
+    pub use quench_runtime::vm::wasm_exception::{js_tag_cell, js_tag_type};
+    pub use quench_runtime::Value;
+    pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
+    pub use crate::dispatch_fast;
+    pub use crate::compiled;
+    pub use crate::js_compiled;
+    pub use crate::dispatch_fast::DispatchFastVm;
+    pub use crate::dispatch_fast::DispatchFastVm2;
+    pub use crate::dispatch_fast::DispatchFastVm3;
+    pub use crate::dispatch_fast::DispatchFastVm4;
+    pub use crate::dispatch_fast::DispatchFastVm5;
+    pub use crate::dispatch_fast::DispatchFastVm6;
+    pub use crate::dispatch_fast::DispatchFastVm7;
+    pub use crate::dispatch_fast::proven_callees::DispatchFastProvenCalleesVm;
+    pub use crate::dispatch_fast::window_owner::DispatchFastWindowOwnerVm;
+    pub use crate::dispatch_fast::lane_stack_trace::DispatchFastLaneStackTraceVm;
+    pub use crate::dispatch_fast::root_constants::DispatchFastRootConstantsVm;
+    pub use crate::dispatch_fast::native_frames::DispatchFastNativeFramesVm;
+    pub use crate::dispatch_fast::in_place_natives::DispatchFastInPlaceNativesVm;
+    pub use crate::dispatch_fast::with_scopes::DispatchFastWithScopesVm;
+    pub use crate::dispatch_fast::on_demand_metadata::DispatchFastOnDemandMetadataVm;
+    pub use crate::dispatch_fast::scoped_names::DispatchFastScopedNamesVm;
+    pub use crate::dispatch_fast::lane_roots::DispatchFastLaneRootsVm;
+    pub use crate::dispatch_fast::setters::DispatchFastSettersVm;
+    pub use crate::dispatch_fast::generator_yields::DispatchFastGeneratorYieldsVm;
+    pub use crate::dispatch_fast::mapped_windows::DispatchFastMappedWindowsVm;
+    pub use crate::dispatch_fast::proxy_traps::DispatchFastProxyTrapsVm;
+    pub use crate::dispatch_fast::closure_targets::DispatchFastClosureTargetsVm;
+    pub use crate::compiled::CompiledVm;
+    pub use crate::compiled::CompiledVm2;
+    pub use crate::compiled::CompiledVm3;
+    pub use crate::compiled::CompiledVm4;
+    pub use crate::compiled::CompiledVm5;
+    pub use crate::compiled::lane_sites::CompiledLaneSitesVm;
+    pub use crate::compiled::base_body::CompiledBaseBodyVm;
+    pub use crate::compiled::lane_compile::CompiledLaneCompileVm;
+    pub use crate::compiled::lane_compile::CompiledLaneCompileVm2;
+    pub use crate::compiled::ahead_images::CompiledAheadImagesVm;
+    pub use crate::compiled::wasm_table_ops_stage::CompiledWasmTableOpsStageVm;
+    pub use crate::compiled::instance_context::CompiledInstanceContextVm;
+    pub use crate::compiled::lane_body_run::CompiledLaneBodyRunVm;
+    pub use crate::compiled::osr_compile::calls::CompiledOsrCompileCallsVm;
+}

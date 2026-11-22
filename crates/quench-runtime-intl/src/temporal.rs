@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 use quench_runtime::host::{CapabilityId, HostContext};
 
 const DURATION_FIELDS: [&str; 10] = [

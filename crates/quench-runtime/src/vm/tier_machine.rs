@@ -100,7 +100,7 @@ pub(super) fn transition(from: TierState, event: TierEvent) -> Option<TierState>
 /// Publishes `method` to `cell` as the effect of `Publish` from `from`; the new state, or
 /// `None` (nothing published) where the machine does not take the transition.
 pub(super) fn publish(cell: &EntryCell, from: TierState, method: &PublishedLaneMethod) -> Option<TierState> {
-    let to = transition(from, Publish(super::compiled::tier_policy::body_tier_in_lane()))?;
+    let to = transition(from, Publish(crate::vm::tier_policy::body_tier_in_lane()))?;
     cell.publish(method);
     Some(to)
 }

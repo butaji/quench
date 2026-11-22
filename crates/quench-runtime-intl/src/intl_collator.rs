@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 const DEFAULT_COLLATOR_LOCALE: &str = "en";
 const COLLATOR_LOCALE_SLOT: &str = "\0quench:intl-collator-locale";

@@ -13393,7 +13393,7 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let source = r#"
       function expandWords(seed, count) {
         const words = seed.slice();
@@ -13599,7 +13599,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         assert_eq!(compiled_output.borrow().as_slice(), ["4999500000"], "{policy:?}");
         let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
+        let analyzes = crate::vm::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
@@ -13639,7 +13639,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
         assert_eq!(compiled_output.borrow().as_slice(), ["1201100"], "{policy:?}");
         let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
+        let analyzes = crate::vm::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "store loop native code under {policy:?}");
@@ -13649,7 +13649,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let source = r#"
       function fill(item, limit) {
         for (let index = 0; index < limit; index++) {
@@ -13811,7 +13811,7 @@ fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let source = r#"
       function maskedScan(values, mask) {
         let sum = 0;
@@ -14596,7 +14596,7 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
         assert_eq!(compiled_output.borrow().as_slice(), ["804092460 34 110"], "{policy:?}");
         let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
+        let analyzes = crate::vm::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field-array loop native code under {policy:?}");
@@ -14680,7 +14680,7 @@ fn lane_define_property_record_matches_interpreter_across_gc_and_throw() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     // Five distinct loops call a polymorphic callback. Each reaches the OSR threshold, but
     // no callback identity is stable enough to build an inlined native region. The callbacks
     // force collection repeatedly and throw one unique object at the final call.
@@ -14760,7 +14760,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         );
         assert!(
             site.tier_threshold_reached
-                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TierRows::PROCESS.table().loops.warmup_taken)
+                && site.lane_backedge_count >= u64::from(crate::vm::tier_policy::TierRows::PROCESS.table().loops.warmup_taken)
         );
         assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();
@@ -14792,7 +14792,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     for scoped in [false, true] {
         for captured in [false, true] {
             let call = if captured { "f()" } else { "g()" };
@@ -15005,7 +15005,7 @@ fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_call_result_is_not_an_incoming_number() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     for bypass in [false, true] {
         let call = if bypass {
             "let value = 1; if (i < 5) value = g();"
@@ -15364,7 +15364,7 @@ fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlines_method_calls_in_a_loop() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     // Each iteration calls `x.am` twice: the region runs am3 in place, its object
     // parameter bound to the caller register it was moved from.
     let source = r#"
@@ -15424,7 +15424,7 @@ print(t + " " + w.array[5] + " " + w.array[77]);
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlined_callee_leaves_through_its_activation() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     // An element the inlined callee reads leaves the subset partway through its loop: native
     // code leaves at the callee's instruction, whose activation the interpreter finishes.
     let source = r#"
@@ -15581,7 +15581,7 @@ print(t + " " + big + " " + (big > 2147483647));
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlines_calls_on_a_receiver_a_field_read_gives() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     // `reduce` calls `this.m.am(…)` and reads `this.m.t`, a nested field: its loop runs am3
     // in place, the receiver the value of `this.m` at entry.
     // Wrapped in a function, as a CommonJS module is, so `DM` and `DV` are captures.
@@ -15931,7 +15931,7 @@ print(out.slice(290).join(" "));
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function countNegative() {
@@ -15981,7 +15981,7 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_numeric_truthiness_branches() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function zero() { return 0; }
@@ -16065,7 +16065,7 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function seed() { return 0; }
@@ -16141,7 +16141,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function count(value) {
@@ -16200,7 +16200,7 @@ fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           let calls = 0;
@@ -16279,7 +16279,7 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbers() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function run(initial) {
@@ -16329,7 +16329,7 @@ fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbe
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function sumList(node) {
@@ -16461,7 +16461,7 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_shape_invalidation_retires_only_dependent_code() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::specialize(r#"
         function sum(node) {
             let result = 0;
@@ -16529,7 +16529,7 @@ fn shared_osr_shape_invalidation_retires_only_dependent_code() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function classify(value) {
@@ -16602,7 +16602,7 @@ fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function classify(value) {
@@ -16654,7 +16654,7 @@ fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function seed() { return 0; }
@@ -16719,7 +16719,7 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function sumList(node) {
@@ -17831,7 +17831,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
 
     // Each fixed look spends alpha/4 under p=0.8. Testing at these points
     // bounds false promotion across looks for this function at 5%.
-    for (observations, minimum) in crate::vm::compiled::tier_policy::TierRows::PROCESS.table().js_function.promotion_looks {
+    for (observations, minimum) in crate::vm::tier_policy::TierRows::PROCESS.table().js_function.promotion_looks {
         assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
         assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
     }
@@ -20259,10 +20259,10 @@ fn js_function_tiers_follow_the_memory_policy() {
         let mut vm = Vm::new(TestHost::default());
         vm.set_memory_policy(policy);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        assert_eq!(vm.tier_may_run(crate::jit_mode::Tier::ANY), super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY), "{policy:?}");
+        assert_eq!(vm.tier_may_run(crate::jit_mode::Tier::ANY), crate::vm::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY), "{policy:?}");
     }
-    assert!(super::compiled::tier_policy::tier_may_run(crate::MemoryPolicy::Throughput, crate::jit_mode::Tier::ANY));
-    assert!(!super::compiled::tier_policy::tier_may_run(crate::MemoryPolicy::MemoryFirst, crate::jit_mode::Tier::ANY));
+    assert!(crate::vm::tier_policy::tier_may_run(crate::MemoryPolicy::Throughput, crate::jit_mode::Tier::ANY));
+    assert!(!crate::vm::tier_policy::tier_may_run(crate::MemoryPolicy::MemoryFirst, crate::jit_mode::Tier::ANY));
 }
 
 #[test]
@@ -20827,7 +20827,7 @@ fn global_declarations_survive_abrupt_script_evaluation() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_guards_replaced_nested_array_receivers() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function fill(rows, column) {
@@ -21129,7 +21129,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         assert_eq!(registers[usize::from(terminal.register_a())], Value::number(expected_total + 11.0));
         assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
         assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
-        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
+        if mode == crate::ExecutionMode::Compiled && crate::vm::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
             assert!(vm.tier_events().count(Event::Inlined) > 0, "the storing callee runs inlined in its caller's lane body");
         }
     }
@@ -21303,7 +21303,7 @@ fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
+        if mode == crate::ExecutionMode::Compiled && crate::vm::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
             assert!(vm.tier_events().count(Event::Published) > 0, "a method making method calls runs as a lane body");
             #[cfg(not(quench_profiled))]
             assert_drive_leaves_no_method_call(&vm, &program, drive);

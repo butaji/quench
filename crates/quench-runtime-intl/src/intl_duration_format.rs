@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::intl_prelude::*;
 
 const DURATION_FORMAT_LOCALE_SLOT: &str = "\0quench:intl-duration-format-locale";
 const DURATION_FORMAT_NUMBERING_SLOT: &str = "\0quench:intl-duration-format-numbering";
