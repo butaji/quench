@@ -543,7 +543,7 @@ fn compile(job: &Shard, shard: usize) {
     // row can reach: the reach file comes from this compile rather than a second, unoptimized one (`write_reach`).
     // The flag is outside `job.args`, so it is in no key.
     let run = || {
-        let child = Command::new(rustc()).args(&job.args).args(["-Z", "print-mono-items=yes"])
+        let child = shard_command().args(&job.args).args(["-Z", "print-mono-items=yes"])
             .envs(job.envs.iter().map(|(name, path)| (*name, path))).stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit()).spawn().expect("run rustc");
         yield_to_oom_killer(child.id());
@@ -575,6 +575,20 @@ fn publish(object: &Path, shared: &Path) {
         let _ = fs::rename(&partial, shared);
     }
     let _ = fs::remove_file(&partial);
+}
+
+/// The command a shard's rustc runs under: at the lowest CPU priority where `nice` is on the path (Unix), so the
+/// runtime crates, which compile beside the stencils and are the build's critical path, take the cores first and the
+/// shards fill the cores they leave idle.
+fn shard_command() -> Command {
+    let nice = Path::new("/usr/bin/nice");
+    if cfg!(unix) && nice.is_file() {
+        let mut command = Command::new(nice);
+        command.arg("-n19").arg(rustc());
+        command
+    } else {
+        Command::new(rustc())
+    }
 }
 
 /// Makes shard rustc `pid` the kernel's first out-of-memory victim (`oom_score_adj` 1000). The stencils build beside
