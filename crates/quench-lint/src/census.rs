@@ -29,8 +29,6 @@ enum Direction {
 enum Source {
     /// A file that must exist.
     File(&'static str),
-    /// A file counted when present.
-    Optional(&'static str),
     /// Every Rust file under a directory, outside test paths, whose name contains one of the fragments (any when empty).
     Tree(&'static str, &'static [&'static str]),
 }
@@ -78,12 +76,12 @@ const METRICS: &[Metric] = &[
         name: "tier_opcode_arms",
         direction: Direction::Down,
         sources: &[
-            Source::Optional("crates/quench-runtime-engine/src/compiled/lane_region.rs"),
-            Source::Optional("crates/quench-runtime-engine/src/compiled/lane_unit.rs"),
-            Source::Optional("crates/quench-runtime-engine/src/compiled/osr_loop.rs"),
-            Source::Optional("crates/quench-runtime-engine/src/compiled.rs"),
-            Source::Optional("crates/quench-runtime-engine/src/js_compiled.rs"),
-            Source::Optional("crates/quench-runtime-engine/src/compiled/base_region/decode.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled/lane_region.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled/lane_unit.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled/osr_loop.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled.rs"),
+            Source::File("crates/quench-runtime-engine/src/js_compiled.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled/base_region/decode.rs"),
             Source::Tree(COMPILED, LOWERING_FRAGMENTS),
         ],
         extract: Extract::Syntax(extract::opcode_arms),
@@ -189,7 +187,6 @@ fn source_files(sources: &[Source]) -> Result<Vec<PathBuf>, String> {
     for source in sources {
         match source {
             Source::File(path) => found.push(PathBuf::from(path)),
-            Source::Optional(path) => found.extend(Some(PathBuf::from(path)).filter(|path| path.exists())),
             Source::Tree(directory, fragments) => rust_files_under(Path::new(directory), fragments, &mut found)?,
         }
     }
