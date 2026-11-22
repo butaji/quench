@@ -12,7 +12,7 @@ use crate::wasm::CanonicalSignature;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Call {
+pub enum Call {
     /// `result = function(window)`: a function the program defines.
     Known,
     /// `a = table[c]`, checked against the signature `imm`: the reference of an indirect call.
@@ -25,7 +25,7 @@ pub(crate) enum Call {
 
 #[cfg(not(stencil_build))]
 impl Call {
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::CallKnown => Some(Self::Known),
             Class::WasmIndirectTarget => Some(Self::IndirectTarget),
@@ -43,14 +43,14 @@ impl Call {
 
 impl Call {
     /// Whether the call reads a table's references: it needs the program's callouts.
-    pub(crate) const fn needs_callouts(self) -> bool {
+    pub const fn needs_callouts(self) -> bool {
         matches!(self, Self::IndirectTarget | Self::RefFunc)
     }
 }
 
 /// A table of function references and the canonical signature of each function
 /// (`wasm::CanonicalSignature`), which an element carries beside its reference (`TableTarget`).
-pub(crate) trait WasmTable: WasmStage {
+pub trait WasmTable: WasmStage {
     /// The flag that `extent` elements from `index` pass the table's end: the shared range check
     /// (`wasm::memory::checked_range`) of tables, memories and bulk operations.
     fn table_range_exceeds(&mut self, index: Self::Word, extent: Self::Word) -> Self::Word;
@@ -115,7 +115,7 @@ pub(crate) fn indirect_target_word<S: WasmTable>(
 /// `indirect_target_word` over the canonical signature the program's type names.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn indirect_target<S: WasmTable>(
+pub fn indirect_target<S: WasmTable>(
     stage: &mut S,
     index: S::Word,
     expected: CanonicalSignature,

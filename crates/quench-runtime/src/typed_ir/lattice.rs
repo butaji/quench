@@ -8,7 +8,7 @@ use crate::{Value, ValueType};
 /// One authority for a semantic type. Refined cases determine their language
 /// bits; storing those bits alongside the payload would duplicate the fact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TypeKind {
+pub enum TypeKind {
     Language(u16),
     Int(IntRange),
     DirectObjectFamily,
@@ -20,7 +20,7 @@ pub(crate) enum TypeKind {
 
 /// Every language type: the set `Type::ANY` holds, and the declared set of a type with no
 /// closed set of language types.
-pub(crate) const ANY_LANGUAGES: u16 = u16::MAX;
+pub const ANY_LANGUAGES: u16 = u16::MAX;
 
 /// A set of language types as a bit map: bit `kind as u16` names `kind`. The one owner of the
 /// bit map that `Type::language`, `Type::languages` and declared TypeScript types share.
@@ -62,44 +62,44 @@ impl core::ops::BitOr for Languages {
 }
 
 /// The language bit of `kind` in a language set: `Languages::of(kind).bits()`.
-pub(crate) const fn language_bit(kind: ValueType) -> u16 {
+pub const fn language_bit(kind: ValueType) -> u16 {
     Languages::of(kind).bits()
 }
 
 /// A set of language types, with an optional semantic refinement.
 /// Reserved bits in ANY also cover internal markers: a TDZ/hole is not Number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Type(pub(super) TypeKind);
+pub struct Type(pub(super) TypeKind);
 
 impl Type {
-    pub(crate) const NEVER: Self = Self(TypeKind::Language(0));
-    pub(crate) const ANY: Self = Self(TypeKind::Language(ANY_LANGUAGES));
+    pub const NEVER: Self = Self(TypeKind::Language(0));
+    pub const ANY: Self = Self(TypeKind::Language(ANY_LANGUAGES));
     pub(crate) const NULLISH: Self = Self(TypeKind::Language(
         Languages::of(ValueType::Null).union(Languages::of(ValueType::Undefined)).bits()));
     /// The types whose values name no heap record (a Number, a Boolean, `null`, `undefined`):
     /// the tag layout's non-reference words, which a store writes with no barrier.
-    pub(crate) const IMMEDIATE: Self = Self(TypeKind::Language(
+    pub const IMMEDIATE: Self = Self(TypeKind::Language(
         Languages::of(ValueType::Number).union(Languages::of(ValueType::Boolean))
             .union(Languages::of(ValueType::Null)).union(Languages::of(ValueType::Undefined)).bits()));
-    pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
+    pub const NUMBER: Self = Self::language(ValueType::Number);
     /// `undefined`, what `Type::immediate(Value::UNDEFINED)` is, as a constant the stencil build can name.
     pub(crate) const UNDEFINED: Self = Self::language(ValueType::Undefined);
     /// The integers of the whole int32 span, the widest range an int32-represented value holds.
-    pub(crate) const INT32: Self = Self(TypeKind::Int(IntRange::FULL));
+    pub const INT32: Self = Self(TypeKind::Int(IntRange::FULL));
     /// The canonical direct-object tag only: no object-table range, base,
     /// shape or storage permission follows from this refinement.
-    pub(crate) const DIRECT_OBJECT_FAMILY: Self = Self(TypeKind::DirectObjectFamily);
+    pub const DIRECT_OBJECT_FAMILY: Self = Self(TypeKind::DirectObjectFamily);
     /// Internal control discriminant emitted by the typeof-test rewrite.
     #[cfg(test)]
     pub(crate) const TYPEOF_INDEX: Self = Self(TypeKind::Language(1 << (u16::BITS - 1)));
 
-    pub(crate) const fn language(kind: ValueType) -> Self {
+    pub const fn language(kind: ValueType) -> Self {
         Self(TypeKind::Language(language_bit(kind)))
     }
 
     /// The set of language types `bits` names (`language` bits, joined): a declared type
     /// (`Function::declared_parameters`).
-    pub(crate) const fn languages(bits: u16) -> Self {
+    pub const fn languages(bits: u16) -> Self {
         Self(TypeKind::Language(bits))
     }
 
@@ -121,7 +121,7 @@ impl Type {
     /// proved on every incoming edge.
     /// This fact lasts only within a layout-preserving, no-safepoint region;
     /// feedback alone and canonical tagged bits cannot establish it.
-    pub(crate) const fn direct_object(shape: u32) -> Self {
+    pub const fn direct_object(shape: u32) -> Self {
         Self(TypeKind::DirectObjectShape { shape, nullish: 0 })
     }
 
@@ -139,7 +139,7 @@ impl Type {
     }
 
     #[inline(always)]
-    pub(crate) const fn is_direct_object_family(self) -> bool {
+    pub const fn is_direct_object_family(self) -> bool {
         matches!(self.0, TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape { nullish: 0, .. })
     }
 
@@ -154,7 +154,7 @@ impl Type {
         }
     }
 
-    pub(crate) fn object_shape(self) -> Option<u32> {
+    pub fn object_shape(self) -> Option<u32> {
         match self.0 {
             TypeKind::DirectObjectShape { shape, nullish: 0 } => Some(shape),
             _ => None,
@@ -163,7 +163,7 @@ impl Type {
 
     /// The object alternative, usable only after an edge proves this value is a
     /// direct object. A nullable shape alone never authorizes a record access.
-    pub(crate) fn direct_object_part(self) -> Option<Self> {
+    pub fn direct_object_part(self) -> Option<Self> {
         match self.0 {
             TypeKind::DirectObjectShape { shape, .. } => Some(Self::direct_object(shape)),
             TypeKind::DirectObjectFamily | TypeKind::NullableDirectObjectFamily(_) => Some(Self::DIRECT_OBJECT_FAMILY),
@@ -172,7 +172,7 @@ impl Type {
     }
 
     /// Retire a region-local shape proof while retaining its language alternatives.
-    pub(crate) fn without_object_shape(self) -> Self {
+    pub fn without_object_shape(self) -> Self {
         match self.0 {
             TypeKind::DirectObjectShape { nullish: 0, .. } => Self::DIRECT_OBJECT_FAMILY,
             TypeKind::DirectObjectShape { nullish, .. } => Self(TypeKind::NullableDirectObjectFamily(nullish)),
@@ -181,24 +181,24 @@ impl Type {
     }
 
     /// Whether nothing narrower than a Number is known: what an int32 contract of a loop may narrow.
-    pub(crate) fn is_any_or_number(self) -> bool { matches!(self, Self::ANY | Self::NUMBER) }
+    pub fn is_any_or_number(self) -> bool { matches!(self, Self::ANY | Self::NUMBER) }
 
-    pub(crate) fn function_identity(self) -> Option<Value> {
+    pub fn function_identity(self) -> Option<Value> {
         match self.0 { TypeKind::FunctionIdentity(identity) => Some(identity), _ => None }
     }
 
     /// A closure admitted against this region's program, function index and realm.
     /// Unlike identity, this admits distinct environments of the same body. It is
     /// local to the active program/realm and cannot cross a safepoint or reentry.
-    pub(crate) const fn function_body(function: u32) -> Self {
+    pub const fn function_body(function: u32) -> Self {
         Self(TypeKind::FunctionBody(function))
     }
 
-    pub(crate) fn body_index(self) -> Option<u32> {
+    pub fn body_index(self) -> Option<u32> {
         match self.0 { TypeKind::FunctionBody(function) => Some(function), _ => None }
     }
 
-    pub(crate) fn join(self, other: Self) -> Self {
+    pub fn join(self, other: Self) -> Self {
         if let Some(joined) = self.trivial_join(other) {
             return joined;
         }
@@ -246,7 +246,7 @@ impl Type {
     }
 
     #[inline(always)]
-    pub(crate) fn is_subtype(self, expected: Self) -> bool {
+    pub fn is_subtype(self, expected: Self) -> bool {
         // Nothing but `ANY` holds every value: the common unproved fact answers with no compare.
         if self.is_any() { return expected.is_any(); }
         self.same(Self::NEVER) || self.same(expected)

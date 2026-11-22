@@ -31,19 +31,19 @@ impl Heap {
 
     /// Whether `value` is a Map.
     #[inline(always)]
-    pub(crate) fn is_map(&self, value: Value) -> bool {
+    pub fn is_map(&self, value: Value) -> bool {
         matches!(self.collection(value), Some(CollectionRecord { entries: CollectionStorage::Map(_), .. }))
     }
 
     /// Whether `value` is a Set.
     #[inline(always)]
-    pub(crate) fn is_set(&self, value: Value) -> bool {
+    pub fn is_set(&self, value: Value) -> bool {
         matches!(self.collection(value), Some(CollectionRecord { entries: CollectionStorage::Set(_), .. }))
     }
 
     /// Whether `value` is a Symbol.
     #[inline(always)]
-    pub(crate) fn is_symbol(&self, value: Value) -> bool {
+    pub fn is_symbol(&self, value: Value) -> bool {
         value.direct_symbol_index().is_some()
     }
 
@@ -67,7 +67,7 @@ impl Heap {
 
     /// A Set's entries.
     #[inline(always)]
-    pub(crate) fn set_entries(&self, value: Value) -> Option<&Entries<Value>> {
+    pub fn set_entries(&self, value: Value) -> Option<&Entries<Value>> {
         match &self.collection(value)?.entries {
             CollectionStorage::Set(entries) => Some(entries),
             CollectionStorage::Map(_) => None,
@@ -184,7 +184,7 @@ impl Heap {
     /// A new Symbol, as a symbol record. Its description is external bytes, charged as a
     /// cell's are (`charge_allocation`), and uncharged when the record is swept.
     #[inline]
-    pub(crate) fn alloc_symbol(&mut self, symbol: SymbolData) -> Value {
+    pub fn alloc_symbol(&mut self, symbol: SymbolData) -> Value {
         let description = symbol.description.as_ref().map_or(0, |description| description.len());
         self.charge_allocation(0, description);
         let Ok(record_id) = self.symbol_records.try_insert(symbol) else {

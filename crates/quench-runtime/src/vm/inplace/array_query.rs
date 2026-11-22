@@ -15,7 +15,7 @@ impl Vm {
     /// from the end. A present element is returned; a hole, or an index past either end, is `None`
     /// except past the end of an array of `Array.prototype` whose chain holds no index, which reads
     /// `undefined`.
-    pub(in crate::vm) fn plain_array_at(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_array_at(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let index = args.first()?.as_int()?;
         let length = self.array_search_elements(receiver)?.len();
         let Some(position) = at_position(index, length) else {
@@ -36,7 +36,7 @@ impl Vm {
     /// strict equality as `indexOf` is. The start is the last index when `fromIndex` is absent,
     /// else an int32 as the spec clamps it. A hole the search reaches is left to the general
     /// algorithm (`None`).
-    pub(in crate::vm) fn plain_array_last_index_of(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_array_last_index_of(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         let length = self.array_search_elements(receiver)?.len();
         let Ok(start) = usize::try_from(last_index_start(args.get(1).copied(), length)?) else {
@@ -54,7 +54,7 @@ impl Vm {
     /// no hole). Every HasProperty, Get and Set reads or writes an own data element and observes
     /// nothing, so the backing is reversed and the receiver returned. Moving values within one
     /// array stores no new reference. The array is looked up once.
-    pub(in crate::vm) fn plain_array_reverse(&mut self, receiver: Value, _args: &[Value]) -> Option<Value> {
+    pub fn plain_array_reverse(&mut self, receiver: Value, _args: &[Value]) -> Option<Value> {
         let array = self.heap.array_store_mut(receiver, Value::UNDEFINED)?;
         if !array.holds_ordinary_elements() {
             return None;
@@ -64,7 +64,7 @@ impl Vm {
 
     /// `Array.prototype.toReversed()` of a dense array with no hole: a new array of its elements in
     /// reverse order, copied from the backing as `array_of` copies a slice.
-    pub(in crate::vm) fn plain_array_to_reversed(&mut self, receiver: Value, _args: &[Value]) -> Option<Value> {
+    pub fn plain_array_to_reversed(&mut self, receiver: Value, _args: &[Value]) -> Option<Value> {
         let elements = self.array_search_elements(receiver)?;
         if elements.iter().any(|value| value.is_deleted()) {
             return None;
@@ -77,7 +77,7 @@ impl Vm {
     /// `Array.prototype.with(index, value)` of a dense array with no hole and an int32 `index` in
     /// range: a new array of the elements with `value` at the relative index. An index past either
     /// end, which throws, is `None` for the general native.
-    pub(in crate::vm) fn plain_array_with(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_array_with(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let index = args.first()?.as_int()?;
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let elements = self.array_search_elements(receiver)?;

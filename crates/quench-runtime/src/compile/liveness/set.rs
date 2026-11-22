@@ -13,17 +13,17 @@ const HALF_WORDS: usize = (u128::BITS / u64::BITS) as usize;
 
 /// A set of registers, one bit each, `u64::BITS * WORDS` wide.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub(crate) struct RegisterSet([u64; WORDS]);
+pub struct RegisterSet([u64; WORDS]);
 
 impl RegisterSet {
     /// The registers a set covers.
-    pub(crate) const BITS: u32 = (u64::BITS as usize * WORDS) as u32;
+    pub const BITS: u32 = (u64::BITS as usize * WORDS) as u32;
     /// Every covered register.
-    pub(crate) const MAX: Self = Self([u64::MAX; WORDS]);
+    pub const MAX: Self = Self([u64::MAX; WORDS]);
 
     /// The set of `register` alone; empty past the covered width.
     #[inline(always)]
-    pub(crate) fn bit(register: usize) -> Self {
+    pub fn bit(register: usize) -> Self {
         let mut set = Self::default();
         set.insert(register);
         set
@@ -31,7 +31,7 @@ impl RegisterSet {
 
     /// Whether `register` is in the set.
     #[inline(always)]
-    pub(crate) fn contains(self, register: usize) -> bool {
+    pub fn contains(self, register: usize) -> bool {
         let Some(word) = self.0.get(register / u64::BITS as usize) else {
             return false;
         };
@@ -40,7 +40,7 @@ impl RegisterSet {
 
     /// Adds `register`; past the covered width the set is unchanged.
     #[inline(always)]
-    pub(crate) fn insert(&mut self, register: usize) {
+    pub fn insert(&mut self, register: usize) {
         if let Some(word) = self.0.get_mut(register / u64::BITS as usize) {
             *word |= 1 << (register % u64::BITS as usize);
         }
@@ -48,7 +48,7 @@ impl RegisterSet {
 
     /// The set shifted left by `bits`; `None` when a set bit would leave the width.
     #[inline(always)]
-    pub(crate) fn checked_shl(self, bits: u32) -> Option<Self> {
+    pub fn checked_shl(self, bits: u32) -> Option<Self> {
         if bits >= Self::BITS { return self.is_empty().then_some(Self::default()); }
         let shifted = self << bits;
         (shifted >> bits == self).then_some(shifted)
@@ -56,7 +56,7 @@ impl RegisterSet {
 
     /// Whether no register is in the set.
     #[inline(always)]
-    pub(crate) fn is_empty(self) -> bool {
+    pub fn is_empty(self) -> bool {
         self.0.iter().all(|word| *word == 0)
     }
 
@@ -68,7 +68,7 @@ impl RegisterSet {
 
     /// Word `index` of the set, the unit dead registers are found a machine word at a time.
     #[inline(always)]
-    pub(crate) fn word(self, index: usize) -> u64 {
+    pub fn word(self, index: usize) -> u64 {
         self.0.get(index).copied().unwrap_or(0)
     }
 

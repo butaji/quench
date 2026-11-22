@@ -2,20 +2,20 @@ use super::program_store::ProgramId;
 use crate::Value;
 
 mod frame_cold;
-mod frame_record;
+pub mod frame_record;
 mod generator_record;
 mod suspension_live;
-pub(crate) use frame_record::FrameRecord;
-pub(in crate::vm) use frame_record::extend_this_env_roots;
+pub use frame_record::FrameRecord;
+pub use frame_record::extend_this_env_roots;
 #[cfg(test)]
 pub(in crate::vm) use frame_record::{frames_made, note_frame_made};
-pub(crate) use generator_record::GeneratorRecord;
+pub use generator_record::GeneratorRecord;
 
 /// The only state that crosses an activation boundary. The value is kept as a
 /// child of the suspension's owner and is consumed by the resumer according
 /// to its completion kind.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Completion {
+pub enum Completion {
     GeneratorStart,
     Return(Value),
     Yield(Value),
@@ -26,7 +26,7 @@ pub(crate) enum Completion {
 /// (`JobRoot`): an async function's await state, or a generator's record, async or the native
 /// `next` of a sync one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SuspendKind {
+pub enum SuspendKind {
     Generator,
     AsyncFunction,
     AsyncGenerator,
@@ -35,15 +35,15 @@ pub(crate) enum SuspendKind {
 /// The root of a lane run that resumes a suspended activation (`Vm::run_lane_job`): the
 /// object that owns its frame, the await state or the generator, and what kind it is.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct JobRoot {
-    pub(crate) object: Value,
-    pub(crate) kind: SuspendKind,
+pub struct JobRoot {
+    pub object: Value,
+    pub kind: SuspendKind,
 }
 
 /// How a promise job or a request resumes the activation its owner suspended
 /// (`Vm::run_job`).
 #[derive(Debug)]
-pub(crate) enum JobResume {
+pub enum JobResume {
     /// With the value its `await` or `yield` evaluates to.
     Sends(Value),
     /// Throwing the error where it suspended, which a handler of its bytecode may catch.
@@ -52,7 +52,7 @@ pub(crate) enum JobResume {
 
 impl JobResume {
     /// The value the resumed `await` or `yield` is sent: `undefined` for a throw, which sends none.
-    pub(crate) fn sent(&self) -> Value {
+    pub fn sent(&self) -> Value {
         match self {
             Self::Sends(sent) => *sent,
             Self::Throws(_) => Value::UNDEFINED,
@@ -68,7 +68,7 @@ impl JobResume {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct NativeActivation {
+pub struct NativeActivation {
     pub callable: Value,
     /// What the activation runs on and keeps alive besides its callable: a windowed
     /// generator step's generator (`Vm::resume_generator_window`), `undefined` for others.
@@ -85,7 +85,7 @@ pub(super) enum NativeCallBoundary {
 
 /// The origin of an activation, including the identity exposed to JavaScript.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum CallContext {
+pub enum CallContext {
     Function(Value),
     DirectEval(Value),
     IndirectEval(Value),
@@ -95,7 +95,7 @@ pub(crate) enum CallContext {
 
 /// The single completion mode of a pushed call. Cross-program restoration and
 /// a caller's terminal-return flag are independent of the value this call yields.
-pub(crate) enum CallCompletion {
+pub enum CallCompletion {
     Value,
     Constructor(Value),
     /// [[Construct]] of a derived class constructor pushed in place (`Vm::try_inline_construct`,
@@ -136,7 +136,7 @@ pub(crate) enum CallCompletion {
 /// How a proxy trap's result is checked against its target: a read, a store, or a strict
 /// store, which a falsish result also rejects with a `TypeError`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TrapAccess {
+pub enum TrapAccess {
     Read,
     Store,
     StrictStore,
@@ -146,14 +146,14 @@ pub(crate) enum TrapAccess {
 /// 10.5.9): the target and key the trap was called with, whose shape the lane's pre-check
 /// found leaving the key unconstrained, which the trap's own effects may have changed.
 #[derive(Clone, Copy)]
-pub(crate) struct TrapCheck {
-    pub(super) target: Value,
-    pub(super) atom: crate::bytecode::Atom,
-    pub(super) access: TrapAccess,
+pub struct TrapCheck {
+    pub target: Value,
+    pub atom: crate::bytecode::Atom,
+    pub access: TrapAccess,
     /// The target's layout id when the pre-check ran, for a key its layout alone answers
     /// (a name other than an array's `length`): the same layout after the trap answers as
     /// the pre-check did. 0, which no object's layout is, where the check is made again.
-    pub(super) layout: u32,
+    pub layout: u32,
 }
 
 impl CallCompletion {
@@ -177,7 +177,7 @@ impl CallCompletion {
     /// Whether the call's value is made on the general path from what the callee returns:
     /// an async callee's promise settles there, an array step's iteration finishes there.
     #[inline(always)]
-    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_) | Self::ToWasm(_)) }
+    pub fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_) | Self::ToWasm(_)) }
 
     #[inline(always)]
     pub(super) fn take_array_step(&mut self) -> Option<Box<super::array_indexed::ArrayStepCall>> {
@@ -195,7 +195,7 @@ impl CallCompletion {
     }
 
     #[inline(always)]
-    pub(super) fn take_generator(&mut self) -> Option<super::generator::GeneratorResume> {
+    pub fn take_generator(&mut self) -> Option<super::generator::GeneratorResume> {
         if !self.is_generator() { return None; }
         let Self::Generator(resume) = std::mem::replace(self, Self::Value) else { unreachable!() };
         Some(resume)
@@ -204,13 +204,13 @@ impl CallCompletion {
 
 /// A pending constructor entry belongs only to its actual callee.
 #[derive(Clone, Copy)]
-pub(super) struct ConstructionTarget {
-    pub(super) callee: Value,
-    pub(super) new_target: Value,
+pub struct ConstructionTarget {
+    pub callee: Value,
+    pub new_target: Value,
 }
 
 impl CallContext {
-    pub(super) fn constructed(self) -> Self {
+    pub fn constructed(self) -> Self {
         match self {
             Self::Function(value) | Self::Constructor(value) => Self::Constructor(value),
             other => other,
@@ -221,7 +221,8 @@ impl CallContext {
         matches!(self, Self::Constructor(_))
     }
 
-    pub(super) fn user_function(id: u32, callable: Value) -> Self {
+    #[inline]
+    pub fn user_function(id: u32, callable: Value) -> Self {
         if id == super::ROOT_FUNCTION_ID {
             Self::Internal
         } else {
@@ -229,7 +230,7 @@ impl CallContext {
         }
     }
 
-    pub(super) fn callee(self) -> Option<Value> {
+    pub fn callee(self) -> Option<Value> {
         match self {
             Self::Function(value)
             | Self::Constructor(value)
@@ -251,7 +252,7 @@ impl CallContext {
 /// and what its resumer reads. Suspending moves the frame's state into the record and
 /// resuming moves it back out (`FrameRecord::into_frame`), so neither copies it nor gives up its storage.
 #[derive(Clone)]
-pub(crate) struct Continuation {
+pub struct Continuation {
     pub frame: Box<FrameRecord>,
     pub completion: Completion,
     pub resume_register: Option<u16>,

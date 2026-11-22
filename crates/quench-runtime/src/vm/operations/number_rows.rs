@@ -4,11 +4,11 @@
 //! `operations.rs` adds what needs the parser's operator names and the bytecode.
 
 /// An int32 shift count is its low five bits (ECMAScript ToUint32 of the count, modulo 32).
-pub(crate) const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
+pub const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
 
 /// A stage supplies the machine operation for each semantic Number relation.
 /// The relation table below is shared by interpreter values and native emitters.
-pub(crate) trait NumberRelationStage<T> {
+pub trait NumberRelationStage<T> {
     type Output;
 
     fn equal(&mut self, left: T, right: T) -> Self::Output;
@@ -22,11 +22,11 @@ pub(crate) trait NumberRelationStage<T> {
 macro_rules! number_relations {
     ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum NumberRelation { $($relation),+ }
+        pub enum NumberRelation { $($relation),+ }
 
         impl NumberRelation {
             #[inline(always)]
-            pub(crate) fn apply<T, S: NumberRelationStage<T>>(
+            pub fn apply<T, S: NumberRelationStage<T>>(
                 self,
                 stage: &mut S,
                 left: T,
@@ -52,6 +52,8 @@ macro_rules! number_relations {
 }
 
 /// Each relation with the operators that denote it; consumers take the table.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! number_relation_rows {
     ($consumer:ident) => { $consumer! {
         Equal => [Equality "==", StrictEquality "==="], equal;
@@ -68,7 +70,7 @@ number_relation_rows!(number_relations);
 
 /// The four IEEE Number arithmetic operations have one operator-to-method
 /// mapping. Interpreter values and native Cranelift values supply the stage.
-pub(crate) trait NumberArithmeticStage<T> {
+pub trait NumberArithmeticStage<T> {
     type Output;
 
     fn add(&mut self, left: T, right: T) -> Self::Output;
@@ -80,7 +82,7 @@ pub(crate) trait NumberArithmeticStage<T> {
 macro_rules! number_arithmetic {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-        pub(crate) enum NumberArithmetic { $($operation),+ }
+        pub enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmeticStage<f64> for NumberF64Stage {
             type Output = f64;
@@ -98,7 +100,7 @@ macro_rules! number_arithmetic {
 
         impl NumberArithmetic {
             #[inline(always)]
-            pub(crate) fn apply<T, S: NumberArithmeticStage<T>>(
+            pub fn apply<T, S: NumberArithmeticStage<T>>(
                 self,
                 stage: &mut S,
                 left: T,
@@ -118,6 +120,8 @@ macro_rules! number_arithmetic {
 
 // The primitive views of each Number operation, including checked signed-int32
 // arithmetic. Backends consume these rows rather than maintain another mapping.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! number_arithmetic_rows {
     ($consumer:ident) => { $consumer! {
         Add => Addition, add, NumericAdd, +, fadd, checked_add, sadd_overflow;
@@ -129,7 +133,7 @@ macro_rules! number_arithmetic_rows {
 pub(crate) use number_arithmetic_rows;
 number_arithmetic_rows!(number_arithmetic);
 
-pub(crate) trait NumberUnaryStage<T> {
+pub trait NumberUnaryStage<T> {
     type Output;
 
     fn plus(&mut self, value: T) -> Self::Output;
@@ -139,7 +143,7 @@ pub(crate) trait NumberUnaryStage<T> {
 macro_rules! number_unary {
     ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum NumberUnary { $($operation),+ }
+        pub enum NumberUnary { $($operation),+ }
 
         impl NumberUnary {
             #[inline(always)]
@@ -169,7 +173,7 @@ self::number_unary_rows!(number_unary);
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
 /// and native emitters share the same signed/unsigned shift decisions.
-pub(crate) trait NumberBitwiseStage<T> {
+pub trait NumberBitwiseStage<T> {
     type Output;
 
     fn and(&mut self, left: T, right: T) -> Self::Output;
@@ -183,7 +187,7 @@ pub(crate) trait NumberBitwiseStage<T> {
 macro_rules! number_bitwise {
     ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum NumberBitwise { $($operation),+ }
+        pub enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
             #[inline(always)]
@@ -202,6 +206,8 @@ macro_rules! number_bitwise {
 }
 
 /// Each bitwise operation with the operator that denotes it; consumers take the table.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! number_bitwise_rows {
     ($consumer:ident) => { $consumer! {
         And => BitwiseAnd, and, "&";
@@ -257,7 +263,7 @@ impl NumberBitwise {
 
 /// The int32 bits `operation` makes of two int32 operands.
 #[inline(always)]
-pub(crate) fn int32_bitwise_bits(operation: NumberBitwise, left: i32, right: i32) -> i32 {
+pub fn int32_bitwise_bits(operation: NumberBitwise, left: i32, right: i32) -> i32 {
     operation.apply(&mut I32BitwiseStage, left, right)
 }
 
@@ -267,7 +273,7 @@ pub(crate) fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, rig
     if operation.keeps_int32(bits) { f64::from(bits) } else { f64::from(bits as u32) }
 }
 
-pub(crate) struct NumberF64Stage;
+pub struct NumberF64Stage;
 
 impl NumberUnaryStage<f64> for NumberF64Stage {
     type Output = f64;
@@ -285,7 +291,7 @@ impl NumberUnaryStage<f64> for NumberF64Stage {
 
 /// A stage supplies predicate operations for the shared JavaScript Number ToBoolean
 /// denotation. Interpreter, stencil and codegen stages use the same nonzero-and-not-NaN formula.
-pub(crate) trait NumberTruthinessStage<T> {
+pub trait NumberTruthinessStage<T> {
     type Predicate;
 
     fn zero(&mut self) -> T;
@@ -329,7 +335,7 @@ impl NumberTruthinessStage<f64> for NumberF64Stage {
     }
 }
 
-pub(crate) struct PartialOrderStage;
+pub struct PartialOrderStage;
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     type Output = bool;
@@ -386,27 +392,27 @@ pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
 /// Plain numbers, so the rows that build or test an operator field read them in the stencil build
 /// too; `vm::operations` asserts each equals the parser's.
 #[allow(non_upper_case_globals)]
-pub(crate) mod binary_operator {
-    pub(crate) const Equality: u32 = 0;
-    pub(crate) const Inequality: u32 = 1;
-    pub(crate) const StrictEquality: u32 = 2;
-    pub(crate) const StrictInequality: u32 = 3;
-    pub(crate) const LessThan: u32 = 4;
-    pub(crate) const LessEqualThan: u32 = 5;
-    pub(crate) const GreaterThan: u32 = 6;
-    pub(crate) const GreaterEqualThan: u32 = 7;
-    pub(crate) const Addition: u32 = 8;
-    pub(crate) const Subtraction: u32 = 9;
-    pub(crate) const Multiplication: u32 = 10;
-    pub(crate) const Division: u32 = 11;
-    pub(crate) const Remainder: u32 = 12;
+pub mod binary_operator {
+    pub const Equality: u32 = 0;
+    pub const Inequality: u32 = 1;
+    pub const StrictEquality: u32 = 2;
+    pub const StrictInequality: u32 = 3;
+    pub const LessThan: u32 = 4;
+    pub const LessEqualThan: u32 = 5;
+    pub const GreaterThan: u32 = 6;
+    pub const GreaterEqualThan: u32 = 7;
+    pub const Addition: u32 = 8;
+    pub const Subtraction: u32 = 9;
+    pub const Multiplication: u32 = 10;
+    pub const Division: u32 = 11;
+    pub const Remainder: u32 = 12;
     pub(crate) const Exponential: u32 = 13;
-    pub(crate) const ShiftLeft: u32 = 14;
-    pub(crate) const ShiftRight: u32 = 15;
-    pub(crate) const ShiftRightZeroFill: u32 = 16;
-    pub(crate) const BitwiseOR: u32 = 17;
-    pub(crate) const BitwiseXOR: u32 = 18;
-    pub(crate) const BitwiseAnd: u32 = 19;
+    pub const ShiftLeft: u32 = 14;
+    pub const ShiftRight: u32 = 15;
+    pub const ShiftRightZeroFill: u32 = 16;
+    pub const BitwiseOR: u32 = 17;
+    pub const BitwiseXOR: u32 = 18;
+    pub const BitwiseAnd: u32 = 19;
     pub(crate) const In: u32 = 20;
     pub(crate) const Instanceof: u32 = 21;
 }
@@ -428,14 +434,15 @@ pub(crate) mod unary_operator {
 macro_rules! number_relation_codes {
     ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         impl NumberRelation {
-            pub(crate) fn binary_operator(self) -> u32 {
+            #[inline]
+            pub fn binary_operator(self) -> u32 {
                 match self {
                     $(Self::$relation => [$(binary_operator::$operator),+][0],)+
                 }
             }
 
             #[inline(always)]
-            pub(crate) fn from_operator(op: u32) -> Option<Self> {
+            pub fn from_operator(op: u32) -> Option<Self> {
                 $(
                     if $(op == binary_operator::$operator)||+ {
                         return Some(Self::$relation);
@@ -453,14 +460,15 @@ macro_rules! number_arithmetic_codes {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
             /// The binary operator this arithmetic operation denotes (`from_operator`'s inverse).
-            pub(crate) fn binary_operator(self) -> u32 {
+            #[inline]
+            pub fn binary_operator(self) -> u32 {
                 match self {
                     $(Self::$operation => binary_operator::$operator,)+
                 }
             }
 
             #[inline(always)]
-            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
+            pub fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == binary_operator::$operator {
                         return Some(Self::$operation);
@@ -476,7 +484,7 @@ number_arithmetic_rows!(number_arithmetic_codes);
 impl NumberArithmetic {
     /// Whether the result of two integers is an integer: all but a division.
     #[inline(always)]
-    pub(crate) const fn integral(self) -> bool {
+    pub const fn integral(self) -> bool {
         !matches!(self, Self::Divide)
     }
 }
@@ -486,14 +494,15 @@ macro_rules! number_bitwise_codes {
     ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         impl NumberBitwise {
             /// The binary operator this bitwise operation denotes (`from_operator`'s inverse).
-            pub(crate) fn binary_operator(self) -> u32 {
+            #[inline]
+            pub fn binary_operator(self) -> u32 {
                 match self {
                     $(Self::$operation => binary_operator::$operator,)+
                 }
             }
 
             #[inline]
-            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
+            pub fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == binary_operator::$operator {
                         return Some(Self::$operation);
@@ -508,7 +517,7 @@ number_bitwise_rows!(number_bitwise_codes);
 
 /// Whether an equality operator is strict and whether it is negated; `None` for any other.
 #[inline(always)]
-pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
+pub fn equality_operator(op: u32) -> Option<(bool, bool)> {
     const EQUALITY: u32 = binary_operator::Equality;
     // The four operators are consecutive from an aligned first, each negation right after
     // its test and the strict pair after the loose one, so two bits of the offset decide
@@ -527,7 +536,7 @@ pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
 
 /// The equality operator code of `(strict, negated)` (`equality_operator`'s inverse).
 #[inline(always)]
-pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
+pub fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
     match (strict, negated) {
         (false, false) => binary_operator::Equality,
         (false, true) => binary_operator::Inequality,

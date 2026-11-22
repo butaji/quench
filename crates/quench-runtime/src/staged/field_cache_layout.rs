@@ -18,13 +18,13 @@ pub(crate) const NO_HOLDER_LAYOUT: u32 = 0;
 /// as empty; `holder_id` is stored as is, its empty value being zero.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FieldCacheWords {
+pub struct FieldCacheWords {
     /// The receiver shape, complemented against `EMPTY.receiver`.
     pub(crate) receiver: u32,
     /// The holder, complemented against `EMPTY.holder`.
     pub(crate) holder: u32,
     /// The slot, complemented against `EMPTY.slot`.
-    pub(crate) slot: u32,
+    pub slot: u32,
     /// The holder's layout id where the holder object was at hand when the entry was recorded,
     /// else `NO_HOLDER_LAYOUT`. Its shape (`layouts::auxiliary`) is `holder`, when set.
     pub(crate) holder_id: u32,

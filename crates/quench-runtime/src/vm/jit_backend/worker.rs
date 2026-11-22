@@ -10,13 +10,13 @@ use std::task::Poll;
 type Work = Box<dyn FnOnce() + Send>;
 
 /// Work handed to the code generator's thread, whose result arrives later.
-pub(in crate::vm) struct Pending<T> {
+pub struct Pending<T> {
     result: Receiver<T>,
 }
 
 impl<T> Pending<T> {
     /// The result once the work has run; `Ready(None)` if the thread is gone.
-    pub(in crate::vm) fn poll(&self) -> Poll<Option<T>> {
+    pub fn poll(&self) -> Poll<Option<T>> {
         match self.result.try_recv() {
             Ok(result) => Poll::Ready(Some(result)),
             Err(TryRecvError::Empty) => Poll::Pending,
@@ -69,7 +69,7 @@ unsafe impl<T> Send for AssertSend<T> {}
 /// lowering and code generation, runs on the code generator's thread from owned inputs, and the
 /// program polls for the result between runs. Where the work reads data the program owns by
 /// pointer (a plan's direct callees), dropping the driver waits for it (`guarded`).
-pub(in crate::vm) struct OffThread<T> {
+pub struct OffThread<T> {
     /// The work's end, which a drop waits for. First, so it drops before what the work reads.
     done: Option<Done>,
     result: Pending<AssertSend<T>>,
@@ -77,27 +77,27 @@ pub(in crate::vm) struct OffThread<T> {
 
 impl<T: 'static> OffThread<T> {
     /// `work` on the code generator's thread, reading nothing the program owns.
-    pub(in crate::vm) fn start<W: 'static>(work: W, run: fn(W) -> T) -> Self {
+    pub fn start<W: 'static>(work: W, run: fn(W) -> T) -> Self {
         let work = AssertSend(work);
         Self { done: None, result: run_in_background(move || { let held = work; let AssertSend(work) = held; AssertSend(run(work)) }) }
     }
 
     /// `work` on the code generator's thread, which reads data the program keeps alive until
     /// it ends: dropping the driver waits for it.
-    pub(in crate::vm) fn guarded<W: 'static>(work: W, run: fn(W) -> T) -> Self {
+    pub fn guarded<W: 'static>(work: W, run: fn(W) -> T) -> Self {
         let work = AssertSend(work);
         let (result, done) = run_in_background_guarded(move || { let held = work; let AssertSend(work) = held; AssertSend(run(work)) });
         Self { done: Some(done), result }
     }
 
     /// A result already in hand (a tier that builds its code at once), polled as any other.
-    pub(in crate::vm) fn ready(result: T) -> Self {
+    pub fn ready(result: T) -> Self {
         Self::start(result, std::convert::identity)
     }
 
     /// The result once the work has run; `Ready(None)` if its thread is gone. Once ready,
     /// what the work read may go.
-    pub(in crate::vm) fn poll(&mut self) -> Poll<Option<T>> {
+    pub fn poll(&mut self) -> Poll<Option<T>> {
         let result = self.result.poll();
         if result.is_ready() {
             self.done = None;
@@ -107,7 +107,7 @@ impl<T: 'static> OffThread<T> {
 }
 
 /// Runs `work` on the code generator's thread, started on the first call.
-pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Pending<T> {
+pub fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Pending<T> {
     static QUEUE: std::sync::OnceLock<Option<Sender<Work>>> = std::sync::OnceLock::new();
     let (deliver, result) = std::sync::mpsc::sync_channel(1);
     let job: Work = Box::new(move || {
@@ -165,5 +165,5 @@ fn serve(jobs: &Receiver<Work>) {
 fn release_compile_scratch() {
     quench_alloc::release_empty_pages();
     quench_alloc::release_scratch();
-    crate::vm::compiled::flush_retired_writers();
+    crate::vm::engine_calls::flush_retired_writers();
 }

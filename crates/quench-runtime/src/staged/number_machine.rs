@@ -13,7 +13,7 @@ use crate::vm::operations::{
 
 /// The comparison `relation` makes of two Numbers of `domain`: signed for int32, IEEE order for
 /// binary64; its flag is a word that holds 0 or 1.
-pub(crate) fn number_relation<M: MachineScalar>(machine: &mut M, relation: NumberRelation, left: M::Word,
+pub fn number_relation<M: MachineScalar>(machine: &mut M, relation: NumberRelation, left: M::Word,
     right: M::Word, domain: Domain) -> M::Word {
     let (integer, float) = match relation {
         NumberRelation::Equal => (Relation::Equal, Relation::FloatEqual),
@@ -27,7 +27,7 @@ pub(crate) fn number_relation<M: MachineScalar>(machine: &mut M, relation: Numbe
 }
 
 /// `operation` of two binary64 Numbers.
-pub(crate) fn float_arithmetic<M: MachineScalar>(machine: &mut M, operation: NumberArithmetic, left: M::Word,
+pub fn float_arithmetic<M: MachineScalar>(machine: &mut M, operation: NumberArithmetic, left: M::Word,
     right: M::Word) -> M::Word {
     let row = match operation {
         NumberArithmetic::Add => Binary::FloatAdd,
@@ -49,7 +49,7 @@ fn integer_row(operation: NumberArithmetic) -> Binary {
 }
 
 /// `operation` of two int32 words: its wrapping result and whether it overflowed.
-pub(crate) fn checked_int32_arithmetic<M: MachineScalar>(machine: &mut M, operation: NumberArithmetic,
+pub fn checked_int32_arithmetic<M: MachineScalar>(machine: &mut M, operation: NumberArithmetic,
     left: M::Word, right: M::Word) -> (M::Word, M::Word) {
     machine.raw_binary_overflow(integer_row(operation), left, right)
 }
@@ -57,13 +57,13 @@ pub(crate) fn checked_int32_arithmetic<M: MachineScalar>(machine: &mut M, operat
 /// `operation` of two integer words of one lane as their wrapping bits: int32 words, where a caller
 /// that proved projecting the Number result commutes with wrapping arithmetic selects it, or 64-bit
 /// words, where a caller that proved the exact result inside the lane does.
-pub(crate) fn wrapping_int32_arithmetic<M: MachineScalar>(machine: &mut M, operation: NumberArithmetic,
+pub fn wrapping_int32_arithmetic<M: MachineScalar>(machine: &mut M, operation: NumberArithmetic,
     left: M::Word, right: M::Word) -> M::Word {
     machine.raw_binary(integer_row(operation), left, right)
 }
 
 /// The int32 bits `operation` makes of two int32 words; a shift's count is its low five bits.
-pub(crate) fn int32_bitwise<M: MachineScalar>(machine: &mut M, operation: NumberBitwise, left: M::Word,
+pub fn int32_bitwise<M: MachineScalar>(machine: &mut M, operation: NumberBitwise, left: M::Word,
     right: M::Word) -> M::Word {
     let (row, counted) = match operation {
         NumberBitwise::And => (Binary::And, false),
@@ -85,7 +85,7 @@ pub(crate) fn int32_bitwise<M: MachineScalar>(machine: &mut M, operation: Number
 
 /// `int32_bitwise` as the binary64 Number it denotes: signed, but for a zero-fill shift, whose
 /// bits are unsigned.
-pub(crate) fn number_bitwise<M: MachineScalar>(machine: &mut M, operation: NumberBitwise, left: M::Word,
+pub fn number_bitwise<M: MachineScalar>(machine: &mut M, operation: NumberBitwise, left: M::Word,
     right: M::Word) -> M::Word {
     let bits = int32_bitwise(machine, operation, left, right);
     if operation == NumberBitwise::ShiftRightUnsigned {
@@ -100,7 +100,7 @@ pub(crate) fn number_bitwise<M: MachineScalar>(machine: &mut M, operation: Numbe
 const REMAINDER_PARAMETERS: [Lane; 2] = [Lane::F64, Lane::F64];
 
 /// The remainder of two binary64 Numbers: a call of the shared leaf, which touches no VM state.
-pub(crate) fn float_remainder<M: MachineAccess>(machine: &mut M, left: M::Word, right: M::Word) -> M::Word {
+pub fn float_remainder<M: MachineAccess>(machine: &mut M, left: M::Word, right: M::Word) -> M::Word {
     machine.call_leaf_lanes(number_remainder as *const () as usize, (REMAINDER_PARAMETERS.as_slice(), Lane::F64), &[left, right])
 }
 
@@ -129,13 +129,13 @@ impl<M: MachineScalar> NumberTruthinessStage<M::Word> for Truthiness<'_, M> {
 
 /// ToBoolean of a Number the caller proved numeric: the one formula (`number_truthiness`) on a
 /// machine's words.
-pub(crate) fn number_truthy<M: MachineScalar>(machine: &mut M, number: M::Word) -> M::Word {
+pub fn number_truthy<M: MachineScalar>(machine: &mut M, number: M::Word) -> M::Word {
     number_truthiness(&mut Truthiness(machine), number)
 }
 
 /// Whether the 64-bit integer `word` lies within `min..=max`: its bias by `min` is an unsigned
 /// prefix of the span, one compare.
-pub(crate) fn within_word<M: MachineScalar>(machine: &mut M, word: M::Word, min: i64, max: i64) -> M::Word {
+pub fn within_word<M: MachineScalar>(machine: &mut M, word: M::Word, min: i64, max: i64) -> M::Word {
     let biased = machine.raw_binary_imm(Binary::Add, word, -min);
     machine.raw_compare_imm(Relation::UnsignedLessEqual, biased, max - min)
 }
@@ -147,7 +147,7 @@ const PRODUCT_EXACT_BIAS: i64 = 1 << 52;
 /// `left * right` of two int32 words: the low 32 bits of their exact 64-bit product, and whether
 /// the product lies within `PRODUCT_EXACT_BIAS`, where its binary64 is exact, so its ToInt32 is
 /// those low bits. Where it is not, the caller leaves.
-pub(crate) fn truncated_int32_product<M: MachineScalar>(machine: &mut M, left: M::Word, right: M::Word) -> (M::Word, M::Word) {
+pub fn truncated_int32_product<M: MachineScalar>(machine: &mut M, left: M::Word, right: M::Word) -> (M::Word, M::Word) {
     let left = machine.raw_unary(Unary::SignExtend(Lane::I64), left);
     let right = machine.raw_unary(Unary::SignExtend(Lane::I64), right);
     let product = machine.raw_binary(Binary::Mul, left, right);
@@ -157,7 +157,7 @@ pub(crate) fn truncated_int32_product<M: MachineScalar>(machine: &mut M, left: M
 
 /// Continues where the int32 `value` stands in `relation` to `bound`; else leaves at `miss`. The
 /// entering-range guard of a loop input (`Lowering::guard_entering_ranges`).
-pub(crate) fn guard_int_bound<S: NumericStage>(stage: &mut S, relation: NumberRelation, value: S::Word,
+pub fn guard_int_bound<S: NumericStage>(stage: &mut S, relation: NumberRelation, value: S::Word,
     bound: i32, miss: S::Miss) -> Option<()> {
     let bound = stage.i32_constant(bound);
     let holds = stage.relation(relation, Domain::Int32, value, bound);

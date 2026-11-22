@@ -19,7 +19,7 @@ pub(crate) fn body_this<S: Stage>(stage: &mut S, receiver: S::Word, lexical: S::
 
 /// `body_this` on machine words, for the interpreter's body calls.
 #[inline(always)]
-pub(crate) fn concrete_body_this(receiver: u64, lexical: bool) -> u64 {
+pub fn concrete_body_this(receiver: u64, lexical: bool) -> u64 {
     body_this(&mut super::Concrete::new(std::ptr::null()), receiver, lexical)
 }
 
@@ -27,10 +27,10 @@ pub(crate) fn concrete_body_this(receiver: u64, lexical: bool) -> u64 {
 /// where all are false): `plain`, the registers alone; `keeping`, by the keeping form; `environment`,
 /// by the environment form.
 #[derive(Clone, Copy)]
-pub(crate) struct CallActivation<C> {
-    pub(crate) plain: C,
-    pub(crate) keeping: C,
-    pub(crate) environment: C,
+pub struct CallActivation<C> {
+    pub plain: C,
+    pub keeping: C,
+    pub environment: C,
 }
 
 /// The activation of a call whose target's entry `activates` or `forwards`, passed the arguments
@@ -52,7 +52,7 @@ pub(crate) fn activation<S: Stage>(stage: &mut S, activates: S::Cond, forwards: 
 
 /// `activation` on machine words, for the interpreter's body calls.
 #[inline(always)]
-pub(crate) fn concrete_activation(activates: bool, forwards: bool, fixed: bool, environment: bool) -> CallActivation<bool> {
+pub fn concrete_activation(activates: bool, forwards: bool, fixed: bool, environment: bool) -> CallActivation<bool> {
     activation(&mut super::Concrete::new(std::ptr::null()), activates, forwards, fixed, environment)
 }
 
@@ -67,7 +67,7 @@ pub(crate) fn admits_target_program<S: Stage>(stage: &mut S, target_program: S::
 
 /// `admits_target_program` on machine words.
 #[inline(always)]
-pub(crate) fn concrete_admits_target_program(target_program: u32, running_program: u32) -> bool {
+pub fn concrete_admits_target_program(target_program: u32, running_program: u32) -> bool {
     admits_target_program(&mut super::Concrete::new(std::ptr::null()), u64::from(target_program), u64::from(running_program))
 }
 

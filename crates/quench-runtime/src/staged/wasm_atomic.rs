@@ -7,7 +7,7 @@ use crate::bytecode::Op;
 
 /// The atomic operations a Wasm function's instruction can be.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Atomic {
+pub enum Atomic {
     /// `atomic.fence`: orders the memory accesses around it.
     Fence,
     /// An atomic access: its operator is the instruction's immediate, and its window of

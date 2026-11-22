@@ -35,7 +35,7 @@ impl Vm {
     /// outermost first: its VM frame's (`closure_in_realm`) or a window activation's
     /// (`LaneStack::with_chain`). The closure captures the objects the activation entered,
     /// those past the ones its own environment already carries.
-    pub(in crate::vm) fn closure_over_scope(
+    pub fn closure_over_scope(
         &mut self,
         p: &ResidualProgram,
         id: u32,

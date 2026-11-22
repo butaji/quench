@@ -121,7 +121,7 @@ impl Vm {
         }
     }
 
-    pub(in crate::vm) fn validate_proxy_get(
+    pub fn validate_proxy_get(
         &mut self,
         p: &ResidualProgram,
         target: Value,
@@ -184,7 +184,7 @@ impl Vm {
     /// holds every own name: an ordinary object, an array (whose elements and `length` the
     /// shape lookup excludes) or a collection. `false` for an index key, an arguments
     /// object, a dictionary-shaped target or any other exotic one.
-    pub(in crate::vm) fn shape_leaves_atom_unconstrained(&self, target: Value, atom: Atom) -> bool {
+    pub fn shape_leaves_atom_unconstrained(&self, target: Value, atom: Atom) -> bool {
         // The fact table's word for the target's layout says whether its shape holds the name
         // and in which slot, without a shape lookup, ahead of the array and index checks: a
         // plain named key is no index, and a non-arguments ordinary object names its own keys

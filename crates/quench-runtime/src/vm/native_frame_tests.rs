@@ -1,7 +1,7 @@
 //! Native frames in the lane stack's activations (`dispatch_fast::native_frames`): the tag and
 //! top word emitted code writes through, and chains of direct calls whose helpers, collections,
 //! exceptions and leaves must match the lane's own run.
-use super::compiled::DirectCallee;
+use crate::vm::engine_types::DirectCallee;
 use super::dispatch_fast::{KIND_NATIVE, KIND_OFFSET};
 use crate::staged::frame;
 use super::lane_activations::LaneActivations;

@@ -310,7 +310,7 @@ pub(super) fn site_index(site: usize) -> usize {
 impl Vm {
     /// The getter a symbol-keyed read of `key` on `object` calls, where a proof records it
     /// (`SymbolLoadAnswer::Getter`).
-    pub(super) fn proved_symbol_getter(&self, object: Value, key: Value) -> Option<Value> {
+    pub fn proved_symbol_getter(&self, object: Value, key: Value) -> Option<Value> {
         self.proved_getter(object, PropertyKey::symbol(key))
     }
 

@@ -23,7 +23,7 @@ use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Distinct headers the table holds: 32 MiB of address space, resident only where written.
-pub(crate) const LAYOUT_CAPACITY: usize = 1 << 22;
+pub const LAYOUT_CAPACITY: usize = 1 << 22;
 
 /// On x86-64 Linux the table sits at a fixed low address, mapped before `main`
 /// (`map_fixed_table`), so a read of an entry is one instruction with the address as its
@@ -78,7 +78,7 @@ static CACHE: [AtomicU32; 1 << CACHE_BITS] = [const { AtomicU32::new(0) }; 1 << 
 
 /// The base address of the table, entry `id` at `id * 8` past it.
 #[inline(always)]
-pub(crate) fn table_base() -> *const u64 {
+pub fn table_base() -> *const u64 {
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     return FIXED_TABLE as *const u64;
     #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
@@ -99,7 +99,7 @@ pub(crate) fn word(id: u32) -> u64 {
 /// guards, so the residual tests none of its bits. A word past the table (a cleared hint's
 /// sentinel) names no layout: its auxiliary word is 0.
 #[inline(always)]
-pub(crate) fn auxiliary(id: u32) -> u32 {
+pub fn auxiliary(id: u32) -> u32 {
     if id as usize >= LAYOUT_CAPACITY {
         return 0;
     }

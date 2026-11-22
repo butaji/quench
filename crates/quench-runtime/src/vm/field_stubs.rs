@@ -93,7 +93,7 @@ impl Vm {
     /// `atom`. A private name is never recorded: its key is the class's brand too, which a
     /// shape and an atom do not name.
     #[inline(always)]
-    pub(super) fn megamorphic_field_entry_hit(
+    pub fn megamorphic_field_entry_hit(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -114,7 +114,7 @@ impl Vm {
 
     /// `megamorphic_field_entry_hit`'s value alone.
     #[inline(always)]
-    pub(super) fn megamorphic_field_hit(&mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<Value> {
+    pub fn megamorphic_field_hit(&mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<Value> {
         self.megamorphic_field_entry_hit(p, object, atom, site).map(|(value, _)| value)
     }
 

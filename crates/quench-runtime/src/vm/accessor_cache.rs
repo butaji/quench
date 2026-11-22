@@ -6,7 +6,7 @@ use super::*;
 impl Vm {
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it.
-    pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+    pub fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
         if self.accessor_field_indices.get(site) == NO_ACCESSOR_FIELD {
             return None;
         }
@@ -26,7 +26,7 @@ impl Vm {
     /// same entries again. Any other receiver has no entry walk yet, so `cached_field_getter`
     /// makes it.
     #[inline(always)]
-    pub(super) fn cached_getter_after_miss(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+    pub fn cached_getter_after_miss(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
         let Some(receiver) = self.heap.object_record(object) else {
             return self.cached_field_getter(object, atom, site);
         };
@@ -38,14 +38,14 @@ impl Vm {
 
     /// Whether the accessor the site's recorded entry answers for `object` lives on its
     /// immediate prototype, whose values a hint's watch covers (`hold_getter_hint`).
-    pub(super) fn cached_accessor_on_prototype(&self, object: Value, atom: Atom, site: usize) -> bool {
+    pub fn cached_accessor_on_prototype(&self, object: Value, atom: Atom, site: usize) -> bool {
         self.receiver_entry(object, atom, site)
             .is_some_and(|(receiver, cache)| cache.holder != OWN_ACCESSOR && cache.holder == receiver.proto())
     }
 
     /// The accessor functions the site's recorded entry answers for `object` (a store's
     /// setter, a read's getter): its getter, and its setter where it has one.
-    pub(super) fn cached_field_accessor(&self, object: Value, atom: Atom, site: usize) -> Option<ShapeAccessors> {
+    pub fn cached_field_accessor(&self, object: Value, atom: Atom, site: usize) -> Option<ShapeAccessors> {
         // A site that never met an accessor has no entry to match, whatever the receiver.
         if self.accessor_field_indices.get(site) == NO_ACCESSOR_FIELD {
             return None;
@@ -109,7 +109,7 @@ impl Vm {
     /// value; else the getter is the one to call, found without the fact table's probe or a
     /// second walk (`cached_getter_after_miss`). `Miss` leaves the read to `cached_getter_after_miss`.
     #[inline(always)]
-    pub(super) fn getter_entry_read(&self, object: Value, site: usize) -> GetterEntryRead {
+    pub fn getter_entry_read(&self, object: Value, site: usize) -> GetterEntryRead {
         let mut index = self.accessor_field_indices.get(site);
         if index == NO_ACCESSOR_FIELD {
             return GetterEntryRead::Miss;
@@ -155,7 +155,7 @@ impl Vm {
     /// the newest: a getter on a prototype is read from receivers of many shapes, as Air's
     /// `Arg` kinds are) that its accessor `getter` (a store site's setter) does what `answer`
     /// says for a receiver of that layout (`getter_entry_read`, `setter_entry_forward`).
-    pub(super) fn memoize_getter_answer(&mut self, object: Value, site: usize, getter: Value, answer: AccessorForward) {
+    pub fn memoize_getter_answer(&mut self, object: Value, site: usize, getter: Value, answer: AccessorForward) {
         let Some(receiver) = self.heap.object_record(object) else {
             return;
         };
@@ -181,7 +181,7 @@ impl Vm {
     /// layout recorded one from this setter, `Declined` where it recorded that the setter
     /// forwards nothing, `Unknown` where it recorded neither.
     #[inline(always)]
-    pub(super) fn setter_entry_forward(&self, object: Value, site: usize, setter: Value) -> SetterForward {
+    pub fn setter_entry_forward(&self, object: Value, site: usize, setter: Value) -> SetterForward {
         let mut index = self.accessor_field_indices.get(site);
         let Some(receiver) = self.heap.object_record(object) else {
             return SetterForward::Unknown;
@@ -206,7 +206,7 @@ impl Vm {
 
 /// What one walk of a read site's accessor entries gives (`Vm::getter_entry_read`).
 #[derive(Clone, Copy)]
-pub(super) enum GetterEntryRead {
+pub enum GetterEntryRead {
     /// The forwarded value, and the getter whose call it stands for.
     Answer(Value, Value),
     /// The getter to call: the entry holds no forward for it, or its forward's field entry
@@ -218,7 +218,7 @@ pub(super) enum GetterEntryRead {
 
 /// What a store site's accessor entry knows of a setter (`Vm::setter_entry_forward`).
 #[derive(Clone, Copy)]
-pub(super) enum SetterForward {
+pub enum SetterForward {
     /// The setter's body stores its argument to this own field entry of the receiver, of this name.
     Store(FieldCache, Atom),
     /// The setter's body is no forward store: the call runs.

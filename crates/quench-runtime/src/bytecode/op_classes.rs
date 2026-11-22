@@ -37,12 +37,12 @@ impl Op {
     }
 
     /// A branch on a binary comparison of two operands.
-    pub(crate) const fn compares_and_jumps(self) -> bool {
+    pub const fn compares_and_jumps(self) -> bool {
         self.traits().has(Traits::FUSED_BINARY_JUMP)
     }
 
     /// A copy of register B into the result register, and nothing else.
-    pub(crate) const fn copies_register(self) -> bool {
+    pub const fn copies_register(self) -> bool {
         self.traits().has(Traits::REGISTER_COPY)
     }
 
@@ -51,64 +51,64 @@ impl Op {
     /// suspension or `this` binding (the catalog's `GenericStep`). The lane's own in-place steps
     /// (`steps_in_lane`) are among them; the rest may replace the frame's environment, which the lane's
     /// own dispatch caches, so only a body, whose helper drops those caches after the step, makes them.
-    pub(crate) const fn steps_in_body(self) -> bool {
+    pub const fn steps_in_body(self) -> bool {
         self.generic_step().is_some()
     }
 
     /// A general step the lane makes in place: it reads and writes only the frame, its registers and
     /// heap values, runs guest code only through nested calls, and continues or throws.
-    pub(crate) const fn steps_in_lane(self) -> bool {
+    pub const fn steps_in_lane(self) -> bool {
         matches!(self.generic_step(), Some(GenericStep::Lane | GenericStep::LaneResult))
     }
 
     /// A lane step that is a call-out row (`Operation::call_out`) whose result the lane writes back to
     /// the frame (`Vm::call_out`).
-    pub(crate) const fn steps_with_result(self) -> bool {
+    pub const fn steps_with_result(self) -> bool {
         matches!(self.generic_step(), Some(GenericStep::LaneResult))
     }
 
     /// A step that reads and writes only the variables of the activation that runs it (its locals,
     /// captures and names) and the registers it addresses, so a frameless activation makes it over
     /// its window (`Vm::owner_step`) as a frame does: the local, capture and name loads and stores.
-    pub(crate) const fn steps_on_owner(self) -> bool {
+    pub const fn steps_on_owner(self) -> bool {
         self.owned_step().is_some()
     }
 
     /// An op whose step binds the frame's `this` (`super()`).
-    pub(crate) const fn binds_this(self) -> bool {
+    pub const fn binds_this(self) -> bool {
         self.traits().has(Traits::BINDS_THIS)
     }
 
     /// An op an inlined callee's unit holds by its own rewrite or an exit rather than by renaming.
-    pub(crate) const fn is_unit_rewritten(self) -> bool {
+    pub const fn is_unit_rewritten(self) -> bool {
         self.traits().has(Traits::UNIT_REWRITTEN)
     }
 
     /// An op whose result may be an arbitrary boxed value (a capture, field, element or global name read).
-    pub(crate) const fn boxes_result(self) -> bool {
+    pub const fn boxes_result(self) -> bool {
         self.traits().has(Traits::BOXED_RESULT)
     }
 
     /// An op that always completes abruptly, raising its operand: no row follows it, and a handler
     /// of its function may take it.
-    pub(crate) const fn raises(self) -> bool {
+    pub const fn raises(self) -> bool {
         self.traits().has(Traits::RAISES)
     }
 
     /// A call form that activates a script function: the plain call, the method, known, array, spread and
     /// forwarding calls, and the construction (the catalog's `Call` control flow).
-    pub(crate) const fn makes_script_call(self) -> bool {
+    pub const fn makes_script_call(self) -> bool {
         matches!(self.control_flow_layout(), ControlFlowLayout::Call)
     }
 
     /// A suspension point: an `await`, or a `yield` (or `yield*`) of a generator.
-    pub(crate) const fn suspends(self) -> bool {
+    pub const fn suspends(self) -> bool {
         self.traits().has(Traits::SUSPENSION_POINT)
     }
 
     /// A binary operation whose arithmetic `binary_operator` names.
     #[allow(dead_code)]
-    pub(crate) const fn is_binary_arithmetic(self) -> bool {
+    pub const fn is_binary_arithmetic(self) -> bool {
         self.traits().has(crate::bytecode::Traits::ARITHMETIC_BINARY)
     }
 
@@ -118,7 +118,7 @@ impl Op {
     }
 
     /// A store to an indexed element, which a compiled loop lowers in place or leaves.
-    pub(crate) const fn stores_element(self) -> bool {
+    pub const fn stores_element(self) -> bool {
         self.traits().has(Traits::ELEMENT_STORE)
     }
 
@@ -128,42 +128,42 @@ impl Op {
     }
 
     /// A store to a binding by name.
-    pub(crate) const fn stores_name(self) -> bool {
+    pub const fn stores_name(self) -> bool {
         self.traits().has(Traits::NAME_STORE)
     }
 
     /// A load of a binding by name.
-    pub(crate) const fn loads_name(self) -> bool {
+    pub const fn loads_name(self) -> bool {
         self.traits().has(Traits::NAME_LOAD)
     }
 
     /// A load by name that throws for an unresolvable binding (every one but `typeof`'s).
-    pub(crate) const fn is_throwing_name_load(self) -> bool {
+    pub const fn is_throwing_name_load(self) -> bool {
         matches!(self.staged(), Some(Decoder::Proved))
     }
 
     /// A read of the activation's passed arguments.
-    pub(crate) const fn reads_arguments(self) -> bool {
+    pub const fn reads_arguments(self) -> bool {
         self.traits().has(Traits::ARGUMENTS_READ)
     }
 
     /// A call through a callee register, with a window or a spread array of arguments.
-    pub(crate) const fn is_ordinary_call(self) -> bool {
+    pub const fn is_ordinary_call(self) -> bool {
         self.traits().has(Traits::ORDINARY_CALL)
     }
 
     /// An instruction that captures the current environment: a closure or an environment clone.
-    pub(crate) const fn captures_environment(self) -> bool {
+    pub const fn captures_environment(self) -> bool {
         self.traits().has(Traits::ENVIRONMENT_CAPTURE)
     }
 
     /// A conditional branch on a register's truthiness.
-    pub(crate) const fn is_truthiness_jump(self) -> bool {
+    pub const fn is_truthiness_jump(self) -> bool {
         self.traits().has(Traits::JUMPS_ON_FALSE) || self.traits().has(Traits::JUMPS_ON_TRUE)
     }
 
     /// A load or store of a captured slot.
-    pub(crate) const fn addresses_capture(self) -> bool {
+    pub const fn addresses_capture(self) -> bool {
         self.traits().has(Traits::CAPTURE_ACCESS)
     }
 
@@ -173,7 +173,7 @@ impl Op {
     }
 
     /// A load of a frame-resident local.
-    pub(crate) const fn loads_frame_local(self) -> bool {
+    pub const fn loads_frame_local(self) -> bool {
         self.traits().has(Traits::FRAME_LOCAL_LOAD)
     }
 
@@ -185,12 +185,12 @@ impl Op {
 
 impl ControlFlowLayout {
     /// Whether execution may continue at the next instruction.
-    pub(crate) const fn falls_through(self) -> bool {
+    pub const fn falls_through(self) -> bool {
         !matches!(self, ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable)
     }
 
     /// Whether the instruction may continue at its jump target.
-    pub(crate) const fn jumps(self) -> bool {
+    pub const fn jumps(self) -> bool {
         matches!(self, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
     }
 

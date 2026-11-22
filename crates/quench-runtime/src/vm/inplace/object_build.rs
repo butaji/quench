@@ -105,7 +105,7 @@ impl Vm {
     /// native then copies every source again. Repeating those copies is unobservable: each read
     /// a data property of an ordinary object and wrote a writable data property of `target`,
     /// with no guest code, so the general path reads the same values and writes them again.
-    pub(in crate::vm) fn plain_object_assign(&mut self, args: &[Value]) -> Option<Value> {
+    pub fn plain_object_assign(&mut self, args: &[Value]) -> Option<Value> {
         let (&target, sources) = args.split_first()?;
         if self.heap.object_record(target)?.has_exotic_access() {
             return None;

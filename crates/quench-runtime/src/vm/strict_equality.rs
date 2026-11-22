@@ -6,7 +6,7 @@ impl Vm {
     /// `strict_equal` of two values that are no Numbers and not identical: equal strings or
     /// BigInts, of equal contents.
     #[inline(always)]
-    pub(in crate::vm) fn heap_values_strictly_equal(&self, a: Value, b: Value) -> bool {
+    pub fn heap_values_strictly_equal(&self, a: Value, b: Value) -> bool {
         a.is_heap() && b.is_heap() && self.distinct_heap_values_equal(a, b)
     }
 

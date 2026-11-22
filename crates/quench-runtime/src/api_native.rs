@@ -1,3 +1,4 @@
+use crate::vm::EngineVm;
 use {super::Runtime, crate::{Host, JsError, RootId, RootedError, Value, vm::Vm}};
 #[path = "api_collection.rs"] mod collection; pub use collection::CollectionContext; #[path = "api_native_values.rs"] mod values; pub use values::Detach;
 
@@ -6,9 +7,9 @@ use {super::Runtime, crate::{Host, JsError, RootId, RootedError, Value, vm::Vm}}
 /// in the chosen realm. A reset or another runtime invalidates this handle.
 #[derive(Clone)]
 pub struct PreparedScript {
-    pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
+    pub program: std::rc::Rc<crate::ResidualProgram>,
     #[cfg(feature = "native-execution")]
-    pub(crate) native: Option<std::rc::Rc<crate::vm::native_program::NativeJsCode>>,
+    pub native: Option<std::rc::Rc<crate::vm::engine_types::NativeJsCode>>,
 }
 
 /// A logical host Script with one source identity and separate execution caches

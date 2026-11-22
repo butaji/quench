@@ -398,7 +398,7 @@ impl ValueDeserializer {
 }
 
 /// The serializer's embedder hooks (V8's `ValueSerializer::Delegate`).
-pub(crate) trait WriteHooks {
+pub trait WriteHooks {
     /// Write a host object's contents after its tag; a returned value is written next,
     /// through this serializer.
     fn write_host_object(&mut self, vm: &mut Vm, program: &ResidualProgram, output: &WireOutput, object: Value) -> Result<Option<Value>, JsError>;
@@ -415,7 +415,7 @@ pub enum HostObjectRead<T> {
     NextValue,
 }
 
-pub(crate) trait ReadHooks {
+pub trait ReadHooks {
     fn read_host_object(&mut self, vm: &mut Vm, program: &ResidualProgram, input: &SharedWireInput) -> Result<HostObjectRead<Value>, JsError>;
     fn shared_array_buffer(&mut self, vm: &mut Vm, program: &ResidualProgram, id: u32) -> Result<Value, JsError>;
 }
@@ -434,7 +434,7 @@ impl From<JsError> for ReadFailure {
 
 type Read<T> = Result<T, ReadFailure>;
 
-fn valid<T>(value: Option<T>) -> Read<T> {
+pub fn valid<T>(value: Option<T>) -> Read<T> {
     value.ok_or(ReadFailure::Invalid)
 }
 

@@ -39,14 +39,14 @@ impl Vm {
     /// the name to, as a pure native read (`pure_native_getter_value`). `None` leaves the read to the
     /// general path: an own property of the name, an exotic or dictionary link, a data
     /// property or a script getter on the way.
-    pub(super) fn typed_array_geometry_read(&mut self, object: Value, atom: Atom) -> Option<Value> {
+    pub fn typed_array_geometry_read(&mut self, object: Value, atom: Atom) -> Option<Value> {
         self.typed_array_geometry_read_inline(object, atom)
     }
 
     /// `typed_array_geometry_read` inlined into its caller: a typed array's `length` site
     /// (`TYPED_LENGTH_SITE`) reads it once per loop test.
     #[inline(always)]
-    pub(super) fn typed_array_geometry_read_inline(&mut self, object: Value, atom: Atom) -> Option<Value> {
+    pub fn typed_array_geometry_read_inline(&mut self, object: Value, atom: Atom) -> Option<Value> {
         let data = self.virtual_field_view(object)?;
         if data.has_side_descriptors() {
             return None;
@@ -118,7 +118,7 @@ impl Vm {
     }
 
     /// `ArrayBuffer.isView(value)`: whether `value` is a typed array or a DataView.
-    pub(super) fn is_array_buffer_view(&self, value: Value) -> bool {
+    pub fn is_array_buffer_view(&self, value: Value) -> bool {
         matches!(self.heap.get(value), Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
     }
 

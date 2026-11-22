@@ -12,18 +12,18 @@ use crate::typed_ir::Type;
 /// per use but the realm. For a store, no code holds the slot's value (the cell is `Mutable`,
 /// so its writes notify nothing) and no inheritor reads the global object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct GlobalSlot {
-    pub(crate) slot: u16,
+pub struct GlobalSlot {
+    pub slot: u16,
     /// The slot count of the global object's shape.
-    pub(crate) storage_len: usize,
+    pub storage_len: usize,
     /// The slot's observed type: a store of a value of it needs no admission.
-    pub(crate) ty: Type,
+    pub ty: Type,
     /// What the code holds of `ty` (`None` where any value fits or none was observed).
-    pub(crate) dependency: Option<SlotDependency>,
-    pub(crate) layout: GlobalLayoutFact,
+    pub dependency: Option<SlotDependency>,
+    pub layout: GlobalLayoutFact,
     /// The global object, and the realm field that names it while its realm is active.
-    pub(crate) global: Value,
-    pub(crate) realm_offset: i32,
+    pub global: Value,
+    pub realm_offset: i32,
 }
 
 /// A global lexical binding's word in the active realm's declarative record (`Realm::global_lexical_bindings`), which code reads (and,
@@ -31,26 +31,26 @@ pub(crate) struct GlobalSlot {
 /// declaration moves them, which retires every holder of the global layout (`Vm::note_global_shadowing`), so the address is
 /// held under that layout, with the realm that owns the record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LexicalSlot {
-    pub(crate) address: usize,
-    pub(crate) layout: GlobalLayoutFact,
-    pub(crate) global: Value,
-    pub(crate) realm_offset: i32,
+pub struct LexicalSlot {
+    pub address: usize,
+    pub layout: GlobalLayoutFact,
+    pub global: Value,
+    pub realm_offset: i32,
 }
 
 /// The Stable cell a folded read of a global's member holds (`GlobalRead::NativeMember`'s `cell`): the cell's fact, and the global
 /// object and realm offset it is of (`GlobalRead::Stable`). A row that folds the read carries it, so its body subscribes to the
 /// fact (a reassignment retires the body) and proves the realm once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StableCell {
-    pub(crate) fact: GlobalFact,
-    pub(crate) global: Value,
-    pub(crate) realm_offset: i32,
+pub struct StableCell {
+    pub fact: GlobalFact,
+    pub global: Value,
+    pub realm_offset: i32,
 }
 
 /// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GlobalRead {
+pub enum GlobalRead {
     /// An immutable global's value (`builtins::immutable_globals`), which no binding changes.
     Constant(Value),
     /// A global cell's value, of type `ty`, held under `fact` by code that runs while the realm
@@ -88,7 +88,7 @@ pub(crate) enum GlobalRead {
 /// run no guest code, change no array and observe no frame (`dispatch_fast::in_place_natives::primitive_leaf`, with a
 /// Number or Boolean result), and the Math functions of Numbers (`number::math_call`), which a loop calling one
 /// (`sin`, `cos`, ...) otherwise declines to run natively. A global cell holding one of them is read as a `GlobalRead::NativeSlot`.
-pub(in crate::vm) fn scalar_native(native: super::Native) -> bool {
+pub fn scalar_native(native: super::Native) -> bool {
     matches!(native, super::Native::ParseInt | super::Native::NumberParseFloat) || super::number::math_call(native).is_some()
 }
 
@@ -96,7 +96,7 @@ pub(in crate::vm) fn scalar_native(native: super::Native) -> bool {
 /// folds a cell's value as a Stable fact; the b-jit's rows read a global object's own data
 /// property from its slot live, under the object's layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GlobalTable {
+pub enum GlobalTable {
     Lane,
     Base,
 }
@@ -104,20 +104,20 @@ pub(crate) enum GlobalTable {
 /// What each by-name global access of a function or unit takes, by PC: a flat table, empty at
 /// a PC that is no such access (`Vm::global_reads_in_lane`).
 #[derive(Clone, Default, PartialEq)]
-pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
+pub struct GlobalReads(Box<[Option<GlobalRead>]>);
 
 impl GlobalReads {
     /// The read at `pc`, if the instruction there is a by-name global read.
-    pub(crate) fn get(&self, pc: &usize) -> Option<&GlobalRead> {
+    pub fn get(&self, pc: &usize) -> Option<&GlobalRead> {
         self.0.get(*pc).and_then(Option::as_ref)
     }
 
-    pub(crate) fn contains_key(&self, pc: &usize) -> bool {
+    pub fn contains_key(&self, pc: &usize) -> bool {
         self.get(pc).is_some()
     }
 
     /// The reads at the PCs of `range`, in order.
-    pub(crate) fn range(&self, range: std::ops::RangeInclusive<usize>) -> impl Iterator<Item = (usize, &GlobalRead)> {
+    pub fn range(&self, range: std::ops::RangeInclusive<usize>) -> impl Iterator<Item = (usize, &GlobalRead)> {
         let end = (*range.end()).saturating_add(1).min(self.0.len());
         let start = (*range.start()).min(end);
         self.0[start..end].iter().enumerate().filter_map(move |(offset, read)| read.as_ref().map(|read| (start + offset, read)))
@@ -147,7 +147,7 @@ impl Vm {
     /// fact, where the cell the lane's own read resolves it to (`Vm::global_name_read`) is not
     /// `Mutable`: an initialized global lexical binding, or the global object's own data field; a lexical
     /// binding that is `Mutable` is read live (`GlobalRead::Lexical`).
-    pub(super) fn stable_global_read(&mut self, code: &super::ResidualProgram, atom: Atom, site: u16) -> GlobalRead {
+    pub fn stable_global_read(&mut self, code: &super::ResidualProgram, atom: Atom, site: u16) -> GlobalRead {
         let globals = self.realm.globals;
         let (value, cell) = match self.global_name_read(code, atom, site) {
             super::field_cache::GlobalNameRead::Value(value, Some(hint)) => (value, GlobalCell::Slot(u32::from(hint.slot))),
@@ -176,7 +176,7 @@ impl Vm {
 
     /// The byte offset in the VM of the active realm's global object, which code that folds a
     /// realm's global cells reads to prove that realm active (`Lowering::prove_realm`, `Heap::Realm`).
-    pub(super) fn realm_globals_offset() -> i32 {
+    pub fn realm_globals_offset() -> i32 {
         i32::try_from(std::mem::offset_of!(Vm, realm) + std::mem::offset_of!(super::Realm, globals)).expect("the realm's global lies within the VM")
     }
 
@@ -184,7 +184,7 @@ impl Vm {
     /// `store` or its `typeof`; `None` where a lexical binding may shadow the name, the property
     /// is no (writable) data property, or a store would be seen by code that holds the cell's
     /// value or by an inheritor of the global object (`GlobalSlot`).
-    pub(super) fn stable_global_slot(&mut self, atom: Atom, store: bool) -> Option<GlobalSlot> {
+    pub fn stable_global_slot(&mut self, atom: Atom, store: bool) -> Option<GlobalSlot> {
         let globals = self.realm.globals;
         if !self.global_name_hintable(atom) { return None; }
         let hint = if store { self.own_data_field_hint::<true>(globals, atom) } else { self.own_data_field_hint::<false>(globals, atom) }?;
@@ -203,7 +203,7 @@ impl Vm {
     /// The global lexical binding `atom` of the active realm as a slot code reads live (`LexicalSlot`), where the record holds it
     /// retained (a script that declared it finished). A `store` also needs a binding assignable with no code holding its
     /// value: no constant, and a cell that is `Mutable`, which no code folds and whose writes notify nothing.
-    pub(super) fn global_lexical_slot(&mut self, atom: Atom, store: bool) -> Option<LexicalSlot> {
+    pub fn global_lexical_slot(&mut self, atom: Atom, store: bool) -> Option<LexicalSlot> {
         let globals = self.realm.globals;
         let index = self.realm.global_lexical_declarations.contains(&atom).then(|| self.realm.global_lexical_bindings.get_index_of(&atom)).flatten()?;
         let table = self.heap.object_mut(globals).map(crate::heap::Object::global_values_table)?;
@@ -217,7 +217,7 @@ impl Vm {
 
     /// The fact of the global lexical binding `atom` of the active realm while it is not `Mutable`: the store
     /// the VM makes holds the cell, so the write that makes it `Mutable` retires the code that stores through the VM.
-    pub(super) fn held_lexical(&mut self, atom: Atom) -> Option<GlobalFact> {
+    pub fn held_lexical(&mut self, atom: Atom) -> Option<GlobalFact> {
         let index = self.realm.global_lexical_declarations.contains(&atom).then(|| self.realm.global_lexical_bindings.get_index_of(&atom)).flatten()?;
         let table = self.heap.object_mut(self.realm.globals).map(crate::heap::Object::global_values_table)?;
         crate::heap::global_value_fact(table, GlobalCell::Binding(u32::try_from(index).ok()?))

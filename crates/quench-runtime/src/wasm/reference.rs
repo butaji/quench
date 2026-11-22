@@ -33,15 +33,15 @@ impl ExternalConversion {
 /// A shared non-null check retains the operation's diagnostic contract.
 #[derive(Clone, Copy, Debug)]
 #[repr(u32)]
-pub(crate) enum NonNullCheck {
+pub enum NonNullCheck {
     Reference,
     Function,
 }
 impl NonNullCheck {
-    pub(crate) fn from_tag(tag: u32) -> Option<Self> {
+    pub fn from_tag(tag: u32) -> Option<Self> {
         [Self::Reference, Self::Function].get(tag as usize).copied()
     }
-    pub(crate) fn trap(self) -> super::WasmTrap {
+    pub fn trap(self) -> super::WasmTrap {
         match self {
             Self::Reference => super::WasmTrap::NullReference,
             Self::Function => super::WasmTrap::NullFunctionReference,
@@ -79,7 +79,7 @@ pub(crate) fn module_type_index(heap: HeapType) -> Option<(u32, bool)> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ReferenceTarget(u32);
+pub struct ReferenceTarget(u32);
 
 /// The heap type a cast target names.
 #[derive(Clone, Copy, Debug)]
@@ -109,7 +109,7 @@ impl ReferenceTarget {
     /// The target of a tag bytecode validation accepted (`from_tag`), read without
     /// rebuilding its type.
     #[inline]
-    pub(crate) fn validated(tag: u32) -> Self {
+    pub fn validated(tag: u32) -> Self {
         Self(tag)
     }
     pub(crate) fn descriptor_type(self, owner: &super::WasmTypes) -> Option<super::WasmType> {
@@ -126,7 +126,7 @@ impl ReferenceTarget {
             nullable: true,
         })
     }
-    pub(crate) fn tag(self) -> u32 {
+    pub fn tag(self) -> u32 {
         self.0
     }
     /// What this target names, read from the tag alone.

@@ -26,7 +26,7 @@ pub(crate) fn buffer_relocations() -> u64 {
 }
 
 /// Where native code reads `BUFFER_RELOCATIONS`.
-pub(crate) fn buffer_relocations_address() -> *const u64 {
+pub fn buffer_relocations_address() -> *const u64 {
     BUFFER_RELOCATIONS.as_ptr().cast_const()
 }
 
@@ -36,7 +36,7 @@ fn note_relocation() {
 
 /// One word, so an ArrayBuffer cell stays within the heap's cell size.
 #[derive(Debug)]
-pub(crate) struct BufferBytes(Rc<BufferStore>);
+pub struct BufferBytes(Rc<BufferStore>);
 
 /// The typed array view epoch (`view_epoch`): it changes whenever a typed array's element
 /// bytes may have moved, been unshared or detached, or a slot a view occupied may hold another
@@ -49,7 +49,7 @@ static VIEW_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 
 /// The current typed array view epoch (`VIEW_EPOCH`).
 #[inline(always)]
-pub(crate) fn view_epoch() -> u64 {
+pub fn view_epoch() -> u64 {
     VIEW_EPOCH.load(std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -382,7 +382,7 @@ pub(crate) enum BufferAccess<'a, B> {
     Borrowed(B),
     Shared { state: MutexGuard<'a, State>, length: Option<usize> },
 }
-pub(crate) type BufferRead<'a> = BufferAccess<'a, &'a [u8]>;
+pub type BufferRead<'a> = BufferAccess<'a, &'a [u8]>;
 pub(crate) type BufferWrite<'a> = BufferAccess<'a, &'a mut [u8]>;
 
 impl<B: std::ops::Deref<Target = [u8]>> std::ops::Deref for BufferAccess<'_, B> {

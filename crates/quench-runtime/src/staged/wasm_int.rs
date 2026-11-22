@@ -16,7 +16,7 @@ use crate::wasm::integer::I64BinaryOperator as Binary;
 /// An integer operation of the family: the rule its record's opcode and operator tag name, with
 /// the record the operands and destination come from.
 #[derive(Clone, Copy)]
-pub(crate) struct WasmIntOperation {
+pub struct WasmIntOperation {
     operation: WasmOperation,
     instruction: WideInstruction,
 }

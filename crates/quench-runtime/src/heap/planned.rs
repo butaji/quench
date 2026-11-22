@@ -6,7 +6,7 @@ impl Heap {
     /// the one owner-chain join admits (`ValueArena::note_plan_values`): no prototype scan, no
     /// per-slot shape lookup.
     #[inline(always)]
-    pub(crate) fn alloc_planned_object<const N: usize>(&mut self, header: InlineObjectHeader, prototype: Value, values: &[Value; N], len: usize) -> Value {
+    pub fn alloc_planned_object<const N: usize>(&mut self, header: InlineObjectHeader, prototype: Value, values: &[Value; N], len: usize) -> Value {
         debug_assert!(self.prototype_flagged(prototype));
         self.properties.note_plan_values(header.shape(), &values[..len]);
         self.settle_widened();
@@ -37,7 +37,7 @@ impl Heap {
     /// `alloc_planned_object` of a receiver whose `len` fields fit its inline slots, passed as
     /// those slots themselves (`undefined` past `len`): no gathered values array.
     #[inline(always)]
-    pub(crate) fn alloc_planned_inline(&mut self, header: InlineObjectHeader, prototype: Value, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Value {
+    pub fn alloc_planned_inline(&mut self, header: InlineObjectHeader, prototype: Value, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Value {
         debug_assert!(self.prototype_flagged(prototype) && len <= INLINE_PROPERTY_COUNT);
         self.properties.note_plan_values(header.shape(), &inline[..len]);
         let Some(object) = Object::from_inline_header(header, inline) else {
@@ -57,7 +57,7 @@ impl Heap {
     /// where a value widens its slot's type, has no narrow form, or the record space needs its
     /// slow path, so a handler's hit path builds no frame.
     #[inline(always)]
-    pub(crate) fn alloc_planned_inline_quick(&mut self, header: InlineObjectHeader, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Option<Value> {
+    pub fn alloc_planned_inline_quick(&mut self, header: InlineObjectHeader, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Option<Value> {
         if !self.properties.inline_plan_values_admitted(header.shape(), inline, len) {
             return None;
         }

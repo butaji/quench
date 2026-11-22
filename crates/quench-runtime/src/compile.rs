@@ -51,7 +51,7 @@ fn plain_local_form(op: Op) -> Option<Op> {
         None
     }
 }
-pub(crate) mod aot_facts;
+pub mod aot_facts;
 mod annex_b_targets;
 mod arrow;
 mod ast;
@@ -82,7 +82,7 @@ pub(crate) use lazy_bodies::{expire_warm_arena, release_warm_arena};
 mod free_names;
 mod syntax_message;
 pub(crate) mod source_syntax;
-pub(crate) mod liveness;
+pub mod liveness;
 mod locals;
 mod numeric;
 pub(crate) mod first_call;

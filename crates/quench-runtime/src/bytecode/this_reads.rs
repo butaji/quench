@@ -5,7 +5,7 @@ use super::*;
 
 /// Whether `function` of `code` may read the `this` of its activation: it loads, initializes or checks `this`, reads a
 /// field of base `this`, makes an arrow that reads an implicit binding, or may read its scope by name (`eval`, `with`).
-pub(crate) fn activation_reads_this(code: &ResidualProgram, function: &Function) -> bool {
+pub fn activation_reads_this(code: &ResidualProgram, function: &Function) -> bool {
     function.has_dynamic_scope_access() || function.instructions().any(|instruction| {
         let op = instruction.op();
         op.immediate_role() == ImmediateRole::SuperinstructionIndex

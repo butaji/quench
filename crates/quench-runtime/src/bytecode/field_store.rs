@@ -2,7 +2,7 @@ use super::{Op, Register, Traits, WideInstruction};
 
 /// Where a named field store finds its receiver: field B's register, or the frame's `this`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StoreReceiver {
+pub enum StoreReceiver {
     Register,
     This,
 }
@@ -10,14 +10,14 @@ pub(crate) enum StoreReceiver {
 /// A named field store's receiver and whether a rejected write throws. The opcode table owns
 /// this, so the interpreter and every tier decode a store from one definition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FieldStore {
-    pub(crate) receiver: StoreReceiver,
-    pub(crate) strict: bool,
+pub struct FieldStore {
+    pub receiver: StoreReceiver,
+    pub strict: bool,
 }
 
 impl Op {
     #[inline(always)]
-    pub(crate) const fn field_store(self) -> Option<FieldStore> {
+    pub const fn field_store(self) -> Option<FieldStore> {
         if !self.is_field_store() {
             return None;
         }
@@ -36,7 +36,7 @@ impl Op {
     }
 
     #[inline(always)]
-    pub(crate) const fn is_field_store(self) -> bool {
+    pub const fn is_field_store(self) -> bool {
         self.traits().has(Traits::FIELD_STORE)
     }
 
@@ -50,7 +50,7 @@ impl WideInstruction {
     /// A named field store's receiver register, or `None` for a store to `this` or an
     /// instruction that is no field store.
     #[inline(always)]
-    pub(crate) fn field_store_register(self) -> Option<Register> {
+    pub fn field_store_register(self) -> Option<Register> {
         match self.op().field_store()?.receiver {
             StoreReceiver::Register => Some(self.register_b()),
             StoreReceiver::This => None,
@@ -58,7 +58,7 @@ impl WideInstruction {
     }
 
     /// Whether this is a named field store to the frame's `this`.
-    pub(crate) fn stores_to_this(self) -> bool {
+    pub fn stores_to_this(self) -> bool {
         self.op().field_store().is_some_and(|store| store.receiver == StoreReceiver::This)
     }
 }

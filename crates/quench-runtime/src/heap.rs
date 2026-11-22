@@ -130,24 +130,26 @@ macro_rules! reset_record_spaces {
 mod access;
 mod array_elements;
 pub(crate) mod growth;
-pub(crate) mod layouts;
+pub mod layouts;
 mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
 mod typed_view;
-pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
+pub use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
 use typed_view::TypedViewTable;
-pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
-pub(crate) use array_proofs::{
+#[allow(unused_imports)]
+pub use array_proofs::{
     ArrayStorageProofs, LaneProofScope, NO_INDEX_FREE_CHAIN_LINK, armed_proofs_address, index_free_chain_link_address,
     retire_array_storage_proofs, set_index_free_chain_link,
 };
 mod cell;
 mod dependencies;
+pub use dependencies::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 pub(crate) use dependencies::{
-    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, InternedChains,
+    Dependencies, IndexFreeChainProof, InternedChains,
     NO_PROVED_LAYOUT, ProofKind, FactStore, ChainCell};
 mod cell_access;
 mod buffer_bytes;
@@ -169,9 +171,9 @@ mod pacing;
 mod parallel_mark; mod planned;
 mod prototypes;
 mod promise_record;
-pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
+pub use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
 mod rc_drop;
-pub(crate) mod rc;
+pub mod rc;
 mod record_children;
 mod records;
 mod root;
@@ -181,18 +183,19 @@ mod string_alloc;
 mod string_atoms;
 mod native_layout;
 mod record_layouts;
-pub(crate) use record_layouts::{
+#[allow(unused_imports)]
+pub use record_layouts::{
     NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
     PropertyStoreLayout, absent_environment_storage,
 };
 mod string_parts;
 mod small_strings;
-pub(crate) use small_strings::{FlatText, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, SmallParts, is_small_string};
+pub use small_strings::{FlatText, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, SmallParts, is_small_string};
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
-pub(crate) use cell::*;
-pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
+pub use cell::*;
+pub use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
@@ -200,7 +203,7 @@ use records::{
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
 pub use root::RootId;
-pub(crate) use root::{RootTable, WeakHandle};
+pub use root::{RootTable, WeakHandle};
 use slots::{FREE_SLOT_WORDS, FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 mod young;
 use young::YoungSlots;
@@ -285,7 +288,7 @@ enum CollectionState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GcTraceKind {
+pub enum GcTraceKind {
     Collection,
     VerifyFull,
 }
@@ -566,7 +569,7 @@ fn release_freed_allocator_memory() {
 }
 
 #[derive(Default)]
-pub(crate) struct Heap {
+pub struct Heap {
     slots: SlotArena,
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
@@ -878,7 +881,7 @@ macro_rules! cell_kinds {
     ($($(#[$meta:meta])* $kind:ident = $name:literal,)*) => {
         #[repr(usize)]
         #[derive(Clone, Copy)]
-        pub(crate) enum CellKind {
+        pub enum CellKind {
             $($(#[$meta])* $kind,)*
         }
         impl CellKind {
@@ -986,7 +989,7 @@ impl Heap {
         self.set_young_budget(self.pacing().minimum_young);
         self.external_collection_budget = self.pacing().minimum_external_budget;
     }
-    #[inline] pub(crate) fn memory_policy(&self) -> MemoryPolicy {
+    #[inline] pub fn memory_policy(&self) -> MemoryPolicy {
         self.memory_policy
     }
     fn pacing(&self) -> pacing::GenerationalPacing {
@@ -1131,7 +1134,7 @@ impl Heap {
 
     /// Visits the elements of every Wasm table in the slot heap, mutably: the same walk as
     /// `for_each_cell`, for the writers that rewrite rows (`WasmTableElements::refresh_bodies`).
-    pub(crate) fn for_each_wasm_table_mut(&mut self, mut visit: impl FnMut(&mut WasmTableElements)) {
+    pub fn for_each_wasm_table_mut(&mut self, mut visit: impl FnMut(&mut WasmTableElements)) {
         for (_, slab) in self.slots.slabs_mut() {
             for slot in slab.iter_mut() {
                 if let Some(Cell::WasmTable { elements, .. }) = &mut slot.cell {
@@ -1205,7 +1208,7 @@ impl Heap {
         Some(())
     }
 
-    #[inline] pub(crate) fn mark_prototype(&mut self, prototype: Value) {
+    #[inline] pub fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
         }
@@ -1287,7 +1290,7 @@ impl Heap {
     /// storage through `charge_payload_allocation`). The array space holds
     /// `ARRAY_RECORD_CAPACITY` (2^30) records, so a full space is a panic.
     #[inline(always)]
-    pub(crate) fn alloc_array(&mut self, object: ArrayObject) -> Value {
+    pub fn alloc_array(&mut self, object: ArrayObject) -> Value {
         let prototype = object.proto();
         self.admit_object_contents(&object);
         self.alloc_slotless_array_of(object, prototype)
@@ -1459,7 +1462,7 @@ impl Heap {
     /// (`NATIVE_TYPED_ARRAY_LAYOUT`): read an entry from a current live typed array's slot
     /// index, finish before any VM safepoint, which an allocation may move the directory at.
     #[inline]
-    pub(crate) fn typed_view_directory(&self) -> (*const usize, usize) {
+    pub fn typed_view_directory(&self) -> (*const usize, usize) {
         self.typed_views.directory()
     }
 
@@ -1478,7 +1481,7 @@ impl Heap {
     /// An environment record, with the address of its slot storage, which stays put while it
     /// lives. An environment's weight is one allocation: it has no prototype, payload or
     /// external bytes.
-    pub(crate) fn alloc_environment(
+    pub fn alloc_environment(
         &mut self,
         parent: Value,
         function: u32,
@@ -1498,7 +1501,7 @@ impl Heap {
     /// An ordinary object's allocation: its prototype marked, its values admitted, and its record
     /// inserted by `insert_object_record`, with no dispatch on a cell's kind (there is no object cell).
     #[inline(always)]
-    pub(crate) fn alloc_object(&mut self, object: Object) -> Value {
+    pub fn alloc_object(&mut self, object: Object) -> Value {
         let prototype = object.proto();
         self.alloc_object_of(object, prototype)
     }
@@ -1773,7 +1776,7 @@ impl Heap {
     /// A Wasm vector of `bytes`: a vector record while one is free, else a slot. A vector is
     /// an immutable leaf with no prototype, payload or external bytes.
     #[inline]
-    pub(crate) fn alloc_v128(&mut self, bytes: [u8; crate::wasm::V128_BYTES]) -> Value {
+    pub fn alloc_v128(&mut self, bytes: [u8; crate::wasm::V128_BYTES]) -> Value {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::WasmV128(bytes));
         }
@@ -1786,7 +1789,7 @@ impl Heap {
 
     /// A Wasm vector's bytes, in its record or in a slot.
     #[inline]
-    pub(crate) fn v128(&self, value: Value) -> Option<[u8; crate::wasm::V128_BYTES]> {
+    pub fn v128(&self, value: Value) -> Option<[u8; crate::wasm::V128_BYTES]> {
         if let Some(record_id) = value.direct_v128_index() {
             // SAFETY: a direct-v128 Value names an initialized record.
             return Some(*unsafe { self.v128_records.get_live(record_id) });
@@ -1800,7 +1803,7 @@ impl Heap {
     /// A new iterator record, admitted and charged as an object record is (`alloc_object_record`).
     /// The iterator space holds `ITERATOR_RECORD_CAPACITY` (2^28) records, so a full space is a
     /// panic.
-    pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
+    pub fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
         #[cfg(feature = "profile-aggregate")]
         let bytes = iterator.object.allocated_extra_bytes();
         self.admit_object_contents(&iterator.object);
@@ -1984,7 +1987,7 @@ impl Heap {
         let padded = [first, second, Value::UNDEFINED, Value::UNDEFINED];
         self.alloc_object_from_run_header(InlineObjectHeader::of_run(proto, shape), proto, &padded, INLINE_PROPERTY_COUNT)
     }
-    pub(crate) fn alloc_object_with_properties(
+    pub fn alloc_object_with_properties(
         &mut self,
         proto: Value,
         shape: u32,
@@ -2375,12 +2378,12 @@ impl Heap {
     }
     /// Counts collections; a slot index names the same cell for as long as this is unchanged.
     #[inline(always)]
-    pub(crate) fn collection_epoch(&self) -> u64 {
+    pub fn collection_epoch(&self) -> u64 {
         self.collections
     }
     /// Charges payload a live cell grew outside `alloc` (array elements) toward the next
     /// collection, at the weight `alloc` gives a cell's own payload.
-    pub(crate) fn charge_payload_growth(&mut self, bytes: usize) {
+    pub fn charge_payload_growth(&mut self, bytes: usize) {
         self.payload_bytes = self.payload_bytes.saturating_add(bytes);
         let pending = self.uncharged_payload_bytes.saturating_add(bytes);
         let weight = pending / payload_unit();
@@ -2400,7 +2403,7 @@ impl Heap {
     /// this (generic allocation, native and host calls, each collection); safepoints, which
     /// run far more often, never pay for it.
     #[inline(always)]
-    pub(crate) fn charge_materialized_text(&mut self) {
+    pub fn charge_materialized_text(&mut self) {
         let text = crate::vm::wtf16::take_materialized_text();
         if text != crate::vm::wtf16::MaterializedText::default() {
             self.charge_text(text);
@@ -2422,7 +2425,7 @@ impl Heap {
         self.collect_at.set(self.collect_at.get().min(self.allocated));
     }
     /// The weight charged since the heap began: unchanged across a call that allocated nothing.
-    #[inline(always)] pub(crate) fn allocated_weight(&self) -> usize { self.allocated }
+    #[inline(always)] pub fn allocated_weight(&self) -> usize { self.allocated }
     #[inline] pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at.get()
     }
@@ -2512,13 +2515,13 @@ impl Heap {
         self.collect_at.set(self.allocated.saturating_add(1));
         self.uncharged_payload_bytes = 0;
     }
-    pub(crate) fn root(&mut self, value: Value) -> RootId {
+    pub fn root(&mut self, value: Value) -> RootId {
         self.roots.insert(value)
     }
     pub(crate) fn update_root(&mut self, root: RootId, value: Value) -> bool {
         self.roots.update(root, value)
     }
-    pub(crate) fn release_root(&mut self, root: RootId) -> bool {
+    pub fn release_root(&mut self, root: RootId) -> bool {
         self.roots.remove(root)
     }
     /// A root that lasts until its native scope ends (`RootTable::insert_scoped`).
@@ -2630,7 +2633,7 @@ impl Heap {
     pub(crate) fn take_mark_stack(&mut self) -> Vec<Value> { std::mem::take(&mut self.mark_stack) }
 
     /// Roots `code`'s folded identities at every collection while it is published.
-    pub(crate) fn hold_folded_roots(&mut self, code: &std::rc::Rc<dyn crate::folded_roots::RootedCode>) {
+    pub fn hold_folded_roots(&mut self, code: &std::rc::Rc<dyn crate::folded_roots::RootedCode>) {
         self.folded.register(code);
     }
 
@@ -4319,7 +4322,7 @@ impl Heap {
             }
         });
     }
-    #[inline(always)] pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
+    #[inline(always)] pub fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
         let value = match object.properties().has_inline_property_storage() {
             true if slot < INLINE_PROPERTY_COUNT => object.inline_property(slot),
             true => None,
@@ -4333,7 +4336,7 @@ impl Heap {
     /// # Safety
     /// As for `property_get_unchecked`.
     #[inline(always)]
-    pub(crate) unsafe fn property_get_shaped(&self, object: &Object, slot: usize) -> Option<Value> {
+    pub unsafe fn property_get_shaped(&self, object: &Object, slot: usize) -> Option<Value> {
         // As `property_get_flat`, for an object outside dictionary storage.
         if let Some(start) = object.plain_shaped_start() {
             // SAFETY: the caller proves that the property slot exists.
@@ -4455,7 +4458,7 @@ impl Heap {
 
     /// Lets promotion and compaction narrow plain objects' property runs: a run whose code
     /// only the interpreter executes (`ExecutionMode::Interpreted`).
-    pub(crate) fn set_narrow_runs(&mut self, narrow: bool) {
+    pub fn set_narrow_runs(&mut self, narrow: bool) {
         self.narrow_runs = narrow;
     }
 
@@ -4501,7 +4504,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
+    pub fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         self.note_value_slot(object, slot, value);
         let vector = {
             let data = self
@@ -4696,7 +4699,7 @@ impl Heap {
     }
 
     /// Whether the arena keeps slot representations, which observe every store (`ValueArena::tracks`).
-    pub(crate) fn tracks_slot_representations(&self) -> bool {
+    pub fn tracks_slot_representations(&self) -> bool {
         self.properties.tracks()
     }
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
@@ -4735,7 +4738,7 @@ impl Heap {
     /// lookup, which passes the write barrier only for a stored reference; the arena borrow
     /// is disjoint from the owner.
     #[inline(always)]
-    pub(crate) fn property_add(&mut self, object: Value, value: Value, shape: u32) {
+    pub fn property_add(&mut self, object: Value, value: Value, shape: u32) {
         let _slot = if let Some(record_id) = object.direct_object_index() {
             let Self {
                 object_records,

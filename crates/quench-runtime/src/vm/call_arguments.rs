@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 
 const INLINE_ARGUMENT_CAPACITY: usize = 8;
 
-pub(super) struct CallArguments {
+pub struct CallArguments {
     values: SmallVec<[Value; INLINE_ARGUMENT_CAPACITY]>,
 }
 
@@ -20,7 +20,7 @@ impl CallArguments {
     /// A copy of `values`: one in place, by a loop of word copies, where they fit the inline
     /// capacity (a call's usual count), else the vector's.
     #[inline(always)]
-    pub(super) fn from_slice(values: &[Value]) -> Self {
+    pub fn from_slice(values: &[Value]) -> Self {
         if values.len() > INLINE_ARGUMENT_CAPACITY {
             return Self::spilled(values);
         }
@@ -38,7 +38,7 @@ impl CallArguments {
     }
 
     #[inline]
-    pub(super) fn as_slice(&self) -> &[Value] {
+    pub fn as_slice(&self) -> &[Value] {
         &self.values
     }
 }

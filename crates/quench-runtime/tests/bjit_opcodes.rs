@@ -202,3 +202,6 @@ fn every_opcode_family_ends_in_b_jit_as_the_interpreter_does() {
     }
     assert!(divergent.is_empty(), "{} of {} families diverge\n{}", divergent.len(), FAMILIES.len(), divergent.join("\n"));
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;

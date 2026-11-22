@@ -11,13 +11,13 @@ use std::rc::{Rc, Weak};
 
 /// The heap values one body of code embeds, ordered by their bits and without repeats.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct FoldedRoots(Vec<Value>);
+pub struct FoldedRoots(Vec<Value>);
 
 impl FoldedRoots {
     /// The word code names `value` by. The only way to embed a value in generated code: a
     /// heap value is registered here before its word is returned, so the publication that
     /// takes this set keeps it alive for as long as the code can compare it.
-    pub(crate) fn embed_heap_identity(&mut self, value: Value) -> u64 {
+    pub fn embed_heap_identity(&mut self, value: Value) -> u64 {
         if value.is_heap() && let Err(at) = self.0.binary_search_by_key(&value.to_bits(), |held| held.to_bits()) {
             self.0.insert(at, value);
         }
@@ -28,7 +28,7 @@ impl FoldedRoots {
     pub(crate) fn is_empty(&self) -> bool { self.0.is_empty() }
 
     /// Releases the spare capacity the set grew with while code lowered.
-    pub(crate) fn settled(mut self) -> Self {
+    pub fn settled(mut self) -> Self {
         self.0.shrink_to_fit();
         self
     }
@@ -37,7 +37,7 @@ impl FoldedRoots {
 }
 
 /// A publication whose code embeds heap identities (`PublishedCode::hold_roots`).
-pub(crate) trait RootedCode {
+pub trait RootedCode {
     fn is_published(&self) -> bool;
     fn extend_roots(&self, roots: &mut Vec<Value>);
 }

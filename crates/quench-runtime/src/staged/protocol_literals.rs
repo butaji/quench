@@ -11,7 +11,7 @@ use crate::bytecode::{Op, WideInstruction};
 /// Operands are the first two registers the step names (`decode`); a step's further registers are
 /// read from the current frame by their index here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum LiteralStep {
+pub enum LiteralStep {
     /// A fresh empty object (`MakeObject`).
     Object,
     /// A fresh array of `length` holes (`MakeArray`).

@@ -9,7 +9,7 @@ use super::region::Region;
 /// byte): one byte load, zero-extended, and one guard that continues where the flag is clear and
 /// leaves at `miss` where it is set. Any work after an interrupted edge belongs on the `miss` path.
 #[inline(always)]
-pub(crate) fn back_edge_poll<S: FlowStage>(stage: &mut S, attention: S::Word, miss: S::Miss) -> Option<()> {
+pub fn back_edge_poll<S: FlowStage>(stage: &mut S, attention: S::Word, miss: S::Miss) -> Option<()> {
     let requested = stage.load_u8(Region::Dispatch.mutable(), attention, 0);
     let clear = stage.eq_imm(requested, 0u64);
     stage.guard(clear, miss)

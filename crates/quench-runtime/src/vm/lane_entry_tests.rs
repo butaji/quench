@@ -21,7 +21,7 @@ fn answer(vm: &mut Vm, source: &str, name: &str) -> Option<f64> {
 /// and agree with the run before.
 #[test]
 fn a_program_install_that_moves_the_field_cache_table_leaves_lane_entries_reading_it() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let hot = "globalThis.hot = function (o) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + o.x + o.y) | 0; } return s; };";
     // Each execution is a fresh realm, so a drive defines its own `hot`.
     let drive = format!("{hot} globalThis.o = {{ x: 1, y: 2 }}; let t = 0; for (let r = 0; r < 4000; r++) {{ t = (t + hot(o)) | 0; }} globalThis.answer = t;");

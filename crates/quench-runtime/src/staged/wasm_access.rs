@@ -17,7 +17,7 @@ use crate::WasmType;
 
 /// A Wasm memory access, with the operands its record names.
 #[derive(Clone, Copy)]
-pub(crate) enum WasmAccessOperation {
+pub enum WasmAccessOperation {
     /// `destination = load[address + offset]` of the function's memory (a direct op): the address
     /// is the 32-bit register `address` plus the record's constant `offset`.
     Load { access: Access, destination: Register, address: Register, offset: u32 },
@@ -90,7 +90,7 @@ impl WasmAccessOperation {
 
 impl<W, P> Operation<W, P> {
     /// The memory access `instruction` denotes (`Decoder::WasmMemory`).
-    pub(crate) fn decode_wasm_access<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_wasm_access<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         WasmAccessOperation::decode(instruction, context).map(Self::WasmAccess)
     }
 }

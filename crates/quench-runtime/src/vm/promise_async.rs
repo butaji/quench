@@ -19,7 +19,7 @@ impl Vm {
     /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
     /// finds live there (`suspension_registers`): a collection while it is suspended traces
     /// those alone, so a dead temporary does not stay reachable until it resumes.
-    pub(super) fn suspend_activation(
+    pub fn suspend_activation(
         &self,
         frame: Box<super::Frame>,
         completion: Completion,
@@ -135,7 +135,7 @@ impl Vm {
     /// starts as a job over its record, as an async root's does (`start_root_job`), so the run
     /// stays in the lane, beside the caller's activations, and its first `await` suspends the
     /// window in place (`Vm::run_job`). The call's promise.
-    pub(in crate::vm) fn start_async_call(
+    pub fn start_async_call(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -177,7 +177,7 @@ impl Vm {
     /// The rooted promise of a settling lane call (`SidePayload::Settles`), made now for a call
     /// that deferred it to its awaiting caller: something other than the await may read it.
     /// Without lifecycle hooks, which settling calls exclude, making it runs no guest code.
-    pub(super) fn settling_root(&mut self, root: Option<crate::heap::RootId>) -> crate::heap::RootId {
+    pub fn settling_root(&mut self, root: Option<crate::heap::RootId>) -> crate::heap::RootId {
         root.unwrap_or_else(|| {
             let promise = self.promise_object().expect("a promise without lifecycle hooks runs no guest code");
             self.heap.root(promise)
@@ -192,7 +192,7 @@ impl Vm {
     /// it again, with nothing between: making the promise without lifecycle hooks, which
     /// settling calls exclude, runs no guest code and collects nothing, so the caller holds it
     /// as `release_settled_call_root` would have handed it back.
-    pub(super) fn settling_promise(&mut self, root: Option<crate::heap::RootId>) -> Value {
+    pub fn settling_promise(&mut self, root: Option<crate::heap::RootId>) -> Value {
         match root {
             Some(root) => self.release_settled_call_root(root),
             None => self.promise_object().expect("a promise without lifecycle hooks runs no guest code"),
@@ -258,7 +258,7 @@ impl Vm {
     /// is both handlers of the await's reaction, so it lives exactly as long as that
     /// reaction. An async generator's await holds no frame, whose continuation stays in its
     /// generator's record (`async_generator_await`, `async_generator_yield`).
-    pub(super) fn enqueue_async_resume(
+    pub fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
         kind: AwaitKind,

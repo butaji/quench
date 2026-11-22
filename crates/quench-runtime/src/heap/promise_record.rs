@@ -8,13 +8,13 @@ use crate::HostExecutionContext;
 /// state. Two boxes cost a promise an allocation header and a rounding more (200k live
 /// promises: 177 -> 186 MiB).
 #[derive(Clone, Debug)]
-pub(crate) struct PromiseCell {
+pub struct PromiseCell {
     pub(crate) object: Object,
     pub(crate) record: PromiseRecord,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PromiseState {
+pub enum PromiseState {
     Pending,
     Fulfilled,
     Rejected,
@@ -25,7 +25,7 @@ pub(crate) enum PromiseState {
 /// (`Host::create_promise_context`, `Host::capture_job_context`), which stands for none. A
 /// promise and each of its reactions keep one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StoredHostContext(u64);
+pub struct StoredHostContext(u64);
 
 /// The `StoredHostContext` of no context; hosts never number one so.
 const NO_HOST_CONTEXT: u64 = u64::MAX;
@@ -49,7 +49,7 @@ impl From<Option<HostExecutionContext>> for StoredHostContext {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PromiseReaction {
+pub struct PromiseReaction {
     pub(crate) on_fulfilled: Value,
     pub(crate) on_rejected: Value,
     pub(crate) next: Value,
@@ -68,7 +68,7 @@ pub(crate) type PromiseReactions = smallvec::SmallVec<[PromiseReaction; 1]>;
 /// live in a box (`PromiseRare`): the first reaction's context inline took the cell from 56
 /// to 64 bytes (doxbee-promise: 186K promise cells at its peak).
 #[derive(Clone, Debug)]
-pub(crate) struct PromiseRecord {
+pub struct PromiseRecord {
     /// Pending: the first reaction's values, when `has_first`. Settled: `on_fulfilled` is
     /// the result, `on_rejected` is undefined, and `next` holds the rejection's identifier
     /// as a number (0 for none), never a heap value.
@@ -123,7 +123,7 @@ impl PromiseRare {
 /// state carries the identifier the host knows the rejection by (they start at one), which
 /// is allocated as the rejection is queued for report, so no reported state lacks one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PromiseRejectionState {
+pub enum PromiseRejectionState {
     Unobserved,
     Observed,
     AwaitingReport(std::num::NonZeroU64),
@@ -135,7 +135,7 @@ pub(crate) enum PromiseRejectionState {
 
 /// `PromiseRejectionState` without its identifier, as the snapshot tags it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PromiseRejectionPhase {
+pub enum PromiseRejectionPhase {
     Unobserved,
     Observed,
     AwaitingReport,
@@ -225,13 +225,13 @@ impl PromiseRecord {
     }
 
     #[inline(always)]
-    pub(crate) fn state(&self) -> PromiseState {
+    pub fn state(&self) -> PromiseState {
         self.state
     }
 
     /// [[PromiseResult]]: undefined while pending.
     #[inline(always)]
-    pub(crate) fn result(&self) -> Value {
+    pub fn result(&self) -> Value {
         if self.state == PromiseState::Pending { Value::UNDEFINED } else { self.first.on_fulfilled }
     }
 
@@ -345,7 +345,7 @@ impl PromiseRecord {
 /// (`Host::release_promise_contexts`). The host allocates the two kinds independently, so
 /// their numbers can coincide and each kind keeps its own list.
 #[derive(Debug, Default)]
-pub(crate) struct AbandonedHostContexts {
+pub struct AbandonedHostContexts {
     pub(crate) jobs: Vec<HostExecutionContext>,
     pub(crate) promises: Vec<HostExecutionContext>,
 }

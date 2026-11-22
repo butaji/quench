@@ -16,7 +16,7 @@ mod regional;
 mod root_maps;
 mod virtual_opcode;
 mod call_kinds;
-pub(crate) use call_kinds::{CallSource, TerminalCall};
+pub use call_kinds::{CallSource, TerminalCall};
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 mod size_histogram;
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
@@ -27,7 +27,7 @@ const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as
 
 #[derive(Clone, Copy)]
 #[repr(usize)]
-pub(crate) enum BinaryValuePath {
+pub enum BinaryValuePath {
     Fallback,
     IntegerFastPath,
     NumberFastPath,
@@ -208,7 +208,7 @@ fn object_literal_site_executions(
 
 #[cfg(not(any(feature = "profile-aggregate", feature = "profile-field-primitives")))]
 #[derive(Default)]
-pub(crate) struct Profile;
+pub struct Profile;
 
 #[cfg(all(feature = "profile-field-primitives", not(feature = "profile-aggregate")))]
 #[derive(Default)]

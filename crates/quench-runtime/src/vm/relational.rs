@@ -38,7 +38,7 @@ impl Vm {
         )
     }
 
-    pub(super) fn has_property(
+    pub fn has_property(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -219,7 +219,7 @@ impl Vm {
     /// an ordinary data read that runs no guest code and cannot throw; `None` leaves any other
     /// case, unobserved, to the general path.
     #[inline(always)]
-    pub(super) fn ordinary_instanceof(
+    pub fn ordinary_instanceof(
         &mut self,
         value: Value,
         constructor: Value,
@@ -235,7 +235,7 @@ impl Vm {
     /// records up to the prototype or `null`. `None` leaves the rest to
     /// `ordinary_instanceof_walk`.
     #[inline(always)]
-    pub(super) fn steady_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
+    pub fn steady_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
         // A primitive is no instance, decided before `prototype` is read
         // (OrdinaryHasInstance step 3): a value outside the heap, or a string.
         if Self::primitive_instance(value, &self.heap) {
@@ -281,7 +281,7 @@ impl Vm {
     /// heap value, a link outside the records), which `proved_instanceof` decides. Calls
     /// nothing, so a handler's hit path builds no frame.
     #[inline(always)]
-    pub(super) fn record_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
+    pub fn record_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
         let proof = &self.instanceof_proofs[instanceof_holder_index(constructor)];
         if proof.0 != constructor || !proof.2.as_ref().is_some_and(|(watch, cell)| watch.is_published() && cell.holds()) {
             return None;
@@ -308,7 +308,7 @@ impl Vm {
     /// (marked a prototype) changes, nor the chain it inherits `@@hasInstance` through, so a
     /// use reads neither its layout nor its `prototype`.
     #[inline(always)]
-    pub(super) fn proved_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
+    pub fn proved_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
         let proof = &self.instanceof_proofs[instanceof_holder_index(constructor)];
         if proof.0 != constructor || !proof.2.as_ref().is_some_and(|(watch, cell)| watch.is_published() && cell.holds()) {
             return self.prove_instanceof(value, constructor);
@@ -422,7 +422,7 @@ impl Vm {
     /// names the key, data property or accessor alike, which runs no guest code. `None`
     /// leaves any other case (a key a side-table descriptor holds, a namespace, a proxy, an
     /// exotic object, a primitive operand) to the general path.
-    pub(super) fn plain_in(&mut self, op: u32, key: Value, object: Value) -> Option<bool> {
+    pub fn plain_in(&mut self, op: u32, key: Value, object: Value) -> Option<bool> {
         if op != oxc_ast::ast::BinaryOperator::In as u32 || !self.heap.is_string(key) {
             return None;
         }
@@ -488,7 +488,7 @@ impl Vm {
     /// `left instanceof right` when it reduces to a prototype-chain walk; `None` for any
     /// other operator or a case the full algorithm must decide.
     #[inline(always)]
-    pub(super) fn instanceof_truthy(&mut self, op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn instanceof_truthy(&mut self, op: u32, left: Value, right: Value) -> Option<bool> {
         if op != oxc_ast::ast::BinaryOperator::Instanceof as u32 {
             return None;
         }
@@ -605,7 +605,7 @@ impl Vm {
         self.instanceof_has_instance_link = ProtoLink::of(holder);
     }
 
-    pub(super) fn ordinary_has_instance(
+    pub fn ordinary_has_instance(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,

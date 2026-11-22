@@ -6,7 +6,7 @@ use crate::WasmTrap;
 use crate::bytecode::{Class, Op, WideInstruction, branch_table_entries};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Flow {
+pub enum Flow {
     /// Continues at the jump target.
     Jump,
     /// Continues at the entry the selector in `a` picks; the last entry is the default.
@@ -19,7 +19,7 @@ pub(crate) enum Flow {
 
 /// Where control continues after an instruction that does not branch on a value.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Leave {
+pub enum Leave {
     /// The next instruction.
     Next,
     Jump(usize),
@@ -43,7 +43,7 @@ impl Flow {
 
     /// Where `instruction` at `pc` leaves to; a table's entries are `Jump`s, which `decode`
     /// reads at their positions.
-    pub(crate) fn leave(
+    pub fn leave(
         self,
         pc: usize,
         instruction: WideInstruction,

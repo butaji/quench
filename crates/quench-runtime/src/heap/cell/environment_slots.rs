@@ -6,7 +6,7 @@ impl EnvironmentSlots {
     /// Dense backing storage for a cache that already owns the environment's lifetime.
     /// The pointer expires when the storage is replaced or collected.
     #[inline(always)]
-    pub(crate) fn dense_storage(&self) -> Option<*const usize> {
+    pub fn dense_storage(&self) -> Option<*const usize> {
         Some(self.dense()?.0.storage().as_ptr().cast_const())
     }
 
@@ -54,7 +54,7 @@ impl EnvironmentSlots {
     /// # Safety
     /// As `linked_parent`, for both storages.
     #[inline(always)]
-    pub(crate) unsafe fn link(storage: *const usize, parent: *const usize, epoch: u64) {
+    pub unsafe fn link(storage: *const usize, parent: *const usize, epoch: u64) {
         type Slice = super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>;
         // SAFETY: as the caller guarantees; an empty storage shares the static header, whose
         // prefix is never written.
@@ -71,7 +71,7 @@ impl EnvironmentSlots {
     /// # Safety
     /// `storage` is null or live as for `dense_storage`; no element is mutably borrowed.
     #[inline(always)]
-    pub(crate) unsafe fn read_storage(storage: *const usize, slot: u16) -> Option<Value> {
+    pub unsafe fn read_storage(storage: *const usize, slot: u16) -> Option<Value> {
         // SAFETY: as guaranteed by the caller; each slot is a `Value` (`repr(transparent)`).
         unsafe { let (values, len) = Self::borrow_storage(storage)?.0.run(); crate::staged::environment::concrete_dense_capture(values.cast(), len, slot) }
     }
@@ -82,7 +82,7 @@ impl EnvironmentSlots {
     /// As `read_storage`, with exclusive access to the element for this operation and the
     /// environment's write authorization/barrier satisfied. No reference escapes the write.
     #[inline(always)]
-    pub(crate) unsafe fn write_storage(storage: *const usize, slot: usize, value: Value) -> Option<()> {
+    pub unsafe fn write_storage(storage: *const usize, slot: usize, value: Value) -> Option<()> {
         // SAFETY: as guaranteed by the caller; the view's values are live for this write only.
         let (values, len) = unsafe { Self::native_storage_view(storage) }?;
         // SAFETY: the caller's exclusive access and authorization, over the view's `len` values.
@@ -113,7 +113,7 @@ impl EnvironmentSlots {
     /// # Safety
     /// As `read_storage`; the returned pointer expires with the original storage.
     #[inline(always)]
-    pub(crate) unsafe fn native_storage_view(storage: *const usize) -> Option<(*const Value, usize)> {
+    pub unsafe fn native_storage_view(storage: *const usize) -> Option<(*const Value, usize)> {
         // SAFETY: the original owner, not this temporary descriptor, owns the result.
         unsafe { Self::borrow_storage(storage) }?.native_dense_view()
     }
@@ -121,7 +121,7 @@ impl EnvironmentSlots {
     /// A dense slot view for native reads. The caller must keep the environment live and
     /// discard the pointer at a safepoint, where collection or mutation can replace storage.
     #[inline]
-    pub(crate) fn native_dense_view(&self) -> Option<(*const Value, usize)> {
+    pub fn native_dense_view(&self) -> Option<(*const Value, usize)> {
         let dense = self.dense()?;
         const { assert!(std::mem::size_of::<EnvironmentSlot>() == std::mem::size_of::<Value>()) };
         const { assert!(std::mem::align_of::<EnvironmentSlot>() == std::mem::align_of::<Value>()) };
@@ -156,7 +156,7 @@ impl EnvironmentSlots {
         None
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.sparse().map_or(self.0.len(), |(length, _)| length)
     }
     pub(crate) fn is_empty(&self) -> bool {
@@ -184,7 +184,7 @@ impl EnvironmentSlots {
     }
     /// This storage when it is dense, which a caller may then read with `dense_plain`.
     #[inline(always)]
-    pub(crate) fn dense(&self) -> Option<&Self> {
+    pub fn dense(&self) -> Option<&Self> {
         (!self.0.marked()).then_some(self)
     }
     /// A dense slot's ordinary value (storage `dense` returned): `None` past the storage or
@@ -192,7 +192,7 @@ impl EnvironmentSlots {
     /// uninitialized binding), which the caller resolves the long way. One tag test answers
     /// both the shared-slot and the initialization check.
     #[inline(always)]
-    pub(crate) fn dense_plain(&self, slot: usize) -> Option<Value> {
+    pub fn dense_plain(&self, slot: usize) -> Option<Value> {
         debug_assert!(!self.0.marked());
         let value = self.0.get(slot)?.0;
         (!value.is_internal_marker()).then_some(value)
@@ -446,7 +446,7 @@ impl EnvironmentSlots {
     /// # Safety
     /// `values` holds a readable value at every index `captured` names, each below `len`,
     /// and none of them shares a slot (`Value::shared_environment_owner`).
-    pub(crate) unsafe fn from_captured(len: usize, captured: u64, values: *const Value) -> Self {
+    pub unsafe fn from_captured(len: usize, captured: u64, values: *const Value) -> Self {
         let mut slots = super::thin_slice::ThinBoxSlice::filled(len, EnvironmentSlot(Value::DELETED));
         let mut remaining = captured;
         while remaining != 0 {

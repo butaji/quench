@@ -9,7 +9,7 @@ use crate::Value;
 
 /// The array callback method an iteration runs, as plain data.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Kind {
+pub enum Kind {
     /// `Array.prototype.forEach`: its callback's results are not read.
     ForEach,
     /// `Array.prototype.map`: each result is stored at its element's index.
@@ -36,7 +36,7 @@ pub(crate) enum Kind {
 
 /// What a callback's result does to its iteration's result.
 #[derive(Clone, Copy)]
-pub(crate) enum Effect {
+pub enum Effect {
     /// The step leaves the result as it is.
     Nothing,
     /// Store `value` at `slot` of the result: a map's element at its index, a filter's kept
@@ -76,14 +76,14 @@ pub(crate) fn visits_holes(kind: Kind) -> bool {
 
 /// Whether the kind's callback passes a reducer's accumulator first.
 #[inline(always)]
-pub(crate) fn takes_accumulator(kind: Kind) -> bool {
+pub fn takes_accumulator(kind: Kind) -> bool {
     matches!(kind, Kind::Reduce | Kind::ReduceRight)
 }
 
 /// Whether a step of the kind applies its callback's result at all. A `forEach` step applies
 /// nothing, so it neither reads the result nor allocates for it.
 #[inline(always)]
-pub(crate) fn applies_results(kind: Kind) -> bool {
+pub fn applies_results(kind: Kind) -> bool {
     kind != Kind::ForEach
 }
 
@@ -101,14 +101,14 @@ pub(crate) fn next_index(kind: Kind, visited: usize, length: usize) -> Option<(u
 
 /// Whether an iteration that has visited `visited` of `length` elements has none left.
 #[inline(always)]
-pub(crate) fn exhausted(visited: usize, length: usize) -> bool {
+pub fn exhausted(visited: usize, length: usize) -> bool {
     visited == length
 }
 
 /// The element of a dense storage slot that HasProperty finds and Get reads, an own data
 /// property observing nothing. `None` for a hole, which leaves the element to the generic loop.
 #[inline(always)]
-pub(crate) fn present(slot: Value) -> Option<Value> {
+pub fn present(slot: Value) -> Option<Value> {
     (!slot.is_deleted()).then_some(slot)
 }
 
@@ -148,7 +148,7 @@ pub(crate) fn apply(
 /// The method's value once every element was visited without a step ending it: the result for
 /// the methods that make one, else the answer the method gives when no element ended it.
 #[inline(always)]
-pub(crate) fn completion(kind: Kind, result: Value) -> Answer {
+pub fn completion(kind: Kind, result: Value) -> Answer {
     match kind {
         Kind::Map | Kind::Filter | Kind::Reduce | Kind::ReduceRight => Answer::Value(result),
         Kind::Some => Answer::Value(Value::FALSE),

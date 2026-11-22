@@ -7,7 +7,7 @@ use super::wasm_jump::WasmJump;
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
-pub(crate) enum Operation<W, P> {
+pub enum Operation<W, P> {
     /// Copy register `source` into `destination` with its facts.
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
@@ -306,7 +306,7 @@ pub(crate) enum Operation<W, P> {
 /// Each `Operation` variant as a number, for the dispatchers' compile-time choice of arm (`step_of` and the other
 /// `*_of` steps): a caller that knows its variant passes it, and every other arm is dropped before code generation
 /// (an `if const` test); `ANY` runs every arm, as the interpreter does.
-pub(crate) mod kind {
+pub mod kind {
     pub(crate) const ANY: u16 = 0;
     pub(crate) const MOVE: u16 = 1;
     pub(crate) const LOAD_CONST: u16 = 2;
@@ -379,7 +379,7 @@ pub(crate) mod kind {
     pub(crate) const FIELD_ADD: u16 = 69;
     pub(crate) const DELETE: u16 = 70;
     pub(crate) const INDEX_GET_HOST: u16 = 71;
-    pub(crate) const CALL: u16 = 72;
+    pub const CALL: u16 = 72;
     pub(crate) const SPREAD_CALL: u16 = 73;
     pub(crate) const SUPER_CALL: u16 = 74;
     pub(crate) const RETURN: u16 = 75;
@@ -431,7 +431,7 @@ impl<W, P> Operation<W, P> {
     /// method site is not available to this tier: the caller then takes its own exact path. The
     /// heap operations are the frame's (`Frame::field_read`); a tier decodes those itself.
     #[inline(always)]
-    pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         match instruction.op().staged()? {
             Decoder::Flow => Self::decode_flow(instruction, context),
             Decoder::Local => Self::decode_local(instruction),
@@ -459,7 +459,7 @@ impl<W, P> Operation<W, P> {
     /// general step decides. Only the operations whose arms are shared with `Vm::step` and whose miss the
     /// site's feedback can gate qualify (`write_binary_result`; element sites record `OperandKinds::DENSE`
     /// and `TYPED`; field sites have no direct arm yet).
-    pub(crate) fn direct_helper(&self) -> bool {
+    pub fn direct_helper(&self) -> bool {
         matches!(self, Self::Binary { .. } | Self::ElementRead { .. } | Self::ElementWrite { .. }
             | Self::GetField { .. } | Self::SetField { .. } | Self::LogicalNot { .. } | Self::TypeofIndex { .. })
     }
@@ -467,13 +467,13 @@ impl<W, P> Operation<W, P> {
     /// The Wasm i32 jumps of `decode` (`Decoder::WasmJump`), from any record's wide fields
     /// (`Fields::wide`).
     #[inline(always)]
-    pub(crate) fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
         WasmJump::decode(instruction).map(Self::WasmJump).or_else(|| BranchTable::decode(instruction).map(Self::BranchTable))
     }
 
     /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.
     #[inline(always)]
-    pub(crate) fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
         wasm_int::decode(instruction).map(Self::WasmInt)
     }
 
@@ -482,7 +482,7 @@ impl<W, P> Operation<W, P> {
     /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
     /// operation with no completion.
     #[inline(always)]
-    pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
+    pub fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
         let (plain, flags) = Self::completion_split(instruction)?;
         Some((Self::decode(plain, context)?, flags))
     }
@@ -490,7 +490,7 @@ impl<W, P> Operation<W, P> {
     /// `decode_completed` of the literal operations (`decode_literal_with`) under the tier's `proof`, with the
     /// superinstruction parts `parts` of `decode_literal_with`: the operation and the flags its record completes
     /// the frame by.
-    pub(crate) fn decode_literal_completed_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P)
+    pub fn decode_literal_completed_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P)
         -> Option<(Self, crate::bytecode::Register)> {
         let (plain, flags) = Self::completion_split(instruction)?;
         Some((Self::decode_literal_with(plain, parts, proof)?, flags))
@@ -518,14 +518,14 @@ impl<W, P> Operation<W, P> {
     /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
     /// same decode, with the constant left for the tier to look up.
     #[inline(always)]
-    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
+    pub fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
         (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
     }
 
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
     /// record's wide fields (`Fields::wide`).
     #[inline(always)]
-    pub(crate) fn decode_names(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_names(instruction: WideInstruction) -> Option<Self> {
         names::decode(instruction)
     }
 
@@ -534,14 +534,15 @@ impl<W, P> Operation<W, P> {
     /// (`Allocation::decode`, which an array literal's element definitions do not change: the
     /// array is a hole array and each definition is `DefineElement`), and an element definition.
     #[inline(always)]
-    pub(crate) fn decode_literal(instruction: WideInstruction, proof: P) -> Option<Self> {
+    pub fn decode_literal(instruction: WideInstruction, proof: P) -> Option<Self> {
         Self::decode_literal_with(instruction, None, proof)
     }
 
     /// `decode_literal`, where `parts` are the four records of the superinstruction a
     /// `SuperConstArrayObject2` record names (the program's table entry); `None` for any other record,
     /// and for a pair whose `parts` are none.
-    pub(crate) fn decode_literal_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P) -> Option<Self> {
+    #[inline]
+    pub fn decode_literal_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P) -> Option<Self> {
         match instruction.op() {
             Op::DefineArrayElement => Some(Self::DefineElement {
                 array: instruction.register_b(), index: instruction.imm(), value: instruction.register_a() }),
@@ -559,7 +560,7 @@ impl<W, P> Operation<W, P> {
     /// The register moves and control transfers of `decode`, from any record a tier holds
     /// (`Fields`): the one flow decoder, the bytecode's and the lane's alike.
     #[inline(always)]
-    pub(crate) fn decode_flow<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_flow<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
             Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction.wide()),
             Op::Move => Self::Move {
@@ -582,7 +583,7 @@ impl<W, P> Operation<W, P> {
     /// except `super(...)`, whose arguments the VM gathers (`spread`). Inlined: a call row decodes
     /// its record on every run, which its constant opcode folds only once the decode is in place.
     #[inline(always)]
-    pub(crate) fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         if instruction.op() == Op::Construct && instruction.is_super_construct() {
             return spread::decode(instruction);
         }
@@ -591,7 +592,7 @@ impl<W, P> Operation<W, P> {
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
     #[inline(always)]
-    pub(crate) fn decode_property(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
             Op::Delete => Some(Self::Delete { destination: instruction.result_register(), base: instruction.register_b(),
@@ -618,7 +619,7 @@ impl<W, P> Operation<W, P> {
 
     /// The value-level operations of `decode`.
     #[inline(always)]
-    pub(crate) fn decode_value(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_value(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
@@ -685,7 +686,7 @@ impl<W, P> Operation<W, P> {
 
     /// The local-slot operations of `decode`.
     #[inline(always)]
-    pub(crate) fn decode_local(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_local(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadLocalPlain => Self::LoadLocalPlain {
                 destination: instruction.result_register(),
@@ -713,7 +714,7 @@ impl<W, P> Operation<W, P> {
 impl<W, P> Operation<W, P> {
     /// The operation as a root read where it is a `LoadCapture` (`root`), else unchanged: a row whose
     /// record a walk settled on a root binding decodes its read so (`FLAG_ROOT`).
-    pub(crate) fn rooted(self) -> Self {
+    pub fn rooted(self) -> Self {
         match self {
             Self::LoadCapture { destination, depth, slot, .. } => Self::LoadCapture { destination, depth, slot, root: true },
             other => other,
@@ -726,14 +727,14 @@ impl<W, P> Operation<W, P> {
 impl Operation<u64, ()> {
     /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
     /// tier asks an instruction's meaning by, where the row's operands need no table.
-    pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
+    pub fn of(instruction: WideInstruction) -> Option<Self> {
         Self::decode(instruction, DecodeContext::EMPTY)
     }
 
     /// The lane's own rows (`Decoder::Lane`): a string-case index over the constants the record names, and an
     /// `await` the lane's frame suspends.
     #[inline(always)]
-    pub(crate) fn decode_lane(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_lane(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
                 source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
@@ -750,7 +751,7 @@ impl Operation<u64, ()> {
     }
 
     /// Whether `instruction` does nothing: a marker that defines and writes nothing.
-    pub(crate) fn is_nop(instruction: WideInstruction) -> bool {
+    pub fn is_nop(instruction: WideInstruction) -> bool {
         instruction.op() == Op::Nop
     }
 
@@ -768,7 +769,7 @@ impl Operation<u64, ()> {
 
     /// Whether `instruction` is a call through its callee register (`Call`, including the eval
     /// forms that decode to no operation), which an inlined unit plans and admits as a call.
-    pub(crate) fn is_plain_call(instruction: WideInstruction) -> bool {
+    pub fn is_plain_call(instruction: WideInstruction) -> bool {
         instruction.op() == Op::Call
     }
 
@@ -784,7 +785,7 @@ impl Operation<u64, ()> {
     }
 
     /// Whether `instruction` throws: its decoded operation is `Throw`, which leaves at the miss edge.
-    pub(crate) fn is_throw(instruction: WideInstruction) -> bool {
+    pub fn is_throw(instruction: WideInstruction) -> bool {
         matches!(Self::of(instruction), Some(Self::Throw { .. }))
     }
 
@@ -801,20 +802,20 @@ impl Operation<u64, ()> {
     }
 
     /// Whether `instruction` is a named field read (`GetField`), whatever its result flags.
-    pub(crate) fn is_field_read(instruction: WideInstruction) -> bool {
+    pub fn is_field_read(instruction: WideInstruction) -> bool {
         instruction.op() == Op::GetField
     }
 
     /// Whether `instruction` is a named field store (`SetField`, `SetThisField`, or a store of a
     /// field of `this`), whatever its operand.
-    pub(crate) fn is_field_store(instruction: WideInstruction) -> bool {
+    pub fn is_field_store(instruction: WideInstruction) -> bool {
         instruction.op().is_field_store()
     }
 
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`), as the
     /// program's field sites name them: a named read's lookup (its site, or the sites of a
     /// nested lookup), and a field store's cache site.
-    pub(crate) fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
+    pub fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
         if Self::is_field_read(instruction) {
             return match instruction.field_lookup() {
                 Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],

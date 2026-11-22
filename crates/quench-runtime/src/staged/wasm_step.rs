@@ -14,7 +14,7 @@ use super::wasm_table_ops::TableOp;
 use crate::bytecode::{Class, InstructionField, Op, WideInstruction};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Step {
+pub enum Step {
     /// Integer, float and conversion arithmetic, and the jumps on it.
     Numeric(WasmOperation),
     /// Registers, constants, instance bindings and globals.
@@ -40,7 +40,7 @@ pub(crate) enum Step {
 
 impl Step {
     /// The step `op` is, with `tag` its operator selector where the opcode takes one.
-    pub(crate) const fn of(op: Op, tag: u32) -> Option<Self> {
+    pub const fn of(op: Op, tag: u32) -> Option<Self> {
         if let Some(step) = WasmOperation::of(op, tag) {
             return Some(Self::Numeric(step));
         }
@@ -77,7 +77,7 @@ impl Step {
     /// The register whose slot the plan records for the step: its first operand, a vector
     /// access's address, or the frame local a load reads (a local is a register past the
     /// `registers` of the frame, `local_register`).
-    pub(crate) fn operand(self, instruction: WideInstruction, registers: u16) -> u16 {
+    pub fn operand(self, instruction: WideInstruction, registers: u16) -> u16 {
         match self {
             Self::Simd(simd) => simd.operand(instruction),
             Self::Table(table) => table.bindings(instruction).0.unwrap_or(instruction.b()),
@@ -88,12 +88,12 @@ impl Step {
     }
 
     /// Whether `field` of the instruction is an operand slot nothing reads.
-    pub(crate) fn leaves_unread(self, field: InstructionField) -> bool {
+    pub fn leaves_unread(self, field: InstructionField) -> bool {
         matches!(self, Self::Simd(simd) if simd.leaves_unread(field))
     }
 
     /// The function a step calls statically.
-    pub(crate) fn callee(self, instruction: WideInstruction) -> Option<usize> {
+    pub fn callee(self, instruction: WideInstruction) -> Option<usize> {
         match self {
             Self::Call(call) => call.callee(instruction),
             _ => None,
@@ -101,7 +101,7 @@ impl Step {
     }
 
     /// The register of the second binding a table copy or segment init names, if any.
-    pub(crate) fn second_binding(self, instruction: WideInstruction) -> Option<u16> {
+    pub fn second_binding(self, instruction: WideInstruction) -> Option<u16> {
         match self {
             Self::Table(table) => table.bindings(instruction).1,
             _ => None,
@@ -109,12 +109,12 @@ impl Step {
     }
 
     /// Whether the step returns from the function.
-    pub(crate) const fn returns(self) -> bool {
+    pub const fn returns(self) -> bool {
         matches!(self, Self::Flow(Flow::Return))
     }
 
     /// Whether the step reads the function's memory register, which no other step may.
-    pub(crate) const fn reads_memory(self) -> bool {
+    pub const fn reads_memory(self) -> bool {
         matches!(self, Self::Memory(_) | Self::Instance(Instance::Binding))
             || matches!(self, Self::Table(TableOp::MemoryInit))
             || matches!(self, Self::Simd(simd) if simd.reads_memory())
@@ -125,7 +125,7 @@ impl Step {
 /// selector: a memory access, scalar or vector, and a float operator by its width and whether
 /// it runs over raw registers. The handler bodies still read the tag at run time.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Family {
+pub enum Family {
     /// A linear-memory load, scalar or vector.
     MemoryLoad,
     /// A linear-memory store, scalar or vector.
@@ -140,7 +140,7 @@ pub(crate) enum Family {
 
 impl Family {
     /// The family `op` is, if it is one of these.
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::WasmMemoryLoad => Some(Self::MemoryLoad),
             Class::WasmMemoryStore => Some(Self::MemoryStore),
@@ -254,7 +254,7 @@ pub(crate) use wasm_lane_list;
 /// fall-through flag, the b-jit's rows). `dispatch` is the one match over `Step` the tiers run,
 /// so a family added to `Step` is a method every tier must answer, and no tier keeps its own
 /// match over the families.
-pub(crate) trait WasmTier {
+pub trait WasmTier {
     type Out;
     fn numeric(&mut self, pc: usize, instruction: WideInstruction, operation: WasmOperation) -> Self::Out;
     fn instance(&mut self, pc: usize, instruction: WideInstruction, step: Instance) -> Self::Out;
@@ -270,7 +270,7 @@ pub(crate) trait WasmTier {
 
 /// The tier's answer for `step`, the step of `instruction` at `pc`.
 #[inline(always)]
-pub(crate) fn dispatch<T: WasmTier>(tier: &mut T, pc: usize, instruction: WideInstruction, step: Step) -> T::Out {
+pub fn dispatch<T: WasmTier>(tier: &mut T, pc: usize, instruction: WideInstruction, step: Step) -> T::Out {
     match step {
         Step::Numeric(operation) => tier.numeric(pc, instruction, operation),
         Step::Instance(step) => tier.instance(pc, instruction, step),

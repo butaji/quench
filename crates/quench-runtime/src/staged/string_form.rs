@@ -34,7 +34,7 @@ pub(crate) type SharedFormWords = SharedFormHead<[usize; 2]>;
 pub(crate) type ShortFormWords = ShortFormHead<ShortAsciiHead<u8>>;
 
 /// Bytes a string record occupies: the largest form, a tag word, then a pointer and a length.
-pub(crate) const RECORD_SIZE: usize = size_of::<SharedFormWords>();
+pub const RECORD_SIZE: usize = size_of::<SharedFormWords>();
 /// Where a `Short` record keeps its unit count, and its units.
 pub(crate) const SHORT_LENGTH_OFFSET: i32 = (offset_of!(ShortFormWords, text) + offset_of!(ShortAsciiHead<u8>, length)) as i32;
 pub(crate) const SHORT_UNITS_OFFSET: u64 = (offset_of!(ShortFormWords, text) + offset_of!(ShortAsciiHead<u8>, bytes)) as u64;
@@ -45,6 +45,7 @@ pub(crate) const SHARED_LENGTH_OFFSET: i32 = SHARED_POINTER_OFFSET + size_of::<u
 /// How far into that allocation the units start: `Rc`'s allocation is `#[repr(C)] RcInner { strong,
 /// weak, value }`, so units of an alignment no larger than a word start two words in. A test probes
 /// the compiler's own `Rc` against it (`vm::wtf16::native_string`).
+#[inline]
 pub(crate) const fn shared_units_offset() -> u64 {
     2 * size_of::<usize>() as u64
 }

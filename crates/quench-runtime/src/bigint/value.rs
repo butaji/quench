@@ -29,7 +29,7 @@ union Storage {
     spilled: NonNull<Digit>,
 }
 
-pub(crate) struct JsBigInt {
+pub struct JsBigInt {
     /// Normalized digit count: the top digit is nonzero, and zero has none. Above
     /// `INLINE_DIGITS`, the digits are `spilled`.
     len: u32,
@@ -283,7 +283,7 @@ impl JsBigInt {
         self.add(&Self::from(1_u8)).negated()
     }
 
-    pub(crate) fn to_num(&self) -> num_bigint::BigInt {
+    pub fn to_num(&self) -> num_bigint::BigInt {
         let magnitude = num_bigint::BigUint::from_slice(
             &self.digits().iter().flat_map(|&digit| [digit as u32, (digit >> u32::BITS) as u32]).collect::<Vec<_>>(),
         );
@@ -297,7 +297,7 @@ impl JsBigInt {
 
     /// The Number nearest the value, ties to even; magnitudes past the finite range are
     /// infinite.
-    pub(crate) fn to_f64(&self) -> f64 {
+    pub fn to_f64(&self) -> f64 {
         let magnitude = match self.digits() {
             [] => 0.0,
             [digit] => *digit as f64,

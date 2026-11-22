@@ -305,7 +305,7 @@ impl crate::bytecode::ResidualProgram {
     /// (`capture_layout::dynamic_name_resolution`), so the closure's reads are the whole chain
     /// and it is not elided.
     #[inline(always)]
-    pub(crate) fn closure_takes_no_environment(&self, id: u32) -> bool {
+    pub fn closure_takes_no_environment(&self, id: u32) -> bool {
         self.closure_reads.as_deref().is_some_and(|reads| {
             reads.takes_no_environment(id, || self.derive_closure_takes_no_environment(id, reads))
         })

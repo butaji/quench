@@ -5,13 +5,13 @@ use crate::bytecode::Register;
 
 /// The most elements a literal evaluates into registers before its array is made, and so the
 /// longest list a staged row holds (`RegisterList`).
-pub(crate) const ARRAY_LITERAL_WINDOW: usize = 8;
+pub const ARRAY_LITERAL_WINDOW: usize = 8;
 
 /// Up to `ARRAY_LITERAL_WINDOW` registers, in element order, held inline.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct RegisterList {
+pub struct RegisterList {
     registers: [Register; ARRAY_LITERAL_WINDOW],
-    count: u8,
+    pub count: u8,
 }
 
 impl RegisterList {
@@ -31,7 +31,7 @@ impl RegisterList {
     }
 
     /// The registers, in element order.
-    pub(crate) fn registers(&self) -> &[Register] {
+    pub fn registers(&self) -> &[Register] {
         &self.registers[..usize::from(self.count)]
     }
 }

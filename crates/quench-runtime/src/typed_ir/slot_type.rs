@@ -4,7 +4,7 @@ use crate::{Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum SlotType {
+pub enum SlotType {
     None,
     Int32,
     Number,
@@ -21,7 +21,7 @@ pub(crate) enum SlotType {
 }
 
 impl SlotType {
-    pub(crate) const ALL: &'static [Self] = &[
+    pub const ALL: &'static [Self] = &[
         Self::None, Self::Int32, Self::Number, Self::Null, Self::Undefined,
         Self::Nullish, Self::DirectObject, Self::DirectObjectOrNull,
         Self::DirectObjectOrUndefined, Self::DirectObjectOrNullish, Self::String,
@@ -30,7 +30,7 @@ impl SlotType {
 
     /// `from_type(Type::immediate(value))`, read straight off the value: writes call it.
     #[inline(always)]
-    pub(crate) fn of(value: Value) -> Self {
+    pub fn of(value: Value) -> Self {
         if value.as_int().is_some() { Self::Int32 }
         else if value.as_number().is_some() { Self::Number }
         else if value.is_null() { Self::Null }
@@ -41,7 +41,7 @@ impl SlotType {
         else { Self::Tagged }
     }
 
-    pub(crate) fn from_type(ty: Type) -> Self {
+    pub fn from_type(ty: Type) -> Self {
         let ty = ty.without_object_shape().machine();
         match ty.0 {
             TypeKind::Int(_) => Self::Int32,
@@ -62,7 +62,7 @@ impl SlotType {
         }
     }
 
-    pub(crate) fn ty(self) -> Type {
+    pub fn ty(self) -> Type {
         match self {
             Self::None => Type::NEVER,
             Self::Int32 => Type::INT32,

@@ -11,7 +11,7 @@ use crate::bytecode::{Op, WideInstruction};
 /// The operand registers the decoder names are read by `Vm::call_out`: `first` is the first operand's value and
 /// `second` the second's. Any further register a step needs is named in the variant and read by the host.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ClassStep {
+pub enum ClassStep {
     /// Define the own field `atom` of the object (`second`) with the value (`first`), through cache site `site`
     /// (`DefineField`).
     DefineField { atom: u32, site: u16 },

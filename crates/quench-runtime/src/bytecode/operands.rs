@@ -5,16 +5,16 @@
 
 use crate::bytecode::{Atom, Register};
 
-pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
-pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
+pub const SET_THIS_REGISTER: Register = 1 << 14;
+pub const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-pub(crate) struct Operand(pub(crate) u16);
+pub struct Operand(pub u16);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
-pub(crate) enum OperandKind {
+pub enum OperandKind {
     Register = 0,
     Constant = 1,
     Field = 2,
@@ -27,9 +27,9 @@ impl OperandKind {
 
 impl Operand {
     const TAG_SHIFT: u16 = 14;
-    pub(crate) const PAYLOAD_MASK: u16 = (1 << Self::TAG_SHIFT) - 1;
+    pub const PAYLOAD_MASK: u16 = (1 << Self::TAG_SHIFT) - 1;
 
-    #[inline] pub(crate) const fn kind(self) -> Option<OperandKind> {
+    #[inline] pub const fn kind(self) -> Option<OperandKind> {
         match self.0 >> Self::TAG_SHIFT {
             tag if tag == OperandKind::Register as u16 => Some(OperandKind::Register),
             tag if tag == OperandKind::Constant as u16 => Some(OperandKind::Constant),
@@ -40,7 +40,7 @@ impl Operand {
     }
 
     #[inline]
-    pub(crate) fn register(value: Register) -> Self {
+    pub fn register(value: Register) -> Self {
         debug_assert!(value <= Self::PAYLOAD_MASK);
         Self(((OperandKind::Register as u16) << Self::TAG_SHIFT) | value)
     }
@@ -48,7 +48,7 @@ impl Operand {
     /// A constant-pool operand, when the pool index fits the operand payload;
     /// larger programs load the constant into a register instead.
     #[inline]
-    pub(crate) fn constant(index: u32) -> Option<Self> {
+    pub fn constant(index: u32) -> Option<Self> {
         u16::try_from(index)
             .ok()
             .filter(|index| *index <= Self::PAYLOAD_MASK)
@@ -56,7 +56,7 @@ impl Operand {
     }
 
     #[inline]
-    pub(crate) fn local(slot: u16) -> Self {
+    pub fn local(slot: u16) -> Self {
         debug_assert!(slot <= Self::PAYLOAD_MASK);
         Self(((OperandKind::Local as u16) << Self::TAG_SHIFT) | slot)
     }
@@ -66,31 +66,31 @@ impl Operand {
         self.0 >> Self::TAG_SHIFT
     }
 
-    #[inline] pub(crate) fn payload(self) -> u16 {
+    #[inline] pub fn payload(self) -> u16 {
         self.0 & Self::PAYLOAD_MASK
     }
 
-    #[inline(always)] pub(crate) fn register_index(self) -> Option<Register> {
+    #[inline(always)] pub fn register_index(self) -> Option<Register> {
         (self.kind() == Some(OperandKind::Register)).then_some(self.payload())
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-pub(crate) struct FieldBase(pub(crate) u16);
+pub struct FieldBase(pub u16);
 
 impl FieldBase {
-    pub(crate) const THIS: Self = Self(u16::MAX);
-    pub(crate) const NESTED: u16 = u16::MAX - 1;
+    pub const THIS: Self = Self(u16::MAX);
+    pub const NESTED: u16 = u16::MAX - 1;
     const LOCAL_FLAG: u16 = 0x4000;
 
     #[inline(always)]
-    pub(crate) fn register(value: Register) -> Self {
+    pub fn register(value: Register) -> Self {
         debug_assert!(value <= REGISTER_MASK);
         Self(value)
     }
 
-    #[inline(always)] pub(crate) fn register_index(self) -> Option<Register> {
+    #[inline(always)] pub fn register_index(self) -> Option<Register> {
         (self.0 <= REGISTER_MASK).then_some(self.0)
     }
 
@@ -99,7 +99,7 @@ impl FieldBase {
         (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
     }
 
-    #[inline(always)] pub(crate) fn local_index(self) -> Option<u16> {
+    #[inline(always)] pub fn local_index(self) -> Option<u16> {
         (self.0 & Self::LOCAL_FLAG != 0
             && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
             .then_some(self.0 & REGISTER_MASK)
@@ -107,7 +107,7 @@ impl FieldBase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FieldLookup {
+pub enum FieldLookup {
     Atom {
         atom: Atom,
         base: FieldBase,
@@ -118,20 +118,20 @@ pub(crate) enum FieldLookup {
 
 /// A run of consecutive registers: a call's arguments, an object literal's values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RegisterWindow {
-    pub(crate) base: Register,
-    pub(crate) count: u16,
+pub struct RegisterWindow {
+    pub base: Register,
+    pub count: u16,
 }
 
 impl RegisterWindow {
     /// The window's last register, when it has one.
-    pub(crate) fn last(self) -> Option<Register> {
+    pub fn last(self) -> Option<Register> {
         self.count.checked_sub(1).map(|offset| self.base + offset)
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ConstructArguments {
+pub enum ConstructArguments {
     Registers(RegisterWindow),
     Array(Register),
 }

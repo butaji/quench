@@ -11,7 +11,7 @@ use std::rc::Rc;
 pub(crate) type ChainSubjects = smallvec::SmallVec<[u32; INHERITED_FIELD_CACHE_MAX_DEPTH]>;
 
 impl Heap {
-    pub(crate) fn subscribe_shape(&mut self, shape: u32, code: &Rc<dyn DependentCode>) -> bool {
+    pub fn subscribe_shape(&mut self, shape: u32, code: &Rc<dyn DependentCode>) -> bool {
         self.properties.subscribe_shape(shape, code)
     }
 
@@ -23,7 +23,7 @@ impl Heap {
 
     /// Subscribe to a slot's observation without its shape's departures: the code guards the
     /// shape it embeds at each use.
-    pub(crate) fn subscribe_slot_observation(&mut self, dependency: SlotDependency, code: &Rc<dyn DependentCode>) -> bool {
+    pub fn subscribe_slot_observation(&mut self, dependency: SlotDependency, code: &Rc<dyn DependentCode>) -> bool {
         self.properties.subscribe_slot_observation(dependency, code)
     }
 
@@ -45,7 +45,7 @@ impl Heap {
     /// no prototype names (`Dependencies::hold_layouts`). A chain no subject names (a link that is
     /// no watched object) falls back to every prototype's layout
     /// (`heap::subscribe_prototype_layouts`). `false` where a reader table is full.
-    pub(crate) fn subscribe_prototype_chain(&mut self, chain: PrototypeChain, code: &Rc<dyn DependentCode>) -> bool {
+    pub fn subscribe_prototype_chain(&mut self, chain: PrototypeChain, code: &Rc<dyn DependentCode>) -> bool {
         match self.chain_subjects(ProtoLink::from_bits(chain.link).prototype(), chain.depth) {
             Some(subjects) => self.dependencies.hold_layouts(&subjects, code),
             None => crate::heap::subscribe_prototype_layouts(code),

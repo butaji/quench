@@ -276,7 +276,7 @@ impl Vm {
 
     /// `copy_data_properties` when a plain copy (`copy_plain_properties`) answers it, or the
     /// source is null or undefined; `false`, before any effect, for any other copy.
-    pub(super) fn copy_plain_data_properties(&mut self, target: Value, source: Value, exclusions: Value) -> bool {
+    pub fn copy_plain_data_properties(&mut self, target: Value, source: Value, exclusions: Value) -> bool {
         if self.adopt_source_shape(target, source, exclusions) {
             return true;
         }
@@ -586,7 +586,7 @@ impl Vm {
         self.slot_data_value(data, slot)
     }
 
-    pub(super) fn set_symbol_property(
+    pub fn set_symbol_property(
         &mut self,
         object: Value,
         key: Value,
@@ -643,7 +643,7 @@ impl Vm {
     /// `set_symbol_property_with_receiver` completes it for its own receiver: an own writable
     /// data property takes the value, and an absent one is defined, not enumerable, on an
     /// extensible object. `false` leaves any other store, unobserved, to the general path.
-    pub(super) fn try_host_private_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub fn try_host_private_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
         if !self.is_host_private_symbol(key) || self.proxy_parts(object).is_some() {
             return false;
         }
@@ -671,7 +671,7 @@ impl Vm {
     /// `set_plain_symbol_property` makes for an extensible receiver of that shape and, for an
     /// add, prototype. `false` for any other write.
     #[inline(always)]
-    pub(super) fn site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
+    pub fn site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
         use super::symbol_write_proof::SymbolWriteStep;
         let Some(data) = self.heap.ordinary_object(object) else {
             return false;
@@ -692,7 +692,7 @@ impl Vm {
     /// `try_plain_symbol_set` at lane site `site`, recording the step it made for
     /// `site_symbol_set`: a store to a writable own data slot, or the add a write proof
     /// admitted, on an extensible receiver whose shapes are not dictionaries.
-    pub(super) fn try_site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
+    pub fn try_site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
         use super::symbol_write_proof::SymbolWriteStep;
         let before = self.heap.ordinary_object(object).map(Object::shape);
         if !self.try_plain_symbol_set(object, key, value) {

@@ -10,7 +10,7 @@ macro_rules! typed_array_kinds {
     (@count $head:ident $($tail:ident)*) => { 1 + typed_array_kinds!(@count $($tail)*) };
     ($($name:ident => $native:literal),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum TypedArrayKind {
+        pub enum TypedArrayKind {
             $($name),+
         }
 
@@ -49,7 +49,7 @@ typed_array_kinds! {
 impl TypedArrayKind {
     /// The element width in bytes.
     #[inline(always)]
-    pub(crate) const fn width(self) -> usize {
+    pub const fn width(self) -> usize {
         match self {
             Self::Uint8 | Self::Uint8Clamped | Self::Int8 => size_of::<u8>(),
             Self::Uint16 | Self::Int16 | Self::Float16 => size_of::<u16>(),

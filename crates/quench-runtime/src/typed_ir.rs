@@ -12,11 +12,12 @@ mod int_range;
 mod int_type;
 mod lattice;
 mod representation;
-pub(crate) use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
-pub(crate) use representation::Representation;
+pub use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
+pub use representation::Representation;
 mod slot_type;
-pub(crate) use slot_type::SlotType;
-pub(crate) use int_range::{IntRange, WIDENING_ROUNDS};
+pub use slot_type::SlotType;
+#[allow(unused_imports)]
+pub use int_range::{IntRange, WIDENING_ROUNDS};
 
 /// An element index is below its array's length, which every layout stores in 32 bits: it
 /// lies within `IntRange::EXACT`, so an index word and the Number it came from agree on it.
@@ -24,22 +25,22 @@ const _: () = assert!((crate::bytecode::MAX_ARRAY_LENGTH as u64) <= (1 << int_ra
 
 /// Whether residual execution can export ownership or enter another guest activation.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Reentry { Closed, Possible }
+pub enum Reentry { Closed, Possible }
 
 mod binding;
-pub(crate) use binding::{BindingTime, Division, Proof};
+pub use binding::{BindingTime, Division, Proof};
 
 impl Type {
     /// A function identity protected by a published weak binding and a
     /// dominating value check. It cannot cross collection or realm retirement.
-    pub(crate) fn function(identity: Value) -> Option<Self> {
+    pub fn function(identity: Value) -> Option<Self> {
         (identity.direct_function_index().is_some() || identity.legacy_heap_index().is_some())
             .then_some(Self(TypeKind::FunctionIdentity(identity)))
     }
 
     /// Facts available from a canonical value alone. Heap language types need
     /// a semantic descriptor; an opaque heap locator remains explicitly ANY.
-    pub(crate) fn immediate(value: Value) -> Self {
+    pub fn immediate(value: Value) -> Self {
         if value.as_int().is_some() {
             Self::INT32
         } else if value.as_number().is_some() {
@@ -65,25 +66,25 @@ impl Type {
 /// A checked machine projection is an obligation for the backend, not an
 /// int32 semantic refinement. Publication must discharge its defining checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Projection {
+pub enum Projection {
     Exact,
     #[cfg(test)]
     CheckedDefinitions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Fact {
-    pub(crate) ty: Type,
-    pub(crate) representation: Representation,
-    pub(crate) binding: BindingTime,
-    pub(crate) proof: Proof,
-    pub(crate) projection: Projection,
+pub struct Fact {
+    pub ty: Type,
+    pub representation: Representation,
+    pub binding: BindingTime,
+    pub proof: Proof,
+    pub projection: Projection,
 }
 
 /// Immutable, consistent semantic type and representation evidence. Entry guards
 /// and checked-definition obligations must still be discharged before publication.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct VerifiedFact(Fact);
+pub struct VerifiedFact(Fact);
 
 impl std::ops::Deref for VerifiedFact {
     type Target = Fact;
@@ -91,7 +92,7 @@ impl std::ops::Deref for VerifiedFact {
 }
 
 impl Fact {
-    pub(crate) fn verified(self) -> Option<VerifiedFact> {
+    pub fn verified(self) -> Option<VerifiedFact> {
         self.verify().then_some(VerifiedFact(self))
     }
     pub(crate) fn verify(self) -> bool {
@@ -147,7 +148,7 @@ impl Fact {
         }
     }
 
-    pub(crate) fn tagged(binding: BindingTime, proof: Proof) -> Self {
+    pub fn tagged(binding: BindingTime, proof: Proof) -> Self {
         Self {
             ty: Type::ANY,
             representation: Representation::Tagged,

@@ -18,17 +18,17 @@ use crate::vm::wtf16::Units;
 /// A flat string's units as the words a row reads: the address of the first, how many there
 /// are, and whether each is two bytes (one) or one (zero).
 #[derive(Clone, Copy)]
-pub(crate) struct FlatString<W> {
-    pub(crate) units: W,
-    pub(crate) length: W,
-    pub(crate) wide: W,
+pub struct FlatString<W> {
+    pub units: W,
+    pub length: W,
+    pub wide: W,
 }
 
 /// The flat string `value` names among the string records at `record_base`: its units, length
 /// and width, read from its record (`string_length::unit_record`: a flat form or an ASCII prefix),
 /// or `None` (leaving at `miss`) where that leaves.
 #[inline(always)]
-pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
+pub fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<FlatString<S::Word>> {
     let (record, short, wide, prefix) = super::string_length::unit_record(stage, record_base, value, miss)?;
     let (units, length) = super::string_length::unit_words(stage, record, short, prefix);
@@ -42,7 +42,7 @@ pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: 
 /// each is read and the form selects. A record's suballocations may change when the VM runs, so a
 /// row reads them where it uses them, not held across a safepoint.
 #[inline(always)]
-pub(crate) fn record_units<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
+pub fn record_units<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
     let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
     let shared_units = stage.add_imm(pointer, form::shared_units_offset());
     let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
@@ -52,7 +52,7 @@ pub(crate) fn record_units<S: Stage>(stage: &mut S, record: S::Word, short: S::C
 /// The length of the flat string whose record is `record`, in the form `short` names. A string's
 /// length never changes, so a loop may hold it (`loop_strings`).
 #[inline(always)]
-pub(crate) fn record_length<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
+pub fn record_length<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
     let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
     let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
     stage.select(short, short_length, shared_length)
@@ -68,7 +68,7 @@ fn at_width<S: Stage>(stage: &mut S, string: FlatString<S::Word>,
 
 /// `builtins::char_code_at` of `string`.
 #[inline(always)]
-pub(crate) fn string_char_code_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+pub fn string_char_code_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     at_width(stage, string, #[inline(always)] |stage, width| char_code_at(stage, width, string.units, string.length, index, miss))
 }
@@ -76,14 +76,14 @@ pub(crate) fn string_char_code_at<S: Stage>(stage: &mut S, string: FlatString<S:
 /// `string_char_code_at` of `string` for an index the caller proves below its length: the row with no
 /// bounds test (`builtins::char_code_at_within`).
 #[inline(always)]
-pub(crate) fn string_char_code_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+pub fn string_char_code_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     at_width(stage, string, #[inline(always)] |stage, width| char_code_at_within(stage, width, string.units, index, miss))
 }
 
 /// `string_char_at` for an index the caller proves below the string's length (`builtins::char_at_ascii_within`).
 #[inline(always)]
-pub(crate) fn string_char_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word, table: S::Word,
+pub fn string_char_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word, table: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let present = stage.ne_imm(table, 0u32);
     stage.guard(present, miss)?;
@@ -96,7 +96,7 @@ pub(crate) fn string_char_at_within<S: Stage>(stage: &mut S, string: FlatString<
 /// exists). `None` (leaving at `miss`) where the row leaves, or where the unit has no string
 /// yet, which the native makes.
 #[inline(always)]
-pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word, table: S::Word,
+pub fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word, table: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let present = stage.ne_imm(table, 0u32);
     stage.guard(present, miss)?;
@@ -109,14 +109,14 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
 /// one-character string with a one-unit constant decides on the unit alone, so the string is
 /// never made (`Lowering::unit_compare`).
 #[inline(always)]
-pub(crate) fn string_unit_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+pub fn string_unit_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     at_width(stage, string, |stage, width| char_at_ascii(stage, width, string.units, string.length, index, miss))
 }
 
 /// `string_unit_at` for an index the caller proves below the string's length (`char_at_ascii_within`).
 #[inline(always)]
-pub(crate) fn string_unit_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+pub fn string_unit_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     at_width(stage, string, |stage, width| char_at_ascii_within(stage, width, string.units, index, miss))
 }
@@ -138,7 +138,7 @@ fn character_of_unit<S: Stage>(stage: &mut S, table: S::Word, unit: S::Word, mis
 /// at `records`, read in place, or its units already viewed, which covers the forms a record
 /// read leaves.
 #[derive(Clone, Copy)]
-pub(crate) enum ConcreteString<'a> {
+pub enum ConcreteString<'a> {
     /// The string `value` among the string records at `records`.
     Record { records: *const JsString, value: Value },
     /// The units of a flat string.
@@ -173,7 +173,7 @@ impl ConcreteString<'_> {
 /// The interpreter's `string_char_code_at` of `string` at `index`; `None` where the row leaves,
 /// which the caller answers through the native.
 #[inline(always)]
-pub(crate) fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) -> Option<Value> {
+pub fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) -> Option<Value> {
     let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
     string_char_code_at(&mut stage, string, index.to_bits(), ()).map(Value::from_bits)
@@ -183,7 +183,7 @@ pub(crate) fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) ->
 /// The interpreter's `string_char_at` of `string` at `index`, from the table of one-unit strings
 /// at `table`; `None` where the row leaves.
 #[inline(always)]
-pub(crate) fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, index: Value) -> Option<Value> {
+pub fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, index: Value) -> Option<Value> {
     let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
     string_char_at(&mut stage, string, index.to_bits(), table as u64, ()).map(Value::from_bits)

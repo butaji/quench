@@ -41,7 +41,7 @@ impl std::ops::DerefMut for Header {
     }
 }
 
-pub(crate) use crate::staged::encodings::OTHERS_UNKNOWN;
+pub use crate::staged::encodings::OTHERS_UNKNOWN;
 
 use crate::staged::elements::{concrete_other as other, concrete_recount as recounted};
 
@@ -78,7 +78,7 @@ unsafe fn write_parts(values: *mut Value, parts: &[&[Value]]) -> u32 {
 /// # Safety
 /// `start` was allocated with `layout` and nothing uses it after this call.
 #[inline(always)]
-unsafe fn release(start: *mut u8, layout: Layout) {
+pub unsafe fn release(start: *mut u8, layout: Layout) {
     // SAFETY: the caller's contract.
     unsafe { dealloc(start, layout) };
 }
@@ -86,17 +86,17 @@ unsafe fn release(start: *mut u8, layout: Layout) {
 /// The values start right after the header, at their own alignment.
 const VALUES_OFFSET: usize = size_of::<Header>();
 /// The arena values a young run's header takes ahead of its values.
-pub(crate) const HEADER_VALUES: usize = VALUES_OFFSET / size_of::<Value>();
+pub const HEADER_VALUES: usize = VALUES_OFFSET / size_of::<Value>();
 const _: () = assert!(HEADER_VALUES * size_of::<Value>() == VALUES_OFFSET);
 const _: () = assert!(align_of::<Header>() <= align_of::<Value>());
 const _: () = assert!(VALUES_OFFSET.is_multiple_of(align_of::<Value>()));
 const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length, which native appends advance.
-pub(crate) const LENGTH_FROM_VALUES: i32 = (std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, len)) as i32 - VALUES_OFFSET as i32;
+pub const LENGTH_FROM_VALUES: i32 = (std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, len)) as i32 - VALUES_OFFSET as i32;
 /// The byte offset from a backing's first value to its `u32` count of other values
 /// (`Header::others`), which native code reads at entry, and sets to `OTHERS_UNKNOWN` where
 /// it may store uncounted values.
-pub(crate) const OTHERS_FROM_VALUES: i32 = (std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, others)) as i32 - VALUES_OFFSET as i32;
+pub const OTHERS_FROM_VALUES: i32 = (std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, others)) as i32 - VALUES_OFFSET as i32;
 
 /// The header every empty backing shares: never written, never freed.
 static EMPTY: Header = Header {
@@ -129,10 +129,10 @@ pub(crate) use crate::staged::encodings::NARROW_LEN;
 /// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt. Native readers
 /// miss on it with the narrow flag (`ENCODED_LEN`), and only `QUENCH_DEV=double-elements`
 /// makes one until compiled tiers guard it.
-pub(crate) use crate::staged::encodings::DOUBLE_LEN;
+pub use crate::staged::encodings::DOUBLE_LEN;
 
 /// Either flag of a backing whose values are not 8-byte `Value`s in place.
-pub(crate) use crate::staged::encodings::ENCODED_LEN;
+pub use crate::staged::encodings::ENCODED_LEN;
 
 /// Whether backings may take the double kind (`DOUBLE_LEN`): in production unless
 /// `QUENCH_DEV=no-double-elements`; in a test only where it asks (`TEST_DOUBLES`), as tests
@@ -188,7 +188,7 @@ const MIN_GROWN_CAPACITY: usize = 4;
 
 /// Packed to four bytes: an array record (`ArrayObject`) holds it in its 4-aligned payload word.
 #[repr(C, packed(4))]
-pub(crate) struct ArrayElements {
+pub struct ArrayElements {
     header: NonNull<Header>,
 }
 
@@ -212,7 +212,7 @@ const _: () = assert!(NATIVE_HEADER_VALUES_OFFSET >= size_of::<Header>());
 /// An `ArrayElements` that no other array shares (`ArrayElements::make_mut`): the only view
 /// through which values change.
 #[repr(transparent)]
-pub(crate) struct UniqueElements(ArrayElements);
+pub struct UniqueElements(ArrayElements);
 
 impl ArrayElements {
     /// No values, in the shared empty header.
@@ -445,7 +445,7 @@ impl ArrayElements {
     }
 
     #[inline(always)]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         (self.header().len & !ENCODED_LEN) as usize
     }
 
@@ -462,7 +462,7 @@ impl ArrayElements {
 
     /// Whether this backing holds raw doubles (`DOUBLE_LEN`).
     #[inline(always)]
-    pub(crate) fn is_double(&self) -> bool {
+    pub fn is_double(&self) -> bool {
         self.header().len & DOUBLE_LEN != 0
     }
 
@@ -475,7 +475,7 @@ impl ArrayElements {
     /// A double backing's words, as doubles (holes are `Value::DELETED`'s NaN word); `None`
     /// for any other backing.
     #[inline]
-    pub(crate) fn double_values(&self) -> Option<&[f64]> {
+    pub fn double_values(&self) -> Option<&[f64]> {
         // SAFETY: a double backing's first `len` words are initialized f64 bits.
         self.is_double().then(|| unsafe { std::slice::from_raw_parts(self.double_words().cast::<f64>(), self.len()) })
     }
@@ -510,7 +510,7 @@ impl ArrayElements {
 
     /// The value at `index`, or `None` past the length.
     #[inline(always)]
-    pub(crate) fn get(&self, index: usize) -> Option<Value> {
+    pub fn get(&self, index: usize) -> Option<Value> {
         (index < self.len()).then(|| self.read(index))
     }
 
@@ -521,13 +521,13 @@ impl ArrayElements {
 
     /// The values in order.
     #[inline]
-    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + Clone + '_ {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + Clone + '_ {
         (0..self.len()).map(move |index| self.read(index))
     }
 
     /// The values of `range` in order.
     #[inline]
-    pub(crate) fn range(&self, range: std::ops::Range<usize>) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + '_ {
+    pub fn range(&self, range: std::ops::Range<usize>) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + '_ {
         assert!(range.start <= range.end && range.end <= self.len(), "array range out of bounds");
         range.map(move |index| self.read(index))
     }
@@ -538,7 +538,7 @@ impl ArrayElements {
 
     /// The values of a wide backing as a slice; `None` for a narrow one.
     #[inline(always)]
-    pub(crate) fn wide_values(&self) -> Option<&[Value]> {
+    pub fn wide_values(&self) -> Option<&[Value]> {
         // SAFETY: the first `len` values of a wide backing are initialized.
         (!self.is_encoded()).then(|| unsafe { std::slice::from_raw_parts(self.values(), self.len()) })
     }
@@ -554,13 +554,13 @@ impl ArrayElements {
 
     /// `values_cow`.
     #[inline]
-    pub(crate) fn as_slice(&self) -> std::borrow::Cow<'_, [Value]> {
+    pub fn as_slice(&self) -> std::borrow::Cow<'_, [Value]> {
         self.values_cow()
     }
 
     /// The values as a slice: borrowed from a wide backing, decoded from a narrow one.
     #[inline]
-    pub(crate) fn values_cow(&self) -> std::borrow::Cow<'_, [Value]> {
+    pub fn values_cow(&self) -> std::borrow::Cow<'_, [Value]> {
         if self.is_encoded() {
             std::borrow::Cow::Owned(self.to_vec())
         } else {
@@ -612,7 +612,7 @@ impl ArrayElements {
     }
 
     #[inline(always)]
-    pub(crate) fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         (self.header().capacity & !(BIASED | KEEP_WIDE)) as usize
     }
 
@@ -670,7 +670,7 @@ impl ArrayElements {
     }
 
     /// The owners of this backing; zero for the shared empty one and young runs.
-    #[inline] pub(crate) fn owner_count(&self) -> usize {
+    #[inline] pub fn owner_count(&self) -> usize {
         self.header().owners as usize
     }
 
@@ -843,7 +843,7 @@ impl ArrayElements {
     /// Room for `additional` more words in a double backing this array alone owns, grown as
     /// `UniqueElements::reserve` grows: the flag and the hole count stay, as a native
     /// append into the room then needs (`Vm::reserve_native_array_append`).
-    pub(crate) fn reserve_double(&mut self, additional: usize) {
+    pub fn reserve_double(&mut self, additional: usize) {
         assert!(self.is_double() && self.header().owners == 1, "double room in a backing of its own");
         let required = self.len().checked_add(additional).expect("array backing overflow");
         if required > self.capacity() {
@@ -1117,7 +1117,7 @@ impl UniqueElements {
 
     /// The first value, for native code that writes the backing and keeps its count of
     /// other values (`OTHERS_FROM_VALUES`).
-    pub(crate) fn as_mut_ptr(&mut self) -> *mut Value {
+    pub fn as_mut_ptr(&mut self) -> *mut Value {
         self.0.values()
     }
 
@@ -1132,7 +1132,7 @@ impl UniqueElements {
     /// Room for `additional` more values, growing by half (`GrowthPolicy::Half`). Inline: a backing with
     /// room, the common append, tests its capacity alone.
     #[inline(always)]
-    pub(crate) fn reserve(&mut self, additional: usize) {
+    pub fn reserve(&mut self, additional: usize) {
         let required = self.0.len().checked_add(additional).expect("array backing overflow");
         if required > self.0.capacity() {
             self.grow_for(required);
@@ -1266,7 +1266,7 @@ impl UniqueElements {
         self.set_len(new_len);
     }
 
-    pub(crate) fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         self.0.capacity()
     }
 }

@@ -119,7 +119,7 @@ impl Vm {
     }
 
     /// `for_in_state` for the lane's `ForInStart` over an object the memo lists.
-    pub(in crate::vm) fn for_in_state_in_lane(&mut self, object: Value, keys: Value) -> Value {
+    pub fn for_in_state_in_lane(&mut self, object: Value, keys: Value) -> Value {
         self.for_in_state(object, keys)
     }
 
@@ -190,7 +190,7 @@ impl Vm {
     /// where each key needs its enumerability checked (`for_in_next`), which may reach a
     /// proxy's traps.
     #[inline(always)]
-    pub(in crate::vm) fn for_in_step_listed(&mut self, state: Value) -> Option<Option<Value>> {
+    pub fn for_in_step_listed(&mut self, state: Value) -> Option<Option<Value>> {
         if let Some(key) = self.for_in_staged_step(state) {
             return Some(Some(key));
         }
@@ -294,7 +294,7 @@ impl Vm {
     /// The memo's snapshot (`ForInOwnKeys`) for `receiver`: a shape-keyed object of its shape
     /// whose prototype is the one listed, with the chain from it still holding its cell, in the
     /// same epoch. None of the prototypes has an enumerable key then, as when listed.
-    pub(in crate::vm) fn listed_for_in_keys(&self, receiver: Value) -> Option<Value> {
+    pub fn listed_for_in_keys(&self, receiver: Value) -> Option<Value> {
         let listed = self.for_in.own_keys.as_ref()?;
         let data = self.shape_keyed_object(receiver)?;
         let keys = listed.keys(data.shape(), self.heap.collection_epoch())?;
@@ -479,7 +479,7 @@ impl Vm {
     /// atom as a named read is, through the (shape, key) proofs (`plain_named_load`, which
     /// refuses index atoms). `None` for any other key, or a read those decline.
     #[inline(always)]
-    pub(in crate::vm) fn plain_string_keyed_get(&mut self, base: Value, key: Value) -> Option<Value> {
+    pub fn plain_string_keyed_get(&mut self, base: Value, key: Value) -> Option<Value> {
         if let Some(value) = self.enumerated_key_get(base, key) {
             return Some(value);
         }

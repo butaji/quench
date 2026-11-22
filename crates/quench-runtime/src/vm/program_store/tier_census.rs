@@ -98,7 +98,7 @@ impl ProgramStore {
                 }
             }
         }
-        let (regions, instructions, entries) = super::super::compiled::base_region::census();
+        let (regions, instructions, entries) = crate::vm::engine_calls::census();
         census.set(Tier::BjitRegion, Row { units: regions, entries, instructions });
         census
     }

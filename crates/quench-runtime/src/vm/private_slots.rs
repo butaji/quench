@@ -33,7 +33,7 @@ fn private_brand_key(brand: PrivateBrand) -> PropertyKey {
 impl Vm {
     /// The slot of `object`'s private field `brand`.
     #[inline]
-    pub(super) fn private_field_slot(&self, object: Value, brand: PrivateBrand) -> Option<usize> {
+    pub fn private_field_slot(&self, object: Value, brand: PrivateBrand) -> Option<usize> {
         let data = self.object_data(object)?;
         self.property_shape_slot(data.shape(), private_field_key(brand))
     }
@@ -41,14 +41,14 @@ impl Vm {
     /// `object`'s private field `brand`; `None` for an object without one (a private
     /// method's or accessor's brand included).
     #[inline]
-    pub(super) fn private_field(&self, object: Value, brand: PrivateBrand) -> Option<Value> {
+    pub fn private_field(&self, object: Value, brand: PrivateBrand) -> Option<Value> {
         let data = self.object_data(object)?;
         let slot = self.property_shape_slot(data.shape(), private_field_key(brand))?;
         self.heap.property_get(data, slot)
     }
 
     /// Whether `object` carries private name `brand`, a field or a method's or accessor's.
-    pub(super) fn has_private_name(&self, object: Value, brand: PrivateBrand) -> bool {
+    pub fn has_private_name(&self, object: Value, brand: PrivateBrand) -> bool {
         self.object_data(object).is_some_and(|data| {
             self.property_shape_slot(data.shape(), private_field_key(brand)).is_some()
                 || self.property_shape_slot(data.shape(), private_brand_key(brand)).is_some()
@@ -97,7 +97,7 @@ impl Vm {
     /// the brand (`Vm::site_private_brand`) and the shape's slot, recorded for the site. `None`
     /// for an object without the field, a private method's or accessor's brand included.
     #[inline(always)]
-    pub(super) fn site_private_field_slot(
+    pub fn site_private_field_slot(
         &mut self,
         code: &ResidualProgram,
         site: usize,
@@ -139,7 +139,7 @@ impl Vm {
 
     /// `site_private_field_slot`'s value.
     #[inline(always)]
-    pub(super) fn site_private_field(
+    pub fn site_private_field(
         &mut self,
         code: &ResidualProgram,
         site: usize,
@@ -153,14 +153,14 @@ impl Vm {
 
     /// Whether a site may record `shape` for a private slot: a shape no edit in place
     /// changes, so its slots stay.
-    pub(super) fn private_shape_cacheable(&self, shape: u32) -> bool {
+    pub fn private_shape_cacheable(&self, shape: u32) -> bool {
         !self.shape_is_dictionary(shape) && !self.owned_shape_edits_in_place(shape)
     }
 
     /// The own-field entry (`FieldCache::own`) of the private field site `site` read last
     /// under the home `environment` finds: a call memo's step (`MemoLeaf`), which holds while
     /// the memo's callee, and so its environment and home, does.
-    pub(super) fn site_private_field_entry(&self, site: usize, environment: Value) -> Option<FieldCache> {
+    pub fn site_private_field_entry(&self, site: usize, environment: Value) -> Option<FieldCache> {
         let (shape, slot) = self.private_site_homes.field_entry(site, environment)?;
         Some(FieldCache::own(shape, u16::try_from(slot).ok()?))
     }

@@ -6,7 +6,7 @@
 /// folds it as a constant only under a code dependency, whose change retires the code
 /// instead of a guard at each use (AGENTS.md, Execution laws 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BindingTime {
+pub enum BindingTime {
     Static,
     Location,
     Stable,
@@ -16,7 +16,7 @@ pub(crate) enum BindingTime {
 
 /// Proof obligations are part of IR, not inferred from the selected encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Proof {
+pub enum Proof {
     Static,
     CanonicalValue,
     EntryGuard,
@@ -27,7 +27,7 @@ pub(crate) enum Proof {
 
 /// Which binding times a specializer treats as known (Ershov's division).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Division {
+pub enum Division {
     /// Build-time facts only: static inputs and storage locations. An AOT image
     /// with no frozen facts folds nothing else.
     Offline,
@@ -42,7 +42,7 @@ pub(crate) enum Division {
 }
 
 impl Division {
-    pub(crate) const fn folds(self, time: BindingTime) -> bool {
+    pub const fn folds(self, time: BindingTime) -> bool {
         match time {
             BindingTime::Static | BindingTime::Location => true,
             BindingTime::Stable => matches!(self, Self::Frozen | Self::Online),

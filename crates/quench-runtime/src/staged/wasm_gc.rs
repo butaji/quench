@@ -16,7 +16,7 @@ use crate::wasm::reference::ReferenceTarget;
 /// The aggregate an access names: a struct, whose field validation proved present, or an array,
 /// whose element past the end traps.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Aggregate {
+pub enum Aggregate {
     Struct,
     Array,
 }
@@ -34,7 +34,7 @@ impl Aggregate {
 /// The primitives of a GC heap the rules run on. A reference is its bits, an integer its
 /// zero-extended word and a flag 0 or 1. The rules hold every check, its order and its trap; a
 /// stage answers the primitives only. A primitive a rule names has been checked by the rule first.
-pub(crate) trait WasmGc: MachineStage {
+pub trait WasmGc: MachineStage {
     /// Whether `struct_slot` answers every struct read, validation having proved each field present, so
     /// the rule skips the missing-field test of a struct read. Stages keep the test by default.
     const PROVEN_STRUCT_READS: bool = false;
@@ -131,7 +131,7 @@ fn locate<S: WasmGc>(
 /// sign-extends the packed bits (shifted to the top and back down arithmetically); the others return
 /// the stored word. `offset` is a struct field's static payload offset where the lowering carried it.
 #[inline(always)]
-pub(crate) fn field_read<S: WasmGc>(
+pub fn field_read<S: WasmGc>(
     stage: &mut S,
     aggregate: Aggregate,
     reference: S::Word,
@@ -153,7 +153,7 @@ pub(crate) fn field_read<S: WasmGc>(
 
 /// The field `index` of `reference` as a `struct.set` or `array.set` writes it (`offset` as `field_read`).
 #[inline(always)]
-pub(crate) fn field_write<S: WasmGc>(
+pub fn field_write<S: WasmGc>(
     stage: &mut S,
     aggregate: Aggregate,
     reference: S::Word,
@@ -170,7 +170,7 @@ pub(crate) fn field_write<S: WasmGc>(
 /// The length of the array `reference`: a null traps, and a reference that is no array traps
 /// past the end, like an element access does.
 #[inline(always)]
-pub(crate) fn array_length<S: WasmGc>(stage: &mut S, reference: S::Word) -> Result<S::Word, S::Exit> {
+pub fn array_length<S: WasmGc>(stage: &mut S, reference: S::Word) -> Result<S::Word, S::Exit> {
     let null = stage.is_null(reference);
     stage.trap_when(null, WasmTrap::NullArrayReference)?;
     let object = stage.is_object(reference);
@@ -192,7 +192,7 @@ fn array_operand<S: WasmGc>(stage: &mut S, reference: S::Word) -> Result<(), S::
 /// `array.fill`: `extent` elements of `destination` from `output` become `value`. The destination
 /// must be mutable, then its range must lie within it.
 #[inline(always)]
-pub(crate) fn array_fill<S: WasmGc>(
+pub fn array_fill<S: WasmGc>(
     stage: &mut S,
     destination: S::Word,
     output: S::Word,
@@ -213,7 +213,7 @@ pub(crate) fn array_fill<S: WasmGc>(
 /// arrays are checked for null and kind, then the destination's mutability and the storage
 /// compatibility; both complete ranges, including empty ones, are checked before any write.
 #[inline(always)]
-pub(crate) fn array_copy<S: WasmGc>(
+pub fn array_copy<S: WasmGc>(
     stage: &mut S,
     destination: S::Word,
     output: S::Word,
@@ -238,7 +238,7 @@ pub(crate) fn array_copy<S: WasmGc>(
 
 /// `ref.as_non_null`: the reference, or `trap` where it is null.
 #[inline(always)]
-pub(crate) fn non_null<S: WasmGc>(stage: &mut S, reference: S::Word, trap: WasmTrap) -> Result<S::Word, S::Exit> {
+pub fn non_null<S: WasmGc>(stage: &mut S, reference: S::Word, trap: WasmTrap) -> Result<S::Word, S::Exit> {
     let null = stage.is_null(reference);
     stage.trap_when(null, trap)?;
     Ok(reference)
@@ -246,7 +246,7 @@ pub(crate) fn non_null<S: WasmGc>(stage: &mut S, reference: S::Word, trap: WasmT
 
 /// `ref.cast`: the reference, or a cast failure where `target` does not admit it.
 #[inline(always)]
-pub(crate) fn reference_cast<S: WasmGc>(
+pub fn reference_cast<S: WasmGc>(
     stage: &mut S,
     reference: S::Word,
     target: ReferenceTarget,
@@ -261,7 +261,7 @@ pub(crate) fn reference_cast<S: WasmGc>(
 /// What a Wasm GC instruction is, for the tiers (`Step::Gc`): the groups whose rules and
 /// primitives differ. The call targets (`ref.func`, an indirect target) are `Step::Call`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum GcOp {
+pub enum GcOp {
     /// `struct.get[_s|_u]`, `struct.set`, `array.get[_s|_u]`, `array.set`: `field_read` or
     /// `field_write`.
     Field,
@@ -283,7 +283,7 @@ pub(crate) enum GcOp {
 /// The array constructor's initial contents: `array.new` repeats a value, `array.new_default`
 /// fills defaults, `array.new_fixed` takes a window of values.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ArrayConstruction {
+pub enum ArrayConstruction {
     Repeated,
     Default,
     Fixed,
@@ -292,7 +292,7 @@ pub(crate) enum ArrayConstruction {
 /// What a Wasm GC value opcode does, with the fields its rule and operands need (`GcStep::of`).
 /// Each step's group is the coarse `GcOp` the tiers match (`GcStep::group`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum GcStep {
+pub enum GcStep {
     /// `struct.get`, `struct.get_s`, `struct.get_u`: `signed` is `None` for a plain read, else the
     /// sign of a packed field's read.
     StructGet { signed: Option<bool> },
@@ -337,9 +337,11 @@ pub(crate) enum GcStep {
 /// `GcStep::op`'s reverse match, `wasm_gc_names` the bare names the lane's handler table and
 /// `wasm_gc_value_ops!` apply their macro to. The list is written
 /// here once; nothing else names these opcodes as a set.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_table {
     ($projector:ident $extra:ident) => {
-        $crate::staged::wasm_gc::$projector! {
+        $crate::$projector! {
             $extra ;
             WasmStructGet => Some(GcStep::StructGet { signed: None }),
             WasmStructGetS => Some(GcStep::StructGet { signed: Some(true) }),
@@ -382,9 +384,10 @@ macro_rules! wasm_gc_table {
         }
     };
 }
-pub(crate) use wasm_gc_table;
 
 /// Projects `wasm_gc_table!`'s entries to the match of `GcStep::of`, over the opcode `$op`.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_step_of {
     ($op:ident ; $($name:ident => $step:expr,)*) => {
         match $op {
@@ -393,10 +396,11 @@ macro_rules! wasm_gc_step_of {
         }
     };
 }
-pub(crate) use wasm_gc_step_of;
 
 /// Projects `wasm_gc_table!`'s entries to the reverse map `GcStep::op`: the opcode whose entry is
 /// the step `$step`. Each value step has one entry, so the first match is the one.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_op_of {
     ($step:ident ; $($name:ident => $entry:expr,)*) => {
         {
@@ -405,24 +409,25 @@ macro_rules! wasm_gc_op_of {
         }
     };
 }
-pub(crate) use wasm_gc_op_of;
 
 /// Projects `wasm_gc_table!`'s entries to the bare opcode names, applying `$then!` to them.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_names {
     ($then:ident ; $($name:ident => $group:expr,)*) => {
         $then!($($name)*)
     };
 }
-pub(crate) use wasm_gc_names;
 
 /// Applies `$then!` to the names of every Wasm GC value opcode: the one list (`wasm_gc_table!`)
 /// that `GcOp::of` and the lane's handlers both derive from.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! wasm_gc_value_ops {
     ($then:ident) => {
-        $crate::staged::wasm_gc::wasm_gc_table!(wasm_gc_names $then)
+        $crate::wasm_gc_table!(wasm_gc_names $then)
     };
 }
-pub(crate) use wasm_gc_value_ops;
 
 /// The access of a plain or packed read: `signed` as `GcStep::StructGet` and `ArrayGet` carry it.
 const fn read_access(signed: Option<bool>) -> GcFieldAccess {
@@ -445,7 +450,7 @@ const fn read_signed(access: GcFieldAccess) -> Option<bool> {
 
 impl GcStep {
     /// The step of `op`, `None` for an opcode that is no GC value operation (a call target is none).
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         wasm_gc_table!(wasm_gc_step_of op)
     }
 
@@ -488,7 +493,7 @@ impl GcStep {
 
     /// The aggregate and the access of a field step (`struct.get`/`set`, `array.get`/`set`), `None`
     /// for any other step.
-    pub(crate) const fn field(self) -> Option<(Aggregate, GcFieldAccess)> {
+    pub const fn field(self) -> Option<(Aggregate, GcFieldAccess)> {
         Some(match self {
             Self::StructGet { signed } => (Aggregate::Struct, read_access(signed)),
             Self::StructSet => (Aggregate::Struct, GcFieldAccess::Write),

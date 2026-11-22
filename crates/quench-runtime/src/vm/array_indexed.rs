@@ -309,7 +309,7 @@ impl Vm {
     /// its own dense storage (`store_fresh_array_element`): a map's over a dense receiver,
     /// which bounds its length, or a filter's. `None` where the species makes the result.
     #[inline(always)]
-    pub(super) fn fresh_array_iteration(
+    pub fn fresh_array_iteration(
         &mut self,
         native: Native,
         this: Value,
@@ -332,7 +332,7 @@ impl Vm {
     /// The loop of an array callback method from `iteration`'s next element to its end,
     /// with a callback prepared for its calls (`Vm::with_prepared_callback`): the native's
     /// own loop, and the continuation of one a lane began (`ArrayIteration`).
-    pub(super) fn array_iteration_run(
+    pub fn array_iteration_run(
         &mut self,
         p: &ResidualProgram,
         iteration: &mut ArrayIteration,
@@ -439,7 +439,7 @@ impl Vm {
     /// The effect of a callback's `mapped` result for `value` at `index` of `iteration`'s step
     /// (`staged::array_iteration::apply`), which advances a filter's kept count.
     #[inline(always)]
-    pub(super) fn iteration_effect(&self, iteration: &mut ArrayIteration, index: usize, value: Value, mapped: Value) -> Effect {
+    pub fn iteration_effect(&self, iteration: &mut ArrayIteration, index: usize, value: Value, mapped: Value) -> Effect {
         step_rules::apply(Kind::of(iteration.native), index, value, mapped, &mut iteration.kept, || self.truthy(mapped))
     }
 
@@ -447,7 +447,7 @@ impl Vm {
     /// (`fresh_array_iteration`): its store and every answer run no guest code and raise
     /// nothing. The answer is the method's value where the step ends it.
     #[inline(always)]
-    pub(super) fn apply_fresh_effect(&mut self, iteration: &mut ArrayIteration, effect: Effect) -> Option<Value> {
+    pub fn apply_fresh_effect(&mut self, iteration: &mut ArrayIteration, effect: Effect) -> Option<Value> {
         match effect {
             Effect::Nothing => None,
             Effect::Store { slot, value } if iteration.native == Native::ArrayMap => {
@@ -468,7 +468,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn array_like_length(
+    pub fn array_like_length(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -503,20 +503,20 @@ impl Vm {
 /// time (`call_array_callback_miss`), and a frame of such a callback, once materialized,
 /// finishes it on the general path (`CallCompletion::ArrayStep`).
 #[derive(Clone, Copy)]
-pub(crate) struct ArrayIteration {
-    pub(super) native: Native,
-    pub(super) receiver: Value,
+pub struct ArrayIteration {
+    pub native: Native,
+    pub receiver: Value,
     pub(super) callback: Value,
     pub(super) this_arg: Value,
     /// A map's or filter's result, a reducer's accumulator, `undefined` for the methods that
     /// make none and for a typed filter, which makes its result at the end.
-    pub(super) result: Value,
+    pub result: Value,
     /// Whether ArrayCreate made the result (`Vm::fresh_array_iteration`).
     pub(super) fresh: bool,
     pub(super) typed_array: bool,
     /// The elements visited, from the end for `findLast*` and `reduceRight`.
-    pub(super) visited: usize,
-    pub(super) length: usize,
+    pub visited: usize,
+    pub length: usize,
     /// The elements a filter kept.
     pub(super) kept: usize,
 }
@@ -537,7 +537,7 @@ impl ArrayIteration {
 
     /// The index of the next element, which it counts as visited; `None` past the last
     /// (`staged::array_iteration::next_index`).
-    pub(super) fn advance(&mut self) -> Option<usize> {
+    pub fn advance(&mut self) -> Option<usize> {
         let (index, visited) = step_rules::next_index(Kind::of(self.native), self.visited, self.length)?;
         self.visited = visited;
         Some(index)
@@ -546,7 +546,7 @@ impl ArrayIteration {
     /// The method's value once every element was visited without a step ending it
     /// (`staged::array_iteration::completion`).
     #[inline(always)]
-    pub(super) fn completion(&self) -> Value {
+    pub fn completion(&self) -> Value {
         match step_rules::completion(Kind::of(self.native), self.result) {
             Answer::Value(value) => value,
             Answer::NotFoundIndex => Value::number(NOT_FOUND),
@@ -559,7 +559,7 @@ impl Kind {
     /// to the staged step semantics, which the native loop and the lane both read. Only the
     /// eleven natives `Native::is_array_callback` names reach an iteration.
     #[inline(always)]
-    pub(crate) fn of(native: Native) -> Self {
+    pub fn of(native: Native) -> Self {
         match native {
             Native::ArrayForEach => Self::ForEach,
             Native::ArrayMap => Self::Map,
@@ -592,7 +592,7 @@ impl ArrayIteration {
 /// (`CallCompletion::ArrayStep`): the loop's state, the element and index that callback was
 /// passed, and roots for the values the iteration reads once its frame returns, which only
 /// the iteration holds.
-pub(crate) struct ArrayStepCall {
+pub struct ArrayStepCall {
     iteration: ArrayIteration,
     element: Value,
     index: usize,
@@ -602,7 +602,7 @@ pub(crate) struct ArrayStepCall {
 impl Vm {
     /// The `ArrayStepCall` of a lane's iteration whose callback, passed `element` at `index`,
     /// becomes a frame.
-    pub(super) fn array_step_call(&mut self, iteration: ArrayIteration, element: Value, index: usize) -> ArrayStepCall {
+    pub fn array_step_call(&mut self, iteration: ArrayIteration, element: Value, index: usize) -> ArrayStepCall {
         let roots = iteration.values(element).map(|value| self.heap.root(value));
         ArrayStepCall { iteration, element, index, roots }
     }

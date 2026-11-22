@@ -14,7 +14,7 @@ impl Vm {
 
     /// The new RegExp object regular expression literal site `site_index` of `p`, the
     /// residual of `program`, evaluates to.
-    pub(in crate::vm) fn regexp_literal_of(
+    pub fn regexp_literal_of(
         &mut self,
         p: &ResidualProgram,
         program: ProgramId,
@@ -151,7 +151,7 @@ impl Vm {
     /// interpreter, a frame's lane run and the b-jit (whose helper step is `Vm::step`), and in
     /// the Cranelift tiers the payload's frame (`lane_allocations::regexp_argument_key`),
     /// which no live frame shares.
-    pub(in crate::vm) fn regexp_literal_argument_of(
+    pub fn regexp_literal_argument_of(
         &mut self,
         p: &ResidualProgram,
         program: ProgramId,

@@ -11,7 +11,8 @@
 #[cfg_attr(stencil_build, path = "machine/rows.rs")]
 mod rows;
 
-pub(crate) use rows::{Binary, Extend, Lane, MachineOperator, Order, Relation, Unary};
+#[allow(unused_imports)]
+pub use rows::{Binary, Extend, Lane, MachineOperator, Order, Relation, Unary};
 
 use super::wasm::Width;
 #[cfg(not(stencil_build))]
@@ -30,14 +31,14 @@ use crate::wasm::integer::{I64BinaryOperator as IntegerBinary, I64UnaryOperator 
 
 /// What every machine has: a word, an integer or float of some `Lane`, or a vector. A comparison's
 /// flag is a word that holds 0 or 1.
-pub(crate) trait Machine {
+pub trait Machine {
     type Word: Copy;
 }
 
 /// The Wasm operator layer of a machine that runs integer, float and conversion operators: what a
 /// stage computes without a trap. The interpreter runs them on machine words (`ConcreteWasm`), a
 /// specializer composes them from its primitives (`Emitter`, `vm/compiled/emit_machine/scalar.rs`).
-pub(crate) trait MachineStage: Machine {
+pub trait MachineStage: Machine {
     /// What a trap leaves with: the trap for the interpreter; nothing for a specializer, whose
     /// code branches to the trap's exit.
     type Exit;
@@ -84,7 +85,7 @@ pub(crate) trait MachineStage: Machine {
 }
 
 /// The scalar primitives: constants, arithmetic, comparison, select and conversion by op row.
-pub(crate) trait MachineScalar: Machine {
+pub trait MachineScalar: Machine {
     /// The lane `value` holds.
     fn raw_lane(&mut self, value: Self::Word) -> Lane;
     /// The `lane` constant whose bits are `bits`; a float lane reads them as its IEEE bits.
@@ -110,7 +111,7 @@ pub(crate) trait MachineScalar: Machine {
 // The stencil build runs the operator layer only; access, flow and vectors are the backends'.
 #[cfg(not(stencil_build))]
 /// and returns words. Open to extension: the rules over it name no layout.
-pub(crate) trait MachineAccess: MachineScalar {
+pub trait MachineAccess: MachineScalar {
     /// What an access carries beside its address: its alias region and whether it may trap.
     type Flags: Copy;
     /// The `lane` `offset` bytes from `base`.
@@ -175,7 +176,7 @@ pub(crate) trait MachineAccess: MachineScalar {
 // The stencil build runs the operator layer only; access, flow and vectors are the backends'.
 #[cfg(not(stencil_build))]
 /// parameters.
-pub(crate) trait MachineFlow: MachineScalar {
+pub trait MachineFlow: MachineScalar {
     type Block: Copy;
     /// A block with no parameters, not yet entered.
     fn new_block(&mut self) -> Self::Block;
@@ -208,7 +209,7 @@ pub(crate) trait MachineFlow: MachineScalar {
 
 /// Mutable locals of an emitting machine: a value a block redefines, read where control joins.
 #[cfg(not(stencil_build))]
-pub(crate) trait MachineVariables: Machine {
+pub trait MachineVariables: Machine {
     type Variable: Copy;
     fn declare_variable(&mut self, lane: Lane) -> Self::Variable;
     fn define_variable(&mut self, variable: Self::Variable, value: Self::Word);
@@ -220,7 +221,7 @@ pub(crate) trait MachineVariables: Machine {
 /// A machine that continues in the code it calls, so the call is the end of the function: a tail
 /// call of `target`, or of the code at an address under a `signature`, on `arguments`.
 #[cfg(all(feature = "jit", not(stencil_build)))]
-pub(crate) trait MachineTail: MachineAccess + MachineFlow {
+pub trait MachineTail: MachineAccess + MachineFlow {
     fn tail_call(&mut self, target: Self::Function, arguments: &[Self::Word]);
     fn tail_call_indirect(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]);
 }
@@ -230,7 +231,7 @@ pub(crate) trait MachineTail: MachineAccess + MachineFlow {
 // The stencil build runs the operator layer only; access, flow and vectors are the backends'.
 #[cfg(not(stencil_build))]
 /// vector is a `Word` of the machine, loaded and stored as the `Lane::V128`.
-pub(crate) trait MachineVector: MachineAccess {
+pub trait MachineVector: MachineAccess {
     /// The row's operation on `left` (and `right`, a vector or a scalar shift count).
     fn operation_in_lane(&mut self, native: Native, left: Self::Word, right: Option<Self::Word>) -> Self::Word;
     /// `value`, a vector, with the lane shape `shape`: the same bits.

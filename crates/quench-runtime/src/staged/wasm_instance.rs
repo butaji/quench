@@ -14,7 +14,7 @@ use std::ops::Range;
 /// build does not decode instructions, so it has none of them.
 #[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Instance {
+pub enum Instance {
     /// `a = b`.
     Move,
     /// `a = constant[index]`.
@@ -37,13 +37,13 @@ pub(crate) enum Instance {
 /// keeps its locals after its registers, in the same register file. A slot past the file's end
 /// saturates to the last register, which no state holds, so its use is rejected.
 #[cfg(not(stencil_build))]
-pub(crate) fn local_register(registers: u16, slot: u32) -> u16 {
+pub fn local_register(registers: u16, slot: u32) -> u16 {
     u16::try_from(slot).map_or(u16::MAX, |slot| registers.saturating_add(slot))
 }
 
 #[cfg(not(stencil_build))]
 impl Instance {
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::Move => Some(Self::Move),
             Class::LoadConst => Some(Self::Constant),
@@ -58,7 +58,7 @@ impl Instance {
     }
 
     /// The registers a constant operation defines: one, or a window.
-    pub(crate) fn constant_registers(self, instruction: WideInstruction) -> Option<Range<u16>> {
+    pub fn constant_registers(self, instruction: WideInstruction) -> Option<Range<u16>> {
         match self {
             Self::Constant => Some(instruction.a()..instruction.a() + 1),
             Self::Fill => {
@@ -73,7 +73,7 @@ impl Instance {
 /// How a global's native slot (`Cell::WasmGlobal::bits`) holds its value, decided once from the
 /// global's type: the static operand of every access. A slot is one raw word.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Storage {
+pub enum Storage {
     /// An i32 or f32: the payload in the low 32 bits.
     Bits32,
     /// An i64 or f64: the payload whole.
@@ -84,7 +84,7 @@ pub(crate) enum Storage {
 }
 
 impl Storage {
-    pub(crate) const fn of(ty: WasmType) -> Self {
+    pub const fn of(ty: WasmType) -> Self {
         match ty {
             WasmType::I32 | WasmType::F32 => Self::Bits32,
             WasmType::I64 | WasmType::F64 => Self::Bits64,
@@ -103,7 +103,7 @@ impl Storage {
 
 /// The state of the instance a function runs in. A word is a global's raw slot as the stage's
 /// registers hold it: a 32-bit payload zero-extended, a 64-bit payload whole, a handle's bits.
-pub(crate) trait WasmInstance: WasmStage {
+pub trait WasmInstance: WasmStage {
     /// The word of the global bound at environment slot `slot`.
     fn global_load(&mut self, slot: u32, storage: Storage) -> Self::Word;
     fn global_store(&mut self, slot: u32, storage: Storage, value: Self::Word);
@@ -112,13 +112,13 @@ pub(crate) trait WasmInstance: WasmStage {
 /// `global.get`: the word of the global bound at `slot`, as its storage holds it. Every tier's
 /// global read is this rule over its own stage.
 #[inline(always)]
-pub(crate) fn global_get<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage) -> S::Word {
+pub fn global_get<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage) -> S::Word {
     stage.global_load(slot, storage)
 }
 
 /// `global.set`: `value` into the global bound at `slot`, narrowed by its storage.
 #[inline(always)]
-pub(crate) fn global_set<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage, value: S::Word) {
+pub fn global_set<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage, value: S::Word) {
     stage.global_store(slot, storage, value);
 }
 
@@ -134,6 +134,6 @@ pub(crate) trait WasmBindings: WasmStage {
 /// is `None`, which the caller leaves for the general path to raise.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn binding_get<S: WasmBindings>(stage: &mut S, slot: u32) -> Option<S::Word> {
+pub fn binding_get<S: WasmBindings>(stage: &mut S, slot: u32) -> Option<S::Word> {
     stage.binding_word(slot)
 }

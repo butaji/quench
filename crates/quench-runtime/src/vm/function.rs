@@ -56,7 +56,7 @@ impl Vm {
     /// The source text `Function.prototype.toString` reports for `function`: one recorded for
     /// it (a dynamic function's synthesized source), otherwise its definition's range of the
     /// program source, made a string on first request and shared by every closure of it.
-    pub(super) fn function_source_value(&mut self, function: Value) -> Option<Value> {
+    pub fn function_source_value(&mut self, function: Value) -> Option<Value> {
         let source_atom = self.intern_atom("\0quench:function-source");
         if let Some(source) = self.own_property(function, source_atom) {
             return Some(source);
@@ -242,7 +242,7 @@ impl Vm {
         })
     }
 
-    pub(super) fn bind_function(
+    pub fn bind_function(
         &mut self,
         p: &ResidualProgram,
         target: Value,
@@ -297,7 +297,7 @@ impl Vm {
     /// The own data property `atom` of an ordinary object whose shape holds every own
     /// property's attributes and no getter (`Vm::plain_function_length`'s test): its value,
     /// read observing nothing. `None` for an accessor, an absent name or any other object.
-    pub(super) fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
+    pub fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
         let data = self.object_data(object)?;
         if data.has_side_descriptors() || self.shapes[data.shape() as usize].facts.slot_getters() {
             return None;
@@ -386,7 +386,7 @@ impl Vm {
     /// With `args` the caller owns (`SmallVec`), as an applied list's copied elements, a
     /// bound function's bound arguments lead the values it passes on (10.4.1.1); borrowed
     /// arguments (`&[Value]`) leave such a call to the original call.
-    pub(super) fn forwarded_call<A: ForwardedArgs>(
+    pub fn forwarded_call<A: ForwardedArgs>(
         &self,
         mut callee: Value,
         mut receiver: Value,
@@ -446,7 +446,7 @@ impl Vm {
     /// `this` and the list of bound arguments (`undefined` for none), which `bind` made and no
     /// script can reach, so its elements never change. A call site may keep the words for a
     /// bound function it calls again (`LaneStack::bound_call`).
-    pub(super) fn bound_function_words(&self, env: Value) -> Option<(Value, Value, Value)> {
+    pub fn bound_function_words(&self, env: Value) -> Option<(Value, Value, Value)> {
         let data = self.object_data(env)?;
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
@@ -511,14 +511,14 @@ fn native_function_source(name: &str) -> String {
 
 /// The call a forwarding call makes (`Vm::forwarded_call`), with the facts the walk read on
 /// the way, so no caller reads them again.
-pub(super) struct Forwarded<A> {
-    pub(super) callee: Value,
-    pub(super) receiver: Value,
-    pub(super) args: A,
+pub struct Forwarded<A> {
+    pub callee: Value,
+    pub receiver: Value,
+    pub args: A,
     /// The callee's kind; `None` for a callee that is no function.
-    pub(super) kind: Option<FunctionKind>,
+    pub kind: Option<FunctionKind>,
     /// Whether the outermost layer was `Function.prototype.call`.
-    pub(super) through_call: bool,
+    pub through_call: bool,
 }
 
 /// The arguments a forwarded call passes on (`Vm::forwarded_call`).
@@ -530,6 +530,7 @@ pub(super) trait ForwardedArgs {
 }
 
 impl ForwardedArgs for &[Value] {
+    #[inline]
     fn shift(&mut self) -> Value {
         let first = self.first().copied().unwrap_or(Value::UNDEFINED);
         *self = self.get(1..).unwrap_or_default();
@@ -543,14 +544,14 @@ impl ForwardedArgs for &[Value] {
 /// A forwarded call's arguments read where the caller's window holds them until a bound
 /// prefix must lead them, then filled once, prefix then window, into an owned list: no copy
 /// of the window before the walk, and none moved again by the prepend.
-pub(super) enum WindowArgs<'a, const N: usize> {
+pub enum WindowArgs<'a, const N: usize> {
     Window(&'a [Value]),
     Owned(smallvec::SmallVec<[Value; N]>),
 }
 
 impl<const N: usize> WindowArgs<'_, N> {
     /// The values as an owned list, copied out of the window where they still lie there.
-    pub(super) fn into_owned(self) -> smallvec::SmallVec<[Value; N]> {
+    pub fn into_owned(self) -> smallvec::SmallVec<[Value; N]> {
         match self {
             Self::Window(window) => smallvec::SmallVec::from_slice(window),
             Self::Owned(values) => values,

@@ -6,7 +6,7 @@ use super::super::{Atom, JsError, PropertyKey, ResidualProgram, Value, Vm};
 use std::ops::ControlFlow;
 
 /// Where `Vm::ordinary_chain_read` stopped.
-pub(in crate::vm) enum ChainRead {
+pub enum ChainRead {
     /// The key's data value.
     Value(Value),
     /// No link holds the key.
@@ -71,7 +71,7 @@ impl Vm {
     /// answer an ordinary receiver's own, inherited or absent key in one probe; a miss walks
     /// once, recording what the walk proves (`Vm::prove_load`). Keys no proof covers, and
     /// receivers no proof starts from, take the plain walk.
-    pub(in crate::vm) fn ordinary_chain_read_proved(&mut self, object: Value, atom: Atom) -> Option<ChainRead> {
+    pub fn ordinary_chain_read_proved(&mut self, object: Value, atom: Atom) -> Option<ChainRead> {
         use super::super::symbol_load_proof::SymbolLoadAnswer;
         if !self.plain_named_key(atom) {
             return self.ordinary_chain_read(object, atom);
@@ -140,7 +140,7 @@ impl Vm {
     /// where shapes alone decide it: an ordinary record's chain, or an array's `length` and
     /// its non-index names. `None` for any other target or key, and wherever the walk meets an
     /// exotic link.
-    pub(in crate::vm) fn reflect_chain_read(&mut self, target: Value, key: Value) -> Option<ChainRead> {
+    pub fn reflect_chain_read(&mut self, target: Value, key: Value) -> Option<ChainRead> {
         // An ordinary record first, the common target (a proxy's): no array probe.
         if self.heap.object_record(target).is_some() {
             let atom = self.lookup_string_atom(key)?;

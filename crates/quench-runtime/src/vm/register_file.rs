@@ -8,13 +8,13 @@ use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::value::Value;
 
 /// The words in front of register 0: captures, environment, receiver (`r[-3]`, `r[-2]`, `r[-1]`).
-pub(in crate::vm) const FRAME_CONTEXT: usize = crate::staged::frame::CONTEXT_WORDS;
+pub const FRAME_CONTEXT: usize = crate::staged::frame::CONTEXT_WORDS;
 /// The words a new file holds room for past its context: a typical frame's registers and window plus
-/// `dispatch_fast::INLINED_WINDOW_ROOM`.
-const SPARE_WORDS: usize = 32 + crate::vm::dispatch_fast::INLINED_WINDOW_ROOM;
+/// `crate::vm::engine_types::INLINED_WINDOW_ROOM`.
+const SPARE_WORDS: usize = 32 + crate::vm::engine_types::INLINED_WINDOW_ROOM;
 
 #[derive(Clone)]
-pub(in crate::vm) struct RegisterFile {
+pub struct RegisterFile {
     /// The context words, then the registers.
     words: Vec<Value>,
 }
@@ -41,7 +41,7 @@ impl RegisterFile {
 
     #[inline(always)] pub(in crate::vm) fn clear(&mut self) { self.words.truncate(FRAME_CONTEXT); }
     #[inline(always)] pub(in crate::vm) fn reserve(&mut self, additional: usize) { self.words.reserve(additional); }
-    #[inline(always)] pub(in crate::vm) fn capacity(&self) -> usize { self.words.capacity() - FRAME_CONTEXT }
+    #[inline(always)] pub fn capacity(&self) -> usize { self.words.capacity() - FRAME_CONTEXT }
     #[inline(always)] pub(in crate::vm) fn shrink_to(&mut self, capacity: usize) { self.words.shrink_to(FRAME_CONTEXT + capacity); }
     #[inline(always)] pub(in crate::vm) fn resize(&mut self, len: usize, value: Value) { self.words.resize(FRAME_CONTEXT + len, value); }
     #[inline(always)] pub(in crate::vm) fn extend_from_slice(&mut self, values: &[Value]) { self.words.extend_from_slice(values); }

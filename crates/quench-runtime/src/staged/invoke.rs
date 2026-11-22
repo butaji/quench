@@ -75,24 +75,24 @@ pub(crate) const fn general_call_form(op: Op) -> Option<CallForm> {
 /// The stacks a direct call is admitted to: the callee's entry cell, its window at `top` (its
 /// end at `next`), and the frame below at `shadow`.
 #[derive(Clone, Copy)]
-pub(crate) struct Room<W> {
-    pub(crate) cell: W,
-    pub(crate) top: W,
-    pub(crate) next: W,
-    pub(crate) shadow: W,
+pub struct Room<W> {
+    pub cell: W,
+    pub top: W,
+    pub next: W,
+    pub shadow: W,
 }
 
 /// A callee's entry: its `status` and result `word`, and where a status other than returned goes.
 #[derive(Clone, Copy)]
-pub(crate) struct Entered<W, M> {
-    pub(crate) status: W,
-    pub(crate) word: W,
-    pub(crate) unfinished: M,
+pub struct Entered<W, M> {
+    pub status: W,
+    pub word: W,
+    pub unfinished: M,
 }
 
 /// The call hooks of a frame. Each defaults to a frame with no direct entry, whose every call is
 /// the VM's own.
-pub(crate) trait CallFrame<S: Stage>: Frame<S> {
+pub trait CallFrame<S: Stage>: Frame<S> {
     /// How the call of `site` reaches its callee, by what the frame fixed.
     #[inline(always)]
     fn call_entry(&self, _site: &Invocation) -> CallEntry {
@@ -391,7 +391,7 @@ impl<W, P> Operation<W, P> {
     /// Whether a tier of `facts` lowers the call or return this row is (`Invocation::admits`: a
     /// return's register is one the tier holds, and it completes by status); `None` for any other
     /// row.
-    pub(crate) fn admitted(&self, facts: CallFacts) -> Option<bool> {
+    pub fn admitted(&self, facts: CallFacts) -> Option<bool> {
         match self {
             Self::Call(CallOperation::Site(site)) => Some(site.admits(facts)),
             Self::Return { source } => Some(facts.activates && facts.holds(*source)),

@@ -20,7 +20,7 @@ pub(crate) enum CallOutcome<R> {
 
 /// The callee a reference call names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CallTarget {
+pub enum CallTarget {
     /// A function of the running program and instance, by its index.
     Function(u32),
     /// A host or JavaScript import (a `WasmHost` function).
@@ -31,7 +31,7 @@ pub(crate) enum CallTarget {
 
 /// What a native tier does with a call the lane offers it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum NativeCall {
+pub enum NativeCall {
     /// The tier declines, and the call enters as an activation.
     Declined,
     /// The tier's run left the lane.
@@ -42,7 +42,7 @@ pub(crate) enum NativeCall {
 
 /// The primitives a Wasm call's rules run on: the lane's state, its activations and its native
 /// tiers. Every method is one check or one step the lane takes; the rules decide their order.
-pub(crate) trait WasmActivation: WasmStage {
+pub trait WasmActivation: WasmStage {
     /// Where a call continues in the lane (`Resumed`).
     type Resume;
     /// The activation shape a callee's frame takes, copied out of its view.
@@ -167,7 +167,7 @@ fn enter_activation<S: WasmActivation>(stage: &mut S, function: u32) -> CallOutc
 /// A known call: an activation of `function`, or the call's frame where the lane has no room.
 /// `None` leaves the lane.
 #[inline(always)]
-pub(crate) fn call_known<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::Resume> {
+pub fn call_known<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::Resume> {
     match enter_function(stage, function) {
         CallOutcome::Resume(resumed) => Some(resumed),
         CallOutcome::NoRoom => Some(push_frame(stage)),
@@ -179,7 +179,7 @@ pub(crate) fn call_known<S: WasmActivation>(stage: &mut S, function: u32) -> Opt
 /// instance, or an import), then entered as a known call would be. Any other callee, or no room,
 /// leaves the lane.
 #[inline(always)]
-pub(crate) fn call_reference<S: WasmActivation>(stage: &mut S) -> Option<S::Resume> {
+pub fn call_reference<S: WasmActivation>(stage: &mut S) -> Option<S::Resume> {
     match stage.reference() {
         CallTarget::Function(function) => match enter_function(stage, function) {
             CallOutcome::Resume(resumed) => Some(resumed),
@@ -225,7 +225,7 @@ fn native_outcome<S: WasmActivation>(stage: &mut S, native: NativeCall) -> Optio
 /// `word`: an i32 or f32 as its number, an f64 as its bits (ToJSValue, which allocates nothing for
 /// these types). The lane reads the word from the register, which may be a Value's payload.
 #[inline(always)]
-pub(crate) fn import_argument(ty: WasmType, word: u64) -> f64 {
+pub fn import_argument(ty: WasmType, word: u64) -> f64 {
     match ty {
         WasmType::I32 => f64::from(word as u32 as i32),
         WasmType::F32 => f64::from(f32::from_bits(word as u32)),

@@ -16,40 +16,40 @@ use crate::Value;
 /// and the element count (below 2^31, so an int32 index below zero is no index), in one width,
 /// and the kind.
 #[derive(Clone, Copy)]
-pub(crate) struct TypedView<W> {
-    pub(crate) values: W,
-    pub(crate) length: W,
-    pub(crate) kind: ViewKind<W>,
+pub struct TypedView<W> {
+    pub values: W,
+    pub length: W,
+    pub kind: ViewKind<W>,
     /// Whether the access's index is proved below `length` (a range proof, or its loop's entry
     /// comparing its bound with the length once: `lane_region::loop_versions`), so no test of it
     /// remains.
-    pub(crate) within: bool,
+    pub within: bool,
 }
 
 /// The kind of a proved view: the kind the proof compared the record's with, or the record's
 /// `TypedArrayKind` discriminant, which an access dispatches on.
 #[derive(Clone, Copy)]
-pub(crate) enum ViewKind<W> {
+pub enum ViewKind<W> {
     Static(NativeKind),
     Dynamic(W),
 }
 
 /// A kind whose elements native code reads and writes in place, with what its element is.
 #[derive(Clone, Copy)]
-pub(crate) struct NativeKind {
+pub struct NativeKind {
     pub(crate) kind: TypedArrayKind,
     element: Element,
 }
 
 impl NativeKind {
     /// `kind` as a native kind; `None` for Float16 and the BigInt kinds, which stay on the general path.
-    pub(crate) fn new(kind: TypedArrayKind) -> Option<Self> {
+    pub fn new(kind: TypedArrayKind) -> Option<Self> {
         ELEMENTS.into_iter().find(|native| native.kind == kind)
     }
 
     /// The type of an element read of this kind: an integer element's range (an int32 type for
     /// the kinds of at most 32 bits, a signed one's or an unsigned one's), a float element's Number.
-    pub(crate) fn element_type(self) -> Type {
+    pub fn element_type(self) -> Type {
         match self.element {
             Element::Integer(integer) => Type::int(integer.range(self.kind.width())),
             Element::Float32 | Element::Float64 => Type::NUMBER,
@@ -57,7 +57,7 @@ impl NativeKind {
     }
 
     /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one).
-    pub(crate) fn is_int32(self) -> bool { self.element_type().is_int32() }
+    pub fn is_int32(self) -> bool { self.element_type().is_int32() }
 }
 
 /// The integer elements, by the load that makes their int32 word and the store of its low bytes.
@@ -103,13 +103,13 @@ const ELEMENTS: [NativeKind; 9] = [
 
 /// The position of `kind` among the native kinds: the index a typed element record keeps in its
 /// immediate, which `native_kind_at` reads back (`None` for Float16 and the BigInt kinds).
-pub(crate) fn native_kind_index(kind: TypedArrayKind) -> Option<u32> {
+pub fn native_kind_index(kind: TypedArrayKind) -> Option<u32> {
     ELEMENTS.iter().position(|native| native.kind == kind).map(|index| index as u32)
 }
 
 /// The native kind at `index` (`native_kind_index`).
 #[inline(always)]
-pub(crate) fn native_kind_at(index: u32) -> NativeKind { ELEMENTS[index as usize] }
+pub fn native_kind_at(index: u32) -> NativeKind { ELEMENTS[index as usize] }
 
 /// The int32 word of the `integer` element at `address`.
 #[inline(always)]
@@ -269,7 +269,7 @@ pub(crate) fn typed_read_value<S: NumericStage>(stage: &mut S, view: TypedView<S
 /// are int32s (`NativeKind::is_int32`): the load itself, with no Number made of it. Past the
 /// elements leaves at `miss`; any other view reads no such word (`None`, nothing emitted).
 #[inline(always)]
-pub(crate) fn typed_read_integer<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+pub fn typed_read_integer<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let ViewKind::Static(native @ NativeKind { kind, element: Element::Integer(integer) }) = view.kind else { return None };
     if !native.is_int32() { return None; }
@@ -302,7 +302,7 @@ use super::super::math::{f64_to_half, half_to_f64};
 use super::super::Concrete;
 
 /// The byte order of the host, which a typed array's elements are read and written in.
-pub(crate) const NATIVE_LITTLE_ENDIAN: bool = cfg!(target_endian = "little");
+pub const NATIVE_LITTLE_ENDIAN: bool = cfg!(target_endian = "little");
 
 /// The Stage row of the element of `kind`; `None` for Float16 and the BigInt kinds, which have
 /// none (Float16 converts through `staged::math`'s binary16, the BigInt kinds take BigInts).
@@ -344,7 +344,7 @@ fn native_word(field: &[u8], little_endian: bool) -> [u8; 8] {
 /// binary16 for Float16. Both the typed array reads and the DataView gets (`staged::typed_view`)
 /// are this body. Panics for the BigInt kinds, which are no Number.
 #[inline(always)]
-pub(crate) fn element_number(kind: TypedArrayKind, field: &[u8], little_endian: bool) -> f64 {
+pub fn element_number(kind: TypedArrayKind, field: &[u8], little_endian: bool) -> f64 {
     if little_endian == NATIVE_LITTLE_ENDIAN
         && let Some(element) = element_of(kind)
     {
@@ -530,7 +530,7 @@ unsafe fn write_raw<T>(target: *mut u8, element: T) {
 /// # Safety
 /// `target` is valid for a write of one element of `kind`.
 #[inline(always)]
-pub(crate) unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
+pub unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
     macro_rules! store {
         ($element:expr) => {
             // SAFETY: the caller's contract.
@@ -562,7 +562,7 @@ pub(crate) unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8,
 /// # Safety
 /// As `store_number_element`.
 #[inline(always)]
-pub(crate) unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
+pub unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
     use crate::value::{number_to_u32, number_to_uint8_clamp};
     let Some(number) = value.as_number() else { return false };
     // SAFETY: the caller's contract, for each arm.
@@ -580,4 +580,4 @@ pub(crate) unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8,
 
 }
 #[cfg(not(stencil_build))]
-pub(crate) use runtime::*;
+pub use runtime::*;

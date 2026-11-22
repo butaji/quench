@@ -42,7 +42,7 @@ pub(super) enum GeneratorStep {
 /// whether the step's result is the object an iteration step reuses
 /// (`Vm::reused_iterator_result`) rather than a fresh one. The generator is the receiver of
 /// the step's native activation, which keeps it alive while its frame runs.
-pub(crate) struct GeneratorResume {
+pub struct GeneratorResume {
     reuses_result: bool,
 }
 
@@ -52,7 +52,7 @@ const ASYNC_GENERATOR_DELEGATE_REACTIONS: [Native; 2] =
 
 impl GeneratorResume {
     /// The resume of a step whose result is the reused iteration object or a fresh one.
-    pub(super) fn new(reuses_result: bool) -> Self {
+    pub fn new(reuses_result: bool) -> Self {
         Self { reuses_result }
     }
 }
@@ -60,7 +60,7 @@ impl GeneratorResume {
 /// How the frame a generator's activation became stopped running: a `yield` of a value, which
 /// suspends the frame back into its generator at its resume register (or a `yield*` passing its
 /// delegate's result on), or a return.
-pub(super) enum MaterializedStop {
+pub enum MaterializedStop {
     Yielded { destination: crate::bytecode::Register, delegated_result: Option<Value> },
     /// An async generator's frame awaiting in place (`Completion::AsyncRequest`).
     Awaited { destination: crate::bytecode::Register },
@@ -74,7 +74,7 @@ impl Vm {
     /// yield keeps the frame as the generator's continuation and a return finishes the
     /// generator, each leaving the native activation; the step's iterator result, or the
     /// delegate's own result a `yield*` passes on.
-    pub(super) fn finish_materialized_generator_step(
+    pub fn finish_materialized_generator_step(
         &mut self,
         mut frame: Box<Frame>,
         resume: GeneratorResume,
@@ -153,7 +153,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn call_generator(
+    pub fn call_generator(
         &mut self,
         p: &ResidualProgram,
         id: u32,

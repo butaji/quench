@@ -2,8 +2,8 @@
 //! incremented on the paths that already do the work. Observation reads this record; nothing
 //! here (or behind a diagnostics switch) decides what the tiers run.
 
-use super::compiled::LaneExit;
-use super::dispatch_fast::lane_body_stats::Miss;
+use crate::vm::engine_types::LaneExit;
+use crate::vm::engine_types::Miss;
 use std::cell::Cell;
 
 /// One kind of tier event. The ends of a lane body's run are contiguous, `Completed` first
@@ -66,7 +66,7 @@ impl Event {
     /// stub of an entry cell that ran no body, included), inside an inlined call, into a
     /// callee, or terminated.
     #[inline]
-    pub(in crate::vm) fn ended(exit: LaneExit) -> Self {
+    pub fn ended(exit: LaneExit) -> Self {
         match exit {
             LaneExit::Returned { .. } | LaneExit::Threw { .. } => Self::Completed,
             LaneExit::At(_) | LaneExit::Entry | LaneExit::Stub => Self::LeftAt,
@@ -77,7 +77,7 @@ impl Event {
     }
 
     /// An end's place among the ends.
-    pub(in crate::vm) fn end_index(self) -> usize { self as usize - Self::Completed as usize }
+    pub fn end_index(self) -> usize { self as usize - Self::Completed as usize }
 }
 
 /// The counters of one VM: one per `Event`, and one per `Miss`, the reason a lane body's call or
@@ -91,7 +91,7 @@ impl Default for TierEvents {
 
 impl TierEvents {
     #[inline]
-    pub(in crate::vm) fn record(&self, event: Event) { self.add(event, 1); }
+    pub fn record(&self, event: Event) { self.add(event, 1); }
 
     #[inline]
     pub(in crate::vm) fn add(&self, event: Event, count: usize) {
@@ -99,13 +99,13 @@ impl TierEvents {
         counter.set(counter.get() + count as u64);
     }
 
-    pub(in crate::vm) fn record_miss(&self, reason: Miss) {
+    pub fn record_miss(&self, reason: Miss) {
         let counter = &self.misses[reason as usize];
         counter.set(counter.get() + 1);
     }
 
     /// The misses of each reason, in `MISS_NAMES` order.
-    pub(in crate::vm) fn miss_counts(&self) -> impl Iterator<Item = u64> + '_ { self.misses.iter().map(Cell::get) }
+    pub fn miss_counts(&self) -> impl Iterator<Item = u64> + '_ { self.misses.iter().map(Cell::get) }
 
     /// How many times `event` happened.
     pub fn count(&self, event: Event) -> u64 { self.events[event as usize].get() }

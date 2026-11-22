@@ -182,7 +182,7 @@ pub(super) const fn direct_mapped_shift(entries: usize) -> u32 {
 
 /// `direct_mapped_index` of a table whose size `shift` names (`direct_mapped_shift`).
 #[inline(always)]
-pub(super) fn direct_mapped_index_by_shift(key: impl Hash, shift: u32) -> usize {
+pub fn direct_mapped_index_by_shift(key: impl Hash, shift: u32) -> usize {
     let mut hasher = rustc_hash::FxHasher::default();
     key.hash(&mut hasher);
     (hasher.finish() >> shift) as usize

@@ -10,7 +10,7 @@ use crate::WasmTrap;
 use crate::wasm::integer::I64BinaryOperator as Binary;
 
 /// The native roots of a frame: a buffer of value words of which `depth` are live.
-pub(crate) trait WasmRoots: WasmStage {
+pub trait WasmRoots: WasmStage {
     /// The handle of the roots buffer: loaded once per rule by `native_roots`, then passed to each access.
     type Roots: Copy;
     /// The roots buffer of the frame's context.
@@ -28,7 +28,7 @@ pub(crate) trait WasmRoots: WasmStage {
 /// Holds `values` in the roots after the live ones; returns the depth they found, for `restore`.
 /// Where the roots have no room for them, the push traps and writes nothing.
 #[inline(always)]
-pub(crate) fn push<S: WasmRoots>(stage: &mut S, values: &[S::Word]) -> Result<S::Word, S::Exit> {
+pub fn push<S: WasmRoots>(stage: &mut S, values: &[S::Word]) -> Result<S::Word, S::Exit> {
     let roots = stage.native_roots();
     let depth = stage.root_depth(roots);
     let count = stage.constant(Width::I64, values.len() as i64);
@@ -46,7 +46,7 @@ pub(crate) fn push<S: WasmRoots>(stage: &mut S, values: &[S::Word]) -> Result<S:
 /// Makes `depth` the live count again: the restore of a `push` that returned it.
 #[inline(always)]
 #[cfg(not(stencil_build))]
-pub(crate) fn restore<S: WasmRoots>(stage: &mut S, depth: S::Word) {
+pub fn restore<S: WasmRoots>(stage: &mut S, depth: S::Word) {
     let roots = stage.native_roots();
     stage.set_root_depth(roots, depth);
 }

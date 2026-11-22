@@ -12,7 +12,7 @@
 use super::{Frame, Operation, Stage, Step};
 
 /// The effects an activation's entry makes on its frame.
-pub(crate) trait PrologueFrame<S: Stage>: Frame<S> {
+pub trait PrologueFrame<S: Stage>: Frame<S> {
     /// The tier prologue of a frameless activation of `function`, which has `parameters` parameters: the
     /// JavaScript tier enters the function (its compiled body where it runs one), and the activation
     /// continues where that completes it. `None` where the frame does not enter it.
@@ -48,7 +48,7 @@ pub(crate) fn step<S: Stage, F: PrologueFrame<S>>(stage: &mut S, frame: &mut F, 
 
 /// `step` of an entry row (`RowStep::Entry`) on the interpreter's word stage, whose frame is a lane frame.
 #[inline(always)]
-pub(crate) fn step_entry<F: PrologueFrame<super::Concrete>>(stage: &mut super::Concrete, frame: &mut F,
+pub fn step_entry<F: PrologueFrame<super::Concrete>>(stage: &mut super::Concrete, frame: &mut F,
     operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     step(stage, frame, operation)
 }

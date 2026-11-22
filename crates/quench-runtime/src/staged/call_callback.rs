@@ -27,19 +27,19 @@ use super::{word_bytes, word_offset, Passed, Stage};
 /// of which take the first passed words; a shape that `keeps` writes all `argc` passed words again
 /// from register `registers` on (a forwarded `arguments`, a sloppy body's legacy reflection).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct CallbackWindow {
-    pub(crate) registers: u16,
-    pub(crate) passed: u16,
-    pub(crate) argc: u16,
-    pub(crate) keeps: bool,
+pub struct CallbackWindow {
+    pub registers: u16,
+    pub passed: u16,
+    pub argc: u16,
+    pub keeps: bool,
 }
 
 /// The context words a callback's callee runs with, written below its window's register 0.
 #[derive(Clone, Copy)]
-pub(crate) struct CallbackContext<W> {
-    pub(crate) this: W,
-    pub(crate) env: W,
-    pub(crate) capture: W,
+pub struct CallbackContext<W> {
+    pub this: W,
+    pub env: W,
+    pub capture: W,
 }
 
 /// The byte offset of context word `word` below a window's register 0.
@@ -56,7 +56,7 @@ pub(crate) fn admit_depth<S: Stage>(stage: &mut S, count: S::Word, limit: S::Wor
 
 /// `admit_depth` on machine words, for the interpreter's re-entry of an array step's activation.
 #[inline(always)]
-pub(crate) fn concrete_below(count: u64, limit: u64) -> bool {
+pub fn concrete_below(count: u64, limit: u64) -> bool {
     admit_depth(&mut super::Concrete::new(std::ptr::null()), count, limit, ()).is_some()
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn admit_callback<S: Stage>(stage: &mut S, count: S::Word, limit: S::
 
 /// `admit_callback` on machine words (`lane_admit_prepared`).
 #[inline(always)]
-pub(crate) fn concrete_admit_callback(count: u64, limit: u64, free: u64, needed: u64) -> bool {
+pub fn concrete_admit_callback(count: u64, limit: u64, free: u64, needed: u64) -> bool {
     admit_callback(&mut super::Concrete::new(std::ptr::null()), count, limit, free, needed, ()).is_some()
 }
 
@@ -91,7 +91,7 @@ fn copy_words<S: Stage>(stage: &mut S, destination: S::Word, source: S::Word, co
 /// for a shape that keeps them, registers `registers..registers + argc` from `arguments` again.
 /// Reads `arguments[0..argc]`.
 #[inline(always)]
-pub(crate) fn fill_callback<S: Stage>(stage: &mut S, window: S::Word, arguments: S::Word, shape: CallbackWindow) {
+pub fn fill_callback<S: Stage>(stage: &mut S, window: S::Word, arguments: S::Word, shape: CallbackWindow) {
     fill_call(stage, window, &[], Passed::Window { arguments, count: shape.passed }, shape.registers);
     if shape.keeps {
         let kept = stage.add_imm(window, word_bytes(shape.registers));
@@ -102,7 +102,7 @@ pub(crate) fn fill_callback<S: Stage>(stage: &mut S, window: S::Word, arguments:
 /// `fill_callback` of words the tier holds rather than memory (an array step's element, index and
 /// array, after a reducer's accumulator): `N == shape.argc`. Writes the same registers.
 #[inline(always)]
-pub(crate) fn fill_callback_words<S: Stage, const N: usize>(stage: &mut S, window: S::Word, words: [S::Word; N],
+pub fn fill_callback_words<S: Stage, const N: usize>(stage: &mut S, window: S::Word, words: [S::Word; N],
     shape: CallbackWindow) {
     debug_assert_eq!(usize::from(shape.argc), N);
     fill_call(stage, window, &[], Passed::Window { arguments: window, count: 0 }, shape.registers);
@@ -123,7 +123,7 @@ pub(crate) fn fill_callback_words<S: Stage, const N: usize>(stage: &mut S, windo
 /// `CONTEXT_ENV` and `CONTEXT_CAPTURE`. One row for every entry that runs a prepared entry over a
 /// window (a callback's, and a suspended frame's register file, `lane_enter_suspended`).
 #[inline(always)]
-pub(crate) fn install_callback<S: Stage>(stage: &mut S, window: S::Word, context: CallbackContext<S::Word>) {
+pub fn install_callback<S: Stage>(stage: &mut S, window: S::Word, context: CallbackContext<S::Word>) {
     let at = Region::Frame.mutable();
     stage.store_u64(at, window, context_at(frame::CONTEXT_THIS), context.this);
     stage.store_u64(at, window, context_at(frame::CONTEXT_ENV), context.env);

@@ -156,7 +156,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn call_symbol_native(
+    pub fn call_symbol_native(
         &mut self,
         p: &ResidualProgram,
         native: Native,

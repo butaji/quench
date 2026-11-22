@@ -8,7 +8,7 @@ use crate::staged::string_form::{ShortFormHead, SharedFormHead};
 use std::mem::offset_of;
 use std::rc::Rc;
 
-pub(crate) use quench_bjit::shared_words::string_tag::{TAG_ASCII, TAG_ASCII_PREFIX, TAG_LATIN1, TAG_OFFSET, TAG_SHORT, TAG_WIDE};
+pub use quench_bjit::shared_words::string_tag::{TAG_ASCII, TAG_ASCII_PREFIX, TAG_LATIN1, TAG_OFFSET, TAG_SHORT, TAG_WIDE};
 /// The offsets and sizes are the shared head's (`staged/string_form.rs`), which the stencils take too.
 pub(crate) use crate::staged::string_form::{
     shared_units_offset, APPEND_UNITS_OFFSET, PREFIX_LENGTH_OFFSET, RECORD_SIZE, SHARED_LENGTH_OFFSET, SHARED_POINTER_OFFSET, SHORT_LENGTH_OFFSET,
