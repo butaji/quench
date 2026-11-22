@@ -76,6 +76,7 @@ pub(super) fn header_packed(window: Registers) -> u64 {
     unsafe { *window.0.sub(CONTEXT_PACKED).cast::<u64>() }
 }
 
+#[quench_macros::ext(LaneStackOps6)]
 impl LaneStack {
     /// The native headers not yet linked, the top run of the plain headers, outermost first, each with
     /// its table index: the frames below the plain headers plus the header's place in the plain run.

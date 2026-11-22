@@ -2,6 +2,7 @@
 pub mod native_operands;
 pub mod jit_backend;
 pub mod tier_policy;
+pub mod engine_types;
 pub mod intl_core;
 pub mod layer_hooks;
 pub mod realm_table;
@@ -2148,22 +2149,22 @@ pub struct Vm {
     /// reentrant entry under it another, so nested native calls allocate none.
     #[allow(clippy::vec_box)]
     #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
-    js_native_contexts: Vec<Box<compiled::CallContext>>,
+    js_native_contexts: Vec<Box<crate::vm::engine_types::CallContext>>,
     /// The environments native Wasm code holds across its calls into other instances.
-    native_roots: Box<compiled::NativeRoots>,
+    native_roots: Box<crate::vm::engine_types::NativeRoots>,
     /// Activations a running lane holds without frames, boxed so a nested run swaps pointers.
-    lane_stack: Box<dispatch_fast::LaneStack>,
+    lane_stack: Box<crate::vm::engine_types::LaneStack>,
     /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
-    lane_roots: Vec<dispatch_fast::ParkedLane>,
+    lane_roots: Vec<crate::vm::engine_types::ParkedLane>,
     /// Empty lane stacks a nested run returned, which the next one starts over
     /// (`Vm::nested_lane_run`): a fresh stack reserves its whole value and activation room and
     /// starts with no call target resolved.
-    spare_lane_stacks: Vec<Box<dispatch_fast::LaneStack>>,
+    spare_lane_stacks: Vec<Box<crate::vm::engine_types::LaneStack>>,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,
     /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
-    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<compiled::NumericImage>>>,
+    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<crate::vm::engine_types::NumericImage>>>,
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver>>,
     execution_interrupt: crate::ExecutionInterrupt,
@@ -2211,9 +2212,9 @@ pub struct Vm {
     /// A lane native call running with its activations still frameless
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).
-    lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    lane_deferred: Option<crate::vm::engine_types::DeferredLaneCall>,
     /// The scope `VarOwner::Window` names, read by `Vm::running_owner` while `lane_deferred` stands.
-    running_window: Option<dispatch_fast::WindowScope>,
+    running_window: Option<crate::vm::engine_types::WindowScope>,
     /// The module the host resolved each (referrer, specifier) of a static request to since
     /// the last collection (`Vm::resolve_module_request`). The graph's passes (collection,
     /// pending dependencies, instantiation, evaluation) resolve each request again, and each
@@ -2229,7 +2230,7 @@ pub struct Vm {
     resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
     /// The native a lane call is running from its caller's frame (`dispatch_fast::call_native_in_lane`),
     /// whose calls of JavaScript run frameless in that lane (`Vm::native_callback_in_lane`).
-    lane_native: Option<dispatch_fast::LaneNativeCall>,
+    lane_native: Option<crate::vm::engine_types::LaneNativeCall>,
     /// The active program's context (`program_contexts`), kept by `set_active_program`: its
     /// cache layout and constants are one load from it.
     active_context: *const ProgramContext,
@@ -2344,7 +2345,7 @@ pub struct Vm {
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     construct_targets: Box<[ConstructTarget; CALL_TARGET_CACHE_SIZE]>,
-    frameless: compiled::CalleeAdmissions,
+    frameless: crate::vm::engine_types::CalleeAdmissions,
     field_caches: site_table::CacheSiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
@@ -3633,7 +3634,7 @@ impl Vm {
     }
 
     fn store_dynamic_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
-        compiled::AheadImages::record(&program);
+        crate::vm::engine_types::AheadImages::record(&program);
         let footprint = crate::compile::program_profile::ProgramFootprint::of(&program).total(); self.heap.charge_reclaimable_program(footprint);
         let id = self.programs.insert_reclaimable_shared(program, footprint)?;
         let residual = self.programs.get(id)?;
@@ -3779,7 +3780,7 @@ impl Vm {
         self.refresh_call_refusal();
     }
 
-    /// Whether cached lane calls are refused (`dispatch_fast::LaneStack::set_refused`): under a
+    /// Whether cached lane calls are refused (`crate::vm::engine_types::LaneStack::set_refused`): under a
     /// pending construction, whose calls the lane does not make from a cache.
     #[inline]
     pub(super) fn refresh_call_refusal(&mut self) {

@@ -150,19 +150,7 @@ fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     }).collect()
 }
 
-/// A program's ahead-of-time image, and its link into this process once a VM loads it.
-pub struct AheadImages {
-    image: AotImage,
-    /// The programs (by number) checked against it, and whether each is it.
-    known: std::cell::RefCell<Vec<(u32, bool)>>,
-    /// The image placed in the loading VM's executable memory; `None` where it did not link.
-    linked: Option<LiveImage>,
-    /// The address of the entry table the system linker placed it at, for an image of the executable (`of_linked`).
-    placed: Option<usize>,
-    /// The program's closed-world facts, which shaped its lane bodies' units (`unit_of`): the
-    /// compile's, or derived once again from the program where the image was read from a file.
-    facts: std::cell::OnceCell<AotFacts>,
-}
+pub use quench_runtime::vm::engine_types::AheadImages;
 
 /// The images of each program stored while recording (`start_recording`); the entry may run
 /// on a worker thread, so this is process-wide. It holds the lowered images alone: a linked
@@ -171,6 +159,7 @@ static RECORDED: std::sync::Mutex<Option<Vec<AotImage>>> = std::sync::Mutex::new
 
 fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AotImage>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
 
+#[quench_macros::ext(AheadImagesOps1)]
 impl AheadImages {
     /// The image of `program`, lowered under its closed-world facts for the baseline ISA.
     pub fn compile(program: &ResidualProgram) -> Result<Self, String> {

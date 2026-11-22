@@ -84,7 +84,7 @@ fn verdict(tiers: &Tiers, completed: bool, recompiles: u8, leaves: LaneLeaves, s
 
 /// Credits the callees `method`'s body calls natively with `NATIVE_CREDIT_RUNS` completions
 /// (a bound, as the caller's completed runs need not reach each call).
-fn credit_native_callees(method: &super::compiled::PublishedLaneMethod) {
+fn credit_native_callees(method: &crate::vm::engine_types::PublishedLaneMethod) {
     let Some(body) = method.lease() else { return };
     for callee in body.direct.iter() {
         // SAFETY: the caller's body owns the callee it named; the view outlives the run.
@@ -94,7 +94,7 @@ fn credit_native_callees(method: &super::compiled::PublishedLaneMethod) {
 
 /// The function a leave at `exit` is in (`None`: the body's own) and its PC, for a leave that
 /// has an instruction.
-fn leave_place(exit: LaneExit, method: &super::compiled::PublishedLaneMethod) -> Option<(Option<u32>, usize)> {
+fn leave_place(exit: LaneExit, method: &crate::vm::engine_types::PublishedLaneMethod) -> Option<(Option<u32>, usize)> {
     match exit {
         LaneExit::At(pc) => Some((None, pc)),
         LaneExit::Inlined { frame, pc } => method.lease().and_then(|method| method.inlined.get(frame).map(|call| (Some(call.target.function), pc as usize))),
@@ -104,7 +104,7 @@ fn leave_place(exit: LaneExit, method: &super::compiled::PublishedLaneMethod) ->
 
 /// Names the place of a leave at `exit` among the body's, and hands a place it had not named to
 /// `left_new` once. A scattered body names none.
-fn name_leave(leaves_at: &std::cell::Cell<LaneLeaves>, exit: LaneExit, method: &super::compiled::PublishedLaneMethod, left_new: impl FnOnce((Option<u32>, usize))) {
+fn name_leave(leaves_at: &std::cell::Cell<LaneLeaves>, exit: LaneExit, method: &crate::vm::engine_types::PublishedLaneMethod, left_new: impl FnOnce((Option<u32>, usize))) {
     // SAFETY: the cell is read in place and nothing writes it meanwhile.
     let seen = match unsafe { &*leaves_at.as_ptr() } {
         LaneLeaves::Few(named) => named.contains(&Some(exit)),
@@ -410,7 +410,7 @@ impl LaneView {
     }
 
     /// The body a just published method makes of this view.
-    pub(super) fn specialized(&self, entry: Handler, method: std::rc::Rc<super::super::compiled::PublishedLaneMethod>, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+    pub(super) fn specialized(&self, entry: Handler, method: std::rc::Rc<crate::vm::engine_types::PublishedLaneMethod>, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
         // A body whose entry would not pay for itself serves native callers only
         // (`body_call_helper`, direct calls); the lane's own entries keep the records, and it
         // has no trial to run.

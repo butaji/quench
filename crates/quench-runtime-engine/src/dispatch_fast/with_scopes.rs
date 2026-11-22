@@ -9,6 +9,7 @@ use super::*;
 pub(super) type WithChain = SmallVec<[Value; WITH_CHAIN_INLINE_OBJECTS]>;
 const WITH_CHAIN_INLINE_OBJECTS: usize = 2;
 
+#[quench_macros::ext(LaneStackOps7)]
 impl LaneStack {
     /// The objects of a resumed frame's chain, now the activation at `depth`'s, moved off its
     /// record.

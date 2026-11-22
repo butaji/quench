@@ -2,6 +2,7 @@
 //! memo names the one it was resolved in, and a new one retires them all at once.
 use super::*;
 
+#[quench_macros::ext(LaneStackOps9)]
 impl LaneStack {
     /// The generation of a lane run under `key`: the current one while the key holds, else
     /// a new one, which retires every target resolved before.

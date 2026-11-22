@@ -298,7 +298,7 @@ pub(super) enum JsTierState {
     /// Terminal: no tier compiles the function again. Its rejections are deterministic (the same
     /// bytecode lowers to the same code), so a retry only repeats the compile.
     Unsupported,
-    Compiled(Rc<super::compiled::CompiledJsFunction>),
+    Compiled(Rc<crate::vm::engine_types::CompiledJsFunction>),
 }
 
 /// What one entry of a function does past counting it: whether it promotes the function's
@@ -346,7 +346,7 @@ struct WasmTiers {
 
 impl WasmTiers {
     /// Keeps `root`'s selective artifact, the holder of each function it holds that none held.
-    fn install(&mut self, root: u32, compiled: Rc<super::compiled::CompiledProgram>) {
+    fn install(&mut self, root: u32, compiled: Rc<crate::vm::engine_types::CompiledProgram>) {
         for function in compiled.held_functions() { self.holders.entry(function as u32).or_insert(root); }
         self.holders.insert(root, root);
         *self.functions.entry(root).or_default() = WasmTierState::Compiled(compiled);
@@ -532,7 +532,7 @@ impl JitTierManager {
     }
 
     /// The selective artifact holding `function` (`WasmTiers::holders`).
-    fn wasm_holding(&self, function: u32) -> Option<&Rc<super::compiled::CompiledProgram>> {
+    fn wasm_holding(&self, function: u32) -> Option<&Rc<crate::vm::engine_types::CompiledProgram>> {
         let Self::Wasm(tiers) = self else { return None };
         tiers.functions.get(tiers.holders.get(&function)?)?.compiled()
     }
@@ -687,7 +687,7 @@ struct ProgramEntry {
     lane_deferred: Vec<std::cell::Cell<u8>>,
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
-    compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
+    compiled: Option<Option<Rc<crate::vm::engine_types::CompiledProgram>>>,
     /// Sparse frontend-specific hotness state and compiled artifacts, owned
     /// by one VM-local tier manager.
     jit_tiers: JitTierManager,
@@ -796,9 +796,9 @@ pub struct ProgramStore {
     /// The IR size of the last lane plan from each entry of each function (`Vm::start_lane_method`):
     /// what deciding the next compile's worth from costs, before planning it again.
     lane_plan_ir: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), usize>>,
-    lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::compiled::PublishedLaneMethod>>>,
+    lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::engine_types::PublishedLaneMethod>>>,
     /// The ahead-of-time bodies the loaded files hold.
-    ahead: std::cell::RefCell<Vec<Rc<crate::vm::compiled::AheadImages>>>,
+    ahead: std::cell::RefCell<Vec<Rc<crate::vm::engine_types::AheadImages>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -827,7 +827,7 @@ pub struct ProgramStore {
     /// The entry facts every function shares whose facts are all unset
     /// (`JsEntryFacts::is_unset`): most functions the tier
     /// watches, which had each held a copy (V8-v7 Crypto `--jit`: 32 -> 21 KiB at the heap's peak).
-    no_entry_facts: Rc<super::js_compiled::JsEntryFacts>,
+    no_entry_facts: Rc<crate::vm::engine_types::JsEntryFacts>,
     /// VM-local bounds for the optional JavaScript tier cache.
     js_jit_tracked_functions: usize,
     js_jit_tracking_exhaustions: u64,
@@ -903,12 +903,12 @@ impl Default for ProgramStore {
 impl ProgramStore {
     /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
     /// its first entry.
-    pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
+    pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<crate::vm::engine_types::JsEntryFacts>> {
         let entry = self.entry(id)?;
         let body = entry.residual.function_get(function as usize)?;
         let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(self.tiers.stress || cfg!(test))); // tests pin tiny fixtures
+            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body, !(self.tiers.stress || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
             let facts = if self.js_entry_specializations_enabled { facts } else { Default::default() };
             if facts.is_unset() {
@@ -1692,7 +1692,7 @@ impl ProgramStore {
     pub(super) fn compiled(
         &self,
         id: ProgramId,
-    ) -> Option<Option<Rc<super::compiled::CompiledProgram>>> {
+    ) -> Option<Option<Rc<crate::vm::engine_types::CompiledProgram>>> {
         self.entry(id)?.compiled.clone()
     }
 
@@ -1716,7 +1716,7 @@ impl ProgramStore {
     pub(super) fn set_compiled(
         &mut self,
         id: ProgramId,
-        compiled: Option<Rc<super::compiled::CompiledProgram>>,
+        compiled: Option<Rc<crate::vm::engine_types::CompiledProgram>>,
     ) {
         if let Some(previous_bytes) = self
             .entry(id)
@@ -1825,7 +1825,7 @@ impl ProgramStore {
 
     /// Whether `compiled`, a whole compile of the Wasm module `id`, holds code for less than
     /// `WASM_MODULE_MIN_COVERAGE` of its bytecodes. JavaScript programs are never short.
-    fn wasm_module_coverage_short(&self, id: ProgramId, compiled: &super::compiled::CompiledProgram) -> bool {
+    fn wasm_module_coverage_short(&self, id: ProgramId, compiled: &crate::vm::engine_types::CompiledProgram) -> bool {
         let Some(entry) = self.entry(id) else { return false };
         if entry.residual.kind != crate::bytecode::ProgramKind::Wasm || entry.residual.functions.len() < WASM_MODULE_WEIGHED_FUNCTIONS {
             return false;
@@ -1888,7 +1888,7 @@ impl ProgramStore {
         &self,
         id: ProgramId,
         function: u32,
-    ) -> Option<Rc<super::compiled::CompiledProgram>> {
+    ) -> Option<Rc<crate::vm::engine_types::CompiledProgram>> {
         self.entry(id)?
             .jit_tiers
             .wasm(function)?
@@ -1901,7 +1901,7 @@ impl ProgramStore {
         &self,
         id: ProgramId,
         function: u32,
-    ) -> Option<Rc<super::compiled::CompiledProgram>> {
+    ) -> Option<Rc<crate::vm::engine_types::CompiledProgram>> {
         self.entry(id)?.jit_tiers.wasm_holding(function).cloned()
     }
 
@@ -1913,8 +1913,8 @@ impl ProgramStore {
         &self,
         id: ProgramId,
         function: usize,
-        artifact: *const super::compiled::CompiledProgram,
-    ) -> Option<Rc<super::compiled::CompiledProgram>> {
+        artifact: *const crate::vm::engine_types::CompiledProgram,
+    ) -> Option<Rc<crate::vm::engine_types::CompiledProgram>> {
         self.entry(id)?
             .jit_tiers
             .wasm_values()
@@ -1938,7 +1938,7 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         root: u32,
-        compiled: Rc<super::compiled::CompiledProgram>,
+        compiled: Rc<crate::vm::engine_types::CompiledProgram>,
     ) -> bool {
         if !compiled.has_function(root as usize) {
             return false;
@@ -2556,7 +2556,7 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
-        compiled: Option<Rc<super::compiled::CompiledJsFunction>>,
+        compiled: Option<Rc<crate::vm::engine_types::CompiledJsFunction>>,
     ) -> bool {
         let Some(entry) = self.entry(id) else {
             return false;
@@ -2686,8 +2686,8 @@ impl ProgramStore {
             crate::bytecode::ProgramKind,
             &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
-        ) -> super::dispatch_fast::LaneView,
-    ) -> Option<*const super::dispatch_fast::LaneView> {
+        ) -> crate::vm::engine_types::LaneView,
+    ) -> Option<*const crate::vm::engine_types::LaneView> {
         let entry = self.entry_in_lane(id)?;
         let view = entry.views_in_lane.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
@@ -2729,8 +2729,8 @@ impl ProgramStore {
             crate::bytecode::ProgramKind,
             &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
-        ) -> super::dispatch_fast::LaneView,
-    ) -> Option<*const super::dispatch_fast::LaneView> {
+        ) -> crate::vm::engine_types::LaneView,
+    ) -> Option<*const crate::vm::engine_types::LaneView> {
         let entry = self.entry_in_lane(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.views_in_lane.of(&entry.residual).get(function as usize)?;
@@ -2750,8 +2750,8 @@ impl ProgramStore {
             crate::bytecode::ProgramKind,
             &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
-        ) -> super::dispatch_fast::LaneView,
-    ) -> Option<(super::dispatch_fast::LaneView, Option<&'s super::dispatch_fast::LaneView>)> {
+        ) -> crate::vm::engine_types::LaneView,
+    ) -> Option<(crate::vm::engine_types::LaneView, Option<&'s crate::vm::engine_types::LaneView>)> {
         let entry = self.entry_in_lane(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let live = || entry.residual.shared_register_root_masks(function);
@@ -2997,7 +2997,7 @@ pub(super) struct LaneViews {
     /// fixed while its program holds it. Each chunk holds as many as all earlier chunks together
     /// (`LANE_VIEW_FIRST_CHUNK` first), so a program's views take a few allocations with at
     /// most half of the arena unused, and lie together in the order the program derived them.
-    arena: std::cell::RefCell<Vec<Vec<super::dispatch_fast::LaneView>>>,
+    arena: std::cell::RefCell<Vec<Vec<crate::vm::engine_types::LaneView>>>,
 }
 
 /// The views a program's first arena chunk holds: most programs that enter the lane derive
@@ -3060,10 +3060,10 @@ impl Drop for LaneViewTable {
 }
 
 /// One function's derived lane view, in its program's arena (`LaneViews::arena`).
-pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<super::dispatch_fast::LaneView>>;
+pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<crate::vm::engine_types::LaneView>>;
 
 /// The view a cell holds, if its function's was derived.
-#[inline(always)] pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&super::dispatch_fast::LaneView> {
+#[inline(always)] pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&crate::vm::engine_types::LaneView> {
     // SAFETY: a cell points into its table's arena (`LaneViews::store`), which outlives it.
     cell.get().map(|view| unsafe { view.as_ref() })
 }
@@ -3080,8 +3080,8 @@ fn derive_lane_view<'s>(
         crate::bytecode::ProgramKind,
         &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
         &[crate::bytecode::FieldSite],
-    ) -> super::dispatch_fast::LaneView,
-) -> *const super::dispatch_fast::LaneView {
+    ) -> crate::vm::engine_types::LaneView,
+) -> *const crate::vm::engine_types::LaneView {
     view.get_or_init(|| {
         // Only a loop tier reads the masks; a collection derives them otherwise.
         let live = || entry.residual.shared_register_root_masks(function);
@@ -3118,12 +3118,12 @@ impl LaneViews {
     }
 
     /// `function`'s view if it has one, without making the table.
-    fn derived(&self, function: u32) -> Option<&super::dispatch_fast::LaneView> {
+    fn derived(&self, function: u32) -> Option<&crate::vm::engine_types::LaneView> {
         derived_lane_view(self.table.get()?.get(function as usize)?)
     }
 
     /// `view` moved into the arena, at an address fixed while the arena holds it.
-    fn store(&self, view: super::dispatch_fast::LaneView) -> std::ptr::NonNull<super::dispatch_fast::LaneView> {
+    fn store(&self, view: crate::vm::engine_types::LaneView) -> std::ptr::NonNull<crate::vm::engine_types::LaneView> {
         let mut arena = self.arena.borrow_mut();
         if arena.last().is_none_or(|chunk| chunk.len() == chunk.capacity()) {
             let held: usize = arena.iter().map(Vec::len).sum();
@@ -3282,21 +3282,21 @@ mod jit_code_cache_tests {
 /// A program's `JsEntryFacts` by function, the table made on the tier's first entry of one.
 #[derive(Default)]
 pub(super) struct JsEntryFactsTable(
-    std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
+    std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<crate::vm::engine_types::JsEntryFacts>>]>>,
 );
 
 // An empty cell is zero bits, which the zeroed table relies on.
 const _: () = assert!(
     // SAFETY: a cell is one pointer-sized `Option<Rc<_>>`, whose `None` this reads.
-    unsafe { std::mem::transmute::<std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>, usize>(std::cell::OnceCell::new()) } == 0
+    unsafe { std::mem::transmute::<std::cell::OnceCell<Rc<crate::vm::engine_types::JsEntryFacts>>, usize>(std::cell::OnceCell::new()) } == 0
 );
 
 /// `len` empty entry-fact cells on zero pages: a program's table takes a cell for each function
 /// it may append, and a filled table would touch every page of them at the first JavaScript
 /// tier entry of any function. Only the pages of functions that enter the tier become resident.
-fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]> {
+fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<crate::vm::engine_types::JsEntryFacts>>]> {
     let zeros: Box<[usize]> = vec![0; len].into_boxed_slice();
-    let cells = Box::into_raw(zeros) as *mut [std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>];
+    let cells = Box::into_raw(zeros) as *mut [std::cell::OnceCell<Rc<crate::vm::engine_types::JsEntryFacts>>];
     // SAFETY: the allocation is `len` words, the layout of `len` cells of one pointer each
     // (asserted above), zeroed, so every cell is empty; the box alone owns it.
     unsafe { Box::from_raw(cells) }

@@ -37,11 +37,11 @@ impl Vm {
         }
     }
 
-    fn window(&self) -> &super::dispatch_fast::WindowScope {
+    fn window(&self) -> &crate::vm::engine_types::WindowScope {
         self.running_window.as_ref().expect("a window owner names the scope running_owner read")
     }
 
-    fn window_mut(&mut self) -> &mut super::dispatch_fast::WindowScope {
+    fn window_mut(&mut self) -> &mut crate::vm::engine_types::WindowScope {
         self.running_window.as_mut().expect("a window owner names the scope running_owner read")
     }
 

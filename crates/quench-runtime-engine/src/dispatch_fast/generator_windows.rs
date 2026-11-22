@@ -35,6 +35,7 @@ impl ActivationView {
     }
 }
 
+#[quench_macros::ext(LaneStackOps8)]
 impl LaneStack {
     /// Pushes `activation` over the register file of a suspended frame, which its window names
     /// (the record's `registers`): the window is marked as no lane stack's (`HEAP_WINDOW`), so

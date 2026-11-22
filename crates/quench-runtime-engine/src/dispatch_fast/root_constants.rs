@@ -59,6 +59,7 @@ pub(super) fn hold_root_constant(cx: *mut LaneContext, ip: Ip, owner: ProgramId,
     true
 }
 
+#[quench_macros::ext(LaneViewOps3)]
 impl LaneView {
     /// Returns the record at `pc`, where it keeps a root slot's value
     /// (`lane_load_root_constant`), to the capture's read (`lane_load_capture_walk`), its

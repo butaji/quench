@@ -11,33 +11,9 @@ use quench_runtime::vm::caller_view::CallerView;
 use quench_runtime::vm::var_owner::VarOwner;
 use quench_runtime::bytecode::Atom;
 
-/// What a lookup reads of the window activation making it, which it reads as it reads a frame
-/// (`CallerView`), and the registers and locals its steps read and write.
-pub(crate) struct WindowScope {
-    pub(super) function: u32,
-    pub(super) program: ProgramId,
-    /// The activation's receiver as the lane holds it.
-    pub(super) this: Value,
-    /// The activation's environment: its own once a closure made one (`captured`), else the
-    /// closure's.
-    pub(super) env: Value,
-    pub(super) captured: bool,
-    /// The activation's record, null for an ordinary function's: it holds no dynamic bindings,
-    /// which only a frame's direct eval makes.
-    pub(super) record: *mut FrameRecord,
-    /// The resume pc of the binding site the access is at (`Frame::binding_site_pc`), if it is
-    /// at one.
-    pub(super) site: Option<u32>,
-    /// The `with` objects of the activation's scope chain (`LaneStack::with_chain`), outermost
-    /// first, which no `with` statement has entered while none is (`Vm::with_scope_entered`).
-    pub(super) chain: WithChain,
-    /// The activation's register file, which its environment window follows.
-    pub(super) registers: Registers,
-    /// The first of the window's locals, which the activation's `Function::locals` fill.
-    pub(super) locals: *mut Value,
-    pub(super) local_count: usize,
-}
+pub(crate) use quench_runtime::vm::engine_types::WindowScope;
 
+#[quench_macros::ext(WindowScopeOps1)]
 impl WindowScope {
     /// The dynamic bindings the activation's record holds, until a closure's environment takes
     /// them over (`captured`); none for an activation without a record.

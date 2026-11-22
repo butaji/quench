@@ -41,16 +41,9 @@ fn numeric_artifact(code: Vec<u8>, params: usize, number_result: NativeNumberRes
     crate::js_compiled::JsJitArtifact { code, params, result: number_result }
 }
 
-/// A numeric function compiled ahead of time: position-independent code with the relocations
-/// that link it, and what its entry returns. It is the same lowering as the live JIT's
-/// (`lower_numeric_region`); loading links it into the artifact the JIT publishes.
-#[derive(Debug)]
-pub(crate) struct NumericImage {
-    code: quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode,
-    params: usize,
-    number_result: NativeNumberResult,
-}
+pub(crate) use quench_runtime::vm::engine_types::NumericImage;
 
+#[quench_macros::ext(NumericImageOps1)]
 impl NumericImage {
     /// The image of `function_id`, `None` where the region lowers to code that needs a link
     /// this build cannot make.

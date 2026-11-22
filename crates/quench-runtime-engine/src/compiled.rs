@@ -1974,29 +1974,7 @@ fn trap_status(trap: quench_runtime::WasmTrap) -> i64 {
 /// exhausted; the interpreter's own guards bound the remainder.
 const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 
-/// The state every compiled function receives. Field offsets are the ABI
-/// compiled code loads from.
-#[repr(C)]
-pub(super) struct CallContext {
-    /// Every field compiled code loads, at its `CallContextHead` offset (`CALL_CONTEXT_ADAPTER_PAYLOAD`).
-    head: CallContextFields,
-    // Fields below are the VM's, never read by the stencils; the last one, `wasm_gc_records`, is read by the
-    // u-jit's emitted code at its `offset_of!`, and is last so the offsets above stay where the stencils hold them.
-    /// Borrowed only during a running entry; a non-reentrant region may prove unique ownership.
-    interrupt_owner: *const quench_runtime::ExecutionInterrupt,
-    /// The record of the instance this context is in (`InstanceContext`), whose words the fields
-    /// it shares by name hold (`SWITCHED`): what a mirror row's instance is compared with.
-    instance: *const InstanceContext,
-    /// The VM's roots for the instances native code enters beyond this one.
-    native_roots: *mut NativeRoots,
-    /// The VM's `memory_grow_callout`: (context, pages) -> the size before in pages, or -1.
-    /// A stitched `memory.grow` row calls it (`CONTEXT_MEMORY_GROW`).
-    memory_grow: usize,
-    /// The base of the Wasm GC record range (`Heap::wasm_gc_record_base`), zero until it is reserved. The
-    /// u-jit's array reads take an element's slot from the record at `base + id * record size`, and call
-    /// the `field_slot` callout where it is zero. Read by the u-jit's emitted code, not the stencils.
-    wasm_gc_records: usize,
-}
+pub(super) use quench_runtime::vm::engine_types::CallContext;
 
 /// The ABI prefix of a call context, with the runtime's own field types (`staged::record_heads`).
 type CallContextFields = CallContextHead<Value, CompiledProgram, quench_runtime::heap::TableWords, ReferenceCallSiteDiagnostics, ProgramId, Option<Raised>>;
@@ -2014,6 +1992,7 @@ impl std::ops::DerefMut for CallContext {
     }
 }
 
+#[quench_macros::ext(CallContextOps1)]
 impl CallContext {
     fn native_adapter(
         adapter_payload: *mut (),
@@ -3015,33 +2994,7 @@ fn compiled_reference_target(
         })
 }
 
-/// A program's compiled functions, sharing one code mapping and one call table.
-pub(super) struct CompiledProgram {
-    _code: CodeMemory,
-    table: Box<[usize]>,
-    /// Each function's entry address, which stitched rows call through (`wasm_stitch::World`).
-    _entry_cells: Box<[std::cell::Cell<usize>]>,
-    /// The compiled functions in index order: a selective tier holds a few of a module's
-    /// thousands, so only `positions` is as long as the module.
-    functions: Box<[CompiledFunction]>,
-    /// Each module function's place in `functions`; `NOT_COMPILED` where it has none.
-    positions: Box<[u32]>,
-    /// The environment slot of the memory compiled code accesses.
-    memory_slot: Option<u32>,
-    /// Memory accesses rely on the memory's guard reservation instead of
-    /// bounds checks.
-    guarded: bool,
-    /// The guarded memory's base, when code addresses it as a constant
-    /// displacement (see `displacement_base`); calls with another base fall
-    /// back to the interpreter.
-    fixed_base: Option<i32>,
-    diagnostics: Option<WasmJitDiagnostics>,
-    /// How often the VM's callout resolved each target at each actual compiled `call_indirect`
-    /// site.
-    indirect_hits: indirect_profile::SiteHits,
-    /// The owner, bytecode PC and table binding of each site `indirect_hits` counts.
-    reference_cache_sites: Vec<(usize, usize, u32)>,
-}
+pub(super) use quench_runtime::vm::engine_types::CompiledProgram;
 
 /// Counters allocated only for opt-in benchmark diagnostics. These runs are
 /// intended to explain coverage; their timings are not qualification scores.
@@ -3184,6 +3137,7 @@ fn jit_diagnostics_enabled() -> bool {
     quench_runtime::trace::Channel::WasmJit.on()
 }
 
+#[quench_macros::ext(CompiledProgramOps1)]
 impl CompiledProgram {
     #[cfg(test)]
     pub(super) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
@@ -3722,17 +3676,7 @@ fn compile_native_function<T>(
     })
 }
 
-/// A guarded JavaScript numeric function compiled from a narrow residual
-/// bytecode subset. It owns one W^X executable mapping and has no heap roots.
-pub(super) struct CompiledJsFunction {
-    _code: CodeMemory,
-    entry: BodyEntry,
-    result: NativeNumberResult,
-    params: usize,
-    mapped_bytes: usize,
-    #[cfg(test)]
-    native_entries: std::cell::Cell<u64>,
-}
+pub(super) use quench_runtime::vm::engine_types::CompiledJsFunction;
 
 /// The instruction transition that returns from native code to the ordinary frame loop. Its `StepResult` is already executed,
 /// so the dispatcher consumes it instead of replaying the bytecode.
@@ -3951,10 +3895,7 @@ impl LaneMethod {
     }
 }
 
-/// Publication owns future entry; active runs and direct callers own code leases.
-/// Retirement unlinks entry without releasing code that execution or recovery uses.
-/// Guest locator validity and exact exits remain separate obligations.
-pub(super) type PublishedLaneMethod = quench_runtime::code_dependencies::PublishedCode<LaneMethod>;
+pub(super) use quench_runtime::vm::engine_types::PublishedLaneMethod;
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
 /// whose activation the lane then makes (`Vm::body_inlined_activation_in_lane`).
@@ -5659,6 +5600,7 @@ unsafe fn stopped<const SINGLE_OPERATION: bool>(context: &mut CallContext, step:
     status
 }
 
+#[quench_macros::ext(CompiledJsFunctionOps1)]
 impl CompiledJsFunction {
     pub(super) fn from_artifact(artifact: crate::js_compiled::JsJitArtifact) -> Option<Self> {
         let code = CodeMemory::new(&artifact.code)?;

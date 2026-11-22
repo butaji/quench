@@ -45,6 +45,7 @@ fn table_rows(vm: &Vm, env: Value, slot: u32) -> Option<&[TableTarget]> {
     }
 }
 
+#[quench_macros::ext(CompiledProgramOps2)]
 impl CompiledProgram {
     /// Counts a resolution of `function` at the call site `site`.
     pub(super) fn note_indirect_target(&self, site: usize, function: u32) {

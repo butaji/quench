@@ -10,6 +10,7 @@ const LANE_STACK_GROWTH: usize = 2;
 #[derive(Clone, Copy)]
 pub(super) struct LaneStackFull(bool, bool);
 
+#[quench_macros::ext(LaneStackOps4)]
 impl LaneStack {
     /// Which arrays lack room for a window of `room` values and one more activation.
     pub(super) fn full(&self, room: usize) -> LaneStackFull {

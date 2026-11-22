@@ -59,6 +59,7 @@ impl ParameterHome {
     }
 }
 
+#[quench_macros::ext(LaneStackOps11)]
 impl LaneStack {
     /// The home of parameter `slot` in the innermost window activation of `code` whose `arguments`
     /// binding holds `object`, where its parameters are.

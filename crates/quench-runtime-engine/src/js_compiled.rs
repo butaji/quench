@@ -121,16 +121,9 @@ fn activation_is_irrelevant(function: &Function) -> bool {
         && function.code.iter().all(|packed| packed.as_wide().op().traits().has(Traits::ACTIVATION_FREE))
 }
 
-/// What the tier finds in a function at its entries. Each fact depends only on the function and
-/// its own program, which never change, so it is derived once per function
-/// (`ProgramStore::js_entry_facts`).
-#[derive(Default)]
-pub(super) struct JsEntryFacts {
-    /// Whether the function is a numeric tier candidate (`function_candidate`); only such a
-    /// function enters native code at its entry.
-    pub(super) candidate: bool,
-}
+pub(super) use quench_runtime::vm::engine_types::JsEntryFacts;
 
+#[quench_macros::ext(JsEntryFactsOps1)]
 impl JsEntryFacts {
     /// Whether every fact is unset (`Self::default`).
     pub(super) const fn is_unset(&self) -> bool {

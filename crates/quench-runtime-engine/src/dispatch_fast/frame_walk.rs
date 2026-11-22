@@ -96,6 +96,7 @@ impl Completion {
     }
 }
 
+#[quench_macros::ext(LaneStackOps5)]
 impl LaneStack {
     /// Every frame innermost first, where it is (`Walk`). The side records, seals and
     /// records change only through `&mut self` and `spill_plain`, which no walk calls: a reader

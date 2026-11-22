@@ -88,7 +88,7 @@ impl Vm {
             lowered_tier0: Default::default(),
             pending_call_stacks: vec![],
             js_native_contexts: Vec::new(),
-            native_roots: super::compiled::NativeRoots::new(),
+            native_roots: crate::vm::engine_types::NativeRoots::new(),
             lane_stack: Default::default(),
             lane_roots: Vec::new(),
             spare_lane_stacks: Vec::new(),

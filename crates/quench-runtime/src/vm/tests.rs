@@ -24098,7 +24098,7 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     .unwrap();
     let artifact = super::js_compiled::compile(&program, 1).expect("numeric loop artifact");
     assert_eq!(artifact.params, 1, "the numeric loop takes its one parameter through the lane body ABI");
-    let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
+    let compiled = crate::vm::engine_types::CompiledJsFunction::from_artifact(artifact)
         .expect("shared executable mapping");
     let interrupt = crate::ExecutionInterrupt::default();
     interrupt.request_termination();

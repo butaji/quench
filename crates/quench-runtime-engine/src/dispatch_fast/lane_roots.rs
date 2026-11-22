@@ -117,13 +117,9 @@ pub(crate) enum JobEnd {
     Frames(Result<FrameOutcome, JsError>),
 }
 
-/// A lane stack a nested run parked (`Vm::nested_lane_run`) with the receiver and environment of
-/// its innermost activation, which the lane's context held.
-pub(crate) struct ParkedLane {
-    pub(crate) stack: Box<LaneStack>,
-    innermost: [Value; 2],
-}
+pub(crate) use quench_runtime::vm::engine_types::ParkedLane;
 
+#[quench_macros::ext(ParkedLaneOps1)]
 impl ParkedLane {
     /// Appends to `out` every value the parked run holds.
     pub(crate) fn extend_roots(&self, programs: &quench_runtime::vm::program_store::ProgramStore, out: &mut Vec<Value>) {

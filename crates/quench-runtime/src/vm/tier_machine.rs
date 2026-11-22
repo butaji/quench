@@ -23,7 +23,7 @@
 //! Warming, GeneralCompileDue is Compiling, Compiled is UJit, Rejected is Retired, Unsupported
 //! is Declined. BaseJIT regions are BJit.
 use super::compiled::entry_cell::EntryCell;
-use super::compiled::PublishedLaneMethod;
+use crate::vm::engine_types::PublishedLaneMethod;
 use super::program_store::JsTierState;
 use crate::jit_mode::{quick_only, tiers_allowed, Tier};
 

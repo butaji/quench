@@ -49,7 +49,7 @@ pub(super) struct GeneralCodeCursor {
     /// Fixed-width expansion of `code`; null while the function is cold.
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
-    pub(super) lane: *const dispatch_fast::LaneView,
+    pub(super) lane: *const crate::vm::engine_types::LaneView,
     /// The loop work the activation did in the general path while it may still gain a view
     /// (`note_back_edge`); `None` once it cannot.
     back_edges: Option<HotLoop>,
@@ -516,7 +516,7 @@ impl Vm {
 
     /// The cursor of a call of function `id` of the active program `p` that enters `view`, a
     /// lane that runs it, at its first instruction.
-    pub(super) fn entry_cursor(&self, p: &ResidualProgram, id: u32, view: *const super::dispatch_fast::LaneView) -> GeneralCodeCursor {
+    pub(super) fn entry_cursor(&self, p: &ResidualProgram, id: u32, view: *const crate::vm::engine_types::LaneView) -> GeneralCodeCursor {
         let body = p.function(id as usize);
         GeneralCodeCursor {
             program: self.active_program,
@@ -537,7 +537,7 @@ impl Vm {
     /// instruction from a native (a promise job, a host callback), as a lane call of it would
     /// activate it (`Vm::resolve_script_call_target`): derived once its deferred runs complete
     /// (`ProgramStore::call_may_derive_in_lane`); null where the general loop runs it.
-    pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
+    pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const crate::vm::engine_types::LaneView {
         let program = self.active_program;
         let runs_in_lane = Self::FRAME_ENTRY_LANE_RUNS
             && !self.tier_may_run(crate::jit_mode::Tier::ANY);
@@ -1559,7 +1559,7 @@ impl Vm {
 
     /// Whether the general loop enters `view` at `pc`: where a lane run pays, or at the first instruction of
     /// the callee a due collection's lane stop left to it (`after_lane_exit`), as a native's call would.
-    fn enters_in_lane(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
+    fn enters_in_lane(view: *const crate::vm::engine_types::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
 
     /// Whether a frame entry may run the lane: execution-only support never
     /// interprets, and instruction profiling must observe every PC.

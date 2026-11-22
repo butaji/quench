@@ -264,6 +264,7 @@ pub(super) fn header_sided(window: Registers) -> bool {
     !quench_runtime::staged::call_complete::concrete_frame_completes_plainly(window.0.expose_provenance() as u64)
 }
 
+#[quench_macros::ext(LaneStackOps3)]
 impl LaneStack {
     /// The frame of the plain activation whose window is `window` (`ActivationView`), read from its
     /// header and `side`, its side record where its header carries one (`header_sided`), and

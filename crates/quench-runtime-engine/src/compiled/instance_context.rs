@@ -85,6 +85,7 @@ macro_rules! switched {
             ),)+
         ];
 
+        #[quench_macros::ext(CallContextOps2)]
         impl CallContext {
             /// Enters the instance of `record`: the context takes its words.
             pub(super) fn enter(&mut self, record: &InstanceContext) {
@@ -273,6 +274,7 @@ impl MemoryArguments {
     }
 }
 
+#[quench_macros::ext(CompiledProgramOps3)]
 impl CompiledProgram {
     /// What a caller outside this instance must match to call its bodies natively: the memory
     /// arguments, where the memory cannot change length unseen, else `ABI_NOT_DIRECT`.
@@ -405,19 +407,7 @@ impl Vm {
     }
 }
 
-/// The values native code keeps alive across a call that can collect: the environments of the
-/// instances it is running in beyond its own (`wasm_instance_switch`), and the reference registers
-/// of the compiled frames it runs (`wasm_roots`), which no frame or table need hold.
-///
-/// The slots are a heap buffer of `capacity` values, owned by the record and freed with it. Code
-/// reads the buffer's base from `SLOTS` and the depth from `DEPTH`, and checks `CAPACITY` before it
-/// pushes.
-#[repr(C)]
-pub struct NativeRoots {
-    depth: u64,
-    capacity: u64,
-    slots: *mut Value,
-}
+pub use quench_runtime::vm::engine_types::NativeRoots;
 
 // SAFETY: the record owns its buffer outright and no other holder reads or writes it, so moving the
 // record to another thread moves the buffer with it.
@@ -427,6 +417,7 @@ unsafe impl Send for NativeRoots {}
 /// compiled frame) or leaves through the VM (for an instance switch), which roots its own.
 pub(super) const NATIVE_ROOT_CAPACITY: usize = 65536;
 
+#[quench_macros::ext(NativeRootsOps1)]
 impl NativeRoots {
     pub(super) const DEPTH: i32 = std::mem::offset_of!(Self, depth) as i32;
     pub(super) const CAPACITY: i32 = std::mem::offset_of!(Self, capacity) as i32;

@@ -83,7 +83,7 @@ pub(crate) struct FunctionRecord<O, K, V> {
     pub(crate) env: V,
 }
 
-/// The ABI prefix of a compiled function's call context (`vm::compiled::CallContext`): every field up
+/// The ABI prefix of a compiled function's call context (`vm::crate::vm::engine_types::CallContext`): every field up
 /// to and including `adapter_payload`, in order, which generated code loads by offset. The runtime embeds
 /// it as the first field `head` of `CallContext`, with `Deref`/`DerefMut`. Its non-word fields are
 /// parameters: `E` the environment value (`Value`), `C` the compiled artifact, `T` the table words' record,

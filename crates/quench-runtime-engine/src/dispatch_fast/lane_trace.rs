@@ -5,6 +5,7 @@ use super::*;
 use quench_runtime::vm::program_store::ProgramStore;
 use quench_runtime::vm::activation::extend_this_env_roots;
 
+#[quench_macros::ext(LaneStackOps12)]
 impl LaneStack {
     /// Appends to `out` every value the stack's activations hold; `programs` hold the liveness
     /// of the Wasm activations' registers.

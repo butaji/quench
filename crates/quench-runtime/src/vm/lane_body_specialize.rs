@@ -70,7 +70,7 @@ impl LaneView {
     /// image (`Vm::install_ahead_body`) at once, with no warm-up, no compile budget and no tier
     /// gate, since an image has no profiling phase; a function the image has no body for runs in
     /// the lane, never in a runtime tier. Whether it has a body.
-    pub(in super::super) fn install_ahead_lane_body(&self, entry: Handler, install: impl FnOnce() -> Option<std::rc::Rc<super::super::super::compiled::PublishedLaneMethod>>) -> bool {
+    pub(in super::super) fn install_ahead_lane_body(&self, entry: Handler, install: impl FnOnce() -> Option<std::rc::Rc<super::crate::vm::engine_types::PublishedLaneMethod>>) -> bool {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; installing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };

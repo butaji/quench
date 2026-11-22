@@ -13,6 +13,7 @@ use super::*;
 use super::scoped_names::window_scope;
 use quench_runtime::vm::activation::FrameRecord;
 
+#[quench_macros::ext(LaneStackOps10)]
 impl LaneStack {
     /// Keeps `record`, made for the innermost activation, at `depth`, until that activation pops,
     /// and names it from the activation where it is (one-frame-one-call.md F4 (3)): a header's
