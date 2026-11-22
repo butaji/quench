@@ -99,7 +99,7 @@ pub use bytecode::{set_record_built, set_record_read, KeptBytes, ResidualProgram
 pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use compile::{CheckedParameters, ParameterSite};
-pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
+pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, memory_mix_has};
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,

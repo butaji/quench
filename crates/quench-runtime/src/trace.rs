@@ -123,6 +123,12 @@ setting! {
     "QUENCH_DEV", Dev {
         /// The memory-first heap policy in place of the default.
         MemoryFirst = "memory-first",
+        /// `memory-mix=young+full+aging+external+pages+alloc+trim`: memory-first's named
+        /// components on top of the throughput policy (`heap::pacing::memory_mix_has`).
+        MemoryMix = "memory-mix",
+        /// Freed JIT code is filled with traps and never reused (`CodeMemory::drop`), so a run
+        /// that reaches freed code stops where it reached it.
+        PoisonFreedCode = "poison-freed-code",
         /// Array backings never take the double element kind (`heap::array_elements::DOUBLE_LEN`),
         /// which they otherwise take on their first Number that is no int32.
         NoDoubleElements = "no-double-elements",
