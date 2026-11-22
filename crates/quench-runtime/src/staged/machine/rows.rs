@@ -68,7 +68,7 @@ pub enum Order { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Unorde
 
 impl Relation {
     /// The order the relation tests, and whether it reads its operands as floats.
-    pub(crate) const fn order(self) -> (Order, bool) {
+    pub const fn order(self) -> (Order, bool) {
         match self {
             Self::Equal => (Order::Equal, false),
             Self::NotEqual => (Order::NotEqual, false),
@@ -88,7 +88,7 @@ impl Relation {
     }
 
     /// Whether the integer relation reads its operands as signed.
-    pub(crate) const fn is_signed(self) -> bool {
+    pub const fn is_signed(self) -> bool {
         matches!(self, Self::SignedLess | Self::SignedLessEqual | Self::SignedGreater | Self::SignedGreaterEqual)
     }
 }

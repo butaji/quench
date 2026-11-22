@@ -183,7 +183,7 @@ impl<T: SiteEntry> CacheSiteTable<T> {
         T::load(unsafe { *entries.add(offset) })
     }
 
-    pub(super) fn get(&self, index: usize) -> T {
+    pub fn get(&self, index: usize) -> T {
         assert!(index < self.len, "cache site out of range");
         // SAFETY: checked above.
         unsafe { self.get_unchecked(index) }
@@ -211,7 +211,7 @@ impl<T: SiteEntry> CacheSiteTable<T> {
         // SAFETY: checked above; an index inside the table names an entry of the mapping.
         unsafe { &*self.base.as_ptr().add(index) }
     }
-    pub(super) fn stored_mut(&mut self, index: usize) -> &mut T::Stored {
+    pub fn stored_mut(&mut self, index: usize) -> &mut T::Stored {
         assert!(index < self.len, "cache site out of range");
         // SAFETY: checked above; an index inside the table names an entry of the mapping.
         unsafe { &mut *self.base.as_ptr().add(index) }

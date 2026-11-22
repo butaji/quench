@@ -43,7 +43,7 @@ pub fn local_register(registers: u16, slot: u32) -> u16 {
 
 #[cfg(not(stencil_build))]
 impl Instance {
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::Move => Some(Self::Move),
             Class::LoadConst => Some(Self::Constant),
@@ -58,7 +58,7 @@ impl Instance {
     }
 
     /// The registers a constant operation defines: one, or a window.
-    pub(crate) fn constant_registers(self, instruction: WideInstruction) -> Option<Range<u16>> {
+    pub fn constant_registers(self, instruction: WideInstruction) -> Option<Range<u16>> {
         match self {
             Self::Constant => Some(instruction.a()..instruction.a() + 1),
             Self::Fill => {
@@ -84,7 +84,7 @@ pub enum Storage {
 }
 
 impl Storage {
-    pub(crate) const fn of(ty: WasmType) -> Self {
+    pub const fn of(ty: WasmType) -> Self {
         match ty {
             WasmType::I32 | WasmType::F32 => Self::Bits32,
             WasmType::I64 | WasmType::F64 => Self::Bits64,

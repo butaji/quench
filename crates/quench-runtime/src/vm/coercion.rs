@@ -23,7 +23,7 @@ const VOID: u32 = UnaryOperator::Void as u32;
 }
 
 impl Vm {
-    pub(super) fn typeof_value(&mut self, value: Value) -> Value {
+    pub fn typeof_value(&mut self, value: Value) -> Value {
         let mut stage = crate::staged::Concrete::new(std::ptr::null());
         let names = self.typeof_names.as_ptr() as u64;
         match crate::staged::value::immediate_typeof_string(&mut stage, value.to_bits(), names, ()) {
@@ -35,14 +35,14 @@ impl Vm {
     /// The kind whose name `typeof value` yields: an `[[IsHTMLDDA]]` object reads as
     /// undefined (ECMA-262 B.3.6.3).
     #[inline]
-    pub(super) fn typeof_kind(&self, value: Value) -> crate::ValueType {
+    pub fn typeof_kind(&self, value: Value) -> crate::ValueType {
         if self.is_html_dda(value) { crate::ValueType::Undefined } else { self.value_type(value) }
     }
 
     /// The integer a `UNARY_TYPEOF_INDEX` operator yields for `value`: the index in
     /// `bytecode::TYPEOF_NAMES` of the name `typeof value` is.
     #[inline]
-    pub(super) fn typeof_index_value(&self, value: Value) -> Value {
+    pub fn typeof_index_value(&self, value: Value) -> Value {
         let index = immediate_typeof_index(value).unwrap_or_else(|| typeof_name_index(self.typeof_kind(value)));
         Value::integer(index as i32)
     }
@@ -50,7 +50,7 @@ impl Vm {
     /// The boolean a `UNARY_TYPEOF_IS` operator testing the name at `index` in
     /// `bytecode::TYPEOF_NAMES` yields for `value`.
     #[inline]
-    pub(super) fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
+    pub fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
         let named = immediate_typeof_index(value).unwrap_or_else(|| typeof_name_index(self.typeof_kind(value)));
         if (named == index) != negated { Value::TRUE } else { Value::FALSE }
     }
@@ -130,7 +130,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
-    pub(super) fn to_property_key(
+    pub fn to_property_key(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -185,7 +185,7 @@ impl Vm {
 
     /// `!value`: the negated truthiness.
     #[inline(always)]
-    pub(super) fn logical_not(&self, value: Value) -> Value {
+    pub fn logical_not(&self, value: Value) -> Value {
         if self.truthy(value) {
             Value::FALSE
         } else {
@@ -193,7 +193,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn unary(
+    pub fn unary(
         &mut self,
         p: &ResidualProgram,
         op: u32,
@@ -246,7 +246,7 @@ impl Vm {
 
     /// ToNumber of `value` where it runs no guest code and raises nothing: an immediate
     /// primitive or a string. `None` for any other value.
-    #[inline] pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
+    #[inline] pub fn primitive_to_number(&self, value: Value) -> Option<f64> {
         value
             .immediate_number()
             .or_else(|| self.heap.string(value).map(|text| text.read_units(super::number::string_to_number_units)))
@@ -384,7 +384,7 @@ impl Vm {
         Err(self.type_error(program, "Cannot convert object to primitive value".into()))
     }
 
-    pub(super) fn strict_equal(&self, a: Value, b: Value) -> bool {
+    pub fn strict_equal(&self, a: Value, b: Value) -> bool {
         if let (Some(left), Some(right)) = (a.as_number(), b.as_number()) {
             return left == right;
         }
@@ -399,7 +399,7 @@ impl Vm {
     /// ToBoolean of a heap value `Value::truthiness` leaves to its cell: one cell read
     /// decides every falsy heap value, "", 0n and the IsHTMLDDA object.
     #[inline(never)]
-    pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
+    pub fn heap_cell_truthy(&self, v: Value) -> bool {
         heap_cell_truthy_in(&self.heap, v)
     }
 

@@ -219,14 +219,14 @@ impl WasmGcRecord {
 #[repr(C)]
 pub struct TableTarget {
     pub(crate) signature: CanonicalSignature,
-    pub(crate) entry: u32,
-    pub(crate) instance: u64,
+    pub entry: u32,
+    pub instance: u64,
     pub(crate) body: usize,
 }
 
 impl TableTarget {
     /// The entry of a row whose element is no function of a module.
-    pub(crate) const NO_ENTRY: u32 = u32::MAX;
+    pub const NO_ENTRY: u32 = u32::MAX;
     /// The row of a function no module defines, which the VM checks against the expected type.
     pub(crate) const FOREIGN: Self = Self {
         signature: CanonicalSignature::FOREIGN,
@@ -239,11 +239,11 @@ impl TableTarget {
         signature: CanonicalSignature::NULL,
         ..Self::FOREIGN
     };
-    pub(crate) const SIZE: i64 = size_of::<Self>() as i64;
-    pub(crate) const SIGNATURE: i32 = std::mem::offset_of!(Self, signature) as i32;
-    pub(crate) const ENTRY: i32 = std::mem::offset_of!(Self, entry) as i32;
-    pub(crate) const INSTANCE: i32 = std::mem::offset_of!(Self, instance) as i32;
-    pub(crate) const BODY: i32 = std::mem::offset_of!(Self, body) as i32;
+    pub const SIZE: i64 = size_of::<Self>() as i64;
+    pub const SIGNATURE: i32 = std::mem::offset_of!(Self, signature) as i32;
+    pub const ENTRY: i32 = std::mem::offset_of!(Self, entry) as i32;
+    pub const INSTANCE: i32 = std::mem::offset_of!(Self, instance) as i32;
+    pub const BODY: i32 = std::mem::offset_of!(Self, body) as i32;
 }
 
 /// The words compiled code reads to reach a table's mirror: its first row and its length. They
@@ -257,8 +257,8 @@ pub struct TableWords {
 }
 
 impl TableWords {
-    pub(crate) const BASE: i32 = std::mem::offset_of!(Self, base) as i32;
-    pub(crate) const LENGTH: i32 = std::mem::offset_of!(Self, length) as i32;
+    pub const BASE: i32 = std::mem::offset_of!(Self, base) as i32;
+    pub const LENGTH: i32 = std::mem::offset_of!(Self, length) as i32;
 }
 
 /// A Wasm table's references and optional maximum, boxed together so the cell keeps four
@@ -304,12 +304,12 @@ impl WasmTableElements {
 
     /// The row of each element, in element order.
     #[inline]
-    pub(crate) fn targets(&self) -> &[TableTarget] {
+    pub fn targets(&self) -> &[TableTarget] {
         &self.targets
     }
 
     /// The words that publish the mirror to compiled code.
-    pub(crate) fn words(&self) -> &TableWords {
+    pub fn words(&self) -> &TableWords {
         &self.words
     }
 
@@ -374,7 +374,7 @@ impl WasmTableElements {
     /// publication changed, which the publisher calls for every table that holds one of its
     /// functions. `None` leaves the row alone. Rows whose entry is `NO_ENTRY` keep 0 whatever
     /// `refresh` says, so a body is never attached to a function no module defines.
-    pub(crate) fn refresh_bodies(&mut self, mut refresh: impl FnMut(&TableTarget) -> Option<usize>) {
+    pub fn refresh_bodies(&mut self, mut refresh: impl FnMut(&TableTarget) -> Option<usize>) {
         for row in &mut self.targets {
             if row.entry == TableTarget::NO_ENTRY {
                 row.body = 0;

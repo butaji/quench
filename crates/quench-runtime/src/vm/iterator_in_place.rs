@@ -26,7 +26,7 @@ impl Vm {
     /// (`InPlaceStep`). An array values step is decided and made from one read of the
     /// record; the other kinds are decided as `iteration_step` decides them.
     #[inline(always)]
-    pub(in crate::vm) fn step_in_place(&mut self, iterator: Value, method: Value) -> InPlaceStep {
+    pub fn step_in_place(&mut self, iterator: Value, method: Value) -> InPlaceStep {
         let Some(record) = self.heap.iterator(iterator) else {
             return InPlaceStep::Call;
         };

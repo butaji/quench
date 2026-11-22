@@ -9,20 +9,20 @@ use crate::jit_mode::Tier;
 
 /// The thresholds every tier controller reads.
 pub struct Tiers {
-    pub(crate) loops: Loops,
-    pub(crate) lane_body: LaneBody,
+    pub loops: Loops,
+    pub lane_body: LaneBody,
     pub(crate) js_function: JsFunction,
-    pub(crate) wasm: Wasm,
-    pub(crate) stitch: Stitch,
-    pub(crate) priors: Priors,
+    pub wasm: Wasm,
+    pub stitch: Stitch,
+    pub priors: Priors,
     /// Whether every eligible compile is admitted and every JavaScript compilation arm is on, so a
     /// run checks each tier against the interpreter (`Tiers::admits_all`).
     pub(crate) stress: bool,
     /// Whether the tier models admit every eligible compile, whatever it would repay.
-    pub(crate) admits_all: bool,
+    pub admits_all: bool,
     /// The searches a regexp program runs interpreted before it is compiled to native code
     /// (`regexp_native`): compiling costs about what this many searches of a small program do.
-    pub(crate) regexp_native_runs: u32,
+    pub regexp_native_runs: u32,
 }
 
 /// The priors the model tests pin their arithmetic to.
@@ -57,16 +57,16 @@ pub const LOOP_BODIES: bool = false;
 pub struct Stitch {
     /// The longest callee body, in bytecodes: the accessors and arithmetic helpers whose call
     /// costs more than their work.
-    pub(crate) max_instructions: usize,
+    pub max_instructions: usize,
     /// The callee bytecodes one stitch inlines in all, so a hot loop's code stays a few call
     /// bodies' worth.
-    pub(crate) max_total_instructions: usize,
+    pub max_total_instructions: usize,
     /// The frame slots above the caller's registers the inlined callees' windows may take: the room
     /// a body's recovery reserves past its activation (`LaneRecoverySpace`).
-    pub(crate) window_registers: u32,
+    pub window_registers: u32,
     /// The inline depth: activations a leave inside inlined code materializes, the caller's
     /// included.
-    pub(crate) max_depth: usize,
+    pub max_depth: usize,
 }
 
 /// Parts per thousand, the unit of a prior's share.
@@ -76,40 +76,40 @@ pub const PER_MILLE: u64 = 1000;
 /// measurements replace it (`tier-decision-rule-v1`): nothing here is fitted to a benchmark row.
 pub struct Priors {
     /// Nanoseconds an interpreted lane bytecode takes.
-    pub(crate) interpreter_ns: u64,
+    pub interpreter_ns: u64,
     /// A u-jit body's per-bytecode time as a share of the interpreter's, in thousandths: bodies
     /// run 2 to 5 times faster per entry than the interpreter once entered (inclusive timing).
-    pub(crate) body_share: u64,
+    pub body_share: u64,
     /// Nanoseconds the code generator takes to compile one IR instruction: a fixed price on the
     /// compile's work (the running ratio it replaced settled at 1.3-2.2 us on JS3 rows).
-    pub(crate) compile_ns_per_ir: u64,
+    pub compile_ns_per_ir: u64,
     /// The part per thousand of a compile's time that waits on the running program: compiles run
     /// on the code generator's thread, so most of their time overlaps it (two cores).
-    pub(crate) compile_wall_permille: u64,
+    pub compile_wall_permille: u64,
     /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry
     /// (measured about 300 ns: some 1,100 instructions at 0.3 ns).
-    pub(crate) region_entry_ns: u64,
-    pub(crate) body_entry_ns: u64,
+    pub region_entry_ns: u64,
+    pub body_entry_ns: u64,
     /// A b-jit body's per-bytecode time as a share of the interpreter's: stencil code runs about
     /// half of it (values stay in the frame). Its entry is `body_entry_ns`, as a u-jit body's: both
     /// publish a `LaneMethod` the one entry driver runs (`lane_body_entry`, `Vm::run_lane_body`),
     /// whose binding of the lane frame is the crossing's cost, not the code the body enters.
-    pub(crate) base_body_share: u64,
+    pub base_body_share: u64,
     /// A u-jit body compiled without the mid-end (`CompileLevel::Quick`: no e-graph, no loop
     /// unswitching), as a share of the interpreter's time per bytecode, and the share of an
     /// optimized compile's time its compile takes, both per mille. Richards' compile profile
     /// (Nov 18): of 972M Ir of Cranelift, the e-graph took 179M and poll unswitching 140M, so a
     /// quick compile costs about two thirds; its code keeps the values the e-graph would have
     /// folded, a third more time per bytecode than `body_share`.
-    pub(crate) quick_body_share: u64,
-    pub(crate) quick_compile_permille: u64,
+    pub quick_body_share: u64,
+    pub quick_compile_permille: u64,
     /// The divisor of the entries and the interpreter time so far that gives the credible lower
     /// bound of those to come, where the decision (a compile) is irreversible.
-    pub(crate) remaining_divisor: u64,
+    pub remaining_divisor: u64,
     /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
     /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
     /// work, none of which overlaps the program as a compile on the code generator's thread does.
-    pub(crate) plan_ns_per_ir: u64,
+    pub plan_ns_per_ir: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -118,21 +118,21 @@ pub struct Loops {
     /// compile (`loop_model`): a resource and correctness floor, enough that the call sites of
     /// its body have linked their targets (which the region inlines) and its entry facts are
     /// observed. The model asks more where the compile does not yet pay.
-    pub(crate) warmup_taken: u32,
+    pub warmup_taken: u32,
     /// IR instructions a bytecode of a loop's span compiles to, which prices the compile before
     /// it runs (its own census replaces the guess in the learned cost per IR instruction).
-    pub(crate) ir_per_bytecode: u64,
+    pub ir_per_bytecode: u64,
     /// The weight of the prior that a site's native entries repay themselves, in entries: the
     /// site's measured runs outweigh it as they mount (`loop_model::repaid_entries`), and it stops
     /// entering where its entries cost more than the iterations they ran save.
-    pub(crate) prior_runs: u64,
+    pub prior_runs: u64,
     /// Runs that leave at one operation before the site compiles again with that operation's
     /// int32 speculation dropped (`LoopTier::left_at`): a sum that overflows on most runs
     /// (SHA-256's rounds) is a double's, and one that overflowed once is not.
-    pub(crate) widen_after_leaves: u16,
+    pub widen_after_leaves: u16,
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
-    pub(crate) max_compilations: u32,
+    pub max_compilations: u32,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -140,7 +140,7 @@ pub(crate) struct LaneBody {
     /// The entries a function makes before its lane body specializes: enough that its call
     /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
     /// only a function called repeatedly pays for compiling one.
-    pub(crate) warmup_entries: u16,
+    pub warmup_entries: u16,
     /// The same under `--b-jit`, whose whole-function body (`Vm::base_body_work`) is stitched
     /// from stencils in microseconds, with no register allocator or code generator thread to
     /// pay for: a few entries show a function's parameters their types (the int32s its entry
@@ -148,18 +148,18 @@ pub(crate) struct LaneBody {
     pub(crate) base_entries: u16,
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
-    pub(crate) reoptimize_share: u8,
+    pub reoptimize_share: u8,
     /// The runs after which a body that no more recompile may change, and that left more than
     /// `retire_share` percent of them, stops being entered: it pays its entry and its exit for
     /// work the lane does anyway.
-    pub(crate) retire_after_runs: u16,
-    pub(crate) retire_share: u8,
+    pub retire_after_runs: u16,
+    pub retire_share: u8,
     /// The leaves after which a body specializes again from the feedback its sites hold then:
     /// a region compiled while its call graph warmed keeps leaving at sites whose targets came
     /// later, the deoptimization that reoptimizes. Each recompile doubles it, as JSC's exit
     /// threshold backs off, and `max_recompiles` bounds it.
-    pub(crate) reoptimize_exits: u16,
-    pub(crate) max_recompiles: u8,
+    pub reoptimize_exits: u16,
+    pub max_recompiles: u8,
     /// The most compiles of one function's body from its entry: a request of another plan past
     /// them is declined, so what each came to is the last that holds.
     pub(crate) max_compiles: u8,
@@ -168,24 +168,24 @@ pub(crate) struct LaneBody {
     pub(crate) max_osr_compiles: u8,
     /// The most bodies of one function lifecycle edges may discard before it runs in the lane
     /// for good: past them a compile costs more than its runs regain.
-    pub(crate) max_lifetimes: u8,
+    pub max_lifetimes: u8,
     /// The times a function specializes again because a callee published its body
     /// (`LaneView::respecialize_callers`): each makes more of its calls direct, and the bound
     /// ends the exchange between functions that call each other. One: a second and third
     /// respecialization cost more compile than their direct calls regained (deltablue at 120
     /// runs: total Ir -2%, richards unchanged; Nov 18).
-    pub(crate) max_callee_recompiles: u8,
-    pub(crate) late_call_calls: u32,
+    pub max_callee_recompiles: u8,
+    pub late_call_calls: u32,
     /// The longest callee body a unit or a call plan inlines (`staged::plan_entry`): each copy of it
     /// costs code and compile time at every call site, and short bodies (accessors, field updates)
     /// are where a call costs most relative to its work.
-    pub(crate) max_inlined_instructions: usize,
+    pub max_inlined_instructions: usize,
     /// The most entries between looks for a compiling body's code, which start one entry apart
     /// and double (`LaneBody::Compiling`). A look costs a channel poll
     /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
-    pub(crate) compile_poll_interval: u16,
+    pub compile_poll_interval: u16,
     /// The entries of one epoch of a published body's audit, whose epochs alternate the body and
     /// the interpreter (`LaneView::audit_entry`): one clock read per epoch.
     pub(crate) audit_period: u32,
@@ -242,12 +242,12 @@ pub const POLYMORPHISM: usize = 4;
 /// `p (probe - guard) > (1 - p) (exit - probe)`, so the break-even rate is
 /// `(exit - probe) / (exit - guard)`.
 pub(crate) struct Speculation {
-    pub(crate) guard_read_ns: u32,
-    pub(crate) probe_read_ns: u32,
-    pub(crate) guard_exit_ns: u32,
+    pub guard_read_ns: u32,
+    pub probe_read_ns: u32,
+    pub guard_exit_ns: u32,
     /// The standard-normal deviate of the posterior's lower 5% quantile: the Beta's quantile is
     /// taken as mean minus this many standard deviations (conservative for a skewed Beta).
-    pub(crate) lower_quantile_z: f64,
+    pub lower_quantile_z: f64,
 }
 
 /// A guarded read is a load and a compare; the probe is the VM cache's hit path; an exit costs
@@ -319,12 +319,12 @@ const FLOOR: Tiers = Tiers {
 
 impl LaneBody {
     /// The compiles allowed a function's whole body, or of one of its loop entries (OSR).
-    pub(crate) fn compile_bound(&self, osr: bool) -> u8 {
+    pub fn compile_bound(&self, osr: bool) -> u8 {
         if osr { self.max_osr_compiles } else { self.max_compiles }
     }
 
     /// The entries before a function's body specializes in this process's mode.
-    pub(crate) fn warmup(&self) -> u16 {
+    pub fn warmup(&self) -> u16 {
         if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
     }
 }
@@ -336,7 +336,7 @@ impl Tiers {
     /// (`body_entry_ns`, the one entry driver's) over the interpretation its code saves per
     /// bytecode (`Priors::repaying_length`): a stencil body keeps `base_body_share` of it, a
     /// Cranelift body `body_share`.
-    pub(crate) fn amortizing_instructions(&self, tier: Tier) -> usize {
+    pub fn amortizing_instructions(&self, tier: Tier) -> usize {
         if self.admits_all { return 0; }
         match tier {
             Tier::Base => self.priors.repaying_length(self.priors.base_body_share),
@@ -433,7 +433,7 @@ pub(crate) struct PolicyTiers {
     /// interpreted, Crypto at 4000 and 3128 (static BOLT x86_64, memory-first, median of 5,
     /// 2026-10-24). Compiling at `none`, without the e-graph pass, saved only 576 KiB on
     /// Crypto and 648 on NavierStokes (`tod137-loop-tier-opt-level-…`).
-    pub(crate) loop_tier: bool,
+    pub loop_tier: bool,
     /// Whether the JavaScript function tiers (the per-function tier and the loop tier's site
     /// analysis) compile. Memory-first compiles none, on the
     /// owner's direction that it may trade Score for memory under `--jit` (TOD-123). Under

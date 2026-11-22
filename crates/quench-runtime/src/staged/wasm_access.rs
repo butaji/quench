@@ -90,7 +90,7 @@ impl WasmAccessOperation {
 
 impl<W, P> Operation<W, P> {
     /// The memory access `instruction` denotes (`Decoder::WasmMemory`).
-    pub(crate) fn decode_wasm_access<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_wasm_access<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         WasmAccessOperation::decode(instruction, context).map(Self::WasmAccess)
     }
 }

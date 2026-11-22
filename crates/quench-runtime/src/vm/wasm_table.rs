@@ -90,7 +90,7 @@ impl Vm {
             })
     }
 
-    pub(super) fn wasm_function_reference(
+    pub fn wasm_function_reference(
         &mut self,
         p: &ResidualProgram,
         function: u32,
@@ -128,20 +128,20 @@ impl Vm {
         }
     }
 
-    pub(super) fn wasm_table_index_type(&self, table: Value) -> Result<crate::WasmType, JsError> {
+    pub fn wasm_table_index_type(&self, table: Value) -> Result<crate::WasmType, JsError> {
         match self.heap.get(table) {
             Some(Cell::WasmTable { table64, .. }) => Ok(table_index_type(*table64)),
             _ => Err(JsError::validation("invalid Wasm table binding".into())),
         }
     }
 
-    pub(super) fn wasm_table_index(&self, table: Value, value: Value) -> Result<u64, JsError> {
+    pub fn wasm_table_index(&self, table: Value, value: Value) -> Result<u64, JsError> {
         let ty = self.wasm_table_index_type(table)?;
         self.wasm_index_operand(value, ty)
     }
 
     #[inline(always)]
-    pub(super) fn wasm_index_operand(
+    pub fn wasm_index_operand(
         &self,
         value: Value,
         ty: crate::WasmType,
@@ -158,7 +158,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn encode_wasm_table_size(
+    pub fn encode_wasm_table_size(
         &mut self,
         table: Value,
         size: Option<u64>,
@@ -167,21 +167,21 @@ impl Vm {
         Ok(self.encode_wasm_index_size(ty, size))
     }
 
-    pub(super) fn wasm_table_elements(&self, table: Value) -> Result<&[Value], JsError> {
+    pub fn wasm_table_elements(&self, table: Value) -> Result<&[Value], JsError> {
         match self.heap.get(table) {
             Some(Cell::WasmTable { elements, .. }) => Ok(elements),
             _ => Err(JsError::validation("invalid Wasm table binding".into())),
         }
     }
 
-    pub(super) fn wasm_table_get(&self, table: Value, index: u64) -> Result<Value, JsError> {
+    pub fn wasm_table_get(&self, table: Value, index: u64) -> Result<Value, JsError> {
         self.wasm_table_elements(table)?
             .get(usize::try_from(index).map_err(|_| out_of_bounds_table())?)
             .copied()
             .ok_or_else(out_of_bounds_table)
     }
 
-    pub(super) fn wasm_table_fill(
+    pub fn wasm_table_fill(
         &mut self,
         table: Value,
         index: u64,
@@ -200,7 +200,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn wasm_table_grow(
+    pub fn wasm_table_grow(
         &mut self,
         table: Value,
         initial: Value,
@@ -236,7 +236,7 @@ impl Vm {
         Ok(Some(old_size as u64))
     }
 
-    pub(super) fn wasm_table_init(
+    pub fn wasm_table_init(
         &mut self,
         table: Value,
         source: Value,
@@ -266,7 +266,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn wasm_table_copy(
+    pub fn wasm_table_copy(
         &mut self,
         destination: Value,
         source: Value,

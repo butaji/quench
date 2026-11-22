@@ -27,7 +27,7 @@ impl Vm {
         self.object_delete_property(p, &[self.realm.globals, key])
     }
 
-    pub(super) fn object_delete_property(
+    pub fn object_delete_property(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],

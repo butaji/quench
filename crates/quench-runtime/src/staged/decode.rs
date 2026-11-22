@@ -18,13 +18,13 @@ pub struct DecodeContext<'a> {
 
 impl DecodeContext<'static> {
     /// No table: a tier that decodes only the rows whose operands the record holds.
-    pub(crate) const EMPTY: Self = Self { constants: &[], constant_at: None, method_sites: &[] };
+    pub const EMPTY: Self = Self { constants: &[], constant_at: None, method_sites: &[] };
 }
 
 impl<'a> DecodeContext<'a> {
     /// The method sites of `program`; its constants are the tier's to type
     /// (`of_constants`), so a `LoadConst` decodes only where the tier gives them.
-    pub(crate) fn of(program: &'a ResidualProgram) -> Self {
+    pub fn of(program: &'a ResidualProgram) -> Self {
         Self { constants: &[], constant_at: None, method_sites: &program.method_sites }
     }
 
@@ -40,7 +40,7 @@ impl<'a> DecodeContext<'a> {
     }
 
     /// The method site at `index`.
-    pub(crate) fn method_site(self, index: usize) -> Option<&'a MethodSite> {
+    pub fn method_site(self, index: usize) -> Option<&'a MethodSite> {
         self.method_sites.get(index)
     }
 }

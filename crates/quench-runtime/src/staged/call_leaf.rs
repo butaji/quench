@@ -93,9 +93,9 @@ pub struct LeafContext<W> {
 /// What a leaf's return reads of its record: the caller's call record, registers and records.
 #[derive(Clone, Copy)]
 pub struct LeafCaller<W> {
-    pub(crate) call: W,
-    pub(crate) registers: W,
-    pub(crate) base: W,
+    pub call: W,
+    pub registers: W,
+    pub base: W,
 }
 
 /// Continues where the `this` of a callee for `receiver` is decided by the receiver's own bits

@@ -112,7 +112,7 @@ impl CallerView for FrameRecord {
 
 impl Vm {
     /// The view of the frame at `index` of the VM's stack.
-    pub(super) fn frame_caller(&self, index: usize) -> &dyn CallerView {
+    pub fn frame_caller(&self, index: usize) -> &dyn CallerView {
         &*self.frames[index]
     }
 
@@ -127,7 +127,7 @@ impl Vm {
 
     /// The environment `caller`'s closure captured: its own environment's parent once it has made
     /// one, else the environment word itself.
-    pub(super) fn captured_parent_environment(&self, caller: &dyn CallerView) -> Value {
+    pub fn captured_parent_environment(&self, caller: &dyn CallerView) -> Value {
         if !caller.owns_environment() {
             return caller.environment();
         }

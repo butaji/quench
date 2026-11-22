@@ -57,13 +57,13 @@ pub enum Mutability {
 /// memory is read-only.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Access {
-    pub(crate) region: Region,
-    pub(crate) mutability: Mutability,
+    pub region: Region,
+    pub mutability: Mutability,
 }
 
 impl Region {
     /// Every region, in declaration order: an index into it is the region's number.
-    pub(crate) const ALL: &'static [Region] = &[
+    pub const ALL: &'static [Region] = &[
         Self::Frame, Self::ObjectSlots, Self::ShapeWord, Self::Elements, Self::HeapMeta, Self::MissCounters,
         Self::Records, Self::Payload, Self::Cells, Self::EntryCell, Self::LoopEntry, Self::Dispatch,
         Self::Constants, Self::Invalidation, Self::RecordBases,
@@ -72,12 +72,12 @@ impl Region {
     // Inlined into every `Concrete` read: an access tag the interpreter ignores must cost nothing,
     // and a plain call would cross codegen units.
     #[inline(always)]
-    pub(crate) const fn mutable(self) -> Access {
+    pub const fn mutable(self) -> Access {
         Access { region: self, mutability: Mutability::Mutable }
     }
 
     #[inline(always)]
-    pub(crate) const fn readonly(self) -> Access {
+    pub const fn readonly(self) -> Access {
         Access { region: self, mutability: Mutability::Readonly }
     }
 }

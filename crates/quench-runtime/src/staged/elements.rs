@@ -95,8 +95,8 @@ fn bounded<S: Stage>(stage: &mut S, within: bool, length: S::Word, index: S::Wor
 /// in one width.
 #[derive(Clone, Copy)]
 pub struct DenseView<W> {
-    pub(crate) values: W,
-    pub(crate) length: W,
+    pub values: W,
+    pub length: W,
     /// Whether a read needs no hole test of its own: the access consumes the element through a
     /// proof that rejects a hole's bits (a Number read, whose proof sees a NaN pattern and
     /// leaves). A fact of the proof, known before any run, so the read compiles without the test.
@@ -108,7 +108,7 @@ pub struct DenseView<W> {
     /// backing, where the view's proof admitted one (`prove_view`): each access then takes the
     /// backing's form. `None` where the proof admitted a wide backing alone (a loop's hoisted
     /// view, a loop entry's).
-    pub(crate) double: Option<W>,
+    pub double: Option<W>,
     /// Whether the backing counts no others for this view (`OTHERS_UNKNOWN`, as a loop's hoisted
     /// writable view holds it: `emit_dense_array_uncounted`), so a store through it writes the
     /// element alone (`replace_uncounted_element`). A view proved by a store's own check keeps the

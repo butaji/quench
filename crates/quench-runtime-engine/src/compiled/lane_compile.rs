@@ -7,7 +7,7 @@ use super::*;
 use quench_runtime::vm::program_store::lane_publication::LaneKey;
 
 type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileRejection>;
-#[path = "lane_compile/image.rs"] mod image;
+#[path = "lane_compile/image.rs"] pub(crate) mod image;
 
 /// A lowered lane body: the method it becomes once its code exists.
 pub(crate) struct LanePlan {
@@ -355,7 +355,7 @@ pub(crate) enum LaneBodyOutcome {
 }
 
 use crate::compiled::tier_policy::{REPLAN_BUDGET_DIVISOR, LANE_BACKTRACKING_MAX_INSTS};
-#[cfg(test)] #[path = "lane_compile/ahead.rs"] mod ahead;
+#[cfg(test)] #[path = "lane_compile/ahead.rs"] pub(crate) mod ahead;
 use super::admission::{refuse, record, Refusal};
 use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
@@ -853,4 +853,4 @@ impl LaneMethod {
 pub(crate) mod dependencies;
 pub(crate) use dependencies::LaneDependencies;
 
-#[cfg(test)] #[path = "lane_compile/tests.rs"] mod tests;
+#[cfg(test)] #[path = "lane_compile/tests.rs"] pub(crate) mod tests;

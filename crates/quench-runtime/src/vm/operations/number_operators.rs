@@ -104,7 +104,7 @@ impl Vm {
     /// and their ToNumeric is `Value::immediate_number`, which runs no guest code, so they
     /// compute as those Numbers. Equality compares types first, and a heap operand may convert
     /// through guest code: `None` leaves both to the caller.
-    pub(in crate::vm) fn immediate_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+    pub fn immediate_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         // Int32 operands, a Boolean and `null` among them (`a + true`, `flags | null`), compute as
         // int32s (`integer_binary`), as two int32 Numbers do. Only a numeric or relational operator:
         // an equality compares types first, which `integer_binary`'s relations would not.

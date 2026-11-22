@@ -43,7 +43,7 @@ impl Flow {
 
     /// Where `instruction` at `pc` leaves to; a table's entries are `Jump`s, which `decode`
     /// reads at their positions.
-    pub(crate) fn leave(
+    pub fn leave(
         self,
         pc: usize,
         instruction: WideInstruction,

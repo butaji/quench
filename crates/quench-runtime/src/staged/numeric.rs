@@ -214,12 +214,12 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 
 /// The `NumberOperation` variants as numbers, for `step_of`'s compile-time choice of arm: `ANY` runs every arm.
 pub mod kind {
-    pub(crate) const ANY: u8 = 0;
-    pub(crate) const ARITHMETIC: u8 = 1;
+    pub const ANY: u8 = 0;
+    pub const ARITHMETIC: u8 = 1;
     pub(crate) const RELATION: u8 = 2;
-    pub(crate) const RELATION_VALUE: u8 = 3;
-    pub(crate) const BITWISE: u8 = 4;
-    pub(crate) const REMAINDER: u8 = 5;
+    pub const RELATION_VALUE: u8 = 3;
+    pub const BITWISE: u8 = 4;
+    pub const REMAINDER: u8 = 5;
     pub(crate) const INC_DEC: u8 = 6;
     pub(crate) const BITWISE_NOT: u8 = 7;
     pub(crate) const TO_NUMERIC: u8 = 8;

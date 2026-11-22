@@ -86,7 +86,7 @@ const PREPARED_ARGUMENT_ROOTS: usize = 4;
 
 #[derive(Clone, Copy, Default)]
 pub struct RuntimeAtoms {
-    lexical_this: Atom,
+    pub lexical_this: Atom,
     new_target: Atom,
     /// The RegExp members the builtin fast paths check on every call.
     regexp_exec: Atom,
@@ -95,7 +95,7 @@ pub struct RuntimeAtoms {
     /// `regexp::REGEXP_FLAG_ACCESSORS` names, in that order.
     regexp_flag_accessors: [Atom; regexp::REGEXP_FLAG_ACCESSORS.len()],
     /// Read by every promise resolution and species lookup.
-    then: Atom,
+    pub then: Atom,
     constructor: Atom,
     /// The ToPrimitive methods, read by every ToNumber and ToString of an object.
     value_of: Atom,
@@ -108,13 +108,13 @@ pub struct RuntimeAtoms {
     empty: Atom,
     /// An iterator result's keys, in its literal order.
     pub value: Atom,
-    done: Atom,
+    pub done: Atom,
     /// The iterator protocol's close method.
     iterator_return: Atom,
     /// A property descriptor object's other keys (`value` above), which
     /// `Object.getOwnPropertyDescriptor` writes on every call.
     writable: Atom, enumerable: Atom, configurable: Atom,
-    get: Atom, set: Atom,
+    pub get: Atom, set: Atom,
     /// The internal keys a bound function's environment holds its parts under
     /// (`Vm::bound_function_parts`).
     bound_target: Atom,
@@ -322,44 +322,44 @@ enum CallbackProof {
 #[derive(Clone)]
 pub struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
-    context: CallContext,
+    pub context: CallContext,
     /// Leading actual arguments that legacy `f.arguments` reflects live from the parameter
     /// storage; `original_arguments` holds the arguments after them.
     reflected_parameters: u16,
-    original_arguments: Vec<Value>,
-    program: ProgramId,
-    function: u32,
-    pc: usize,
+    pub original_arguments: Vec<Value>,
+    pub program: ProgramId,
+    pub function: u32,
+    pub pc: usize,
     /// Whether pc is a saved continuation after a call rather than the executing operation.
-    pc_is_resume: bool,
+    pub pc_is_resume: bool,
     /// Skip one function-entry tier attempt after a native continuation stopped
     /// on an already-executed backedge to PC zero.
-    pub(super) js_jit_skip_entry_once: bool,
+    pub js_jit_skip_entry_once: bool,
     source_field: Option<(usize, crate::bytecode::FieldPart)>,
     // The current operation's lexical projection, independent of the PC
     // published for GC roots or saved as the continuation after a call.
     binding_site_pc: Option<u32>,
-    env: Value,
-    this: Value,
-    locals: Vec<Value>,
+    pub env: Value,
+    pub this: Value,
+    pub locals: Vec<Value>,
     dynamic_bindings: Vec<(Atom, Value)>,
-    captured: bool,
-    registers: register_file::RegisterFile,
+    pub captured: bool,
+    pub registers: register_file::RegisterFile,
     capture_cache: CaptureCache,
     /// How many leading register slots hold values, whatever the current length: below it a
     /// root-mapped activation can take the file without rewriting it.
     initialized_registers: usize,
-    active_iterators: Vec<ActiveIterator>,
+    pub active_iterators: Vec<ActiveIterator>,
     // Empty while active; owns the transferred scope stack while detached.
-    with_objects: Vec<Value>,
-    with_base: usize,
+    pub with_objects: Vec<Value>,
+    pub with_base: usize,
     /// Opt-in interpreter time for a synchronous JIT-diagnostic activation.
     /// Excludes compile work, native execution, suspended and exceptional exits.
-    js_jit_interpreter_started: Option<std::time::Instant>,
+    pub js_jit_interpreter_started: Option<std::time::Instant>,
     /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
     /// `this`, and only in derived constructors, whose binding starts deleted; so for these
     /// frames `this` is authoritative and the binding lookup can be skipped.
-    fixed_this: bool,
+    pub fixed_this: bool,
 }
 /// A frame's innermost capture slots, valid for `env` until the collection after `epoch`
 /// (`Vm::cached_direct_capture`).
@@ -653,7 +653,7 @@ pub struct Realm {
     /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one: a test every
     /// global name load makes (`name_row`).
     global_lexical_declarations: AtomSet,
-    global_lexical_bindings: GlobalLexicalBindings,
+    pub global_lexical_bindings: GlobalLexicalBindings,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
     /// Every inactive realm's global lexical state, keyed by its global, except the realm
     /// last switched away from, which `parked` holds.
@@ -662,9 +662,9 @@ pub struct Realm {
     /// across two realms do on every turn, moves its state without hashing.
     parked: Option<ParkedRealm>,
     pub intrinsics: RealmIntrinsics,
-    jobs: std::collections::VecDeque<PendingJob>,
+    pub jobs: std::collections::VecDeque<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
-    promise: PromiseRuntime,
+    pub promise: PromiseRuntime,
 }
 impl Realm {
     /// Binds global lexical `atom` to `value`, declaring a name bound for the first time;
@@ -769,9 +769,9 @@ const REALM_FOLLOWING_PROTOTYPES: [Native; 8] = [
 ];
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct FieldCache {
-    receiver: u32,
-    holder: u32,
-    slot: u16,
+    pub receiver: u32,
+    pub holder: u32,
+    pub slot: u16,
     /// The layout id of the holder (`Object::layout_id`) where the holder object was at hand when
     /// the entry was recorded, else `NO_HOLDER_LAYOUT`. It names the holder's exact shape `holder`
     /// (`layouts::auxiliary`), so a read may guard the holder's whole header in one compare.
@@ -781,7 +781,7 @@ pub struct FieldCache {
 impl FieldCache {
     /// The entry of an own data field at `slot` of receivers of exact shape `receiver`.
     #[inline(always)]
-    const fn own(receiver: u32, slot: u16) -> Self {
+    pub const fn own(receiver: u32, slot: u16) -> Self {
         Self { receiver, holder: NO_FIELD_HOLDER, slot, holder_id: field_cache_layout::NO_HOLDER_LAYOUT }
     }
 }
@@ -1133,11 +1133,11 @@ pub(crate) struct ProgramContext {
     /// The `ProgramStore::context_epoch` it was derived at.
     epoch: u64,
     /// The program's residual; null for a program the store does not hold.
-    code: *const crate::bytecode::ResidualProgram,
+    pub code: *const crate::bytecode::ResidualProgram,
     /// Its lane views by function; a null slice until the program's view table exists
     /// (`Vm::program_context_in_lane`), which a program the lane never enters never makes.
-    views: *const [program_store::LaneViewCell],
-    constants: *const [Value],
+    pub views: *const [program_store::LaneViewCell],
+    pub constants: *const [Value],
     layout: ProgramCacheLayout,
     field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
 }
@@ -1183,9 +1183,9 @@ const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
 /// lifetime, so its classifications are computed once, when the entry is filled.
 #[derive(Clone, Copy)]
 pub struct InLoopCallTarget {
-    callee: Value,
-    program: ProgramId,
-    function: u32,
+    pub callee: Value,
+    pub program: ProgramId,
+    pub function: u32,
     env: Value,
     push: InLoopPush,
     construct: ConstructKind,
@@ -1953,7 +1953,7 @@ pub enum FrameOutcome {
 impl FrameOutcome {
     /// The value a call's completed activation yields: a return, or a constructor's.
     #[inline(always)]
-    fn into_value(self) -> Result<Value, JsError> {
+    pub fn into_value(self) -> Result<Value, JsError> {
         match self {
             Self::Complete(value) | Self::ConstructComplete { value, .. } => Ok(value),
             Self::ParameterInitializationComplete => {
@@ -2032,18 +2032,18 @@ pub struct Vm {
     /// The async function a microtask drain resumed whose activation the running lane run is
     /// rooted in (`Vm::resume_job`), else undefined: its `await` of a settled value continues in
     /// place when no other job is queued (`await_miss`).
-    queue_resumed: Value,
+    pub queue_resumed: Value,
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
     /// The native whose fast in-place body a dispatcher tried and declined on the call that is
     /// about to reach its general native, so that native skips that body (the one-shot flag is
     /// taken at each such native's entry, and cleared at each dispatcher attempt).
-    declined_fast: Option<Native>,
+    pub declined_fast: Option<Native>,
     /// The index a declined `indexOf` or `includes` dense walk stopped at (`Err(Some(index))` of
     /// `dense_search_resume`), recorded with `declined_fast` naming that native and taken with it
     /// by the general native, which resumes its steps there instead of rescanning the prefix.
-    declined_resume: Option<usize>,
+    pub declined_resume: Option<usize>,
     /// The programs the running job queues return to, innermost last (`Vm::run_job_queue`):
     /// an await's job leaves its function's program active for the queue's next jobs, so a
     /// collection keeps each of these, which the queue makes active again when it ends.
@@ -2061,8 +2061,8 @@ pub struct Vm {
     /// are not methods of `host`.
     pub(crate) host_statics: crate::host::HostStatics,
     /// `Host::runs_lane`, read once: whether bodies run in the lane (`dispatch_fast`).
-    pub(crate) runs_lane: bool,
-    specialized: bool,
+    pub runs_lane: bool,
+    pub specialized: bool,
     pub heap: Heap,
     pub realm: Realm,
     pub object_proto: Value,
@@ -2070,7 +2070,7 @@ pub struct Vm {
     pub array_proto: Value,
     /// %String.prototype% of the current realm; primitive string property
     /// reads use it directly, so realm switches re-derive it.
-    string_proto: Value,
+    pub string_proto: Value,
     /// %Promise.prototype% of the current realm, which every promise allocation takes
     /// (`Vm::promise_object_with_parent`); it follows the active realm as `string_proto` does.
     promise_proto: Value,
@@ -2096,14 +2096,14 @@ pub struct Vm {
     float16_array_proto: Value,
     float32_array_proto: Value,
     float64_array_proto: Value,
-    data_view_proto: Value,
-    map_proto: Value,
-    set_proto: Value,
+    pub data_view_proto: Value,
+    pub map_proto: Value,
+    pub set_proto: Value,
     shadow_realm_proto: Value,
     map_iterator_proto: Value,
     set_iterator_proto: Value,
-    weak_map_proto: Value,
-    weak_set_proto: Value,
+    pub weak_map_proto: Value,
+    pub weak_set_proto: Value,
     weak_ref_proto: Value,
     /// ECMAScript [[KeptAlive]] targets, held until the host ends a job turn.
     /// The roots `keep_alive` holds until the job ends, by the kept value's bits: one lookup per
@@ -2130,7 +2130,7 @@ pub struct Vm {
     main_realm: Value,
     // Boxed: frames move between this stack, `frame_pool` and suspended generators by pointer.
     #[allow(clippy::vec_box)]
-    frames: Vec<Box<Frame>>,
+    pub frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
     pub(crate) native_root_lists: Vec<Vec<RootId>>,
@@ -2147,30 +2147,30 @@ pub struct Vm {
     realm_native_proofs: iterators::RealmNativeProofs,
     /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
     /// takes one on entry, so running a job allocates no stack of its own.
-    pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
+    pub pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
     /// Idle JS entry contexts, one per nesting level reached: an entry takes one and a
     /// reentrant entry under it another, so nested native calls allocate none.
     #[allow(clippy::vec_box)]
     #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
     js_native_contexts: Vec<Box<crate::vm::engine_types::CallContext>>,
     /// The environments native Wasm code holds across its calls into other instances.
-    native_roots: Box<crate::vm::engine_types::NativeRoots>,
+    pub native_roots: Box<crate::vm::engine_types::NativeRoots>,
     /// Activations a running lane holds without frames, boxed so a nested run swaps pointers.
-    lane_stack: Box<crate::vm::engine_types::LaneStack>,
+    pub lane_stack: Box<crate::vm::engine_types::LaneStack>,
     /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
-    lane_roots: Vec<crate::vm::engine_types::ParkedLane>,
+    pub lane_roots: Vec<crate::vm::engine_types::ParkedLane>,
     /// Empty lane stacks a nested run returned, which the next one starts over
     /// (`Vm::nested_lane_run`): a fresh stack reserves its whole value and activation room and
     /// starts with no call target resolved.
-    spare_lane_stacks: Vec<Box<crate::vm::engine_types::LaneStack>>,
+    pub spare_lane_stacks: Vec<Box<crate::vm::engine_types::LaneStack>>,
     /// Whether Wasm functions with a compiled denotation run as native code.
-    execution_mode: ExecutionMode,
-    native_execution_rejections: u64,
+    pub execution_mode: ExecutionMode,
+    pub native_execution_rejections: u64,
     /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
-    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<crate::vm::engine_types::NumericImage>>>,
+    pub js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<crate::vm::engine_types::NumericImage>>>,
     #[cfg(feature = "native-execution")]
-    native_program_resolver: Option<Box<engine_types::NativeProgramResolver>>,
-    execution_interrupt: crate::ExecutionInterrupt,
+    pub native_program_resolver: Option<Box<engine_types::NativeProgramResolver>>,
+    pub execution_interrupt: crate::ExecutionInterrupt,
     pub active_call_roots: Vec<Value>,
     /// The frame index of each root activation this Vm's entry points are running (`call_root`,
     /// `call_eval_closure`), innermost last. Global var paths walk them rather than every frame.
@@ -2181,25 +2181,25 @@ pub struct Vm {
     prepared_roots: Vec<Value>,
     /// The step natives an iteration proved (`Vm::proved_step_native`), one per `StepNative`.
     step_native_proofs: [iterators::StepNativeProof; iterators::STEP_NATIVES],
-    with_stack: Vec<Value>,
+    pub with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
     startup_intrinsics: startup_intrinsics::StartupIntrinsics,
     /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
     /// the only source of with objects, so until it runs no environment
     /// carries any.
-    with_scope_entered: bool,
+    pub with_scope_entered: bool,
     /// What lane reads of names past an eval's scope rely on (`name_scope`).
-    scope_names: name_scope::DynamicScopeNames,
+    pub scope_names: name_scope::DynamicScopeNames,
     test262_agent: Test262AgentState,
     shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
-    programs: ProgramStore,
+    pub programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The cache-site ranges of reclaimed programs, by their site counts, which the next
     /// program with the same counts takes over (`append_cache_layout`): a loop of `eval` or
     /// `new Function` makes programs alike, and each had appended ranges that never shrink.
     free_cache_layouts: FxHashMap<crate::bytecode::CacheSiteCounts, Vec<ProgramCacheLayout>>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
-    active_registers: *mut Value,
+    pub active_registers: *mut Value,
     /// The staged row the general loop's fast prelude decoded for the instruction it dispatches and
     /// found the frame left: the arm that runs next takes it as declined, rather than decode and try it again.
     pending_row: Option<crate::staged::Operation<u64, ()>>,
@@ -2207,17 +2207,17 @@ pub struct Vm {
     /// suspension); the fast prelude takes it as the instruction's step result.
     row_stop: Option<Result<StepResult, JsError>>,
     /// How the last lane run left its activation, for the code it exits to to take (`LaneCompletion`).
-    lane_completion: LaneCompletion,
+    pub lane_completion: LaneCompletion,
     /// Where a lane body's native `throw` raised the error in `lane_completion`
     /// (`compiled::raise_site`), which the lane gives it as its source location once it
     /// escapes the native frames (`dispatch_fast::raised_exit_in_lane`).
-    lane_raise_site: u64,
+    pub lane_raise_site: u64,
     /// A lane native call running with its activations still frameless
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).
-    lane_deferred: Option<crate::vm::engine_types::DeferredLaneCall>,
+    pub lane_deferred: Option<crate::vm::engine_types::DeferredLaneCall>,
     /// The scope `VarOwner::Window` names, read by `Vm::running_owner` while `lane_deferred` stands.
-    running_window: Option<crate::vm::engine_types::WindowScope>,
+    pub running_window: Option<crate::vm::engine_types::WindowScope>,
     /// The module the host resolved each (referrer, specifier) of a static request to since
     /// the last collection (`Vm::resolve_module_request`). The graph's passes (collection,
     /// pending dependencies, instantiation, evaluation) resolve each request again, and each
@@ -2233,7 +2233,7 @@ pub struct Vm {
     resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
     /// The native a lane call is running from its caller's frame (`dispatch_fast::call_native_in_lane`),
     /// whose calls of JavaScript run frameless in that lane (`Vm::native_callback_in_lane`).
-    lane_native: Option<crate::vm::engine_types::LaneNativeCall>,
+    pub lane_native: Option<crate::vm::engine_types::LaneNativeCall>,
     /// The active program's context (`program_contexts`), kept by `set_active_program`: its
     /// cache layout and constants are one load from it.
     active_context: *const ProgramContext,
@@ -2248,8 +2248,8 @@ pub struct Vm {
     /// The VM's invalidation counters (`cache_epochs`): the collection count caches key on, and
     /// the field cache table's moves (`CacheEpochs::field_entries`), which a run that kept a
     /// pointer into the table across code that may install a program compares.
-    cache_epochs: cache_epochs::CacheEpochs,
-    active_program: ProgramId,
+    pub cache_epochs: cache_epochs::CacheEpochs,
+    pub active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
     /// Each shape's constructor (`ShapeTransition::Constructed` on its chain), derived for
@@ -2273,10 +2273,10 @@ pub struct Vm {
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     /// Lane private-name sites' homes (`private_site_home`).
-    private_site_homes: private_site_home::PrivateSiteHomes,
+    pub private_site_homes: private_site_home::PrivateSiteHomes,
     /// The classes evaluated once and the private names they own, whose sites each meet one
     /// home for good, so a receiver shape alone proves the brand (`Vm::note_class_evaluation`).
-    private_classes: private_site_home::PrivateClasses,
+    pub private_classes: private_site_home::PrivateClasses,
     /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
     array_iteration_shape: Option<u32>,
     /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
@@ -2317,7 +2317,7 @@ pub struct Vm {
     array_index_atoms: IndexAtoms,
     /// Every atom name in id order (`atom_text`, then the names the VM appends), shared by
     /// the dynamic and module programs whose atoms are a prefix of the VM's.
-    atom_sequence: Rc<crate::bytecode::AtomSequence>,
+    pub atom_sequence: Rc<crate::bytecode::AtomSequence>,
     /// The strings most recently matched by a RegExp whose search decodes them, most recent
     /// first, each prepared once for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: regexp::SubjectCache,
@@ -2329,7 +2329,7 @@ pub struct Vm {
     /// The native each intrinsic name read so far stands for (`bytecode::intrinsic_name_native`),
     /// indexed by atom and recorded by its first read (`load_name_resolve_miss`); it lives as long
     /// as the atoms.
-    intrinsic_natives: Vec<Option<Native>>,
+    pub intrinsic_natives: Vec<Option<Native>>,
     /// Each native's family, by discriminant, derived on its first call (`Vm::native_family_of`).
     native_families: Vec<operations::NativeFamily>,
     /// The compiled chunk of each first-call stub, by its program and function, while both live.
@@ -2339,17 +2339,17 @@ pub struct Vm {
     /// The `typeof` result strings, one table indexed as `bytecode::TYPEOF_NAMES`, interned when the
     /// heap is made (`Vm::intern_typeof_names`). Rooted, so `typeof` neither hashes nor allocates, and a
     /// compiled body may name the table (`staged::value::typeof_string`).
-    typeof_names: [Value; TYPEOF_NAMES],
+    pub typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
     pub well_known_symbols: WellKnownSymbols,
     /// The slots of a bound function's target, receiver and arguments in the shape its
     /// environment object has (`Vm::bound_function_parts`): every `bind` gives its environment
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
-    call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
+    pub call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     construct_targets: Box<[ConstructTarget; CALL_TARGET_CACHE_SIZE]>,
-    frameless: crate::vm::engine_types::CalleeAdmissions,
-    field_caches: site_table::CacheSiteTable<FieldCache>,
+    pub frameless: crate::vm::engine_types::CalleeAdmissions,
+    pub field_caches: site_table::CacheSiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
     /// Per cache site, the index of its inherited entry (`Dependencies::inherited`), or
@@ -2362,7 +2362,7 @@ pub struct Vm {
     /// `next`, up to `ACCESSOR_FIELD_CACHE_WAYS` receiver shapes a site, as an inherited
     /// method's site sees one shape per subclass; cleared with the field caches.
     accessor_fields: Vec<AccessorFieldCache>,
-    field_add_indices: site_table::CacheSiteTable<u32>,
+    pub field_add_indices: site_table::CacheSiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     /// The prototype chains add entries name (`FieldAddCache::chain`), each once; cleared
     /// only with every entry (`field_add_sets` and `keyed_adds`).
@@ -2392,7 +2392,7 @@ pub struct Vm {
     /// heap's pin epoch they were pinned in.
     rc_pinned_shapes: usize,
     rc_pin_epoch: u64,
-    length_atom: Atom,
+    pub length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
     /// Non-dictionary constructor shapes verified to have no own `@@hasInstance` and a
@@ -2487,7 +2487,7 @@ pub struct Vm {
     object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: method_cache::MethodCacheTable,
     megamorphic_methods: Vec<MethodCacheSet>,
-    method_cache_atoms: method_cache::MethodCacheAtoms,
+    pub method_cache_atoms: method_cache::MethodCacheAtoms,
     /// The inline method-cache sites that may hold an entry for each atom: a superset, pushed
     /// when a site first records the atom, so invalidating an atom visits only its sites.
     method_cache_sites: FxHashMap<Atom, Vec<u32>>,
@@ -2509,17 +2509,17 @@ pub struct Vm {
     /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
     pub default_collation: Option<std::rc::Rc<intl_core::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
-    direct_eval: bool,
+    pub direct_eval: bool,
     /// The direct evals running above lane activations (`var_owner::EvalCaller`), innermost last.
-    eval_callers: Vec<EvalCaller>,
+    pub eval_callers: Vec<EvalCaller>,
     direct_eval_var_program: Option<ProgramId>,
     /// The Function-constructor programs this VM may still offer the host's compile cache
     /// (`DYNAMIC_FUNCTIONS_KEPT`).
     dynamic_functions_to_keep: u16,
-    parameter_eval: bool,
+    pub parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,
-    construct_target: Option<ConstructionTarget>,
+    pub construct_target: Option<ConstructionTarget>,
     random_state: u64,
 }
 
@@ -2571,7 +2571,7 @@ impl Vm {
     }
 
     pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
-    pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
+    pub fn check_execution_interrupt(&self)->Result<(),JsError> {
         if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
     }
 
@@ -2875,7 +2875,7 @@ impl Vm {
     /// Whether a global name read of `atom` may keep the global object's own data property as
     /// its hint: no realm, active or not, declares a global lexical binding of it, so a realm
     /// switch keeps every hint. A later declaration drops them (`note_global_lexical_names`).
-    pub(super) fn global_name_hintable(&self, atom: Atom) -> bool {
+    pub fn global_name_hintable(&self, atom: Atom) -> bool {
         !self.realm.shadows_global_name(atom)
     }
 
@@ -2936,7 +2936,7 @@ impl Vm {
 
     /// Runs the main program of an installed realm: its module graph, its declarations and
     /// its body, then optionally its jobs.
-    fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, JsError> {
+    pub fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, JsError> {
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
@@ -3349,7 +3349,7 @@ impl Vm {
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
-    fn initialize_shared(
+    pub fn initialize_shared(
         &mut self,
         program: &Rc<ResidualProgram>,
         scope: builtins::RealmScope,
@@ -3624,7 +3624,7 @@ impl Vm {
         self.store_module_program_shared(Rc::new(program))
     }
 
-    pub(super) fn store_module_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+    pub fn store_module_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = self.programs.insert_module_shared(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -3711,7 +3711,7 @@ impl Vm {
     /// Makes `program` the executing program and caches its layout, the projection every cache
     /// index reads. A program's layout is appended before the program can run.
     #[inline(always)]
-    pub(super) fn set_active_program(&mut self, program: ProgramId) {
+    pub fn set_active_program(&mut self, program: ProgramId) {
         let context = self.program_context(program);
         self.activate_context(program, context);
     }
@@ -3753,7 +3753,7 @@ impl Vm {
     /// `program_context` of a program the lane runs, whose view table it makes if the
     /// program has none yet. The program is one the store holds.
     #[inline(always)]
-    pub(super) fn program_context_in_lane(&mut self, program: ProgramId) -> *const ProgramContext {
+    pub fn program_context_in_lane(&mut self, program: ProgramId) -> *const ProgramContext {
         let context = self.program_context(program);
         // SAFETY: a context stays in its box while the VM lives.
         if unsafe { (*context).views.is_null() } {
@@ -3778,7 +3778,7 @@ impl Vm {
     /// Sets the construction whose callee's frame is pending (`construct_target`), which
     /// refuses cached lane calls while it is (`refresh_call_refusal`).
     #[inline]
-    pub(in crate::vm) fn set_construct_target(&mut self, target: Option<ConstructionTarget>) {
+    pub fn set_construct_target(&mut self, target: Option<ConstructionTarget>) {
         self.construct_target = target;
         self.refresh_call_refusal();
     }
@@ -3793,7 +3793,7 @@ impl Vm {
 
     /// `set_active_program` with `program`'s context (`program_context`) in hand.
     #[inline(always)]
-    pub(super) fn activate_context(&mut self, program: ProgramId, context: *const ProgramContext) {
+    pub fn activate_context(&mut self, program: ProgramId, context: *const ProgramContext) {
         self.active_program = program;
         self.lane_stack.enter_program(program);
         self.active_context = context;
@@ -3805,7 +3805,7 @@ impl Vm {
     /// changed.
     /// The field cache entries of `program`'s sites, for generated code that reads them
     /// (`NATIVE_FIELD_CACHE_LAYOUT`); valid until the cache table grows or is replaced.
-    pub(super) fn program_field_entries(&self, program: ProgramId) -> Option<usize> {
+    pub fn program_field_entries(&self, program: ProgramId) -> Option<usize> {
         let layout = self.program_cache_layouts.get(program.raw() as usize)?;
         Some(self.field_caches.entries_from(layout.field_base) as usize)
     }
@@ -3829,7 +3829,7 @@ impl Vm {
 
     /// Constant `index` of the active program.
     #[inline(always)]
-    pub(super) fn active_constant(&self, index: usize) -> Option<Value> {
+    pub fn active_constant(&self, index: usize) -> Option<Value> {
         // SAFETY: the active context is derived again whenever the active program or its
         // constants change, and an installed constant buffer stays put until the store is
         // reset, which reactivates the main program.
@@ -3843,7 +3843,7 @@ impl Vm {
     /// while it stays active (`active_constant`, `active_cache_layout`), so a call within the
     /// running program re-derives nothing.
     #[inline(always)]
-    pub(super) fn replace_active_program(&mut self, program: ProgramId) -> ProgramId {
+    pub fn replace_active_program(&mut self, program: ProgramId) -> ProgramId {
         let previous = self.active_program;
         self.restore_active_program(program);
         previous
@@ -3867,12 +3867,12 @@ impl Vm {
         layout
     }
     #[inline(always)]
-    pub(super) fn field_cache_index(&self, site: u16) -> usize {
+    pub fn field_cache_index(&self, site: u16) -> usize {
         self.active_cache_layout().field_base + usize::from(site)
     }
     /// Whether the active program may record cache entries at `index`: every index but its
     /// shared overflow site, if it has one.
-    pub(super) fn field_cache_records(&self, index: usize) -> bool {
+    pub fn field_cache_records(&self, index: usize) -> bool {
         self.active_cache_layout().shared_uncached_field != Some(index)
     }
     pub(super) fn method_cache_index(&self, site: usize) -> usize {

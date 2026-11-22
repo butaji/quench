@@ -159,13 +159,13 @@ impl Memory {
 
     /// Whether the operation runs a native bulk or size operation, which needs the memory's
     /// representation to be the one compiled code supports.
-    pub(crate) const fn needs_compiled_memory(self) -> bool {
+    pub const fn needs_compiled_memory(self) -> bool {
         matches!(self, Self::Size | Self::Grow | Self::Fill | Self::Copy)
     }
 
     /// Whether the operation calls out to the VM, which changes the memory's length: the
     /// program's callouts must be available, and the tier reads the length again after it.
-    pub(crate) const fn needs_callouts(self) -> bool {
+    pub const fn needs_callouts(self) -> bool {
         matches!(self, Self::Grow)
     }
 }
@@ -387,7 +387,7 @@ pub(crate) fn copy_across<S: WasmMemoryPair>(
 #[cfg(not(stencil_build))]
 impl Memory {
     /// The registers naming the memory the operation reads: its binding register.
-    pub(crate) fn memories(self, instruction: WideInstruction) -> [Option<u16>; 2] {
+    pub fn memories(self, instruction: WideInstruction) -> [Option<u16>; 2] {
         match self {
             Self::Load(_) | Self::Store(_) | Self::Size | Self::Grow => {
                 [Some(instruction.b()), None]
@@ -398,7 +398,7 @@ impl Memory {
     }
 
     /// The registers holding 32-bit addresses, lengths and bytes the operation reads.
-    pub(crate) fn operands(self, instruction: WideInstruction) -> [Option<u16>; 3] {
+    pub fn operands(self, instruction: WideInstruction) -> [Option<u16>; 3] {
         match self {
             Self::Load(_) | Self::Store(_) | Self::Grow => [Some(instruction.c()), None, None],
             Self::Size => [None, None, None],
@@ -428,7 +428,7 @@ macro_rules! direct_accesses {
             pub(crate) const fn direct_op(self) -> Option<crate::bytecode::Op> {
                 match self { $(Self::$name => Some(crate::bytecode::Op::$op),)+ #[allow(unreachable_patterns)] _ => None }
             }
-            pub(crate) const fn from_direct_op(op: crate::bytecode::Op) -> Option<Self> {
+            pub const fn from_direct_op(op: crate::bytecode::Op) -> Option<Self> {
                 match op { $(crate::bytecode::Op::$op => Some(Self::$name),)+ _ => None }
             }
         }

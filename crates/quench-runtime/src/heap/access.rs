@@ -133,7 +133,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn environment_slot(&self, environment: Value, slot: usize) -> Option<Value> {
+    pub fn environment_slot(&self, environment: Value, slot: usize) -> Option<Value> {
         match self.environment(environment)?.slots.state(slot)? {
             EnvironmentSlotState::Owned(value) => Some(value),
             // A shared slot names its owner, which holds the slot itself.
@@ -141,7 +141,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn environment_slot_mut(
+    pub fn environment_slot_mut(
         &mut self,
         environment: Value,
         slot: usize,
@@ -222,7 +222,7 @@ impl Heap {
     }
 
     #[inline(always)]
-    pub(crate) fn object(&self, value: Value) -> Option<&Object> {
+    pub fn object(&self, value: Value) -> Option<&Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: a direct-object Value is only created after the
             // ObjectRecord is initialized, and records retire after weak pruning.
@@ -308,7 +308,7 @@ impl Heap {
     /// # Safety
     /// `record_id` names a live string, retained by a reachable Value.
     #[inline(always)]
-    pub(crate) unsafe fn string_record_by_id(&self, record_id: u32) -> &crate::vm::wtf16::JsString {
+    pub unsafe fn string_record_by_id(&self, record_id: u32) -> &crate::vm::wtf16::JsString {
         unsafe { self.written_out_string(record_id) }
     }
 
@@ -320,7 +320,7 @@ impl Heap {
 
     /// `await_state`, mutably, past the write barrier.
     /// The environment `value` names, while it lives.
-    #[inline(always)] pub(crate) fn environment(&self, value: Value) -> Option<&EnvironmentRecord> {
+    #[inline(always)] pub fn environment(&self, value: Value) -> Option<&EnvironmentRecord> {
         let record_id = value.direct_environment_index()?;
         // SAFETY: an occupied id names an initialized record.
         self.environment_records.is_live(record_id).then(|| unsafe { self.environment_records.get_live(record_id) })
@@ -329,7 +329,7 @@ impl Heap {
     /// `environment` of a value reached from a live root, a register or another live record's
     /// link, which the collector keeps live: no occupancy test (checked in debug builds). The
     /// lane's hot capture reads take this; a value of unknown provenance takes `environment`.
-    #[inline(always)] pub(crate) fn reachable_environment(&self, value: Value) -> Option<&EnvironmentRecord> {
+    #[inline(always)] pub fn reachable_environment(&self, value: Value) -> Option<&EnvironmentRecord> {
         let record_id = value.direct_environment_index()?;
         debug_assert!(self.environment_records.is_live(record_id), "a reachable environment is live");
         // SAFETY: a reachable record is live, so occupied and initialized.
@@ -345,7 +345,7 @@ impl Heap {
     }
 
     /// `environment`, mutably, past the write barrier.
-    #[inline(always)] pub(crate) fn environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
+    #[inline(always)] pub fn environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
         let record_id = value.direct_environment_index()?;
         if !self.environment_records.is_live(record_id) {
             return None;
@@ -379,7 +379,7 @@ impl Heap {
 
     /// A function, in its function record (`FunctionRecord`).
     #[inline(always)]
-    pub(crate) fn function(&self, value: Value) -> Option<&FunctionRecord> {
+    pub fn function(&self, value: Value) -> Option<&FunctionRecord> {
         let record_id = value.direct_function_index()?;
         // SAFETY: a direct-function Value names an initialized function record.
         Some(unsafe { self.function_records.get_live(record_id) })
@@ -397,7 +397,7 @@ impl Heap {
     }
 
     #[inline(always)]
-    pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
+    pub fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let object = unsafe { self.object_records.get_live_mut(record_id, &self.properties) };
@@ -430,7 +430,7 @@ impl Heap {
     /// `object_mut` for a store of `stored`: the write barrier applies only when `stored`
     /// is a heap reference.
     #[inline(always)]
-    pub(crate) fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
+    pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             // A narrow run stays: the stores that borrow this way (`property_set`) take a
@@ -512,7 +512,7 @@ impl Heap {
     /// `record_array_store_mut` for a store the write barrier passes without logging, else
     /// `None`: the caller takes the logging store elsewhere, so its own path makes no call.
     #[inline(always)]
-    pub(crate) fn record_array_store_mut_unlogged(
+    pub fn record_array_store_mut_unlogged(
         &mut self,
         value: Value,
         stored: Value,
@@ -625,7 +625,7 @@ impl Heap {
     /// read guards (`IcOp::Held`): an array's and a Map's or Set's inline (the receivers of
     /// their methods' reads), the rest out of line.
     #[inline(always)]
-    pub(crate) fn held_other_receiver(&self, value: Value) -> Option<&Object> {
+    pub fn held_other_receiver(&self, value: Value) -> Option<&Object> {
         if let Some(array) = self.record_array(value) { return Some(array); }
         if let Some(record_id) = value.direct_collection_index() {
             // SAFETY: a direct-collection Value names an initialized collection record.
@@ -637,7 +637,7 @@ impl Heap {
     /// The object part of a function, inline: the receiver an own read of a function's static
     /// field guards (`CELL_OWN_SITE`); `None` for any other value.
     #[inline(always)]
-    pub(crate) fn function_receiver(&self, value: Value) -> Option<&Object> {
+    pub fn function_receiver(&self, value: Value) -> Option<&Object> {
         value.direct_function_index().and_then(|_| self.function(value)).map(|function| &function.object)
     }
 
@@ -658,7 +658,7 @@ impl Heap {
     /// The array a direct-array Value names; `None` for any other value, including an array
     /// in a slot.
     #[inline(always)]
-    pub(crate) fn record_array(&self, value: Value) -> Option<&ArrayObject> {
+    pub fn record_array(&self, value: Value) -> Option<&ArrayObject> {
         let record_id = value.direct_array_index()?;
         // SAFETY: direct-array Values name live records, retired after weak pruning.
         Some(unsafe { self.array_records.get_live(record_id) })
@@ -671,14 +671,14 @@ impl Heap {
     /// it must resolve the record's current backing for each access because array mutation can
     /// replace that backing.
     #[inline(always)]
-    pub(crate) fn array_record_base(&self) -> Option<*const ArrayObject> {
+    pub fn array_record_base(&self) -> Option<*const ArrayObject> {
         self.array_records.base_ptr()
     }
 
     /// `array_record_base` untested, for a read that proves its receiver a direct array before
     /// it addresses the table.
     #[inline(always)]
-    pub(crate) fn live_array_records(&self) -> *const ArrayObject {
+    pub fn live_array_records(&self) -> *const ArrayObject {
         self.array_records.live_base()
     }
 
@@ -768,7 +768,7 @@ impl Heap {
 
     /// An ordinary object (an object record, or a promise, whose internal slots change no
     /// object operation). Ordinary objects are always records, so there is no legacy-slot fallback.
-    #[inline] pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
+    #[inline] pub fn ordinary_object(&self, value: Value) -> Option<&Object> {
         match self.object_record(value) {
             Some(object) => Some(object),
             None => match self.promise(value) {
@@ -788,48 +788,48 @@ impl Heap {
     /// A native reader may combine this with an ID from a current live, rooted direct-object
     /// Value. It must end before any safepoint and must not retain a record pointer afterward.
     #[inline]
-    pub(crate) fn object_record_base(&self) -> Option<*const Object> {
+    pub fn object_record_base(&self) -> Option<*const Object> {
         self.object_records.base_ptr()
     }
 
     /// `object_record_base` untested, for a read that proves its receiver a direct object before
     /// it addresses the table (`object_record_by_id`'s contract).
     #[inline(always)]
-    pub(crate) fn live_object_records(&self) -> *const Object {
+    pub fn live_object_records(&self) -> *const Object {
         self.object_records.live_base()
     }
 
     /// The base of the function record reservation (`NATIVE_FUNCTION_LAYOUT`).
-    pub(crate) fn function_record_base(&self) -> Option<*const FunctionRecord> {
+    pub fn function_record_base(&self) -> Option<*const FunctionRecord> {
         self.function_records.base_ptr()
     }
 
     /// Object mark blocks used by no-safepoint native write-barrier guards.
-    pub(crate) fn native_object_mark_blocks(&self) -> (*const u8, usize) {
+    pub fn native_object_mark_blocks(&self) -> (*const u8, usize) {
         self.object_records.native_mark_blocks()
     }
 
     /// The object space's allocation cursor (`records::RecordCursor`), which an inline allocation
     /// reads and bumps (`NATIVE_RECORD_CURSOR_LAYOUT`). It is a field of this heap, which stays
     /// where it is while the VM runs; a native entry rereads it with the other record bases.
-    pub(crate) fn native_object_cursor(&self) -> usize {
+    pub fn native_object_cursor(&self) -> usize {
         std::ptr::addr_of!(self.object_records.cursor) as usize
     }
 
     /// The array space's allocation cursor, read and bumped by an inline empty array allocation,
     /// as `native_object_cursor` is for objects.
-    pub(crate) fn native_array_cursor(&self) -> usize {
+    pub fn native_array_cursor(&self) -> usize {
         std::ptr::addr_of!(self.array_records.cursor) as usize
     }
 
     /// Array mark blocks, which a native store of a reference into an array's elements reads
     /// (`staged::barrier::unmarked`, the array records' list in the dispatch head).
-    pub(crate) fn native_array_mark_blocks(&self) -> (*const u8, usize) {
+    pub fn native_array_mark_blocks(&self) -> (*const u8, usize) {
         self.array_records.native_mark_blocks()
     }
 
     /// Function mark blocks, which a native store into a function's own properties reads.
-    pub(crate) fn native_function_mark_blocks(&self) -> (*const u8, usize) {
+    pub fn native_function_mark_blocks(&self) -> (*const u8, usize) {
         self.function_records.native_mark_blocks()
     }
 
@@ -838,14 +838,14 @@ impl Heap {
     /// Native readers may use these only during synchronous no-safepoint execution and must
     /// bounds-check every slot. Compaction relocates property ranges; the ordinary
     /// allocation fallback may also move the base when the arena grows.
-    pub(crate) fn native_property_values(&self) -> (*const Value, usize) {
+    pub fn native_property_values(&self) -> (*const Value, usize) {
         self.properties.native_values()
     }
 
     /// Offset of the property allocator header within this heap. Bind native
     /// readers from the live VM's raw pointer, so later mutable VM callouts
     /// reborrow the same allocation provenance rather than a shared header view.
-    pub(crate) const PROPERTY_BUFFER_OFFSET: usize = std::mem::offset_of!(Self, properties)
+    pub const PROPERTY_BUFFER_OFFSET: usize = std::mem::offset_of!(Self, properties)
         + crate::value_vec::ValueArena::BUFFER_OFFSET;
 
     /// The object of an object, array or promise record, whose field reads the field cache
@@ -879,7 +879,7 @@ impl Heap {
 
     /// The object a record holds for `value` (`record_object`), a direct object's first.
     #[inline(always)]
-    pub(crate) fn record_object_value(&self, value: Value) -> Option<&Object> {
+    pub fn record_object_value(&self, value: Value) -> Option<&Object> {
         match value.direct_object_index() {
             Some(record_id) => Some(self.object_record_by_id(record_id)),
             None => self.record_object(value.heap_reference()?),
@@ -901,7 +901,7 @@ impl Heap {
         self.object_records.for_each_live(|_, object| visit(object));
     }
 
-    #[inline(always)] pub(crate) fn object_record_by_id(&self, record_id: u32) -> &Object {
+    #[inline(always)] pub fn object_record_by_id(&self, record_id: u32) -> &Object {
         // SAFETY: direct-object Values name live records, retired after weak pruning.
         unsafe { self.object_records.get_live(record_id) }
     }

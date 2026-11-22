@@ -314,7 +314,7 @@ impl Vm {
         self.heap.set_memory_policy(policy);
     }
 
-    pub(crate) fn memory_policy(&self) -> crate::MemoryPolicy {
+    pub fn memory_policy(&self) -> crate::MemoryPolicy {
         self.heap.memory_policy()
     }
 

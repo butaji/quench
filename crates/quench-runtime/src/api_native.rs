@@ -7,9 +7,9 @@ use {super::Runtime, crate::{Host, JsError, RootId, RootedError, Value, vm::Vm}}
 /// in the chosen realm. A reset or another runtime invalidates this handle.
 #[derive(Clone)]
 pub struct PreparedScript {
-    pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
+    pub program: std::rc::Rc<crate::ResidualProgram>,
     #[cfg(feature = "native-execution")]
-    pub(crate) native: Option<std::rc::Rc<crate::vm::engine_types::NativeJsCode>>,
+    pub native: Option<std::rc::Rc<crate::vm::engine_types::NativeJsCode>>,
 }
 
 /// A logical host Script with one source identity and separate execution caches

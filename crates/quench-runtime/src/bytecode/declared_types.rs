@@ -98,11 +98,11 @@ pub(crate) struct DeclaredSignature {
     /// `static` modifier).
     pub(crate) start: u32,
     /// The return type; an `async` function or generator returns an object.
-    pub(crate) returns: u16,
+    pub returns: u16,
     /// The element type of an annotated rest parameter.
-    pub(crate) rest: u16,
+    pub rest: u16,
     /// The `this` parameter's type.
-    pub(crate) this: u16,
+    pub this: u16,
 }
 
 /// A declared local binding: its innermost enclosing function's start (`u32::MAX` at the top
@@ -152,11 +152,11 @@ pub(crate) struct DeclaredLocalMember {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DeclaredParameterClass {
     /// The function's source span start (as `DeclaredSignature::start`).
-    pub(crate) function: u32,
+    pub function: u32,
     /// The parameter's index.
-    pub(crate) parameter: u16,
+    pub parameter: u16,
     /// The class's source span start (as `DeclaredField::class_start`).
-    pub(crate) class: u32,
+    pub class: u32,
 }
 
 /// A parameter whose annotation the program's own type names resolve to a different language set
@@ -208,7 +208,7 @@ pub(crate) struct DeclaredTypes {
     /// The declared properties of locals whose object annotation names them, in source order.
     pub(crate) local_members: Vec<DeclaredLocalMember>,
     /// The parameters whose annotation names a top-level class, in source order.
-    pub(crate) parameter_classes: Vec<DeclaredParameterClass>,
+    pub parameter_classes: Vec<DeclaredParameterClass>,
     /// The parameters whose named-resolved language sets differ from their name-free ones, in source order.
     pub(crate) parameters: Vec<DeclaredParameter>,
     /// The receiver layouts of base classes (`DeclaredLayout`), in source order.
@@ -377,13 +377,13 @@ impl DeclaredTypes {
     }
 
     /// The declared signature of the function whose source span starts at `start`, when declared.
-    pub(crate) fn declared_signature(&self, start: u32) -> Option<&DeclaredSignature> {
+    pub fn declared_signature(&self, start: u32) -> Option<&DeclaredSignature> {
         self.signatures.iter().rev().find(|signature| signature.start == start)
     }
 
     /// The declared language types of local `name` of the function starting at `function`
     /// (`u32::MAX` for the top level), when the program declares one (the last declaration wins).
-    pub(crate) fn declared_local(&self, function: u32, name: &str) -> Option<u16> {
+    pub fn declared_local(&self, function: u32, name: &str) -> Option<u16> {
         self.locals.iter().rev()
             .find(|local| local.function == function && &*local.name == name && local.languages != ANY_LANGUAGES)
             .map(|local| local.languages)
@@ -400,7 +400,7 @@ impl DeclaredTypes {
 
     /// The declared language types of instance field `name` of the class starting at
     /// `class_start`, when the program declares one (the last declaration wins).
-    pub(crate) fn declared_field(&self, class_start: u32, name: &str) -> Option<u16> {
+    pub fn declared_field(&self, class_start: u32, name: &str) -> Option<u16> {
         self.fields.iter().rev()
             .find(|field| !field.is_static && field.class_start == class_start && &*field.name == name
                 && field.languages != ANY_LANGUAGES)
@@ -422,7 +422,7 @@ impl DeclaredTypes {
     /// starting at `function`, from its type literal, when the program declares one (the last
     /// declaration wins).
     #[cfg_attr(not(test), allow(dead_code, reason = "the fact store reads parameter members next"))]
-    pub(crate) fn declared_member(&self, function: u32, parameter: u16, name: &str) -> Option<u16> {
+    pub fn declared_member(&self, function: u32, parameter: u16, name: &str) -> Option<u16> {
         self.members.iter().rev()
             .find(|member| member.function == function && member.parameter == parameter && &*member.name == name)
             .map(|member| member.languages)
@@ -431,7 +431,7 @@ impl DeclaredTypes {
     /// The class (its span start) that parameter `parameter` of the function starting at
     /// `function` is declared an instance of, when the program declares one (the last declaration wins).
     #[cfg_attr(not(test), allow(dead_code, reason = "the fact store reads parameter classes next"))]
-    pub(crate) fn declared_parameter_class(&self, function: u32, parameter: u16) -> Option<u32> {
+    pub fn declared_parameter_class(&self, function: u32, parameter: u16) -> Option<u32> {
         self.parameter_classes.iter().rev()
             .find(|entry| entry.function == function && entry.parameter == parameter)
             .map(|entry| entry.class)

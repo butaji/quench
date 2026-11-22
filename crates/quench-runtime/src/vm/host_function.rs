@@ -269,7 +269,7 @@ impl Vm {
 
     /// The host operation index a host function's `environment` names (`create_host_function`):
     /// the number itself, or its `HostEnvironmentSlot::Operation` slot.
-    pub(super) fn host_operation_index(&self, environment: Value) -> Option<u32> {
+    pub fn host_operation_index(&self, environment: Value) -> Option<u32> {
         environment
             .as_number()
             .or_else(|| {

@@ -42,7 +42,7 @@ impl GlobalBinding {
     /// What this binding leaves known: an immutable global's value and a closed program's
     /// value are fixed at specialization, a held value or a lexical binding's address rests on a
     /// dependency, and a dynamic binding is the lane's own read.
-    pub(crate) const fn time(&self) -> BindingTime {
+    pub const fn time(&self) -> BindingTime {
         match self {
             Self::Constant(_) | Self::Frozen { .. } => BindingTime::Static,
             Self::Held { .. } | Self::Typed { .. } | Self::Lexical { .. } => BindingTime::Stable,

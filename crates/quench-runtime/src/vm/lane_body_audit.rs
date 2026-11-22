@@ -81,7 +81,7 @@ impl LaneView {
     /// hold a fraction of the body epoch's work (fib(10)'s 177 activations against the body's
     /// one entry retired a body 3.8x cheaper). Asked only while the audit runs.
     #[inline(always)]
-    pub(in crate::vm) fn audit_entry(&self, counts_interpreted: bool, recursive: impl FnOnce() -> bool) -> bool {
+    pub fn audit_entry(&self, counts_interpreted: bool, recursive: impl FnOnce() -> bool) -> bool {
         let mut history = self.tier().history.get();
         if history.audit.done {
             return false;
@@ -169,7 +169,7 @@ impl LaneView {
     }
 
     /// Starts the audit of a body just specialized.
-    pub(super) fn audit_restart(&self) {
+    pub fn audit_restart(&self) {
         let mut history = self.tier().history.get();
         history.audit = Audit::default();
         self.tier().history.set(history);
@@ -183,7 +183,7 @@ impl LaneView {
 pub struct Verdict {
     body_nanos: u64,
     interpreter_nanos: u64,
-    pub(in crate::vm) retire: bool,
+    pub retire: bool,
 }
 
 impl Verdict {

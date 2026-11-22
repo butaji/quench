@@ -189,7 +189,7 @@ pub enum InitialRegister {
 }
 
 impl InitialRegister {
-    pub(crate) fn value(self) -> crate::Value {
+    pub fn value(self) -> crate::Value {
         match self {
             Self::Undefined => crate::Value::UNDEFINED,
             Self::I32Zero => crate::Value::integer(0),
@@ -249,7 +249,7 @@ pub enum FieldLayout {
 pub(crate) use crate::typed_ir::BindingTime;
 
 impl FieldLayout {
-    pub(crate) const fn is_register_field(self) -> bool {
+    pub const fn is_register_field(self) -> bool {
         matches!(
             self,
             Self::ResultRegister
@@ -260,7 +260,7 @@ impl FieldLayout {
         )
     }
 
-    pub(crate) const fn reads_register(self) -> bool {
+    pub const fn reads_register(self) -> bool {
         matches!(
             self,
             Self::Register | Self::RegisterWindowBase | Self::ReadWriteRegister
@@ -417,7 +417,7 @@ pub enum InstructionField {
 }
 
 impl InstructionField {
-    pub(crate) const ALL: &'static [Self] = &[Self::A, Self::B, Self::C];
+    pub const ALL: &'static [Self] = &[Self::A, Self::B, Self::C];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -486,7 +486,7 @@ macro_rules! property_definition_modes {
         impl PropertyDefinitionMode {
             pub(crate) const ALL: &'static [Self] = &[$(Self::$mode),+];
 
-            pub(crate) fn from_word(word: u32) -> Option<Self> {
+            pub fn from_word(word: u32) -> Option<Self> {
                 Self::ALL.get(usize::try_from(word).ok()?).copied()
             }
 
@@ -545,7 +545,7 @@ impl OperandLayout {
 
 impl ResultLayout {
     #[inline(always)]
-    pub(crate) const fn allowed_flags(self) -> Register {
+    pub const fn allowed_flags(self) -> Register {
         match self {
             Self::Register => NO_RESULT_FLAGS,
             Self::RegisterReadWrite => NO_RESULT_FLAGS,
@@ -601,7 +601,7 @@ impl ImmediateLayout {
         )
     }
 
-    pub(crate) const fn call_immediate(
+    pub const fn call_immediate(
         base: Register,
         count: u16,
         direct_eval: bool,
@@ -624,53 +624,53 @@ impl ImmediateLayout {
     /// A lane `Call` record whose result register is dead after the call (`derive_lane_view`).
     /// Lane call records carry no eval flags (`call_fits_in_lane`), so the flag reuses the
     /// direct-eval bit; a callee whose result is unobservable may skip building it.
-    pub(crate) const LANE_CALL_RESULT_UNUSED_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
+    pub const LANE_CALL_RESULT_UNUSED_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
 
-    pub(crate) const fn call_result_used_in_lane(imm: u32) -> bool {
+    pub const fn call_result_used_in_lane(imm: u32) -> bool {
         imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
     }
 
     /// A lane `Call` record whose result only the `Await` right after it reads
     /// (`derive_lane_view`). Lane call records carry no eval flags, so the flag reuses the
     /// parameter-eval bit; a settling callee there needs no promise for a primitive result.
-    pub(crate) const LANE_CALL_RESULT_AWAITED_FLAG: u32 = Self::PARAMETER_EVAL_FLAG;
+    pub const LANE_CALL_RESULT_AWAITED_FLAG: u32 = Self::PARAMETER_EVAL_FLAG;
 
-    pub(crate) const fn call_result_awaited_in_lane(imm: u32) -> bool {
+    pub const fn call_result_awaited_in_lane(imm: u32) -> bool {
         imm & Self::LANE_CALL_RESULT_AWAITED_FLAG != 0
     }
 
     #[inline(always)]
-    pub(crate) const fn direct_eval(imm: u32) -> bool {
+    pub const fn direct_eval(imm: u32) -> bool {
         imm & Self::DIRECT_EVAL_FLAG != 0
     }
 
     #[inline(always)]
-    pub(crate) const fn parameter_eval(imm: u32) -> bool {
+    pub const fn parameter_eval(imm: u32) -> bool {
         imm & Self::PARAMETER_EVAL_FLAG != 0
     }
 
-    #[inline] pub(crate) const fn call_window_base(imm: u32) -> Register {
+    #[inline] pub const fn call_window_base(imm: u32) -> Register {
         ((imm & Self::CALL_BASE_MASK) >> Self::CALL_BASE_SHIFT) as Register
     }
 
-    #[inline] pub(crate) const fn argument_count(imm: u32) -> u16 {
+    #[inline] pub const fn argument_count(imm: u32) -> u16 {
         (imm & Self::ARGUMENT_COUNT_MASK) as u16
     }
 
-    #[inline] pub(crate) const fn capture_depth(imm: u32) -> u16 {
+    #[inline] pub const fn capture_depth(imm: u32) -> u16 {
         (imm >> Self::PAIR_SECOND_SHIFT) as u16
     }
 
-    #[inline] pub(crate) const fn capture_slot(imm: u32) -> u16 {
+    #[inline] pub const fn capture_slot(imm: u32) -> u16 {
         (imm & Self::PAIR_FIELD_MASK) as u16
     }
 
-    pub(crate) const fn capture_immediate(depth: usize, slot: u16) -> u32 {
+    pub const fn capture_immediate(depth: usize, slot: u16) -> u32 {
         ((depth as u32) << Self::PAIR_SECOND_SHIFT) | slot as u32
     }
 
     #[inline]
-    pub(crate) const fn register_pair(imm: u32) -> (Register, Register) {
+    pub const fn register_pair(imm: u32) -> (Register, Register) {
         (
             (imm & Self::PAIR_FIELD_MASK) as Register,
             (imm >> Self::PAIR_SECOND_SHIFT) as Register,
@@ -699,11 +699,11 @@ impl ImmediateLayout {
             })
     }
 
-    pub(crate) const fn super_construct(imm: u32) -> bool {
+    pub const fn super_construct(imm: u32) -> bool {
         imm & Self::SUPER_CONSTRUCT_FLAG != 0
     }
 
-    pub(crate) const fn construct_array_arguments(imm: u32) -> bool {
+    pub const fn construct_array_arguments(imm: u32) -> bool {
         imm & Self::CONSTRUCT_ARRAY_FLAG != 0
     }
 }
@@ -732,19 +732,19 @@ macro_rules! opcodes {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             const CLASSES: [Class; Self::COUNT] = [$(opcodes!(@class $($class)?)),+];
-            #[inline(always)] pub(crate) const fn class(self) -> Class { Self::CLASSES[self as usize] }
+            #[inline(always)] pub const fn class(self) -> Class { Self::CLASSES[self as usize] }
             const TRAITS: [Traits; Self::COUNT] = [$(opcodes!(@traits $($($trait)+)?)),+];
-            #[inline(always)] pub(crate) const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
+            #[inline(always)] pub const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
             const DECODERS: [Option<Decoder>; Self::COUNT] = [$(opcodes!(@staged $($decoder)?)),+];
-            #[inline(always)] pub(crate) const fn staged(self) -> Option<Decoder> { Self::DECODERS[self as usize] }
+            #[inline(always)] pub const fn staged(self) -> Option<Decoder> { Self::DECODERS[self as usize] }
             const GENERIC_STEPS: [Option<GenericStep>; Self::COUNT] = [$(opcodes!(@step $($step)?)),+];
             #[inline(always)] pub(crate) const fn generic_step(self) -> Option<GenericStep> { Self::GENERIC_STEPS[self as usize] }
             const OWNED_STEPS: [Option<OwnedStep>; Self::COUNT] = [$(opcodes!(@owned $($owned)?)),+];
             #[inline(always)] pub(crate) const fn owned_step(self) -> Option<OwnedStep> { Self::OWNED_STEPS[self as usize] }
             const VALUE_STEPS: [Option<ValueStep>; Self::COUNT] = [$(opcodes!(@value $($value)?)),+];
-            #[inline(always)] pub(crate) const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
+            #[inline(always)] pub const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
             #[cfg(feature = "native-execution")]
-            pub(crate) fn native_semantic_entry(self) -> crate::NativeJsOperationEntry {
+            pub fn native_semantic_entry(self) -> crate::NativeJsOperationEntry {
                 match self {
                     $(Self::$name => crate::native_js_operation_entry::<{ Self::$name as usize }>),+
                 }
@@ -774,28 +774,28 @@ macro_rules! opcodes {
                 Self::EFFECTS[self as usize]
             }
 
-            #[inline(always)] pub(crate) const fn immediate_layout(self) -> ImmediateLayout {
+            #[inline(always)] pub const fn immediate_layout(self) -> ImmediateLayout {
                 Self::IMMEDIATE_LAYOUTS[self as usize]
             }
 
             #[inline(always)]
-            pub(crate) const fn result_layout(self) -> ResultLayout {
+            pub const fn result_layout(self) -> ResultLayout {
                 Self::RESULT_LAYOUTS[self as usize]
             }
 
-            #[inline(always)] pub(crate) const fn control_flow_layout(self) -> ControlFlowLayout {
+            #[inline(always)] pub const fn control_flow_layout(self) -> ControlFlowLayout {
                 Self::CONTROL_FLOW_LAYOUTS[self as usize]
             }
 
-            #[inline(always)] pub(crate) const fn field_layout(self, field: InstructionField) -> FieldLayout {
+            #[inline(always)] pub const fn field_layout(self, field: InstructionField) -> FieldLayout {
                 Self::OPERAND_LAYOUTS[self as usize].field(field)
             }
 
-            #[inline(always)] pub(crate) const fn immediate_role(self) -> ImmediateRole {
+            #[inline(always)] pub const fn immediate_role(self) -> ImmediateRole {
                 Self::IMMEDIATE_ROLES[self as usize]
             }
 
-            #[inline(always)] pub(crate) const fn js_denotation(self) -> JsDenotation {
+            #[inline(always)] pub const fn js_denotation(self) -> JsDenotation {
                 Self::JS_DENOTATIONS[self as usize]
             }
 
@@ -804,7 +804,7 @@ macro_rules! opcodes {
                 matches!(self.immediate_role(), ImmediateRole::WideInstructionIndex)
             }
 
-            pub(crate) const fn from_index(index: usize) -> Option<Self> {
+            pub const fn from_index(index: usize) -> Option<Self> {
                 if index < Self::COUNT {
                     // SAFETY: `opcodes!` emits a contiguous repr(u16) enum.
                     Some(unsafe { std::mem::transmute::<u16, Self>(index as u16) })
@@ -1511,24 +1511,24 @@ pub struct Function {
     pub simple_parameters: bool,
     pub strict: bool,
     pub locals: u16,
-    pub(crate) local_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub local_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Names visible through this function's captured declarative environment.
     pub(crate) environment_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Source local slots owned by a closure environment when this activation
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
-    pub(crate) selective_capture_slots: Option<crate::heap::ThinBoxSlice<u16>>,
+    pub selective_capture_slots: Option<crate::heap::ThinBoxSlice<u16>>,
     /// The local slots of the function declarations this nested function's body declares at its top level, which
     /// no store writes (`capture_layout::inputs`): a closure that captures one holds its identity fixed.
     pub(crate) declared_functions: crate::heap::ThinBoxSlice<u16>,
     /// The depth-0 capture slots of this function whose value is a never-written declaration of its parent
     /// (`declared_functions` of the parent): a body that calls one by its identity checks it once at entry.
-    pub(crate) declared_captures: crate::heap::ThinBoxSlice<u16>,
+    pub declared_captures: crate::heap::ThinBoxSlice<u16>,
     /// Binding slots assigned stable frame registers by lowering.
-    pub(crate) local_registers: crate::heap::ThinBoxSlice<LocalRegister>,
+    pub local_registers: crate::heap::ThinBoxSlice<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,
     /// so unresolved names in descendants can still observe its outer locals.
-    pub(crate) inherited_with_scope: bool,
+    pub inherited_with_scope: bool,
     pub(crate) lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Bindings a dynamic name lookup in this function can see.
     pub(crate) name_bindings: NameBindings,
@@ -1538,9 +1538,9 @@ pub struct Function {
     /// The plan of each CloneEnv instruction.
     pub environment_clones: EnvironmentClones,
     pub code: Vec<Instr>,
-    pub(crate) wide: Vec<WideInstruction>,
+    pub wide: Vec<WideInstruction>,
     pub registers: u16,
-    pub(crate) dispatch: DispatchClass,
+    pub dispatch: DispatchClass,
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
     /// The `plain_local_slots` words of the final code: stored by `compile::lower_settled` from its
@@ -1555,16 +1555,16 @@ pub struct Function {
     /// Lazily derived `call_plan`; never serialized.
     /// `CallPlan::to_bits`, packed: the plan's flags are one word, not a byte each.
     pub(crate) call_plan: std::cell::OnceCell<u16>,
-    pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
-    pub(crate) register_roots: RegisterRoots,
+    pub handlers: crate::heap::ThinBoxSlice<Handler>,
+    pub register_roots: RegisterRoots,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
     /// never written by code: the receiver of plain calls.
-    pub(crate) undefined_register: Option<Register>,
+    pub undefined_register: Option<Register>,
     /// First register of the parameters when the body keeps its locals in
     /// registers; activation then writes arguments there, not into locals.
-    pub(crate) parameter_registers: Option<u16>,
+    pub parameter_registers: Option<u16>,
     /// The value every register holds when an activation starts.
-    pub(crate) initial_register: InitialRegister,
+    pub initial_register: InitialRegister,
     /// The parts few functions set (`FunctionRare`), behind one pointer: `None` for most.
     pub(crate) rare: Option<Box<FunctionRare>>,
 }
@@ -1611,8 +1611,8 @@ const _: () = assert!(size_of::<Function>() <= 384);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FunctionHeader {
     pub(crate) parent: Option<u32>,
-    pub(crate) name: Option<Atom>,
-    pub(crate) inferred_name: Option<Atom>,
+    pub name: Option<Atom>,
+    pub inferred_name: Option<Atom>,
     pub(crate) source_span: Option<SourceSpan>,
     pub(crate) length: u16,
     pub(crate) dispatch: DispatchClass,
@@ -1621,7 +1621,7 @@ pub(crate) struct FunctionHeader {
     pub(crate) is_generator: bool,
     pub(crate) is_class_constructor: bool,
     pub(crate) constructible: bool,
-    pub(crate) prototype_unobservable: bool,
+    pub prototype_unobservable: bool,
     pub(crate) inherited_with_scope: bool,
 }
 
@@ -1890,13 +1890,13 @@ impl FunctionSlot {
         self.record.get().is_none() && self.unlowered.with(|held| held.is_none()) && self.tier0.get().is_none()
     }
 
-    #[inline(always)] pub(crate) fn header(&self) -> FunctionHeader {
+    #[inline(always)] pub fn header(&self) -> FunctionHeader {
         self.header.unpack()
     }
 
     /// The compiled record, when it exists: the lowered one, else the one its first runs
     /// execute unlowered (`tier0`).
-    #[inline(always)] pub(crate) fn record(&self) -> Option<&Function> {
+    #[inline(always)] pub fn record(&self) -> Option<&Function> {
         self.record.get().map(|function| &**function).or_else(|| self.tier0.get().map(|tier0| tier0.record()))
     }
 
@@ -2044,8 +2044,8 @@ pub(crate) enum FieldConstant {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalRegister {
-    pub(crate) local: u16,
-    pub(crate) register: Register,
+    pub local: u16,
+    pub register: Register,
 }
 
 /// A source position table entry: the instruction at `pc` came from byte `offset` of the
@@ -2134,7 +2134,7 @@ impl RegisterRoots {
     }
 
     /// `entry_live` where it is derived already (by the lowering or a first ask), else `None`.
-    pub(crate) fn entry_live_known(&self) -> Option<u16> {
+    pub fn entry_live_known(&self) -> Option<u16> {
         self.entry_live.get().copied()
     }
 }
@@ -2181,7 +2181,7 @@ impl Function {
     }
 
     /// The TypeScript parameter types, by argument index (`FunctionRare::declared_parameters`).
-    pub(crate) fn declared_parameters(&self) -> &[u16] {
+    pub fn declared_parameters(&self) -> &[u16] {
         match &self.rare {
             Some(rare) => &rare.declared_parameters[..],
             None => &[],
@@ -2189,7 +2189,7 @@ impl Function {
     }
 
     /// The class constructor's instance initializer (`FunctionRare::instance_initializer`).
-    pub(crate) fn instance_initializer(&self) -> Option<u32> {
+    pub fn instance_initializer(&self) -> Option<u32> {
         self.rare.as_deref().and_then(|rare| rare.instance_initializer)
     }
 
@@ -2305,14 +2305,14 @@ impl Function {
         self.strict && !self.class_initializer && self.handler_at(pc).is_none()
     }
 
-    pub(crate) fn handler_at(&self, pc: u32) -> Option<Handler> {
+    pub fn handler_at(&self, pc: u32) -> Option<Handler> {
         self.handlers
             .iter()
             .find(|handler| pc >= handler.start && pc < handler.end)
             .copied()
     }
 
-    pub(crate) fn promoted_register(&self, local: u16) -> Option<Register> {
+    pub fn promoted_register(&self, local: u16) -> Option<Register> {
         self.local_registers
             .binary_search_by_key(&local, |entry| entry.local)
             .ok()
@@ -2325,7 +2325,7 @@ impl Function {
     /// parameters none of them names (`Compiler::promoted_local_plan`'s `parameters_only`).
     /// An environment activation fills those registers as a call fills a plain activation's
     /// (`call_environment::EnvironmentPassed::in_registers`). 0 for any other layout.
-    pub(crate) fn parameters_promoted_in_place(&self) -> u16 {
+    pub fn parameters_promoted_in_place(&self) -> u16 {
         let in_place = self.local_registers.iter().enumerate().all(|(index, entry)| {
             usize::from(entry.local) == index
                 && usize::from(entry.register) == index
@@ -2342,7 +2342,7 @@ impl Function {
     /// register `undefined` and makes no array.
     /// Derived once (`LazyFlag::RestView`): every frame entry of a rest function asks.
     #[inline]
-    pub(crate) fn rest_view(&self) -> bool {
+    pub fn rest_view(&self) -> bool {
         self.rest && self.lazy_flag(LazyFlag::RestView, || {
             self.instructions_of(|op| matches!(op, Op::RestGet | Op::RestLength | Op::CallRest)).next().is_some()
         })
@@ -2358,7 +2358,7 @@ impl Function {
 
     /// Whether the `arguments` object's indices alias the parameters: a mapped object
     /// whose mapping some write could observe (`unaliased_arguments`).
-    pub(crate) fn arguments_alias_parameters(&self) -> bool {
+    pub fn arguments_alias_parameters(&self) -> bool {
         self.arguments_are_mapped() && !self.unaliased_arguments
     }
 
@@ -2537,7 +2537,7 @@ impl Function {
     /// its own name lookups (`activation_binding_reads`) or by an arrow function it makes,
     /// which inherits them. Any other closure has its own. `functions` is the owning
     /// program's table.
-    pub(crate) fn activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
+    pub fn activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
         self.lazy_flag(LazyFlag::ActivationBindings, || self.derive_activation_bindings_observable(tables))
     }
 
@@ -2546,11 +2546,11 @@ impl Function {
     /// none (`arrow_chain_reads_implicit_bindings`), as `xs.map(x => x * 2)` does, needs no
     /// `this` kept for it.
     /// `arrow_chain_reads_implicit_bindings` of this function, `id` of `code`, cached.
-    pub(crate) fn arrow_reads_implicit_bindings(&self, code: &ResidualProgram, id: u32) -> bool {
+    pub fn arrow_reads_implicit_bindings(&self, code: &ResidualProgram, id: u32) -> bool {
         self.lazy_flag(LazyFlag::ArrowReads, || arrow_chain_reads_implicit_bindings(code, id))
     }
 
-    pub(crate) fn maker_bindings_read(&self, code: &ResidualProgram) -> bool {
+    pub fn maker_bindings_read(&self, code: &ResidualProgram) -> bool {
         self.lazy_flag(LazyFlag::MakerBindings, || {
             self.activation_binding_reads(code)
                 || self.instructions_of(|op| op == Op::MakeClosure).any(|instruction| {
@@ -2634,12 +2634,12 @@ impl Function {
     }
 
     /// Every instruction in fixed-width form.
-    pub(crate) fn instructions(&self) -> impl Iterator<Item = WideInstruction> + '_ {
+    pub fn instructions(&self) -> impl Iterator<Item = WideInstruction> + '_ {
         self.code.iter().map(|&packed| self.widened(packed))
     }
 
     /// The instruction at `pc` in fixed-width form.
-    pub(crate) fn instruction_at(&self, pc: usize) -> WideInstruction {
+    pub fn instruction_at(&self, pc: usize) -> WideInstruction {
         self.widened(self.code[pc])
     }
 
@@ -2659,21 +2659,21 @@ impl Function {
     /// The opcode of the packed instruction `packed` of this function, without decoding its
     /// operands.
     #[inline(always)]
-    pub(crate) fn op_of(&self, packed: Instr) -> Op {
+    pub fn op_of(&self, packed: Instr) -> Op {
         if packed.is_wide() { self.wide[packed.wide_index()].op() } else { packed.op() }
     }
 
     /// The fixed-width form of the packed instruction `packed` of this function: the one
     /// decoder of the packed encoding every reader of the code takes.
     #[inline(always)]
-    pub(crate) fn widened(&self, packed: Instr) -> WideInstruction {
+    pub fn widened(&self, packed: Instr) -> WideInstruction {
         widen(packed, &self.wide)
     }
 
     /// Whether a closure environment may hold local `slot`: the selective layout names it or,
     /// without one, the function captures its whole frame by creating closures or reaching its
     /// environment.
-    pub(crate) fn local_slot_captured(&self, slot: usize) -> bool {
+    pub fn local_slot_captured(&self, slot: usize) -> bool {
         match &self.selective_capture_slots {
             Some(captured) => {
                 u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
@@ -2722,7 +2722,7 @@ impl Function {
     /// `with` scope or observable implicit bindings. Such a frame needs only its storage sized
     /// (cleared when no root map lets the collector skip stale registers), its parameters
     /// placed and its scalar state set; see `activate_plain_frame`.
-    pub(crate) fn plain_activation(&self, program: &ResidualProgram) -> bool {
+    pub fn plain_activation(&self, program: &ResidualProgram) -> bool {
         self.call_plan(program).plain
     }
 
@@ -2767,12 +2767,12 @@ impl Function {
     }
 
     /// Whether some jump of the body targets its own or an earlier instruction: a loop.
-    pub(crate) fn loops(&self) -> bool {
+    pub fn loops(&self) -> bool {
         self.back_edges().next().is_some()
     }
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
-    pub(crate) fn suspends(&self) -> bool {
+    pub fn suspends(&self) -> bool {
         // By opcode alone: a wide record's opcode is in the side table.
         self.code.iter().any(|packed| {
             if packed.is_wide() { self.wide[packed.wide_index()].op().suspends() } else { packed.op().suspends() }
@@ -2855,12 +2855,12 @@ impl Function {
     /// (`ParameterHome`): the window's parameter reads and writes go through the object
     /// whose element writes reach the binding
     /// (`LaneStack::window_parameter`).
-    pub(crate) fn arguments_ride_window(&self) -> bool {
+    pub fn arguments_ride_window(&self) -> bool {
         self.arguments_slot.is_some() && self.suspends_in_record()
     }
 
     /// The function's `CallPlan`, derived on first use.
-    #[inline(always)] pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
+    #[inline(always)] pub fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
         CallPlan::from_bits(u32::from(*self.call_plan.get_or_init(|| u16::try_from(self.derive_call_plan(tables).to_bits()).expect("the plan's flags fit 16 bits"))))
     }
 
@@ -3030,12 +3030,12 @@ impl Function {
     /// Whether the body's whole effect is storing parameters into fields of `this`, each as
     /// passed or a Number in its place where it is falsy, then returning `undefined`
     /// (`initializer_stores`). `constants` is the owning program's table.
-    pub(crate) fn only_initializes_this_fields(&self, constants: &[Constant]) -> bool {
+    pub fn only_initializes_this_fields(&self, constants: &[Constant]) -> bool {
         self.initializer_stores(constants).is_some()
     }
 
     /// The function's `initializer_stores`, derived on first use.
-    #[inline(always)] pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
+    #[inline(always)] pub fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
         self.caches()
             .initializer
             .get_or_init(|| self.derive_initializer_stores(constants).map(Into::into))
@@ -3160,7 +3160,7 @@ impl Function {
     /// aliases (`arguments_alias_parameters`) is that parameter's local, which no closure
     /// captures, and any other the value passed. An environment activation then keeps those
     /// values after its locals.
-    pub(crate) fn reads_passed_arguments_only(&self) -> bool {
+    pub fn reads_passed_arguments_only(&self) -> bool {
         let Some(slot) = self.arguments_slot else {
             return false;
         };
@@ -3185,7 +3185,7 @@ impl Function {
     /// `\0quench:super` binding) and makes the `super` construction, then binds the
     /// receiver. Without fields or private elements of its own (`instance_initializer`), its
     /// construction is the parent's with the class as `new.target`.
-    pub(crate) fn super_forwarding(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperForwarded> {
+    pub fn super_forwarding(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperForwarded> {
         if !self.derived_constructor
             || !self.handlers.is_empty()
             || self.arguments_slot.is_some()
@@ -3311,7 +3311,7 @@ impl Function {
     /// `Class.create` constructor): its seven records read `this.<method>`, read `apply` from
     /// it, load `this` and the forwarded `arguments` binding into the call window, make the
     /// forwarding call, then return `undefined`. No handler covers them.
-    pub(crate) fn forwarded_this_method(&self, constants: &[Constant]) -> Option<ForwardedThisMethod> {
+    pub fn forwarded_this_method(&self, constants: &[Constant]) -> Option<ForwardedThisMethod> {
         if !self.handlers.is_empty() {
             return None;
         }
@@ -3361,7 +3361,7 @@ impl Function {
     /// reach the binding: no closure, environment clone, dynamic scope access or promoted
     /// register, and no suspension. An object it later materializes must equal one made on
     /// entry: unmapped, or mapped onto no parameters.
-    pub(crate) fn kept_arguments(&self) -> Option<KeptArguments> {
+    pub fn kept_arguments(&self) -> Option<KeptArguments> {
         let slot = self.arguments_slot?;
         let instructions = self.instructions().collect::<Vec<_>>();
         // A mapped object's elements alias the parameters; its `length` does not, so a body
@@ -3450,7 +3450,7 @@ impl Function {
     /// calls direct eval (also from a parameter scope).
     /// Derived once per function: lane views, capture layouts and name resolution each ask,
     /// and the instruction scan had cost 1.3% of the axios npm scenario's instructions.
-    pub(crate) fn has_dynamic_scope_access(&self) -> bool {
+    pub fn has_dynamic_scope_access(&self) -> bool {
         self.lazy_flag(LazyFlag::DynamicScopeAccess, || self.derive_dynamic_scope_access())
     }
 
@@ -3474,7 +3474,7 @@ impl Function {
     /// names, so a by-name load in it can only denote a global binding.
     /// `program` holds this function; an enclosing function whose record it has not read yet
     /// is read here.
-    pub(crate) fn names_resolve_statically(&self, program: &ResidualProgram) -> bool {
+    pub fn names_resolve_statically(&self, program: &ResidualProgram) -> bool {
         self.lazy_flag(LazyFlag::StaticNameScope, || self.derive_names_resolve_statically(program))
     }
 
@@ -3489,19 +3489,19 @@ impl Function {
 
     /// `names_resolve_statically` but for the enclosing functions: this function itself has
     /// no dynamic scope access and contains no `with` statement.
-    pub(crate) fn own_names_resolve_statically(&self, tables: &impl FactTables) -> bool {
+    pub fn own_names_resolve_statically(&self, tables: &impl FactTables) -> bool {
         !self.has_dynamic_scope_access()
             && !self.contains_with_statement(|atom| tables.atom_name(atom) == Some(WITH_ENTER_BINDING))
     }
 
     /// The memoized `plain_local_slots` projection for this residual's atoms.
-    #[inline(always)] pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
+    #[inline(always)] pub fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
         let words =
             self.plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
         crate::bitset::words_contain(words, slot)
     }
 
-    pub(crate) fn plain_local_slot_is_safe(&self, slot: usize) -> bool {
+    pub fn plain_local_slot_is_safe(&self, slot: usize) -> bool {
         self.plain_local_slot_ineligibility(slot).is_none()
     }
 
@@ -3533,7 +3533,7 @@ impl Function {
         None
     }
 
-    pub(crate) fn is_self_binding_slot(&self, slot: usize) -> bool {
+    pub fn is_self_binding_slot(&self, slot: usize) -> bool {
         self.self_binding_slot
             .is_some_and(|self_slot| usize::from(self_slot) == slot)
     }
@@ -3545,7 +3545,7 @@ impl Function {
         !root && self.self_binding_slot.is_none() && !self.arguments_alias_parameters()
     }
 
-    pub(crate) fn local_slot_uses_environment(&self, slot: usize) -> bool {
+    pub fn local_slot_uses_environment(&self, slot: usize) -> bool {
         match self.selective_capture_slots.as_ref() {
             Some(captured) => u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()),
             None => self.locals_use_environment(),
@@ -3760,10 +3760,10 @@ pub(crate) const FORWARDED_THIS_METHOD_CALL: u32 = 4;
 /// forwarding call's record index and result register.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ForwardedThisMethod {
-    pub(crate) method: (Atom, u16),
-    pub(crate) apply: (Atom, u16),
-    pub(crate) call_pc: u32,
-    pub(crate) call_result: u16,
+    pub method: (Atom, u16),
+    pub apply: (Atom, u16),
+    pub call_pc: u32,
+    pub call_result: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4105,7 +4105,7 @@ pub(crate) struct ProgramSource {
     pub(crate) layout: std::cell::OnceCell<std::sync::Arc<SourceLayout>>,
     /// Complete static call-printing facts for native images. An unset cell
     /// leaves the dynamic error-path renderer in charge; an empty table is final.
-    pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
+    pub call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
 }
 
 impl ProgramSource {
@@ -4318,26 +4318,26 @@ impl CacheSiteCounts {
 
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
-    pub(crate) specialized: bool,
-    pub(crate) kind: ProgramKind,
+    pub specialized: bool,
+    pub kind: ProgramKind,
     pub(crate) module_requests: Vec<ModuleRequest>,
     pub(crate) module_imports: Vec<ModuleImportBinding>,
     pub(crate) module_link_plan: Option<ModuleLinkPlan>,
     /// The TypeScript declared environment (`DeclaredTypes`); none for JavaScript.
-    pub(crate) declared_types: Option<Box<DeclaredTypes>>,
-    pub(crate) source_name: String,
-    pub(crate) source: Option<ProgramSource>,
-    pub(crate) atoms: AtomTable,
-    pub(crate) constants: append_vec::AppendVec<Constant>,
-    pub(crate) functions: append_vec::AppendVec<FunctionSlot>,
+    pub declared_types: Option<Box<DeclaredTypes>>,
+    pub source_name: String,
+    pub source: Option<ProgramSource>,
+    pub atoms: AtomTable,
+    pub constants: append_vec::AppendVec<Constant>,
+    pub functions: append_vec::AppendVec<FunctionSlot>,
     pub(crate) cache_sites: chunk_append::SiteCount,
     pub(crate) method_sites: append_vec::AppendVec<MethodSite>,
-    pub(crate) method_arguments: append_vec::AppendVec<Register>,
-    pub(crate) field_sites: append_vec::AppendVec<FieldSite>,
+    pub method_arguments: append_vec::AppendVec<Register>,
+    pub field_sites: append_vec::AppendVec<FieldSite>,
     pub(crate) object_sites: append_vec::AppendVec<ObjectSite>,
     pub(crate) regexp_literal_sites: append_vec::AppendVec<RegExpLiteralSite>,
     pub(crate) literal_templates: append_vec::AppendVec<Box<[LiteralStep]>>,
-    pub(crate) superinstructions: append_vec::AppendVec<Superinstruction>,
+    pub superinstructions: append_vec::AppendVec<Superinstruction>,
     pub(crate) rewrite_ranges: crate::compile::replay::RewriteRanges,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
@@ -4437,7 +4437,7 @@ impl ResidualProgram {
     }
     /// The record of function `index`, compiled again from source on its first read when
     /// the program released it.
-    #[inline(always)] pub(crate) fn function(&self, index: usize) -> &Function {
+    #[inline(always)] pub fn function(&self, index: usize) -> &Function {
         let slot = &self.functions[index];
         match slot.record() {
             Some(function) => function,
@@ -4446,7 +4446,7 @@ impl ResidualProgram {
     }
 
     /// `function`, for an index that may lie outside the table.
-    #[inline(always)] pub(crate) fn function_get(&self, index: usize) -> Option<&Function> {
+    #[inline(always)] pub fn function_get(&self, index: usize) -> Option<&Function> {
         (index < self.functions.len()).then(|| self.function(index))
     }
 
@@ -4570,7 +4570,7 @@ impl ResidualProgram {
     }
 
     /// Compiles every released record again.
-    pub(crate) fn compile_released(&self) {
+    pub fn compile_released(&self) {
         for index in 0..self.functions.len() {
             self.function(index);
         }
@@ -4600,7 +4600,7 @@ impl ResidualProgram {
     /// The registers an activation of `function` starts with its initial value (`entry_fill`):
     /// those below every register live at its entry, derived from this program's tables on the
     /// first ask.
-    pub(crate) fn entry_fill(&self, function: &Function) -> u16 {
+    pub fn entry_fill(&self, function: &Function) -> u16 {
         function
             .register_roots
             .entry_live_with(|| crate::compile::liveness::derive_entry_live_keeping(function, self, &self.field_sites, &self.superinstructions))
@@ -4609,12 +4609,12 @@ impl ResidualProgram {
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
+    pub fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
         self.shared_register_root_masks(function).map(|masks| &**masks)
     }
 
     /// `register_root_masks`, as the shared derivation the loop tier's regions hold.
-    pub(crate) fn shared_register_root_masks(
+    pub fn shared_register_root_masks(
         &self,
         function: u32,
     ) -> Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>> {

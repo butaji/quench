@@ -48,7 +48,7 @@ pub struct CallSite {
 impl Vm {
     /// The VM's operation `operation` at `site` of its operand values (`CallOut::operands`): the
     /// value it defines, if any. A for-in step defines `Value::DELETED` once no key is left.
-    pub(super) fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
+    pub fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
         operands: OperandValues<Value>) -> Result<Option<Value>, JsError> {
         let OperandValues { fixed: [first, second], list } = operands;
         let operand = second.unwrap_or(Value::UNDEFINED);
@@ -336,7 +336,7 @@ impl Vm {
     /// The owner a call-out of `operation` made by a lane's helper runs for: the running
     /// activation where the step reads its names or locals (`CallOut::names_activation`), else
     /// the innermost frame.
-    pub(super) fn call_out_owner(&mut self, operation: CallOut) -> VarOwner {
+    pub fn call_out_owner(&mut self, operation: CallOut) -> VarOwner {
         if operation.names_activation() { self.running_owner() } else { VarOwner::Frame(self.frames.len().saturating_sub(1)) }
     }
 

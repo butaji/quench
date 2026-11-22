@@ -683,7 +683,7 @@ impl Vm {
             }
         });
     }
-    pub(super) fn atom_name(&self, atom: Atom) -> &str {
+    pub fn atom_name(&self, atom: Atom) -> &str {
         let index = atom as usize;
         if index < self.atom_text.len() {
             &self.atom_text[index]

@@ -11,7 +11,7 @@ impl Vm {
     /// `Object.create(proto)` before its properties argument: an empty ordinary object
     /// inheriting from `proto`, which runs no guest code; `None` when `proto` is neither an
     /// object nor `null`.
-    pub(super) fn object_create(&mut self, proto: Value) -> Option<Value> {
+    pub fn object_create(&mut self, proto: Value) -> Option<Value> {
         if !proto.is_null() && self.object_data(proto).is_none() && !self.is_wasm_gc_object(proto) {
             return None;
         }
@@ -114,7 +114,7 @@ impl Vm {
         .then(|| object.shape())
     }
 
-    pub(super) fn define_class_field(
+    pub fn define_class_field(
         &mut self,
         p: &ResidualProgram,
         target: Value,
@@ -171,7 +171,7 @@ impl Vm {
         self.call_value(p, method, this, &[])
     }
 
-    pub(super) fn object_prototype_to_string(
+    pub fn object_prototype_to_string(
         &mut self,
         p: &ResidualProgram,
         value: Value,
@@ -496,7 +496,7 @@ impl Vm {
         self.set_builtin_value_named(object, name, function)
     }
 
-    pub(super) fn call_object_native(
+    pub fn call_object_native(
         &mut self,
         p: &ResidualProgram,
         native: Native,

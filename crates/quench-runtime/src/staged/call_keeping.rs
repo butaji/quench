@@ -53,15 +53,15 @@ pub const fn keeping_window_words(registers: u16, argc: usize, keeps: bool) -> u
 /// (`ScriptActivation::kept`, 0 for none), which marks it forwarding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct KeepingRecord {
-    pub(crate) argc: u16,
-    pub(crate) forwards: bool,
-    pub(crate) kept: u16,
+    pub argc: u16,
+    pub forwards: bool,
+    pub kept: u16,
 }
 
 impl KeepingRecord {
     /// The record of `window` passed `argc` values (at most `u16::MAX`, which the tier checked).
     #[inline(always)]
-    pub(crate) const fn of(window: KeepingWindow, argc: usize) -> Self {
+    pub const fn of(window: KeepingWindow, argc: usize) -> Self {
         let params = window.params as usize;
         let argc = if window.keeps || argc < params { argc } else { params };
         Self { argc: argc as u16, forwards: window.keeps, kept: if window.keeps { window.registers } else { 0 } }
@@ -70,7 +70,7 @@ impl KeepingRecord {
     /// The record of an activation whose window the tier filled itself, passed `argc`, that
     /// keeps from register `kept` where `Some` (`lane_enter_window_of`'s `kept`).
     #[inline(always)]
-    pub(crate) const fn of_kept(argc: u16, kept: Option<u16>) -> Self {
+    pub const fn of_kept(argc: u16, kept: Option<u16>) -> Self {
         match kept {
             Some(kept) => Self { argc, forwards: true, kept },
             None => Self { argc, forwards: false, kept: 0 },

@@ -20,24 +20,24 @@ pub(in crate::vm) fn patchable(kind: Reloc) -> bool {
 /// `(namespace, key)` plus `addend`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Relocation {
-    pub(in crate::vm) offset: usize,
-    pub(in crate::vm) kind: Reloc,
-    pub(in crate::vm) namespace: u32,
-    pub(in crate::vm) key: u32,
-    pub(in crate::vm) addend: i64,
+    pub offset: usize,
+    pub kind: Reloc,
+    pub namespace: u32,
+    pub key: u32,
+    pub addend: i64,
 }
 
 /// Position-independent machine code and the relocations that link it.
 #[derive(Debug)]
 pub struct RelocatableCode {
-    pub(in crate::vm) code: Box<[u8]>,
-    pub(in crate::vm) relocations: Box<[Relocation]>,
+    pub code: Box<[u8]>,
+    pub relocations: Box<[Relocation]>,
 }
 
 impl RelocatableCode {
     /// The code `compiled` holds, each relocation resolved to its symbol; `None` where one
     /// names anything but a user symbol or cannot be patched.
-    pub(in crate::vm) fn extract(compiled: &CompiledCode, function: &ir::Function) -> Option<Self> {
+    pub fn extract(compiled: &CompiledCode, function: &ir::Function) -> Option<Self> {
         let names = function.params.user_named_funcs();
         let relocations = compiled.buffer.relocs().iter().map(|relocation| {
             let RelocTarget::ExternalName(ir::ExternalName::User(name)) = &relocation.target else { return None };
@@ -55,7 +55,7 @@ impl RelocatableCode {
 
     /// The code patched for `address`, each symbol resolved by `resolve`; an error names the
     /// first symbol it cannot resolve or relocation it cannot fill.
-    pub(in crate::vm) fn link(&self, address: u64, mut resolve: impl FnMut(u32, u32) -> Option<u64>) -> Result<Vec<u8>, String> {
+    pub fn link(&self, address: u64, mut resolve: impl FnMut(u32, u32) -> Option<u64>) -> Result<Vec<u8>, String> {
         let mut linked = self.code.to_vec();
         for relocation in &*self.relocations {
             let value = resolve(relocation.namespace, relocation.key)

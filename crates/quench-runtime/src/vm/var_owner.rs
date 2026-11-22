@@ -199,7 +199,7 @@ impl Vm {
     }
 
     /// The environment `depth` function layers out from `owner`'s captures.
-    pub(super) fn owner_capture_env(&self, owner: VarOwner, depth: u16) -> Option<Value> {
+    pub fn owner_capture_env(&self, owner: VarOwner, depth: u16) -> Option<Value> {
         self.caller_capture_env(self.owner_view(owner), depth)
     }
 

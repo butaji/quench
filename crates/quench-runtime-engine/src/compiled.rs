@@ -139,21 +139,21 @@ pub(crate) mod admission;
 pub(crate) mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 pub(crate) mod lane_sites;
-#[path = "compiled/lane_allocations.rs"] mod lane_allocations;
+#[path = "compiled/lane_allocations.rs"] pub(crate) mod lane_allocations;
 use lane_allocations::{binary_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 pub(crate) mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
 pub(crate) mod site_posterior;
 #[path = "compiled/entry_cell.rs"] pub(crate) mod entry_cell;
-#[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(crate) use numeric_image::compile_js_typed_numeric_region;
+#[path = "compiled/numeric_image.rs"] pub(crate) mod numeric_image; #[cfg(test)] pub(crate) use numeric_image::compile_js_typed_numeric_region;
 pub(crate) use numeric_image::NumericImage;
-#[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages; pub(crate) use ahead_images::closed_lane_image;
+#[path = "compiled/ahead_images.rs"] pub(crate) mod ahead_images; pub use ahead_images::AheadImages; pub(crate) use ahead_images::closed_lane_image;
 pub use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fingerprint};
-#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
+#[path = "compiled/lane_body_abi.rs"] pub(crate) mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
 #[path = "compiled/lane_facts.rs"]
 pub(crate) mod lane_facts;
-#[path = "compiled/tier_model.rs"] mod tier_model;
+#[path = "compiled/tier_model.rs"] pub(crate) mod tier_model;
 #[path = "compiled/loop_model.rs"] pub(crate) mod loop_model;
 pub(crate) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]

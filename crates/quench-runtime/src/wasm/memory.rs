@@ -214,7 +214,7 @@ impl MemoryStorage {
         }
     }
 
-    pub(crate) fn lock(&self) -> MemoryGuard<'_> {
+    pub fn lock(&self) -> MemoryGuard<'_> {
         match self {
             // An unshared memory's accessors never nest, as with the shared lock.
             Self::Unshared(state) => MemoryGuard::Unshared(state.borrow_mut()),
@@ -391,7 +391,7 @@ memory_load_list!(define_memory_loads);
 macro_rules! loads {
     ($value:ident; scalar { $($scalar:ident, $swidth:ty;)+ } vector { $($name:ident, $word:ty => $result:expr;)+ }) => {
         impl MemoryLoad {
-            pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
+            pub const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
                 match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
@@ -452,11 +452,11 @@ macro_rules! stores {
         pub enum MemoryStore { $($scalar,)+ $($name,)+ }
         impl MemoryStore {
             const ALL: &'static [Self] = &[$(Self::$scalar,)+ $(Self::$name,)+];
-            pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
+            pub const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
                 match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
-            #[inline(always)] pub(crate) const fn value_type(self) -> WasmType { match self { $(Self::$scalar => WasmType::$variant,)+ $(Self::$name => WasmType::V128,)+ } }
+            #[inline(always)] pub const fn value_type(self) -> WasmType { match self { $(Self::$scalar => WasmType::$variant,)+ $(Self::$name => WasmType::V128,)+ } }
             #[inline(always)] pub(crate) const fn width(self) -> usize { match self { $(Self::$scalar => std::mem::size_of::<$swidth>(),)+ $(Self::$name => std::mem::size_of::<$word>(),)+ } }
         }
     }

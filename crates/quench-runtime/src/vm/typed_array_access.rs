@@ -289,7 +289,7 @@ impl Vm {
 
     /// The kind of the typed array `object`, which picks a site's kind variant
     /// (`typed_element_quick`).
-    pub(super) fn typed_array_kind_of(&self, object: Value) -> Option<TypedArrayKind> {
+    pub fn typed_array_kind_of(&self, object: Value) -> Option<TypedArrayKind> {
         match self.heap.get(object) {
             Some(Cell::TypedArray { object, .. }) => Some(object.native.kind()),
             _ => None,
@@ -334,7 +334,7 @@ impl Vm {
     /// until the loop calls out. Only an attached buffer of Number elements this heap holds
     /// qualifies, and to write, one the buffer owns alone (`BufferBytes::mut_in_lane`), so no
     /// store copies or moves it; anything else stays on the general path.
-    pub(super) fn typed_array_elements_in_lane(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize, TypedArrayKind)> {
+    pub fn typed_array_elements_in_lane(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize, TypedArrayKind)> {
         let view = self.typed_array_view(object)?;
         if view.kind.is_bigint() || view.kind == TypedArrayKind::Float16 {
             return None;
@@ -372,7 +372,7 @@ impl Vm {
     /// `object` in its record's native prefix as its buffer is now, which stays true until the next buffer
     /// event (`buffer_relocations`); a view native code cannot address is withdrawn instead. Whether it is
     /// addressable.
-    pub(super) fn publish_typed_view(&mut self, object: Value) -> bool {
+    pub fn publish_typed_view(&mut self, object: Value) -> bool {
         if matches!(self.heap.get(object), Some(Cell::TypedArray { object, .. } | Cell::DataView { object, .. }) if object.native.is_retracted()) {
             return false;
         }
@@ -531,7 +531,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn typed_array_kind(&self, object: Value) -> Option<TypedArrayKind> {
+    pub fn typed_array_kind(&self, object: Value) -> Option<TypedArrayKind> {
         match self.heap.get(object) {
             Some(Cell::TypedArray { object, .. }) => Some(object.native.kind()),
             _ => None,
@@ -622,7 +622,7 @@ impl Vm {
     /// `typed_array_set` of a Number into a typed array of Number content: its ToNumber has no
     /// effect, so the write needs neither a root nor a conversion. False leaves the store to
     /// `typed_array_set`.
-    pub(super) fn typed_array_set_number(&mut self, object: Value, index: usize, value: Value) -> bool {
+    pub fn typed_array_set_number(&mut self, object: Value, index: usize, value: Value) -> bool {
         if let Some(integer) = value.as_int()
             && self.typed_array_set_integer(object, index, integer)
         {
@@ -704,7 +704,7 @@ impl Vm {
 
     /// Whether `value` is a typed array, whose elements a loop region reads in place
     /// (`typed_array_elements_in_lane`) and a function body has no row for.
-    pub(super) fn is_typed_array(&self, value: Value) -> bool {
+    pub fn is_typed_array(&self, value: Value) -> bool {
         self.typed_array_view(value).is_some()
     }
 
@@ -1130,7 +1130,7 @@ impl Vm {
     /// a writable view: an integer, or any Number into a float kind. False leaves the store to
     /// the caller's slower path (`typed_cached_store_number` first).
     #[inline(always)]
-    pub(super) fn typed_cached_store<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub fn typed_cached_store<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
         let Some((kind, element)) = self.typed_cached_slot::<KIND>(object, key) else { return false };
         // SAFETY: `typed_cached_slot` proved one element of `kind` writable at `element`.
         unsafe { store_number_element(kind, element, value) }
@@ -1139,7 +1139,7 @@ impl Vm {
     /// `typed_cached_store` of any Number, a double into an integer kind included
     /// (`store_double_element`): the store-miss handler's first try, before it refills the entry.
     #[inline(always)]
-    pub(super) fn typed_cached_store_number<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub fn typed_cached_store_number<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
         let Some((kind, element)) = self.typed_cached_slot::<KIND>(object, key) else { return false };
         // SAFETY: as `typed_cached_store`.
         unsafe { store_any_number(kind, element, value) }
@@ -1168,7 +1168,7 @@ impl Vm {
     /// store this heap owns, writable when the buffer owns it alone and is mutable. Any other
     /// object leaves the cache as it is.
     #[inline(never)]
-    pub(super) fn fill_typed_view(&mut self, object: Value) {
+    pub fn fill_typed_view(&mut self, object: Value) {
         let Some(Cell::TypedArray { object: view, buffer, length }) = self.heap.get(object) else {
             return;
         };
@@ -1214,14 +1214,14 @@ impl Vm {
 #[derive(Clone, Copy)]
 pub(crate) struct TypedSpan {
     /// The first element's byte.
-    pub(crate) first: *mut u8,
-    pub(crate) kind: TypedArrayKind,
-    pub(crate) length: usize,
+    pub first: *mut u8,
+    pub kind: TypedArrayKind,
+    pub length: usize,
     /// Whether a store may write the elements in place: the buffer's bytes are this
     /// buffer's alone and mutable.
-    pub(crate) writable: bool,
+    pub writable: bool,
     /// The buffer's bytes, which two views over one buffer share.
-    pub(crate) store: (usize, usize),
+    pub store: (usize, usize),
 }
 
 impl Vm {
@@ -1229,7 +1229,7 @@ impl Vm {
     /// kernel reads and writes them without guest code; `None` for any other value, a
     /// detached, length-tracking, shared or Wasm buffer, or a BigInt or Float16 kind. Valid
     /// while nothing allocates, detaches or resizes.
-    pub(crate) fn typed_array_span(&mut self, object: Value) -> Option<TypedSpan> {
+    pub fn typed_array_span(&mut self, object: Value) -> Option<TypedSpan> {
         let Some(Cell::TypedArray { object: view, buffer, length }) = self.heap.get(object) else {
             return None;
         };

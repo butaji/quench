@@ -153,7 +153,7 @@ impl Vm {
     /// `callee` with `receiver`, which runs no guest code: its text, where the receiver is the
     /// realm's constructor and the match state is available; `None` leaves any throw to the
     /// native.
-    pub(in crate::vm) fn regexp_legacy_getter_in_place(&mut self, callee: Value, receiver: Value) -> Option<Value> {
+    pub fn regexp_legacy_getter_in_place(&mut self, callee: Value, receiver: Value) -> Option<Value> {
         let record = self.heap.function(callee)?;
         let env = record.env;
         if self.record_realm(record) != self.realm.globals || !self.same_value(receiver, self.regexp_intrinsic_constructor()) {

@@ -2183,7 +2183,7 @@ impl Vm {
     /// `result` of a call whose searches ran a matcher, or the stack RangeError V8 raises where
     /// one of them ran out of backtracking stack (`take_backtrack_exhausted`).
     #[inline(always)]
-    pub(in crate::vm) fn regexp_search_outcome(&mut self, result: Result<Value, JsError>) -> Result<Value, JsError> {
+    pub fn regexp_search_outcome(&mut self, result: Result<Value, JsError>) -> Result<Value, JsError> {
         if quench_regexp::backtrack::take_backtrack_exhausted() {
             return Err(self.stack_exhaustion_error());
         }

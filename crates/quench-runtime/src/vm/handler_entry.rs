@@ -29,7 +29,7 @@ pub struct WindowHome {
 impl Vm {
     /// Leaves the scopes of the `with` statements the exception left in `home`: those past the
     /// depth `handler` was entered at.
-    pub(super) fn unwind_handler_scopes(&mut self, home: HandlerHome, handler: Handler) {
+    pub fn unwind_handler_scopes(&mut self, home: HandlerHome, handler: Handler) {
         let entered = usize::from(handler.with_depth);
         match home {
             HandlerHome::Frame(frame) => self.with_stack.truncate(self.frames[frame].with_base + entered),
@@ -40,7 +40,7 @@ impl Vm {
     /// Stores the thrown `value` to the binding `slot` names in `home`: a promoted register, or a
     /// local, which a captured activation's handler entry gives a fresh environment
     /// (`Vm::initialize_handler_binding`, `Vm::bind_window_local`).
-    pub(super) fn bind_thrown_value(
+    pub fn bind_thrown_value(
         &mut self,
         program: &ResidualProgram,
         home: HandlerHome,

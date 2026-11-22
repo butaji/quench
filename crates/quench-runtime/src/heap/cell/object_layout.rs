@@ -6,7 +6,7 @@ impl Object {
     /// The record's two stored words, `(payload, layout)`, as they are written. A fresh empty
     /// object's pair depends only on its prototype, so generated allocation copies it
     /// (`JsStepDispatch::empty_object_layout`).
-    pub(crate) fn stored_words(&self) -> (u64, u32) {
+    pub fn stored_words(&self) -> (u64, u32) {
         (self.head.payload, self.head.layout)
     }
 
@@ -36,7 +36,7 @@ impl Object {
     /// The interned layout id (`heap::layouts`): equal ids mean equal prototype links, flags,
     /// shapes and storage forms, so one compare proves what comparing each would.
     #[inline(always)]
-    pub(crate) fn layout_id(&self) -> u32 {
+    pub fn layout_id(&self) -> u32 {
         self.layout
     }
 
@@ -125,7 +125,7 @@ impl Object {
 
     /// The prototype reference as stored (`ProtoLink`), undecoded.
     #[inline(always)]
-    pub(crate) fn proto_link(&self) -> ProtoLink {
+    pub fn proto_link(&self) -> ProtoLink {
         ProtoLink(self.meta() & PROTO_INDEX_BITS)
     }
 

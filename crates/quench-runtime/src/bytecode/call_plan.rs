@@ -50,46 +50,46 @@ pub struct CallPlan {
     /// The dispatch loop may push the activation in place: an ordinary body that is no
     /// generator, async function, class constructor or field initializer and raises no
     /// parameter-scope `arguments` error.
-    pub(crate) in_loop: bool,
+    pub in_loop: bool,
     /// An async function whose body never suspends (`Function::suspends`): a plain call may
     /// push it in place as `in_loop` bodies are pushed, settling the promise it returns with
     /// the body's completion (`PendingGeneralCall::settles`).
-    pub(crate) settles_in_loop: bool,
+    pub settles_in_loop: bool,
     /// Legacy `caller`/`arguments` reflection may observe the activation
     /// (`!has_restricted_legacy_caller_access`).
-    pub(crate) legacy_reflection: bool,
+    pub legacy_reflection: bool,
     /// `reflects_live_parameters`.
     pub(crate) live_parameters: bool,
     /// Some instruction can reach the frame's local slots: one names a slot
     /// (`addressed_local_slots`), creates a closure or clones an environment. A plain
     /// activation without that needs no local storage, since promoted bindings live in
     /// registers and nothing else reads its locals.
-    pub(crate) addresses_locals: bool,
+    pub addresses_locals: bool,
     /// The activation passes its `arguments` binding only straight into
     /// `CallForwardingArguments` calls, so it keeps the argument values instead of an
     /// `arguments` object until a call needs one (`Function::kept_arguments`).
-    pub(crate) forwards_arguments: bool,
+    pub forwards_arguments: bool,
     /// `forwards_arguments`, or a frameless activation answers the binding from the values
     /// it kept and makes the object only at its last read (`KeptArguments::Passes`). Its
     /// frame makes the object on entry.
-    pub(crate) keeps_arguments: bool,
+    pub keeps_arguments: bool,
     /// `Function::reads_passed_arguments_only`: an environment activation keeps every value
     /// passed after its locals, past its parameters too.
-    pub(crate) reads_passed_arguments: bool,
+    pub reads_passed_arguments: bool,
     /// The activation's whole state is its registers, plus the values it was passed when it
     /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
     /// may run such a body without a frame: an ordinary body (`in_loop`), a base class
     /// constructor's construction, or a `settles_in_loop` body with no rest parameter or
     /// `arguments` binding, whose return settles its call's promise (`CallEntry::Settles`).
-    pub(crate) registers_only: bool,
+    pub registers_only: bool,
     /// The activation's state is its registers, its frame locals and the environment its
     /// closures capture, which it may make on entry: an ordinary body but for the closures
     /// it makes and the iteration copies of its environment, with no `arguments`, binding
     /// site, dynamic scope access or superinstruction, whose every local access is a plain or
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
     /// may run such a body without a frame (`CallEntry::Environment`).
-    pub(crate) environment_activation: bool,
+    pub environment_activation: bool,
     /// A function that suspends (a generator, an async function or an async generator) laid out
     /// as its registers: no locals, `arguments`, closures or dynamic scope, so what its
     /// suspended frame holds is its registers, receiver and closure environment (its implicit
@@ -103,18 +103,18 @@ pub struct CallPlan {
     /// (`FrameRecord::open_environment_window`) and storing it back at the suspension. Its
     /// names may resolve through `with` objects and dynamic bindings, which its record carries
     /// and its window's handlers read (`scoped_names`).
-    pub(crate) suspended_environment: bool,
+    pub suspended_environment: bool,
     /// A function whose window activations run the direct evals and the closures at binding
     /// sites it holds in the lane (`evals_in_scope`): its window rides (`holds_window_scope`),
     /// and the eval promotes the window's environment into the activation's record, which owns
     /// the eval's variable environment (`Vm::eval_owner`).
-    pub(crate) admits_direct_eval: bool,
+    pub admits_direct_eval: bool,
 }
 
 impl CallPlan {
     /// Whether the function's activations run over an environment window (an ordinary body's or a
     /// suspended frame's), where names resolve through the activation's scope (`scoped_names`).
-    pub(crate) fn holds_window_scope(self) -> bool {
+    pub fn holds_window_scope(self) -> bool {
         self.environment_activation || self.suspended_environment
     }
 }

@@ -25,7 +25,7 @@ pub enum Call {
 
 #[cfg(not(stencil_build))]
 impl Call {
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::CallKnown => Some(Self::Known),
             Class::WasmIndirectTarget => Some(Self::IndirectTarget),
@@ -43,7 +43,7 @@ impl Call {
 
 impl Call {
     /// Whether the call reads a table's references: it needs the program's callouts.
-    pub(crate) const fn needs_callouts(self) -> bool {
+    pub const fn needs_callouts(self) -> bool {
         matches!(self, Self::IndirectTarget | Self::RefFunc)
     }
 }

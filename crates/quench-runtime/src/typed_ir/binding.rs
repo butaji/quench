@@ -42,7 +42,7 @@ pub enum Division {
 }
 
 impl Division {
-    pub(crate) const fn folds(self, time: BindingTime) -> bool {
+    pub const fn folds(self, time: BindingTime) -> bool {
         match time {
             BindingTime::Static | BindingTime::Location => true,
             BindingTime::Stable => matches!(self, Self::Frozen | Self::Online),

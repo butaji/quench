@@ -52,7 +52,7 @@ impl AotFacts {
     }
 
     /// The facts of function `function`, for its lowering.
-    pub(crate) fn function_facts(&self, function: u32) -> FunctionFacts<'_> {
+    pub fn function_facts(&self, function: u32) -> FunctionFacts<'_> {
         FunctionFacts { facts: self, function }
     }
 }
@@ -65,17 +65,17 @@ pub struct FunctionFacts<'a> {
 
 impl<'a> FunctionFacts<'a> {
     /// The function the plain call at `pc` always calls.
-    pub(crate) fn call_target(&self, pc: u32) -> Option<u32> {
+    pub fn call_target(&self, pc: u32) -> Option<u32> {
         self.facts.call_targets.get(&(self.function, pc)).copied()
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
-    pub(crate) fn construct_target(&self, pc: u32) -> Option<u32> {
+    pub fn construct_target(&self, pc: u32) -> Option<u32> {
         self.facts.construct_targets.get(&(self.function, pc)).copied()
     }
 
     /// Per register, the Number representation it always holds.
-    pub(crate) fn numbers(&self) -> Option<&'a [Option<Representation>]> {
+    pub fn numbers(&self) -> Option<&'a [Option<Representation>]> {
         self.facts.numbers.get(&self.function).map(|numbers| &**numbers)
     }
 

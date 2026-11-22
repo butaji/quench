@@ -55,11 +55,11 @@ macro_rules! i32_direct_operators {
                 match self { $(Self::$name => I64BinaryOperator::$name,)+ }
             }
             #[cfg(not(stencil_build))]
-            pub(crate) const fn from_register_op(op: Op) -> Option<Self> {
+            pub const fn from_register_op(op: Op) -> Option<Self> {
                 match op { $(Op::$register => Some(Self::$name),)+ _ => None }
             }
             #[cfg(not(stencil_build))]
-            pub(crate) const fn from_immediate_op(op: Op) -> Option<Self> {
+            pub const fn from_immediate_op(op: Op) -> Option<Self> {
                 match op { $(Op::$immediate => Some(Self::$name),)+ _ => None }
             }
         }
@@ -109,11 +109,11 @@ macro_rules! i32_comparison_jumps {
                 match self { $(Self::$name => Some(Self::$negation),)+ _ => None }
             }
             #[cfg(not(stencil_build))]
-            pub(crate) const fn from_jump_op(op: Op) -> Option<Self> {
+            pub const fn from_jump_op(op: Op) -> Option<Self> {
                 match op { $(Op::$jump => Some(Self::$name),)+ _ => None }
             }
             #[cfg(not(stencil_build))]
-            pub(crate) const fn from_immediate_jump_op(op: Op) -> Option<Self> {
+            pub const fn from_immediate_jump_op(op: Op) -> Option<Self> {
                 match op { $(Op::$immediate => Some(Self::$name),)+ _ => None }
             }
         }

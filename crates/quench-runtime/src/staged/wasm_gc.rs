@@ -450,7 +450,7 @@ const fn read_signed(access: GcFieldAccess) -> Option<bool> {
 
 impl GcStep {
     /// The step of `op`, `None` for an opcode that is no GC value operation (a call target is none).
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         wasm_gc_table!(wasm_gc_step_of op)
     }
 
@@ -493,7 +493,7 @@ impl GcStep {
 
     /// The aggregate and the access of a field step (`struct.get`/`set`, `array.get`/`set`), `None`
     /// for any other step.
-    pub(crate) const fn field(self) -> Option<(Aggregate, GcFieldAccess)> {
+    pub const fn field(self) -> Option<(Aggregate, GcFieldAccess)> {
         Some(match self {
             Self::StructGet { signed } => (Aggregate::Struct, read_access(signed)),
             Self::StructSet => (Aggregate::Struct, GcFieldAccess::Write),

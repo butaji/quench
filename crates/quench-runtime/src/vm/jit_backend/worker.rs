@@ -16,7 +16,7 @@ pub(in crate::vm) struct Pending<T> {
 
 impl<T> Pending<T> {
     /// The result once the work has run; `Ready(None)` if the thread is gone.
-    pub(in crate::vm) fn poll(&self) -> Poll<Option<T>> {
+    pub fn poll(&self) -> Poll<Option<T>> {
         match self.result.try_recv() {
             Ok(result) => Poll::Ready(Some(result)),
             Err(TryRecvError::Empty) => Poll::Pending,
@@ -77,27 +77,27 @@ pub struct OffThread<T> {
 
 impl<T: 'static> OffThread<T> {
     /// `work` on the code generator's thread, reading nothing the program owns.
-    pub(in crate::vm) fn start<W: 'static>(work: W, run: fn(W) -> T) -> Self {
+    pub fn start<W: 'static>(work: W, run: fn(W) -> T) -> Self {
         let work = AssertSend(work);
         Self { done: None, result: run_in_background(move || { let held = work; let AssertSend(work) = held; AssertSend(run(work)) }) }
     }
 
     /// `work` on the code generator's thread, which reads data the program keeps alive until
     /// it ends: dropping the driver waits for it.
-    pub(in crate::vm) fn guarded<W: 'static>(work: W, run: fn(W) -> T) -> Self {
+    pub fn guarded<W: 'static>(work: W, run: fn(W) -> T) -> Self {
         let work = AssertSend(work);
         let (result, done) = run_in_background_guarded(move || { let held = work; let AssertSend(work) = held; AssertSend(run(work)) });
         Self { done: Some(done), result }
     }
 
     /// A result already in hand (a tier that builds its code at once), polled as any other.
-    pub(in crate::vm) fn ready(result: T) -> Self {
+    pub fn ready(result: T) -> Self {
         Self::start(result, std::convert::identity)
     }
 
     /// The result once the work has run; `Ready(None)` if its thread is gone. Once ready,
     /// what the work read may go.
-    pub(in crate::vm) fn poll(&mut self) -> Poll<Option<T>> {
+    pub fn poll(&mut self) -> Poll<Option<T>> {
         let result = self.result.poll();
         if result.is_ready() {
             self.done = None;

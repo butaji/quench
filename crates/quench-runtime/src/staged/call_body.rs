@@ -28,9 +28,9 @@ pub fn concrete_body_this(receiver: u64, lexical: bool) -> u64 {
 /// by the environment form.
 #[derive(Clone, Copy)]
 pub struct CallActivation<C> {
-    pub(crate) plain: C,
-    pub(crate) keeping: C,
-    pub(crate) environment: C,
+    pub plain: C,
+    pub keeping: C,
+    pub environment: C,
 }
 
 /// The activation of a call whose target's entry `activates` or `forwards`, passed the arguments

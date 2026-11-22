@@ -38,10 +38,10 @@ pub enum NonNullCheck {
     Function,
 }
 impl NonNullCheck {
-    pub(crate) fn from_tag(tag: u32) -> Option<Self> {
+    pub fn from_tag(tag: u32) -> Option<Self> {
         [Self::Reference, Self::Function].get(tag as usize).copied()
     }
-    pub(crate) fn trap(self) -> super::WasmTrap {
+    pub fn trap(self) -> super::WasmTrap {
         match self {
             Self::Reference => super::WasmTrap::NullReference,
             Self::Function => super::WasmTrap::NullFunctionReference,
@@ -109,7 +109,7 @@ impl ReferenceTarget {
     /// The target of a tag bytecode validation accepted (`from_tag`), read without
     /// rebuilding its type.
     #[inline]
-    pub(crate) fn validated(tag: u32) -> Self {
+    pub fn validated(tag: u32) -> Self {
         Self(tag)
     }
     pub(crate) fn descriptor_type(self, owner: &super::WasmTypes) -> Option<super::WasmType> {
@@ -126,7 +126,7 @@ impl ReferenceTarget {
             nullable: true,
         })
     }
-    pub(crate) fn tag(self) -> u32 {
+    pub fn tag(self) -> u32 {
         self.0
     }
     /// What this target names, read from the tag alone.

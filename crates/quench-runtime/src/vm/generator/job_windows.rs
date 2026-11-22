@@ -72,7 +72,7 @@ impl Vm {
     /// Starts the lane run of `job`'s activation: its frame stays in its owner, running, and
     /// `sent` is the value the suspending `await` evaluates to. The frame's address, which its
     /// box keeps until the run ends.
-    pub(in crate::vm) fn resume_job_window(&mut self, job: JobRoot, sent: Value) -> Option<*mut FrameRecord> {
+    pub fn resume_job_window(&mut self, job: JobRoot, sent: Value) -> Option<*mut FrameRecord> {
         let resumed = match job.kind {
             SuspendKind::AsyncFunction => self.heap.await_state_mut(job.object)?.resume_windowed()?,
             SuspendKind::AsyncGenerator | SuspendKind::Generator => self.generator_record_mut(job.object)?.resume_windowed()?,
@@ -84,7 +84,7 @@ impl Vm {
     /// whose result goes to `destination`: the frame is suspended where it stands, as a
     /// generator's yield suspends it (`park_frame`), and its owner holds it awaiting again,
     /// the await state armed anew. A sync generator's root suspends at its `yield` of `value`.
-    pub(in crate::vm) fn suspend_job_window(
+    pub fn suspend_job_window(
         &mut self,
         job: JobRoot,
         pc: usize,
@@ -103,13 +103,13 @@ impl Vm {
     /// Ends the lane run of an async generator `job`'s activation at a `yield` of `value` that
     /// resumes at `pc`, the value it is sent next going to `destination`: the frame parks in its
     /// record, which awaits the yielded value (`Vm::async_generator_yield`; `JobEnd::Yielded`).
-    pub(in crate::vm) fn suspend_async_generator_yield(&mut self, job: JobRoot, pc: usize, destination: crate::bytecode::Register, value: Value, depth: usize) {
+    pub fn suspend_async_generator_yield(&mut self, job: JobRoot, pc: usize, destination: crate::bytecode::Register, value: Value, depth: usize) {
         self.park_generator_job(job, (pc, destination, depth), Completion::Yield(value), true);
     }
 
     /// Whether the lane run of `job` ended at an async generator's `yield`
     /// (`suspend_async_generator_yield`), not an `await`.
-    pub(in crate::vm) fn yielded_async_generator(&self, job: JobRoot) -> bool {
+    pub fn yielded_async_generator(&self, job: JobRoot) -> bool {
         job.kind == SuspendKind::AsyncGenerator
             && self
                 .heap
@@ -143,7 +143,7 @@ impl Vm {
 
     /// Ends the lane run of `job`'s activation at its return: the owner drops the frame, the
     /// await state spent and the generator completed.
-    pub(in crate::vm) fn finish_job_window(&mut self, job: JobRoot) {
+    pub fn finish_job_window(&mut self, job: JobRoot) {
         match job.kind {
             SuspendKind::AsyncFunction => {
                 let finished = self.heap.await_state_mut(job.object).and_then(|state| state.take_running());
@@ -170,7 +170,7 @@ impl Vm {
     /// `job`'s activation made a VM frame on the frame stack, where the lane's activations
     /// became frames: its owner gives the frame up, with the iterators the lane's loops pushed
     /// and the `with` objects its scope chain holds since it resumed.
-    pub(in crate::vm) fn push_job_window_frame(
+    pub fn push_job_window_frame(
         &mut self,
         job: JobRoot,
         iterators: impl Iterator<Item = ActiveIterator>,

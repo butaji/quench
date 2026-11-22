@@ -144,7 +144,7 @@ fn fresh_step<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegatio
 /// cleared only after both, so a frame declines a read before any effect: the compiler resets
 /// `state` before each `yield*` begins, so a read that throws leaves nothing a later step sees.
 #[inline(always)]
-fn finish<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation, result: S::Word, asynchronous: bool)
+pub fn finish<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation, result: S::Word, asynchronous: bool)
     -> Option<Outcome<S::Word, F::Control>> {
     let (done, _) = frame.delegation(stage, DelegationStep::Done { result })?;
     let (truthy, _) = frame.delegation(stage, DelegationStep::Truthy { value: done })?;

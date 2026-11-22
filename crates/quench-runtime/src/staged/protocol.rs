@@ -190,10 +190,10 @@ pub(crate) fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::
 #[derive(Clone, Copy)]
 pub struct PlainHeader<W> {
     /// The caller's call record.
-    pub(crate) call: W,
+    pub call: W,
     pub(crate) caller_registers: W,
     /// The caller's records (the lane context's `base`).
-    pub(crate) caller_base: W,
+    pub caller_base: W,
     /// `plain_packed`'s word.
     pub(crate) packed: W,
     pub(crate) callee: W,
@@ -206,7 +206,7 @@ impl PlainHeader<u64> {
     /// record-shaped push (`LaneStack::push_activation`), a proved call (`enter_plain_window`)
     /// and a native callback's trampoline header.
     #[inline(always)]
-    pub(crate) const fn new(call: u64, caller_registers: u64, caller_base: u64, function: u32, argc: u16, flags: u64,
+    pub const fn new(call: u64, caller_registers: u64, caller_base: u64, function: u32, argc: u16, flags: u64,
         callee: u64) -> Self {
         Self { call, caller_registers, caller_base, packed: plain_packed(function, argc, flags), callee }
     }
@@ -216,9 +216,9 @@ impl PlainHeader<u64> {
 /// and records.
 #[derive(Clone, Copy)]
 pub(crate) struct PlainCaller<W> {
-    pub(crate) call: W,
-    pub(crate) registers: W,
-    pub(crate) base: W,
+    pub call: W,
+    pub registers: W,
+    pub base: W,
 }
 
 /// The header's packed word: `function`, the plain flag and `flags` (`frame::BODY_FLAG`,

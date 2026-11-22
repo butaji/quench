@@ -26,7 +26,7 @@ macro_rules! number_relations {
 
         impl NumberRelation {
             #[inline(always)]
-            pub(crate) fn apply<T, S: NumberRelationStage<T>>(
+            pub fn apply<T, S: NumberRelationStage<T>>(
                 self,
                 stage: &mut S,
                 left: T,
@@ -100,7 +100,7 @@ macro_rules! number_arithmetic {
 
         impl NumberArithmetic {
             #[inline(always)]
-            pub(crate) fn apply<T, S: NumberArithmeticStage<T>>(
+            pub fn apply<T, S: NumberArithmeticStage<T>>(
                 self,
                 stage: &mut S,
                 left: T,
@@ -394,22 +394,22 @@ pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
 #[allow(non_upper_case_globals)]
 pub mod binary_operator {
     pub const Equality: u32 = 0;
-    pub(crate) const Inequality: u32 = 1;
-    pub(crate) const StrictEquality: u32 = 2;
-    pub(crate) const StrictInequality: u32 = 3;
+    pub const Inequality: u32 = 1;
+    pub const StrictEquality: u32 = 2;
+    pub const StrictInequality: u32 = 3;
     pub(crate) const LessThan: u32 = 4;
     pub(crate) const LessEqualThan: u32 = 5;
     pub(crate) const GreaterThan: u32 = 6;
     pub(crate) const GreaterEqualThan: u32 = 7;
     pub const Addition: u32 = 8;
-    pub(crate) const Subtraction: u32 = 9;
-    pub(crate) const Multiplication: u32 = 10;
-    pub(crate) const Division: u32 = 11;
+    pub const Subtraction: u32 = 9;
+    pub const Multiplication: u32 = 10;
+    pub const Division: u32 = 11;
     pub const Remainder: u32 = 12;
     pub(crate) const Exponential: u32 = 13;
     pub const ShiftLeft: u32 = 14;
     pub const ShiftRight: u32 = 15;
-    pub(crate) const ShiftRightZeroFill: u32 = 16;
+    pub const ShiftRightZeroFill: u32 = 16;
     pub const BitwiseOR: u32 = 17;
     pub const BitwiseXOR: u32 = 18;
     pub const BitwiseAnd: u32 = 19;
@@ -441,7 +441,7 @@ macro_rules! number_relation_codes {
             }
 
             #[inline(always)]
-            pub(crate) fn from_operator(op: u32) -> Option<Self> {
+            pub fn from_operator(op: u32) -> Option<Self> {
                 $(
                     if $(op == binary_operator::$operator)||+ {
                         return Some(Self::$relation);
@@ -466,7 +466,7 @@ macro_rules! number_arithmetic_codes {
             }
 
             #[inline(always)]
-            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
+            pub fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == binary_operator::$operator {
                         return Some(Self::$operation);
@@ -482,7 +482,7 @@ number_arithmetic_rows!(number_arithmetic_codes);
 impl NumberArithmetic {
     /// Whether the result of two integers is an integer: all but a division.
     #[inline(always)]
-    pub(crate) const fn integral(self) -> bool {
+    pub const fn integral(self) -> bool {
         !matches!(self, Self::Divide)
     }
 }
@@ -499,7 +499,7 @@ macro_rules! number_bitwise_codes {
             }
 
             #[inline]
-            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
+            pub fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == binary_operator::$operator {
                         return Some(Self::$operation);

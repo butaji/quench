@@ -32,7 +32,7 @@ impl Vm {
     /// The user function `callee` names when it belongs to the current realm: the one
     /// target an in-loop frame push can enter without switching realm or program state.
     #[inline(always)]
-    pub(super) fn same_realm_user_target(
+    pub fn same_realm_user_target(
         &self,
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value)> {
@@ -48,7 +48,7 @@ impl Vm {
     }
 
     /// `same_realm_user_target`, and whether its body is numeric (`DispatchClass::Numeric`).
-    #[inline(always)] pub(super) fn same_realm_script_target(
+    #[inline(always)] pub fn same_realm_script_target(
         &self,
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value, bool)> {
@@ -56,7 +56,7 @@ impl Vm {
     }
 
     /// Whether function `id` of `program` has a numeric body (`DispatchClass::Numeric`).
-    #[inline(always)] pub(super) fn numeric_body(&self, program: super::ProgramId, id: u32) -> bool {
+    #[inline(always)] pub fn numeric_body(&self, program: super::ProgramId, id: u32) -> bool {
         self.programs.residual(program).and_then(|code| code.function_get(id as usize).map(|body| body.dispatch))
             == Some(crate::bytecode::DispatchClass::Numeric)
     }
@@ -77,7 +77,7 @@ impl Vm {
     /// Inlined into each caller, so a caller with a constant native folds the admission and
     /// the body choice to that one body.
     #[inline(always)]
-    pub(super) fn pure_string_method_call(
+    pub fn pure_string_method_call(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -132,7 +132,7 @@ impl Vm {
         result
     }
 
-    pub(super) fn call_primitive_native(
+    pub fn call_primitive_native(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -587,7 +587,7 @@ impl Vm {
     /// `String.fromCharCode` of Numbers, whose ToNumber runs no guest code; `None` when any
     /// argument is another value.
     #[expect(clippy::wrong_self_convention, reason = "named for `String.fromCharCode`; allocates its result on the VM heap")]
-    pub(super) fn from_char_code_numbers(&mut self, args: &[Value]) -> Option<Value> {
+    pub fn from_char_code_numbers(&mut self, args: &[Value]) -> Option<Value> {
         // One code unit, as `fromCharCode(byte)` in a decode loop: its string with no list.
         if let [value] = args {
             let unit = crate::staged::strings::from_char_code_unit(value.as_number()?);

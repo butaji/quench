@@ -80,7 +80,7 @@ impl Vm {
         outcome
     }
 
-    pub(super) fn define_property_or_throw(
+    pub fn define_property_or_throw(
         &mut self,
         p: &ResidualProgram,
         target: Value,

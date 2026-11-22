@@ -71,7 +71,7 @@ pub enum InlineEmpty {
 impl Allocation {
     /// The inline empty allocation this is, or `None`. The one predicate both tiers read: the u-jit's
     /// `allocate_value` and the b-jit planner (`base_region::steps`) decide an inline empty allocation by it.
-    pub(crate) fn inline_empty(self) -> Option<InlineEmpty> {
+    pub fn inline_empty(self) -> Option<InlineEmpty> {
         match self {
             Self::Empty => Some(InlineEmpty::Object),
             Self::Array { length: 0, .. } => Some(InlineEmpty::Array),
@@ -83,7 +83,7 @@ impl Allocation {
     /// The register `instruction` defines and the allocation it makes, given the instructions
     /// `following` it (an array literal's element definitions); `None` for an opcode that makes
     /// no such value.
-    pub(crate) fn decode(instruction: WideInstruction, following: &[WideInstruction]) -> Option<(Register, Self)> {
+    pub fn decode(instruction: WideInstruction, following: &[WideInstruction]) -> Option<(Register, Self)> {
         let allocation = match instruction.op() {
             Op::MakeObject => Self::Empty,
             Op::MakeArray => match literal_elements(instruction, following) {

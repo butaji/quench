@@ -28,7 +28,7 @@ pub struct RegisterList {
 
 impl RegisterList {
     /// The registers the list names in `records`; none where the records do not hold them.
-    pub(crate) fn registers(self, records: &[Register]) -> &[Register] {
+    pub fn registers(self, records: &[Register]) -> &[Register] {
         let start = self.start as usize;
         records.get(start..start + usize::from(self.count)).unwrap_or(&[])
     }
@@ -46,7 +46,7 @@ pub enum Arguments {
 impl Arguments {
     /// How many arguments the call passes.
     #[inline]
-    pub(crate) const fn count(self) -> u16 {
+    pub const fn count(self) -> u16 {
         match self {
             Self::Window { count, .. } | Self::List(RegisterList { count, .. }) => count,
         }
@@ -97,15 +97,15 @@ pub enum Receiver {
 /// result goes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Invocation {
-    pub(crate) callee: Callee,
-    pub(crate) receiver: Receiver,
-    pub(crate) arguments: Arguments,
-    pub(crate) result: Register,
+    pub callee: Callee,
+    pub receiver: Receiver,
+    pub arguments: Arguments,
+    pub result: Register,
     /// Whether the call's completion is its activation's: the call returns its callee's value.
-    pub(crate) returns: bool,
+    pub returns: bool,
     /// Whether the window's last argument is the caller's `arguments`, which the activation keeps
     /// as values (`CallForwardingArguments`).
-    pub(crate) forwards: bool,
+    pub forwards: bool,
 }
 
 /// What a tier fixes around its calls: the registers its code holds, whether it completes its
@@ -132,7 +132,7 @@ impl Invocation {
     /// The operands of `instruction`, read with the tables of `context`; `None` for any form no
     /// row runs: an eval, which the host decides, a super construction, and an array of arguments.
     #[inline(always)]
-    pub(crate) fn of(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn of(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         let (callee, receiver, arguments) = Self::operands(instruction, context)?;
         matches!(instruction.result_flags(), 0 | RETURN_REGISTER).then(|| Self { callee, receiver, arguments,
             result: instruction.result_register(), returns: instruction.returns_from_frame(),
@@ -196,12 +196,12 @@ impl Invocation {
     /// Whether the call allocates its callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
     #[inline(always)]
-    pub(crate) fn constructs(&self) -> bool {
+    pub fn constructs(&self) -> bool {
         self.receiver == Receiver::Allocated
     }
 
     /// The first register past the call's window (`Arguments::window_end`).
-    pub(crate) fn window_end(&self) -> u32 {
+    pub fn window_end(&self) -> u32 {
         self.arguments.window_end()
     }
 

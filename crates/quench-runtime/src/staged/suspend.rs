@@ -58,11 +58,11 @@ pub enum SuspendEffect {
 /// instruction (`again`, a `yield*` step) rather than after it.
 #[derive(Clone, Copy, Debug)]
 pub struct Suspending<W> {
-    pub(crate) effect: SuspendEffect,
-    pub(crate) value: W,
-    pub(crate) destination: Register,
-    pub(crate) delegated: Option<W>,
-    pub(crate) again: bool,
+    pub effect: SuspendEffect,
+    pub value: W,
+    pub destination: Register,
+    pub delegated: Option<W>,
+    pub again: bool,
 }
 
 impl<W> Suspending<W> {

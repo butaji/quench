@@ -538,18 +538,18 @@ pub(crate) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 }
 
 #[cfg(test)]
-#[path = "facts/tests.rs"] mod tests;
-#[path = "facts/immediates.rs"] mod immediates;
-#[path = "facts/written.rs"] mod written;
-#[path = "facts/binary.rs"] mod binary;
-#[path = "facts/widen.rs"] mod widen;
+#[path = "facts/tests.rs"] pub(crate) mod tests;
+#[path = "facts/immediates.rs"] pub(crate) mod immediates;
+#[path = "facts/written.rs"] pub(crate) mod written;
+#[path = "facts/binary.rs"] pub(crate) mod binary;
+#[path = "facts/widen.rs"] pub(crate) mod widen;
 #[path = "facts/ranges.rs"] pub(crate) mod ranges;
-#[path = "facts/lengths.rs"] mod lengths;
-#[path = "facts/run.rs"] mod run;
+#[path = "facts/lengths.rs"] pub(crate) mod lengths;
+#[path = "facts/run.rs"] pub(crate) mod run;
 pub(crate) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(crate) use binary::{heap_operator, heap_primitive_binary};
 pub(crate) use lengths::IndexProof;
 pub(crate) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text, TypedAccess};
 
 #[cfg(test)]
-#[path = "facts/decode_ratchet.rs"] mod decode_ratchet;
+#[path = "facts/decode_ratchet.rs"] pub(crate) mod decode_ratchet;

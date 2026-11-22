@@ -11,14 +11,14 @@ use crate::typed_ir::Type;
 /// keeps type facts records for it.
 #[derive(Clone, Copy)]
 pub struct Constant {
-    pub(crate) value: crate::Value,
-    pub(crate) ty: Type,
+    pub value: crate::Value,
+    pub ty: Type,
 }
 
 impl Constant {
     /// A constant whose type the stage does not keep.
     #[inline(always)]
-    pub(crate) const fn untyped(value: crate::Value) -> Self {
+    pub const fn untyped(value: crate::Value) -> Self {
         Self { value, ty: Type::ANY }
     }
 }

@@ -118,15 +118,15 @@ pub fn is_heap<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 /// order of `ValueType`'s discriminants; the runtime's `vm/compiled/base_region/declared.rs` asserts
 /// they are these types' bits).
 pub mod language {
-    pub(crate) const UNDEFINED: u16 = 1 << 0;
-    pub(crate) const NULL: u16 = 1 << 1;
-    pub(crate) const BOOLEAN: u16 = 1 << 2;
-    pub(crate) const NUMBER: u16 = 1 << 3;
-    pub(crate) const STRING: u16 = 1 << 4;
-    pub(crate) const OBJECT: u16 = 1 << 7;
-    pub(crate) const FUNCTION: u16 = 1 << 8;
-    pub(crate) const ARRAY: u16 = 1 << 9;
-    pub(crate) const OBJECT_PLAIN: u16 = 1 << 10;
+    pub const UNDEFINED: u16 = 1 << 0;
+    pub const NULL: u16 = 1 << 1;
+    pub const BOOLEAN: u16 = 1 << 2;
+    pub const NUMBER: u16 = 1 << 3;
+    pub const STRING: u16 = 1 << 4;
+    pub const OBJECT: u16 = 1 << 7;
+    pub const FUNCTION: u16 = 1 << 8;
+    pub const ARRAY: u16 = 1 << 9;
+    pub const OBJECT_PLAIN: u16 = 1 << 10;
 }
 
 /// The language bits (`language`) a word's tag alone sets: a Number (an int32 or a double), a Boolean,
@@ -354,7 +354,7 @@ pub struct TypeofKind(u64);
 
 impl TypeofKind {
     /// The kind whose `typeof` name is `bytecode::TYPEOF_NAMES[index]`.
-    pub(crate) const fn of_index(index: u64) -> Self {
+    pub const fn of_index(index: u64) -> Self {
         Self(index)
     }
 

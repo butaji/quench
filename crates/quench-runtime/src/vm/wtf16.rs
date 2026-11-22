@@ -319,7 +319,7 @@ impl FlatUnits {
         }
     }
 
-    #[inline(always)] pub(crate) fn view(&self) -> Units<'_> {
+    #[inline(always)] pub fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
             Self::Ascii(_) | Self::AsciiSlice(_) => {
@@ -1045,7 +1045,7 @@ impl JsString {
     }
 
     /// Number::toString(10) of `value`, written on the stack: text this short is held inline.
-    pub(crate) fn from_number(value: f64) -> Self {
+    pub fn from_number(value: f64) -> Self {
         let mut text = crate::number_to_string::Short::new();
         crate::number_to_string::write(value, &mut text);
         // SAFETY: `write` appends ASCII only.
@@ -1193,7 +1193,7 @@ impl JsString {
 
     /// Whether the string holds the flat form a string record reads in place (`native_string`): its
     /// units held by the record, short or ASCII or wide, rather than a rope, a slice or parts.
-    pub(crate) fn holds_record_form(&self) -> bool {
+    pub fn holds_record_form(&self) -> bool {
         matches!(&self.repr, Repr::Flat(FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::Wide(_)))
     }
 
@@ -1205,7 +1205,7 @@ impl JsString {
     /// The flat units when the string already has them: never flattens a rope, so a
     /// reader needs no call on its way.
     #[inline]
-    pub(crate) fn existing_flat(&self) -> Option<&FlatUnits> {
+    pub fn existing_flat(&self) -> Option<&FlatUnits> {
         match &self.repr {
             Repr::Flat(units) => Some(units),
             Repr::Shared(inner) => inner.flat.get(),
@@ -1306,7 +1306,7 @@ impl JsString {
     /// the copy lives only as long as the returned string. An operation that reads a rope
     /// many times through helpers that take a string uses it in place of the rope, so the
     /// rope does not keep a flat copy of its text for its own life.
-    pub(crate) fn unkept_flat(&self) -> JsString {
+    pub fn unkept_flat(&self) -> JsString {
         match &self.repr {
             Repr::Flat(_) => self.clone(),
             Repr::Shared(_) => Self::from_flat(self.flat_unkept().into_owned()),
@@ -1414,7 +1414,7 @@ impl JsString {
     }
 
     #[inline]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match &self.repr {
             Repr::Flat(units) => units.len(),
             Repr::Shared(inner) => inner.length as usize,

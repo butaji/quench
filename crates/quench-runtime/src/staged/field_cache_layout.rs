@@ -24,7 +24,7 @@ pub struct FieldCacheWords {
     /// The holder, complemented against `EMPTY.holder`.
     pub(crate) holder: u32,
     /// The slot, complemented against `EMPTY.slot`.
-    pub(crate) slot: u32,
+    pub slot: u32,
     /// The holder's layout id where the holder object was at hand when the entry was recorded,
     /// else `NO_HOLDER_LAYOUT`. Its shape (`layouts::auxiliary`) is `holder`, when set.
     pub(crate) holder_id: u32,

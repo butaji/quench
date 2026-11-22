@@ -35,7 +35,7 @@ impl Native {
     /// `RegExp`, the buffers, typed arrays and errors and the primitive wrappers and `Proxy`, whose
     /// [[Construct]] reads no caller state beyond the frame's published PC and runs guest
     /// code only through ordinary nested calls.
-    pub(crate) fn constructs_from_lane(self) -> bool {
+    pub fn constructs_from_lane(self) -> bool {
         self.is_typed_array_constructor()
             || self.is_error_constructor()
             || matches!(
@@ -87,7 +87,7 @@ impl Native {
             )
     }
 
-    pub(crate) fn is_error_constructor(self) -> bool {
+    pub fn is_error_constructor(self) -> bool {
         matches!(
             self,
             Self::Error

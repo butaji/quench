@@ -69,7 +69,7 @@ macro_rules! number_arithmetic_operators {
 
             /// `from_instruction` of an opcode and its operator field, for a caller that holds
             /// the opcode but no record: the record is built with the operator in its immediate.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+            pub fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
                 Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
             }
         }
@@ -81,7 +81,7 @@ impl NumberArithmetic {
     /// For signed-int32 inputs, addition and subtraction are exact binary64
     /// integers; a following ToInt32 therefore keeps their wrapping low bits.
     /// Multiplication can round before ToInt32 and does not have this law.
-    pub(super) const fn int32_projection_is_wrapping(self) -> bool {
+    pub const fn int32_projection_is_wrapping(self) -> bool {
         matches!(self, Self::Add | Self::Subtract)
     }
 }
@@ -119,7 +119,7 @@ macro_rules! number_unary_operators {
 
             /// The side-effect-free Number unary operation denoted by JavaScript bytecode.
             /// Other unary operators still require their normal coercion and effect paths.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+            pub fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
                 (instruction as u16 == crate::staged::UNARY_ROW)
                     .then(|| Self::from_operator(operator))
                     .flatten()
@@ -153,7 +153,7 @@ macro_rules! number_bitwise_operators {
 
             /// `from_instruction` of an opcode and its operator field, for a caller that holds
             /// the opcode but no record.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+            pub fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
                 Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
             }
         }
@@ -164,7 +164,7 @@ number_bitwise_rows!(number_bitwise_operators);
 impl NumberBitwise {
     /// A nonzero effective zero-fill shift clears the sign bit. All other
     /// bitwise operations already return signed Word32 values.
-    pub(super) fn result_is_int32(self, right: Option<f64>) -> bool {
+    pub fn result_is_int32(self, right: Option<f64>) -> bool {
         self != Self::ShiftRightUnsigned || right.is_some_and(|right|
             crate::value::number_to_u32(right) & crate::value::WORD32_SHIFT_MASK != 0)
     }
@@ -1556,7 +1556,7 @@ impl Vm {
     /// The operands are classified only for an operator that takes Numbers; a caller that has
     /// classified its operands already calls `number_binary_classified` instead.
     #[inline(always)]
-    pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+    pub fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         if NumberArithmetic::from_operator(op).is_none() && !is_numeric_binary_operator(op) {
             return None;
         }
@@ -1567,7 +1567,7 @@ impl Vm {
     /// right)`, which the caller made once and reuses here rather than classifying them again.
     /// Its result is `number_binary`'s for the same operands.
     #[inline(always)]
-    pub(super) fn number_binary_classified(
+    pub fn number_binary_classified(
         &mut self,
         op: u32,
         left: Value,
@@ -1616,7 +1616,7 @@ impl Vm {
     }
 
     #[inline]
-    pub(super) fn binary(
+    pub fn binary(
         &mut self,
         p: &ResidualProgram,
         op: u32,
@@ -1854,21 +1854,21 @@ impl Vm {
 
     /// `binary_bigint` where it succeeds, for callers that leave failures to it: the result
     /// allocated, or `None`.
-    pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+    pub fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         let value = self.bigint_operation(op, left, right)?.ok()?;
         Some(self.heap.alloc_bigint(value))
     }
 
     /// `Date.now()`: the host clock's milliseconds, truncated. It runs no guest code, so the
     /// lane answers it in place (`steady_native_value`) as the native call does.
-    pub(super) fn date_now(&mut self) -> Value {
+    pub fn date_now(&mut self) -> Value {
         Value::number(HostContext::new(&mut *self.host).invoke(CapabilityId::ClockMillis, None).trunc())
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
     /// code units, which runs no guest code. Identical Values name the same string, so they
     /// are equal without reading either; otherwise `order` compares them (in place when flat).
-    pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let relation = NumberRelation::from_operator(op)?;
         let (left_string, right_string) = (self.heap.string(left)?, self.heap.string(right)?);
         if left == right {
@@ -1878,7 +1878,7 @@ impl Vm {
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
-    pub(super) fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         if !(self.is_bigint(left) && self.is_bigint(right)) {
             return None;
         }
@@ -1915,7 +1915,7 @@ impl Vm {
     /// `+` of two operands that become strings without guest code, Numbers and strings,
     /// at least one a string: `concatenate`'s result. `None` for any other pair, or a result
     /// `concatenate` refuses, which leaves the operation to `binary_slow`.
-    pub(super) fn primitive_concatenation(
+    pub fn primitive_concatenation(
         &mut self,
         p: &ResidualProgram,
         left: Value,
@@ -1961,7 +1961,7 @@ impl Vm {
         Ok(if answer { Value::TRUE } else { Value::FALSE })
     }
     #[inline(always)]
-    pub(super) fn binary_truthy(
+    pub fn binary_truthy(
         &mut self,
         p: &ResidualProgram,
         op: u32,
@@ -2029,7 +2029,7 @@ impl Vm {
     /// object is never `document.all` (`is_html_dda`), so loose and strict equality agree.
     /// `None` leaves the operands to `identity_equality`.
     #[inline(always)]
-    pub(super) fn word_identity_equality(op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn word_identity_equality(op: u32, left: Value, right: Value) -> Option<bool> {
         let (_, negated) = equality_operator(op)?;
         let record = |value: Value| {
             value.direct_object_index().is_some() || value.direct_array_index().is_some()
@@ -2050,7 +2050,7 @@ impl Vm {
     /// objects; two distinct objects are loosely unequal. `None` leaves two Numbers, which
     /// Number comparison decides, and every comparison that may coerce to the full algorithm.
     #[inline(always)]
-    pub(super) fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (strict, negated) = equality_operator(op)?;
         match (left.as_number().is_some(), right.as_number().is_some()) {
             // Number comparison decides two Numbers (NaN, signed zeros).

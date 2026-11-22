@@ -40,7 +40,7 @@ pub enum Step {
 
 impl Step {
     /// The step `op` is, with `tag` its operator selector where the opcode takes one.
-    pub(crate) const fn of(op: Op, tag: u32) -> Option<Self> {
+    pub const fn of(op: Op, tag: u32) -> Option<Self> {
         if let Some(step) = WasmOperation::of(op, tag) {
             return Some(Self::Numeric(step));
         }
@@ -77,7 +77,7 @@ impl Step {
     /// The register whose slot the plan records for the step: its first operand, a vector
     /// access's address, or the frame local a load reads (a local is a register past the
     /// `registers` of the frame, `local_register`).
-    pub(crate) fn operand(self, instruction: WideInstruction, registers: u16) -> u16 {
+    pub fn operand(self, instruction: WideInstruction, registers: u16) -> u16 {
         match self {
             Self::Simd(simd) => simd.operand(instruction),
             Self::Table(table) => table.bindings(instruction).0.unwrap_or(instruction.b()),
@@ -88,12 +88,12 @@ impl Step {
     }
 
     /// Whether `field` of the instruction is an operand slot nothing reads.
-    pub(crate) fn leaves_unread(self, field: InstructionField) -> bool {
+    pub fn leaves_unread(self, field: InstructionField) -> bool {
         matches!(self, Self::Simd(simd) if simd.leaves_unread(field))
     }
 
     /// The function a step calls statically.
-    pub(crate) fn callee(self, instruction: WideInstruction) -> Option<usize> {
+    pub fn callee(self, instruction: WideInstruction) -> Option<usize> {
         match self {
             Self::Call(call) => call.callee(instruction),
             _ => None,
@@ -101,7 +101,7 @@ impl Step {
     }
 
     /// The register of the second binding a table copy or segment init names, if any.
-    pub(crate) fn second_binding(self, instruction: WideInstruction) -> Option<u16> {
+    pub fn second_binding(self, instruction: WideInstruction) -> Option<u16> {
         match self {
             Self::Table(table) => table.bindings(instruction).1,
             _ => None,
@@ -109,12 +109,12 @@ impl Step {
     }
 
     /// Whether the step returns from the function.
-    pub(crate) const fn returns(self) -> bool {
+    pub const fn returns(self) -> bool {
         matches!(self, Self::Flow(Flow::Return))
     }
 
     /// Whether the step reads the function's memory register, which no other step may.
-    pub(crate) const fn reads_memory(self) -> bool {
+    pub const fn reads_memory(self) -> bool {
         matches!(self, Self::Memory(_) | Self::Instance(Instance::Binding))
             || matches!(self, Self::Table(TableOp::MemoryInit))
             || matches!(self, Self::Simd(simd) if simd.reads_memory())
@@ -140,7 +140,7 @@ pub enum Family {
 
 impl Family {
     /// The family `op` is, if it is one of these.
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::WasmMemoryLoad => Some(Self::MemoryLoad),
             Class::WasmMemoryStore => Some(Self::MemoryStore),

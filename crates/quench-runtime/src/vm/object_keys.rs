@@ -15,7 +15,7 @@ pub enum EnumerableOwnPropertyKind {
 
 impl EnumerableOwnPropertyKind {
     /// What `Object.keys`, `Object.values` or `Object.entries` lists.
-    pub(super) fn of(native: Native) -> Option<Self> {
+    pub fn of(native: Native) -> Option<Self> {
         match native {
             Native::ObjectKeys => Some(Self::Key),
             Native::ObjectValues => Some(Self::Value),
@@ -30,7 +30,7 @@ impl Vm {
     /// memo first (`plain_key_list`), `Object.values` and `Object.entries` the shape's data items
     /// (`shape_enumerable_data_items`). No guest code runs and nothing raises. `None` leaves
     /// Proxies, accessors and every other object to the general path.
-    pub(super) fn plain_enumerable_own_properties(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
+    pub fn plain_enumerable_own_properties(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
         if kind == EnumerableOwnPropertyKind::Key {
             return self.plain_key_list(object);
         }

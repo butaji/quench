@@ -26,7 +26,7 @@ impl CanonicalSignature {
 
     /// The id as the word a staged rule compares.
     #[inline(always)]
-    pub(crate) const fn word(self) -> u64 {
+    pub const fn word(self) -> u64 {
         self.0 as u64
     }
 }

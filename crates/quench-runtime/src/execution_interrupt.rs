@@ -158,7 +158,7 @@ pub struct ExecutionInterrupt {
 impl ExecutionInterrupt {
     /// With one owner, a non-reentrant region cannot gain an external requester.
     /// The caller must end this proof before any host/guest callback can export a handle.
-    pub(crate) fn exclusive_and_clear(&self) -> bool {
+    pub fn exclusive_and_clear(&self) -> bool {
         Arc::strong_count(&self.state) == 1 && !self.is_termination_requested()
     }
     /// Irreversibly terminate this execution owner. No guest error is thrown.
@@ -191,19 +191,19 @@ impl ExecutionInterrupt {
     }
     /// Asks the running regions to leave at their next backward jump, so the loop headers
     /// dispatch to the body that has published.
-    pub(crate) fn request_tier_up(&self) {
+    pub fn request_tier_up(&self) {
         self.state.tier_up.store(true, Ordering::SeqCst);
         raise(&self.state.attention);
     }
 
     /// Whether a tier-up request is raised and not yet cleared by a header dispatch.
-    pub(crate) fn tier_up_requested(&self) -> bool {
+    pub fn tier_up_requested(&self) -> bool {
         self.state.tier_up.load(Ordering::Acquire)
     }
 
     /// Clears a raised tier-up request at a loop header's dispatch. The common case, no request
     /// raised, is one plain load, not a locked read-modify-write per backward jump.
-    pub(crate) fn clear_tier_up(&self) {
+    pub fn clear_tier_up(&self) {
         if self.state.tier_up.load(Ordering::Acquire) && self.state.tier_up.swap(false, Ordering::SeqCst) {
             self.settle_attention();
         }
@@ -223,7 +223,7 @@ impl ExecutionInterrupt {
         self.state.requested.load(Ordering::Acquire)
     }
     /// The owner's lane floor, which lives as long as this handle's state.
-    pub(crate) fn floor_in_lane(&self) -> &AtomicUsize {
+    pub fn floor_in_lane(&self) -> &AtomicUsize {
         &self.state.lane_floor
     }
     /// Register a native, idempotent cancellation wakeup for a blocked operation.
@@ -242,20 +242,20 @@ impl ExecutionInterrupt {
     }
     /// The byte compiled code polls at its backward jumps: nonzero for a termination or a
     /// tier-up request, which the slow path tells apart.
-    pub(crate) fn attention_flag(&self) -> &AtomicBool {
+    pub fn attention_flag(&self) -> &AtomicBool {
         &self.state.attention
     }
 
     /// The termination byte, for readers that decline only on termination.
     #[inline]
-    pub(crate) fn atomic_flag(&self) -> &AtomicBool {
+    pub fn atomic_flag(&self) -> &AtomicBool {
         &self.state.requested
     }
 
     /// The address of the poll page compiled code reads at its interrupt checks, and how many
     /// bytes it spans; `None` where the host cannot provide one. The page is unreadable once
     /// termination is requested.
-    pub(crate) fn poll_page(&self) -> Option<(usize, usize)> {
+    pub fn poll_page(&self) -> Option<(usize, usize)> {
         // Once the page exists, a request closes it itself (`request_termination`); only its
         // creation races a request, which the fence below orders.
         if let Some(page) = self.state.poll.get() {

@@ -60,7 +60,7 @@ impl Vm {
 
     /// `get_index` of a string at an integer key inside its length: the one-unit string
     /// there (`string_index_value`). `None` for any other read.
-    pub(super) fn string_element(&mut self, string: Value, key: Value) -> Option<Value> {
+    pub fn string_element(&mut self, string: Value, key: Value) -> Option<Value> {
         // An int32 key into flat ASCII text, as `s[i]` in a scan: the byte's shared string,
         // read in place with no unit view built.
         if let Some(index) = key.as_int()
@@ -78,7 +78,7 @@ impl Vm {
 
     /// `get_index` of a typed array at an index key where it allocates nothing: an element
     /// of a non-BigInt kind, or `undefined` past the end. `None` for any other read.
-    pub(super) fn plain_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
+    pub fn plain_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
         let index = self.array_index_key(key)? as usize;
         self.typed_array_number_element(object, index)
     }
@@ -146,7 +146,7 @@ impl Vm {
         self.set_index_mode(p, object, key, value, false)
     }
 
-    pub(super) fn set_index_mode(
+    pub fn set_index_mode(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -250,7 +250,7 @@ impl Vm {
 
     /// `dense_array_element` of an array whose object is a record; `None` for any other base.
     #[inline(always)]
-    pub(super) fn direct_dense_element(&self, base: Value, key: Value) -> Option<Value> {
+    pub fn direct_dense_element(&self, base: Value, key: Value) -> Option<Value> {
         // One unsigned compare of the word past the int tag is the tag, sign and range test.
         let index = key.int_key_offset();
         if index > i32::MAX as usize {
@@ -264,7 +264,7 @@ impl Vm {
     /// object on the chain holds the index as an element of an array, as a property keyed by
     /// the index's canonical atom (`shape_names_index`), or through exotic behaviour, where
     /// this declines.
-    pub(super) fn absent_array_element(&self, base: Value, key: Value) -> Option<Value> {
+    pub fn absent_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
         let mut current = base;
         loop {
@@ -300,7 +300,7 @@ impl Vm {
     /// An array's `"length"` read by a string key (`base["length"]`); `None` for any other
     /// key or base. Index-named string keys reach the integer-keyed reads instead
     /// (`canonical_index_key`).
-    pub(super) fn keyed_array_length(&self, base: Value, key: Value) -> Option<Value> {
+    pub fn keyed_array_length(&self, base: Value, key: Value) -> Option<Value> {
         if self.lookup_string_atom(key)? != self.length_atom {
             return None;
         }
@@ -309,7 +309,7 @@ impl Vm {
 
     /// The present dense element `base[key]` for a non-negative integer key: a data property.
     #[inline(always)]
-    pub(super) fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
+    pub fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
         let object = self.heap.array(base)?;
         object
@@ -324,7 +324,7 @@ impl Vm {
     /// one array lookup serves the guards and the write. `false` leaves the store, unobserved,
     /// to the general path.
     #[inline(always)]
-    pub(super) fn try_replace_dense_element(
+    pub fn try_replace_dense_element(
         &mut self,
         object: Value,
         key: Value,
@@ -357,7 +357,7 @@ impl Vm {
 
     /// `object[key] = value` that appends to a dense array at its length
     /// (`append_dense_element`); `false` leaves the store, unobserved, to the general path.
-    pub(super) fn try_append_dense_element(
+    pub fn try_append_dense_element(
         &mut self,
         object: Value,
         key: Value,
@@ -370,7 +370,7 @@ impl Vm {
 
     /// `object[key] = value` that fills a hole of a dense array (`fill_dense_hole`); `false`
     /// leaves the store, unobserved, to the general path.
-    #[inline(always)] pub(super) fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+    #[inline(always)] pub fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
         key.as_int()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.fill_dense_hole(object, index, value))
@@ -382,7 +382,7 @@ impl Vm {
     /// OrdinarySet then defines a plain data element in the hole, one write in place. `false`
     /// changes nothing and leaves the store to the general steps.
     #[inline(always)]
-    pub(super) fn try_fill_record_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub fn try_fill_record_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
         let index = key.int_key_offset();
         if index > i32::MAX as usize {
             return false;
@@ -406,7 +406,7 @@ impl Vm {
     /// arm (`element_rows::concrete_record_replace`), whose ownership, integrity and extras
     /// proofs every tier shares.
     #[inline(always)]
-    pub(super) fn try_replace_record_element(
+    pub fn try_replace_record_element(
         &mut self,
         object: Value,
         key: Value,
@@ -434,7 +434,7 @@ impl Vm {
     /// `inherited_index_unclaimed`, a writable length) and owns its elements, so the store
     /// runs no guest code; anything else changes nothing. Growing the elements charges the
     /// heap, whose collection waits for a safepoint.
-    pub(super) fn try_add_record_element(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub fn try_add_record_element(&mut self, object: Value, key: Value, value: Value) -> bool {
         let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
             return false;
         };
@@ -563,7 +563,7 @@ impl Vm {
     /// and no allocation, so the direct helper runs it too (`family_helpers`). `false`, before any effect,
     /// where the element is absent or the array's descriptors or integrity govern the store.
     #[inline(always)]
-    pub(in crate::vm) fn store_present_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+    pub fn store_present_element(&mut self, object: Value, index: usize, value: Value) -> bool {
         let Some(data) = self.heap.array(object) else { return false };
         if data.has_indexed_descriptors() || data.is_frozen() { return false; }
         if !data.elements().get(index).is_some_and(|present| !present.is_deleted()) { return false; }

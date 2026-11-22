@@ -74,7 +74,7 @@ impl Vm {
 
     /// The instance field at environment slot `slot` of `env`: a binding is a handle read from
     /// the environment's cell, by the binding rule (`binding_get`) over `InstanceBindings`.
-    pub(super) fn wasm_binding(&self, env: Value, slot: usize) -> Option<Value> {
+    pub fn wasm_binding(&self, env: Value, slot: usize) -> Option<Value> {
         let slot = u32::try_from(slot).ok()?;
         binding_get(&mut InstanceBindings { vm: self, env }, slot).map(Value::from_bits)
     }
@@ -105,7 +105,7 @@ impl Vm {
 
     /// The value of the global bound to `binding`, as its register encoding: its slot's word
     /// under its type's storage.
-    pub(super) fn wasm_global_load(&mut self, binding: Value) -> Result<Value, JsError> {
+    pub fn wasm_global_load(&mut self, binding: Value) -> Result<Value, JsError> {
         let Some(Cell::WasmGlobal { bits, ty, .. }) = self.heap.get(binding) else {
             return Err(JsError::validation("invalid Wasm global binding".into()));
         };
@@ -130,7 +130,7 @@ impl Vm {
 
     /// Stores `value`, a register encoding, in the mutable global bound to `binding`, as its
     /// type's storage holds it.
-    pub(super) fn wasm_global_store(
+    pub fn wasm_global_store(
         &mut self,
         binding: Value,
         value: Value,

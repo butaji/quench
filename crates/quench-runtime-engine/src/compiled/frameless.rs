@@ -10,7 +10,7 @@ use super::object_slots::emit;
 use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use cranelift_frontend::FunctionBuilder;
 
-#[path = "frameless/admission.rs"] mod admission;
+#[path = "frameless/admission.rs"] pub(crate) mod admission;
 pub(crate) use admission::general_frameless_admit;
 
 const CACHE_ENTRIES: usize = 256;

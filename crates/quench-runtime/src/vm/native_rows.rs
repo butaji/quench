@@ -98,10 +98,10 @@ pub(super) enum Length {
 /// A builtin function as its holder installs it.
 #[derive(Clone, Copy)]
 pub(super) struct NativeRow {
-    pub(super) holder: Holder,
+    pub holder: Holder,
     /// The property name, and the function's `name`.
     pub(super) name: &'static str,
-    pub(super) native: Native,
+    pub native: Native,
     /// The function's `length`.
     pub(super) length: Length,
     /// `MATH`, `PURE_STRING`, `LANE_METHOD`.
@@ -341,12 +341,12 @@ impl Native {
     /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
     /// them; `match` and `search`, which make a RegExp of a string, are not.
     #[inline]
-    pub(crate) const fn is_pure_string_method(self) -> bool {
+    pub const fn is_pure_string_method(self) -> bool {
         NATIVE_FLAGS[self as usize] & PURE_STRING != 0
     }
 
     /// The functions of the `Math` object: the natives of `Math`'s rows (`MATH_FUNCTIONS`).
-    pub(crate) const fn is_math_function(self) -> bool {
+    pub const fn is_math_function(self) -> bool {
         NATIVE_FLAGS[self as usize] & MATH != 0
     }
 }

@@ -55,7 +55,7 @@ impl Simd {
     }
 
     /// The register naming the memory the step reads, where it reads one.
-    pub(crate) fn memory(self, instruction: WideInstruction) -> Option<u16> {
+    pub fn memory(self, instruction: WideInstruction) -> Option<u16> {
         match self {
             Self::Address => Some(instruction.c()),
             Self::Load | Self::Store => Some(instruction.b()),
@@ -138,7 +138,7 @@ impl VectorOperation {
 
 impl<W, P> Operation<W, P> {
     /// The Wasm vector operation `instruction` denotes (`Decoder::WasmVector`).
-    pub(crate) fn decode_wasm_vector<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_wasm_vector<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         VectorOperation::decode(instruction, context).map(Self::WasmVector)
     }
 }

@@ -222,4 +222,4 @@ impl Edge {
 }
 
 #[cfg(test)]
-#[path = "ranges_tests.rs"] mod tests;
+#[path = "ranges_tests.rs"] pub(crate) mod tests;

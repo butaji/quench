@@ -211,7 +211,7 @@ impl Vm {
     /// (`field_define_overwrite`), as only a receiver made in the constant layout does. One cache
     /// entry and one shape are read; anything else, an empty entry included, answers `false`.
     #[inline(always)]
-    pub(super) fn constant_fields_held(&self, receiver: Value, site: u16) -> bool {
+    pub fn constant_fields_held(&self, receiver: Value, site: u16) -> bool {
         let Some(record_id) = receiver.direct_object_index() else {
             return false;
         };

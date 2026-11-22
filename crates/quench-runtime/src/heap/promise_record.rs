@@ -225,13 +225,13 @@ impl PromiseRecord {
     }
 
     #[inline(always)]
-    pub(crate) fn state(&self) -> PromiseState {
+    pub fn state(&self) -> PromiseState {
         self.state
     }
 
     /// [[PromiseResult]]: undefined while pending.
     #[inline(always)]
-    pub(crate) fn result(&self) -> Value {
+    pub fn result(&self) -> Value {
         if self.state == PromiseState::Pending { Value::UNDEFINED } else { self.first.on_fulfilled }
     }
 

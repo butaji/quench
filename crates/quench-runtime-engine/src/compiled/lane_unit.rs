@@ -15,12 +15,12 @@ use quench_runtime::bytecode::Function;
 use quench_runtime::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
 use quench_runtime::typed_ir::BindingTime;
 use quench_runtime::value::Value;
-#[path = "lane_unit/admission.rs"] mod admission;
+#[path = "lane_unit/admission.rs"] pub(crate) mod admission;
 pub(crate) use admission::{inlinable, InlineScope};
 use admission::{restartable, returns_or_keeps};
 use super::admission::{admit_callee, CalleeUse};
-#[path = "lane_unit/weights.rs"] mod weights;
-#[cfg(test)] #[path = "lane_unit/static_hints.rs"] mod static_hints;
+#[path = "lane_unit/weights.rs"] pub(crate) mod weights;
+#[cfg(test)] #[path = "lane_unit/static_hints.rs"] pub(crate) mod static_hints;
 #[cfg(test)] pub(crate) use static_hints::static_call_targets;
 
 pub(crate) use quench_runtime::vm::engine_types::CalleeBinding;

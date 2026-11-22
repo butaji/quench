@@ -24,10 +24,10 @@ pub(super) struct ClosureShapes {
 /// with (the receiver made from `new.target` for a base parent, `undefined` for a derived one,
 /// which binds its own), and the completion of its pending call.
 pub(super) struct SuperConstruction {
-    pub(super) target: (ProgramId, u32, Value),
-    pub(super) new_target: Value,
-    pub(super) this: Value,
-    pub(super) completion: CallCompletion,
+    pub target: (ProgramId, u32, Value),
+    pub new_target: Value,
+    pub this: Value,
+    pub completion: CallCompletion,
 }
 
 /// What a recorded ordinary closure of one nested function in one realm is made of, apart
@@ -101,7 +101,7 @@ fn finished_closure_slots(
 impl Vm {
     /// The creation realm of a function record: its override, else the main realm.
     #[inline(always)]
-    pub(super) fn record_realm(&self, record: &FunctionRecord) -> Value {
+    pub fn record_realm(&self, record: &FunctionRecord) -> Value {
         record.realm_override().unwrap_or(self.main_realm)
     }
 
@@ -182,7 +182,7 @@ impl Vm {
     /// SetFunctionName of `function` to the program atom `name` at cache `site`: the staged naming
     /// row along the edge the site recorded (`named_by_transition`), else the general naming, which
     /// records the edge it made for the next one.
-    pub(super) fn set_function_name(
+    pub fn set_function_name(
         &mut self,
         p: &ResidualProgram,
         function: Value,
@@ -209,13 +209,13 @@ impl Vm {
 
     /// The word of the empty string every anonymous closure starts with as its name
     /// (`closure_in_realm`), `DELETED` before any exists, which no name slot holds.
-    pub(super) fn empty_string_word(&self) -> Value {
+    pub fn empty_string_word(&self) -> Value {
         self.heap.atom_string(self.runtime_atoms.empty, true).unwrap_or(Value::DELETED)
     }
 
     /// The string value spelling `atom`, shared for program atoms and the anonymous name.
     /// Other dynamic atoms grow with guest input, so their strings stay collectable.
-    pub(super) fn atom_string(&mut self, atom: Atom) -> Value {
+    pub fn atom_string(&mut self, atom: Atom) -> Value {
         let keep = (atom as usize) < self.atom_text.len() || atom == self.runtime_atoms.empty;
         self.atom_string_kept(atom, keep)
     }
@@ -233,7 +233,7 @@ impl Vm {
         value
     }
 
-    pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
+    pub fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
         // A string key is its own name: strings are immutable, so the closure shares the key's
         // record instead of copying its text into a new one for every closure made with it.
         if prefix == crate::bytecode::FUNCTION_NAME_PREFIX_NONE && self.heap.string(key).is_some() {
@@ -391,7 +391,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn closure(
+    pub fn closure(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -404,7 +404,7 @@ impl Vm {
     /// from in the running realm: none under a `with` scope, nor for a call-only closure
     /// (`Value::known_closure`), whose function has none.
     #[inline(always)]
-    pub(super) fn closure_template_in_lane(&self, id: u32) -> Option<ClosureTemplate> {
+    pub fn closure_template_in_lane(&self, id: u32) -> Option<ClosureTemplate> {
         if self.with_scope_entered {
             return None;
         }
@@ -417,7 +417,7 @@ impl Vm {
     /// environment of `maker` of no slots under it, shared by the maker's activations until a
     /// collection. `None` for a closure that reads the maker's environment.
     #[inline(always)]
-    pub(super) fn maker_free_environment(&mut self, template: &ClosureTemplate, parent: Value, maker: u32) -> Option<Value> {
+    pub fn maker_free_environment(&mut self, template: &ClosureTemplate, parent: Value, maker: u32) -> Option<Value> {
         match template.maker_reads {
             crate::bytecode::MakerReads::Maker => None,
             crate::bytecode::MakerReads::Nothing => Some(parent),
@@ -505,7 +505,7 @@ impl Vm {
 
     /// A closure of `template`'s function over `env`. The template's prototypes were flagged
     /// as prototypes by the closure it was recorded from, which needs no marking again.
-    pub(super) fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
+    pub fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
         // Both objects are allocated finished from headers derived once: the prototype under
         // the shape its `constructor` add would reach, its slot filled once the closure exists.
         // A closure whose record is claimed first is its prototype's `constructor` from the
@@ -582,7 +582,7 @@ impl Vm {
     /// Whether root `slot` of `program` is written once while the root has run at most once
     /// (`ProgramStore::root_slot_written_once`): a read that found it initialized may keep the
     /// value for every later read.
-    pub(crate) fn root_slot_written_once(&self, program: ProgramId, slot: u16) -> bool {
+    pub fn root_slot_written_once(&self, program: ProgramId, slot: u16) -> bool {
         self.programs.root_slot_written_once(program, slot)
     }
 
@@ -664,7 +664,7 @@ impl Vm {
     /// error constructor's stack capture reads the activations from the lane's frame walk
     /// (`Vm::lane_stack_sites`, frame-switches.md §5), or makes them frames where the walk
     /// declines, as every other observation point does.
-    pub(super) fn constructs_beside_activations(&self, callee: Value) -> bool {
+    pub fn constructs_beside_activations(&self, callee: Value) -> bool {
         matches!(
             self.heap.function(callee),
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
@@ -672,7 +672,7 @@ impl Vm {
         )
     }
 
-    pub(super) fn construct_value_with_new_target(
+    pub fn construct_value_with_new_target(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
@@ -853,7 +853,7 @@ impl Vm {
 
     /// Whether `derived_construct_value` of `value` and `this` completes without an error, so a
     /// lane may finish the construction itself (`lane_return_script_frame`).
-    pub(super) fn derived_construct_completes(&self, value: Value, this: Value) -> bool {
+    pub fn derived_construct_completes(&self, value: Value, this: Value) -> bool {
         self.is_object_like(value) || value.is_undefined() && !this.is_deleted()
     }
 
@@ -864,7 +864,7 @@ impl Vm {
     /// (non-class, non-derived, field-free) user constructor of the executing program and realm,
     /// whose own data `prototype` is an object. Returns the callee's code and environment
     /// together with the freshly allocated receiver; any other case keeps `construct_value`.
-    pub(super) fn inline_construct_target(
+    pub fn inline_construct_target(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -878,7 +878,7 @@ impl Vm {
     /// `inline_construct_target` admits a base one: its code and environment. It allocates no
     /// receiver: the body binds `this` through `super(...)` (`InitializeThis`), and its pending
     /// call yields that binding or the object the body returns (`CallCompletion::DerivedConstructor`).
-    pub(super) fn inline_derived_construct_target(
+    pub fn inline_derived_construct_target(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -896,7 +896,7 @@ impl Vm {
     /// (`Vm::try_inline_construct`) and a lane running the frame (`derived_frames`) push it. Any other parent
     /// (a native, a bound function, a proxy, a class with instance fields at its root, a
     /// `new.target` whose `prototype` is not an own data object) keeps `construct_super_value`.
-    pub(super) fn inline_super_construct_target(
+    pub fn inline_super_construct_target(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -920,7 +920,7 @@ impl Vm {
     /// dense array's elements, as CreateListFromArrayLike reads them (`dense_apply_arguments`).
     /// `None` leaves the construction to `construct_super_value`, which reads them in full and
     /// rejects a non-array as the general step does.
-    pub(super) fn dense_super_arguments(&self, array: Value) -> Option<Vec<Value>> {
+    pub fn dense_super_arguments(&self, array: Value) -> Option<Vec<Value>> {
         self.heap.array(array)?;
         self.dense_apply_arguments(array)
     }
@@ -972,7 +972,7 @@ impl Vm {
     /// are its own code); a derived constructor binds `this` through `super()` and runs its
     /// instance initializer there, so it is pushed with its own completion
     /// (`inline_derived_constructible`).
-    pub(super) fn inline_constructible(function: &crate::bytecode::Function) -> bool {
+    pub fn inline_constructible(function: &crate::bytecode::Function) -> bool {
         function.dispatch == DispatchClass::General
             && function.constructible
             && !function.is_async
@@ -986,7 +986,7 @@ impl Vm {
     /// frame starts with `this` uninitialized (`activate_general_frame`), its `super(...)`
     /// binds it and runs its instance initializer (`InitializeThis`), and its pending call
     /// applies the derived return rules (`CallCompletion::DerivedConstructor`).
-    pub(super) fn inline_derived_constructible(function: &crate::bytecode::Function) -> bool {
+    pub fn inline_derived_constructible(function: &crate::bytecode::Function) -> bool {
         function.dispatch == DispatchClass::General
             && function.constructible
             && !function.is_async
@@ -1000,20 +1000,20 @@ impl Vm {
     /// callee's constant layout (`preshaped_receiver`), as every caller runs its body next.
     /// A construct plan's own allocations take the empty template (`inline_construct_template`):
     /// a plan records the stores its body adds from it.
-    pub(super) fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
+    pub fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
         let object = self.inline_construct_template(callee)?;
         Some(self.alloc_construct_receiver(object, callee))
     }
 
     /// The object `inline_construct_receiver` allocates, before it is allocated.
-    pub(super) fn inline_construct_template(&mut self, callee: Value) -> Option<Object> {
+    pub fn inline_construct_template(&mut self, callee: Value) -> Option<Object> {
         self.inline_construct_template_by(callee, callee)
     }
 
     /// The receiver [[Construct]] of `constructor` makes with `new_target` before its body
     /// runs (OrdinaryCreateFromConstructor): of `new_target`'s own data `prototype`, named by
     /// `constructor` as the general path names it (`capture_constructed_name`).
-    pub(super) fn inline_construct_template_by(&mut self, new_target: Value, constructor: Value) -> Option<Object> {
+    pub fn inline_construct_template_by(&mut self, new_target: Value, constructor: Value) -> Option<Object> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(new_target, prototype_atom)?;
         self.object_data(prototype)?;
@@ -1082,7 +1082,7 @@ impl Vm {
 
     /// `constructor`'s own shape and the slot of its own data `prototype` there, for a shape
     /// that fixes both (not a dictionary) once `own_function_prototype_data` has found it.
-    pub(super) fn function_prototype_layout(&self, constructor: Value) -> Option<(u32, usize)> {
+    pub fn function_prototype_layout(&self, constructor: Value) -> Option<(u32, usize)> {
         let shape = self.heap.function(constructor)?.object.shape();
         if self.shape_is_dictionary(shape) {
             return None;

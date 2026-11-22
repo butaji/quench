@@ -36,7 +36,7 @@ impl<W, P> Operation<W, P> {
     /// key (the tier defines the result register), and `SetIndex`; `None` where the instruction
     /// completes a frame or an operand names a local or a field.
     #[inline(always)]
-    pub(crate) fn decode_element(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_element(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         Some(match instruction.op() {
             Op::GetIndex => match instruction.operand_b().register_index() {

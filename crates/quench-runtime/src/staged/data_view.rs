@@ -46,8 +46,8 @@ impl DataViewElement {
 /// A DataView's bytes as an access reads them, once proved: the address of its first byte and its byte length (below 2^31).
 #[derive(Clone, Copy)]
 pub struct DataViewWords<W> {
-    pub(crate) values: W,
-    pub(crate) length: W,
+    pub values: W,
+    pub length: W,
 }
 
 /// The view of the DataView `base`, proved for an access (`writable` to store): `None` (leaving at `miss`) for any other

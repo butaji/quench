@@ -24,7 +24,7 @@ impl PropertyDescriptorRecord {
         }
     }
 
-    pub(in crate::vm) fn for_definition(mode: PropertyDefinitionMode, value: Value) -> Self {
+    pub fn for_definition(mode: PropertyDefinitionMode, value: Value) -> Self {
         use PropertyDefinitionMode::*;
         match mode {
             Method | ReadonlyMethod => Self {

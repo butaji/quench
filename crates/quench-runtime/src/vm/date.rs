@@ -423,7 +423,7 @@ impl Vm {
 
     /// A Date getter's call on a Date (`date_reads`), which raises nothing; `None` for any
     /// other receiver, whose TypeError the general call raises.
-    pub(super) fn plain_date_get(&self, native: Native, receiver: Value) -> Option<Value> {
+    pub fn plain_date_get(&self, native: Native, receiver: Value) -> Option<Value> {
         let Some(Cell::Date { milliseconds, .. }) = self.heap.get(receiver) else {
             return None;
         };

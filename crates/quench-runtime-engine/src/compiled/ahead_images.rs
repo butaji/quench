@@ -9,7 +9,7 @@ use crate::aot_image::{LaneImage, base::BaseImage, symbols::{Symbol, SymbolTable
 use quench_runtime::compile::aot_facts::AotFacts;
 use super::lane_unit::Origin;
 use crate::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self, LiveImage}};
-#[path = "ahead_images/constructions.rs"] mod constructions;
+#[path = "ahead_images/constructions.rs"] pub(crate) mod constructions;
 
 pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID;
 

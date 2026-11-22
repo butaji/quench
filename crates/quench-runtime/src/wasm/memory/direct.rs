@@ -9,7 +9,7 @@ impl MemoryStorage {
     /// memory model gives a racing access some bytes, while atomics keep taking the lock. The
     /// length is the memory's now; other agents only grow it, so an access past a stale
     /// length takes the general path, which locks.
-    pub(crate) fn direct_view(&self) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
+    pub fn direct_view(&self) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
         if !self.is_direct() {
             return None;
         }
@@ -23,7 +23,7 @@ impl MemoryStorage {
 
     /// Whether code may address the memory's bytes in place (`direct_view`): an unshared
     /// memory, or a shared one whose bytes never move.
-    pub(crate) fn is_direct(&self) -> bool {
+    pub fn is_direct(&self) -> bool {
         match self {
             Self::Unshared(_) => true,
             Self::Shared(memory) => memory.0.lock().bytes.guard().is_some(),

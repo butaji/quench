@@ -16,7 +16,7 @@ impl Heap {
     /// `alloc_string` of the string of `units` (`JsString::from_unit_run`): a one-unit ASCII
     /// run that has its record is answered without building the string.
     #[inline]
-    pub(crate) fn alloc_unit_run(&mut self, units: crate::vm::wtf16::Units<'_>) -> Value {
+    pub fn alloc_unit_run(&mut self, units: crate::vm::wtf16::Units<'_>) -> Value {
         if let crate::vm::wtf16::Units::Ascii(&[unit]) = units
             && let Some(strings) = &self.ascii_unit_strings
             && !strings[usize::from(unit)].is_undefined()

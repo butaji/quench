@@ -86,7 +86,7 @@ pub enum ArraySegmentInput {
     Segment,
 }
 impl ArraySegmentInput {
-    pub(crate) const COUNT: u16 = Self::Segment as u16 + 1;
+    pub const COUNT: u16 = Self::Segment as u16 + 1;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

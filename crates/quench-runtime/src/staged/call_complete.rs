@@ -212,8 +212,8 @@ pub fn concrete_write_side_flags(window: u64, flags: u64) {
 /// environment frames need nothing past the window's release.
 #[derive(Clone, Copy)]
 pub(crate) struct SideCompletion<C> {
-    pub(crate) sided: C,
-    pub(crate) crosses: C,
+    pub sided: C,
+    pub crosses: C,
 }
 
 /// The side completion row: which side steps the frame of packed word `packed` runs once its

@@ -9,7 +9,7 @@ impl Vm {
     /// file, and whether its window carries an environment after the registers: a frame of the
     /// active program whose function lays out as its registers or with an environment window
     /// (`CallPlan::suspended_registers`, `CallPlan::suspended_environment`).
-    pub(in crate::vm) fn window_layout(&self, frame: &FrameRecord, code: &ResidualProgram) -> Option<bool> {
+    pub fn window_layout(&self, frame: &FrameRecord, code: &ResidualProgram) -> Option<bool> {
         let plan = code.function_get(frame.function as usize)?.call_plan(code);
         (frame.program == self.active_program && (plan.suspended_registers || plan.suspended_environment))
             .then_some(plan.suspended_environment)
@@ -19,7 +19,7 @@ impl Vm {
     /// `parent`: the frame's own, or an arrow's lexical `this`, which a `super()` since the frame
     /// suspended may have initialized. `None` where it is still uninitialized, which only the
     /// general path's dead-zone check raises from.
-    pub(in crate::vm) fn window_this(&self, body: &crate::bytecode::Function, this: Value, parent: Value) -> Option<Value> {
+    pub fn window_this(&self, body: &crate::bytecode::Function, this: Value, parent: Value) -> Option<Value> {
         if !body.is_arrow {
             return Some(this);
         }
@@ -35,7 +35,7 @@ impl Vm {
     /// and the native activation roots the generator while the run lasts.
     /// `record` is `generator`'s, which its cell keeps boxed while the generator lives.
     #[inline(always)]
-    pub(in crate::vm) fn resume_generator_window(
+    pub fn resume_generator_window(
         &mut self,
         (generator, record): (Value, *mut GeneratorRecord),
         suspended: (*mut FrameRecord, Option<u16>),
@@ -73,7 +73,7 @@ impl Vm {
     /// live registers noted, and takes back the iterators its loops pushed on the lane stack for
     /// the activation at `depth`.
     #[inline(always)]
-    pub(in crate::vm) fn suspend_generator_window(
+    pub fn suspend_generator_window(
         &mut self,
         (generator, frame): (Value, *mut FrameRecord),
         pc: usize,
@@ -117,7 +117,7 @@ impl Vm {
     /// (`LaneStack::last_generator`): a step looks its generator up several times, and a
     /// delegation alternates between two.
     #[inline(always)]
-    pub(in crate::vm) fn generator_record_mut(
+    pub fn generator_record_mut(
         &mut self,
         generator: Value,
     ) -> Option<&mut GeneratorRecord> {
@@ -172,7 +172,7 @@ impl Vm {
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.
-    pub(in crate::vm) fn finish_generator_window(&mut self, generator: Value) {
+    pub fn finish_generator_window(&mut self, generator: Value) {
         self.pop_host_frame();
         if let Some(record) = self.generator_record_mut(generator) {
             record.complete();
@@ -182,7 +182,7 @@ impl Vm {
     /// The frame of `generator`'s windowed run, for the general loop to continue in where the
     /// lane's activations become frames: pushed with the iterators its loops pushed since the
     /// lane resumed it (`iterators`).
-    pub(in crate::vm) fn push_generator_window_frame(
+    pub fn push_generator_window_frame(
         &mut self,
         generator: Value,
         iterators: impl Iterator<Item = ActiveIterator>,
@@ -216,7 +216,7 @@ impl Vm {
     /// (`iterator_result`) whose fields are still its own data slots, `done` a Boolean: a
     /// delegate step's result, which no code has seen. `None` for any other object, whose
     /// fields `[[Get]]` reads.
-    pub(in crate::vm) fn own_iterator_result_parts(&self, result: Value) -> Option<(Value, bool)> {
+    pub fn own_iterator_result_parts(&self, result: Value) -> Option<(Value, bool)> {
         let (prototype, header) = self.iterator_result_header?;
         let object = self.heap.object_record(result)?;
         if object.shape() != header.shape() || object.proto() != prototype {
@@ -229,7 +229,7 @@ impl Vm {
     /// The iterator result of a generator step that stopped with `value`: the reused object a step
     /// whose `done` and `value` reads alone observe it shares (`reused_iterator_result`), or a
     /// fresh one.
-    pub(in crate::vm) fn generator_step_result(&mut self, value: Value, done: bool, reuses_result: bool) -> Value {
+    pub fn generator_step_result(&mut self, value: Value, done: bool, reuses_result: bool) -> Value {
         if reuses_result {
             self.reused_iterator_result(value, done)
         } else {

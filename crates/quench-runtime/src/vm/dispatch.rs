@@ -90,7 +90,7 @@ impl Vm {
     /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
     /// is set before it, so the frame push leaves both untouched.
     #[inline(always)]
-    pub(super) fn try_inline_user_call(
+    pub fn try_inline_user_call(
         &mut self,
         p: &ResidualProgram,
         f: usize,
@@ -249,7 +249,7 @@ impl Vm {
     /// its program, which the loop executes from the push (`StepResult::PushFrame`) until the
     /// return restores the caller's.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn push_in_loop_call(
+    pub fn push_in_loop_call(
         &mut self,
         p: &ResidualProgram,
         f: usize,
@@ -325,7 +325,7 @@ impl Vm {
     /// JavaScript program in the current realm that the loop may push in place: a non-root
     /// ordinary body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
     #[inline(always)]
-    pub(super) fn in_loop_call_target(
+    pub fn in_loop_call_target(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
@@ -338,7 +338,7 @@ impl Vm {
     /// The program, function and environment of `callee` when the loop pushes it as a settling
     /// call (`InLoopPush::Settles`): an async body, which the lane starts as a job
     /// (`Vm::start_async_call`).
-    pub(super) fn in_loop_settling_target(&mut self, p: &ResidualProgram, callee: Value) -> Option<(ProgramId, u32, Value)> {
+    pub fn in_loop_settling_target(&mut self, p: &ResidualProgram, callee: Value) -> Option<(ProgramId, u32, Value)> {
         self.in_loop_call_entry(p, callee)
             .filter(|target| target.push == super::InLoopPush::Settles)
             .map(|target| (target.program, target.function, target.env))
@@ -644,7 +644,7 @@ impl Vm {
     /// template's data `length` (`arguments_object_length`), no indexed descriptor and no
     /// hole below it. A mapped parameter's element holds the parameter's value, as its loads
     /// and stores keep it. `None` for any other list, whose reads may run guest code.
-    pub(super) fn dense_list_length(&self, list: Value) -> Option<usize> {
+    pub fn dense_list_length(&self, list: Value) -> Option<usize> {
         let array = self.heap.array(list)?;
         if self.heap.sparse_length(list).is_some() {
             return None;
@@ -1145,7 +1145,7 @@ impl Vm {
     /// record's immediate and element count); `None` for a range outside the program's
     /// constants.
     #[inline]
-    pub(super) fn const_array_value(&mut self, program: ProgramId, start: usize, count: usize) -> Option<Value> {
+    pub fn const_array_value(&mut self, program: ProgramId, start: usize, count: usize) -> Option<Value> {
         let elements = self.programs.const_array(program, start, count)?;
         let prototype = self.array_prototype_for_realm(self.realm.globals);
         Some(self.heap.alloc_fresh_array(prototype, elements))

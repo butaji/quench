@@ -23,7 +23,7 @@ impl Vm {
 
     /// `element_read_fast` with the element kind it read (`DENSE` or `TYPED`), for the site's feedback.
     #[inline(always)]
-    pub(in crate::vm) fn element_read_kind(&self, object: Value, key: Value) -> Option<(Value, OperandKinds)> {
+    pub fn element_read_kind(&self, object: Value, key: Value) -> Option<(Value, OperandKinds)> {
         let index = usize::try_from(key.as_int()?).ok()?;
         if let Some(value) = self.dense_element(object, index) {
             return Some((value, OperandKinds::DENSE));

@@ -26,36 +26,36 @@ use super::object_extras::ObjectExtrasWords;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeObjectLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
-    pub(crate) layout_offset: usize,
-    pub(crate) meta_offset: usize,
-    pub(crate) auxiliary_offset: usize,
-    pub(crate) payload_offset: usize,
-    pub(crate) extras_arena_start_offset: usize,
-    pub(crate) extras_inline_values_offset: usize,
-    pub(crate) inline_storage_mask: u32,
-    pub(crate) array_mask: u32,
-    pub(crate) storage_start_mask: u32,
-    pub(crate) dictionary_mask: u32,
-    pub(crate) inline_form: u32,
-    pub(crate) extras_form: u32,
-    pub(crate) narrow_form: u32,
-    pub(crate) narrow_run_tag: u64,
-    pub(crate) integrity_mask: u32,
-    pub(crate) inline_property_count: usize,
-    pub(crate) extras_tag: u64,
-    pub(crate) extras_tag_mask: u64,
-    pub(crate) proto_mask: u32,
-    pub(crate) proto_record_base: u32,
-    pub(crate) proto_record_end: u32,
-    pub(crate) mark_records_per_block: usize,
-    pub(crate) mark_word_bits: usize,
-    pub(crate) mark_block_size: usize,
-    pub(crate) mark_offset: usize,
-    pub(crate) property_value_size: usize,
-    pub(crate) property_value_align: usize,
+    pub record_capacity: usize,
+    pub record_size: usize,
+    pub record_align: usize,
+    pub layout_offset: usize,
+    pub meta_offset: usize,
+    pub auxiliary_offset: usize,
+    pub payload_offset: usize,
+    pub extras_arena_start_offset: usize,
+    pub extras_inline_values_offset: usize,
+    pub inline_storage_mask: u32,
+    pub array_mask: u32,
+    pub storage_start_mask: u32,
+    pub dictionary_mask: u32,
+    pub inline_form: u32,
+    pub extras_form: u32,
+    pub narrow_form: u32,
+    pub narrow_run_tag: u64,
+    pub integrity_mask: u32,
+    pub inline_property_count: usize,
+    pub extras_tag: u64,
+    pub extras_tag_mask: u64,
+    pub proto_mask: u32,
+    pub proto_record_base: u32,
+    pub proto_record_end: u32,
+    pub mark_records_per_block: usize,
+    pub mark_word_bits: usize,
+    pub mark_block_size: usize,
+    pub mark_offset: usize,
+    pub property_value_size: usize,
+    pub property_value_align: usize,
 }
 
 pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
@@ -93,8 +93,8 @@ pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFunctionLayout {
-    pub(crate) record_size: usize,
-    pub(crate) object_offset: usize,
+    pub record_size: usize,
+    pub object_offset: usize,
 }
 
 /// The function record as the stencils see it: the runtime's `FunctionRecord` with words of the same size and
@@ -109,20 +109,20 @@ pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLa
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeArrayLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
-    pub(crate) elements_offset: usize,
-    pub(crate) extras_elements_offset: usize,
-    pub(crate) elements_header_offset: usize,
-    pub(crate) header_length_offset: usize,
-    pub(crate) header_values_offset: usize,
-    pub(crate) header_owners_offset: usize,
-    pub(crate) header_capacity_offset: usize,
-    pub(crate) capacity_mask: u32,
-    pub(crate) object_offset: usize,
-    pub(crate) frozen_mask: u32,
-    pub(crate) integrity_mask: u32,
+    pub record_capacity: usize,
+    pub record_size: usize,
+    pub record_align: usize,
+    pub elements_offset: usize,
+    pub extras_elements_offset: usize,
+    pub elements_header_offset: usize,
+    pub header_length_offset: usize,
+    pub header_values_offset: usize,
+    pub header_owners_offset: usize,
+    pub header_capacity_offset: usize,
+    pub capacity_mask: u32,
+    pub object_offset: usize,
+    pub frozen_mask: u32,
+    pub integrity_mask: u32,
 }
 
 pub const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
@@ -146,8 +146,8 @@ pub const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
 /// `limit`, which the empty-allocation rows bump (`heap_rows::empty_row`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeRecordCursorLayout {
-    pub(crate) next_offset: usize,
-    pub(crate) limit_offset: usize,
+    pub next_offset: usize,
+    pub limit_offset: usize,
 }
 
 pub const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
@@ -157,15 +157,15 @@ pub const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCu
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeTypedArrayLayout {
-    pub(crate) entry_size: usize,
-    pub(crate) page_shift: u32,
-    pub(crate) page_mask: usize,
-    pub(crate) kind_offset: usize,
-    pub(crate) detached_offset: usize,
-    pub(crate) unshared_offset: usize,
-    pub(crate) data_offset: usize,
-    pub(crate) length_offset: usize,
-    pub(crate) stamp_offset: usize,
+    pub entry_size: usize,
+    pub page_shift: u32,
+    pub page_mask: usize,
+    pub kind_offset: usize,
+    pub detached_offset: usize,
+    pub unshared_offset: usize,
+    pub data_offset: usize,
+    pub length_offset: usize,
+    pub stamp_offset: usize,
 }
 
 pub const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
@@ -192,10 +192,10 @@ pub(crate) use super::typed_array_catalog::TypedArrayKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeEnvironmentLayout {
-    pub(crate) header_pointer_offset: i32,
-    pub(crate) sparse_mark: u64,
-    pub(crate) slots_offset: u64,
-    pub(crate) slot_size: u64,
+    pub header_pointer_offset: i32,
+    pub sparse_mark: u64,
+    pub slots_offset: u64,
+    pub slot_size: u64,
 }
 
 pub const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
@@ -210,10 +210,10 @@ pub const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironment
 /// element size (`WasmGcRecord`, which the head starts), not the head's, so it is not named here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeWasmGcLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) payload_offset: usize,
-    pub(crate) length_offset: usize,
-    pub(crate) type_offset: usize,
+    pub record_capacity: usize,
+    pub payload_offset: usize,
+    pub length_offset: usize,
+    pub type_offset: usize,
 }
 
 pub const NATIVE_WASM_GC_LAYOUT: NativeWasmGcLayout = NativeWasmGcLayout {
@@ -225,15 +225,15 @@ pub const NATIVE_WASM_GC_LAYOUT: NativeWasmGcLayout = NativeWasmGcLayout {
 
 #[derive(Debug)]
 pub(crate) struct NativeFieldCacheLayout {
-    pub(crate) entry_size: usize,
-    pub(crate) receiver_offset: usize,
-    pub(crate) holder_offset: usize,
-    pub(crate) slot_offset: usize,
-    pub(crate) holder_id_offset: usize,
-    pub(crate) receiver_complement: u32,
-    pub(crate) holder_complement: u32,
-    pub(crate) slot_complement: u32,
-    pub(crate) own_holder: u32,
+    pub entry_size: usize,
+    pub receiver_offset: usize,
+    pub holder_offset: usize,
+    pub slot_offset: usize,
+    pub holder_id_offset: usize,
+    pub receiver_complement: u32,
+    pub holder_complement: u32,
+    pub slot_complement: u32,
+    pub own_holder: u32,
 }
 
 /// The field cache entry's layout, from its `repr(C)` words and their empty values (`field_cache_layout`).

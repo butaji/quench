@@ -25,7 +25,7 @@ pub enum Exception {
 
 impl Exception {
     /// The exception operation `op` is, if it is one.
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         Some(match op {
             Op::WasmExceptionNew => Self::New,
             Op::WasmExceptionMatch => Self::Match,
@@ -57,7 +57,7 @@ impl PayloadType {
     }
 
     /// The type a field's code names.
-    pub(crate) fn of_code(code: u16) -> Option<Self> {
+    pub fn of_code(code: u16) -> Option<Self> {
         Self::ALL.get(usize::from(code)).copied()
     }
 
@@ -143,7 +143,7 @@ pub(crate) fn matches<S: WasmException>(stage: &mut S, exception: S::Word, expec
 
 /// `payload`: the word of `exception` at `index`. An index past the exception's payload is a
 /// validation failure of the module.
-pub(crate) fn payload<S: WasmException>(stage: &mut S, exception: S::Word, index: u32) -> Result<S::Word, S::Exit> {
+pub fn payload<S: WasmException>(stage: &mut S, exception: S::Word, index: u32) -> Result<S::Word, S::Exit> {
     let present = stage.payload_present(exception, index);
     let absent = negated(stage, present);
     stage.reject_when(absent, "Wasm exception payload index out of bounds")?;

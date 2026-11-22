@@ -98,7 +98,7 @@ impl ArrayStorageProofs {
 
     /// No proofs.
     #[inline(always)]
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             readable: [0; ARRAY_PROOF_SLOTS],
             writable: [0; ARRAY_PROOF_SLOTS],
@@ -110,7 +110,7 @@ impl ArrayStorageProofs {
 
     /// The slot of base register `register`.
     #[inline(always)]
-    pub(crate) fn slot(register: u16) -> usize {
+    pub fn slot(register: u16) -> usize {
         usize::from(register) % ARRAY_PROOF_SLOTS
     }
 
@@ -124,7 +124,7 @@ impl ArrayStorageProofs {
     /// The first element and the elements a read through the proof in `register`'s slot may reach,
     /// for a staged element row (`ElementFrame::proved_view`); `None` where the slot does not prove `base`.
     #[inline(always)]
-    pub(crate) fn read_span(&self, register: u16, base: Value) -> Option<(NonNull<Value>, usize)> {
+    pub fn read_span(&self, register: u16, base: Value) -> Option<(NonNull<Value>, usize)> {
         let slot = Self::slot(register);
         let bound = self.readable[slot];
         // SAFETY: a proved slot's values were written by `prove` with its bound.
@@ -134,7 +134,7 @@ impl ArrayStorageProofs {
     /// `read_span` for a store: the elements the proof in `register`'s slot lets a store replace in
     /// place; `None` where the slot proves no in-place replacement of `base`.
     #[inline(always)]
-    pub(crate) fn write_span(&self, register: u16, base: Value) -> Option<(NonNull<Value>, usize)> {
+    pub fn write_span(&self, register: u16, base: Value) -> Option<(NonNull<Value>, usize)> {
         let slot = Self::slot(register);
         let bound = self.writable[slot];
         // SAFETY: as in `read_span`.
@@ -158,7 +158,7 @@ impl ArrayStorageProofs {
 
     /// Whether `register`'s slot proves `base`, whether or not an access through it hit.
     #[inline(always)]
-    pub(crate) fn holds(&self, register: u16, base: Value) -> bool {
+    pub fn holds(&self, register: u16, base: Value) -> bool {
         let slot = Self::slot(register);
         self.proves(slot, self.readable[slot], base)
     }
@@ -188,7 +188,7 @@ impl ArrayStorageProofs {
     }
 
     /// Proves nothing, until the next `prove`.
-    pub(crate) fn retire(&mut self) {
+    pub fn retire(&mut self) {
         self.readable = [0; ARRAY_PROOF_SLOTS];
         self.writable = [0; ARRAY_PROOF_SLOTS];
     }
@@ -199,7 +199,7 @@ impl Heap {
     /// barrier, as `record_array_store_mut_unlogged` admits it: the gate of a proved heap-value
     /// replacement (`ElementFrame::array_store_gate`).
     #[inline(always)]
-    pub(crate) fn array_store_unlogged(&self, base: Value, stored: Value) -> bool {
+    pub fn array_store_unlogged(&self, base: Value, stored: Value) -> bool {
         base.direct_array_index().is_some_and(|record_id| !self.array_records.store_logs(record_id, stored))
     }
 
@@ -208,7 +208,7 @@ impl Heap {
     /// record array; `false` for any other value.
     /// Widens the narrow backing of the record array `base` (`ArrayObject::widen_elements`),
     /// as a loop entry that reads it in place needs; any other value is left as it is.
-    pub(crate) fn widen_array_elements(&mut self, base: Value) {
+    pub fn widen_array_elements(&mut self, base: Value) {
         let Some(record_id) = base.direct_array_index() else {
             return;
         };
@@ -221,7 +221,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn prove_array_storage(&mut self, proofs: &mut ArrayStorageProofs, register: u16, base: Value) -> bool {
+    pub fn prove_array_storage(&mut self, proofs: &mut ArrayStorageProofs, register: u16, base: Value) -> bool {
         let Some(record_id) = base.direct_array_index() else {
             return false;
         };
@@ -247,7 +247,7 @@ impl Heap {
     /// of a Number may replace in place (zero where none may). `None` for any other value,
     /// Valid until the next change that retires proofs
     /// (`retire_array_storage_proofs`): a loop kernel holds it across no call or allocation.
-    pub(crate) fn array_storage_span(&mut self, base: Value) -> Option<(NonNull<Value>, usize, usize)> {
+    pub fn array_storage_span(&mut self, base: Value) -> Option<(NonNull<Value>, usize, usize)> {
         let record_id = base.direct_array_index()?;
         // SAFETY: as in `prove_array_storage`.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
@@ -333,7 +333,7 @@ fn retire_armed(proofs: *mut ArrayStorageProofs) {
 pub struct LaneProofScope(());
 
 impl LaneProofScope {
-    pub(crate) fn enter() -> Self {
+    pub fn enter() -> Self {
         retire_array_storage_proofs();
         Self(())
     }

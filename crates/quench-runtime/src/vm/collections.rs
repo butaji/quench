@@ -26,7 +26,7 @@ impl Vm {
     /// without a call (`pure_native_getter_value`: a Map's or Set's `size`, a typed array's
     /// `length`, and a typed array's or DataView's `byteLength` and `byteOffset`), wherever a
     /// prototype holds it, as primordials copy it. `None` leaves the read to the general path.
-    pub(super) fn pure_virtual_field(&self, object: Value, atom: Atom) -> Option<Value> {
+    pub fn pure_virtual_field(&self, object: Value, atom: Atom) -> Option<Value> {
         if !self.atom_class(atom).contains(object::AtomClass::VIRTUAL_FIELD) {
             return None;
         }
@@ -1075,7 +1075,7 @@ impl Vm {
     /// collection, which runs no guest code: the general step itself
     /// (`call_collection_native`), whose only error is an incompatible receiver, ruled out
     /// here. `None` for any other call.
-    pub(super) fn plain_collection_mutation(
+    pub fn plain_collection_mutation(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -1094,7 +1094,7 @@ impl Vm {
     /// The value of a Map `get` (`undefined` when absent), or the presence of `key` for a
     /// `has`; one hash of the key and one probe, whatever the lookup.
     #[inline(always)]
-    pub(super) fn pure_collection_lookup(
+    pub fn pure_collection_lookup(
         &self,
         native: Native,
         receiver: Value,
@@ -1150,7 +1150,7 @@ impl Vm {
     /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
     /// entry takes the value, or a new entry is appended. `false`, with nothing written,
     /// when `map` is no Map.
-    pub(super) fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
+    pub fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
         let Some(entries) = self.heap.map_entries(map) else { return false };
         // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).
         let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));

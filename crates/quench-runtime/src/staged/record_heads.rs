@@ -26,11 +26,11 @@ pub struct ObjectHead {
 #[repr(C)]
 pub struct WasmGcHead {
     /// The first byte of the payload, or 0 where the payload is not allocated.
-    pub(crate) payload: u64,
+    pub payload: u64,
     /// The payload's length in bytes.
-    pub(crate) length: u64,
+    pub length: u64,
     /// The index of the object's type in its module's types.
-    pub(crate) ty: u32,
+    pub ty: u32,
 }
 
 /// A dense element backing's header (`heap::array_elements::Header`), the words before its values.
@@ -78,9 +78,9 @@ pub struct FunctionRecord<O, K, V> {
     pub(crate) object: O,
     /// Beside the object, whose 12 bytes it fills to the words after: after them, its 12
     /// bytes and two of padding made the record 48 bytes (jsdom-d3: 114K records at its peak).
-    pub(crate) kind: K,
+    pub kind: K,
     /// The closure environment.
-    pub(crate) env: V,
+    pub env: V,
 }
 
 /// The ABI prefix of a compiled function's call context (`vm::crate::vm::engine_types::CallContext`): every field up
@@ -93,60 +93,60 @@ pub struct FunctionRecord<O, K, V> {
 #[repr(C)]
 pub struct CallContextHead<E, C, T, D, P, R> {
     /// The lowest stack address compiled code may use before a call traps as exhausted.
-    pub(crate) stack_limit: usize,
+    pub stack_limit: usize,
     /// The attention flag the code polls (`ExecutionInterrupt::attention_flag`).
-    pub(crate) interrupt: *const AtomicBool,
-    pub(crate) table: *const usize,
-    pub(crate) vm: *mut (),
-    pub(crate) env: E,
+    pub interrupt: *const AtomicBool,
+    pub table: *const usize,
+    pub vm: *mut (),
+    pub env: E,
     /// The entry trampoline's stack pointer after it saved the caller's registers; a guard fault resumes there.
-    pub(crate) entry_stack: usize,
+    pub entry_stack: usize,
     /// The guarded memory reservation compiled code may fault in.
-    pub(crate) guard_start: usize,
-    pub(crate) guard_end: usize,
+    pub guard_start: usize,
+    pub guard_end: usize,
     /// Per environment slot (the instance's global area), the address of the native slot of the
     /// global bound there, read and written raw; null for any other binding. Heap cells never
     /// move, so the addresses outlive callouts.
-    pub(crate) globals: *const *mut u64,
+    pub globals: *const *mut u64,
     /// Per environment slot, the words that publish the table bound there (`TableWords`): the
     /// table's rows are read in place, its growth rewrites the words.
-    pub(crate) table_words: *const *const T,
+    pub table_words: *const *const T,
     /// `import_callout` for the VM's host type.
-    pub(crate) callout: usize,
+    pub callout: usize,
     /// VM helper for indirect calls, including table checks and invocation.
-    pub(crate) call_reference: usize,
+    pub call_reference: usize,
     /// The artifact containing the currently executing call site. The active
     /// entry (or its caller) keeps this artifact strongly owned for the callout.
-    pub(crate) compiled: *const C,
+    pub compiled: *const C,
     /// The program of the code running (the VM's; compiled code never reads it).
-    pub(crate) program: P,
+    pub program: P,
     /// Number of Wasm-to-host callouts made by this native invocation.
-    pub(crate) import_callouts: *mut u64,
+    pub import_callouts: *mut u64,
     /// Number of direct known calls that had to use the VM fallback.
-    pub(crate) known_callouts: *mut u64,
+    pub known_callouts: *mut u64,
     /// Number of Wasm indirect-reference callouts made by this native invocation.
-    pub(crate) reference_callouts: *mut u64,
+    pub reference_callouts: *mut u64,
     /// The bound linear memory whose base and size this call uses.
-    pub(crate) memory: E,
+    pub memory: E,
     /// Its exact current byte length, refreshed when a callout may grow it.
-    pub(crate) memory_length: u64,
+    pub memory_length: u64,
     /// What a callout that returned the raised status raised.
-    pub(crate) raised: R,
+    pub raised: R,
     /// Diagnostic-only ABI fields are appended so existing repr(C) offsets
     /// used by generated code stay fixed.
-    pub(crate) call_reference_diagnostic: usize,
-    pub(crate) reference_call_sites: *const D,
-    pub(crate) reference_call_site_count: usize,
+    pub call_reference_diagnostic: usize,
+    pub reference_call_sites: *const D,
+    pub reference_call_site_count: usize,
     /// The VM's poll page (`ExecutionInterrupt::poll_page`), whose fault ends the call as
     /// terminated; empty when compiled code checks the flag instead.
-    pub(crate) poll_start: usize,
-    pub(crate) poll_end: usize,
+    pub poll_start: usize,
+    pub poll_end: usize,
     /// Diagnostic-only count of direct Emscripten same-memory copies.
-    pub(crate) emscripten_memcpy_fast_path_hits: *mut u64,
+    pub emscripten_memcpy_fast_path_hits: *mut u64,
     /// Per-import attribution, present only during opt-in diagnostic runs.
-    pub(crate) import_callout_counts: *const Cell<u64>,
-    pub(crate) import_callout_count: usize,
+    pub import_callout_counts: *const Cell<u64>,
+    pub import_callout_count: usize,
     /// A stack-owned adapter payload for JS and OSR entries that use this
     /// module's common native-entry trampoline without Wasm callouts.
-    pub(crate) adapter_payload: *mut (),
+    pub adapter_payload: *mut (),
 }

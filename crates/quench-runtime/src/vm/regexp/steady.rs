@@ -13,7 +13,7 @@ impl Vm {
     /// call to the general path. A flat ASCII subject's call decides every proof in one look
     /// at the regexp and its realm's RegExp record (`steady_ascii_direct`) before the general
     /// checks here.
-    pub(in crate::vm) fn steady_regexp_call(
+    pub fn steady_regexp_call(
         &mut self,
         p: &ResidualProgram,
         native: Native,

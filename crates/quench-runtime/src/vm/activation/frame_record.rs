@@ -23,21 +23,21 @@ use crate::Value;
 pub struct FrameRecord {
     /// The receiver, as value bits (the frame prefix's THIS word, `staged::frame`).
     receiver: u64,
-    pub(in crate::vm) context: CallContext,
+    pub context: CallContext,
     /// The reflected parameters and kept arguments, dynamic bindings, `with` objects and
     /// binding site, when the frame holds any (`FrameCold`).
     pub(super) cold: Option<Box<FrameCold>>,
-    pub(in crate::vm) program: ProgramId,
-    pub(in crate::vm) function: u32,
-    pub(in crate::vm) pc: usize,
-    pub(in crate::vm) env: Value,
+    pub program: ProgramId,
+    pub function: u32,
+    pub pc: usize,
+    pub env: Value,
     pub(in crate::vm) locals: Vec<Value>,
-    pub(in crate::vm) captured: bool,
+    pub captured: bool,
     /// The register file, with the frame context words below register 0 that a lane window
     /// over it writes (`register_file::FRAME_CONTEXT`). Only its values change while
     /// suspended, never its length, so `WINDOW` stays valid.
-    pub(in crate::vm) registers: RegisterFile,
-    pub(in crate::vm) active_iterators: Vec<ActiveIterator>,
+    pub registers: RegisterFile,
+    pub active_iterators: Vec<ActiveIterator>,
     /// Whether the registers the last suspension found live (`suspension_live`) are the only
     /// ones the GC traces (`live_registers`): set while suspended, until the frame runs again
     /// (`settle_registers`). The others keep what they held, cleared only on resume after a
@@ -50,7 +50,7 @@ pub struct FrameRecord {
     /// (`Vm::park_frame`, `suspend_registers`).
     suspension_live: Option<SuspensionLive>,
     /// What its windowed resumes derive once (`generator_windows::window_plan`).
-    pub(in crate::vm) window_plan: Option<crate::vm::engine_types::WindowPlan>,
+    pub window_plan: Option<crate::vm::engine_types::WindowPlan>,
     /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
     pub(in crate::vm) js_jit_skip_entry_once: bool,
     /// An environment window follows the registers in the file's spare capacity while a lane
@@ -90,7 +90,7 @@ pub(in crate::vm) fn note_frame_made() {
 
 impl FrameRecord {
     /// The suspended receiver.
-    pub(in crate::vm) fn this(&self) -> Value {
+    pub fn this(&self) -> Value {
         Value::from_bits(self.receiver)
     }
 
@@ -108,7 +108,7 @@ impl FrameRecord {
     /// slots living among the locals in place), the slot storage's address, the `captured` mask,
     /// the in-place storage words, then the locals. The words live in the file's spare
     /// capacity, so a frame that never ran in a lane carries none of them.
-    pub(in crate::vm) fn open_environment_window(&mut self, captured: u64, own_slots: Option<*const EnvironmentSlots>) {
+    pub fn open_environment_window(&mut self, captured: u64, own_slots: Option<*const EnvironmentSlots>) {
         let count = self.registers.len();
         self.registers.reserve(usize::from(WINDOW_LOCALS) + self.locals.len() + crate::vm::engine_types::INLINED_WINDOW_ROOM);
         // SAFETY: the capacity holds the entries and the locals after the registers, which
@@ -148,7 +148,7 @@ impl FrameRecord {
     ///
     /// # Safety
     /// `entries` starts a live environment window of `locals` locals.
-    pub(in crate::vm) unsafe fn pull_window(&mut self, entries: *const Value, locals: usize) {
+    pub unsafe fn pull_window(&mut self, entries: *const Value, locals: usize) {
         // SAFETY: as the caller guarantees.
         unsafe {
             let environment = *entries.add(usize::from(WINDOW_ENVIRONMENT));
@@ -165,7 +165,7 @@ impl FrameRecord {
     ///
     /// # Safety
     /// `entries` starts the live environment window `pull_window` read.
-    pub(in crate::vm) unsafe fn push_window_locals(&self, entries: *mut Value) {
+    pub unsafe fn push_window_locals(&self, entries: *mut Value) {
         // SAFETY: as the caller guarantees; the record holds as many locals as the window.
         unsafe { entries.add(usize::from(WINDOW_LOCALS)).copy_from_nonoverlapping(self.locals.as_ptr(), self.locals.len()) };
     }
@@ -200,7 +200,7 @@ impl FrameRecord {
     /// The record of an ordinary activation of `function` of `program` that runs a direct eval
     /// (`lane_eval`): its closure `callee`, its receiver and the environment its closure
     /// captured, with no registers or locals of its own until the window is pulled.
-    pub(in crate::vm) fn for_eval(program: ProgramId, function: u32, callee: Value, this: Value, env: Value) -> Box<Self> {
+    pub fn for_eval(program: ProgramId, function: u32, callee: Value, this: Value, env: Value) -> Box<Self> {
         Box::new(Self {
             receiver: this.to_bits(),
             context: CallContext::Function(callee),
@@ -211,7 +211,7 @@ impl FrameRecord {
 
     /// Makes `this` the receiver an eval's code reads (`CallerView::this`) and returns the
     /// one it replaces, which the caller puts back when the eval ends.
-    pub(in crate::vm) fn replace_this(&mut self, this: Value) -> Value {
+    pub fn replace_this(&mut self, this: Value) -> Value {
         Value::from_bits(std::mem::replace(&mut self.receiver, this.to_bits()))
     }
 

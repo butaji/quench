@@ -36,8 +36,8 @@ pub enum SuspendKind {
 /// object that owns its frame, the await state or the generator, and what kind it is.
 #[derive(Clone, Copy, Debug)]
 pub struct JobRoot {
-    pub(crate) object: Value,
-    pub(crate) kind: SuspendKind,
+    pub object: Value,
+    pub kind: SuspendKind,
 }
 
 /// How a promise job or a request resumes the activation its owner suspended
@@ -52,7 +52,7 @@ pub enum JobResume {
 
 impl JobResume {
     /// The value the resumed `await` or `yield` is sent: `undefined` for a throw, which sends none.
-    pub(crate) fn sent(&self) -> Value {
+    pub fn sent(&self) -> Value {
         match self {
             Self::Sends(sent) => *sent,
             Self::Throws(_) => Value::UNDEFINED,
@@ -147,13 +147,13 @@ pub enum TrapAccess {
 /// found leaving the key unconstrained, which the trap's own effects may have changed.
 #[derive(Clone, Copy)]
 pub struct TrapCheck {
-    pub(super) target: Value,
-    pub(super) atom: crate::bytecode::Atom,
-    pub(super) access: TrapAccess,
+    pub target: Value,
+    pub atom: crate::bytecode::Atom,
+    pub access: TrapAccess,
     /// The target's layout id when the pre-check ran, for a key its layout alone answers
     /// (a name other than an array's `length`): the same layout after the trap answers as
     /// the pre-check did. 0, which no object's layout is, where the check is made again.
-    pub(super) layout: u32,
+    pub layout: u32,
 }
 
 impl CallCompletion {
@@ -177,7 +177,7 @@ impl CallCompletion {
     /// Whether the call's value is made on the general path from what the callee returns:
     /// an async callee's promise settles there, an array step's iteration finishes there.
     #[inline(always)]
-    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_) | Self::ToWasm(_)) }
+    pub fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_) | Self::ToWasm(_)) }
 
     #[inline(always)]
     pub(super) fn take_array_step(&mut self) -> Option<Box<super::array_indexed::ArrayStepCall>> {
@@ -195,7 +195,7 @@ impl CallCompletion {
     }
 
     #[inline(always)]
-    pub(super) fn take_generator(&mut self) -> Option<super::generator::GeneratorResume> {
+    pub fn take_generator(&mut self) -> Option<super::generator::GeneratorResume> {
         if !self.is_generator() { return None; }
         let Self::Generator(resume) = std::mem::replace(self, Self::Value) else { unreachable!() };
         Some(resume)
@@ -205,12 +205,12 @@ impl CallCompletion {
 /// A pending constructor entry belongs only to its actual callee.
 #[derive(Clone, Copy)]
 pub struct ConstructionTarget {
-    pub(super) callee: Value,
+    pub callee: Value,
     pub(super) new_target: Value,
 }
 
 impl CallContext {
-    pub(super) fn constructed(self) -> Self {
+    pub fn constructed(self) -> Self {
         match self {
             Self::Function(value) | Self::Constructor(value) => Self::Constructor(value),
             other => other,
@@ -221,7 +221,7 @@ impl CallContext {
         matches!(self, Self::Constructor(_))
     }
 
-    pub(super) fn user_function(id: u32, callable: Value) -> Self {
+    pub fn user_function(id: u32, callable: Value) -> Self {
         if id == super::ROOT_FUNCTION_ID {
             Self::Internal
         } else {

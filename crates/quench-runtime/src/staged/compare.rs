@@ -83,7 +83,7 @@ pub enum Comparison {
 impl Comparison {
     /// The binary operator the VM decides this comparison by; `None` for a Number relation,
     /// which no VM step decides.
-    pub(crate) fn operator(self) -> Option<u32> {
+    pub fn operator(self) -> Option<u32> {
         match self {
             Self::Relation { .. } | Self::Nullish { .. } | Self::Boolean { .. } | Self::Bitwise(_) => None,
             Self::Equality { strict, negated } => Some(equality_binary_operator(strict, negated)),
@@ -98,7 +98,7 @@ impl Comparison {
     /// relation, an equality, a bitwise test, `instanceof`, else the operator itself. A tier with
     /// more facts than the operator narrows it (the observed Numbers, the proved domain).
     #[inline(always)]
-    pub(crate) fn of_operator(operator: u32) -> Self {
+    pub fn of_operator(operator: u32) -> Self {
         equality_operator(operator)
             .map(|(strict, negated)| Self::Equality { strict, negated })
             .or_else(|| NumberRelation::from_operator(operator)
@@ -110,7 +110,7 @@ impl Comparison {
 
     /// The comparison where the VM's residual decides what no word does: `in`, which the decode
     /// leaves as an operator, is `Membership`; every other comparison is itself.
-    pub(crate) const fn by_vm(self) -> Self {
+    pub const fn by_vm(self) -> Self {
         match self {
             Self::Operator(IN_OPERATOR) => Self::Membership,
             comparison => comparison,
@@ -120,7 +120,7 @@ impl Comparison {
     /// Whether deciding it may run guest code (a conversion, a trap), which retires what a
     /// tier proved of objects: every comparison but a Number relation, a bitwise test of Numbers,
     /// a nullish test and a strict equality.
-    pub(crate) const fn runs_guest_code(self) -> bool {
+    pub const fn runs_guest_code(self) -> bool {
         !matches!(self, Self::Relation { .. } | Self::Bitwise(_) | Self::Nullish { .. } | Self::Boolean { .. }
             | Self::Equality { strict: true, .. } | Self::Decided(_))
     }

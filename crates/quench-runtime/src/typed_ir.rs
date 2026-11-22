@@ -33,14 +33,14 @@ pub use binding::{BindingTime, Division, Proof};
 impl Type {
     /// A function identity protected by a published weak binding and a
     /// dominating value check. It cannot cross collection or realm retirement.
-    pub(crate) fn function(identity: Value) -> Option<Self> {
+    pub fn function(identity: Value) -> Option<Self> {
         (identity.direct_function_index().is_some() || identity.legacy_heap_index().is_some())
             .then_some(Self(TypeKind::FunctionIdentity(identity)))
     }
 
     /// Facts available from a canonical value alone. Heap language types need
     /// a semantic descriptor; an opaque heap locator remains explicitly ANY.
-    pub(crate) fn immediate(value: Value) -> Self {
+    pub fn immediate(value: Value) -> Self {
         if value.as_int().is_some() {
             Self::INT32
         } else if value.as_number().is_some() {
@@ -74,8 +74,8 @@ pub enum Projection {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fact {
-    pub(crate) ty: Type,
-    pub(crate) representation: Representation,
+    pub ty: Type,
+    pub representation: Representation,
     pub(crate) binding: BindingTime,
     pub(crate) proof: Proof,
     pub(crate) projection: Projection,
@@ -92,7 +92,7 @@ impl std::ops::Deref for VerifiedFact {
 }
 
 impl Fact {
-    pub(crate) fn verified(self) -> Option<VerifiedFact> {
+    pub fn verified(self) -> Option<VerifiedFact> {
         self.verify().then_some(VerifiedFact(self))
     }
     pub(crate) fn verify(self) -> bool {
@@ -148,7 +148,7 @@ impl Fact {
         }
     }
 
-    pub(crate) fn tagged(binding: BindingTime, proof: Proof) -> Self {
+    pub fn tagged(binding: BindingTime, proof: Proof) -> Self {
         Self {
             ty: Type::ANY,
             representation: Representation::Tagged,

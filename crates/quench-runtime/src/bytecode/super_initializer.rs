@@ -100,7 +100,7 @@ fn super_base(records: &mut impl Iterator<Item = WideInstruction>, atoms: &AtomT
 impl Function {
     /// Whether the body is the return of `undefined` alone, as a class without a constructor
     /// or with an empty one has it.
-    pub(crate) fn only_returns_undefined(&self, constants: &[Constant]) -> bool {
+    pub fn only_returns_undefined(&self, constants: &[Constant]) -> bool {
         let mut records = self.instructions();
         let mut temporaries = Temporaries { params: self.params, constants, written: SmallVec::new() };
         self.handlers.is_empty()
@@ -136,7 +136,7 @@ impl Function {
     /// no fields or private elements of its own (`instance_initializer`): the parent read
     /// (`super_base`), the `super(...)` construction of parameters and primitive constants,
     /// the receiver's binding, stores of such values to `this`, and the return of `undefined`.
-    pub(crate) fn super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
+    pub fn super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
         if self.constructs_parent_with_rest() {
             return self.rest_super_initializer(atoms, constants);
         }

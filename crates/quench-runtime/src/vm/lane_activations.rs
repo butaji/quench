@@ -33,7 +33,7 @@ impl LaneActivations {
     #[inline(always)]
     pub(super) fn len(&self) -> usize { Self::distance(self.base, self.top) }
     #[inline(always)]
-    pub(super) fn capacity(&self) -> usize { Self::distance(self.base, self.end) }
+    pub fn capacity(&self) -> usize { Self::distance(self.base, self.end) }
     /// The activations that fit above the top.
     #[inline(always)]
     pub(super) fn room(&self) -> usize { Self::distance(self.top, self.end) }
@@ -58,13 +58,13 @@ impl LaneActivations {
     /// Whether the innermost activation is a native frame the lane has not linked
     /// (`ActivationKind::Native`): the one test a helper makes before it observes the stack.
     #[inline(always)]
-    pub(super) fn top_is_native(&self) -> bool {
+    pub fn top_is_native(&self) -> bool {
         // SAFETY: a non-empty region's slot below `top` holds at least its tag.
         !self.is_empty() && unsafe { Self::tag(self.top.sub(1)) } == KIND_NATIVE
     }
 
     /// How many native frames on top are unlinked, which a link walks outermost first.
-    pub(super) fn unlinked(&self) -> usize {
+    pub fn unlinked(&self) -> usize {
         let mut slot = self.top;
         // SAFETY: each slot below `top` holds at least its tag.
         while slot != self.base && unsafe { Self::tag(slot.sub(1)) } == KIND_NATIVE { slot = unsafe { slot.sub(1) }; }
@@ -74,7 +74,7 @@ impl LaneActivations {
     /// How many frames on top belong to a running native body, linked or not: those whose
     /// prefix names a callee, which the lane clears when it continues in them.
     #[inline]
-    pub(super) fn native_depth(&self) -> usize {
+    pub fn native_depth(&self) -> usize {
         let mut slot = self.top;
         // SAFETY: each slot below `top` holds at least its prefix.
         while slot != self.base && !unsafe { (*slot.sub(1)).callee.is_null() } { slot = unsafe { slot.sub(1) }; }
@@ -126,12 +126,12 @@ impl LaneActivations {
     /// # Safety
     /// `len` activations below it are initialized, within the capacity.
     #[inline(always)]
-    pub(super) unsafe fn set_len(&mut self, len: usize) { self.top = self.base.wrapping_add(len); }
+    pub unsafe fn set_len(&mut self, len: usize) { self.top = self.base.wrapping_add(len); }
 
     /// # Safety
     /// The activations' room holds one more.
     #[inline(always)]
-    pub(super) unsafe fn push_unchecked(&mut self, activation: Activation) {
+    pub unsafe fn push_unchecked(&mut self, activation: Activation) {
         // SAFETY: `top` lies below `end`, in the allocation.
         unsafe { self.top.write(activation); self.top = self.top.add(1); }
     }

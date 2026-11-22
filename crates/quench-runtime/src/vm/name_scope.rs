@@ -55,13 +55,13 @@ pub(super) struct DynamicScopeNames {
     /// (`Vm::name_lands_on_global_object`).
     landed: BitSet,
     /// The read the lane left for the general path to settle.
-    pub(super) probe: Option<NameProbe>,
+    pub probe: Option<NameProbe>,
 }
 
 impl DynamicScopeNames {
     /// Whether a scope declared `atom` dynamically at any time.
     #[inline(always)]
-    pub(super) fn declared(&self, atom: Atom) -> bool {
+    pub fn declared(&self, atom: Atom) -> bool {
         self.declared.contains(atom as usize)
     }
 }
@@ -124,7 +124,7 @@ impl Vm {
     /// searches before the global object binds the name. `None`, before any effect, where one
     /// does (a named binding of the activation or its closures, its own local, an outer static
     /// owner, an active global lexical binding) or the global read is not decided in place.
-    pub(super) fn read_past_scopes(&mut self, p: &ResidualProgram, caller: &dyn CallerView, atom: Atom, site: u16) -> Option<Value> {
+    pub fn read_past_scopes(&mut self, p: &ResidualProgram, caller: &dyn CallerView, atom: Atom, site: u16) -> Option<Value> {
         // Once a `with` was entered, a scope the window does not hold may bind the name: the chain
         // eval code's environment captured (`captured_with_objects_for_function`).
         if self.with_scope_entered || self.binds_before_global_object(p, &NameLookup::new(caller, atom), caller.function(), atom) {

@@ -27,18 +27,18 @@ pub enum LaneCompletion {
 impl LaneCompletion {
     /// Leaves `exit` for the code the lane exits to; a raise replaces a completion not taken.
     #[inline(always)]
-    pub(crate) fn set(&mut self, exit: LaneCompletion) {
+    pub fn set(&mut self, exit: LaneCompletion) {
         debug_assert!(matches!(self, Self::None) || matches!(exit, Self::Raised(_)), "two lane completions: {self:?} then {exit:?}");
         *self = exit;
     }
 
     #[inline(always)]
-    pub(crate) fn raise(&mut self, error: JsError) {
+    pub fn raise(&mut self, error: JsError) {
         self.set(Self::Raised(error));
     }
 
     #[inline(always)]
-    pub(crate) fn is_raised(&self) -> bool {
+    pub fn is_raised(&self) -> bool {
         matches!(self, Self::Raised(_))
     }
 
@@ -47,7 +47,7 @@ impl LaneCompletion {
         matches!(self, Self::None)
     }
 
-    pub(crate) fn raised_mut(&mut self) -> Option<&mut JsError> {
+    pub fn raised_mut(&mut self) -> Option<&mut JsError> {
         match self {
             Self::Raised(error) => Some(error),
             _ => None,
@@ -55,7 +55,7 @@ impl LaneCompletion {
     }
 
     #[inline(always)]
-    pub(crate) fn take_raised(&mut self) -> Option<JsError> {
+    pub fn take_raised(&mut self) -> Option<JsError> {
         match std::mem::take(self) {
             Self::Raised(error) => Some(error),
             other => {
@@ -71,12 +71,12 @@ impl LaneCompletion {
     }
 
     #[inline(always)]
-    pub(crate) fn take_native_returned(&mut self) -> Option<Value> {
+    pub fn take_native_returned(&mut self) -> Option<Value> {
         self.take_value(|exit| matches!(exit, Self::NativeReturned(_)))
     }
 
     #[inline(always)]
-    pub(crate) fn take_suspended(&mut self) -> Option<Value> {
+    pub fn take_suspended(&mut self) -> Option<Value> {
         self.take_value(|exit| matches!(exit, Self::Suspended(_)))
     }
 

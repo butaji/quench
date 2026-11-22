@@ -12,7 +12,7 @@ const LOOPS: u8 = 0x40;
 
 impl ProgramStore {
     /// Whether `function` of program `id` loops, scanned once and kept beside its deferred runs.
-    pub(in crate::vm) fn function_loops(&self, id: ProgramId, function: u32) -> bool {
+    pub fn function_loops(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.entry_in_lane(id) else { return false };
         let Some(cell) = entry.lane_deferred.get(function as usize) else { return false };
         let held = cell.get();

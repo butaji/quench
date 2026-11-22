@@ -221,7 +221,7 @@ pub enum FlatText<'a> {
 
 impl FlatText<'_> {
     #[inline(always)]
-    pub(crate) fn units(&self) -> Units<'_> {
+    pub fn units(&self) -> Units<'_> {
         match self {
             Self::Record(units) => *units,
             Self::Small(text) => Units::Ascii(text.as_bytes()),
@@ -541,7 +541,7 @@ impl Heap {
     /// reads them, but with no view made of a small string: what a reader that only copies or
     /// measures the units takes.
     #[inline(always)]
-    pub(crate) fn flat_text(&self, value: Value) -> Option<FlatText<'_>> {
+    pub fn flat_text(&self, value: Value) -> Option<FlatText<'_>> {
         let record_id = value.direct_string_index()?;
         if let Some(local) = small_string_local(record_id) {
             // SAFETY: string Values come only from allocation and stay live while reachable.

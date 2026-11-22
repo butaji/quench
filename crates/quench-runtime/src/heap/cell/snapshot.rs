@@ -53,7 +53,7 @@ impl Native {
     /// One past the last native's discriminant.
     pub const COUNT: u16 = Native::DataViewInitialize as u16 + 1;
 
-    pub(crate) const fn from_discriminant(index: u16) -> Option<Self> {
+    pub const fn from_discriminant(index: u16) -> Option<Self> {
         if index >= Self::COUNT {
             return None;
         }

@@ -63,7 +63,7 @@ impl Vm {
 
     /// The store of `set_plain_named_property` for a key the caller admitted. `record_add`
     /// remembers an add for `keyed_add_hit` to replay.
-    pub(in crate::vm) fn set_plain_key_property(&mut self, object: Value, atom: Atom, value: Value, record_add: bool) -> Option<()> {
+    pub fn set_plain_key_property(&mut self, object: Value, atom: Atom, value: Value, record_add: bool) -> Option<()> {
         let key = PropertyKey::string(atom);
         if let PlainWriteTarget::Own { slot, old } = self.plain_write_target(object, key)? {
             self.write_shape_slot(object, key, slot, Some(old), value);
@@ -80,7 +80,7 @@ impl Vm {
     /// A keyed `[[Set]]` of a string naming an existing atom, made as
     /// `set_plain_named_property` makes the named one; `false` leaves the write, and any key
     /// that function refuses, to the general path, which interns a new name.
-    pub(in crate::vm) fn try_plain_string_key_set(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub fn try_plain_string_key_set(&mut self, object: Value, key: Value, value: Value) -> bool {
         let Some(atom) = self.lookup_string_atom(key) else {
             return false;
         };

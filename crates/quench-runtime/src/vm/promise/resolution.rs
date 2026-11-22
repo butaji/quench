@@ -44,7 +44,7 @@ impl Vm {
 
     /// Resolves `promise` with `value`, whose `then` reads as `then`: a callable `then`
     /// enqueues NewPromiseResolveThenableJob, anything else fulfills the promise.
-    pub(in crate::vm) fn resolve_promise_with_then(
+    pub fn resolve_promise_with_then(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
@@ -86,7 +86,7 @@ impl Vm {
     /// whose layout the species proof answers (`promise_species_proved`) reads its
     /// `constructor` as this realm's `%Promise%`, which the proof was recorded for, so it is
     /// returned as is before the look-up the unproved read needs.
-    pub(in crate::vm) fn intrinsic_promise_resolve(&mut self, p: &ResidualProgram, value: Value) -> Option<Value> {
+    pub fn intrinsic_promise_resolve(&mut self, p: &ResidualProgram, value: Value) -> Option<Value> {
         if self.host.observes_promise_lifecycle() {
             return None;
         }

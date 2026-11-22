@@ -188,7 +188,7 @@ impl Vm {
     /// does: one read of the view, one of its buffer, a bounds check, and the load or store
     /// with its byte swap. `None` leaves the call to `data_view_native`, which raises what this
     /// declines.
-    pub(super) fn plain_data_view_access(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_data_view_access(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
         // One match, one arm per element type, so each inlined copy folds its width,
         // direction and conversion; no second call level or setter test per access.
         match native {
@@ -218,7 +218,7 @@ impl Vm {
     /// direction and the element conversion fold to constants, leaving the view read, the
     /// bounds check and the load or store.
     #[inline(always)]
-    pub(super) fn data_view_access_of(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
+    pub fn data_view_access_of(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
         let width = data_view_plain_width(native)?;
         let Some(Cell::DataView { buffer, object, length }) = self.heap.get(this) else {
             return None;

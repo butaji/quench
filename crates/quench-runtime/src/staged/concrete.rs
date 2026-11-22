@@ -14,7 +14,7 @@ pub struct Concrete {
 
 impl Concrete {
     #[inline(always)]
-    pub(crate) fn new(property_values: *const crate::Value) -> Self {
+    pub fn new(property_values: *const crate::Value) -> Self {
         Self { tables: [property_values as u64], heap: std::ptr::null() }
     }
 
@@ -34,7 +34,7 @@ impl Concrete {
 
     /// The stage of stores into `heap`'s objects.
     #[inline(always)]
-    pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
+    pub fn storing(heap: *const crate::heap::Heap) -> Self {
         // SAFETY: the caller's heap is live.
         Self { tables: [unsafe { (*heap).arena_values_base() } as u64], heap }
     }

@@ -22,7 +22,7 @@ pub const fn selector_of(tag: u32, lane: u8) -> u32 {
 }
 
 impl SimdOperator {
-    pub(crate) fn from_selector(selector: u32) -> Option<(Self, u8)> {
+    pub fn from_selector(selector: u32) -> Option<(Self, u8)> {
         let (_, lane) = SimdKernel::of(selector)?;
         Some((Self::ALL[(selector >> SELECTOR_LANE_BITS) as usize], lane))
     }
@@ -40,8 +40,8 @@ impl SimdOperator {
 /// An operator as an execution needs it (`SimdKernel::of`): its operand and result types, its lane
 /// count, and the operator whose bits body computes it.
 pub struct SimdKernel {
-    pub(crate) left: WasmType,
-    pub(crate) right: Option<WasmType>,
+    pub left: WasmType,
+    pub right: Option<WasmType>,
     /// How many lanes a lane immediate may name: one for an operator without one.
     lanes: u32,
     pub(crate) result: WasmType,
@@ -52,7 +52,7 @@ impl SimdKernel {
     /// The kernel and lane immediate a selector names: none for an unknown operator or a
     /// lane past its count.
     #[inline(always)]
-    pub(crate) const fn of(selector: u32) -> Option<(&'static Self, u8)> {
+    pub const fn of(selector: u32) -> Option<(&'static Self, u8)> {
         let index = (selector >> SELECTOR_LANE_BITS) as usize;
         if index >= SimdOperator::KERNELS.len() {
             return None;
@@ -63,14 +63,14 @@ impl SimdKernel {
     }
 
     /// The type of the operator's result, from its table entry.
-    pub(crate) fn result_type(&self, _lane: u8) -> WasmType {
+    pub fn result_type(&self, _lane: u8) -> WasmType {
         self.result
     }
 
     /// The operator applied to operands given as bits, its result as bits: a vector whole, a
     /// scalar in the low bits (`ScalarBits`), as compiled code holds them.
     #[inline(always)]
-    pub(crate) fn apply_bits(&self, left: u128, right: u128, lane: u8) -> u128 {
+    pub fn apply_bits(&self, left: u128, right: u128, lane: u8) -> u128 {
         self.operator.bits(left, right, lane)
     }
 }
@@ -113,7 +113,7 @@ pub enum Lanes {
 }
 
 impl Lanes {
-    pub(crate) const fn width(self) -> u32 {
+    pub const fn width(self) -> u32 {
         match self {
             Self::Bits => u128::BITS,
             Self::I8x16 => u8::BITS,
@@ -144,8 +144,8 @@ pub enum NativeOp {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Native {
-    pub(crate) op: NativeOp,
-    pub(crate) lanes: Lanes,
+    pub op: NativeOp,
+    pub lanes: Lanes,
 }
 
 macro_rules! native_rows {

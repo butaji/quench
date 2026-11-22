@@ -2874,18 +2874,18 @@ pub struct ForwardedResolution {
 /// distance from the record, a constant index becomes the constant.
 #[derive(Clone, Copy)]
 pub union LaneOperand {
-    imm: u32,
+    pub imm: u32,
     /// Immutable candidates for a string selector, owned by the lane view.
-    string_case_filter: *const StringCaseFilter,
+    pub string_case_filter: *const StringCaseFilter,
     /// A `GetField` record's immediate and the receiver shape of its own-field hint
     /// (`LaneInstruction::field_hint`).
-    field: FieldOperand,
+    pub field: FieldOperand,
     /// A call record's immediate and its read memo's slot (`CallOperand::memo`).
-    call: CallOperand,
-    jump: isize,
-    constant: Value,
+    pub call: CallOperand,
+    pub jump: isize,
+    pub constant: Value,
     /// The first record of a vector region: the region, which the view owns.
-    region: *const VectorRegion,
+    pub region: *const VectorRegion,
 }
 
 /// A field of a plan that takes a fresh object of `constructor`, constructed from the
@@ -3286,7 +3286,7 @@ pub struct PreparedLaneCallback {
 
 /// The kinds of operand a site met where its quickened int32 handler declined, as a set of bits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct OperandKinds(u8);
+pub struct OperandKinds(pub u8);
 
 /// How a job's lane run ended (`Vm::run_lane_job`).
 pub enum JobEnd {
@@ -3872,7 +3872,7 @@ pub struct ScriptActivation {
 /// instruction; a reader gets one only where the view proves it was set.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct Slot<T: Copy>(std::mem::MaybeUninit<T>);
+pub struct Slot<T: Copy>(pub std::mem::MaybeUninit<T>);
 
 impl Default for LaneStack {
     fn default() -> Self {

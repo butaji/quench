@@ -11,7 +11,7 @@ pub const ARRAY_LITERAL_WINDOW: usize = 8;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RegisterList {
     registers: [Register; ARRAY_LITERAL_WINDOW],
-    count: u8,
+    pub count: u8,
 }
 
 impl RegisterList {
@@ -31,7 +31,7 @@ impl RegisterList {
     }
 
     /// The registers, in element order.
-    pub(crate) fn registers(&self) -> &[Register] {
+    pub fn registers(&self) -> &[Register] {
         &self.registers[..usize::from(self.count)]
     }
 }

@@ -37,14 +37,14 @@ pub enum Operand {
 }
 
 impl Form {
-    pub(crate) fn left(self, instruction: WideInstruction) -> u16 {
+    pub fn left(self, instruction: WideInstruction) -> u16 {
         match self {
             Self::Register | Self::Immediate | Self::Short => instruction.b(),
             Self::Branch | Self::BranchImmediate => instruction.a(),
         }
     }
 
-    pub(crate) fn right(self, instruction: WideInstruction) -> Operand {
+    pub fn right(self, instruction: WideInstruction) -> Operand {
         match self {
             Self::Register => Operand::Register(instruction.c()),
             Self::Immediate => Operand::Constant(i64::from(instruction.imm() as i32)),
@@ -55,7 +55,7 @@ impl Form {
     }
 
     /// Whether the value is a jump condition, not a register.
-    pub(crate) const fn branches(self) -> bool {
+    pub const fn branches(self) -> bool {
         matches!(self, Self::Branch | Self::BranchImmediate)
     }
 }
@@ -119,7 +119,7 @@ impl WasmOperation {
     }
 
     /// The integer operation `op` is, with `tag` its operator selector where the opcode takes one.
-    pub(crate) const fn of(op: Op, tag: u32) -> Option<Self> {
+    pub const fn of(op: Op, tag: u32) -> Option<Self> {
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             return Some(i32_binary(operator, Form::Register));
         }
@@ -219,7 +219,7 @@ impl WasmOperation {
     }
 
     /// The type its operands have.
-    pub(crate) fn operand_type(self) -> WasmType {
+    pub fn operand_type(self) -> WasmType {
         match self {
             Self::Binary { width, .. } | Self::Unary { width, .. } => width.ty(),
             Self::BitField | Self::AddBranch | Self::Test { .. } => WasmType::I32,
@@ -229,7 +229,7 @@ impl WasmOperation {
     }
 
     /// The type of the value it computes.
-    pub(crate) fn result_type(self) -> WasmType {
+    pub fn result_type(self) -> WasmType {
         match self {
             Self::Binary {
                 operator, width, ..
@@ -243,7 +243,7 @@ impl WasmOperation {
     }
 
     /// The registers it reads: the left operand, and the right where that is a register.
-    pub(crate) fn reads(self, instruction: WideInstruction) -> (u16, Option<u16>) {
+    pub fn reads(self, instruction: WideInstruction) -> (u16, Option<u16>) {
         match self {
             Self::Binary { form, .. } => match form.right(instruction) {
                 Operand::Register(register) => (form.left(instruction), Some(register)),
@@ -256,13 +256,13 @@ impl WasmOperation {
     }
 
     /// Whether it defines register `a`: a comparison that only jumps does not.
-    pub(crate) const fn writes(self) -> bool {
+    pub const fn writes(self) -> bool {
         !matches!(self, Self::Test { .. })
             && !matches!(self, Self::Binary { form, .. } if form.branches())
     }
 
     /// Whether it ends the block with a jump on its value.
-    pub(crate) const fn jumps(self) -> bool {
+    pub const fn jumps(self) -> bool {
         matches!(self, Self::AddBranch) || !self.writes()
     }
 }

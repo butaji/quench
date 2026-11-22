@@ -815,7 +815,7 @@ impl Vm {
             .ok_or_else(|| JsError::wasm_link("invalid Wasm global binding"))
     }
 
-    pub(super) fn wasm_memory_bytes(
+    pub fn wasm_memory_bytes(
         &self,
         memory: Value,
     ) -> Result<crate::wasm::memory::MemoryRead<'_>, JsError> {
@@ -856,14 +856,14 @@ impl Vm {
         Ok(rule(&mut crate::staged::wasm_machine::ConcreteBytes { memory: &guard }))
     }
 
-    #[inline] pub(super) fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
+    #[inline] pub fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
         let Some(Cell::WasmMemory { header, .. }) = self.heap.get(memory) else {
             return Err(JsError::validation("invalid Wasm memory binding".into()));
         };
         crate::WasmType::from_wasm(header.ty.index_type()).ok_or_else(|| JsError::validation("invalid Wasm memory index type".into()))
     }
 
-    pub(super) fn wasm_memory_index(&self, memory: Value, value: Value) -> Result<u64, JsError> {
+    pub fn wasm_memory_index(&self, memory: Value, value: Value) -> Result<u64, JsError> {
         self.wasm_index_operand(value, self.wasm_memory_index_type(memory)?)
     }
 
@@ -978,7 +978,7 @@ impl Vm {
 
     /// Copy memory or immutable data bytes; None is the dropped segment state.
     /// Check both ranges before mutation, including zero-length boundary cases.
-    pub(super) fn wasm_copy_bytes(
+    pub fn wasm_copy_bytes(
         &mut self,
         destination: Value,
         source: Option<Value>,
@@ -1036,7 +1036,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn wasm_memory_grow(
+    pub fn wasm_memory_grow(
         &mut self,
         memory: Value,
         delta: u64,
@@ -1243,7 +1243,7 @@ impl Vm {
         }
     }
 
-    #[inline] pub(super) fn wasm_i64_operand(&self, value: Value) -> Result<i64, JsError> {
+    #[inline] pub fn wasm_i64_operand(&self, value: Value) -> Result<i64, JsError> {
         if let Some(bits) = value.bits64() { return Ok(bits as i64); }
         let crate::WasmValue::I64(value) = self.decode_wasm_value_slow(value, crate::WasmType::I64, None)? else { unreachable!("decoded i64 operand") };
         Ok(value)
@@ -1275,7 +1275,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn encode_wasm_value(&mut self, value: crate::WasmValue) -> Value {
+    pub fn encode_wasm_value(&mut self, value: crate::WasmValue) -> Value {
         if let crate::WasmValue::FuncRef(value)
         | crate::WasmValue::ExternRef(value)
         | crate::WasmValue::GcRef(value) = value
@@ -1292,20 +1292,20 @@ impl Vm {
     /// A 64-bit Wasm payload as a slot value: in place unless it falls in
     /// the tag space (`Value::from_bits64`).
     #[inline(always)]
-    pub(crate) fn encode_bits64(&mut self, bits: u64) -> Value {
+    pub fn encode_bits64(&mut self, bits: u64) -> Value {
         Value::from_bits64(bits).unwrap_or_else(|| self.heap.alloc(Cell::WasmBits64(bits)))
     }
 
     /// The 64-bit Wasm payload of a slot value typed i64 or f64.
     #[inline(always)]
-    pub(crate) fn decode_bits64(&self, value: Value) -> Option<u64> {
+    pub fn decode_bits64(&self, value: Value) -> Option<u64> {
         value.bits64().or_else(|| match self.heap.get(value) {
             Some(Cell::WasmBits64(bits)) => Some(*bits),
             _ => None,
         })
     }
 
-    pub(crate) fn decode_wasm_value(
+    pub fn decode_wasm_value(
         &self,
         value: Value,
         ty: crate::WasmType,
@@ -1379,7 +1379,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn decode_wasm_value_in(
+    pub fn decode_wasm_value_in(
         &self,
         value: Value,
         ty: crate::WasmType,

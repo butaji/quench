@@ -434,7 +434,7 @@ impl From<JsError> for ReadFailure {
 
 type Read<T> = Result<T, ReadFailure>;
 
-fn valid<T>(value: Option<T>) -> Read<T> {
+pub fn valid<T>(value: Option<T>) -> Read<T> {
     value.ok_or(ReadFailure::Invalid)
 }
 

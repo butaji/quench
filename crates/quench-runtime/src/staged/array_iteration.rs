@@ -148,7 +148,7 @@ pub(crate) fn apply(
 /// The method's value once every element was visited without a step ending it: the result for
 /// the methods that make one, else the answer the method gives when no element ended it.
 #[inline(always)]
-pub(crate) fn completion(kind: Kind, result: Value) -> Answer {
+pub fn completion(kind: Kind, result: Value) -> Answer {
     match kind {
         Kind::Map | Kind::Filter | Kind::Reduce | Kind::ReduceRight => Answer::Value(result),
         Kind::Some => Answer::Value(Value::FALSE),

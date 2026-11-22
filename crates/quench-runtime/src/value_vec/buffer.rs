@@ -38,8 +38,8 @@ pub(super) struct PropertyBuffer {
 /// Native code reads the allocator's authoritative header, never a copied view.
 #[derive(Clone, Copy)]
 pub(crate) struct NativePropertyBufferLayout {
-    pub(crate) base: usize,
-    pub(crate) length: usize,
+    pub base: usize,
+    pub length: usize,
 }
 
 pub const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = NativePropertyBufferLayout {

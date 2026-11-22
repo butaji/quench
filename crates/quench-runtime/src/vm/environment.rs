@@ -157,7 +157,7 @@ impl Vm {
         ))
     }
 
-    pub(super) fn initialize_this_binding(
+    pub fn initialize_this_binding(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -587,7 +587,7 @@ impl Vm {
         self.atom_class(atom).contains(AtomClass::SELF_BINDING)
     }
 
-    pub(super) fn captured_lexical_this(&self, mut env: Value) -> Option<Value> {
+    pub fn captured_lexical_this(&self, mut env: Value) -> Option<Value> {
         while let Some(crate::heap::EnvironmentRecord { parent, .. }) = self.heap.environment(env) {
             let dynamic_bindings = self.heap.environment_bindings(env)?;
             if let Some((_, value)) = dynamic_bindings
@@ -644,7 +644,7 @@ impl Vm {
     /// Object environments participate only before the selected declarative
     /// binding. Captured scopes retain their position in the parent chain;
     /// scopes entered by the current activation are its innermost suffix.
-    pub(super) fn with_objects_before_binding(&self, caller: &dyn CallerView, atom: Atom) -> Vec<Value> {
+    pub fn with_objects_before_binding(&self, caller: &dyn CallerView, atom: Atom) -> Vec<Value> {
         let parent = self.captured_parent_environment(caller);
         let own_dynamic = self
             .own_dynamic_bindings(caller)
@@ -760,7 +760,7 @@ impl Vm {
     /// `objects` that has `atom` and its value there, or `Some(None)` where none has it. `None`
     /// before any effect, leaves a chain the shapes alone do not decide (a Proxy, an accessor,
     /// an exotic object) to `first_with_binding`.
-    pub(super) fn plain_first_with_binding(&self, objects: &[Value], atom: Atom) -> Option<Option<(Value, Value)>> {
+    pub fn plain_first_with_binding(&self, objects: &[Value], atom: Atom) -> Option<Option<(Value, Value)>> {
         for object in objects.iter().rev().copied() {
             if let Some(value) = self.plain_with_binding(object, atom)? {
                 return Some(Some((object, value)));
@@ -1075,7 +1075,7 @@ impl Vm {
         true
     }
 
-    pub(super) fn dynamic_binding(&self, caller: &dyn CallerView, atom: Atom) -> Option<Value> {
+    pub fn dynamic_binding(&self, caller: &dyn CallerView, atom: Atom) -> Option<Value> {
         self.dynamic_binding_in(&NameLookup::new(caller, atom))
     }
 
@@ -1329,7 +1329,7 @@ impl Vm {
 
     /// The environment `depth` function layers out from an activation's captures
     /// (`owner_capture_env`), from its environment `env`, which is its own when `captured`.
-    pub(super) fn environment_capture_env(
+    pub fn environment_capture_env(
         &self,
         env: Value,
         captured: bool,
@@ -1423,7 +1423,7 @@ impl Vm {
     /// of a non-root function's environment; of a root environment (`root` names its program),
     /// only a slot no projection reads through.
     #[inline(always)]
-    pub(super) fn owned_capture(
+    pub fn owned_capture(
         &self,
         slots: &crate::heap::EnvironmentSlots,
         root: Option<Option<u32>>,
@@ -1455,7 +1455,7 @@ impl Vm {
     /// the slot's rule (`ProgramStore::root_slot`); with the global var whose global object
     /// property answered it.
     #[inline(always)]
-    pub(super) fn plain_capture(
+    pub fn plain_capture(
         &self,
         slots: &crate::heap::EnvironmentSlots,
         root: Option<Option<u32>>,
@@ -1481,7 +1481,7 @@ impl Vm {
 
     /// The slots a direct capture at `depth` reads, and a root environment's program (`owned_capture`):
     /// the walk from an activation's environment `env` (past its own once `captured`), function layers only.
-    pub(super) fn environment_capture_slots(
+    pub fn environment_capture_slots(
         &self,
         env: Value,
         captured: bool,
@@ -1524,7 +1524,7 @@ impl Vm {
     /// (`Reads::of_captures`): only where both are function environments other than a
     /// root, whose dense slots a capture walk reads as they are.
     #[inline(never)]
-    pub(super) fn link_capture_chain(&self, env: Value, depth: u16) {
+    pub fn link_capture_chain(&self, env: Value, depth: u16) {
         let epoch = self.heap.collection_epoch();
         let function_storage = |cell: Option<&crate::heap::EnvironmentRecord>| match cell {
             Some(crate::heap::EnvironmentRecord { parent, function, slots, .. })
@@ -1550,7 +1550,7 @@ impl Vm {
     /// `slot` at the end of a capture walk `walked_capture_slots` remembers, when that end is
     /// a function environment holding the slot densely; `None` leaves the read to the walk.
     #[inline(always)]
-    pub(super) fn remembered_capture(
+    pub fn remembered_capture(
         &self,
         env: Value,
         captured: bool,
@@ -1575,7 +1575,7 @@ impl Vm {
     /// from the same environment, equally its own or not, to the same depth in the same
     /// collection ends at the same live cell, whose slot storage never moves.
     #[inline(always)]
-    pub(super) fn walked_capture_slots(
+    pub fn walked_capture_slots(
         &mut self,
         env: Value,
         captured: bool,
@@ -1617,7 +1617,7 @@ impl Vm {
     /// The frame's cached innermost slots and root program while the cache is current
     /// (`cached_direct_capture`).
     #[inline(always)]
-    pub(super) fn current_capture_slots(
+    pub fn current_capture_slots(
         &self,
         frame: usize,
     ) -> Option<(*const crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
@@ -1635,7 +1635,7 @@ impl Vm {
     /// all three are unchanged the walk ends at the same live cell, whose slot storage never
     /// moves.
     #[inline(always)]
-    pub(super) fn cached_direct_capture(
+    pub fn cached_direct_capture(
         &mut self,
         frame: usize,
         depth: u16,
@@ -1647,7 +1647,7 @@ impl Vm {
     /// `cached_direct_capture` that also answers a root projection's plain read
     /// (`plain_capture`), for the interpreter's reads, which take the value however held.
     #[inline(always)]
-    pub(super) fn cached_plain_capture(&mut self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
+    pub fn cached_plain_capture(&mut self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
         self.cached_capture(frame, depth, slot, Self::plain_capture).flatten()
     }
 
@@ -1744,7 +1744,7 @@ impl Vm {
     /// (`Vm::plain_named_get`), or an initialized retained global
     /// lexical binding (`root_global_lexical_value`). `None` for any other projection or
     /// read.
-    pub(super) fn plain_projected_root_binding(&self, env: Value, slot: u16) -> Option<Value> {
+    pub fn plain_projected_root_binding(&self, env: Value, slot: u16) -> Option<Value> {
         let crate::heap::EnvironmentRecord { function, scope, .. } = self.heap.environment(env)?;
         let owner_id = scope
             .program()
@@ -1844,7 +1844,7 @@ impl Vm {
     /// store. Root bindings, with-object layers and everything else return false for
     /// `store_environment_binding`.
     #[inline(always)]
-    pub(super) fn direct_store_environment(
+    pub fn direct_store_environment(
         &mut self,
         p: &ResidualProgram,
         program: super::ProgramId,
@@ -1879,7 +1879,7 @@ impl Vm {
     /// slot another environment holds, or one holding any marker (an uninitialized binding),
     /// returns `false` for the general store.
     #[inline(always)]
-    pub(super) fn direct_store_own_environment(
+    pub fn direct_store_own_environment(
         &mut self,
         p: &ResidualProgram,
         program: super::ProgramId,
@@ -1912,7 +1912,7 @@ impl Vm {
 
     /// Whether `environment_admits_direct_store` admits a store to every slot of `env` in
     /// the executing program: its function has no self binding and maps no parameter.
-    pub(super) fn admits_every_direct_store(
+    pub fn admits_every_direct_store(
         &self,
         p: &ResidualProgram,
         program: super::ProgramId,
@@ -2022,7 +2022,7 @@ impl Vm {
 
     /// The value an intrinsic name (`bytecode::intrinsic_name_native`, or the RegExp
     /// intrinsic) stands for, which no binding can shadow.
-    pub(super) fn intrinsic_name_value(&mut self, atom: Atom) -> Option<Value> {
+    pub fn intrinsic_name_value(&mut self, atom: Atom) -> Option<Value> {
         let name = self.atom_name(atom);
         if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
             return Some(self.regexp_intrinsic_constructor());

@@ -26,7 +26,7 @@ macro_rules! scalar_conversions {
                 match self { $(Self::$name => WasmType::$source,)+ }
             }
 
-            pub(crate) fn result_type(self) -> WasmType {
+            pub fn result_type(self) -> WasmType {
                 match self { $(Self::$name => WasmType::$result,)+ }
             }
 

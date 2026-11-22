@@ -33,7 +33,7 @@ impl Vm {
     /// Beside a window activation (`Vm::runs_windows_in_lane`) a call that waits boxes the window's
     /// record as a frame, which costs more than its view: the callee lowers where nothing keeps
     /// it unlowered and derives at once, its deferred runs skipped.
-    pub(super) fn call_may_derive_in_lane(&self, program: ProgramId, function: u32) -> bool {
+    pub fn call_may_derive_in_lane(&self, program: ProgramId, function: u32) -> bool {
         let now = self.runs_windows_in_lane();
         let blocked = self.programs.residual(program).is_some_and(|code| {
             if now {

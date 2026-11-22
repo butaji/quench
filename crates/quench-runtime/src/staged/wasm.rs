@@ -21,7 +21,7 @@ pub enum Width {
 }
 
 impl Width {
-    pub(crate) const fn bits(self) -> u32 {
+    pub const fn bits(self) -> u32 {
         match self {
             Self::I32 => i32::BITS,
             Self::I64 => i64::BITS,
@@ -37,7 +37,7 @@ impl Width {
         }
     }
 
-    pub(crate) const fn ty(self) -> WasmType {
+    pub const fn ty(self) -> WasmType {
         match self {
             Self::I32 => WasmType::I32,
             Self::I64 => WasmType::I64,

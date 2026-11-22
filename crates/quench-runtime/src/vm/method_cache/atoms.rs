@@ -20,7 +20,7 @@ pub struct MethodCacheAtoms {
 
 impl MethodCacheAtoms {
     #[inline(always)]
-    pub(in crate::vm) fn contains(&self, atom: Atom) -> bool {
+    pub fn contains(&self, atom: Atom) -> bool {
         self.bits.contains(atom as usize)
     }
 
@@ -37,18 +37,18 @@ impl MethodCacheAtoms {
     }
 
     /// The names now, for a lowering that folds them (`compiled::OnlineFacts`).
-    pub(in crate::vm) fn bits(&self) -> &AtomBits {
+    pub fn bits(&self) -> &AtomBits {
         &self.bits
     }
 
     /// The bit words, for generated code that tests a name (`emit_js_own_field_set`).
     #[inline]
-    pub(in crate::vm) fn words(&self) -> &[u64] {
+    pub fn words(&self) -> &[u64] {
         self.bits.words()
     }
 
     /// The code that holds atoms unnamed, which a publication subscribes to.
-    pub(in crate::vm) fn readers(&mut self) -> &mut crate::code_dependencies::CodeReaders {
+    pub fn readers(&mut self) -> &mut crate::code_dependencies::CodeReaders {
         &mut self.readers
     }
 }

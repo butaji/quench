@@ -23,9 +23,9 @@
 use super::*;
 use quench_runtime::staged::Stage;
 
-#[path = "loop_versions/plan.rs"] mod plan;
-#[path = "loop_versions/hoists.rs"] mod hoists;
-#[path = "loop_versions/inductions.rs"] mod inductions;
+#[path = "loop_versions/plan.rs"] pub(crate) mod plan;
+#[path = "loop_versions/hoists.rs"] pub(crate) mod hoists;
+#[path = "loop_versions/inductions.rs"] pub(crate) mod inductions;
 pub(crate) use plan::{Nest, Resolved, Shape};
 
 /// A loop-invariant integer an index is made of, held as a 64-bit word on its checking loop's

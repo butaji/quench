@@ -14,47 +14,47 @@ pub(crate) const EXACT_BITS: u32 = f64::MANTISSA_DIGITS;
 /// fits int32 (`fits_int32`) is the caller's question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IntRange {
-    pub(crate) min: i64,
-    pub(crate) max: i64,
+    pub min: i64,
+    pub max: i64,
 }
 
 impl IntRange {
     /// The span of int32: what an int32-represented value holds at widest, and where widening settles.
-    pub(crate) const FULL: Self = Self { min: i32::MIN as i64, max: i32::MAX as i64 };
+    pub const FULL: Self = Self { min: i32::MIN as i64, max: i32::MAX as i64 };
 
     pub(crate) const NON_NEGATIVE: Self = Self { min: 0, max: Self::FULL.max };
 
     /// The widest span integer arithmetic over int32s stays within without wrapping an i64,
     /// where widening settles a range that left int32: a result outside it has no range.
-    pub(crate) const WORD: Self = Self { min: -(1 << WORD_BITS), max: 1 << WORD_BITS };
+    pub const WORD: Self = Self { min: -(1 << WORD_BITS), max: 1 << WORD_BITS };
 
     /// The integers a Number holds exactly.
-    pub(crate) const EXACT: Self = Self { min: -(1 << EXACT_BITS), max: 1 << EXACT_BITS };
+    pub const EXACT: Self = Self { min: -(1 << EXACT_BITS), max: 1 << EXACT_BITS };
 
     /// What an int32 observed to be `value` gives a later entry to guard once: its sign.
-    pub(crate) const fn entering(value: i32) -> Self { if value >= 0 { Self::NON_NEGATIVE } else { Self::FULL } }
+    pub const fn entering(value: i32) -> Self { if value >= 0 { Self::NON_NEGATIVE } else { Self::FULL } }
 
-    pub(crate) fn singleton(value: impl Into<i64>) -> Self {
+    pub fn singleton(value: impl Into<i64>) -> Self {
         let value = value.into();
         Self { min: value, max: value }
     }
 
-    pub(crate) fn packed() -> Self {
+    pub fn packed() -> Self {
         let half = 1_i64 << (crate::value::NarrowLayout::INTEGER_BITS - 1);
         Self { min: -half, max: half - 1 }
     }
 
-    pub(crate) fn bounds(min: i64, max: i64) -> Option<Self> { (min <= max).then_some(Self { min, max }) }
+    pub fn bounds(min: i64, max: i64) -> Option<Self> { (min <= max).then_some(Self { min, max }) }
 
-    pub(crate) fn fits_int32(&self) -> bool { Self::FULL.contains(*self) }
+    pub fn fits_int32(&self) -> bool { Self::FULL.contains(*self) }
 
     /// The range of the binary64 Numbers the integers of `self` round to. Rounding to nearest
     /// is monotone, so the bounds' own are the range's: `self` within `EXACT`, wider beyond.
-    pub(crate) fn rounded(self) -> Self {
+    pub fn rounded(self) -> Self {
         Self { min: self.min as f64 as i64, max: self.max as f64 as i64 }
     }
 
-    pub(crate) fn join(self, other: Self) -> Self {
+    pub fn join(self, other: Self) -> Self {
         Self { min: self.min.min(other.min), max: self.max.max(other.max) }
     }
 
@@ -76,21 +76,21 @@ impl IntRange {
         if hull.min < self.min { up.widen_down() } else { up }
     }
 
-    pub(crate) fn intersect(self, other: Self) -> Option<Self> {
+    pub fn intersect(self, other: Self) -> Option<Self> {
         Self::bounds(self.min.max(other.min), self.max.min(other.max))
     }
 
-    pub(crate) fn contains(self, other: Self) -> bool { self.min <= other.min && other.max <= self.max }
+    pub fn contains(self, other: Self) -> bool { self.min <= other.min && other.max <= self.max }
 
-    pub(crate) fn add(self, other: Self) -> Option<Self> {
+    pub fn add(self, other: Self) -> Option<Self> {
         Some(Self { min: self.min.checked_add(other.min)?, max: self.max.checked_add(other.max)? })
     }
 
-    pub(crate) fn subtract(self, other: Self) -> Option<Self> {
+    pub fn subtract(self, other: Self) -> Option<Self> {
         Some(Self { min: self.min.checked_sub(other.max)?, max: self.max.checked_sub(other.min)? })
     }
 
-    pub(crate) fn multiply(self, other: Self) -> Option<Self> {
+    pub fn multiply(self, other: Self) -> Option<Self> {
         let corners = [(self.min, other.min), (self.min, other.max), (self.max, other.min), (self.max, other.max)];
         let [a, b, c, d] = corners.map(|(left, right)| left.checked_mul(right));
         let products = [a?, b?, c?, d?];
@@ -100,7 +100,7 @@ impl IntRange {
     /// Sign-extended N-bit operands remain sign-extended after &, | or ^.
     /// Unlike independent known bits, this retains the correlation of high
     /// bits with the sign even when the input interval crosses zero.
-    pub(crate) fn bitwise_hull(self, other: Self) -> Self {
+    pub fn bitwise_hull(self, other: Self) -> Self {
         let inputs = self.join(other);
         let magnitude = [inputs.min, inputs.max].map(|value| value.max(!value) as u64);
         let width = u64::BITS - (magnitude[0] | magnitude[1]).leading_zeros() + 1;
@@ -108,7 +108,7 @@ impl IntRange {
         Self { min: -half, max: half - 1 }
     }
 
-    pub(crate) fn shift_right(self, count: Self) -> Option<Self> {
+    pub fn shift_right(self, count: Self) -> Option<Self> {
         if count.min != count.max { return None; }
         let shift = (count.min as u32) & crate::value::WORD32_SHIFT_MASK;
         Some(Self { min: self.min >> shift, max: self.max >> shift })
@@ -118,7 +118,7 @@ impl IntRange {
     /// shift of 1 or more leaves [0, 2^31); a non-negative operand shifts its bounds. Any other
     /// operand is reinterpreted as a uint32 first, so only the upper bound of the shifted uint32
     /// is known. A zero shift keeps the uint32, which is not an int32: `None`.
-    pub(crate) fn shift_right_unsigned(self, count: Self) -> Option<Self> {
+    pub fn shift_right_unsigned(self, count: Self) -> Option<Self> {
         if count.min != count.max { return None; }
         let shift = (count.min as u32) & crate::value::WORD32_SHIFT_MASK;
         if shift == 0 { return None; }

@@ -39,7 +39,7 @@ impl Vm {
     /// is the call: the general loop's caller carries it while the getter runs
     /// (`Vm::with_field_source`). A frame a lane activation's caller became, or the walk's site
     /// of one, carries it from here, so the getter's caller reads the same position.
-    pub(in crate::vm) fn called_field_source(
+    pub fn called_field_source(
         &self,
         program: ProgramId,
         function: u32,

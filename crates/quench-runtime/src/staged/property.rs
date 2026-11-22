@@ -133,7 +133,7 @@ pub enum FieldPlan<'a> {
 pub struct StoreArm {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
-    pub(crate) holds: Option<Type>,
+    pub holds: Option<Type>,
     pub(crate) raw_double: bool,
     /// Whether the site left the record's storage form open (`Form::Either`): a raw store
     /// then tests the inline flag at run time, which a proven arena run skips.
@@ -145,7 +145,7 @@ impl StoreArm {
     /// value of type `fact`. A slot that holds the value's type stores it as is. Otherwise
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
-    pub(crate) fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
+    pub fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
         if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false, unformed: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
         holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false, unformed: false })
@@ -155,7 +155,7 @@ impl StoreArm {
     /// value whose type the slot's holds, a Number, stores in place, as its binary64 word, and
     /// only into a shape whose values its `form` leaves an arena run (a packed slot holds narrow
     /// values, whatever its owner's type); an open form is tested when the store runs.
-    pub(crate) fn of_rep(at: (u32, u16), slot_ty: Type, fact: Type, (raw_double, form): (bool, super::Form)) -> Option<Self> {
+    pub fn of_rep(at: (u32, u16), slot_ty: Type, fact: Type, (raw_double, form): (bool, super::Form)) -> Option<Self> {
         let arm = Self::of(at, slot_ty, fact)?;
         if !raw_double { return Some(arm); }
         (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form != super::Form::Packed)
@@ -210,7 +210,7 @@ pub enum StorePlan<'a> {
 impl<'a> StorePlan<'a> {
     /// The plan that stores in place by `arms` and otherwise by `join`; by `join` alone with
     /// no arm.
-    pub(crate) fn of(arms: &'a [StoreArm], join: StoreJoin) -> Self {
+    pub fn of(arms: &'a [StoreArm], join: StoreJoin) -> Self {
         match (arms.is_empty(), join) {
             (false, join) => Self::Own { arms, join },
             (true, StoreJoin::Host) => Self::Host,

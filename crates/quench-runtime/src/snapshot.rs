@@ -17,7 +17,7 @@
 
 /// Why a snapshot could not be written or read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SnapshotError(pub(crate) String);
+pub(crate) struct SnapshotError(pub String);
 
 impl SnapshotError {
     pub(crate) fn unsupported(what: &str) -> Self {

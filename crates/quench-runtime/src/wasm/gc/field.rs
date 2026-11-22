@@ -50,7 +50,7 @@ impl GcField {
     }
 
     #[inline(always)]
-    pub(crate) fn from_tag(tag: u32) -> Option<Self> {
+    pub fn from_tag(tag: u32) -> Option<Self> {
         ((tag & STORAGE_MASK) as usize <= PACKED.len()).then_some(Self(tag))
     }
 
@@ -60,13 +60,13 @@ impl GcField {
     }
 
     #[inline(always)]
-    pub(crate) fn index(self) -> u32 {
+    pub fn index(self) -> u32 {
         self.0 >> INDEX_SHIFT
     }
 
     /// The Wasm kind of the field's word; a packed field is `Narrow`, its integer.
     #[inline(always)]
-    pub(crate) fn value(self) -> GcFieldValue {
+    pub fn value(self) -> GcFieldValue {
         CLASSES[((self.0 >> CLASS_SHIFT) & CLASS_MASK) as usize]
     }
 
@@ -85,7 +85,7 @@ impl GcField {
     /// The bytes the field's storage takes in a payload (`ObjectLayout`'s rule): a packed field its
     /// width, a 32-bit word four, anything else a word.
     #[inline(always)]
-    pub(crate) fn size(self) -> usize {
+    pub fn size(self) -> usize {
         match self.packed_bits() {
             Some(bits) => bits as usize / 8,
             None if self.value() == GcFieldValue::Narrow => 4,

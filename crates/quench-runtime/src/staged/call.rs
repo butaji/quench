@@ -51,17 +51,17 @@ pub(crate) struct EntryCellLayoutWords {
 
 /// The entry cell's word offsets in the designed layout (`EntryCellLayoutWords`).
 pub(crate) struct CellLayout {
-    pub(crate) entry_offset: i32,
-    pub(crate) body_offset: i32,
-    pub(crate) validity_offset: i32,
-    pub(crate) facts_offset: i32,
-    pub(crate) recovery_offset: i32,
-    pub(crate) counters_offset: i32,
-    pub(crate) scalar_offset: i32,
-    pub(crate) rows_offset: i32,
-    pub(crate) proven_offset: i32,
-    pub(crate) numbers_offset: i32,
-    pub(crate) uses_this_offset: i32,
+    pub entry_offset: i32,
+    pub body_offset: i32,
+    pub validity_offset: i32,
+    pub facts_offset: i32,
+    pub recovery_offset: i32,
+    pub counters_offset: i32,
+    pub scalar_offset: i32,
+    pub rows_offset: i32,
+    pub proven_offset: i32,
+    pub numbers_offset: i32,
+    pub uses_this_offset: i32,
 }
 pub const ENTRY_CELL: CellLayout = CellLayout {
     entry_offset: std::mem::offset_of!(EntryCellLayoutWords, entry) as i32,
@@ -119,30 +119,30 @@ pub fn concrete_fits(limit: u64, needed: u64) -> bool {
 /// once).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellFacts {
-    pub(crate) registers: u16,
-    pub(crate) room: u16,
-    pub(crate) params: u16,
+    pub registers: u16,
+    pub room: u16,
+    pub params: u16,
     /// The registers a native call starts `undefined` past its arguments (`RegisterRoots::entry_fill`),
     /// `FILL_ALL` for every one: the rest are written before any read, as the interpreter's window fill
     /// leaves them.
     pub(crate) fill: u8,
-    pub(crate) entry: u8,
+    pub entry: u8,
 }
 
 impl CellFacts {
     /// The facts of a function whose body needs `registers` words and takes `params` parameters: a plain
     /// activation (`plain`) or one whose calls take a frame or a window.
-    pub(crate) const fn of_function(registers: u16, params: u16, fill: u16, plain: bool) -> Self {
+    pub const fn of_function(registers: u16, params: u16, fill: u16, plain: bool) -> Self {
         let fill = if fill < FILL_ALL as u16 { fill as u8 } else { FILL_ALL };
         Self { registers, room: registers, params, fill, entry: if plain { ENTRY_ACTIVATES as u8 } else { ENTRY_FRAMED } }
     }
 
-    pub(crate) const fn word(self) -> u64 {
+    pub const fn word(self) -> u64 {
         self.registers as u64 | (self.room as u64) << ROOM_SHIFT | (self.params as u64) << PARAMS_SHIFT | (self.fill as u64) << FILL_SHIFT
             | (self.entry as u64) << ENTRY_SHIFT
     }
 
-    pub(crate) const fn of_word(word: u64) -> Self {
+    pub const fn of_word(word: u64) -> Self {
         Self { registers: word as u16, room: (word >> ROOM_SHIFT) as u16, params: (word >> PARAMS_SHIFT) as u16, fill: (word >> FILL_SHIFT) as u8, entry: (word >> ENTRY_SHIFT) as u8 }
     }
 }

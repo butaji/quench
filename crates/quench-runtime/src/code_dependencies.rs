@@ -19,7 +19,7 @@ pub struct Invalidation(Rc<std::cell::Cell<u64>>);
 
 impl Invalidation {
     /// The word's address, which lives as long as any holder of this invalidation.
-    pub(crate) fn address(&self) -> usize { self.0.as_ptr() as usize }
+    pub fn address(&self) -> usize { self.0.as_ptr() as usize }
     #[cfg(test)]
     pub(crate) fn is_set(&self) -> bool { self.0.get() != 0 }
     fn set(&self) { self.0.set(1); }
@@ -55,23 +55,23 @@ impl<T> PublishedCode<T> {
     pub(crate) fn on_retire(&self, word: &std::cell::Cell<usize>, entry: usize, stub: usize) {
         self.entry_links.borrow_mut().push((std::ptr::from_ref(word), entry, stub));
     }
-    pub(crate) fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
+    pub fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
     /// Code compiled to read `invalidation` at its invalidation points.
     pub(crate) fn with_invalidation(code: T, invalidation: Invalidation) -> Self {
         Self { code: std::cell::RefCell::new(Some(Rc::new(code))), published: std::cell::Cell::new(true), invalidation, entry_links: Default::default(), roots: Default::default() }
     }
     /// Keeps `roots`, the heap identities its code embeds, alive until it retires: `heap` roots
     /// them at every collection (`Heap::extend_folded_roots`).
-    pub(crate) fn hold_roots(self: &Rc<Self>, roots: FoldedRoots, heap: &mut crate::heap::Heap) where T: 'static {
+    pub fn hold_roots(self: &Rc<Self>, roots: FoldedRoots, heap: &mut crate::heap::Heap) where T: 'static {
         if roots.is_empty() { return; }
         *self.roots.borrow_mut() = roots.settled();
         let code: Rc<dyn RootedCode> = self.clone();
         heap.hold_folded_roots(&code);
     }
-    pub(crate) fn lease(&self) -> Option<Rc<T>> { self.code.borrow().clone() }
+    pub fn lease(&self) -> Option<Rc<T>> { self.code.borrow().clone() }
     #[inline(always)]
-    pub(crate) fn is_published(&self) -> bool { self.published.get() }
-    pub(crate) fn retire(&self) {
+    pub fn is_published(&self) -> bool { self.published.get() }
+    pub fn retire(&self) {
         self.invalidation.set();
         *self.roots.borrow_mut() = FoldedRoots::default();
         let links = std::mem::take(&mut *self.entry_links.borrow_mut());
@@ -98,9 +98,9 @@ impl<T> RootedCode for PublishedCode<T> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlotDependency {
-    pub(crate) shape: u32,
-    pub(crate) slot: u16,
-    pub(crate) ty: Type,
+    pub shape: u32,
+    pub slot: u16,
+    pub ty: Type,
 }
 
 /// The prototypes a Stable fact was read through: the `depth` links from the prototype the encoded
@@ -124,16 +124,16 @@ pub struct PrototypeChain {
 /// one retires the code).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InstanceofFact {
-    pub(crate) link: u32,
-    pub(crate) shape: u32,
+    pub link: u32,
+    pub shape: u32,
     pub(crate) slot: u16,
-    pub(crate) holder: u32,
-    pub(crate) chain: PrototypeChain,
+    pub holder: u32,
+    pub chain: PrototypeChain,
 }
 
 impl InstanceofFact {
     /// The slot dependency on the constructor's `prototype`, an object.
-    pub(crate) fn slot_dependency(self) -> SlotDependency {
+    pub fn slot_dependency(self) -> SlotDependency {
         SlotDependency { shape: self.shape, slot: self.slot, ty: Type::DIRECT_OBJECT_FAMILY }
     }
 }
@@ -167,7 +167,7 @@ impl CodeReaders {
 
     /// Publication is cold: prune expired readers and deduplicate the same code
     /// here, rather than accumulating dead weak handles on an unchanged owner.
-    pub(crate) fn subscribe(&mut self, owner: u32, code: &Rc<dyn DependentCode>) -> bool {
+    pub fn subscribe(&mut self, owner: u32, code: &Rc<dyn DependentCode>) -> bool {
         let owner = owner as usize;
         self.heads.resize(self.heads.len().max(owner + 1), None);
         let weak = Rc::downgrade(code);

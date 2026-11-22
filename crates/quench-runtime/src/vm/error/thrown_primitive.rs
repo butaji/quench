@@ -22,7 +22,7 @@ pub(in crate::vm) fn primitive_detail(value: Value) -> Option<String> {
 impl JsError {
     /// The throw of `value` when it is a primitive whose text needs no VM
     /// (`primitive_detail`), with that text made only when read; `None` for any other value.
-    pub(crate) fn thrown_primitive(value: Value) -> Option<Self> {
+    pub fn thrown_primitive(value: Value) -> Option<Self> {
         let plain = value.as_number().is_some() || value.as_bool().is_some() || value.is_null() || value.is_undefined();
         plain.then(|| Self::described(ErrorDescription::ThrownPrimitive, Some(value)))
     }

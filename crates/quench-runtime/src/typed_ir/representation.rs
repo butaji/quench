@@ -32,7 +32,7 @@ impl Representation {
             || (self == Self::Int64 && source == Self::Int32)
             || (self == Self::Float64 && matches!(source, Self::Int32 | Self::Int64))
     }
-    pub(crate) fn accepts(self, ty: Type) -> bool {
+    pub fn accepts(self, ty: Type) -> bool {
         ty != Type::NEVER
             && match self {
                 Self::Int32 => ty.is_subtype(Type::INT32),

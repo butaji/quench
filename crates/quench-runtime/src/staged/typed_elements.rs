@@ -17,9 +17,9 @@ use crate::Value;
 /// and the kind.
 #[derive(Clone, Copy)]
 pub struct TypedView<W> {
-    pub(crate) values: W,
-    pub(crate) length: W,
-    pub(crate) kind: ViewKind<W>,
+    pub values: W,
+    pub length: W,
+    pub kind: ViewKind<W>,
     /// Whether the access's index is proved below `length` (a range proof, or its loop's entry
     /// comparing its bound with the length once: `lane_region::loop_versions`), so no test of it
     /// remains.
@@ -43,13 +43,13 @@ pub struct NativeKind {
 
 impl NativeKind {
     /// `kind` as a native kind; `None` for Float16 and the BigInt kinds, which stay on the general path.
-    pub(crate) fn new(kind: TypedArrayKind) -> Option<Self> {
+    pub fn new(kind: TypedArrayKind) -> Option<Self> {
         ELEMENTS.into_iter().find(|native| native.kind == kind)
     }
 
     /// The type of an element read of this kind: an integer element's range (an int32 type for
     /// the kinds of at most 32 bits, a signed one's or an unsigned one's), a float element's Number.
-    pub(crate) fn element_type(self) -> Type {
+    pub fn element_type(self) -> Type {
         match self.element {
             Element::Integer(integer) => Type::int(integer.range(self.kind.width())),
             Element::Float32 | Element::Float64 => Type::NUMBER,
@@ -57,7 +57,7 @@ impl NativeKind {
     }
 
     /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one).
-    pub(crate) fn is_int32(self) -> bool { self.element_type().is_int32() }
+    pub fn is_int32(self) -> bool { self.element_type().is_int32() }
 }
 
 /// The integer elements, by the load that makes their int32 word and the store of its low bytes.

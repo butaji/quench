@@ -106,7 +106,7 @@ macro_rules! natives {
 
         impl Native {
             /// Every native in discriminant order: `ALL[n as usize]` has discriminant `n`.
-            pub(crate) const ALL: [Native; Native::COUNT as usize] = [$(Native::$variant),*];
+            pub const ALL: [Native; Native::COUNT as usize] = [$(Native::$variant),*];
 
             /// Whether this native is a shared function object, which `Vm::native_value` builds on
             /// first read and every realm shares.
@@ -670,7 +670,7 @@ pub(crate) struct WasmGlobalHeader {
 #[derive(Clone, Debug)]
 pub(crate) struct WasmMemoryHeader {
     pub(crate) object: Object,
-    pub(crate) ty: wasmparser::MemoryType,
+    pub ty: wasmparser::MemoryType,
 }
 
 /// The internal slot of a `Cell::WasmObject`.
@@ -854,14 +854,14 @@ impl InlineObjectHeader {
     /// No receiver's header: an unplanned entry's, which no construction reads.
     pub(crate) const EMPTY: Self = Self { layout: 0 };
 
-    pub(crate) fn of(proto: Value, shape: u32) -> Self {
+    pub fn of(proto: Value, shape: u32) -> Self {
         Self::of_storage(proto, ValueVec::inline_property_storage(shape))
     }
 
     /// The header words of an object with prototype `proto` whose `shape`'s values live in an
     /// arena run (`Object::from_run_header`), as `Object::with_property_storage` sets them
     /// apart from the run's position.
-    pub(crate) fn of_run(proto: Value, shape: u32) -> Self {
+    pub fn of_run(proto: Value, shape: u32) -> Self {
         Self::of_storage(proto, ValueVec::from_parts(0, shape))
     }
 
@@ -991,7 +991,7 @@ impl ProtoLink {
 
     /// The link as the object header encodes it (`OBJECT.proto_mask`).
     #[inline(always)]
-    pub(crate) fn bits(self) -> u32 {
+    pub fn bits(self) -> u32 {
         self.0
     }
 
@@ -1004,7 +1004,7 @@ impl ProtoLink {
 
     /// The object record this link names, if it names one.
     #[inline(always)]
-    pub(crate) fn object_record_id(self) -> Option<u32> {
+    pub fn object_record_id(self) -> Option<u32> {
         // The object range starts at a power of two above its own power-of-two span, so a
         // link in it holds the record id in its low bits: a mask, which addresses the record
         // without the subtracted base as a 64-bit displacement.
@@ -1513,7 +1513,7 @@ const _: () = assert!(align_of::<EnvironmentScope>() > INLINE_SCOPE_TAG);
 static NO_DYNAMIC_BINDINGS: EnvironmentBindings = EnvironmentBindings::Owned(Vec::new());
 
 impl EnvironmentScopeRef {
-    pub(crate) fn new(scope: EnvironmentScope) -> Self {
+    pub fn new(scope: EnvironmentScope) -> Self {
         if scope.is_program_only()
             && let Some(inline) = Self::inline(scope.program)
         {
@@ -1524,7 +1524,7 @@ impl EnvironmentScopeRef {
 
     /// The scope of a function's activation, which names only its `program`: `new` of that
     /// scope, without building it first.
-    pub(crate) fn of_program(program: u32) -> Self {
+    pub fn of_program(program: u32) -> Self {
         Self::inline(Some(program)).unwrap_or_else(|| {
             Self::boxed(EnvironmentScope {
                 program: Some(program),
@@ -1559,7 +1559,7 @@ impl EnvironmentScopeRef {
     }
 
     #[inline(always)]
-    pub(crate) fn program(&self) -> Option<u32> {
+    pub fn program(&self) -> Option<u32> {
         match self.scope() {
             Some(scope) => scope.program,
             None => (self.0.get() >> INLINE_PROGRAM_SHIFT)
@@ -1682,7 +1682,7 @@ pub struct IteratorExt {
     pub(crate) helper: Option<Box<IteratorHelper>>,
     /// Where `helper` is in its life; the record's `done` ends it.
     pub(crate) helper_phase: HelperPhase,
-    pub(crate) generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
+    pub generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
 }
 
 impl IteratorExt {

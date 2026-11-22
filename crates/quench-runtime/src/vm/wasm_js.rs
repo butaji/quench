@@ -1056,7 +1056,7 @@ impl Vm {
 
     /// The JavaScript value of an exported function's encoded `result` of scalar type `ty`
     /// (`CallCompletion::WasmExport`), whose decoding allocates nothing; `undefined` for none.
-    pub(super) fn wasm_export_result(&self, result: Value, ty: Option<WasmType>) -> Value {
+    pub fn wasm_export_result(&self, result: Value, ty: Option<WasmType>) -> Value {
         let Some(ty) = ty else { return Value::UNDEFINED };
         match self.decode_wasm_value_in(result, ty, None) {
             Ok(WasmValue::I32(value)) => Value::number(f64::from(value)),
@@ -1071,7 +1071,7 @@ impl Vm {
     /// whose parameters encode without allocating (`i32`, `f32`) from the Numbers `args` holds,
     /// so converting them runs no JavaScript, and whose result decodes without allocating.
     /// Its program, function, instance environment, encoded arguments and result type.
-    pub(super) fn wasm_export_frame_call(
+    pub fn wasm_export_frame_call(
         &mut self,
         callee: Value,
         args: &[Value],
@@ -1235,7 +1235,7 @@ impl Vm {
     /// activations become frames first), as V8 captures the stack at the throw; made where a
     /// handler takes it, its stack would name only the handler's frame. It stays a trap
     /// (`JsError::wasm_trap`), which no Wasm handler catches.
-    pub(super) fn trap_raised_in_javascript(&mut self, p: &ResidualProgram, mut error: JsError) -> JsError {
+    pub fn trap_raised_in_javascript(&mut self, p: &ResidualProgram, mut error: JsError) -> JsError {
         let Some(trap) = error.wasm_trap().filter(|_| error.thrown_value().is_none()) else {
             return error;
         };
@@ -1557,7 +1557,7 @@ impl Vm {
 
     /// Whether `value` is a Wasm GC object (a struct or array reference) in JavaScript: an
     /// exotic object with a null prototype and no properties, which every mutation refuses.
-    pub(super) fn is_wasm_gc_object(&self, value: Value) -> bool {
+    pub fn is_wasm_gc_object(&self, value: Value) -> bool {
         self.heap.wasm_gc(value).is_some()
     }
 

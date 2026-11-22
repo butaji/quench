@@ -168,7 +168,7 @@ impl JsError {
         self.0.payload.compile_failure
     }
 
-    pub(crate) fn execution_terminated() -> Self {
+    pub fn execution_terminated() -> Self {
         Self::described(ErrorDescription::ExecutionTerminated, None)
     }
     /// A host termination is uncatchable, not a guest Error object or throw.
@@ -183,7 +183,7 @@ impl JsError {
 
     pub fn is_execution_terminated(&self)->bool { matches!(self.0.payload.description,ErrorDescription::ExecutionTerminated) }
 
-    pub(crate) fn thrown(value: Value, message: String) -> Self {
+    pub fn thrown(value: Value, message: String) -> Self {
         Self::described(ErrorDescription::Text { message }, Some(value))
     }
 
@@ -213,7 +213,7 @@ impl JsError {
         })
     }
 
-    pub(super) fn capture_source_location(
+    pub fn capture_source_location(
         &mut self,
         program: &ResidualProgram,
         function: u32,
@@ -265,7 +265,7 @@ impl JsError {
         }
     }
 
-    pub(crate) fn wasm_trap_error(trap: crate::WasmTrap) -> Self {
+    pub fn wasm_trap_error(trap: crate::WasmTrap) -> Self {
         Self::described(ErrorDescription::WasmTrap(trap), None)
     }
 
@@ -281,14 +281,14 @@ impl JsError {
         Self::described(ErrorDescription::WasmLink(message.into()), None)
     }
 
-    pub(crate) fn validation(message: String) -> Self {
+    pub fn validation(message: String) -> Self {
         Self(ErrorMessage::from(format!(
             "invalid residual program: {message}"
         )))
     }
 
     /// Whether this is a JavaScript error whose message is `text`.
-    pub(super) fn has_message(&self, text: &str) -> bool {
+    pub fn has_message(&self, text: &str) -> bool {
         matches!(&self.0.payload.description, ErrorDescription::Text { message, .. } if message == text)
             || matches!(self.0.payload.description, ErrorDescription::ThrownPrimitive) && self.primitive_message_is(text)
     }
@@ -1137,7 +1137,7 @@ impl Vm {
         JsError::thrown(object, text)
     }
 
-    pub(super) fn thrown_value_for(&mut self, program: &ResidualProgram, error: JsError) -> Value {
+    pub fn thrown_value_for(&mut self, program: &ResidualProgram, error: JsError) -> Value {
         if let Some(value) = error.thrown_value() {
             return value;
         }

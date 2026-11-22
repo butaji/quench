@@ -92,7 +92,7 @@ pub(crate) fn unit_words<S: Stage>(stage: &mut S, record: S::Word, short: S::Con
 #[derive(Clone, Copy)]
 pub(crate) struct FlatString<W> {
     pub(crate) units: W,
-    pub(crate) length: W,
+    pub length: W,
     pub(crate) wide: W,
 }
 

@@ -417,7 +417,7 @@ macro_rules! define_simd_operators {
 
         impl SimdOperator {
             /// Every operator, by tag.
-            pub(crate) const ALL: &'static [Self] = &[$(Self::$name,)*];
+            pub const ALL: &'static [Self] = &[$(Self::$name,)*];
 
             /// The operator whose tag is `tag`, in a const context (a row's OP folds to it).
             #[inline(always)]

@@ -33,35 +33,35 @@ use super::super::wasm_gc::stage::HeapStage;
 /// A field access's operands (`Vm::wasm_field_operands`): the object, the field or element, its
 /// storage and access, and the value a write stores.
 pub(in crate::vm) struct FieldOperands {
-    pub(in crate::vm) reference: Value,
-    pub(in crate::vm) location: GcFieldIndex,
-    pub(in crate::vm) field: GcField,
-    pub(in crate::vm) access: GcFieldAccess,
-    pub(in crate::vm) value: Option<Value>,
+    pub reference: Value,
+    pub location: GcFieldIndex,
+    pub field: GcField,
+    pub access: GcFieldAccess,
+    pub value: Option<Value>,
     /// A struct read's field's static payload offset (`static_offset` of the `c` operand), `None` for a
     /// write, an array access, or an operand that does not carry it.
-    pub(in crate::vm) offset: Option<u32>,
+    pub offset: Option<u32>,
     /// Whether the access is a `*Raw` form: the data register holds the field's Wasm bits as a raw
     /// word (`compile::liveness::raw_webs`), which moves to or from the storage untouched.
-    pub(in crate::vm) raw: bool,
+    pub raw: bool,
 }
 
 /// The operands of a bulk array step (`array.fill`, `array.copy`), decoded from the registers: the
 /// destination and source references, the element count, and the output and input indices (`input`
 /// is only read by a copy).
 pub(in crate::vm) struct ArrayBulkOperands {
-    pub(in crate::vm) destination: Value,
-    pub(in crate::vm) source: Value,
-    pub(in crate::vm) count: u64,
-    pub(in crate::vm) output: u64,
-    pub(in crate::vm) input: u64,
+    pub destination: Value,
+    pub source: Value,
+    pub count: u64,
+    pub output: u64,
+    pub input: u64,
 }
 
 impl Vm {
     /// The operands of a bulk array step of `i`'s registers, as `wasm_array_bulk_step` and the lane
     /// decode them (`copy` for `array.copy`, else `array.fill`).
     #[inline(always)]
-    pub(in crate::vm) fn wasm_array_bulk_operands(
+    pub fn wasm_array_bulk_operands(
         &self,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
@@ -87,7 +87,7 @@ impl Vm {
     /// it writes to its result register, if any. Inlined, so a lane handler of one opcode
     /// keeps only that opcode's arm.
     #[inline(always)]
-    pub(in crate::vm) fn wasm_gc_value_step(
+    pub fn wasm_gc_value_step(
         &mut self,
         program: ProgramId,
         env: Value,
@@ -154,7 +154,7 @@ impl Vm {
     /// The operands of the field step `step` (`struct.get`/`set`, `array.get`/`set`) of the
     /// instruction `i`, read from its registers.
     #[inline(always)]
-    pub(in crate::vm) fn wasm_field_operands(
+    pub fn wasm_field_operands(
         &self,
         step: GcStep,
         i: WideInstruction,

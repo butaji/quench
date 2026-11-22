@@ -60,19 +60,19 @@ pub struct BitSet {
 
 impl BitSet {
     /// An empty set of indices below `len`.
-    pub(crate) fn new(len: usize) -> Self {
+    pub fn new(len: usize) -> Self {
         Self { words: smallvec::smallvec![0; words_for(len)], len }
     }
 
     /// The set of indices below `len` that `member` accepts.
-    pub(crate) fn from_fn(len: usize, mut member: impl FnMut(usize) -> bool) -> Self {
+    pub fn from_fn(len: usize, mut member: impl FnMut(usize) -> bool) -> Self {
         let mut set = Self::new(len);
         (0..len).filter(|&index| member(index)).for_each(|index| set.words[index / WORD_BITS] |= position(index).1);
         set
     }
 
     /// The bound every member stays below.
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.len
     }
 
@@ -81,14 +81,14 @@ impl BitSet {
     }
 
     #[inline(always)]
-    pub(crate) fn contains(&self, index: usize) -> bool {
+    pub fn contains(&self, index: usize) -> bool {
         let (word, bit) = position(index);
         index < self.len && self.words[word] & bit != 0
     }
 
     /// Adds `index`, which must be below `len`; whether it was absent.
     #[inline(always)]
-    pub(crate) fn insert(&mut self, index: usize) -> bool {
+    pub fn insert(&mut self, index: usize) -> bool {
         debug_assert!(index < self.len, "bit {index} of a set of {}", self.len);
         let (word, bit) = position(index);
         let absent = self.words[word] & bit == 0;
@@ -97,12 +97,12 @@ impl BitSet {
     }
 
     /// Adds `index` when it is below `len`; `None` (nothing added) otherwise.
-    pub(crate) fn checked_insert(&mut self, index: usize) -> Option<bool> {
+    pub fn checked_insert(&mut self, index: usize) -> Option<bool> {
         (index < self.len).then(|| self.insert(index))
     }
 
     /// Adds `index`, first raising `len` past it when needed; whether it was absent.
-    pub(crate) fn insert_growing(&mut self, index: usize) -> bool {
+    pub fn insert_growing(&mut self, index: usize) -> bool {
         if index >= self.len {
             self.grow(index + 1);
         }
@@ -110,7 +110,7 @@ impl BitSet {
     }
 
     #[inline(always)]
-    pub(crate) fn remove(&mut self, index: usize) {
+    pub fn remove(&mut self, index: usize) {
         if index < self.len {
             let (word, bit) = position(index);
             self.words[word] &= !bit;
@@ -158,7 +158,7 @@ impl BitSet {
     }
 
     /// The members, ascending.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.words.iter().enumerate().flat_map(|(index, &word)| word_members(index, word))
     }
 
@@ -188,7 +188,7 @@ impl BitRows {
         Self { words, bits: vec![0; points * words] }
     }
 
-    pub(crate) fn row(&self, point: usize) -> &[u64] {
+    pub fn row(&self, point: usize) -> &[u64] {
         &self.bits[point * self.words..(point + 1) * self.words]
     }
 

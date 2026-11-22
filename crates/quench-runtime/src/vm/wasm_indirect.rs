@@ -46,7 +46,7 @@ impl Vm {
 
     /// The function reference at `index` of `table` an indirect call of signature type
     /// `expected_index` of `caller`'s module calls (`wasm_indirect_element`).
-    pub(super) fn wasm_indirect_target(
+    pub fn wasm_indirect_target(
         &self,
         caller: ProgramId,
         table: Value,
@@ -85,7 +85,7 @@ impl Vm {
 
     /// `wasm_indirect_row_of_operand` over the caller's signature pool, `pool` (None where the
     /// program has none, which the element check reports after the table and index).
-    pub(super) fn wasm_indirect_row_with(
+    pub fn wasm_indirect_row_with(
         &self,
         pool: Option<&crate::wasm::WasmSignatures>,
         table: Value,

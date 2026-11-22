@@ -67,7 +67,7 @@ impl Identity {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct WordList {
     pub(crate) start: u32,
-    pub(crate) count: u16,
+    pub count: u16,
 }
 
 impl WordList {

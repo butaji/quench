@@ -51,7 +51,7 @@ fn optimized(isa: &OwnedTargetIsa, function: ir::Function) -> String {
 }
 
 /// The machine code and the vcode text.
-fn compiled(isa: &OwnedTargetIsa, function: ir::Function) -> (Vec<u8>, String, Vec<u32>) {
+pub fn compiled(isa: &OwnedTargetIsa, function: ir::Function) -> (Vec<u8>, String, Vec<u32>) {
     let mut context = Context::for_function(function);
     context.set_disasm(true);
     context.compile(&**isa, &mut ControlPlane::default()).unwrap();

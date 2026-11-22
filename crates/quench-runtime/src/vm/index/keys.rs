@@ -6,7 +6,7 @@ impl Vm {
     /// an array index in canonical decimal form (`object_static::array_index`), so the
     /// integer-keyed element reads answer `base["0"]` as they answer `base[0]`.
     #[inline(always)]
-    pub(in crate::vm) fn canonical_index_key(&self, key: Value) -> Value {
+    pub fn canonical_index_key(&self, key: Value) -> Value {
         let Some(text) = self.heap.string(key) else {
             return key;
         };
@@ -18,7 +18,7 @@ impl Vm {
             .map_or(key, Value::integer)
     }
 
-    pub(in crate::vm) fn array_index_key(&self, key: Value) -> Option<u32> {
+    pub fn array_index_key(&self, key: Value) -> Option<u32> {
         if let Some(index) = key.as_int() {
             return u32::try_from(index).ok();
         }

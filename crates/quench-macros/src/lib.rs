@@ -346,8 +346,11 @@ fn derive_extension(name: syn::Ident, mut block: syn::ItemImpl) -> syn::Result<p
                 function.sig.constness = None;
                 let mut signature = function.sig.clone();
                 for input in &mut signature.inputs {
-                    if let FnArg::Typed(typed) = input {
-                        typed.pat = Box::new(syn::parse_quote!(_));
+                    match input {
+                        FnArg::Typed(typed) => typed.pat = Box::new(syn::parse_quote!(_)),
+                        // `mut self` is a pattern, which a declaration may not carry.
+                        FnArg::Receiver(receiver) if receiver.reference.is_none() => receiver.mutability = None,
+                        FnArg::Receiver(_) => {}
                     }
                 }
                 let attributes = declaration_attributes(&function.attrs);
@@ -389,7 +392,7 @@ fn derive_extension(name: syn::Ident, mut block: syn::ItemImpl) -> syn::Result<p
     let items = &block.items;
     Ok(quote! {
         #(#attributes)*
-        pub trait #name #impl_generics #where_clause {
+        pub trait #name #impl_generics: ::core::marker::Sized #where_clause {
             #(#declarations)*
         }
         #(#attributes)*

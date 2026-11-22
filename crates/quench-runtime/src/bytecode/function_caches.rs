@@ -17,7 +17,7 @@ pub struct FunctionCaches {
     pub(crate) register_masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     /// The int32 `+`/`-` PCs the facts analysis proves exact, ascending (`base_region::exact`), `None` where the
     /// analysis declines the function.
-    pub(crate) exact_sums: std::cell::OnceCell<Option<Box<[u32]>>>,
+    pub exact_sums: std::cell::OnceCell<Option<Box<[u32]>>>,
 }
 
 /// A boolean a function derives on its first ask and keeps (`Function::lazy_flag`). Each owns a
@@ -51,12 +51,12 @@ impl LazyFlag {
 
 impl Function {
     /// The caches this function fills on demand, boxed by the first fill.
-    #[inline(always)] pub(crate) fn caches(&self) -> &FunctionCaches {
+    #[inline(always)] pub fn caches(&self) -> &FunctionCaches {
         self.caches.get_or_init(|| Box::default())
     }
 
     /// The derived boolean `flag`, derived by `derive` on its first ask and kept.
-    #[inline(always)] pub(crate) fn lazy_flag(&self, flag: LazyFlag, derive: impl FnOnce() -> bool) -> bool {
+    #[inline(always)] pub fn lazy_flag(&self, flag: LazyFlag, derive: impl FnOnce() -> bool) -> bool {
         if self.lazy_flags.get() & flag.known_bit() == 0 {
             let value = derive();
             self.seed_lazy_flag(flag, value);

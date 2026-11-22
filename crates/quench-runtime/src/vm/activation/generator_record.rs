@@ -47,7 +47,7 @@ pub struct GeneratorRecord {
     /// The parked continuation: present exactly while `life` is `Suspended`, `Windowed` or
     /// `Busy`. A windowed run's completion and resume register are stale until it parks again.
     pub(crate) parked: Option<Continuation>,
-    pub(crate) realm: Value,
+    pub realm: Value,
     pub(crate) requests: VecDeque<AsyncGeneratorRequest>,
 }
 
@@ -153,7 +153,7 @@ impl GeneratorRecord {
     /// (`resume_suspended_window`), and the register that takes the value the resume sends.
     /// The frame's address, which its box keeps while the record parks it.
     #[inline(always)]
-    pub(crate) fn suspended_frame(&mut self) -> Option<(*mut FrameRecord, Option<u16>)> {
+    pub fn suspended_frame(&mut self) -> Option<(*mut FrameRecord, Option<u16>)> {
         if self.life != GeneratorLife::Suspended {
             return None;
         }
@@ -195,7 +195,7 @@ impl GeneratorRecord {
 
     /// The frame of a windowed run, read in place: what `take_windowed` would give a
     /// materialization (`Vm::lane_stack_sites`).
-    pub(crate) fn windowed_frame(&self) -> Option<&FrameRecord> {
+    pub fn windowed_frame(&self) -> Option<&FrameRecord> {
         if self.life != GeneratorLife::Windowed {
             return None;
         }

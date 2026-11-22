@@ -33,9 +33,9 @@
 #[derive(Default)]
 pub(crate) struct CacheEpochs {
     /// Counts the stop-the-world collections that finished in this VM (`bump_gc`).
-    pub(crate) gc: u64,
+    pub gc: u64,
     /// Counts moves of the field cache table: its growth or replacement (`bump_field_entries`).
-    pub(crate) field_entries: u64,
+    pub field_entries: u64,
 }
 
 impl CacheEpochs {

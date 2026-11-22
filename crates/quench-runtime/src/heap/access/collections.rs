@@ -31,13 +31,13 @@ impl Heap {
 
     /// Whether `value` is a Map.
     #[inline(always)]
-    pub(crate) fn is_map(&self, value: Value) -> bool {
+    pub fn is_map(&self, value: Value) -> bool {
         matches!(self.collection(value), Some(CollectionRecord { entries: CollectionStorage::Map(_), .. }))
     }
 
     /// Whether `value` is a Set.
     #[inline(always)]
-    pub(crate) fn is_set(&self, value: Value) -> bool {
+    pub fn is_set(&self, value: Value) -> bool {
         matches!(self.collection(value), Some(CollectionRecord { entries: CollectionStorage::Set(_), .. }))
     }
 
@@ -67,7 +67,7 @@ impl Heap {
 
     /// A Set's entries.
     #[inline(always)]
-    pub(crate) fn set_entries(&self, value: Value) -> Option<&Entries<Value>> {
+    pub fn set_entries(&self, value: Value) -> Option<&Entries<Value>> {
         match &self.collection(value)?.entries {
             CollectionStorage::Set(entries) => Some(entries),
             CollectionStorage::Map(_) => None,

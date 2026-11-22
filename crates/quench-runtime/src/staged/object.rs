@@ -27,7 +27,7 @@ impl Form {
     /// The form a site's observed storage and its shape's length leave possible: only a shape
     /// that fits the payload word can be packed.
     #[inline(always)]
-    pub(crate) fn of(storage: Option<PlainPropertyStorage>, storage_len: usize) -> Self {
+    pub fn of(storage: Option<PlainPropertyStorage>, storage_len: usize) -> Self {
         match storage {
             Some(PlainPropertyStorage::PackedInline) => Self::Packed,
             Some(PlainPropertyStorage::Arena) => Self::Arena,
@@ -68,8 +68,8 @@ pub enum Slots<W, C> {
 /// The layout of one object record and how many values its shape holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Layout<W, C> {
-    pub(crate) slots: Slots<W, C>,
-    pub(crate) storage_len: usize,
+    pub slots: Slots<W, C>,
+    pub storage_len: usize,
 }
 
 /// The address of the table entry of the record's layout (`heap::layouts`), which holds its

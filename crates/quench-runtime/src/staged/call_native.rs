@@ -58,7 +58,7 @@ impl MathCall {
 
     /// Whether a stage runs the function as a row (`math_call`), which native code lowers inline:
     /// every function but the libm and two-Number bodies.
-    pub(crate) const fn is_row(self) -> bool {
+    pub const fn is_row(self) -> bool {
         !matches!(self, Self::Libm(_) | Self::Binary(_))
     }
 
@@ -68,7 +68,7 @@ impl MathCall {
     }
 
     /// The number of arguments the function's operation reads: two for the binary functions, else one.
-    pub(crate) const fn arity(self) -> u16 {
+    pub const fn arity(self) -> u16 {
         match self {
             Self::Extreme(_) | Self::Imul | Self::Binary(_) => 2,
             Self::Unary(_) | Self::LeadingZeros | Self::Libm(_) => 1,

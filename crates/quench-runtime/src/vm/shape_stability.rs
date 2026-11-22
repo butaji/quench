@@ -10,7 +10,7 @@ impl Vm {
     /// guards the shape at each use instead. Only where slot representations are kept: their
     /// store gate keeps a native add, which moves its object to the child without telling the
     /// readers of the shape it leaves (`staged::add::add_property`), out of native code.
-    pub(super) fn shape_is_stable(&self, shape: u32) -> bool {
+    pub fn shape_is_stable(&self, shape: u32) -> bool {
         let Some(children) = self.shapes.get(shape as usize + 1..) else { return false };
         self.heap.tracks_slot_representations() && !self.shape_is_dictionary(shape)
             && !children.iter().any(|child| child.parent() == Some(shape))

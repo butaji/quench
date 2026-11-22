@@ -28,7 +28,7 @@ impl Vm {
 
     /// Whether any method cache may name `atom`; `false` proves that none does.
     #[inline(always)]
-    pub(super) fn method_caches_may_name(&self, atom: Atom) -> bool {
+    pub fn method_caches_may_name(&self, atom: Atom) -> bool {
         self.method_cache_atoms.contains(atom)
     }
 
@@ -91,7 +91,7 @@ impl Vm {
         self.retain_megamorphic_sets();
     }
 
-    pub(super) fn is_function(&self, value: Value) -> bool {
+    pub fn is_function(&self, value: Value) -> bool {
         self.heap.is_function_value(value)
             || matches!(
                 self.heap.get(value),
@@ -534,7 +534,7 @@ impl Vm {
 
     /// The method `atom` of `this` that method site `site` caches, loaded as `call_method_site_safe`
     /// loads it on a hit and without running guest code: `None` where the caches do not serve it.
-    pub(super) fn method_cache_load(&self, p: &ResidualProgram, site: usize, atom: Atom, this: Value) -> Option<Value> {
+    pub fn method_cache_load(&self, p: &ResidualProgram, site: usize, atom: Atom, this: Value) -> Option<Value> {
         let key = self.method_receiver_key(this);
         self.cached_method(self.method_cache_index(site), atom, key, this, self.specialized && p.specialized)
             .map(|(callee, _, _)| callee)

@@ -17,8 +17,8 @@ use crate::value_vec::range_has_room;
 pub struct Transition {
     pub(crate) before: u32,
     pub(crate) after: u32,
-    pub(crate) slot: u16,
-    pub(crate) layouts: [u32; 2],
+    pub slot: u16,
+    pub layouts: [u32; 2],
 }
 
 /// An add site as compiled code holds it: the transition the site recorded and, for an add the
@@ -29,15 +29,15 @@ pub struct Transition {
 /// so it holds no link.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct AddSite {
-    pub(crate) transition: Transition,
-    pub(crate) link: Option<u32>,
-    pub(crate) depth: u8,
+    pub transition: Transition,
+    pub link: Option<u32>,
+    pub depth: u8,
 }
 
 impl Transition {
     /// The staged rows' edge: the layouts, and the slot.
     #[inline(always)]
-    pub(crate) fn edge(self) -> Edge<u64> {
+    pub fn edge(self) -> Edge<u64> {
         let [before, after] = self.layouts.map(u64::from);
         Edge { before, after, slot: u64::from(self.slot) }
     }
@@ -47,7 +47,7 @@ impl Transition {
     /// room for one more where its capacity class says (`range_has_room`). `None` where neither
     /// form fits, so the VM's add, which allocates, is the only one.
     #[inline(always)]
-    pub(crate) fn form(self) -> Option<Form> {
+    pub fn form(self) -> Option<Form> {
         let slot = usize::from(self.slot);
         match (slot < OBJECT.inline_property_count, range_has_room(slot)) {
             (true, true) => Some(Form::Either),

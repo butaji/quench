@@ -1,7 +1,7 @@
 use super::*;
 
 impl Vm {
-    pub(super) fn cached_functions(
+    pub fn cached_functions(
         &self,
         program: ProgramId,
         id: u32,
@@ -126,7 +126,7 @@ impl Vm {
     }
 
     /// Whether module instance `program` made hoisted function `id` at instantiation.
-    pub(super) fn is_module_function(&self, program: ProgramId, id: u32) -> bool {
+    pub fn is_module_function(&self, program: ProgramId, id: u32) -> bool {
         self.module_functions.contains(program, id)
     }
 

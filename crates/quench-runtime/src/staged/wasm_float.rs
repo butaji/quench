@@ -24,7 +24,7 @@ impl Float {
         }
     }
 
-    pub(crate) const fn ty(self) -> WasmType {
+    pub const fn ty(self) -> WasmType {
         match self {
             Self::F32 => WasmType::F32,
             Self::F64 => WasmType::F64,
@@ -44,9 +44,9 @@ impl Float {
 /// A trapping float-to-integer conversion: the float it reads and the integers it may produce.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Truncation {
-    pub(crate) float: Float,
-    pub(crate) width: Width,
-    pub(crate) signed: bool,
+    pub float: Float,
+    pub width: Width,
+    pub signed: bool,
 }
 
 /// Whether `operator` compares: its result is an `I32` flag at either float width.
@@ -380,7 +380,7 @@ pub(crate) fn step<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, oper
 
 impl<W, P> Operation<W, P> {
     /// The float operation `instruction` denotes (`Decoder::WasmFloat`).
-    pub(crate) fn decode_wasm_float(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_wasm_float(instruction: WideInstruction) -> Option<Self> {
         WasmFloatOperation::decode(instruction).map(Self::WasmFloat)
     }
 }

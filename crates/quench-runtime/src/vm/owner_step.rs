@@ -19,7 +19,7 @@ fn global_lexical_declaration(p: &ResidualProgram, declaration: u32) -> (Atom, &
 impl Vm {
     /// The step `i` (an `Op::owned_step` op) of the activation `owner` names, whose instruction
     /// resumes at `pc`, which a name lookup takes for its binding site.
-    pub(super) fn owner_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
+    pub fn owner_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
         match i.op().owned_step().expect("an owner step is a catalog `owned` row") {
             OwnedStep::LoadLocal => self.load_local_step(p, owner, i),
             OwnedStep::StoreVarBinding => self.store_var_binding_step(p, owner, i),

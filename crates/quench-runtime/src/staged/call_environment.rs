@@ -144,7 +144,7 @@ pub struct EnvironmentShape {
 impl EnvironmentShape {
     /// The window's words before its kept values: registers, entries, locals.
     #[inline(always)]
-    pub(crate) const fn held(self) -> usize {
+    pub const fn held(self) -> usize {
         self.registers as usize + ENTRY_WORDS as usize + self.locals as usize
     }
 }

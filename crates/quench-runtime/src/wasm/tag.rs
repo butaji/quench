@@ -15,5 +15,5 @@ pub enum ExceptionInput {
     Payload,
 }
 impl ExceptionInput {
-    pub(crate) const MIN_COUNT: u16 = Self::Payload as u16;
+    pub const MIN_COUNT: u16 = Self::Payload as u16;
 }

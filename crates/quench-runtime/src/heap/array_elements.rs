@@ -78,7 +78,7 @@ unsafe fn write_parts(values: *mut Value, parts: &[&[Value]]) -> u32 {
 /// # Safety
 /// `start` was allocated with `layout` and nothing uses it after this call.
 #[inline(always)]
-unsafe fn release(start: *mut u8, layout: Layout) {
+pub unsafe fn release(start: *mut u8, layout: Layout) {
     // SAFETY: the caller's contract.
     unsafe { dealloc(start, layout) };
 }
@@ -445,7 +445,7 @@ impl ArrayElements {
     }
 
     #[inline(always)]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         (self.header().len & !ENCODED_LEN) as usize
     }
 
@@ -462,7 +462,7 @@ impl ArrayElements {
 
     /// Whether this backing holds raw doubles (`DOUBLE_LEN`).
     #[inline(always)]
-    pub(crate) fn is_double(&self) -> bool {
+    pub fn is_double(&self) -> bool {
         self.header().len & DOUBLE_LEN != 0
     }
 
@@ -475,7 +475,7 @@ impl ArrayElements {
     /// A double backing's words, as doubles (holes are `Value::DELETED`'s NaN word); `None`
     /// for any other backing.
     #[inline]
-    pub(crate) fn double_values(&self) -> Option<&[f64]> {
+    pub fn double_values(&self) -> Option<&[f64]> {
         // SAFETY: a double backing's first `len` words are initialized f64 bits.
         self.is_double().then(|| unsafe { std::slice::from_raw_parts(self.double_words().cast::<f64>(), self.len()) })
     }
@@ -521,13 +521,13 @@ impl ArrayElements {
 
     /// The values in order.
     #[inline]
-    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + Clone + '_ {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + Clone + '_ {
         (0..self.len()).map(move |index| self.read(index))
     }
 
     /// The values of `range` in order.
     #[inline]
-    pub(crate) fn range(&self, range: std::ops::Range<usize>) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + '_ {
+    pub fn range(&self, range: std::ops::Range<usize>) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + '_ {
         assert!(range.start <= range.end && range.end <= self.len(), "array range out of bounds");
         range.map(move |index| self.read(index))
     }
@@ -538,7 +538,7 @@ impl ArrayElements {
 
     /// The values of a wide backing as a slice; `None` for a narrow one.
     #[inline(always)]
-    pub(crate) fn wide_values(&self) -> Option<&[Value]> {
+    pub fn wide_values(&self) -> Option<&[Value]> {
         // SAFETY: the first `len` values of a wide backing are initialized.
         (!self.is_encoded()).then(|| unsafe { std::slice::from_raw_parts(self.values(), self.len()) })
     }
@@ -612,7 +612,7 @@ impl ArrayElements {
     }
 
     #[inline(always)]
-    pub(crate) fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         (self.header().capacity & !(BIASED | KEEP_WIDE)) as usize
     }
 
@@ -670,7 +670,7 @@ impl ArrayElements {
     }
 
     /// The owners of this backing; zero for the shared empty one and young runs.
-    #[inline] pub(crate) fn owner_count(&self) -> usize {
+    #[inline] pub fn owner_count(&self) -> usize {
         self.header().owners as usize
     }
 
@@ -843,7 +843,7 @@ impl ArrayElements {
     /// Room for `additional` more words in a double backing this array alone owns, grown as
     /// `UniqueElements::reserve` grows: the flag and the hole count stay, as a native
     /// append into the room then needs (`Vm::reserve_native_array_append`).
-    pub(crate) fn reserve_double(&mut self, additional: usize) {
+    pub fn reserve_double(&mut self, additional: usize) {
         assert!(self.is_double() && self.header().owners == 1, "double room in a backing of its own");
         let required = self.len().checked_add(additional).expect("array backing overflow");
         if required > self.capacity() {
@@ -1132,7 +1132,7 @@ impl UniqueElements {
     /// Room for `additional` more values, growing by half (`GrowthPolicy::Half`). Inline: a backing with
     /// room, the common append, tests its capacity alone.
     #[inline(always)]
-    pub(crate) fn reserve(&mut self, additional: usize) {
+    pub fn reserve(&mut self, additional: usize) {
         let required = self.0.len().checked_add(additional).expect("array backing overflow");
         if required > self.0.capacity() {
             self.grow_for(required);
@@ -1266,7 +1266,7 @@ impl UniqueElements {
         self.set_len(new_len);
     }
 
-    pub(crate) fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         self.0.capacity()
     }
 }

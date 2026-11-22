@@ -321,7 +321,7 @@ impl Vm {
     /// leaves accessors (lazy properties among them), exotic and namespace objects, Proxies
     /// and private, index, `length` or legacy function keys to the general path.
     #[inline]
-    pub(super) fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
+    pub fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
         if !self.plain_named_key(atom) {
             return None;
         }
@@ -332,7 +332,7 @@ impl Vm {
     /// property of the global object or its ordinary prototypes, or `Some(None)` for an
     /// absent name (`plain_property_lookup`). `None` for any lookup the shapes alone do not
     /// answer.
-    pub(super) fn plain_global_lookup(&self, atom: Atom) -> Option<Option<Value>> {
+    pub fn plain_global_lookup(&self, atom: Atom) -> Option<Option<Value>> {
         if !self.plain_named_key(atom) {
             return None;
         }
@@ -356,7 +356,7 @@ impl Vm {
     /// properties, side-table descriptors, exotic, namespace and non-extensible objects,
     /// Proxies and the keys `plain_named_key` refuses to the general path, which runs no
     /// guest code before reaching one.
-    pub(super) fn set_plain_named_property(
+    pub fn set_plain_named_property(
         &mut self,
         object: Value,
         atom: Atom,
@@ -381,7 +381,7 @@ impl Vm {
     }
 
     /// `set_plain_named_property` of array index `index` on a chain `plain_index_get` reads.
-    pub(super) fn set_plain_index_property(&mut self, object: Value, index: usize, value: Value) -> Option<()> {
+    pub fn set_plain_index_property(&mut self, object: Value, index: usize, value: Value) -> Option<()> {
         if !self.ordinary_index_chain(object) {
             return None;
         }
@@ -410,7 +410,7 @@ impl Vm {
     /// A keyed read of a symbol, or of a string naming an existing non-index atom, that the
     /// plain chain walk answers: what `get_index` returns for it before any lookup that can
     /// run guest code. `None` leaves the read to `get_index`.
-    pub(super) fn plain_keyed_get(&mut self, object: Value, key: Value) -> Option<Value> {
+    pub fn plain_keyed_get(&mut self, object: Value, key: Value) -> Option<Value> {
         if let Some(index) = key.as_int() {
             return self.plain_index_get(object, usize::try_from(index).ok()?);
         }
@@ -437,7 +437,7 @@ impl Vm {
     /// slot its site entry names for `object`'s shape (`SymbolLoadProofs::site_own_slot`). An
     /// arguments object's indices are exotic whatever its shape says.
     #[inline(always)]
-    pub(super) fn site_keyed_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
+    pub fn site_keyed_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
         let data = self.heap.ordinary_object(object)?;
         let slot = self.symbol_load_proofs.site_own_slot(site, data.layout_id(), key)?;
         if data.is_arguments_object() {
@@ -450,7 +450,7 @@ impl Vm {
     /// Records at lane site `site` the own slot a proof gives `key`, a symbol or an array
     /// index, on `object`'s shape, for `site_keyed_own_read`; nothing for any other key or
     /// answer.
-    pub(super) fn record_site_keyed_read(&self, site: usize, object: Value, key: Value) {
+    pub fn record_site_keyed_read(&self, site: usize, object: Value, key: Value) {
         let property = match key.as_int() {
             Some(index) => match usize::try_from(index).ok().and_then(|index| self.lookup_array_index_atom(index)) {
                 Some(atom) => PropertyKey::string(atom),
@@ -466,7 +466,7 @@ impl Vm {
 
     /// `plain_named_get` with its walk proved (`plain_proved_get`), for callers that may record.
     #[inline]
-    pub(super) fn plain_named_load(&mut self, object: Value, atom: Atom) -> Option<Value> {
+    pub fn plain_named_load(&mut self, object: Value, atom: Atom) -> Option<Value> {
         if !self.plain_named_key(atom) {
             return None;
         }
@@ -739,7 +739,7 @@ impl Vm {
     /// Makes the data dependency `dependency` retire when a link of the whole chain from
     /// `start` (itself included) changes its layout or dies, each marked a prototype first
     /// (`Dependencies::hold_layouts`); `false` where a link has no subject or a table is full.
-    pub(super) fn hold_chain_layouts(&mut self, start: Value, dependency: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+    pub fn hold_chain_layouts(&mut self, start: Value, dependency: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
         let Some(subjects) = self.chain_depth(start).and_then(|depth| self.heap.chain_subjects(start, depth)) else {
             return false;
         };
@@ -785,7 +785,7 @@ impl Vm {
     /// present one: `HasProperty` and `Get` together where neither can run guest code.
     /// `None` leaves both to the general path.
     #[inline]
-    pub(super) fn plain_property_lookup(
+    pub fn plain_property_lookup(
         &self,
         object: Value,
         key: PropertyKey,
@@ -1060,7 +1060,7 @@ impl Vm {
     /// The value of private field `atom` of `target` under the running frame's home for the
     /// name. A target without the field, or whose element is a method or accessor, answers
     /// `None`, leaving the access to the general path, which throws or calls it.
-    pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
+    pub fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
         self.private_field(target, PrivateBrand { home, name: atom })
     }
@@ -1098,7 +1098,7 @@ impl Vm {
     /// `site`: the element the site recorded under the brand's home (`PrivateSiteHomes::element`), else the one `[[Get]]`'s walk of the
     /// object's chain meets, recorded for the next read. `None` leaves the read to the general
     /// path: a missing getter, a proxy on the chain, or a site without a recorded home.
-    pub(super) fn site_private_element(
+    pub fn site_private_element(
         &self,
         site: usize,
         brand: PrivateBrand,
@@ -1131,7 +1131,7 @@ impl Vm {
     }
 
     /// `private_field_value` through `memoized_private_brand`.
-    pub(super) fn memoized_private_field_value(
+    pub fn memoized_private_field_value(
         &self,
         p: &ResidualProgram,
         environment: Value,
@@ -1153,11 +1153,11 @@ impl Vm {
 
     /// Whether `object` may gain a private element: always, unless the host applies
     /// non-extensibility to private elements (`Host::nonextensible_applies_to_private`).
-    pub(super) fn private_element_addable(&self, object: &Object) -> bool {
+    pub fn private_element_addable(&self, object: &Object) -> bool {
         object.is_extensible() || !self.host.nonextensible_applies_to_private()
     }
 
-    pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
+    pub fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
         let Some(addable) = self.object_data(target).map(|object| self.private_element_addable(object)) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
@@ -1174,7 +1174,7 @@ impl Vm {
     /// `MarkPrivateName`: brands `object` with private method name `atom` of the class home
     /// `home` (PrivateMethodOrAccessorAdd), which raises for a non-extensible object or one
     /// already branded; the class itself, as its own home, takes its static methods' brand.
-    pub(super) fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
+    pub fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
         let brand = PrivateBrand { home, name: atom };
         if object != home {
             let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), self.has_private_name(object, brand))) else {

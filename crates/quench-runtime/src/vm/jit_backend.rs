@@ -71,7 +71,7 @@ pub enum CompileLevel {
 impl CompileLevel {
     /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
     /// `quick-compile` experiment measures that level.
-    pub(super) fn run_default() -> Self {
+    pub fn run_default() -> Self {
         if crate::jit_mode::quick_only() || crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
     }
 
@@ -247,14 +247,14 @@ pub enum NativeCompileRejection {
 
 impl NativeCompileRejection {
     /// Whether replanning with less inlined code can address this rejection.
-    pub(super) const fn exceeds_code_budget(self) -> bool {
+    pub const fn exceeds_code_budget(self) -> bool {
         match self {
             Self::CodeSizeBudget => true,
             _ => false,
         }
     }
 
-    pub(super) const fn reason(self) -> &'static str {
+    pub const fn reason(self) -> &'static str {
         match self {
             Self::Cranelift => "cranelift-compile-error",
             Self::Relocations => "unresolved-relocations",

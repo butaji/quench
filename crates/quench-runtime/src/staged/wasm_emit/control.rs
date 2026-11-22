@@ -68,7 +68,7 @@ pub(crate) fn unreachable() -> Emission {
 }
 
 /// `result = condition ? left : right`.
-pub(crate) fn select(
+pub fn select(
     result: Register,
     left: Register,
     right: Register,

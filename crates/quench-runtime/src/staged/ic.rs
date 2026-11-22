@@ -85,7 +85,7 @@ pub struct Reached<W, C> {
 impl<W, C> Reached<W, C> {
     /// A record the read reached with no facts of it held.
     #[inline(always)]
-    pub(crate) fn bare(record: W) -> Self {
+    pub fn bare(record: W) -> Self {
         Self { record, shape: None, inline: None, word: None, formed: None, auxiliary: None }
     }
 }

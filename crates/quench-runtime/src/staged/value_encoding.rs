@@ -175,14 +175,14 @@ const _: () = assert!(NARROW_UPPER_WORDS[DIRECT_OBJECT_NARROW_CODE as usize] == 
 pub struct ValueLayout;
 
 impl ValueLayout {
-    pub(crate) const TAG_MASK: u64 = TAG_MASK;
-    pub(crate) const INT_TAG: u64 = TAG_INT;
+    pub const TAG_MASK: u64 = TAG_MASK;
+    pub const INT_TAG: u64 = TAG_INT;
     /// Tag shared by TDZ and internal environment-slot markers.
-    pub(crate) const INTERNAL_TAG: u64 = TAG_DELETED;
+    pub const INTERNAL_TAG: u64 = TAG_DELETED;
     /// The tag of every heap reference (`Value::heap_index`).
     pub(crate) const HEAP_TAG: u64 = TAG_HEAP;
-    pub(crate) const DIRECT_ARRAY_TAG: u64 = DIRECT_ARRAY_TAG;
-    pub(crate) const DIRECT_OBJECT_TAG: u64 = DIRECT_OBJECT_TAG;
+    pub const DIRECT_ARRAY_TAG: u64 = DIRECT_ARRAY_TAG;
+    pub const DIRECT_OBJECT_TAG: u64 = DIRECT_OBJECT_TAG;
     pub(crate) const DIRECT_FUNCTION_TAG: u64 = DIRECT_FUNCTION_TAG;
     pub(crate) const DIRECT_PROMISE_TAG: u64 = DIRECT_PROMISE_TAG;
     pub(crate) const DIRECT_ITERATOR_TAG: u64 = DIRECT_ITERATOR_TAG;

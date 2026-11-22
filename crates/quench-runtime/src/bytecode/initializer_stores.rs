@@ -6,9 +6,9 @@ use smallvec::SmallVec;
 /// cache site `site`, takes `value`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InitializerStore {
-    pub(crate) atom: u32,
-    pub(crate) site: u16,
-    pub(crate) value: InitializerValue,
+    pub atom: u32,
+    pub site: u16,
+    pub value: InitializerValue,
 }
 
 /// What an initializer store gives its field.
@@ -38,12 +38,12 @@ pub const NESTED_ARGUMENTS: usize = 4;
 /// `arguments[..count]`; or `<capture>.<chain>` itself where it does not `constructs`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NestedConstruct {
-    pub(crate) capture: u32,
-    pub(crate) chain: [u32; NESTED_CHAIN],
-    pub(crate) depth: u8,
-    pub(crate) arguments: [InitializerConstant; NESTED_ARGUMENTS],
-    pub(crate) count: u8,
-    pub(crate) constructs: bool,
+    pub capture: u32,
+    pub chain: [u32; NESTED_CHAIN],
+    pub depth: u8,
+    pub arguments: [InitializerConstant; NESTED_ARGUMENTS],
+    pub count: u8,
+    pub constructs: bool,
 }
 
 impl InitializerStore {
@@ -82,7 +82,7 @@ impl InitializerConstant {
 
     /// The value the constant stores, a string literal's from the running program's
     /// materialized constants (`program_constant`).
-    pub(crate) fn value(self, program_constant: impl FnOnce(usize) -> Option<crate::value::Value>) -> Option<crate::value::Value> {
+    pub fn value(self, program_constant: impl FnOnce(usize) -> Option<crate::value::Value>) -> Option<crate::value::Value> {
         Some(match self {
             Self::Number(number) => crate::value::Value::number(number),
             Self::Boolean(boolean) => crate::value::Value::boolean(boolean),
