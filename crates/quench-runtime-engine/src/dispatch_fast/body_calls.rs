@@ -199,7 +199,7 @@ fn body_script_call(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         if !activation_room_in_lane(vm, target) { return miss(vm, Miss::NoActivationRoom); }
         return body_activate_in_lane(cx, call, target, this, false, how);
     }
-    let Some(how) = call_activation_in_lane(target, call.argc()) else { return miss(vm, Miss::EntryNotActivation) };
+    let Some(how) = activation_form(target, call.argc()) else { return miss(vm, Miss::EntryNotActivation) };
     if how.plain && !activation_room_in_lane(vm, target) { return miss(vm, Miss::NoActivationRoom); }
     body_activate_in_lane(cx, call, target, this, false, how)
 }
@@ -310,7 +310,7 @@ fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value) -> 
     if !target.constructs() { return miss(vm, Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`script_construct_miss`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
-    let how = match call_activation_in_lane(&target, call.argc()) {
+    let how = match activation_form(&target, call.argc()) {
         None => return miss(vm, Miss::EntryNotActivation),
         Some(how) => how,
     };
@@ -381,9 +381,11 @@ fn body_call_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value, li
 /// `activate_in_lane`; by the keeping form (`keeping`) where it keeps or gathers values or is passed
 /// more than it has parameters; by the environment form (`environment`, a window holding its
 /// environment and locals). A frame or a settling entry takes the lane's own call, which is
-/// `None`, where none holds.
+/// `None`, where none holds. The one chooser of the lane's own calls and of a body's: the interpreter's
+/// `script_call_full_miss` reads `is_some` for its activation test, where a target that forwards or
+/// is an environment is already routed away.
 #[inline]
-fn call_activation_in_lane(target: &ScriptCallTarget, argc: u16) -> Option<CallActivation<bool>> {
+pub(crate) fn activation_form(target: &ScriptCallTarget, argc: u16) -> Option<CallActivation<bool>> {
     let fixed = argc <= target.params.min(FIXED_ARGUMENT_COPIES);
     let form = quench_runtime::staged::call_body::concrete_activation(target.entry.activates(), target.forwards(), fixed, matches!(target.entry, CallEntry::Environment));
     (form.plain || form.keeping || form.environment).then_some(form)
@@ -397,7 +399,7 @@ fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value {
 
 /// The activation of `target` a lane body's call (`constructs`: `new`) makes, run by the target's
 /// own body where it has one (`body_run_in_lane`). It is pushed by the form the activation row chose
-/// (`how`, `call_activation_in_lane`: `staged::call_body::activation`), consumed here, each form's
+/// (`how`, `activation_form`: `staged::call_body::activation`), consumed here, each form's
 /// words its push's: `push_plain` (`BodyCall::push_plain`), `activate_keeping_in_lane`,
 /// `activate_environment_in_lane`; a form that routes the call to the general path is the helper's
 /// miss.
@@ -415,7 +417,7 @@ fn body_activate_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptC
             Err(_) => return refused(),
         }
     } else {
-        debug_assert!(how.environment, "call_activation_in_lane admits one of the three forms");
+        debug_assert!(how.environment, "activation_form admits one of the three forms");
         // SAFETY: the call's values are registers of the running function.
         let values = unsafe { call.values() };
         match activate_environment_in_lane(cx, call.registers, call.ip, target, &values, (this, constructs)) {

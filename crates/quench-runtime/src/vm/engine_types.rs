@@ -5342,6 +5342,11 @@ impl LaneView {
     #[inline]
     pub fn called_by_regions(&self) -> bool { self.tier().history.get().region_called }
 
+    /// Whether a body compiled a call of this function (`note_caller`): native callers want its
+    /// body whatever its length, which only the lane's own entries ask to amortize.
+    #[inline]
+    pub fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
+
     /// A specialized body that went at a lifecycle edge warms again from the start, keeping
     /// where it and its predecessors left, and its recompiles, as its successor's feedback: a call site's behavior
     /// outlives the shape ids the edge renumbered. One no run of which completed counts as

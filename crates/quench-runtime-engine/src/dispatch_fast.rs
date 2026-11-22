@@ -1359,10 +1359,11 @@ impl Admission {
     }
 
     /// Whether `self` was made in the lane's current generation and program, whatever the lane's
-    /// conditions: what a plan built now may rely on (`lane_direct_callee`).
+    /// conditions and diagnostics: what a plan built now may rely on (`direct_callee_in_lane`).
+    /// The diagnostics only observe the tier, so they must not change which callees it compiles.
     #[inline(always)]
     fn current(self, lane: Admission) -> bool {
-        (self.0 ^ lane.0) & !Self::CONDITIONS == 0
+        (self.0 ^ lane.0) & !(Self::CONDITIONS | Self::DIAGNOSED) == 0
     }
 
     /// Whether `self` was made in the lane's current generation, whatever its program.
@@ -9032,7 +9033,6 @@ script_handler! {
         // A leaf entry its own call form proved (`script_call_leaf_prove_miss`) activates as
         // `Activates` from any other call (`CallEntry::activates`).
         debug_assert!(target.entry.activates());
-        debug_assert!(!vm.programs.js_jit_diagnostics_enabled());
         debug_assert!(target.program() == unsafe { (*cx).program });
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
@@ -9063,11 +9063,6 @@ script_handler! {
         }
         let argc = call_argument_count::<ARGC>(i);
         if argc > FIXED_ARGUMENT_COPIES || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
-            sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
-        }
-        // The tier's diagnostics count every entry (`record_js_jit_lane_entry`), which a
-        // proved call skips: under them no link is proved.
-        if vm.programs.js_jit_diagnostics_enabled() {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
         // A callee whose cell holds a body is proved too: the plain activation tests the cell
@@ -9391,7 +9386,9 @@ script_handler! {
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let argc = ImmediateLayout::argument_count(i.imm());
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
-        let value = if target.entry.activates()
+        // Past the forwards, settling, frame and environment tests above, `activation_form` holds
+        // exactly when the entry activates (its plain or keeping form), so this is the same test.
+        let value = if body_calls::activation_form(target, argc).is_some()
             || returns && !returning_call_admitted(cx)
         {
             None
@@ -11513,6 +11510,11 @@ fn construct_native_in_lane(
 /// than an error constructor, with what the constructor passes on.
 #[inline(never)]
 fn super_forwarded_parent_in_lane(vm: &Vm, callee: Value) -> Option<(Value, quench_runtime::bytecode::SuperForwarded)> {
+    // A plan with a recorded user parent (`super_construction`) is no native forwarding: its
+    // construction goes straight to that plan, not decoding the constructor's body each time.
+    if holding_construct_plan_index(vm, callee).is_some_and(|index| vm.lane_stack.construct_plans[index].super_parent != Value::UNDEFINED) {
+        return None;
+    }
     let Some(FunctionRecord { kind: FunctionKind::User(program, function), .. }) = vm.heap.function(callee) else {
         return None;
     };
@@ -13740,12 +13742,20 @@ fn enter_window_of_in_lane<const GENERAL: bool, const SETTLES: bool, const COUNT
     if cross {
         enter_program_in_lane(cx, target.program());
     }
-    // A proved plain call (`PLAIN_LINK`) never runs under the tier's diagnostics
-    // (`script_call_prove_miss`), so it skips their per-call test (`COUNTED`).
+    // A proved plain call (`PLAIN_LINK`) skips this per-call count (`COUNTED`); under the tier's
+    // diagnostics `enter_plain_window` counts it instead.
     if COUNTED { vm.programs.record_js_jit_lane_entry(target.program(), target.function); }
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     (callee_registers, start)
+}
+
+/// Counts a proved call's entry, which only the tier's diagnostics make (`enter_plain_window`).
+#[cold]
+#[inline(never)]
+fn count_proved_entry_in_lane(vm: &mut Vm, target: &ScriptCallTarget) {
+    let (program, function) = (target.program(), target.function);
+    vm.programs.record_js_jit_lane_entry(program, function);
 }
 
 /// `enter_window_of_in_lane` of a proved plain call (`lane_plain_activation!` past `PLAIN_LINK`):
@@ -13754,6 +13764,7 @@ fn enter_window_of_in_lane<const GENERAL: bool, const SETTLES: bool, const COUNT
 /// window), so its header goes below the window straight from the call's words
 /// (`protocol::push_plain_at`), with no `Activation` value and no `LaneStack::header_flags`
 /// test. `depth` is the plain depth `LaneStack::plain_room` admitted it at.
+/// The tier's entry count (`record_js_jit_lane_entry`) is made here only under diagnostics.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn enter_plain_window(
@@ -13793,8 +13804,9 @@ fn enter_plain_window(
     }
     callee_registers.set_env(target.env);
     callee_registers.set_capture(target.capture);
-    // A proved call never runs under the tier's diagnostics (`script_call_prove_miss`), so it
-    // records no tier entry (`enter_window_of_in_lane`'s `COUNTED`). It never constructs.
+    // A proved call skips the tier entry count (`enter_window_of_in_lane`'s `COUNTED`) unless the
+    // tier's diagnostics count entries: then this cold branch does, so they observe the same path.
+    if vm.programs.js_jit_diagnostics_enabled() { count_proved_entry_in_lane(vm, target); }
     (callee_registers, unsafe { (*target.view).start() })
 }
 
@@ -17362,7 +17374,9 @@ fn derive_lane_view<'live>(
         specialize_proved_arrays(&decoded, &mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
-    let loop_kernels = if !wasm && (!loop_tier || quench_runtime::jit_mode::base_only()) {
+    // Every mode runs them: a loop a kernel takes keeps no tier site (`loop_sites`), since the
+    // compiled tiers project the interpreter's fastest form of the loop, its kernel.
+    let loop_kernels = if !wasm {
         loop_kernel::install_loop_kernels(&decoded, constants, function, &exits, &mut records, live().map(|masks| &**masks))
     } else {
         Box::default()
@@ -17377,7 +17391,7 @@ fn derive_lane_view<'live>(
     // A loop kernel or vector region writes its registers from its own code, under no kind.
     let int_kinds = (!wasm && int_kinds::proven_forms_enabled() && loop_kernels.is_empty() && vector_regions.is_empty())
         .then(|| int_kinds::analyze(&decoded, constants, live().map(|masks| &**masks), usize::from(function.registers),
-            resolves_names, int_kinds::speculation_allowed()))
+            resolves_names, int_kinds::speculation_in_mode()))
         .flatten();
     let mut int_speculating = Vec::new();
     if !wasm {
@@ -17659,9 +17673,9 @@ fn install_loop_sites<'live>(
         })
         .collect();
     let mut sites = sites;
-    // BaseJIT's stencils run a loop the interpreter's kernel takes slower than the kernel does:
-    // under `--b-jit` that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
-    if quench_runtime::jit_mode::base_only() {
+    // The tiers run a loop the interpreter's kernel takes slower than the kernel does: in every
+    // mode that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
+    {
         sites.retain(|(pc, site)| !loop_kernel::LoopKernel::accepts(decoded, constants, function, site.header as usize, *pc));
     }
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
