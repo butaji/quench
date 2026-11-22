@@ -34,3 +34,7 @@ micro	callAdd (call returning this.x + o.x)	13.54	0.46	0.47	two field reads plus
 micro	fieldOnly (a.x)	3.00	0.46	0.33	the interpreter's per-field floor	-
 micro	newOnly (new V(i,i,i); v.x)	2.01	1.00	1.29	construction is already competitive (faster than Node and Bun here)	-
 micro	ops decomposition	73 ns = calls ~20 + 6 reads ~18 + 3 constructions ~6 + ~9 arithmetic rows ~15 + loop ~10	-	-	with a *perfect* call (0 ns) the loop is still ~53 ns against Bun's 2.71: the floor is the interpreter's ~3 ns per operation across ~20 operations, not any single fast path	-
+# The inliner's prize, measured by source-level inlining (the prototype's ceiling)
+micro	calls (a.add(b), a.dot(b))	74.89	6.41	2.87	raytrace's pattern as written	-
+micro	the same computation hand-inlined (locals, no calls, no objects)	2.41	4.31	1.17	quench is **31x faster inlined than with calls**, and faster than Node and 2x behind Bun: the interpreter's arithmetic core is competitive; the entire gap is the call + object path	-
+micro	what each step is worth	a call-site inliner alone removes the call share (~27%: 20 ns of 75); inlining + scalar replacement of the constructed vector removes everything the hand-inlined version removes, i.e. up to 31x on this loop	-	-	so the prize is real and large, and it is exactly the pair (inline, escape analysis) that the disabled lane-body tier was built to do	-
