@@ -416,13 +416,7 @@ impl Vm {
     pub(in crate::vm) fn load_linked_image(&mut self, program: &ResidualProgram, table: &live::LinkedTable) -> Result<(), String> {
         if self.programs.has_linked_image(table) { return Ok(()); }
         for index in 0..program.function_count() { program.lowered_function(index); }
-        let images = AheadImages::of_linked(table).inspect_err(|error| {
-            if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: image refused: {error}"); }
-        })?;
-        if crate::trace::Channel::AotLanes.on() {
-            eprintln!("aot-lanes: image loaded fingerprint={} functions={}", images.fingerprint(), images.len());
-        }
-        self.programs.add_ahead_images(images);
+        self.programs.add_ahead_images(AheadImages::of_linked(table)?);
         Ok(())
     }
 }
