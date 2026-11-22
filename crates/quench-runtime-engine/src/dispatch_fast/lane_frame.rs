@@ -8,7 +8,7 @@ use super::lane_reads::Reads;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::bytecode::RegisterWindow;
-use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
+use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Stage, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -2681,9 +2681,42 @@ macro_rules! row_step {
         else if const { matches!(quench_runtime::staged::row_step($op), R::Entry) } { quench_runtime::staged::step_entry($stage, $frame, $operation) }
         // An opcode with no family step runs the whole `step`, out of line: inlined, it put every arm of the
         // interpreter into each of its row instances (1065 instances, half of the crate's code before optimization).
-        else { quench_runtime::staged::step_out_of_line($stage, $frame, $operation) }
+        else { crate::dispatch_fast::lane_frame::out_of_line_step($stage, $frame, $operation) }
     }};
 }
+
+/// `staged::step_out_of_line` of a lane frame: the whole staged step, out of line, for a row whose opcode has no
+/// family step (`row_step!`). One function per accumulator position, each in its own module: as instances of the
+/// core's generic they shared one codegen unit (450 KB of code), which every staged edit re-codegens on one core.
+#[inline(always)]
+pub(crate) fn out_of_line_step<const ACC: u8>(stage: &mut Concrete, frame: &mut LaneFrame<ACC>,
+    operation: Operation<<Concrete as Stage>::Word, <Concrete as Stage>::Proof>) -> Step<<Concrete as Stage>::Word, LaneControl> {
+    macro_rules! at { ($module:ident, $acc:expr) => {
+        // SAFETY: `ACC` is `$acc`, so the frame is of that type.
+        $module::step(stage, unsafe { &mut *std::ptr::from_mut(frame).cast::<LaneFrame<{ $acc }>>() }, operation)
+    }; }
+    if const { ACC == ACC_NONE } { at!(out_of_line_none, ACC_NONE) }
+    else if const { ACC == ACC_A } { at!(out_of_line_a, ACC_A) }
+    else if const { ACC == ACC_B } { at!(out_of_line_b, ACC_B) }
+    else if const { ACC == ACC_C } { at!(out_of_line_c, ACC_C) }
+    else if const { ACC == ACC_PAIR } { at!(out_of_line_pair, ACC_PAIR) }
+    else { quench_runtime::staged::step_out_of_line(stage, frame, operation) }
+}
+
+macro_rules! out_of_line_steps {
+    ($($module:ident = $acc:expr),*) => { $(
+        pub(crate) mod $module {
+            #[allow(unused_imports)]
+            use super::*;
+            #[inline(never)]
+            pub(crate) fn step(stage: &mut Concrete, frame: &mut LaneFrame<{ $acc }>, operation: Operation<<Concrete as Stage>::Word, <Concrete as Stage>::Proof>)
+                -> Step<<Concrete as Stage>::Word, LaneControl> {
+                quench_runtime::staged::step(stage, frame, operation)
+            }
+        }
+    )* };
+}
+out_of_line_steps!(out_of_line_none = ACC_NONE, out_of_line_a = ACC_A, out_of_line_b = ACC_B, out_of_line_c = ACC_C, out_of_line_pair = ACC_PAIR);
 
 /// Where opcode `op`'s jump row leaves when its words do not decide the edge: a comparison the
 /// frame leaves takes the lane's comparison chain (`binary_false_chain_miss`); any other, a truth
@@ -3612,7 +3645,7 @@ sharded_handler! { script_handler, returning_row_shards, returning_row_handler;
     }
 }
 
-script_handler! {
+sharded_handler! { script_handler, returning_operator_row_shards, returning_operator_row_handler;
     /// The lane handler of a returning `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
     /// value) on a register and a constant, at leaf form `LEAF`, whose RETURN parameter is `MISS`
     /// (`protocol_misses::operator_return_code`). The operator is static, so the row builds the staged
@@ -3646,10 +3679,10 @@ script_handler! {
                 // (`Value::number`), so an integral result is the integer it is.
                 let value = Value::from_bits(value);
                 let value = if INT32 { value } else { value.as_number().map_or(value, Value::number) };
-                if let Some(resumed) = by_leaf!(LEAF, |L| super::complete_plain_activation_in_lane::<L>(cx, value)) {
+                if let Some(resumed) = by_leaf!(LEAF, |L| crate::dispatch_fast::complete_plain_activation_in_lane::<L>(cx, value)) {
                     resume!(cx, resumed)
                 }
-                resume!(cx, super::return_value_general_in_lane(cx, ip, value));
+                resume!(cx, crate::dispatch_fast::return_value_general_in_lane(cx, ip, value));
             }
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),
         }
@@ -3669,7 +3702,7 @@ pub(crate) const OPERANDS_PROVEN: u8 = 5;
 /// A register the view's int32 kinds prove an int32 and an int32 constant on the right.
 pub(crate) const OPERANDS_PROVEN_INT32: u8 = 6;
 
-script_handler! {
+sharded_handler! { script_handler, operator_row_shards, operator_row_handler;
     /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
     /// value) whose accumulator field is `ACC`: `generated_row`'s row with the operator a parameter of the
     /// instantiation rather than a field the row decodes and dispatches on. `FORM` (`OPERANDS_*`) states
@@ -3725,13 +3758,13 @@ script_handler! {
                 // Number form refuses too goes generic.
                 // A proven form's result left int32: its checked Number form, over the same proven operands.
                 let widened: Handler = if const { FORM == OPERANDS_PROVEN } {
-                    operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTERS> as Handler
+                    const { operator_row_handler::<OP, ACC, OPERATOR, OPERANDS_REGISTERS>() }
                 } else if const { FORM == OPERANDS_PROVEN_INT32 } {
-                    operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT> as Handler
+                    const { operator_row_handler::<OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT>() }
                 } else if const { FORM == OPERANDS_REGISTER_INT32 } {
-                    operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT> as Handler
+                    const { operator_row_handler::<OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT>() }
                 } else if const { FORM == OPERANDS_INT32 } {
-                    operator_row::<OP, ACC, OPERATOR, OPERANDS_ANY> as Handler
+                    const { operator_row_handler::<OP, ACC, OPERATOR, OPERANDS_ANY>() }
                 } else {
                     // The Number form's operand pair is no Number pair: the operator's own pure operation.
                     crate::dispatch_fast::binary_operator_miss::<OPERATOR> as Handler
