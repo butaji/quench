@@ -13,7 +13,13 @@ use super::lane_unit::Origin;
 use crate::aot_image::{self, AotImage, file::Words, live::{self, LiveImage}};
 #[path = "ahead_images/constructions.rs"] pub(crate) mod constructions;
 
-pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID;
+/// This build of the engine and the core (`build.rs`): the only build an ahead image runs on.
+pub const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_ENGINE_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
+
+/// The link-time hook through which the core's `quench compile` reads this build (`native_link::NativeSupport::check_build`).
+#[unsafe(no_mangle)]
+fn quench_engine_build_id() -> u64 { AHEAD_BUILD_ID }
+const _: fn() -> u64 = quench_engine_build_id;
 
 pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID_PREFIX;
 
@@ -22,7 +28,7 @@ pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID_PREFIX;
 /// it (`native_link::NativeSupport::check_build`): an image only runs on its own build.
 #[used]
 pub(crate) static AHEAD_BUILD_ID_MARK: [u8; 32] = {
-    let id = quench_runtime::vm::engine_types::QUENCH_BUILD_ID_TEXT.as_bytes();
+    let id = env!("QUENCH_ENGINE_BUILD_ID").as_bytes();
     let mut mark = [0u8; 32];
     let mut at = 0;
     while at < 16 {

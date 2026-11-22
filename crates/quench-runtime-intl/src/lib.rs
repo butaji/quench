@@ -78,7 +78,7 @@ pub(crate) mod intl_prelude {
     pub use quench_runtime::vm::wtf16::JsString;
     pub use quench_runtime::staged::field_cache_layout::{self, FieldCacheWords};
     pub use quench_runtime::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
-    pub use quench_runtime::vm::engine_types::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
+    pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID_PREFIX;
     pub use crate::dispatch::IntlTemporalDispatch;
     pub use crate::intl_collator;
     pub use crate::intl_datetime;

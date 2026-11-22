@@ -78,7 +78,8 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::staged::field_cache_layout::{ FieldCacheWords};
     pub use quench_runtime::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
     pub use quench_runtime::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
-    pub use quench_runtime::vm::engine_types::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
+    pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID_PREFIX;
+    pub use crate::compiled::AHEAD_BUILD_ID;
     pub use quench_runtime::vm::activation::{JobResume, JobRoot, TrapAccess, TrapCheck};
     pub use quench_runtime::vm::activation::frame_record::FrameRecord;
     pub use quench_runtime::vm::dispatch_frame::PendingGeneralCall;

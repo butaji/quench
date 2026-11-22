@@ -266,3 +266,13 @@ impl Vm {
     }
 }
 
+/// The core's `NativeJsProgram::from_linked_image` (a link-time hook).
+///
+/// # Safety
+/// The caller's contract is `NativeJsProgramOps1::from_linked_image`'s.
+#[unsafe(no_mangle)]
+unsafe fn quench_engine_native_from_linked_image(program: ResidualProgram, image: *const u8) -> Result<NativeJsProgram, String> {
+    // SAFETY: the caller's contract.
+    unsafe { <NativeJsProgram as NativeJsProgramOps1>::from_linked_image(program, image) }
+}
+const _: unsafe fn(ResidualProgram, *const u8) -> Result<NativeJsProgram, String> = quench_engine_native_from_linked_image;

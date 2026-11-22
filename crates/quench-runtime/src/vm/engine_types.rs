@@ -3135,12 +3135,8 @@ pub enum JobEnd {
     Frames(Result<FrameOutcome, JsError>),
 }
 
-/// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
-pub const QUENCH_BUILD_ID_TEXT: &str = env!("QUENCH_BUILD_ID");
-pub const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
-
-/// The text that names the build in a library's bytes, followed by `QUENCH_BUILD_ID` in 16 hex
-/// digits (`AHEAD_BUILD_ID_MARK`).
+/// The text that names the build in a library's bytes, followed by the engine's build ID in 16 hex
+/// digits (`quench_runtime_engine`'s `AHEAD_BUILD_ID_MARK`, which names the engine and the core).
 pub const AHEAD_BUILD_ID_PREFIX: &[u8; 16] = b"QUENCH_BUILD_ID=";
 
 /// An own member a constant-marked object holds (`Vm::own_constant_of`): the object a lane body
@@ -3229,6 +3225,25 @@ pub struct NativeJsProgram {
     pub code: Rc<NativeJsCode>,
     pub counts: NativeJsPublicationCounts,
     pub frozen: Option<FrozenAssumptions>,
+}
+
+unsafe extern "Rust" {
+    fn quench_engine_native_from_linked_image(program: ResidualProgram, image: *const u8) -> Result<NativeJsProgram, String>;
+}
+
+impl NativeJsProgram {
+    /// Adopt a statically linked image table (the engine's `NativeJsProgramOps1::from_linked_image`),
+    /// named here so an image's driver, which links the core and its host, reaches it
+    /// (`linked_native_sources!`).
+    ///
+    /// # Safety
+    /// `image` must be the aligned entry-table symbol for this exact program, emitted by this
+    /// build's object linker; its code, image file and records must live for the process's lifetime.
+    #[cfg(feature = "native-execution")]
+    pub unsafe fn from_linked_image(program: ResidualProgram, image: *const u8) -> Result<Self, String> {
+        // SAFETY: the caller's contract is the hook's.
+        unsafe { quench_engine_native_from_linked_image(program, image) }
+    }
 }
 
 /// What a publication lowered, so admission is measured rather than assumed.

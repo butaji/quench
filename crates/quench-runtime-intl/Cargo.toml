@@ -10,7 +10,7 @@ description = "Intl and Temporal for the Quench runtime: a layer crate above the
 doctest = false
 
 [dependencies]
-quench-runtime = { path = "../quench-runtime" }
+quench-runtime = { path = "../quench-runtime", default-features = false }
 quench-macros = { path = "../quench-macros" }
 quench-intl = { path = "../quench-intl" }
 quench-temporal = { path = "../quench-temporal" }
