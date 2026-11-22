@@ -8350,11 +8350,13 @@ impl Vm {
                 let full_plan = full_plans[index].as_ref()?;
                 let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
                 let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
                 let built = WasmSpecializer {
                     index,
                     plans: &plans,
                     full_plan,
                     reference_site_ids: &reference_site_ids[index],
+                    admitted,
                     tier: WasmTierChoice::Optimizing { analysis: &analysis, isa, guarded, fixed_base, diagnostics_enabled },
                 }
                 .specialize(&code);
@@ -8387,11 +8389,13 @@ impl Vm {
                             return None;
                         }
                         let full_plan = full_plans[index].as_ref()?;
+                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
                         let residual = WasmSpecializer {
                             index,
                             plans: &plans,
                             full_plan,
                             reference_site_ids: &reference_site_ids[index],
+                            admitted,
                             tier: WasmTierChoice::Baseline {
                                 vm: self,
                                 program_id: program,

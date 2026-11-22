@@ -42,6 +42,8 @@ pub(crate) struct WasmSpecializer<'s, 'a> {
     pub(crate) full_plan: &'s Plan,
     /// The function's indirect reference sites: (pc, cache site id).
     pub(crate) reference_site_ids: &'a [(usize, usize)],
+    /// The gate's proof that this function's Wasm compile may run (`UnitKind::Wasm`, minted by `specialize`).
+    pub(crate) admitted: super::admission::CompiledUnit,
     pub(crate) tier: WasmTierChoice<'s, 'a>,
 }
 
@@ -57,7 +59,8 @@ impl Specializer for WasmSpecializer<'_, '_> {
     type Residual = WasmResidual;
 
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
-        let Self { index, plans, full_plan, reference_site_ids, tier } = self;
+        let Self { index, plans, full_plan, reference_site_ids, tier, admitted } = self;
+        let _ = admitted;
         match tier {
             WasmTierChoice::Optimizing { analysis, isa, guarded, fixed_base, diagnostics_enabled } => {
                 // The body, then the entry, in the order the u-jit driver always built them.
