@@ -9058,13 +9058,11 @@ script_handler! {
         if argc > FIXED_ARGUMENT_COPIES || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
-        // A callee whose cell holds a body is never proved: its calls run the unproved activation
-        // from here, which enters the body (`enter_cell_body_in_lane`). Candidate revert of
-        // cca72f571 for the typescript-lib default-mode regression (unverified; see report).
-        // SAFETY: the target's view lives with its program.
-        if unsafe { (*target.view).entry_published() } {
-            lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN)
-        }
+        // A callee whose cell holds a body is proved too: the plain activation tests the cell
+        // on every call, proved or not (`lane_plain_activation!`), and enters the body through
+        // it (`enter_cell_body_in_lane`) or, for a call completing its caller, through the
+        // activation's `BodyEntry` record. Only a leaf entry's proved form skips the cell, and
+        // this proves no leaf entry (`CallEntry::Activates` above).
         // The proof (`Admission::UNPROVEN`): the entry, which the link names, now admits proved
         // calls from every site whose arguments it takes (`script_call_miss`'s compare).
         let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
