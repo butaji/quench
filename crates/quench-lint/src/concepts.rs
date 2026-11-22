@@ -53,12 +53,12 @@ const CONCEPTS: &[Concept] = &[
     },
     Concept {
         name: "to-int32",
-        homes: &["quench-runtime/src/value/number_conversion.rs", "quench-runtime/src/lib.rs", "quench-runtime/src/staged/numeric.rs", "quench-runtime/src/vm/compiled/object_slots/emit.rs", STENCILS],
+        homes: &["quench-runtime/src/value/number_conversion.rs", "quench-runtime/src/lib.rs", "quench-runtime/src/staged/numeric.rs", "quench-runtime-engine/src/compiled/object_slots/emit.rs", STENCILS],
         marks: &[Mark::Function("to_int32"), Mark::Function("to_uint32"), Mark::Function("number_to_u32"), Mark::Function("number_to_i32"), Mark::Function("value_to_int32")],
     },
     Concept {
         name: "to-uint8-clamp",
-        homes: &["quench-runtime/src/value/number_conversion.rs", "quench-runtime/src/staged/", "quench-runtime/src/vm/compiled/object_slots/emit.rs", STENCILS],
+        homes: &["quench-runtime/src/value/number_conversion.rs", "quench-runtime/src/staged/", "quench-runtime-engine/src/compiled/object_slots/emit.rs", STENCILS],
         marks: &[Mark::Function("clamp_u8"), Mark::Function("uint8_clamped_from_value"), Mark::Function("number_to_uint8_clamp"), Mark::Spelled("round_ties_even()asu8")],
     },
     Concept {
