@@ -686,6 +686,7 @@ fn clear_timeout(
 #[cfg(test)]
 mod tests {
     use super::Test262RuntimeHost;
+    use quench_layers::engine::NativeJsProgramOps1 as _;
 
     #[test]
     fn linked_graph_shares_dynamic_source_semantics_and_resets_after_rejection() {
