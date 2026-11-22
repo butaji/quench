@@ -61,7 +61,7 @@ impl NumericImage {
     pub(crate) fn start(program: &ResidualProgram, function_id: u32, unit: crate::compiled::admission::CompiledUnit) -> Option<quench_runtime::vm::jit_backend::OffThread<Option<Self>>> {
         program.function_get(function_id as usize)?;
         let detached = program.detached(&[function_id]);
-        Some(quench_runtime::vm::jit_backend::OffThread::start((detached, function_id), move |(detached, function_id)| Self::build(lower_numeric_region(&detached, function_id, unit)?, function_id)))
+        Some(quench_runtime::vm::jit_backend::OffThread::start((detached, function_id, unit), |(detached, function_id, unit)| Self::build(lower_numeric_region(&detached, function_id, unit)?, function_id)))
     }
 
     fn build(lowering: NumericLowering, function_id: u32) -> Option<Self> {

@@ -35,6 +35,13 @@ macro_rules! for_each_builder {
 }
 pub(crate) use for_each_builder;
 
+// Every builder view is the u-jit/AOT projection (Cranelift IR); `object_slots::Emit` and
+// `Emitter` declare theirs beside their own stage impls.
+quench_runtime::projection!(Raw<'_> => Emit);
+quench_runtime::projection!(crate::compiled::RegionCore<'_> => Emit);
+quench_runtime::projection!(crate::compiled::Body<'_> => Emit);
+quench_runtime::projection!(crate::compiled::lane_region::Lowering<'_, '_> => Emit);
+
 
 /// A backend that builds into one Cranelift function: the accessor the primitive bodies are
 /// written over.
