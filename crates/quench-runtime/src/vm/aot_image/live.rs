@@ -57,6 +57,11 @@ struct Places<'a> {
     invalidation: usize,
     operands: &'a [[u64; 2]],
     calls: &'a [UnsafeCell<CallRecord>],
+    /// The address of the atom-id table `vm.intern_atom` fills (`Symbol::Atom`): one `u32` per
+    /// `image.atoms`, placed beside the code so an `adrp` reaches it.
+    atoms: u64,
+    /// How many words that table holds.
+    atom_count: usize,
 }
 
 /// Links `image` into `vm`: its code placed, every symbol resolved.
@@ -66,9 +71,12 @@ pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String
     let operands: Box<[[u64; 2]]> = image.operands.iter().map(|record| record.words).collect();
     let calls = BoundCalls::of(image);
     let mut linked = vec![false; image.functions.len()];
-    let code = CodeMemory::assemble(layout.length, |pointer, out| {
+    let atom_bytes = image.atoms.len() * std::mem::size_of::<u32>();
+    let code = CodeMemory::assemble(layout.length + atom_bytes, |pointer, out| {
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
-        let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands, calls: calls.records() };
+        let atoms = pointer.addr() + layout.length;
+        place_atoms(image, vm, out, layout.length)?;
+        let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands, calls: calls.records(), atoms: atoms as u64, atom_count: image.atoms.len() };
         place(image, vm, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()))
     })?;
     let start = code.pointer().addr();
@@ -138,17 +146,42 @@ pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage,
 /// which its publication keeps alive (`PublishedCode::hold_roots`): a collected object's id is
 /// reused, and the code would take the next object for it. `None` where the function has no lane
 /// body or a symbol does not link.
-pub(crate) fn link_lane(image: &AotImage, vm: &mut Vm, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
-    let lane = image.functions.get(function as usize)?.lane.as_ref()?;
+pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, function: u32, address: u64, out: &mut [u8]) -> Result<FoldedRoots, String> {
+    let lane = image.functions.get(function as usize).and_then(|function| function.lane.as_ref())
+        .ok_or_else(|| "no lane body".to_owned())?;
+    let code_len = lane.code.code.len();
+    let atom_bytes = image.atoms.len() * std::mem::size_of::<u32>();
+    if out.len() < code_len + atom_bytes { return Err("lane body is larger than its placement".to_owned()) }
+    // The atom-id table follows the code in the same block, so its `adrp` is in range.
+    place_atoms(image, vm, out, code_len)?;
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
-    let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: live.calls.records() };
+    let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: live.calls.records(),
+        atoms: address + code_len as u64, atom_count: image.atoms.len() };
     let mut roots = FoldedRoots::default();
-    let code = lane.code.link(0, |namespace, key| {
+    // The body is linked at the address it will run at: its `adrp`/`add` pairs and branches are
+    // page- and displacement-relative to it, so a copy linked anywhere else faults (or refuses to
+    // link at all). A caller that copies it again must keep that address.
+    let mut symbol = None;
+    let code = lane.code.link(address, |namespace, key| {
+        symbol = SymbolTable::decode(image, namespace, key);
         let word = resolve(image, vm, &places, namespace, key)?;
-        if let Some(Symbol::HeapValue(_)) = SymbolTable::decode(image, namespace, key) { roots.embed_heap_identity(crate::Value::from_bits(word)); }
+        if let Some(Symbol::HeapValue(_)) = symbol { roots.embed_heap_identity(crate::Value::from_bits(word)); }
         Some(word)
-    }).ok()?;
-    Some((code, roots.settled()))
+    }).map_err(|error| format!("{error} [{symbol:?}]"))?;
+    out[..code_len].copy_from_slice(&code);
+    Ok(roots.settled())
+}
+
+/// Writes the running VM's atom ids into `out` at `at`: one `u32` per `image.atoms`, the table
+/// `Symbol::Atom` addresses. `image.atoms` are the build's texts; a VM interns them under its own
+/// numbers, so the words are written at load and the code reads them.
+fn place_atoms(image: &AotImage, vm: &mut Vm, out: &mut [u8], at: usize) -> Result<(), String> {
+    let size = std::mem::size_of::<u32>();
+    let table = out.get_mut(at..at + image.atoms.len() * size).ok_or("AOT image block is too small for its atoms")?;
+    for (slot, text) in table.chunks_exact_mut(size).zip(&image.atoms) {
+        slot.copy_from_slice(&u32::from(vm.intern_atom(text)).to_le_bytes());
+    }
+    Ok(())
 }
 
 /// The offsets of every body, each aligned, and the block's length.
@@ -196,7 +229,10 @@ fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, k
         Symbol::SemanticEntry(op) => semantic_entry(op),
         Symbol::Operands { .. } => places.operands.get(key as usize).map(|record| record.as_ptr().addr() as u64),
         Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),
-        Symbol::Atom(atom) => Some(u64::from(vm.intern_atom(image.atoms.get(atom as usize)?))),
+        Symbol::Atom(atom) => {
+            let _ = image.atoms.get(atom as usize)?;
+            (places.atom_count > atom as usize).then(|| places.atoms + u64::from(atom) * std::mem::size_of::<u32>() as u64)
+        }
         Symbol::Invalidation => Some(places.invalidation as u64),
         Symbol::NarrowUpperWords => Some(crate::value::NarrowLayout::upper_words() as u64),
         Symbol::Attention => Some(crate::execution_interrupt::attention_address()),

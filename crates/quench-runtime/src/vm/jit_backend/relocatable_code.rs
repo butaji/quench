@@ -82,7 +82,9 @@ impl RelocatableCode {
         for relocation in &*self.relocations {
             let value = resolve(relocation.namespace, relocation.key)
                 .ok_or_else(|| format!("unresolved symbol ({}, {})", relocation.namespace, relocation.key))?;
-            apply_relocation(&mut linked, address, (relocation.offset, relocation.kind, relocation.addend), value)?;
+            apply_relocation(&mut linked, address, (relocation.offset, relocation.kind, relocation.addend), value)
+                .map_err(|error| format!("symbol ({}, {}) at {value:#x} (relocation {:#x} of {:#x}): {error}",
+                    relocation.namespace, relocation.key, relocation.offset, address))?;
         }
         Ok(linked)
     }

@@ -320,16 +320,30 @@ impl Vm {
         };
         // An image has no lowering to ask which registers a leave inside an inlined frame stores.
         if !unit.frames.is_empty() { refused("inlined frames"); return None; }
-        let Some((linked, roots)) = live::link_lane(&images.image, self, linked_live, function) else {
-            refused("link_lane"); return None;
+        // The body's code is linked where it will run: its page- and displacement-relative
+        // fields are its address's, so the placement comes first (`live::link_lane_at`).
+        let code = &images.image.functions.get(function as usize)?.lane.as_ref()?.code;
+        let mut linked = None;
+        let memory = match super::code_heap::publishing("u-jit-lane", function as usize, || {
+            // The body's atom-id table follows its code in the block (`live::link_lane_at`).
+            let atom_bytes = images.image.atoms.len() * std::mem::size_of::<u32>();
+            super::code_heap::CodeMemory::assemble(code.code.len() + atom_bytes, |address, out| {
+                let roots = live::link_lane_at(&images.image, self, linked_live, function, address.addr() as u64, out)?;
+                linked = Some(roots);
+                Ok(())
+            })
+        }) {
+            Ok(memory) => memory,
+            Err(why) => { refused(&why); return None; }
         };
+        let Some(roots) = linked else { refused("link_lane"); return None };
         // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() }, entry_types: Default::default(), summary: None,
             exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
-        let method = plan.finish(&linked, None, None);
+        let method = plan.finish_in(memory, None, None);
         if method.is_none() { refused("plan.finish"); }
         method
     }

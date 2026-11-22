@@ -789,14 +789,20 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    pub(super) fn finish(mut self, code: &[u8], scalar: Option<usize>, proven: Option<(usize, Box<[crate::typed_ir::Type]>)>) -> Option<LaneMethod> {
+    pub(super) fn finish(self, code: &[u8], scalar: Option<usize>, proven: Option<(usize, Box<[crate::typed_ir::Type]>)>) -> Option<LaneMethod> {
+        let memory = super::code_heap::publishing("u-jit-lane", self.function as usize, || CodeMemory::new(code))?;
+        self.finish_in(memory, scalar, proven)
+    }
+
+    /// `finish` of a body already placed: an ahead image's lane body links at the address its
+    /// code runs at (`live::link_lane_at`), so it is placed before the method is made.
+    pub(super) fn finish_in(mut self, memory: CodeMemory, scalar: Option<usize>, proven: Option<(usize, Box<[crate::typed_ir::Type]>)>) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
         let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
         let names_shapes = self.names_shapes();
-        let memory = super::code_heap::publishing("u-jit-lane", self.function as usize, || CodeMemory::new(code))?;
         if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
             dump_native_code(directory, DumpSite::Body { function: self.function, scalar }, &memory, clif);
         }

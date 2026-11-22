@@ -1296,7 +1296,17 @@ impl LaneHelpers {
     pub(super) fn atom_word(self, builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
         match self {
             Self::Process(_) => object_slots::emit(builder).constant(u64::from(atom)),
-            Self::Numeric | Self::Ahead => lane_region::atom_symbol(builder, atom),
+            Self::Numeric => lane_region::atom_symbol(builder, atom),
+            // An ahead image's atom is a word beside its code (`Symbol::Atom`), which the loader
+            // fills with the running VM's id: an image's atom numbers are its build's, not this
+            // VM's, and an `adrp` can reach a word but not an immediate.
+            Self::Ahead => {
+                use crate::staged::machine::{Lane, Unary};
+                let base = lane_region::atom_symbol(builder, atom);
+                let mut stage = object_slots::emit(builder);
+                let word = stage.raw_load(Lane::I32, invariant(), base, 0);
+                stage.raw_unary(Unary::ZeroExtend(Lane::I64), word)
+            }
             Self::Linked(_, narrow) | Self::Bound(_, narrow) => {
                 use crate::staged::machine::{Lane, Unary};
                 let table = linked_data_symbol(builder, narrow + NATIVE_ATOM_TABLE_OFFSET);
