@@ -8700,12 +8700,16 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         }
         return installed;
     }
-    let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
+    // Sampled only where the body starts: an entry that merely counts toward the warm-up (the
+    // most of a program's calls) pays no scan or allocation for a body not yet planned.
+    let mut arrays = None;
     let specialize = |work: super::compiled::LaneBodyWork| {
         let work = match work {
             // A looping caller's trips pay for the body as its own iterations do (`looped`).
-            super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: seen, called, caller, .. } =>
-                super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: looped.or(seen), called, caller, arrays: &arrays },
+            super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: seen, called, caller, .. } => {
+                let sampled = arrays.insert(loop_tier::sampled_arrays(vm, parameters.iter().copied()));
+                super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: looped.or(seen), called, caller, arrays: &*sampled }
+            }
             poll => poll,
         };
         let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
@@ -8774,12 +8778,18 @@ fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
     // A body still warming after the loop's trips asked for it is refused under the body's epoch
     // (`LoopSite::refuse_warming`): its back edges are plain jumps until the epoch moves or the
     // wait runs out, so a function whose entries do not advance costs no per-edge checks.
+    //
+    // A site whose body declined for good can never run one, so it keeps no header while its
+    // function warms either: releasing it makes every iteration a plain jump (the function's own
+    // body, whose prologue replaces its entry, runs the loop natively when it publishes). Holding
+    // it made each iteration enter the site's handler for the rest of the run.
+    //
     // SAFETY: the program's views outlive the lane run.
     if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
         specialize_in_lane(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
-        if own.warming() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
+        if own.warming() && site.body.borrow().pending() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
