@@ -123,7 +123,13 @@ impl Vm {
             // frames onto the lane stack's own tops, which the dispatch points at. A body entered
             // through its cell has an activation pending, which a leave pushes first: it makes no
             // direct call, the frames of which would sit above that activation's room.
-            let words = self.stack_words_in_lane(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
+            // A Cranelift body with no direct callee takes every call through the helper row,
+            // which pushes no frame at this binding; sizing shadow frames for it spills the
+            // caller's plain frames for pushes that never happen. A b-jit body's rows push
+            // whether or not the run names direct calls.
+            let pushes = run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS
+                && (!run.method.direct.is_empty() || run.method.row_entries().is_some());
+            let words = self.stack_words_in_lane(if pushes { SHADOW_FRAMES } else { 0 });
             // A b-jit body's direct call rows push whether or not the run names direct calls (`run.direct_calls` sizes
             // only the shadow frames), so in a leaf's window they refuse to the helper row.
             super::super::dispatch_fast::refuse_direct_calls_in_leaf(run.lane_context, run.registers);

@@ -1235,6 +1235,13 @@ impl LaneView {
         self.tier.get_or_init(Box::default)
     }
 
+    /// Whether its body declined for good (`LaneBody::Declined`): no entry specializes it again.
+    #[inline]
+    pub(super) fn body_declined_in_lane(&self) -> bool {
+        // SAFETY: as `lane_body`; the cell is read on this view's VM thread.
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Declined)
+    }
+
     /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
     pub(super) fn body_state_in_lane(&self) -> &'static str {
         // SAFETY: as `lane_body`.
@@ -10478,11 +10485,19 @@ impl Vm {
         let stack = &mut self.lane_stack;
         let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activation_count() + 1));
         // The one spill left for emitted code (one-frame-one-call.md F5): its direct calls push
-        // native frames onto the records' top and read no header yet.
-        let frames_end = stack.activations().top_ptr().wrapping_add(frames).addr();
+        // native frames onto the records' top and read no header yet. A binding that admits no
+        // frame (`frames == 0`) pushes none, so it reads the records where they are and leaves the
+        // plain frames alone: spilling them copies every frame of a body's caller.
+        let (frames_end, activations_top) = if frames != 0 {
+            (stack.activations().top_ptr().wrapping_add(frames).addr(), stack.activations_mut().top_word().addr())
+        } else {
+            // SAFETY: as `activations`; the walk's contract holds (nothing borrows them after).
+            let records = unsafe { stack.records_unspilled() };
+            let top = records.top_ptr().addr();
+            (top, top)
+        };
         // SAFETY: the values' capacity bounds the vector's own allocation.
         let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
-        let activations_top = stack.activations_mut().top_word().addr();
         let words = LaneStackWords {
             values_top: stack.values.top_word().addr(),
             values_end,
@@ -14444,6 +14459,12 @@ fn tier_enter_in_lane(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
+        // A body that declined never specializes again (`LaneBody::Declined` is terminal): its
+        // entries pay no sampling, image lookup or tier bookkeeping.
+        if own.body_declined_in_lane() {
+            own.release_from_tier();
+            return None;
+        }
         // A function of a program with a loaded AOT image takes its body at its first entry, no warm-up.
         let ahead = vm.programs.ahead_images(program, code).is_some();
         if !specialize_in_lane(cx, own, function, ahead, parameters, None) {
