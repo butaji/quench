@@ -92,6 +92,11 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
         NativeCompileRejection::Relocations => "a relocation the image cannot name",
         _ => "Cranelift rejects the code",
     })?;
+    // An image body's lowering is otherwise invisible: dump it where the JIT bodies are dumped,
+    // named by its function, so a wrong body can be compared with the JIT's (`QUENCH_TRACE=jit-dump`).
+    if let (Some(directory), Some(clif)) = (super::native_dump_directory(), lowered.clif.as_deref()) {
+        let _ = std::fs::write(directory.join(format!("ahead-function-{function}.clif")), clif);
+    }
     Ok((code, lowered.region.fault_poll))
 }
 
