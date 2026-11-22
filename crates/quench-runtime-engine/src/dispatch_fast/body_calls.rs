@@ -179,6 +179,25 @@ fn call_admitted(cx: *mut LaneContext, vm: &Vm, call: &BodyCall, _callee: Value)
     Ok(())
 }
 
+/// The miss of a call of `target` whose body is retired to `Declined`: it has no body to run, so the body leaves at the
+/// call before any activation is pushed, and the interpreter makes the call. `body_run_in_lane` would push the
+/// activation and then leave with it. `None` where the callee has a body, or no view.
+fn declined_callee_miss(cx: *mut LaneContext, target: &ScriptCallTarget) -> Option<u64> {
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
+    if !own.declined_in_lane() { return None; }
+    // The demand a native caller makes of a declined callee, as `body_run_in_lane` makes it.
+    let rest_view = unsafe { &*(*cx).code }.function_get(target.function as usize).is_some_and(|function| function.rest_view());
+    if !rest_view && !calling_body_in_lane(cx) { own.note_native_caller(); }
+    Some(miss(unsafe { vm(cx) }, Miss::CalleeDeclined))
+}
+
+/// Whether the running body's caller has a body of its own (`body_site`), which planned the call already (`bind_callees`).
+fn calling_body_in_lane(cx: *mut LaneContext) -> bool {
+    unsafe { (*cx).body_site }.and_then(|(_, function, _, _)| unsafe { &*(*cx).views }.get(function as usize))
+        .and_then(quench_runtime::vm::program_store::derived_lane_view).is_some_and(|caller| caller.body_view_in_lane().is_some())
+}
+
 /// A body's call of the script function `target`, binding `receiver`: answered by its read, else
 /// activated as the lane's own call would.
 fn body_script_call(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTarget, receiver: Value) -> u64 {
@@ -197,10 +216,12 @@ fn body_script_call(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         let how = quench_runtime::staged::call_body::concrete_activation(target.entry.activates_registers_only(), target.forwards(), fixed, false);
         if !how.plain { return miss(vm, Miss::CallReadAnswer); }
         if !activation_room_in_lane(vm, target) { return miss(vm, Miss::NoActivationRoom); }
+        if let Some(missed) = declined_callee_miss(cx, target) { return missed; }
         return body_activate_in_lane(cx, call, target, this, false, how);
     }
     let Some(how) = activation_form(target, call.argc()) else { return miss(vm, Miss::EntryNotActivation) };
     if how.plain && !activation_room_in_lane(vm, target) { return miss(vm, Miss::NoActivationRoom); }
+    if let Some(missed) = declined_callee_miss(cx, target) { return missed; }
     body_activate_in_lane(cx, call, target, this, false, how)
 }
 
@@ -315,6 +336,8 @@ fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value) -> 
         Some(how) => how,
     };
     if how.plain && !activation_room_in_lane(vm, &target) { return miss(vm, Miss::NoActivationRoom); }
+    // Before the receiver is allocated: a declined constructor's construction is the interpreter's, with no effect here.
+    if let Some(missed) = declined_callee_miss(cx, &target) { return missed; }
     let Some((this, initialized)) = construct_receiver(cx, call, callee, &target) else { return miss(vm, Miss::Receiver) };
     // Allocating the receiver can make a collection due.
     note_allocation(vm);
@@ -458,8 +481,7 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         // with no frame of its own to read them from.
         let rest_view = unsafe { &*(*cx).code }.function_get(target.function as usize).is_some_and(|function| function.rest_view());
         // A caller with a body of its own planned this call already (`bind_callees`); a loop region did not.
-        let caller_body = unsafe { (*cx).body_site }.and_then(|(_, function, _, _)| unsafe { &*(*cx).views }.get(function as usize))
-            .and_then(quench_runtime::vm::program_store::derived_lane_view).is_some_and(|caller| caller.body_view_in_lane().is_some());
+        let caller_body = calling_body_in_lane(cx);
         if own.body_view_in_lane().is_none() && !rest_view && !caller_body { own.note_native_caller(); }
         if quench_runtime::trace::Channel::BodyLeave.on() {
             let why = if own.body_view_in_lane().is_some() { "not-admitted" } else if own.warming() { "warming" } else { "no-body" };
