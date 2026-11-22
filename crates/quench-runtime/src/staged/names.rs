@@ -15,7 +15,7 @@ use crate::Value;
 /// frame answers it with a callout; and the test of a receiver's constant fields, whose
 /// answer is VM state (a cache entry), which a frame answers the same way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Protocol {
+pub enum Protocol {
     /// The iterator of the operand (`GetIterator`).
     GetIterator,
     /// The for-in state over the operand's key snapshot (`ForInStart`).
@@ -98,7 +98,7 @@ impl<W, P> Operation<W, P> {
     /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
     /// tier's `proof` of the global it names; `None` for any other opcode.
     #[inline(always)]
-    pub(crate) fn decode_load_name(instruction: WideInstruction, proof: P) -> Option<Self> {
+    pub fn decode_load_name(instruction: WideInstruction, proof: P) -> Option<Self> {
         let receiver = match instruction.op() {
             Op::LoadName => None,
             Op::LoadNameCall => Some(instruction.register_b()),

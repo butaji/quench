@@ -150,7 +150,7 @@ impl Vm {
 
     /// The atom of the string `key`, interned as `intern_js_atom` does, found once per string
     /// record and then read from it (`Heap::string_atom`). `None` when `key` is not a string.
-    pub(super) fn string_key_atom(&mut self, key: Value) -> Option<Atom> {
+    pub fn string_key_atom(&mut self, key: Value) -> Option<Atom> {
         if let Some(atom) = self.heap.string_atom(key) {
             return Some(atom);
         }
@@ -163,7 +163,7 @@ impl Vm {
     /// Whether ToString of `value` runs no guest code and raises nothing: a string, number,
     /// boolean, null or undefined.
     #[inline(always)]
-    pub(super) fn converts_to_string_purely(&self, value: Value) -> bool {
+    pub fn converts_to_string_purely(&self, value: Value) -> bool {
         let immediate = value.as_bool().is_some() || value.is_null() || value.is_undefined();
         immediate || value.as_number().is_some() || self.heap.is_string(value)
     }
@@ -278,7 +278,7 @@ impl Vm {
     }
 
     /// `string_concat` that runs no guest code: a string of parts, or `pure_string_concat_apart`.
-    pub(super) fn pure_string_concat(&mut self, p: &ResidualProgram, count: usize,
+    pub fn pure_string_concat(&mut self, p: &ResidualProgram, count: usize,
         part: impl Fn(&Self, usize) -> Value + Copy) -> Option<Value> {
         self.string_of_parts(count, part).or_else(|| self.pure_string_concat_apart(p, count, part))
     }

@@ -2,7 +2,7 @@ use super::*;
 use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue, ObjectLayout};
 
 mod window;
-pub(in crate::vm) mod stage;
+pub mod stage;
 
 /// The error of a struct whose storage no room is left for.
 fn wasm_struct_allocation_failed() -> JsError {
@@ -20,7 +20,7 @@ pub(super) enum ArrayInitialization {
     Fixed(Vec<Value>),
 }
 
-pub(super) enum GcFieldIndex {
+pub enum GcFieldIndex {
     Struct(u32),
     Array(u32),
 }
@@ -176,7 +176,7 @@ impl Vm {
     /// integer, a 64-bit number as the register's `Value` (boxed only where its bits are in the tag
     /// space), a reference's bits as they are.
     #[inline(always)]
-    pub(in crate::vm) fn wasm_field_value(&mut self, field: GcField, access: GcFieldAccess, bits: u64) -> Value {
+    pub fn wasm_field_value(&mut self, field: GcField, access: GcFieldAccess, bits: u64) -> Value {
         match (access, field.value()) {
             (GcFieldAccess::ReadSigned | GcFieldAccess::ReadUnsigned, _) | (_, GcFieldValue::Narrow) => Value::integer(bits as i32),
             (_, GcFieldValue::Wide) => self.encode_bits64(bits),
@@ -184,7 +184,7 @@ impl Vm {
         }
     }
 
-    pub(in crate::vm) fn wasm_stored_bits(&self, field: GcField, value: Value) -> u64 {
+    pub fn wasm_stored_bits(&self, field: GcField, value: Value) -> u64 {
         match field.value() {
             GcFieldValue::Wide => self.decode_bits64(value).expect("validated Wasm 64-bit field"),
             _ => field.raw_of(value),

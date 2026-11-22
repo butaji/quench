@@ -6,7 +6,7 @@ use std::rc::Rc;
 pub(in crate::vm) enum WasmTierState {
     Counting(u8),
     Attempted,
-    Compiled(Rc<crate::vm::compiled::CompiledProgram>),
+    Compiled(Rc<crate::vm::engine_types::CompiledProgram>),
 }
 
 impl Default for WasmTierState {
@@ -16,14 +16,14 @@ impl Default for WasmTierState {
 }
 
 impl WasmTierState {
-    pub(in crate::vm) fn compiled(&self) -> Option<&Rc<crate::vm::compiled::CompiledProgram>> {
+    pub(in crate::vm) fn compiled(&self) -> Option<&Rc<crate::vm::engine_types::CompiledProgram>> {
         match self {
             Self::Compiled(compiled) => Some(compiled),
             Self::Counting(_) | Self::Attempted => None,
         }
     }
 
-    pub(in crate::vm) fn take_compiled(&mut self) -> Option<Rc<crate::vm::compiled::CompiledProgram>> {
+    pub(in crate::vm) fn take_compiled(&mut self) -> Option<Rc<crate::vm::engine_types::CompiledProgram>> {
         match std::mem::replace(self, Self::Attempted) {
             Self::Compiled(compiled) => Some(compiled),
             other => {

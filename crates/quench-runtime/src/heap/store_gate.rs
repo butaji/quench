@@ -40,7 +40,7 @@ impl Heap {
     /// split into its inputs, slot observation (`STORE_WATCH_TRACKS`) and reference counts
     /// (`STORE_WATCH_COUNTS`). Zero exactly when `store_watched` is clear.
     #[inline(always)]
-    pub(crate) fn store_watch_word(&self) -> usize {
+    pub fn store_watch_word(&self) -> usize {
         use crate::staged::layout_offsets::{STORE_WATCH_COUNTS, STORE_WATCH_TRACKS};
         let tracks = if self.properties.tracks() { STORE_WATCH_TRACKS } else { 0 };
         let counts = if self.rc_active { STORE_WATCH_COUNTS } else { 0 };
@@ -63,7 +63,7 @@ impl Heap {
 
     /// The first arena value, which a flat run's position offsets (`staged::Table::PropertyValues`).
     #[inline(always)]
-    pub(crate) fn arena_values_base(&self) -> *const Value {
+    pub fn arena_values_base(&self) -> *const Value {
         self.properties.values_base()
     }
 

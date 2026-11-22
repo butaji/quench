@@ -454,7 +454,7 @@ impl DynamicImportJob {
 }
 
 #[derive(Default)]
-pub(super) struct PromiseRuntime {
+pub struct PromiseRuntime {
     pub(super) rejection_notifications: VecDeque<RejectionNotification>,
     pub(super) last_rejection_id: u64,
     pub(super) finally_handler_callbacks: FxHashMap<Value, FinallyHandlerCallback>,
@@ -472,7 +472,7 @@ pub(super) struct PromiseRuntime {
     pub(super) async_module_settled: bool,
     pub(super) module_sources: FxHashMap<ModuleIdentity, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
-    pub(super) active_native: Vec<super::activation::NativeActivation>,
+    pub active_native: Vec<super::activation::NativeActivation>,
 }
 
 impl PromiseRuntime {
@@ -510,7 +510,7 @@ const STATIC_MODULE_ANALYSIS_GOAL: &str = "static-module-analysis";
 
 impl Vm {
     #[cfg(feature = "native-execution")]
-    pub(super) fn register_native_module(&mut self, native: crate::NativeJsProgram) -> Result<(), JsError> {
+    pub fn register_native_module(&mut self, native: crate::NativeJsProgram) -> Result<(), JsError> {
         let key = module_cache_key(&native.residual().source_name, "javascript");
         if self.realm.promise.modules.contains_key(&key) {
             return Err(JsError::validation("duplicate native module identity".into()));
@@ -555,7 +555,7 @@ impl Vm {
     /// `call_native_guarded` of a lane's native call: its stack depth is the compare of the
     /// bounds the lane read at its entry (`LaneStack::native_stack`) in place of a
     /// `StackGuard`'s thread-local enter and drop; past them the guard decides, as before.
-    pub(super) fn call_native_from_lane(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
+    pub fn call_native_from_lane(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
         callee: Value) -> Result<Value, JsError> {
         #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
         let limit = self.lane_stack.native_stack;
@@ -566,7 +566,7 @@ impl Vm {
     /// running function's registers (`dispatch_fast::arguments_in_window`): the frame
     /// parked at the call (the lane's own, or the one its activation becomes, before any
     /// collection) holds them live at the call's pc, so only the receiver is rooted.
-    pub(super) fn call_native_from_lane_arguments_held(&mut self, p: &ResidualProgram, native: Native, this: Value,
+    pub fn call_native_from_lane_arguments_held(&mut self, p: &ResidualProgram, native: Native, this: Value,
         args: &[Value], callee: Value) -> Result<Value, JsError> {
         #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
         let limit = self.lane_stack.native_stack;
@@ -683,7 +683,7 @@ impl Vm {
         self.native_with_realm(kind, env, self.realm.globals)
     }
 
-    pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
+    pub fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
         let promise_resolver = !env.is_null()
             && matches!(
                 kind,
@@ -796,7 +796,7 @@ impl Vm {
         self.set_builtin_value_named(global, "Promise", promise)
     }
 
-    pub(super) fn promise_object(&mut self) -> Result<Value, JsError> {
+    pub fn promise_object(&mut self) -> Result<Value, JsError> {
         self.promise_object_with_parent(None)
     }
 
@@ -4828,7 +4828,7 @@ impl Vm {
     /// `promise_then`'s intrinsic arm makes them. `None` leaves any other receiver, an
     /// impure species read, or a lifecycle-observing host, whose hooks run guest code, to
     /// the general call.
-    pub(super) fn promise_then_in_lane(
+    pub fn promise_then_in_lane(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
@@ -4855,7 +4855,7 @@ impl Vm {
     /// that `then` is not callable, else through the thenable job the general path would
     /// enqueue. `None` leaves an impure read or a lifecycle-observing host to the general
     /// call.
-    pub(super) fn promise_resolve_in_lane(
+    pub fn promise_resolve_in_lane(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
@@ -4877,7 +4877,7 @@ impl Vm {
     /// The `then` `promise_resolve_value` would read from a resolution `value`, where the read
     /// observes nothing: `undefined` for a non-object, else its plain-data `then`
     /// (`plain_named_load`). `None` where the read could run guest code.
-    pub(super) fn plain_resolution_then(&mut self, value: Value) -> Option<Value> {
+    pub fn plain_resolution_then(&mut self, value: Value) -> Option<Value> {
         if self.object_data(value).is_none() {
             return Some(Value::UNDEFINED);
         }

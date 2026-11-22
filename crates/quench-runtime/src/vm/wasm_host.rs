@@ -126,7 +126,7 @@ impl Vm {
     /// The JavaScript callee of the host import `function`, its memcpy capture where it has one,
     /// and its host signature, shared with the cell rather than copied. `None` for a function
     /// that is no host function, or a host-backed import.
-    pub(super) fn host_import_js_target(
+    pub fn host_import_js_target(
         &self,
         function: Value,
     ) -> Option<(Value, Option<(Value, usize)>, Rc<WasmHostSignature>)> {
@@ -172,7 +172,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn wasm_callable_matches(
+    pub fn wasm_callable_matches(
         &self,
         function: Value,
         expected: &crate::wasm::WasmSignatures,
@@ -347,7 +347,7 @@ impl Vm {
     /// Calls a JS-backed Wasm import from compiled code without dispatching
     /// through its `Native::WasmHost` wrapper. Keep the wrapper's VM boundary
     /// observable state while sharing the ordinary JS import conversion path.
-    pub(super) fn call_compiled_js_wasm_import(
+    pub fn call_compiled_js_wasm_import(
         &mut self,
         program: ProgramId,
         p: &ResidualProgram,

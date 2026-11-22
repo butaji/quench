@@ -61,7 +61,7 @@ impl Vm {
     /// guest code: `construct_array_native`'s array with the callee's own `prototype` data.
     /// `None` for any other callee, a prototype held otherwise, or an invalid length, whose
     /// RangeError the general path throws.
-    pub(in crate::vm) fn intrinsic_array_construction(&mut self, callee: Value, args: &[Value]) -> Option<Value> {
+    pub fn intrinsic_array_construction(&mut self, callee: Value, args: &[Value]) -> Option<Value> {
         if !matches!(self.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), .. })) {
             return None;
         }
@@ -76,7 +76,7 @@ impl Vm {
     /// `construct_array_native`'s array for `new_target` whose own `prototype` data names an
     /// object (a class extending `Array` passes itself), which runs no guest code; `None`
     /// where the general path must read it or throw.
-    pub(in crate::vm) fn array_construction_by(&mut self, new_target: Value, args: &[Value]) -> Option<Value> {
+    pub fn array_construction_by(&mut self, new_target: Value, args: &[Value]) -> Option<Value> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(new_target, prototype_atom)
             .filter(|prototype| self.object_data(*prototype).is_some())?;

@@ -23,7 +23,7 @@ use crate::heap::{NATIVE_FUNCTION_LAYOUT as FUNCTION, NATIVE_OBJECT_LAYOUT as OB
 /// as the record says at run time; any other is an arena run. The slot already holds a value, so
 /// no room is needed, unlike an add (`add_plan::Transition::form`).
 #[inline(always)]
-pub(crate) fn name_form(slot: u16) -> Form {
+pub fn name_form(slot: u16) -> Form {
     if usize::from(slot) < OBJECT.inline_property_count { Form::Either } else { Form::Arena }
 }
 
@@ -49,7 +49,7 @@ pub(crate) fn set_function_name<S: Stage>(stage: &mut S, record: S::Word, record
 /// the way a compiled site holds it: a reserved table, and the word names a direct function (else
 /// `None`, leaving at `miss`).
 #[inline(always)]
-pub(crate) fn site_name<S: Stage>(stage: &mut S, records: S::Word, function: S::Word, naming: (Edge<S::Word>, S::Word),
+pub fn site_name<S: Stage>(stage: &mut S, records: S::Word, function: S::Word, naming: (Edge<S::Word>, S::Word),
     form: Form, name: S::Word, miss: S::Miss) -> Option<()> {
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;

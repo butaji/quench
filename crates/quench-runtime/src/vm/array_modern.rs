@@ -53,7 +53,7 @@ impl Vm {
         Ok((0..length).map(move |index| self.array_value_at(this, index)))
     }
 
-    pub(super) fn new_array(&mut self, values: Vec<Value>) -> Value {
+    pub fn new_array(&mut self, values: Vec<Value>) -> Value {
         self.new_array_with_prototype(values, self.array_prototype_for_realm(self.realm.globals))
     }
 
@@ -794,7 +794,7 @@ impl Vm {
         plain && self.set_array_element(target, index, value)
     }
 
-    pub(super) fn iterator_abrupt(
+    pub fn iterator_abrupt(
         &mut self,
         p: &ResidualProgram,
         iterator: Value,

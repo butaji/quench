@@ -24,7 +24,7 @@ use crate::typed_ir::Type;
 /// An array's elements as an access reads them, once proved: a dense array's backing or a
 /// typed array's elements, whose kind the proof carries.
 #[derive(Clone, Copy)]
-pub(crate) enum ElementView<W> {
+pub enum ElementView<W> {
     Dense(DenseView<W>),
     Typed(TypedView<W>),
 }
@@ -36,7 +36,7 @@ impl<W, P> Operation<W, P> {
     /// key (the tier defines the result register), and `SetIndex`; `None` where the instruction
     /// completes a frame or an operand names a local or a field.
     #[inline(always)]
-    pub(crate) fn decode_element(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_element(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         Some(match instruction.op() {
             Op::GetIndex => match instruction.operand_b().register_index() {

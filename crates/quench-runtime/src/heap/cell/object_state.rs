@@ -109,14 +109,14 @@ impl Object {
         }
     }
 
-    #[inline] pub(crate) fn shape(&self) -> u32 {
+    #[inline] pub fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.aux()).auxiliary()
     }
     /// The shape with its dictionary and exotic bits (`ValueVec::exact_auxiliary`): a cache
     /// entry, which records only shapes, matches it exactly when it matches the shape of an
     /// ordinary object outside dictionary storage.
     #[inline(always)]
-    pub(crate) fn exact_shape(&self) -> u32 {
+    pub fn exact_shape(&self) -> u32 {
         ValueVec::from_parts(0, self.aux()).exact_auxiliary()
     }
     /// The shape with its exotic bit and without its dictionary bit: a recorded shape
@@ -220,7 +220,7 @@ impl Object {
     pub(crate) fn window_depth(&self) -> Option<usize> {
         self.extras()?.rare()?.window_depth.map(|depth| depth as usize)
     }
-    pub(crate) fn set_window_depth(&mut self, depth: usize) {
+    pub fn set_window_depth(&mut self, depth: usize) {
         if let Some(rare) = self.extras_mut_existing().and_then(ObjectExtras::rare_mut_existing) {
             rare.window_depth = u32::try_from(depth).ok();
         }
@@ -251,7 +251,7 @@ impl Object {
             && !self.has_exotic_access()
             && !self.element_facts().has(ElementFacts::NOT_ORDINARY)
     }
-    #[inline] pub(crate) fn is_arguments_object(&self) -> bool {
+    #[inline] pub fn is_arguments_object(&self) -> bool {
         self.brand() == ObjectBrand::Arguments
     }
     #[inline]
@@ -308,7 +308,7 @@ impl Object {
     /// A namespace is exotic (`set_module_namespace`), so the flag in the object's own word
     /// rules out every other object without reading its extras.
     #[inline(always)]
-    pub(crate) fn is_module_namespace(&self) -> bool {
+    pub fn is_module_namespace(&self) -> bool {
         self.has_exotic_access() && self.brand() == ObjectBrand::ModuleNamespace
     }
     /// A proxy's own object: the handler answers every access, so no shape a cache records

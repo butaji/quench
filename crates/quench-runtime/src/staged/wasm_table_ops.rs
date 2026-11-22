@@ -11,7 +11,7 @@ use crate::bytecode::{Class, Op, WideInstruction};
 /// The table, element-segment, data-segment and memory-init operations a function body runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub(crate) enum TableOp {
+pub enum TableOp {
     /// `a = table.size b`.
     Size,
     /// `a = table.get b[c]`: the reference bits of the element.
@@ -47,7 +47,7 @@ impl TableOp {
     ];
 
     /// The operation `op` is, if it is one of these.
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::WasmTableSize => Some(Self::Size),
             Class::WasmTableGet => Some(Self::Get),
@@ -63,19 +63,19 @@ impl TableOp {
     }
 
     /// The tag a callout receives the operation by.
-    pub(crate) const fn tag(self) -> u64 {
+    pub const fn tag(self) -> u64 {
         self as u64
     }
 
     /// The operation of `tag`, as `tag` names it.
-    pub(crate) fn from_tag(tag: u64) -> Option<Self> {
+    pub fn from_tag(tag: u64) -> Option<Self> {
         Self::ALL.into_iter().find(|op| op.tag() == tag)
     }
 
     /// The registers of the bindings the operation names, first then second: a table, a
     /// segment or (for `memory.init`) a segment, and the second table or segment of a copy or
     /// an init. A binding register holds a `Slot::Binding`, the environment slot it names.
-    pub(crate) fn bindings(self, instruction: WideInstruction) -> (Option<u16>, Option<u16>) {
+    pub fn bindings(self, instruction: WideInstruction) -> (Option<u16>, Option<u16>) {
         match self {
             Self::Size | Self::Get | Self::Set | Self::Grow | Self::MemoryInit => {
                 (Some(instruction.b()), None)
@@ -88,7 +88,7 @@ impl TableOp {
 
     /// The registers of the word operands, in the order `Vm::wasm_table_op` takes them: an
     /// index, a length, a delta, or a destination, a source and a length. Each is a 32-bit word.
-    pub(crate) fn words(self, instruction: WideInstruction) -> [Option<u16>; 3] {
+    pub fn words(self, instruction: WideInstruction) -> [Option<u16>; 3] {
         let (first, second) = instruction.register_pair();
         match self {
             Self::Size | Self::SegmentDrop => [None, None, None],
@@ -103,7 +103,7 @@ impl TableOp {
 
     /// The register of the reference the operation stores or initializes with, if any: an `I64`
     /// word holding the reference's bits.
-    pub(crate) fn value(self, instruction: WideInstruction) -> Option<u16> {
+    pub fn value(self, instruction: WideInstruction) -> Option<u16> {
         match self {
             Self::Set => Some(instruction.a()),
             Self::Fill => Some(instruction.b()),

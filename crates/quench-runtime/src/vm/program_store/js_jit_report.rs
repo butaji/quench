@@ -2,8 +2,8 @@
 //! lane's miss reports, one JSON stats line per function of the diagnostics map, and the
 //! store's totals.
 use super::*;
-use super::super::compiled::RegionRejection;
-use super::super::dispatch_fast::{LaneView, OsrDiagnostics, OsrSiteDiagnostics, OsrSiteStatus, RegionDecline};
+use crate::vm::engine_types::RegionRejection;
+use crate::vm::engine_types::{LaneView, OsrDiagnostics, OsrSiteDiagnostics, OsrSiteStatus, RegionDecline};
 use std::fmt::Display;
 use std::io::{self, Write};
 
@@ -259,8 +259,8 @@ impl ProgramStore {
             return;
         };
         self.report_lane_bodies();
-        eprintln!("{}", super::super::dispatch_fast::lane_miss_report(&self.tier_events));
-        eprintln!("{}", super::super::dispatch_fast::lane_unlowered_report());
+        eprintln!("{}", crate::vm::engine_calls::lane_miss_report(&self.tier_events));
+        eprintln!("{}", crate::vm::engine_calls::lane_unlowered_report());
         let mut records: Vec<_> = diagnostics.iter().collect();
         records.sort_unstable_by_key(|(key, _)| **key);
         let stderr = io::stderr();

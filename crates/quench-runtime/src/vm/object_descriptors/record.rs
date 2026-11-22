@@ -3,7 +3,7 @@
 use super::*;
 
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct PropertyDescriptorRecord {
+pub struct PropertyDescriptorRecord {
     pub(in crate::vm) value: Option<Value>,
     pub(in crate::vm) writable: Option<bool>,
     pub(in crate::vm) enumerable: Option<bool>,
@@ -24,7 +24,7 @@ impl PropertyDescriptorRecord {
         }
     }
 
-    pub(in crate::vm) fn for_definition(mode: PropertyDefinitionMode, value: Value) -> Self {
+    pub fn for_definition(mode: PropertyDefinitionMode, value: Value) -> Self {
         use PropertyDefinitionMode::*;
         match mode {
             Method | ReadonlyMethod => Self {

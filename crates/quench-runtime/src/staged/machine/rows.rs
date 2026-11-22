@@ -8,7 +8,7 @@ use crate::staged::wasm_float::Float;
 /// The width and kind of a machine value or memory cell: an integer or float word, a narrow
 /// integer cell, or a 128-bit vector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Lane { I8, I16, I32, I64, F32, F64, V128 }
+pub enum Lane { I8, I16, I32, I64, F32, F64, V128 }
 
 impl From<Width> for Lane {
     fn from(width: Width) -> Self {
@@ -30,11 +30,11 @@ impl From<Float> for Lane {
 
 /// How a load narrower than its result extends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Extend { Zero, Sign }
+pub enum Extend { Zero, Sign }
 
 /// A two-operand row: integer arithmetic, bitwise and division, or float arithmetic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Binary {
+pub enum Binary {
     Add, Sub, Mul, MulHighSigned, MulHighUnsigned,
     And, Or, Xor, ShiftLeft, ShiftRightUnsigned, ShiftRightSigned, RotateLeft, RotateRight,
     DivideSigned, DivideUnsigned, RemainderSigned, RemainderUnsigned,
@@ -44,7 +44,7 @@ pub(crate) enum Binary {
 /// A comparison row: its flag is a word that holds 0 or 1 (an `i8` lane); the integer
 /// relations test the operands at their own width.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Relation {
+pub enum Relation {
     Equal, NotEqual,
     SignedLess, SignedLessEqual, SignedGreater, SignedGreaterEqual,
     UnsignedLess, UnsignedLessEqual, UnsignedGreater, UnsignedGreaterEqual,
@@ -55,7 +55,7 @@ pub(crate) enum Relation {
 /// What a language operator is on the machine: a comparison row, a two-operand row, or the
 /// signed remainder, a row behind the guard of its overflowing quotient.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MachineOperator {
+pub enum MachineOperator {
     Relation(Relation),
     Binary(Binary),
     SignedRemainder,
@@ -64,11 +64,11 @@ pub(crate) enum MachineOperator {
 /// The order a comparison tests, apart from the domain it reads its operands in: a backend
 /// builds its condition codes from it (`Relation::order`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Order { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Unordered, UnorderedEqual }
+pub enum Order { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Unordered, UnorderedEqual }
 
 impl Relation {
     /// The order the relation tests, and whether it reads its operands as floats.
-    pub(crate) const fn order(self) -> (Order, bool) {
+    pub const fn order(self) -> (Order, bool) {
         match self {
             Self::Equal => (Order::Equal, false),
             Self::NotEqual => (Order::NotEqual, false),
@@ -88,14 +88,14 @@ impl Relation {
     }
 
     /// Whether the integer relation reads its operands as signed.
-    pub(crate) const fn is_signed(self) -> bool {
+    pub const fn is_signed(self) -> bool {
         matches!(self, Self::SignedLess | Self::SignedLessEqual | Self::SignedGreater | Self::SignedGreaterEqual)
     }
 }
 
 /// A one-operand row: a conversion to the lane it names, a bit count, or a float rounding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Unary {
+pub enum Unary {
     ZeroExtend(Lane), SignExtend(Lane), Narrow(Lane),
     Promote, Demote, Bitcast(Lane),
     FromSigned(Lane), FromUnsigned(Lane), ToSignedSaturating(Lane), ToUnsignedSaturating(Lane),

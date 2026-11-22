@@ -16,7 +16,7 @@ const WORD_FIELD_BITS: u32 = u16::BITS;
 const WORD_FIELD_MASK: u64 = u16::MAX as u64;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct WideInstruction {
+pub struct WideInstruction {
     op: Op,
     a: u16,
     b: u16,
@@ -32,7 +32,7 @@ impl WideInstruction {
     /// scope binds statically (its `ResolveName` flag set,
     /// `needs_strict_global_reference_capture`) meets only bindings a `with` or `eval`
     /// makes, whose own functions those mark, and otherwise the global object.
-    pub(crate) fn resolves_dynamic_scope(self) -> bool {
+    pub fn resolves_dynamic_scope(self) -> bool {
         match self.op() {
             Op::ResolveName => self.boolean_field(InstructionField::B) != Some(true),
             op if op.is_call_with_eval_flags() => {
@@ -77,40 +77,40 @@ impl WideInstruction {
         }
     }
 
-    #[inline(always)] pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
+    #[inline(always)] pub const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
         Self { op, a, b, c, imm }
     }
 
     /// Every field of the instruction as two words, equal exactly where the instructions are
     /// (`lane_facts::plan_key`).
-    #[inline] pub(crate) const fn words(self) -> (u64, u32) {
+    #[inline] pub const fn words(self) -> (u64, u32) {
         ((self.op as u16 as u64) | (self.a as u64) << WORD_FIELD_BITS | (self.b as u64) << 2 * WORD_FIELD_BITS | (self.c as u64) << 3 * WORD_FIELD_BITS, self.imm)
     }
 
     /// The inverse of `words`: the instruction the two words name, `None` where the first holds no opcode.
-    #[inline] pub(crate) fn from_words(first: u64, imm: u32) -> Option<Self> {
+    #[inline] pub fn from_words(first: u64, imm: u32) -> Option<Self> {
         let op = Op::from_index((first & WORD_FIELD_MASK) as usize)?;
         let field = |index: u32| (first >> (index * WORD_FIELD_BITS)) as u16;
         Some(Self::new(op, field(1), field(2), field(3), imm))
     }
 
-    #[inline] pub(crate) const fn op(self) -> Op {
+    #[inline] pub const fn op(self) -> Op {
         self.op
     }
 
-    #[inline] pub(crate) const fn a(self) -> u16 {
+    #[inline] pub const fn a(self) -> u16 {
         self.a
     }
 
-    #[inline] pub(crate) const fn b(self) -> u16 {
+    #[inline] pub const fn b(self) -> u16 {
         self.b
     }
 
-    #[inline] pub(crate) const fn c(self) -> u16 {
+    #[inline] pub const fn c(self) -> u16 {
         self.c
     }
 
-    #[inline] pub(crate) const fn imm(self) -> u32 {
+    #[inline] pub const fn imm(self) -> u32 {
         self.imm
     }
 
@@ -159,13 +159,13 @@ impl WideInstruction {
     /// The instruction without its return flag where that is its only result flag (it completes its
     /// function with the value it would write to its result register, and does nothing else with it),
     /// and whether it had it; any other instruction as it is.
-    pub(crate) fn split_return(self) -> (Self, bool) {
+    pub fn split_return(self) -> (Self, bool) {
         let returning = self.result_flags() == RETURN_REGISTER && self.returns_from_frame();
         (if returning { self.without_return() } else { self }, returning)
     }
 
     /// The instruction without its return flag: the same operation, which writes its result register.
-    pub(crate) const fn without_return(mut self) -> Self {
+    pub const fn without_return(mut self) -> Self {
         self.a &= !RETURN_REGISTER;
         self
     }
@@ -174,7 +174,7 @@ impl WideInstruction {
 macro_rules! layout_accessors {
     ($instruction:ty) => {
         impl $instruction {
-            pub(crate) fn field_value(self, field: InstructionField) -> u16 {
+            pub fn field_value(self, field: InstructionField) -> u16 {
                 match field {
                     InstructionField::A => self.a(),
                     InstructionField::B => self.b(),
@@ -182,7 +182,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[inline(always)] pub(crate) fn result_register(self) -> Register {
+            #[inline(always)] pub fn result_register(self) -> Register {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::A),
                     FieldLayout::ResultRegister
@@ -194,7 +194,7 @@ macro_rules! layout_accessors {
             /// register; `None` when A holds something else, including a numeric
             /// result stored directly into a local rather than a register.
             #[allow(dead_code)] #[inline]
-            pub(crate) fn defined_register(self) -> Option<Register> {
+            pub fn defined_register(self) -> Option<Register> {
                 (self.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
                     && !self.writes_numeric_local())
                     .then(|| self.a() & REGISTER_MASK)
@@ -204,7 +204,7 @@ macro_rules! layout_accessors {
             /// results live in a different index space; optional outputs use
             /// their decoded register, not the biased field encoding.
             #[allow(dead_code)] #[inline]
-            pub(crate) fn written_registers(self) -> impl Iterator<Item = Register> {
+            pub fn written_registers(self) -> impl Iterator<Item = Register> {
                 InstructionField::ALL.iter().copied().filter_map(move |field| {
                     let layout = self.op().field_layout(field);
                     match layout {
@@ -220,7 +220,7 @@ macro_rules! layout_accessors {
             }
 
             #[inline(always)]
-            pub(crate) fn result_flags(self) -> Register {
+            pub fn result_flags(self) -> Register {
                 self.a() & !REGISTER_MASK
             }
 
@@ -246,24 +246,24 @@ macro_rules! layout_accessors {
             // dispatch, and only a set bit needs the op's layout to tell the flag from other
             // field-A data.
             #[inline]
-            pub(crate) fn returns_from_frame(self) -> bool {
+            pub fn returns_from_frame(self) -> bool {
                 self.result_flags() & RETURN_REGISTER != 0
                     && self.op().result_layout().allows_return()
             }
 
-            pub(crate) fn writes_current_this(self) -> bool {
+            pub fn writes_current_this(self) -> bool {
                 self.result_flags() & SET_THIS_REGISTER != 0
                     && self.op().result_layout().allows_this_write()
             }
 
             #[inline(always)]
-            pub(crate) fn writes_numeric_local(self) -> bool {
+            pub fn writes_numeric_local(self) -> bool {
                 self.result_flags() & super::NUMERIC_LOCAL_TARGET != 0
                     && self.op().result_layout().allows_numeric_local()
             }
 
             #[allow(dead_code)] #[inline(always)]
-            pub(crate) fn numeric_local_target(self) -> Option<Register> {
+            pub fn numeric_local_target(self) -> Option<Register> {
                 self.writes_numeric_local().then(|| self.result_register())
             }
 
@@ -288,7 +288,7 @@ macro_rules! layout_accessors {
 
             // The packed form decodes this only through its fixed-width form.
             #[allow(dead_code)] #[inline]
-            pub(crate) fn call_window(self) -> RegisterWindow {
+            pub fn call_window(self) -> RegisterWindow {
                 debug_assert!(matches!(
                     self.op().immediate_layout(),
                     ImmediateLayout::CallWindow
@@ -303,19 +303,19 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline(always)]
-            pub(crate) fn direct_eval(self) -> bool {
+            pub fn direct_eval(self) -> bool {
                 debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::direct_eval(self.imm())
             }
 
             #[allow(dead_code)] #[inline(always)]
-            pub(crate) fn parameter_eval(self) -> bool {
+            pub fn parameter_eval(self) -> bool {
                 debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::parameter_eval(self.imm())
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn known_function_index(self) -> u16 {
+            pub fn known_function_index(self) -> u16 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
                     FieldLayout::FunctionIndex
@@ -324,7 +324,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn register_a(self) -> Register {
+            pub fn register_a(self) -> Register {
                 debug_assert!(
                     self.op()
                         .field_layout(InstructionField::A)
@@ -334,7 +334,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn register_b(self) -> Register {
+            pub fn register_b(self) -> Register {
                 debug_assert!(
                     self.op()
                         .field_layout(InstructionField::B)
@@ -344,7 +344,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn optional_register_b(self) -> Option<Register> {
+            pub fn optional_register_b(self) -> Option<Register> {
                 debug_assert!(matches!(
                     self.op().field_layout(InstructionField::B),
                     FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister
@@ -436,7 +436,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn register_c(self) -> Register {
+            pub fn register_c(self) -> Register {
                 debug_assert!(
                     self.op()
                         .field_layout(InstructionField::C)
@@ -446,7 +446,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn cache_site_index(self) -> u16 {
+            pub fn cache_site_index(self) -> u16 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::C),
                     FieldLayout::CacheSiteIndex
@@ -455,7 +455,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn boolean_field(self, field: InstructionField) -> Option<bool> {
+            pub fn boolean_field(self, field: InstructionField) -> Option<bool> {
                 debug_assert_eq!(self.op().field_layout(field), FieldLayout::BooleanFlag);
                 match self.field_value(field) {
                     0 => Some(false),
@@ -485,7 +485,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn operand_b(self) -> Operand {
+            pub fn operand_b(self) -> Operand {
                 debug_assert!(
                     self.op()
                         .field_layout(InstructionField::B)
@@ -507,7 +507,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn operand_c(self) -> Operand {
+            pub fn operand_c(self) -> Operand {
                 debug_assert!(
                     self.op()
                         .field_layout(InstructionField::C)
@@ -529,7 +529,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn binary_operator_field(self) -> u32 {
+            pub fn binary_operator_field(self) -> u32 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::A),
                     FieldLayout::BinaryOperator
@@ -538,7 +538,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn register_window(self) -> RegisterWindow {
+            pub fn register_window(self) -> RegisterWindow {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
                     FieldLayout::RegisterWindowBase
@@ -554,7 +554,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn element_count(self) -> u16 {
+            pub fn element_count(self) -> u16 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
                     FieldLayout::ElementCount
@@ -563,13 +563,13 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn method_site_index(self) -> usize {
+            pub fn method_site_index(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::MethodSiteIndex);
                 self.imm() as usize
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn constant_index(self) -> usize {
+            pub fn constant_index(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ConstantIndex);
                 self.imm() as usize
             }
@@ -587,7 +587,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn binary_operator(self) -> u32 {
+            pub fn binary_operator(self) -> u32 {
                 debug_assert!(matches!(
                     self.op().immediate_role(),
                     ImmediateRole::BinaryOperator
@@ -598,7 +598,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn unary_operator(self) -> u32 {
+            pub fn unary_operator(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::UnaryOperator);
                 self.imm()
             }
@@ -610,7 +610,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn atom_index(self) -> u32 {
+            pub fn atom_index(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::AtomIndex);
                 self.imm()
             }
@@ -634,7 +634,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn boolean_flag(self) -> Option<bool> {
+            pub fn boolean_flag(self) -> Option<bool> {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::BooleanFlag);
                 match self.imm() {
                     0 => Some(false),
@@ -644,7 +644,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn field_lookup(self) -> Option<FieldLookup> {
+            pub fn field_lookup(self) -> Option<FieldLookup> {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::FieldLookup);
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
@@ -691,19 +691,19 @@ macro_rules! layout_accessors {
             }
 
             #[inline]
-            pub(crate) fn local_slot(self) -> usize {
+            pub fn local_slot(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::LocalSlot);
                 self.imm() as usize
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn jump_target(self) -> u32 {
+            pub fn jump_target(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::JumpTarget);
                 self.imm()
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn set_jump_target(&mut self, target: u32) {
+            pub fn set_jump_target(&mut self, target: u32) {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::JumpTarget);
                 self.set_imm(target);
             }
@@ -718,7 +718,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn object_site_index(self) -> usize {
+            pub fn object_site_index(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ObjectSiteIndex);
                 self.imm() as usize
             }
@@ -751,7 +751,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn capture_depth(self) -> u16 {
+            pub fn capture_depth(self) -> u16 {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
                     ImmediateLayout::CaptureDepthAndSlot
@@ -760,7 +760,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn capture_slot(self) -> u16 {
+            pub fn capture_slot(self) -> u16 {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
                     ImmediateLayout::CaptureDepthAndSlot
@@ -770,14 +770,14 @@ macro_rules! layout_accessors {
 
             // The packed form decodes this only through its fixed-width form.
             #[allow(dead_code)] #[inline]
-            pub(crate) fn register_pair(self) -> (Register, Register) {
+            pub fn register_pair(self) -> (Register, Register) {
                 debug_assert_eq!(self.op().immediate_layout(), ImmediateLayout::RegisterPair);
                 ImmediateLayout::register_pair(self.imm())
             }
 
             // The packed form decodes this only through its fixed-width form.
             #[allow(dead_code)] #[inline]
-            pub(crate) fn construct_arguments(self) -> ConstructArguments {
+            pub fn construct_arguments(self) -> ConstructArguments {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
                     ImmediateLayout::ConstructCountAndFlags
@@ -798,7 +798,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)] #[inline]
-            pub(crate) fn is_super_construct(self) -> bool {
+            pub fn is_super_construct(self) -> bool {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
                     ImmediateLayout::ConstructCountAndFlags
@@ -903,11 +903,11 @@ impl Instr {
         Self::wide(usize::try_from(index).ok()?)
     }
 
-    #[inline(always)] pub(crate) const fn is_wide(self) -> bool {
+    #[inline(always)] pub const fn is_wide(self) -> bool {
         self.op().is_wide_marker()
     }
 
-    pub(crate) const fn wide_index(self) -> usize {
+    pub const fn wide_index(self) -> usize {
         debug_assert!(matches!(
             self.op().immediate_role(),
             ImmediateRole::WideInstructionIndex
@@ -915,11 +915,11 @@ impl Instr {
         (self.0 >> Self::OP_BITS) as usize
     }
 
-    #[inline(always)] pub(crate) const fn as_wide(self) -> WideInstruction {
+    #[inline(always)] pub const fn as_wide(self) -> WideInstruction {
         WideInstruction::new(self.op(), self.a(), self.b(), self.c(), self.imm())
     }
 
-    #[inline] pub(crate) const fn op(self) -> Op {
+    #[inline] pub const fn op(self) -> Op {
         // SAFETY: construction and residual decoding reject IDs outside the
         // contiguous macro-generated opcode range.
         unsafe { std::mem::transmute::<u16, Op>((self.0 & ((1 << Self::OP_BITS) - 1)) as u16) }

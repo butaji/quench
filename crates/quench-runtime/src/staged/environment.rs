@@ -8,7 +8,7 @@ use crate::value::ValueLayout;
 /// The address of `slot` of the dense run of `len` environment values at `values`, or `None` (leaving at `miss`) past
 /// the run.
 #[inline(always)]
-pub(crate) fn slot_address<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub fn slot_address<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let slot = u64::from(slot);
     // The slot is a per-site operand: one hole for the bounds test, one for the address.
     let bound = stage.site(slot);
@@ -49,7 +49,7 @@ fn ordinary_slot<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
 /// Value `slot` of the dense run of `len` environment values at `values`: its ordinary
 /// value, or `None` (leaving at `miss`) past the run or at an internal marker.
 #[inline(always)]
-pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16,
+pub fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16,
     miss: S::Miss) -> Option<S::Word> {
     dense_slot(stage, values, len, slot, miss).map(|(_, value)| value)
 }
@@ -85,7 +85,7 @@ pub(crate) unsafe fn concrete_environment_slot_open(storage: *mut crate::heap::E
 /// # Safety
 /// As `concrete_environment_slot_store`.
 #[inline(always)]
-pub(crate) unsafe fn concrete_environment_slot_define(storage: *mut crate::heap::EnvironmentSlots, slot: u16, value: crate::Value) -> bool {
+pub unsafe fn concrete_environment_slot_define(storage: *mut crate::heap::EnvironmentSlots, slot: u16, value: crate::Value) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     environment_slot_define(&mut stage, storage as u64, slot, value.to_bits(), ()).is_some()
 }
@@ -130,7 +130,7 @@ fn storage_run<S: Stage>(stage: &mut S, storage: S::Word, miss: S::Miss) -> Opti
 /// Value `slot` of the dense environment storage whose word `storage` holds (`storage_run`): an ordinary value,
 /// else a leave at `miss`.
 #[inline(always)]
-pub(crate) fn environment_slot<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub fn environment_slot<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let (values, len) = storage_run(stage, storage, miss)?;
     dense_capture(stage, values, len, slot, miss)
 }
@@ -139,7 +139,7 @@ pub(crate) fn environment_slot<S: Stage>(stage: &mut S, storage: S::Word, slot: 
 /// (`storage_run`), a leave at `miss` otherwise with nothing written. The caller owns the write barrier: a storage the
 /// window holds in place has none, and an environment's takes none for a value that is no heap reference.
 #[inline(always)]
-pub(crate) fn environment_slot_store<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
+pub fn environment_slot_store<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
     let (values, len) = storage_run(stage, storage, miss)?;
     let (address, _) = dense_slot(stage, values, len, slot, miss)?;
     stage.store_u64(Region::Cells.mutable(), address, 0, value);
@@ -153,7 +153,7 @@ pub(crate) fn environment_slot_store<S: Stage>(stage: &mut S, storage: S::Word, 
 /// has no barrier of its own, as `environment_slot_store`'s: an activation's environment lives only within a lane run,
 /// which collects nothing, so it is young or remembered (`dispatch_fast::window_records`'s `FLAG_WINDOW` store asserts it).
 #[inline(always)]
-pub(crate) fn environment_slot_define<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
+pub fn environment_slot_define<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
     let (values, len) = storage_run(stage, storage, miss)?;
     let address = slot_address(stage, values, len, slot, miss)?;
     let current = stage.load_u64(Region::Cells.mutable(), address, 0);
@@ -168,7 +168,7 @@ pub(crate) fn environment_slot_define<S: Stage>(stage: &mut S, storage: S::Word,
 /// Opens the dead zone of slot `slot` of the dense environment storage whose word `storage` holds (`InitializeTdz`):
 /// the hole defined as its value (`environment_slot_define`).
 #[inline(always)]
-pub(crate) fn environment_slot_open<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<()> {
+pub fn environment_slot_open<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<()> {
     let hole = stage.constant(crate::Value::DELETED.to_bits());
     environment_slot_define(stage, storage, slot, hole, miss)
 }
@@ -189,7 +189,7 @@ pub(crate) unsafe fn concrete_environment_slot(storage: *const crate::heap::Envi
 /// # Safety
 /// `storage` addresses a live `EnvironmentSlots` no other reference reads, and the caller owns the store's barrier.
 #[inline(always)]
-pub(crate) unsafe fn concrete_environment_slot_store(storage: *mut crate::heap::EnvironmentSlots, slot: u16, value: crate::Value) -> bool {
+pub unsafe fn concrete_environment_slot_store(storage: *mut crate::heap::EnvironmentSlots, slot: u16, value: crate::Value) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     environment_slot_store(&mut stage, storage as u64, slot, value.to_bits(), ()).is_some()
 }

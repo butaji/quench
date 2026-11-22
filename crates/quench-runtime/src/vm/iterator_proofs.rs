@@ -45,7 +45,7 @@ impl Vm {
     /// `iterator_close` of an iterator whose close the shapes end before any call
     /// (`iterator_lacks_property`), proving that for the next close; `false` for any other,
     /// whose close takes the general step.
-    pub(super) fn iterator_close_absent(&mut self, iterator: Value) -> bool {
+    pub fn iterator_close_absent(&mut self, iterator: Value) -> bool {
         let target = self.iterator_close_target(iterator);
         let Some(IteratorRecord { object, .. }) = self.heap.iterator(target) else {
             return false;
@@ -66,7 +66,7 @@ impl Vm {
     /// `count` elements, so each of the `count` steps yields its element and none reports
     /// done, and the array iterator's chain lacks `return`, so the close that follows calls
     /// nothing. `false` leaves the pattern to the iterator protocol.
-    pub(super) fn array_pattern_fits(&mut self, source: Value, count: usize) -> bool {
+    pub fn array_pattern_fits(&mut self, source: Value, count: usize) -> bool {
         if !self.intact_spread_length(source).is_some_and(|length| length >= count) {
             return false;
         }
@@ -153,7 +153,7 @@ impl Vm {
 
     /// A fresh array iterator of `kind` over the object `source`, as `%Array.prototype.values%`
     /// and its kin make one.
-    pub(super) fn array_iterator_of(&mut self, kind: IteratorKind, source: Value) -> Value {
+    pub fn array_iterator_of(&mut self, kind: IteratorKind, source: Value) -> Value {
         self.heap.alloc_iterator(IteratorRecord {
             object: Self::empty_object(self.array_iterator_proto),
             source,

@@ -5,7 +5,7 @@
 use super::Stage;
 
 /// The control transfers a specializer's stage emits, over its own block type.
-pub(crate) trait FlowStage: Stage {
+pub trait FlowStage: Stage {
     type Block: Copy;
     /// A callee's signature, which an indirect call names.
     type Signature: Copy;

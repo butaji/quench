@@ -11,14 +11,14 @@ use crate::vm::operations::{
 
 /// The representation both operands and the result of a Number operation have.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Domain {
+pub enum Domain {
     Int32,
     Float64,
 }
 
 /// What an int32 operation does at an overflow or a negative zero.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Overflow {
+pub enum Overflow {
     /// Leave at the frame's miss edge.
     Exit,
     /// Keep the wrapping int32 result.
@@ -31,7 +31,7 @@ pub(crate) enum Overflow {
 
 /// What an int32 product does at a zero whose sign is negative, which no int32 holds.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum NegativeZero {
+pub enum NegativeZero {
     /// Leave at the frame's miss edge.
     Exit,
     /// Keep the int32 zero: a tier that proved no consumer reads its sign, or that no operand
@@ -44,7 +44,7 @@ pub(crate) enum NegativeZero {
 
 /// A frame whose operands a numeric operation proves in its representation and whose result
 /// it defines with that representation's fact.
-pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> + super::CallFrame<S> {
+pub trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> + super::CallFrame<S> {
     /// The int32 word of `operand`, proved here; `None` where it is none (a frame whose
     /// facts prove it, or whose guard branches away at `miss`, always answers `Some`).
     fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
@@ -139,7 +139,7 @@ const LEAVES: (Overflow, NegativeZero) = (Overflow::Exit, NegativeZero::Exit);
 
 /// A Number operation `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
-pub(crate) enum NumberOperation {
+pub enum NumberOperation {
     /// Number x Number arithmetic with both operands in `domain`.
     Arithmetic { destination: Register, left: Operand, right: Operand,
         operation: NumberArithmetic, domain: Domain, overflow: Overflow, zero: NegativeZero },
@@ -213,13 +213,13 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 }
 
 /// The `NumberOperation` variants as numbers, for `step_of`'s compile-time choice of arm: `ANY` runs every arm.
-pub(crate) mod kind {
-    pub(crate) const ANY: u8 = 0;
-    pub(crate) const ARITHMETIC: u8 = 1;
+pub mod kind {
+    pub const ANY: u8 = 0;
+    pub const ARITHMETIC: u8 = 1;
     pub(crate) const RELATION: u8 = 2;
-    pub(crate) const RELATION_VALUE: u8 = 3;
-    pub(crate) const BITWISE: u8 = 4;
-    pub(crate) const REMAINDER: u8 = 5;
+    pub const RELATION_VALUE: u8 = 3;
+    pub const BITWISE: u8 = 4;
+    pub const REMAINDER: u8 = 5;
     pub(crate) const INC_DEC: u8 = 6;
     pub(crate) const BITWISE_NOT: u8 = 7;
     pub(crate) const TO_NUMERIC: u8 = 8;
@@ -234,7 +234,7 @@ pub(crate) mod kind {
 /// unresolved in a `const` test, which rustc drops before code generation, so a stencil row instantiates only its
 /// own arm. `kind::ANY` is `step`.
 #[inline(always)]
-pub(crate) fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: NumberOperation) -> Step<S::Word, F::Control> {
     // The general operator is decoded only once the words leave the row, so a decided row pays nothing for it.
     #[cfg(not(stencil_build))]
@@ -618,7 +618,7 @@ fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 /// tables are the operations' own (`NumberArithmetic::from_operator` and its siblings).
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
+pub fn binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
     if let Some(operation) = NumberArithmetic::from_operator(operator) {
         return Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Float64,
             overflow: Overflow::Widen, zero: NegativeZero::Ignore });
@@ -640,7 +640,7 @@ pub(crate) fn binary_operation(operator: u32, destination: Register, left: Opera
 /// `binary_operation`'s own.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn int32_binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
+pub fn int32_binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
     let int32 = match NumberArithmetic::from_operator(operator) {
         Some(NumberArithmetic::Divide) => None,
         Some(operation) => Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Int32,
@@ -1014,7 +1014,7 @@ fn negative_zero<S: NumericStage>(stage: &mut S, operation: NumberArithmetic,
 
 #[path = "numeric/stage.rs"]
 mod stage;
-pub(crate) use stage::NumericStage;
+pub use stage::NumericStage;
 #[path = "numeric/concrete.rs"]
 mod concrete;
 

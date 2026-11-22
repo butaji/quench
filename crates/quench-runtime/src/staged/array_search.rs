@@ -124,13 +124,13 @@ fn number_kind(number: f64, mode: Match) -> Kind {
 
 /// What a dense element must equal for `scan_dense` to stop on it.
 #[derive(Clone, Copy)]
-pub(crate) struct DenseNeedle<'a, W> {
+pub struct DenseNeedle<'a, W> {
     /// Elements whose word is one of these.
-    pub(crate) words: &'a [W],
+    pub words: &'a [W],
     /// Elements that are doubles float-equal to this binary64 word (`NumericStage::float_eq`).
-    pub(crate) number: Option<W>,
+    pub number: Option<W>,
     /// The hole word: a hole stops the scan too, so its caller settles it.
-    pub(crate) hole: Option<W>,
+    pub hole: Option<W>,
 }
 
 /// The index in `from..to` of the first element of the dense backing at `base` (element 0's address) that
@@ -140,7 +140,7 @@ pub(crate) struct DenseNeedle<'a, W> {
 /// step, whether the loop stopped on a match or on the end.
 ///
 /// This is `Vm::search_dense`'s word walk and the u-jit's `element_search` scans, one body for both.
-pub(crate) fn scan_dense<S: NumericStage>(stage: &mut S, base: S::Word, from: S::Word, to: S::Word,
+pub fn scan_dense<S: NumericStage>(stage: &mut S, base: S::Word, from: S::Word, to: S::Word,
     needle: DenseNeedle<'_, S::Word>, step: u32) -> S::Word {
     let bytes = u64::from(step);
     let start = {

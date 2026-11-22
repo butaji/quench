@@ -105,7 +105,7 @@ impl Vm {
     /// `%ArrayIteratorPrototype%.next`, every Get on the way reading a data property: an
     /// ordinary Array with no own `@@iterator` whose prototype is `Array.prototype`, while
     /// both fuses hold (`IntactFuse::ArrayIterator`, `IntactFuse::ArrayIteratorNext`).
-    pub(super) fn array_iteration_intact(&mut self, source: Value) -> bool {
+    pub fn array_iteration_intact(&mut self, source: Value) -> bool {
         let Some(array) = self.heap.array(source) else {
             return false;
         };
@@ -122,7 +122,7 @@ impl Vm {
     /// the realm's `Array.prototype`, no own `@@iterator`) yields its elements without running
     /// guest code: the realm's array iterator and its `next` are intact.
     #[inline]
-    pub(super) fn fresh_array_iteration_intact(&mut self) -> bool {
+    pub fn fresh_array_iteration_intact(&mut self) -> bool {
         self.fuse_intact(IntactFuse::ArrayIterator) && self.fuse_intact(IntactFuse::ArrayIteratorNext)
     }
 
@@ -130,7 +130,7 @@ impl Vm {
     /// guest code: an array whose iteration is intact (`array_iteration_intact`) holding only
     /// present own data elements, no indexed descriptor, sparse storage or hole. One array
     /// read answers what `array_iteration_intact` and `present_dense_elements` answer apart.
-    pub(super) fn intact_spread_length(&mut self, list: Value) -> Option<usize> {
+    pub fn intact_spread_length(&mut self, list: Value) -> Option<usize> {
         let array = self.heap.array(list)?;
         if array.is_arguments_object() || array.has_side_descriptors() || array.has_indexed_descriptors() || array.proto() != self.array_proto {
             return None;

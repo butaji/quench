@@ -2,7 +2,7 @@
 //! must end alike (printed lines, completion or exception, the `answer` global). The tier's own
 //! `TierEvents` must also show that it engaged: a tier that never ran agrees with anything.
 
-use super::compiled::tier_policy::TierRows;
+use crate::vm::tier_policy::TierRows;
 use super::compiled::forced_miss;
 use super::tier_events::{Event, TierEvents};
 use super::Vm;

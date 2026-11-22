@@ -12,12 +12,12 @@ pub(crate) const PAYLOAD_MASK: u64 = 0x0000_ffff_ffff_ffff;
 pub(crate) const TAG_UNDEFINED: u64 = 0x7ff9_0000_0000_0000;
 pub(crate) const TAG_NULL: u64 = 0x7ffa_0000_0000_0000;
 pub(crate) const TAG_BOOL: u64 = 0x7ffb_0000_0000_0000;
-pub(crate) const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
+pub const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 pub(crate) const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 pub(crate) const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 pub(crate) const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 /// The high dword of every int32's word (`Registers::int` compares it in memory).
-pub(crate) const INT_TAG_HIGH: u32 = (TAG_INT >> 32) as u32;
+pub const INT_TAG_HIGH: u32 = (TAG_INT >> 32) as u32;
 /// The `true` word: the `false` tag with bit 0 set.
 pub(crate) const TAG_TRUE: u64 = TAG_BOOL | 1;
 /// A tag field is the bits at and above this shift: the payload's width.
@@ -79,7 +79,7 @@ pub(crate) const DIRECT_SYMBOL_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIREC
 pub(crate) const DIRECT_COLLECTION_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
 /// The Wasm GC object record family's code: the vector bit with the array bit (no narrow word sets
 /// the vector bit, so it names no narrow family; `family_is` compares every family bit exactly).
-pub(crate) const DIRECT_WASM_GC_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+pub const DIRECT_WASM_GC_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The payload bits that code a heap value's reference family.
 pub(crate) const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
 /// Where a known closure keeps its function id: the payload bits above the 32-bit slot index and below
@@ -88,7 +88,7 @@ pub(crate) const KNOWN_CLOSURE_FUNCTION_SHIFT: u32 = u32::BITS;
 pub(crate) const KNOWN_CLOSURE_FUNCTION_MASK: u64 = (1 << (DIRECT_V128_HANDLE_BIT.trailing_zeros() - KNOWN_CLOSURE_FUNCTION_SHIFT)) - 1;
 pub(crate) const KNOWN_CLOSURE_FUNCTION_BITS: u64 = KNOWN_CLOSURE_FUNCTION_MASK << KNOWN_CLOSURE_FUNCTION_SHIFT;
 /// The bits that name a heap value's reference family.
-pub(crate) const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
+pub const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
 /// The shift of the family bits within the payload, to the family's index.
 pub(crate) const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
 
@@ -131,7 +131,7 @@ pub(crate) const NARROW_LOOKUP_CODES: usize = 2 * (1 << NARROW_CODE_BITS);
 /// Upper words of narrow non-integers by code: the eight heap reference families in `HEAP_FAMILY_BITS`
 /// order, then the tagged constants. Unused codes hold zero, the upper word of a number, which `to_narrow`
 /// never looks up.
-pub(crate) const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
+pub const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
     let mut words = [0; NARROW_LOOKUP_CODES];
     let mut family = 0;
     while family < NARROW_HEAP_FAMILIES {
@@ -172,24 +172,24 @@ const _: () = assert!(NARROW_UPPER_WORDS[NARROW_HEAP_FAMILIES + 1] == TAG_NULL);
 const _: () = assert!(NARROW_UPPER_WORDS[DIRECT_OBJECT_NARROW_CODE as usize] == DIRECT_OBJECT_UPPER);
 
 /// The encoding facts compiled code tests and builds values with (`Value::number`, `Value::is_tagged`).
-pub(crate) struct ValueLayout;
+pub struct ValueLayout;
 
 impl ValueLayout {
-    pub(crate) const TAG_MASK: u64 = TAG_MASK;
-    pub(crate) const INT_TAG: u64 = TAG_INT;
+    pub const TAG_MASK: u64 = TAG_MASK;
+    pub const INT_TAG: u64 = TAG_INT;
     /// Tag shared by TDZ and internal environment-slot markers.
-    pub(crate) const INTERNAL_TAG: u64 = TAG_DELETED;
+    pub const INTERNAL_TAG: u64 = TAG_DELETED;
     /// The tag of every heap reference (`Value::heap_index`).
-    pub(crate) const HEAP_TAG: u64 = TAG_HEAP;
-    pub(crate) const DIRECT_ARRAY_TAG: u64 = DIRECT_ARRAY_TAG;
-    pub(crate) const DIRECT_OBJECT_TAG: u64 = DIRECT_OBJECT_TAG;
+    pub const HEAP_TAG: u64 = TAG_HEAP;
+    pub const DIRECT_ARRAY_TAG: u64 = DIRECT_ARRAY_TAG;
+    pub const DIRECT_OBJECT_TAG: u64 = DIRECT_OBJECT_TAG;
     pub(crate) const DIRECT_FUNCTION_TAG: u64 = DIRECT_FUNCTION_TAG;
     pub(crate) const DIRECT_PROMISE_TAG: u64 = DIRECT_PROMISE_TAG;
     pub(crate) const DIRECT_ITERATOR_TAG: u64 = DIRECT_ITERATOR_TAG;
     pub(crate) const DIRECT_COLLECTION_TAG: u64 = DIRECT_COLLECTION_TAG;
-    pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
+    pub const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
     pub(crate) const DIRECT_STRING_TAG: u64 = DIRECT_STRING_TAG;
-    pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
+    pub const CANONICAL_NAN: u64 = CANONICAL_NAN;
     /// A tag field is the bits at and above this shift.
     pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;
     /// The first tag's field; a value is tagged when its field less this is at most the span.
@@ -199,7 +199,7 @@ impl ValueLayout {
 
 /// The narrow-value facts compiled code decodes an inline property slot with, as `Value::from_narrow`
 /// does: an integer below the flag, else an upper word by code with the lower word above the code.
-pub(crate) struct NarrowLayout;
+pub struct NarrowLayout;
 
 impl NarrowLayout {
     pub(crate) const INTEGER_FLAG: u32 = NARROW_INTEGER_FLAG;

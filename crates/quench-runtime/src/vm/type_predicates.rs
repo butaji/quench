@@ -4,7 +4,7 @@ use super::*;
 const BRAND_TEXT_CAPACITY: usize = 48;
 
 impl Vm {
-    pub(super) fn is_string(&self, v: Value) -> bool {
+    pub fn is_string(&self, v: Value) -> bool {
         self.heap.is_string(v)
     }
 

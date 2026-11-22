@@ -7,7 +7,7 @@ use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
 /// The class of one `Binary` operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BinaryClass {
+pub enum BinaryClass {
     Arithmetic(NumberArithmetic),
     Bitwise(NumberBitwise),
     /// `%`, the staged Number remainder.
@@ -20,7 +20,7 @@ pub(crate) enum BinaryClass {
 
 impl BinaryClass {
     /// The class of the binary operator `operator` (the `BinaryOperator` discriminant).
-    pub(crate) fn of_operator(operator: u32) -> Self {
+    pub fn of_operator(operator: u32) -> Self {
         if let Some(operation) = NumberArithmetic::from_operator(operator) {
             Self::Arithmetic(operation)
         } else if operator == crate::vm::operations::binary_operator::Remainder {

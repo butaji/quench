@@ -60,7 +60,7 @@ const BRAND_SLOT: u32 = u32::MAX;
 
 /// A private name's method or accessor, which an object carrying its brand reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum PrivateElement {
+pub enum PrivateElement {
     /// A private method: the read's value.
     Method(Value),
     /// A private accessor's getter, which the read calls with the object.
@@ -68,7 +68,7 @@ pub(super) enum PrivateElement {
 }
 
 #[derive(Default)]
-pub(super) struct PrivateSiteHomes {
+pub struct PrivateSiteHomes {
     entries: super::shape_memo::DirectMappedTable<SiteHome, PRIVATE_SITE_HOME_ENTRIES>,
 }
 
@@ -127,7 +127,7 @@ impl PrivateSiteHomes {
     /// (`SiteHome::unique`), which only a site whose private name stays unique may take
     /// (`PrivateClasses::unique_name`): the shape names the field's key with that home.
     #[inline(always)]
-    pub(super) fn unique_field_slot(&self, site: usize, shape: u32) -> Option<usize> {
+    pub fn unique_field_slot(&self, site: usize, shape: u32) -> Option<usize> {
         let entry = self.entries.get(Self::index(site))?;
         (entry.site == site && entry.shape == shape && entry.unique && entry.slot != BRAND_SLOT).then_some(entry.slot as usize)
     }
@@ -136,7 +136,7 @@ impl PrivateSiteHomes {
     /// carries its brand (`record_brand_shape`), under any environment: as `unique_field_slot`,
     /// only for a site whose home is one value for good.
     #[inline(always)]
-    pub(super) fn unique_element(&self, site: usize, shape: u32) -> Option<PrivateElement> {
+    pub fn unique_element(&self, site: usize, shape: u32) -> Option<PrivateElement> {
         let entry = self.entries.get(Self::index(site))?;
         (entry.site == site && entry.shape == shape && entry.unique && entry.slot == BRAND_SLOT).then_some(entry.element).flatten()
     }
@@ -145,7 +145,7 @@ impl PrivateSiteHomes {
     /// method's or accessor's brand (`record_field_slot`, `record_brand_shape`), under any
     /// environment: as `unique_field_slot`, only for a site whose home is one value for good.
     #[inline(always)]
-    pub(super) fn unique_carrier(&self, site: usize, shape: u32) -> bool {
+    pub fn unique_carrier(&self, site: usize, shape: u32) -> bool {
         self.entries.get(Self::index(site)).is_some_and(|entry| entry.site == site && entry.shape == shape && entry.unique)
     }
 
@@ -153,7 +153,7 @@ impl PrivateSiteHomes {
     /// of the private method or accessor site `site` names under `home`, its class's for a
     /// name that class owns (`PrivateClasses::register`): a read's answers the entry's element
     /// (`unique_element`), an `in`'s is true (`unique_carrier`).
-    pub(super) fn record_brand_shape(&self, site: usize, home: Value, shape: u32) {
+    pub fn record_brand_shape(&self, site: usize, home: Value, shape: u32) {
         let index = Self::index(site);
         if let Some(entry) = self.entries.get(index)
             && entry.site == site
@@ -173,7 +173,7 @@ impl PrivateSiteHomes {
     /// Records that private field reads at `site` under `home` find the field at `slot` of
     /// an object of `shape`, a shape no dictionary edit changes; `unique` where `home` is its
     /// class's for a name that class owns (`PrivateClasses::register`, `SiteHome::unique`).
-    pub(super) fn record_field_slot(&self, site: usize, home: Value, shape: u32, slot: usize, unique: bool) {
+    pub fn record_field_slot(&self, site: usize, home: Value, shape: u32, slot: usize, unique: bool) {
         let index = Self::index(site);
         if let Some(entry) = self.entries.get(index)
             && entry.site == site
@@ -187,19 +187,19 @@ impl PrivateSiteHomes {
     /// The shape a private field define at `site` under `home` leaves an object of `shape`
     /// in (`record_define`).
     #[inline(always)]
-    pub(super) fn define_shape(&self, site: usize, home: Value, shape: u32) -> Option<u32> {
+    pub fn define_shape(&self, site: usize, home: Value, shape: u32) -> Option<u32> {
         let entry = self.entries.get(Self::index(site))?;
         (entry.site == site && entry.home == home && entry.shape == shape).then_some(entry.slot)
     }
 
     /// Records that a private field define at `site` under `home` takes an object of
     /// `shape` to `next`, both shapes no dictionary edit changes.
-    pub(super) fn record_define(&self, site: usize, home: Value, shape: u32, next: u32) {
+    pub fn record_define(&self, site: usize, home: Value, shape: u32, next: u32) {
         // A define site reads no environment: the home stands in for it, a live value.
         self.entries.set(Self::index(site), SiteHome { site, environment: home, home, element: None, shape, slot: next, unique: false });
     }
 
-    pub(super) fn clear(&self) {
+    pub fn clear(&self) {
         self.entries.clear();
     }
 
@@ -264,7 +264,7 @@ const SHARED_NAME: u32 = u32::MAX;
 /// class's home registers it, or eval code can name it: then it is shared for good, and only
 /// the sites of that name stop answering from shapes alone.
 #[derive(Default)]
-pub(super) struct PrivateClasses {
+pub struct PrivateClasses {
     /// The dense id of each class constructor a closure was made of (`UNTRACKED_CLASS` past
     /// `u32` ids), by program and function. A program id that a freed program's reuses finds
     /// its classes evaluated already: a false second evaluation, which shares their names.
@@ -316,7 +316,7 @@ impl PrivateClasses {
     /// Registers private name `name` as the own name of the class whose evaluation made
     /// `home`, where a site recorded a shape under `home`: whether the name is that class's,
     /// the class evaluated once. A name another class registered is shared from now on.
-    pub(super) fn register(&mut self, name: Atom, home: Value) -> bool {
+    pub fn register(&mut self, name: Atom, home: Value) -> bool {
         let Some(&class) = self.homes.get(&home) else { return false };
         let Some(Some(names)) = self.classes.get_mut(class as usize) else { return false };
         match self.owners.entry(name) {
@@ -353,7 +353,7 @@ impl PrivateClasses {
     /// entry recorded under its class's home (`SiteHome::unique`), or a record's hint made of
     /// one, then answers from the receiver's shape alone.
     #[inline(always)]
-    pub(super) fn unique_name(&self, name: Atom) -> bool {
+    pub fn unique_name(&self, name: Atom) -> bool {
         self.unique.get(name as usize).is_some_and(|unique| *unique)
     }
 
@@ -393,7 +393,7 @@ impl Vm {
     /// from `environment`: the home the site found last for that environment, inline, else
     /// `site_private_brand_miss`. `None` leaves the access to the general path.
     #[inline(always)]
-    pub(super) fn site_private_brand(
+    pub fn site_private_brand(
         &mut self,
         p: &ResidualProgram,
         site: usize,

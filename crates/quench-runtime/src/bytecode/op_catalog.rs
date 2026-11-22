@@ -5,12 +5,12 @@
 //! tier traits (`Traits`). The table expands into `Op::class`, `Op::staged`,
 //! `Op::generic_step` and `Op::traits`.
 use super::Op;
-pub(crate) use super::opcode_table::{OPCODE_COUNT, opcode_name};
+pub use super::opcode_table::{OPCODE_COUNT, opcode_name};
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[allow(dead_code)]
-pub(crate) enum Class {
+pub enum Class {
     Other,
     Move,
     LoadConst,
@@ -173,7 +173,7 @@ impl Class {
 /// says which opcodes have a staged operation and which family builds it. An opcode with no
 /// decoder is the interpreter's hand path alone (a tier leaves at its exact PC).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Decoder {
+pub enum Decoder {
     /// A register move, a constant, a jump, a return or a suspension (`await`, `yield`, `yield*`).
     Flow,
     /// A frame local's load or store.
@@ -220,7 +220,7 @@ pub(crate) enum Decoder {
 /// An opcode's general step a lane or a body makes in place, by one helper of the
 /// interpreter's own definition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GenericStep {
+pub enum GenericStep {
     /// A body's helper only: it may replace the frame's environment, which the lane's own
     /// dispatch caches (the scope, operator, constant, name, literal, element, field and class steps).
     Body,
@@ -235,7 +235,7 @@ pub(crate) enum GenericStep {
 /// The step of an activation's own variables an opcode makes, over the `VarOwner` that runs it
 /// (`Vm::owner_step`): a frame in the interpreter, the window of a frameless activation in a lane's body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OwnedStep {
+pub enum OwnedStep {
     LoadLocal,
     StoreVarBinding,
     StoreLocal,
@@ -255,7 +255,7 @@ pub(crate) enum OwnedStep {
 /// activation with no frame of its own makes as a frame does (`Vm::binary`, `Vm::unary`,
 /// `Vm::binary_truthy`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ValueStep {
+pub enum ValueStep {
     Binary,
     Unary,
     CompareJump,
@@ -264,48 +264,48 @@ pub(crate) enum ValueStep {
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
 /// Two words: the first 128 traits, then the rest (`Self(0, 1 << n)`).
-pub(crate) struct Traits(pub(crate) u128, pub(crate) u64);
+pub struct Traits(pub(crate) u128, pub(crate) u64);
 
 impl Traits {
     pub(crate) const NONE: Self = Self(0, 0);
     pub(crate) const LEAF_VALUE: Self = Self(1 << 0, 0);
     pub(crate) const LEAF_JUMP: Self = Self(1 << 1, 0);
     pub(crate) const LEAF_BINARY: Self = Self(1 << 2, 0);
-    pub(crate) const THIS_LEAF: Self = Self(1 << 3, 0);
-    pub(crate) const NAME_LEAF: Self = Self(1 << 4, 0);
-    pub(crate) const FIELD_LEAF: Self = Self(1 << 5, 0);
+    pub const THIS_LEAF: Self = Self(1 << 3, 0);
+    pub const NAME_LEAF: Self = Self(1 << 4, 0);
+    pub const FIELD_LEAF: Self = Self(1 << 5, 0);
     pub(crate) const NAME_OPERATION: Self = Self(1 << 6, 0);
     pub(crate) const MAKES_CLOSURE: Self = Self(1 << 7, 0);
-    pub(crate) const RETURNING_FIELD: Self = Self(1 << 8, 0);
-    pub(crate) const RETURNING_UNARY: Self = Self(1 << 9, 0);
-    pub(crate) const RETURNING_BINARY: Self = Self(1 << 10, 0);
-    pub(crate) const RETURNING_OBJECT: Self = Self(1 << 11, 0);
-    pub(crate) const RETURNING_OBJECT_LITERAL: Self = Self(1 << 12, 0);
-    pub(crate) const RETURNING_LITERAL: Self = Self(1 << 13, 0);
+    pub const RETURNING_FIELD: Self = Self(1 << 8, 0);
+    pub const RETURNING_UNARY: Self = Self(1 << 9, 0);
+    pub const RETURNING_BINARY: Self = Self(1 << 10, 0);
+    pub const RETURNING_OBJECT: Self = Self(1 << 11, 0);
+    pub const RETURNING_OBJECT_LITERAL: Self = Self(1 << 12, 0);
+    pub const RETURNING_LITERAL: Self = Self(1 << 13, 0);
     /// An op an inlined OSR callee may hold.
-    pub(crate) const INLINABLE: Self = Self(1 << 14, 0);
+    pub const INLINABLE: Self = Self(1 << 14, 0);
     /// An op a call's argument setup may run with no repeatable effect.
-    pub(crate) const PURE_SETUP: Self = Self(1 << 15, 0);
+    pub const PURE_SETUP: Self = Self(1 << 15, 0);
     /// A Wasm memory access through the function's memory register.
     pub(crate) const WASM_MEMORY: Self = Self(1 << 16, 0);
     /// An op reading nothing of its activation (environment, `this`, captures, names), making no closure or call.
-    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 17, 0);
+    pub const ACTIVATION_FREE: Self = Self(1 << 17, 0);
     /// An op a call-free loop region lowers beside numeric binaries (`static_typed_regions`).
-    pub(crate) const SCALAR_REGION: Self = Self(1 << 18, 0);
+    pub const SCALAR_REGION: Self = Self(1 << 18, 0);
     /// An indexed element read or write, which a loop region views its arrays for.
-    pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19, 0);
+    pub const ELEMENT_ACCESS: Self = Self(1 << 19, 0);
     /// An op whose result may return from the frame instead of the register file.
-    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 20, 0);
+    pub const FRAME_RETURNABLE: Self = Self(1 << 20, 0);
     /// An op that reads and writes only registers and control, no heap value.
-    pub(crate) const FRAME_ONLY: Self = Self(1 << 21, 0);
+    pub const FRAME_ONLY: Self = Self(1 << 21, 0);
     /// An op the lifetime-role loop admission can rename a register through.
     pub(crate) const LIFETIME_SAFE: Self = Self(1 << 22, 0);
     /// An op whose handler keeps its call target hint in the record's `call_link`.
-    pub(crate) const CALL_LINK: Self = Self(1 << 23, 0);
+    pub const CALL_LINK: Self = Self(1 << 23, 0);
     /// A by-name load or store access.
-    pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 24, 0);
+    pub const GLOBAL_NAME_ACCESS: Self = Self(1 << 24, 0);
     /// A Wasm op that calls out to the VM or ends the body, which no unrolled loop admits.
-    pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 25, 0);
+    pub const UNROLL_EXCLUDED: Self = Self(1 << 25, 0);
     /// An op that always completes abruptly: it raises the value of its operand as an exception.
     pub(crate) const RAISES: Self = Self(1 << 26, 0);
     /// An op whose step binds the frame's `this` (`super()` completing a derived constructor's receiver).
@@ -317,10 +317,10 @@ impl Traits {
     pub(crate) const BOXED_RESULT: Self = Self(1 << 29, 0);
     /// A lane step that leaves its loop (`ForInNext` once no key is left), which the lane's loop
     /// dispatch makes with its own handler.
-    pub(crate) const LANE_LOOP_EXIT: Self = Self(1 << 30, 0);
+    pub const LANE_LOOP_EXIT: Self = Self(1 << 30, 0);
     /// An op whose lane handler is its staged row (`generated_row`), generated rather than written; the
     /// flow rows that fall through have theirs without the trait.
-    pub(crate) const ROW_HANDLER: Self = Self(1 << 31, 0);
+    pub const ROW_HANDLER: Self = Self(1 << 31, 0);
     /// An op that stores its register A into the frame local slot its immediate names (`LocalSlot`). When its
     /// optional register B is set, the stored value is also written there, and every tier honours B: the
     /// interpreter's owner step and plain-store arm, the lane windows' local stores, and the base tier, which
@@ -360,7 +360,7 @@ impl Traits {
     /// An op that ends its activation, returning its register A. Tagged: `Return`.
     pub(crate) const RETURN_VALUE: Self = Self(1 << 42, 0);
     /// An op that suspends its activation (`await`, `yield`). Tagged: `Await`, `Yield`.
-    pub(crate) const SUSPENDS: Self = Self(1 << 43, 0);
+    pub const SUSPENDS: Self = Self(1 << 43, 0);
     /// A property store with sloppy-mode semantics, whose strict form (`STRICT_STORE`) shares its encoding.
     /// Tagged: `SetField`, `SetThisField`.
     pub(crate) const SLOPPY_STORE: Self = Self(1 << 44, 0);
@@ -392,7 +392,7 @@ impl Traits {
     /// A call that spreads the array of its one-value argument window. Tagged: `CallSpread`.
     pub(crate) const SPREAD_CALL: Self = Self(1 << 77, 0);
     /// A call that spreads a rest parameter's kept values in place of its array. Tagged: `CallRest`.
-    pub(crate) const REST_SPREAD_CALL: Self = Self(1 << 78, 0);
+    pub const REST_SPREAD_CALL: Self = Self(1 << 78, 0);
     /// A read of one kept rest value by index. Tagged: `RestGet`.
     pub(crate) const REST_INDEX_READ: Self = Self(1 << 79, 0);
     /// The read of a rest parameter's length from its kept values. Tagged: `RestLength`.
@@ -400,7 +400,7 @@ impl Traits {
     /// The call whose callee and arguments are both registers, without a spread or a method site. Tagged: `Call`.
     pub(crate) const PLAIN_CALL: Self = Self(1 << 81, 0);
     /// The raw-register form of a Wasm i64 or f64 operation (`raw_webs`). Tagged: every `*Raw` row (the i64/f64 operators and the GC field accesses of an i64 or f64 field) and `WasmReturn64`.
-    pub(crate) const RAW_FORM: Self = Self(1 << 82, 0);
+    pub const RAW_FORM: Self = Self(1 << 82, 0);
     /// The family of the i64 binary operation, boxed or raw. Tagged: `WasmI64Binary`, `WasmI64BinaryRaw`.
     pub(crate) const I64_BINARY_FAMILY: Self = Self(1 << 83, 0);
     /// The family of the i64 binary operation with an immediate operand. Tagged: `WasmI64BinaryImmediate`, `WasmI64BinaryImmediateRaw`.
@@ -412,7 +412,7 @@ impl Traits {
     /// The family of the f64 unary operation. Tagged: `WasmF64Unary`, `WasmF64UnaryRaw`.
     pub(crate) const F64_UNARY_FAMILY: Self = Self(1 << 87, 0);
     /// The family of a function's return, boxed or raw. Tagged: `Return`, `WasmReturn64`.
-    pub(crate) const RETURN_FAMILY: Self = Self(1 << 88, 0);
+    pub const RETURN_FAMILY: Self = Self(1 << 88, 0);
     /// The family of a struct field read, boxed or raw. Tagged: `WasmStructGet`, `WasmStructGetRaw`.
     pub(crate) const STRUCT_GET_FAMILY: Self = Self(1 << 111, 0);
     /// The family of a struct field write, boxed or raw. Tagged: `WasmStructSet`, `WasmStructSetRaw`.
@@ -460,7 +460,7 @@ impl Traits {
     /// The op that concatenates a window of string parts into one string. Tagged: `StringConcat`.
     pub(crate) const STRING_CONCAT: Self = Self(1 << 109, 0);
     /// The op that runs a first-call stub's function body as its compiled chunk. Tagged: `CallFirstChunk`.
-    pub(crate) const FIRST_CALL_CHUNK: Self = Self(1 << 110, 0);
+    pub const FIRST_CALL_CHUNK: Self = Self(1 << 110, 0);
     /// A suspension point of an activation: `await`, `yield` and `yield*`. Tagged: `Await`, `Yield`, `YieldStar`.
     pub(crate) const SUSPENSION_POINT: Self = Self(1 << 51, 0);
     /// An access that reads its object register as an indexed receiver. Tagged: `GetIndex`, `SetIndex`, `RequireObjectCoercible`.
@@ -549,10 +549,10 @@ impl Traits {
     /// An op whose step may allocate a heap value or call guest code, so its step may make a collection due
     /// (`note_allocation`). Conservative: every op is tagged unless its step only moves registers, jumps or
     /// reads and writes a frame local, or is a Wasm op whose effect is pure or control alone.
-    pub(crate) const MAY_ALLOCATE: Self = Self(0, 1 << 0);
+    pub const MAY_ALLOCATE: Self = Self(0, 1 << 0);
     /// A Wasm opcode (its catalog name begins `Wasm`): its own compiler owns the memory, tables and
     /// typed registers it reads, so the b-jit compiles no function holding one (`base_region::covers`).
-    pub(crate) const WASM_OPCODE: Self = Self(0, 1 << 1);
+    pub const WASM_OPCODE: Self = Self(0, 1 << 1);
     /// An op whose staged row is a register move, a local slot access or a jump, which decodes over the
     /// register file alone (`Operation::decode_flow`, `decode_local`). Tagged: `Move`, `LoadLocalPlain`,
     /// `StoreLocalPlain`, `Jump`, `JumpFalse`, `JumpTrue`.
@@ -577,11 +577,11 @@ impl Traits {
     pub(crate) const ARITHMETIC_BINARY: Self = Self(0, 1 << 6);
 
     #[inline(always)]
-    pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 || self.1 & other.1 != 0 }
-    pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0, self.1 | other.1) }
+    pub const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 || self.1 & other.1 != 0 }
+    pub const fn union(self, other: Self) -> Self { Self(self.0 | other.0, self.1 | other.1) }
 }
 
-pub(crate) use super::denotation::JsDenotation;
+pub use super::denotation::JsDenotation;
 
 /// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
 /// table load (unlike `Op::class()`), for per-instruction loops.
@@ -589,7 +589,7 @@ macro_rules! op_predicates {
     ($($method:ident => $($op:ident)|+),+ $(,)?) => {
         #[allow(dead_code)]
         impl Op { $(
-            pub(crate) const fn $method(self) -> bool { matches!(self, $(Op::$op)|+) }
+            pub const fn $method(self) -> bool { matches!(self, $(Op::$op)|+) }
         )+ }
     };
 }

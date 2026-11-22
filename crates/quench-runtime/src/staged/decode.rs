@@ -8,23 +8,23 @@ use crate::bytecode::{MethodSite, Op, Register, ResidualProgram, WideInstruction
 /// The tables a decode reads: the constants a `LoadConst` names and the method sites a method call
 /// names (whose argument registers the call's own record holds).
 #[derive(Clone, Copy)]
-pub(crate) struct DecodeContext<'a> {
-    pub(crate) constants: &'a [Constant],
+pub struct DecodeContext<'a> {
+    pub constants: &'a [Constant],
     /// The constant at an index `constants` does not hold, as the tier types it (a region's Number
     /// table, the compiling VM's values): `None` where `constants` is the whole table.
-    pub(crate) constant_at: Option<&'a dyn Fn(usize) -> Option<Constant>>,
-    pub(crate) method_sites: &'a [MethodSite],
+    pub constant_at: Option<&'a dyn Fn(usize) -> Option<Constant>>,
+    pub method_sites: &'a [MethodSite],
 }
 
 impl DecodeContext<'static> {
     /// No table: a tier that decodes only the rows whose operands the record holds.
-    pub(crate) const EMPTY: Self = Self { constants: &[], constant_at: None, method_sites: &[] };
+    pub const EMPTY: Self = Self { constants: &[], constant_at: None, method_sites: &[] };
 }
 
 impl<'a> DecodeContext<'a> {
     /// The method sites of `program`; its constants are the tier's to type
     /// (`of_constants`), so a `LoadConst` decodes only where the tier gives them.
-    pub(crate) fn of(program: &'a ResidualProgram) -> Self {
+    pub fn of(program: &'a ResidualProgram) -> Self {
         Self { constants: &[], constant_at: None, method_sites: &program.method_sites }
     }
 
@@ -40,7 +40,7 @@ impl<'a> DecodeContext<'a> {
     }
 
     /// The method site at `index`.
-    pub(crate) fn method_site(self, index: usize) -> Option<&'a MethodSite> {
+    pub fn method_site(self, index: usize) -> Option<&'a MethodSite> {
         self.method_sites.get(index)
     }
 }
@@ -49,7 +49,7 @@ impl<'a> DecodeContext<'a> {
 /// `WideInstruction`, whose constants index the context, or a tier's own pre-resolved record (the
 /// lane's `LaneInstruction`). One decoder per row family serves every record, so a record format
 /// is never a second definition of what an instruction means.
-pub(crate) trait Fields: Copy {
+pub trait Fields: Copy {
     fn op(self) -> Op;
     fn result_register(self) -> Register;
     fn register_a(self) -> Register;

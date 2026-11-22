@@ -25,40 +25,40 @@ use super::object_encoding::{
 use super::object_extras::ObjectExtrasWords;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeObjectLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
-    pub(crate) layout_offset: usize,
-    pub(crate) meta_offset: usize,
-    pub(crate) auxiliary_offset: usize,
-    pub(crate) payload_offset: usize,
-    pub(crate) extras_arena_start_offset: usize,
-    pub(crate) extras_inline_values_offset: usize,
-    pub(crate) inline_storage_mask: u32,
-    pub(crate) array_mask: u32,
-    pub(crate) storage_start_mask: u32,
-    pub(crate) dictionary_mask: u32,
-    pub(crate) inline_form: u32,
-    pub(crate) extras_form: u32,
-    pub(crate) narrow_form: u32,
-    pub(crate) narrow_run_tag: u64,
-    pub(crate) integrity_mask: u32,
-    pub(crate) inline_property_count: usize,
-    pub(crate) extras_tag: u64,
-    pub(crate) extras_tag_mask: u64,
-    pub(crate) proto_mask: u32,
-    pub(crate) proto_record_base: u32,
-    pub(crate) proto_record_end: u32,
-    pub(crate) mark_records_per_block: usize,
-    pub(crate) mark_word_bits: usize,
-    pub(crate) mark_block_size: usize,
-    pub(crate) mark_offset: usize,
-    pub(crate) property_value_size: usize,
-    pub(crate) property_value_align: usize,
+pub struct NativeObjectLayout {
+    pub record_capacity: usize,
+    pub record_size: usize,
+    pub record_align: usize,
+    pub layout_offset: usize,
+    pub meta_offset: usize,
+    pub auxiliary_offset: usize,
+    pub payload_offset: usize,
+    pub extras_arena_start_offset: usize,
+    pub extras_inline_values_offset: usize,
+    pub inline_storage_mask: u32,
+    pub array_mask: u32,
+    pub storage_start_mask: u32,
+    pub dictionary_mask: u32,
+    pub inline_form: u32,
+    pub extras_form: u32,
+    pub narrow_form: u32,
+    pub narrow_run_tag: u64,
+    pub integrity_mask: u32,
+    pub inline_property_count: usize,
+    pub extras_tag: u64,
+    pub extras_tag_mask: u64,
+    pub proto_mask: u32,
+    pub proto_record_base: u32,
+    pub proto_record_end: u32,
+    pub mark_records_per_block: usize,
+    pub mark_word_bits: usize,
+    pub mark_block_size: usize,
+    pub mark_offset: usize,
+    pub property_value_size: usize,
+    pub property_value_align: usize,
 }
 
-pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
+pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     record_capacity: OBJECT_RECORD_CAPACITY,
     record_size: size_of::<super::record_heads::ObjectHead>(),
     record_align: align_of::<super::record_heads::ObjectHead>(),
@@ -93,8 +93,8 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFunctionLayout {
-    pub(crate) record_size: usize,
-    pub(crate) object_offset: usize,
+    pub record_size: usize,
+    pub object_offset: usize,
 }
 
 /// The function record as the stencils see it: the runtime's `FunctionRecord` with words of the same size and
@@ -108,24 +108,24 @@ pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLa
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeArrayLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
-    pub(crate) elements_offset: usize,
-    pub(crate) extras_elements_offset: usize,
-    pub(crate) elements_header_offset: usize,
-    pub(crate) header_length_offset: usize,
-    pub(crate) header_values_offset: usize,
-    pub(crate) header_owners_offset: usize,
-    pub(crate) header_capacity_offset: usize,
-    pub(crate) capacity_mask: u32,
-    pub(crate) object_offset: usize,
-    pub(crate) frozen_mask: u32,
-    pub(crate) integrity_mask: u32,
+pub struct NativeArrayLayout {
+    pub record_capacity: usize,
+    pub record_size: usize,
+    pub record_align: usize,
+    pub elements_offset: usize,
+    pub extras_elements_offset: usize,
+    pub elements_header_offset: usize,
+    pub header_length_offset: usize,
+    pub header_values_offset: usize,
+    pub header_owners_offset: usize,
+    pub header_capacity_offset: usize,
+    pub capacity_mask: u32,
+    pub object_offset: usize,
+    pub frozen_mask: u32,
+    pub integrity_mask: u32,
 }
 
-pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
+pub const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: ARRAY_RECORD_CAPACITY,
     record_size: size_of::<super::record_heads::ObjectHead>(),
     record_align: align_of::<super::record_heads::ObjectHead>(),
@@ -145,30 +145,30 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
 /// A hot record space's allocation cursor (`heap::records::RecordCursor`): two `u32` words, `next` then
 /// `limit`, which the empty-allocation rows bump (`heap_rows::empty_row`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeRecordCursorLayout {
-    pub(crate) next_offset: usize,
-    pub(crate) limit_offset: usize,
+pub struct NativeRecordCursorLayout {
+    pub next_offset: usize,
+    pub limit_offset: usize,
 }
 
-pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
+pub const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
     next_offset: 0,
     limit_offset: size_of::<u32>(),
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTypedArrayLayout {
-    pub(crate) entry_size: usize,
-    pub(crate) page_shift: u32,
-    pub(crate) page_mask: usize,
-    pub(crate) kind_offset: usize,
-    pub(crate) detached_offset: usize,
-    pub(crate) unshared_offset: usize,
-    pub(crate) data_offset: usize,
-    pub(crate) length_offset: usize,
-    pub(crate) stamp_offset: usize,
+pub struct NativeTypedArrayLayout {
+    pub entry_size: usize,
+    pub page_shift: u32,
+    pub page_mask: usize,
+    pub kind_offset: usize,
+    pub detached_offset: usize,
+    pub unshared_offset: usize,
+    pub data_offset: usize,
+    pub length_offset: usize,
+    pub stamp_offset: usize,
 }
 
-pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
+pub const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
     entry_size: size_of::<usize>(),
     page_shift: TYPED_PAGE_SHIFT,
     page_mask: (1 << TYPED_PAGE_SHIFT) - 1,
@@ -191,14 +191,14 @@ pub(crate) const LOOP_ENTRY_ARRAY_COUNT_AT: u64 = size_of::<u64>() as u64;
 pub(crate) use super::typed_array_catalog::TypedArrayKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeEnvironmentLayout {
-    pub(crate) header_pointer_offset: i32,
-    pub(crate) sparse_mark: u64,
-    pub(crate) slots_offset: u64,
-    pub(crate) slot_size: u64,
+pub struct NativeEnvironmentLayout {
+    pub header_pointer_offset: i32,
+    pub sparse_mark: u64,
+    pub slots_offset: u64,
+    pub slot_size: u64,
 }
 
-pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
+pub const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
     header_pointer_offset: 0,
     sparse_mark: super::encodings::MARK_BIT as u64,
     slots_offset: size_of::<usize>() as u64,
@@ -209,14 +209,14 @@ pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvi
 /// index sit, so compiled code reads a field's slot inline. The record's stride is the record space's
 /// element size (`WasmGcRecord`, which the head starts), not the head's, so it is not named here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeWasmGcLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) payload_offset: usize,
-    pub(crate) length_offset: usize,
-    pub(crate) type_offset: usize,
+pub struct NativeWasmGcLayout {
+    pub record_capacity: usize,
+    pub payload_offset: usize,
+    pub length_offset: usize,
+    pub type_offset: usize,
 }
 
-pub(crate) const NATIVE_WASM_GC_LAYOUT: NativeWasmGcLayout = NativeWasmGcLayout {
+pub const NATIVE_WASM_GC_LAYOUT: NativeWasmGcLayout = NativeWasmGcLayout {
     record_capacity: WASM_GC_RECORD_CAPACITY,
     payload_offset: core::mem::offset_of!(super::record_heads::WasmGcHead, payload),
     length_offset: core::mem::offset_of!(super::record_heads::WasmGcHead, length),
@@ -224,20 +224,20 @@ pub(crate) const NATIVE_WASM_GC_LAYOUT: NativeWasmGcLayout = NativeWasmGcLayout 
 };
 
 #[derive(Debug)]
-pub(crate) struct NativeFieldCacheLayout {
-    pub(crate) entry_size: usize,
-    pub(crate) receiver_offset: usize,
-    pub(crate) holder_offset: usize,
-    pub(crate) slot_offset: usize,
-    pub(crate) holder_id_offset: usize,
-    pub(crate) receiver_complement: u32,
-    pub(crate) holder_complement: u32,
-    pub(crate) slot_complement: u32,
-    pub(crate) own_holder: u32,
+pub struct NativeFieldCacheLayout {
+    pub entry_size: usize,
+    pub receiver_offset: usize,
+    pub holder_offset: usize,
+    pub slot_offset: usize,
+    pub holder_id_offset: usize,
+    pub receiver_complement: u32,
+    pub holder_complement: u32,
+    pub slot_complement: u32,
+    pub own_holder: u32,
 }
 
 /// The field cache entry's layout, from its `repr(C)` words and their empty values (`field_cache_layout`).
-pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
+pub const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
     entry_size: size_of::<super::field_cache_layout::FieldCacheWords>(),
     receiver_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, receiver),
     holder_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, holder),
@@ -253,8 +253,8 @@ pub(crate) use super::encodings::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN, OTHERS_UN
 /// The first id past the string records' own range: a small string's id is this base plus its bits.
 pub(crate) const STRING_RECORD_HOLE: u32 = 1 << 24;
 /// A string id whose bits under the mask are the base is small: it names no string record.
-pub(crate) const SMALL_STRING_ID_MASK: u32 = !(STRING_RECORD_HOLE - 1);
-pub(crate) const SMALL_STRING_ID_BASE: u32 = STRING_RECORD_HOLE;
+pub const SMALL_STRING_ID_MASK: u32 = !(STRING_RECORD_HOLE - 1);
+pub const SMALL_STRING_ID_BASE: u32 = STRING_RECORD_HOLE;
 /// The byte offsets from a backing's first value to its `len` and `others` words: the head
 /// `ArrayHeaderHead` is the backing's header, and its values follow it.
 pub(crate) const LENGTH_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, len) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
@@ -318,7 +318,7 @@ pub(crate) const JS_STEP_STORE_WATCH: usize = core::mem::offset_of!(super::js_st
 pub(crate) const STORE_WATCH_TRACKS: u64 = 1;
 /// The `store_watch` bit set while old records keep reference counts (`Heap::rc_active`): every
 /// store into a marked record logs then, an immediate one too (`RecordSpace::store_logs`).
-pub(crate) const STORE_WATCH_COUNTS: u64 = 2;
+pub const STORE_WATCH_COUNTS: u64 = 2;
 /// The heap's collection epoch as of the last refresh (`JsStepDispatch::epoch`), which a for-in step
 /// compares to the epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).
 pub(crate) const JS_STEP_EPOCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, epoch);
@@ -337,7 +337,7 @@ pub(crate) const JS_STEP_FIELD_ENTRIES: usize = core::mem::offset_of!(super::js_
 pub(crate) const PROPERTY_BUFFER_BASE: usize = core::mem::offset_of!(super::property_buffer::PropertyBufferHead<u8>, base);
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above
 /// them (`entry_cell::CAPTURE_ADDRESS_BITS`), and the pad is what a shift pair clears them with.
-pub(crate) const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - super::shared_words::CAPTURE_ADDRESS_BITS;
+pub const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - super::shared_words::CAPTURE_ADDRESS_BITS;
 /// The record a completed body names (`LANE_BODY_RETURNED`).
 pub(crate) const JS_STEP_RETURNED_PC: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, returned_pc);
 /// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
@@ -365,7 +365,7 @@ pub(crate) const JS_STEP_ACTIVATION_COUNT: usize = core::mem::offset_of!(super::
 /// offsets come from `staged::call`, which the Wasm rows' family does not compile (`stencil_family`).
 #[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
-pub(crate) const RAISED_RUN: u64 = 1 << u32::BITS;
+pub const RAISED_RUN: u64 = 1 << u32::BITS;
 
 /// The running activation's receiver and body-capture words live in its window's header
 /// (`staged::frame::CONTEXT_THIS`, `CONTEXT_BODY`); the stencils read them at `context_word(frame, ..)`.

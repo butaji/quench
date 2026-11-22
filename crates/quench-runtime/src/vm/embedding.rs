@@ -804,7 +804,7 @@ impl Vm {
         Ok(self.error_is_error(self.embedding_value(root)?))
     }
 
-    pub(super) fn detail_string(&self, value: Value) -> String {
+    pub fn detail_string(&self, value: Value) -> String {
         if let Some(detail) = super::error::primitive_detail(value) {
             return detail;
         }

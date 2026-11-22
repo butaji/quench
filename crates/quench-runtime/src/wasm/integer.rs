@@ -56,7 +56,7 @@ macro_rules! integer_binary_operators {
         #[cfg(not(stencil_build))]
         impl I64BinaryOperator {
             /// The machine row this operator is, from its declaration.
-            pub(crate) const fn machine(self) -> crate::staged::machine::MachineOperator {
+            pub const fn machine(self) -> crate::staged::machine::MachineOperator {
                 #[allow(unused_imports)]
                 use crate::staged::machine::{Binary::*, MachineOperator::*, Relation::*};
                 match self { $(Self::$name => $($machine)+,)+ $(Self::$wide_name => $($wide_machine)+,)+ }
@@ -184,7 +184,7 @@ impl I32BinaryOperator {
     /// `apply` as a raw i32 payload, comparisons yielding 0 or 1: the interpreter's execution
     /// of the operator, through the staged rules (`staged::wasm`).
     #[inline(always)]
-    pub(crate) fn evaluate(self, left: i32, right: i32) -> Result<i32, WasmTrap> {
+    pub fn evaluate(self, left: i32, right: i32) -> Result<i32, WasmTrap> {
         integer_binary(
             &mut ConcreteWasm,
             self.widen(),

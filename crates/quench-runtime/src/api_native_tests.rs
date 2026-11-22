@@ -1309,7 +1309,7 @@ fn native_proxy_snapshots_survive_revocation_reentry_and_collection_without_trap
     let source = r#"
 let target={tag:'target'},handler={tag:'handler',get(){throw Error('proxy trap')}};
 const pair=Proxy.revocable(target,handler);
-const held=snapshotProxy(pair.proxy,()=>{target=null;handler=null;pair.revoke()});
+pub const held=snapshotProxy(pair.proxy,()=>{target=null;handler=null;pair.revoke()});
 if(held[0].tag!=='target'||held[1].tag!=='handler')throw Error('snapshot lost roots');
 const revoked=snapshotProxy(pair.proxy);
 if(revoked[0]!==null||revoked[1]!==null)throw Error('revoked snapshot');

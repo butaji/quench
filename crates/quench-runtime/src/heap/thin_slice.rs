@@ -21,7 +21,7 @@ pub(crate) const NATIVE_WORD_ELEMENTS_OFFSET: usize = size_of::<usize>();
 /// own use (`prefix`); the header and elements sit where an unprefixed slice's do relative to
 /// the header, so code that reads a slice from its header reads either alike.
 #[repr(transparent)]
-pub(crate) struct ThinBoxSlice<T, const P: usize = 0> {
+pub struct ThinBoxSlice<T, const P: usize = 0> {
     /// Points at the header; the elements follow at `elements_offset`.
     header: NonNull<usize>,
     marker: std::marker::PhantomData<T>,

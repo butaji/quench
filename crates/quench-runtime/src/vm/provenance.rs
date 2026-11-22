@@ -163,7 +163,7 @@ impl Vm {
     /// The naming cache `site` recorded for `name` that compiled code may run (`staged::naming`): its edge
     /// and the word of the name's string, which the interpreter's own run found (`atom_string`). `None`
     /// where the site recorded none.
-    pub(super) fn native_function_name(&self, site: u16, name: Atom) -> Option<(Transition, u64)> {
+    pub fn native_function_name(&self, site: u16, name: Atom) -> Option<(Transition, u64)> {
         let word = self.heap.atom_string(name, true)?;
         let edge = self.native_field_add(site, name, false)?;
         Some((edge.transition, word.to_bits()))
@@ -253,7 +253,7 @@ impl Vm {
     /// V8's named native-info load enters prototype lookup mode, whereas
     /// Reflect.get and computed-key reads retain the setup-mode accessor view.
     #[inline(always)]
-    pub(super) fn prepare_named_function_info_lookup(&mut self, object: Value, atom: Atom) {
+    pub fn prepare_named_function_info_lookup(&mut self, object: Value, atom: Atom) {
         if !self.reads_function_info(atom) {
             return;
         }
@@ -268,7 +268,7 @@ impl Vm {
     /// Whether a named read of `atom` can enter prototype lookup mode: the function
     /// information keys `name` and `length`. Fixed per read site, so a site may decide it once.
     #[inline(always)]
-    pub(super) fn reads_function_info(&self, atom: Atom) -> bool {
+    pub fn reads_function_info(&self, atom: Atom) -> bool {
         atom == self.runtime_atoms.name || atom == self.length_atom
     }
 
@@ -399,7 +399,7 @@ impl Vm {
         self.heap.set_detached_object_shape(object, shape);
     }
 
-    pub(super) fn capture_constructed_value(
+    pub fn capture_constructed_value(
         &mut self,
         value: Value,
         constructor: Value,

@@ -1,7 +1,7 @@
 //! The state an activation lends the lookups that read its scope: by-name resolution, `with`
 //! scopes, `new.target` and `this` bindings, and the direct eval its code makes. One trait over
 //! where that state lives, a VM frame or the window of a lane activation
-//! (`dispatch_fast::scoped_names::WindowScope`), so each lookup reads the same facts of either
+//! (`crate::vm::engine_types::WindowScope`), so each lookup reads the same facts of either
 //! and no lookup needs a frame fabricated for an activation that has none.
 use super::*;
 use super::activation::FrameRecord;
@@ -9,7 +9,7 @@ use super::activation::FrameRecord;
 /// What a lookup reads of the activation it runs for. Whatever else is derived of these (the
 /// function's strictness, its home atom, its private names) is read of the function's metadata
 /// by `function`, and of the dynamic bindings by `Vm::dynamic_binding`.
-pub(in crate::vm) trait CallerView {
+pub trait CallerView {
     /// The program the activation runs.
     fn program(&self) -> ProgramId;
 
@@ -112,7 +112,7 @@ impl CallerView for FrameRecord {
 
 impl Vm {
     /// The view of the frame at `index` of the VM's stack.
-    pub(super) fn frame_caller(&self, index: usize) -> &dyn CallerView {
+    pub fn frame_caller(&self, index: usize) -> &dyn CallerView {
         &*self.frames[index]
     }
 
@@ -127,7 +127,7 @@ impl Vm {
 
     /// The environment `caller`'s closure captured: its own environment's parent once it has made
     /// one, else the environment word itself.
-    pub(super) fn captured_parent_environment(&self, caller: &dyn CallerView) -> Value {
+    pub fn captured_parent_environment(&self, caller: &dyn CallerView) -> Value {
         if !caller.owns_environment() {
             return caller.environment();
         }

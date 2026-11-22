@@ -9,7 +9,7 @@ use crate::WasmType;
 
 /// The v128 at `index + offset`: the check of `Access::VECTOR`, then the 16 bytes.
 #[inline(always)]
-pub(crate) fn load_vector<S: WasmMemory>(
+pub fn load_vector<S: WasmMemory>(
     stage: &mut S,
     index: S::Word,
     offset: u32,
@@ -21,7 +21,7 @@ pub(crate) fn load_vector<S: WasmMemory>(
 
 /// Writes the v128 `value` at `index + offset`: the check of `Access::VECTOR`, then the 16 bytes.
 #[inline(always)]
-pub(crate) fn store_vector<S: WasmMemoryWrite>(
+pub fn store_vector<S: WasmMemoryWrite>(
     stage: &mut S,
     index: S::Word,
     offset: u32,

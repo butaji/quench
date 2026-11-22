@@ -8,7 +8,7 @@ use crate::value::Value;
 /// cannot be confused with strings, and private names have their own
 /// namespace even when display text happens to match.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PropertyKey {
+pub enum PropertyKey {
     String(Atom),
     Symbol(Value),
     /// A private name: the class home whose evaluation declared it and its name, the
@@ -32,12 +32,12 @@ impl std::hash::Hash for PropertyKey {
 }
 
 impl PropertyKey {
-    #[inline(always)] pub(crate) fn string(atom: Atom) -> Self {
+    #[inline(always)] pub fn string(atom: Atom) -> Self {
         Self::String(atom)
     }
 
     #[inline(always)]
-    pub(crate) fn symbol(value: Value) -> Self {
+    pub fn symbol(value: Value) -> Self {
         Self::Symbol(value)
     }
 

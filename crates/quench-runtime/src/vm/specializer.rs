@@ -14,7 +14,7 @@ use crate::bytecode::ResidualProgram;
 /// `Residual` is the publication: linked object code, Cranelift IR, copied stencils, or a
 /// lowered region. The trait deliberately carries no division or tier: those are the
 /// caller's plan, so a JIT and an AOT publication can use the same implementation.
-pub(crate) trait Specializer {
+pub trait Specializer {
     type Residual;
 
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String>;

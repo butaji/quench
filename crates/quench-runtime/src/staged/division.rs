@@ -32,17 +32,17 @@ pub(crate) fn folded(times: &[OperandTime], division: Division) -> impl Iterator
 pub(crate) const FIELD_LAYOUT: BindingTime = BindingTime::Stable;
 
 /// The time of a prototype's field value a read inherits: a code dependency holds it.
-pub(crate) const INHERITED_FIELD: BindingTime = BindingTime::Stable;
+pub const INHERITED_FIELD: BindingTime = BindingTime::Stable;
 
 /// The time of a whole-program field value: the closed program fixes it at specialization,
 /// and the read checks it once.
-pub(crate) const FROZEN_FIELD: BindingTime = BindingTime::Static;
+pub const FROZEN_FIELD: BindingTime = BindingTime::Static;
 
 impl GlobalBinding {
     /// What this binding leaves known: an immutable global's value and a closed program's
     /// value are fixed at specialization, a held value or a lexical binding's address rests on a
     /// dependency, and a dynamic binding is the lane's own read.
-    pub(crate) const fn time(&self) -> BindingTime {
+    pub const fn time(&self) -> BindingTime {
         match self {
             Self::Constant(_) | Self::Frozen { .. } => BindingTime::Static,
             Self::Held { .. } | Self::Typed { .. } | Self::Lexical { .. } => BindingTime::Stable,

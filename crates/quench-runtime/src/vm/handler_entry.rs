@@ -2,14 +2,14 @@
 //! the interpreter's unwinding (`Vm::exception_handler_target`) and a compiled body's or loop
 //! region's native catch (`dispatch_fast::handler_edge`), in a VM frame or in the
 //! environment window of a lane activation (`HandlerHome`): one implementation of each step.
-use super::dispatch_fast::{WINDOW_ENVIRONMENT, WINDOW_LOCALS, WINDOW_SLOTS};
+use crate::vm::engine_types::{WINDOW_ENVIRONMENT, WINDOW_LOCALS, WINDOW_SLOTS};
 use super::*;
 use crate::bytecode::{Handler, ThrownValueSlot};
 
 /// Where the state a handler's entry settles lives: a frame of the VM's stack, or the window of
 /// a lane activation (a suspended function's, an ordinary one's) over the lane stack's scope chain.
 #[derive(Clone, Copy)]
-pub(in crate::vm) enum HandlerHome {
+pub enum HandlerHome {
     Frame(usize),
     Window(WindowHome),
 }
@@ -19,17 +19,17 @@ pub(in crate::vm) enum HandlerHome {
 /// register, after whose function's registers its environment entries and locals follow
 /// (`activate_environment_in_lane`).
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct WindowHome {
-    pub(in crate::vm) depth: usize,
-    pub(in crate::vm) program: ProgramId,
-    pub(in crate::vm) function: u32,
-    pub(in crate::vm) window: *mut Value,
+pub struct WindowHome {
+    pub depth: usize,
+    pub program: ProgramId,
+    pub function: u32,
+    pub window: *mut Value,
 }
 
 impl Vm {
     /// Leaves the scopes of the `with` statements the exception left in `home`: those past the
     /// depth `handler` was entered at.
-    pub(super) fn unwind_handler_scopes(&mut self, home: HandlerHome, handler: Handler) {
+    pub fn unwind_handler_scopes(&mut self, home: HandlerHome, handler: Handler) {
         let entered = usize::from(handler.with_depth);
         match home {
             HandlerHome::Frame(frame) => self.with_stack.truncate(self.frames[frame].with_base + entered),
@@ -40,7 +40,7 @@ impl Vm {
     /// Stores the thrown `value` to the binding `slot` names in `home`: a promoted register, or a
     /// local, which a captured activation's handler entry gives a fresh environment
     /// (`Vm::initialize_handler_binding`, `Vm::bind_window_local`).
-    pub(super) fn bind_thrown_value(
+    pub fn bind_thrown_value(
         &mut self,
         program: &ResidualProgram,
         home: HandlerHome,

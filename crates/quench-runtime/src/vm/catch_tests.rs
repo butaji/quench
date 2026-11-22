@@ -123,7 +123,7 @@ fn body_runs(source: &str, names: &[&str]) -> Vec<BodyRuns> {
         let view = views.get(id).and_then(super::program_store::derived_lane_view).expect("lane view");
         let (ended, left) = view.tier().body_stats.ended_runs();
         // SAFETY: the view owns its entry cell, which lives as long as the view.
-        let raised = unsafe { &*(view.entry_cell() as *const super::compiled::entry_cell::EntryCell) }.raised_runs();
+        let raised = unsafe { &*(view.entry_cell() as *const crate::vm::engine_types::EntryCell) }.raised_runs();
         (ended, left, raised)
     }).collect()
 }

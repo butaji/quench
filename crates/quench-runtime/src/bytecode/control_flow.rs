@@ -9,7 +9,7 @@ pub(super) fn instruction_at(function: &Function, packed: Instr) -> Option<WideI
 /// Whether every edge into `pc` is the fall-through of the instruction at `pc - 1`: no jump,
 /// branch table entry or exception handler targets it, so a record pair fused from `pc - 1`
 /// and `pc` leaves nothing else arriving at the second expecting the first's result.
-pub(crate) fn entered_only_by_fallthrough(function: &Function, pc: usize) -> bool {
+pub fn entered_only_by_fallthrough(function: &Function, pc: usize) -> bool {
     let Some(previous) = pc.checked_sub(1) else {
         return false;
     };
@@ -26,7 +26,7 @@ pub(crate) fn entered_only_by_fallthrough(function: &Function, pc: usize) -> boo
 }
 
 /// The PCs of a branch table's `Jump` entries: its cases, then the default.
-pub(crate) fn branch_table_entries(
+pub fn branch_table_entries(
     pc: usize,
     instruction: WideInstruction,
 ) -> std::ops::RangeInclusive<usize> {
@@ -35,7 +35,7 @@ pub(crate) fn branch_table_entries(
 
 /// Visit the ordinary instruction successors from the opcode's generated control-flow
 /// layout. Exception handlers are separate edges owned by `Function::for_each_successor`.
-pub(crate) fn for_each_instruction_successor(
+pub fn for_each_instruction_successor(
     pc: usize,
     instruction: WideInstruction,
     mut successor: impl FnMut(usize),
@@ -57,7 +57,7 @@ pub(crate) fn for_each_instruction_successor(
 }
 
 /// The PCs of `instructions` control reaches from `starts` by ordinary successors.
-pub(crate) fn reachable_from(instructions: &[WideInstruction], starts: impl IntoIterator<Item = usize>) -> crate::bitset::BitSet {
+pub fn reachable_from(instructions: &[WideInstruction], starts: impl IntoIterator<Item = usize>) -> crate::bitset::BitSet {
     let mut reached = crate::bitset::BitSet::new(instructions.len());
     let mut pending: Vec<usize> = starts.into_iter().collect();
     while let Some(pc) = pending.pop() {
@@ -121,7 +121,7 @@ pub(super) fn is_bounded(function: &Function) -> bool {
 /// How control reaches a successor: in order, or by an abrupt completion that a
 /// handler covering the instruction catches (or a `finally` return resumes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ControlEdge {
+pub enum ControlEdge {
     Normal,
     Handler,
 }
@@ -169,7 +169,7 @@ fn handler_successors(handler: &super::Handler, successor: &mut impl FnMut(usize
 /// for a pass over the whole function (`Handler::for_each_covering`). `pc + 1` stands for the
 /// function's end after its last instruction.
 #[derive(Debug, PartialEq, Eq, Default)]
-pub(crate) struct Successors {
+pub struct Successors {
     /// Where each pc's successors begin in `targets`, with one entry past the last pc.
     starts: Vec<u32>,
     targets: Vec<u32>,
@@ -286,6 +286,6 @@ impl Function {
 /// Whether the instruction at `pc` may run more than once in one activation. A cycle through
 /// `pc` must leave it for an instruction before it, by a transfer from at or after `pc` to at
 /// or before it, which `backward` (`Function::backward_transfers`) lists.
-pub(crate) fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
+pub fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
     backward.iter().any(|&(target, source)| target <= pc && pc <= source)
 }

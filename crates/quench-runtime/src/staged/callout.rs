@@ -43,7 +43,7 @@ pub(crate) const TAG_GLOBAL_LEXICAL_STORE: u8 = 28;
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub(crate) enum CallOut {
+pub enum CallOut {
     /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
     /// equality: strings and BigInts compare by contents, a conversion may run guest code.
     Equality { left: Operand, right: Operand, strict: bool, negated: bool } = TAG_EQUALITY,
@@ -133,14 +133,14 @@ pub(crate) enum CallOut {
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
 /// passes (`Arguments`), which a handle names without copying it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Operands {
+pub struct Operands {
     /// The fixed operands: a register or a program constant (`Operand`).
-    pub(crate) fixed: [Option<Operand>; 2],
+    pub fixed: [Option<Operand>; 2],
     pub(crate) list: Option<Arguments>,
 }
 
 /// The values of a `CallOut`'s operands, read by the tier from its own registers or constants.
-pub(crate) struct OperandValues<V> {
+pub struct OperandValues<V> {
     pub(crate) fixed: [Option<V>; 2],
     #[cfg(not(stencil_build))]
     pub(crate) list: Vec<V>,
@@ -159,7 +159,7 @@ impl Operands {
 
     /// Every register the operands name, with the list's resolved by `records` (the call records
     /// of a method site; a window needs none). A constant operand names no register.
-    pub(crate) fn registers<'a>(self, records: &'a [Register]) -> impl Iterator<Item = Register> + 'a {
+    pub fn registers<'a>(self, records: &'a [Register]) -> impl Iterator<Item = Register> + 'a {
         self.fixed.into_iter().flatten().filter_map(Operand::register_index)
             .chain(self.list.into_iter().flat_map(move |list| list.registers(records)))
     }
@@ -167,7 +167,7 @@ impl Operands {
     /// The operands' values, each operand read by `read` in the order `registers` names them, the
     /// list's as registers.
     #[cfg(not(stencil_build))]
-    pub(crate) fn read<V>(self, records: &[Register], mut read: impl FnMut(Operand) -> V) -> OperandValues<V> {
+    pub fn read<V>(self, records: &[Register], mut read: impl FnMut(Operand) -> V) -> OperandValues<V> {
         let fixed = self.fixed.map(|operand| operand.map(&mut read));
         let list = self.list.map_or_else(Vec::new, |list| list.registers(records).map(Operand::register).map(&mut read).collect());
         OperandValues { fixed, list }
@@ -179,7 +179,7 @@ impl CallOut {
     /// effect: `===` and `!==` (`Vm::strict_equal`), as a decision or a value. It runs no guest
     /// code, allocates nothing and never raises, so a tier may ask a pure helper of the words
     /// (`dispatch_fast::lane_decide`) instead of making the step in place.
-    pub(crate) fn word_decision(self) -> Option<([Register; 2], u32)> {
+    pub fn word_decision(self) -> Option<([Register; 2], u32)> {
         use crate::vm::operations::{equality_binary_operator, equality_operator};
         match self {
             Self::Decide { left, right, operator } if equality_operator(operator).is_some_and(|(strict, _)| strict) =>
@@ -202,7 +202,7 @@ impl CallOut {
     /// The registers the VM reads, in the order its operation takes them: the first operand
     /// then the second, which is the only one an operation of a single operand has, then the
     /// list of arguments a call passes.
-    pub(crate) fn operands(self) -> Operands {
+    pub fn operands(self) -> Operands {
         let fixed = match self {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::DecideOperand { left, right, .. }
                 | Self::LoadElement { base: left, key: right } => return Operands::of_operands([Some(left), Some(right)]),
@@ -235,7 +235,7 @@ impl CallOut {
 impl<W, P> Operation<W, P> {
     /// The VM operation of a row that calls out, and the register it defines, if any; `None`
     /// for a row that never does.
-    pub(crate) fn call_out(&self) -> Option<(CallOut, Option<Register>)> {
+    pub fn call_out(&self) -> Option<(CallOut, Option<Register>)> {
         Some(match *self {
             Self::PropertyKey { destination, source } => (CallOut::PropertyKey { source }, Some(destination)),
             Self::Equality { destination, left, right, strict, negated } =>

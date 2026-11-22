@@ -1,7 +1,8 @@
 use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
-use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ResidualProgram, Runtime, emit_native_module_for, lower_native_js_module_for};
+use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ResidualProgram, Runtime};
+use quench_layers::engine::{emit_native_module_for, lower_native_js_module_for};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
 mod source_pool;
@@ -67,7 +68,7 @@ impl CompiledSources {
             let module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
             let symbol = module.entry_table_symbol().to_owned();
             for function in &module.functions {
-                if let quench_runtime::NativeFunction::Import { name, .. } = function {
+                if let quench_layers::engine::NativeFunction::Import { name, .. } = function {
                     required_exports.insert(name.clone());
                 }
             }

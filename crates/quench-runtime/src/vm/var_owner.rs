@@ -9,7 +9,7 @@ use super::*;
 /// The owner of a variable environment. A record's pointer is its activation's own, which the
 /// activation's slot or its generator or async owner keeps until the activation ends.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::vm) enum VarOwner {
+pub enum VarOwner {
     Frame(usize),
     Record(*mut FrameRecord),
     /// The innermost activation of a lane native call's frameless activations, whose scope
@@ -23,9 +23,9 @@ pub(in crate::vm) enum VarOwner {
 /// variable environment, and the depth of the frame stack the eval's code runs above
 /// (`Vm::eval_callers`).
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct EvalCaller {
-    pub(in crate::vm) frames: usize,
-    pub(in crate::vm) record: *mut FrameRecord,
+pub struct EvalCaller {
+    pub frames: usize,
+    pub record: *mut FrameRecord,
 }
 
 impl Vm {
@@ -37,11 +37,11 @@ impl Vm {
         }
     }
 
-    fn window(&self) -> &super::dispatch_fast::WindowScope {
+    fn window(&self) -> &crate::vm::engine_types::WindowScope {
         self.running_window.as_ref().expect("a window owner names the scope running_owner read")
     }
 
-    fn window_mut(&mut self) -> &mut super::dispatch_fast::WindowScope {
+    fn window_mut(&mut self) -> &mut crate::vm::engine_types::WindowScope {
         self.running_window.as_mut().expect("a window owner names the scope running_owner read")
     }
 
@@ -199,7 +199,7 @@ impl Vm {
     }
 
     /// The environment `depth` function layers out from `owner`'s captures.
-    pub(super) fn owner_capture_env(&self, owner: VarOwner, depth: u16) -> Option<Value> {
+    pub fn owner_capture_env(&self, owner: VarOwner, depth: u16) -> Option<Value> {
         self.caller_capture_env(self.owner_view(owner), depth)
     }
 

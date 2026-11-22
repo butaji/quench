@@ -10,10 +10,10 @@ pub struct WasmTag {
 
 /// Complete exception-construction window: tag followed by its payload.
 #[repr(u16)]
-pub(crate) enum ExceptionInput {
+pub enum ExceptionInput {
     Tag,
     Payload,
 }
 impl ExceptionInput {
-    pub(crate) const MIN_COUNT: u16 = Self::Payload as u16;
+    pub const MIN_COUNT: u16 = Self::Payload as u16;
 }

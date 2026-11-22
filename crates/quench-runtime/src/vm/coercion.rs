@@ -11,19 +11,19 @@ mod strict_equality;
 const BIGINT_TO_NUMBER: &str = "Cannot convert a BigInt value to a number";
 const UNARY_PLUS: u32 = UnaryOperator::UnaryPlus as u32;
 const UNARY_NEGATION: u32 = UnaryOperator::UnaryNegation as u32;
-pub(super) const LOGICAL_NOT: u32 = UnaryOperator::LogicalNot as u32;
+pub const LOGICAL_NOT: u32 = UnaryOperator::LogicalNot as u32;
 const BITWISE_NOT: u32 = UnaryOperator::BitwiseNot as u32;
-pub(super) const TYPEOF: u32 = UnaryOperator::Typeof as u32;
+pub const TYPEOF: u32 = UnaryOperator::Typeof as u32;
 const VOID: u32 = UnaryOperator::Void as u32;
 
 /// The unary operators that convert their operand to a numeric value; on a Number they
 /// run no guest code.
-#[inline] pub(super) fn numeric_unary(op: u32) -> bool {
+#[inline] pub fn numeric_unary(op: u32) -> bool {
     matches!(op, UNARY_PLUS | UNARY_NEGATION | BITWISE_NOT)
 }
 
 impl Vm {
-    pub(super) fn typeof_value(&mut self, value: Value) -> Value {
+    pub fn typeof_value(&mut self, value: Value) -> Value {
         let mut stage = crate::staged::Concrete::new(std::ptr::null());
         let names = self.typeof_names.as_ptr() as u64;
         match crate::staged::value::immediate_typeof_string(&mut stage, value.to_bits(), names, ()) {
@@ -35,14 +35,14 @@ impl Vm {
     /// The kind whose name `typeof value` yields: an `[[IsHTMLDDA]]` object reads as
     /// undefined (ECMA-262 B.3.6.3).
     #[inline]
-    pub(super) fn typeof_kind(&self, value: Value) -> crate::ValueType {
+    pub fn typeof_kind(&self, value: Value) -> crate::ValueType {
         if self.is_html_dda(value) { crate::ValueType::Undefined } else { self.value_type(value) }
     }
 
     /// The integer a `UNARY_TYPEOF_INDEX` operator yields for `value`: the index in
     /// `bytecode::TYPEOF_NAMES` of the name `typeof value` is.
     #[inline]
-    pub(super) fn typeof_index_value(&self, value: Value) -> Value {
+    pub fn typeof_index_value(&self, value: Value) -> Value {
         let index = immediate_typeof_index(value).unwrap_or_else(|| typeof_name_index(self.typeof_kind(value)));
         Value::integer(index as i32)
     }
@@ -50,7 +50,7 @@ impl Vm {
     /// The boolean a `UNARY_TYPEOF_IS` operator testing the name at `index` in
     /// `bytecode::TYPEOF_NAMES` yields for `value`.
     #[inline]
-    pub(super) fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
+    pub fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
         let named = immediate_typeof_index(value).unwrap_or_else(|| typeof_name_index(self.typeof_kind(value)));
         if (named == index) != negated { Value::TRUE } else { Value::FALSE }
     }
@@ -95,7 +95,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
-    pub(super) fn to_bigint(
+    pub fn to_bigint(
         &mut self,
         p: &ResidualProgram,
         value: Value,
@@ -130,7 +130,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
-    pub(super) fn to_property_key(
+    pub fn to_property_key(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -164,7 +164,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn coerce_js_string(
+    pub fn coerce_js_string(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -185,7 +185,7 @@ impl Vm {
 
     /// `!value`: the negated truthiness.
     #[inline(always)]
-    pub(super) fn logical_not(&self, value: Value) -> Value {
+    pub fn logical_not(&self, value: Value) -> Value {
         if self.truthy(value) {
             Value::FALSE
         } else {
@@ -193,7 +193,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn unary(
+    pub fn unary(
         &mut self,
         p: &ResidualProgram,
         op: u32,
@@ -246,14 +246,14 @@ impl Vm {
 
     /// ToNumber of `value` where it runs no guest code and raises nothing: an immediate
     /// primitive or a string. `None` for any other value.
-    #[inline] pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
+    #[inline] pub fn primitive_to_number(&self, value: Value) -> Option<f64> {
         value
             .immediate_number()
             .or_else(|| self.heap.string(value).map(|text| text.read_units(super::number::string_to_number_units)))
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
-    pub(super) fn to_number(
+    pub fn to_number(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -288,7 +288,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention)]
-    pub(super) fn to_string(
+    pub fn to_string(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -329,7 +329,7 @@ impl Vm {
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
-    pub(super) fn to_primitive(
+    pub fn to_primitive(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -384,7 +384,7 @@ impl Vm {
         Err(self.type_error(program, "Cannot convert object to primitive value".into()))
     }
 
-    pub(super) fn strict_equal(&self, a: Value, b: Value) -> bool {
+    pub fn strict_equal(&self, a: Value, b: Value) -> bool {
         if let (Some(left), Some(right)) = (a.as_number(), b.as_number()) {
             return left == right;
         }
@@ -392,14 +392,14 @@ impl Vm {
     }
 
     #[inline(always)]
-    pub(super) fn truthy(&self, v: Value) -> bool {
+    pub fn truthy(&self, v: Value) -> bool {
         v.truthiness().unwrap_or_else(|| self.heap_cell_truthy(v))
     }
 
     /// ToBoolean of a heap value `Value::truthiness` leaves to its cell: one cell read
     /// decides every falsy heap value, "", 0n and the IsHTMLDDA object.
     #[inline(never)]
-    pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
+    pub fn heap_cell_truthy(&self, v: Value) -> bool {
         heap_cell_truthy_in(&self.heap, v)
     }
 
@@ -415,7 +415,7 @@ impl Vm {
 }
 
 /// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`.
-#[inline] pub(crate) fn typeof_name_index(kind: crate::ValueType) -> usize {
+#[inline] pub fn typeof_name_index(kind: crate::ValueType) -> usize {
     use crate::ValueType as T;
     match kind {
         T::Undefined => 0,
@@ -430,14 +430,14 @@ impl Vm {
 }
 
 /// The text `typeof` yields for a value of `kind`.
-pub(super) fn typeof_text(kind: crate::ValueType) -> &'static str {
+pub fn typeof_text(kind: crate::ValueType) -> &'static str {
     crate::bytecode::TYPEOF_NAMES[typeof_name_index(kind)]
 }
 
 /// ToString where the value alone decides it: `undefined` (the deleted marker reads as it),
 /// `null`, a Boolean or a Number. `None` for a heap value, whose conversion reads its cell and
 /// may run guest code. A Number's digits are written straight into the string.
-pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
+pub fn immediate_to_string(value: Value) -> Option<JsString> {
     match value.as_bool() {
         _ if value.is_undefined() || value.is_deleted() => Some(JsString::from_str("undefined")),
         _ if value.is_null() => Some(JsString::from_str("null")),
@@ -450,7 +450,7 @@ pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
 /// which its tag alone decides (`staged::value::immediate_typeof_index`, which the tiers run as
 /// well); `None` for a heap value. None of these kinds is the `[[IsHTMLDDA]]` object's.
 #[inline(always)]
-pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
+pub fn immediate_typeof_index(value: Value) -> Option<usize> {
     crate::staged::value::concrete_immediate_typeof_index(value)
 }
 
@@ -458,7 +458,7 @@ pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
 /// string's or another cell's ToBoolean in place: a string's length from its record, a BigInt's
 /// zero, the IsHTMLDDA object, and every other cell truthy.
 #[inline(never)]
-pub(crate) fn heap_cell_truthy_in(heap: &crate::heap::Heap, v: Value) -> bool {
+pub fn heap_cell_truthy_in(heap: &crate::heap::Heap, v: Value) -> bool {
     if let Some(length) = heap.string_record_base().and_then(|records| crate::staged::string_length::concrete_string_length(records, v)) {
         return length != Value::integer(0);
     }

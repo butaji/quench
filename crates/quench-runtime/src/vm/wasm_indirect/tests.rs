@@ -197,7 +197,7 @@ fn vm_running(compiled: bool) -> Vm {
 }
 
 /// How many times the VM entered function `index` of `module`'s compiled code.
-fn entries(vm: &Vm, module: &crate::WasmModule, index: usize) -> Option<u64> {
+pub fn entries(vm: &Vm, module: &crate::WasmModule, index: usize) -> Option<u64> {
     let program = vm.programs.find_shared(&module.program)?;
     vm.programs.compiled(program).flatten()?.native_entries(index)
 }

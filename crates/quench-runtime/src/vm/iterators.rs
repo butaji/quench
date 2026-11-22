@@ -34,11 +34,12 @@ pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 mod collection_steps;
 #[path = "iterator_in_place.rs"]
 mod iterator_in_place;
-pub(super) use iterator_in_place::InPlaceStep;
+#[allow(unused_imports)]
+pub use iterator_in_place::InPlaceStep;
 
 /// The stores `Vm::intact_iteration_kind` proves iterate by their own contents.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum IterationSource {
+pub enum IterationSource {
     Array,
     Set,
     Map,
@@ -48,7 +49,7 @@ pub(super) enum IterationSource {
 /// What an iteration step's call is (`Vm::iteration_step`): one the lane makes in place, of
 /// an array iterator or a generator, or any other call.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum IterationStep {
+pub enum IterationStep {
     Array,
     Generator,
     /// A String, Map or Set iterator's (`collection_steps`).
@@ -90,7 +91,7 @@ impl Vm {
     /// `spread_into_array` of a `source` whose iteration runs no guest code
     /// (`intact_iteration_kind`), which then neither throws nor calls out: `true` once its
     /// values are appended to the dense literal `array`, `false` (nothing done) for any other.
-    pub(super) fn spread_intact_in_place(&mut self, array: Value, source: Value) -> bool {
+    pub fn spread_intact_in_place(&mut self, array: Value, source: Value) -> bool {
         if self.share_spread_elements(array, source) {
             return true;
         }
@@ -160,7 +161,7 @@ impl Vm {
     /// iterator it makes (the realm's fuses, `IntactFuse`), reading data properties only. An
     /// ordinary Array (`array_iteration_intact`), Set or Map with no own `@@iterator` under
     /// its realm's prototype, or a primitive string.
-    pub(super) fn intact_iteration_kind(&mut self, source: Value) -> Option<IterationSource> {
+    pub fn intact_iteration_kind(&mut self, source: Value) -> Option<IterationSource> {
         if self.array_iteration_intact(source) {
             return Some(IterationSource::Array);
         }
@@ -212,7 +213,7 @@ impl Vm {
         proto.is_null() || self.iterator_absence_proved(proto, key) || self.plain_property_lookup(proto, key) == Some(None)
     }
 
-    pub(super) fn iterator_step_value(
+    pub fn iterator_step_value(
         &mut self,
         p: &ResidualProgram,
         iterator: Value,
@@ -236,7 +237,7 @@ impl Vm {
     /// `iterator_close` of an iterator whose `return` is absent along its chain, which ends
     /// the close with `undefined` before any call (the shapes decide it, as in
     /// `iterator_close`); `None` for any other, which may call guest code or throw.
-    pub(in crate::vm) fn iterator_close_in_place(&self, iterator: Value) -> Option<Value> {
+    pub fn iterator_close_in_place(&self, iterator: Value) -> Option<Value> {
         let current = self.iterator_close_target(iterator);
         let key = PropertyKey::string(self.runtime_atoms.iterator_return);
         self.iterator_lacks_property(current, key).then_some(Value::UNDEFINED)
@@ -991,7 +992,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn collection_iterator(
+    pub fn collection_iterator(
         &mut self,
         source: Value,
         kind: IteratorKind,
@@ -1035,7 +1036,7 @@ impl Vm {
         Ok(iterator)
     }
 
-    pub(super) fn get_iterator(
+    pub fn get_iterator(
         &mut self,
         p: &ResidualProgram,
         source: Value,
@@ -2126,7 +2127,7 @@ impl Vm {
         Ok(values)
     }
 
-    pub(super) fn iterator_get_direct(
+    pub fn iterator_get_direct(
         &mut self,
         p: &ResidualProgram,
         iterator: Value,
@@ -2881,7 +2882,7 @@ impl Vm {
                 }
             };
             if kind == IteratorKind::IntlSegments {
-                return vm.intl_segment_iterator_next(p, this);
+                return layer_hooks::intl_segment_iterator_next(vm, p, this);
             }
             if kind == IteratorKind::Generator {
                 return vm.generator_next(p, this, args);
@@ -3135,7 +3136,7 @@ impl Vm {
     /// and the element at the position is a present data value (a hole's Get reaches the
     /// prototype chain). The result object is the general step's (`iterator_result`); `None`
     /// leaves the call to the general path.
-    pub(super) fn plain_array_iterator_next(&mut self, callee: Value, iterator: Value) -> Option<Value> {
+    pub fn plain_array_iterator_next(&mut self, callee: Value, iterator: Value) -> Option<Value> {
         if !self.proved_step_native(callee, StepNative::ArrayIteratorNext) {
             return None;
         }
@@ -3184,7 +3185,7 @@ impl Vm {
     /// (`steps_as_array_iterator`), this realm's `Generator.prototype.next` of a generator
     /// that is not running (`steps_as_generator`), or another call.
     #[inline(always)]
-    pub(super) fn iteration_step(&self, iterator: Value, method: Value) -> IterationStep {
+    pub fn iteration_step(&self, iterator: Value, method: Value) -> IterationStep {
         match self.heap.iterator(iterator) {
             Some(IteratorRecord { kind, .. })
                 if kind.is_array_iterator() && self.proved_step_native(method, StepNative::ArrayIteratorNext) =>
@@ -3209,7 +3210,7 @@ impl Vm {
     /// Whether a for-of step calling `method` of `iterator` (`iteration_step_in_lane`) is this
     /// realm's `Generator.prototype.next` of a generator that is not running, which the step
     /// resumes in place (`generator_iteration_step`).
-    pub(super) fn steps_as_generator(&self, iterator: Value, method: Value) -> bool {
+    pub fn steps_as_generator(&self, iterator: Value, method: Value) -> bool {
         self.iteration_step(iterator, method) == IterationStep::Generator
     }
 
@@ -3217,7 +3218,7 @@ impl Vm {
     /// path calls the native `method` (`call_native_guarded`, `call_native`), with a result
     /// only the step's `done` and `value` reads observe (`reused_iterator_result`), or the
     /// delegate's own result a `yield*` passes on.
-    pub(super) fn generator_iteration_step(
+    pub fn generator_iteration_step(
         &mut self,
         p: &ResidualProgram,
         method: Value,
@@ -3290,7 +3291,7 @@ impl Vm {
     /// no prototype fills read as `undefined` (`Some(Some(_))`), or the iterator done past
     /// the end (`Some(None)`). `None` for a hole some prototype may fill, an exotic or sparse
     /// array, another kind or a done iterator, whose step the native makes.
-    pub(super) fn step_present_array_value(&mut self, iterator: Value) -> Option<Option<Value>> {
+    pub fn step_present_array_value(&mut self, iterator: Value) -> Option<Option<Value>> {
         let Some(IteratorRecord {
             source,
             kind: IteratorKind::Array | IteratorKind::ArrayValues,
@@ -3322,7 +3323,7 @@ impl Vm {
     /// An iterator result `{ value, done }` whose object no code but the step that reads it
     /// back observes (a `Call` the lane recognises as an iteration step, `iterator_step_miss`):
     /// one object, rewritten by each such step, in place of a fresh one per step.
-    pub(super) fn reused_iterator_result(&mut self, value: Value, done: bool) -> Value {
+    pub fn reused_iterator_result(&mut self, value: Value, done: bool) -> Value {
         let result = self.reused_iterator_result;
         if result.is_undefined() {
             let result = self.iterator_result(value, done).expect("an iterator result allocates");
@@ -3337,7 +3338,7 @@ impl Vm {
         result
     }
 
-    pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
+    pub fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
         let prototype = self.realm_object_prototype(self.realm.globals);
         // Its two slots are the inline ones, so the header of the realm's prototype and the
         // shape, derived once, makes every result (`Heap::alloc_object_from_header`).

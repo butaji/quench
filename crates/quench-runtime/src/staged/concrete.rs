@@ -6,7 +6,7 @@ use super::region::Access;
 /// The interpreter's stage: machine words, read from live memory. It knows every condition,
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
-pub(crate) struct Concrete {
+pub struct Concrete {
     tables: [u64; 1],
     /// The heap whose store barrier `store_gate` reads; null where no store runs.
     heap: *const crate::heap::Heap,
@@ -14,7 +14,7 @@ pub(crate) struct Concrete {
 
 impl Concrete {
     #[inline(always)]
-    pub(crate) fn new(property_values: *const crate::Value) -> Self {
+    pub fn new(property_values: *const crate::Value) -> Self {
         Self { tables: [property_values as u64], heap: std::ptr::null() }
     }
 
@@ -34,7 +34,7 @@ impl Concrete {
 
     /// The stage of stores into `heap`'s objects.
     #[inline(always)]
-    pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
+    pub fn storing(heap: *const crate::heap::Heap) -> Self {
         // SAFETY: the caller's heap is live.
         Self { tables: [unsafe { (*heap).arena_values_base() } as u64], heap }
     }

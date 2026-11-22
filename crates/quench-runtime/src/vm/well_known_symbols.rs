@@ -2,7 +2,7 @@ use crate::value::Value;
 
 /// The well-known symbols (ECMA-262 Table 1), in their installation order on `Symbol`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WellKnownSymbol {
+pub enum WellKnownSymbol {
     AsyncDispose,
     AsyncIterator,
     Dispose,
@@ -70,11 +70,11 @@ impl WellKnownSymbol {
 /// The realm-independent well-known symbol values, one slot per `WellKnownSymbol`, empty
 /// until `Symbol` is installed.
 #[derive(Clone, Default)]
-pub(crate) struct WellKnownSymbols(pub(super) [Option<Value>; WellKnownSymbol::ALL.len()]);
+pub struct WellKnownSymbols(pub(super) [Option<Value>; WellKnownSymbol::ALL.len()]);
 
 impl WellKnownSymbols {
     #[inline(always)]
-    pub(crate) fn get(&self, symbol: WellKnownSymbol) -> Option<Value> {
+    pub fn get(&self, symbol: WellKnownSymbol) -> Option<Value> {
         self.0[symbol as usize]
     }
     pub(crate) fn insert(&mut self, symbol: WellKnownSymbol, value: Value) {

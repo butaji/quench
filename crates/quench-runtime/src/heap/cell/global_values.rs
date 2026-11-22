@@ -42,7 +42,7 @@ impl Constancy {
 /// A cell of a global table: an own slot of the global object, or the index of a global
 /// lexical binding of its realm (never removed while the realm is active).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum GlobalCell {
+pub enum GlobalCell {
     Slot(u32),
     Binding(u32),
 }
@@ -51,7 +51,7 @@ pub(crate) enum GlobalCell {
 /// stood when the code read it (its constancy and the table's shadowing epoch), which its
 /// publication revalidates before it subscribes (`subscribe_global_value`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct GlobalFact {
+pub struct GlobalFact {
     pub(crate) table: u32,
     pub(crate) cell: GlobalCell,
     constancy: Constancy,
@@ -62,7 +62,7 @@ pub(crate) struct GlobalFact {
 /// own property where its slot was when the code was compiled. Its publication revalidates it
 /// before it subscribes (`subscribe_global_layout`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct GlobalLayoutFact {
+pub struct GlobalLayoutFact {
     pub(crate) table: u32,
     epoch: u32,
 }
@@ -133,7 +133,7 @@ pub(crate) fn new_table() -> u32 {
 }
 
 /// The fact code takes by folding `cell` of `table` now; `None` once the cell is `Mutable`.
-pub(crate) fn global_value_fact(table: u32, cell: GlobalCell) -> Option<GlobalFact> {
+pub fn global_value_fact(table: u32, cell: GlobalCell) -> Option<GlobalFact> {
     with_table(table, |held| {
         let epoch = held.epoch;
         let (cells, index) = held.cells(cell);
@@ -144,7 +144,7 @@ pub(crate) fn global_value_fact(table: u32, cell: GlobalCell) -> Option<GlobalFa
 
 /// Makes `code` retire when `fact`'s cell is written or a declaration shadows its slot; `false`
 /// where the cell changed since the fact was taken or the reader table is full.
-pub(crate) fn subscribe_global_value(fact: GlobalFact, code: &Rc<dyn DependentCode>) -> bool {
+pub fn subscribe_global_value(fact: GlobalFact, code: &Rc<dyn DependentCode>) -> bool {
     with_table(fact.table, |held| {
         let epoch = held.epoch;
         let (cells, index) = held.cells(fact.cell);
@@ -153,7 +153,7 @@ pub(crate) fn subscribe_global_value(fact: GlobalFact, code: &Rc<dyn DependentCo
 }
 
 /// `cell` of `table` was written: its constancy rises and the code holding it retires.
-pub(crate) fn note_global_write(table: u32, cell: GlobalCell) {
+pub fn note_global_write(table: u32, cell: GlobalCell) {
     with_table(table, |held| {
         let (cells, index) = held.cells(cell);
         cells.note_write(index);
@@ -162,7 +162,7 @@ pub(crate) fn note_global_write(table: u32, cell: GlobalCell) {
 
 /// A global lexical declaration may shadow a property of the global object of `table`: every
 /// slot's holders retire.
-pub(crate) fn note_global_shadowed(table: u32) {
+pub fn note_global_shadowed(table: u32) {
     with_table(table, |held| {
         held.epoch = held.epoch.wrapping_add(1);
         held.slots.readers.reset();
@@ -172,13 +172,13 @@ pub(crate) fn note_global_shadowed(table: u32) {
 }
 
 /// The fact code takes by holding the layout of `table`'s global object now.
-pub(crate) fn global_layout_fact(table: u32) -> Option<GlobalLayoutFact> {
+pub fn global_layout_fact(table: u32) -> Option<GlobalLayoutFact> {
     with_table(table, |held| GlobalLayoutFact { table, epoch: held.layout_epoch })
 }
 
 /// Makes `code` retire when the layout `fact` names changes or a declaration shadows a name;
 /// `false` where it changed since the fact was taken or the reader table is full.
-pub(crate) fn subscribe_global_layout(fact: GlobalLayoutFact, code: &Rc<dyn DependentCode>) -> bool {
+pub fn subscribe_global_layout(fact: GlobalLayoutFact, code: &Rc<dyn DependentCode>) -> bool {
     with_table(fact.table, |held| held.layout_epoch == fact.epoch && held.layout.subscribe(LAYOUT_OWNER, code))
         .unwrap_or(false)
 }

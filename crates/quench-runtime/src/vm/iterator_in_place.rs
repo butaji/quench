@@ -6,7 +6,7 @@ use super::*;
 
 /// What an iteration step calling `method` of an iterator is (`Vm::step_in_place`).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::vm) enum InPlaceStep {
+pub enum InPlaceStep {
     /// A values step over a plain array, made: the element, or `None` once the iterator is
     /// done. It allocated nothing.
     Element(Option<Value>),
@@ -26,7 +26,7 @@ impl Vm {
     /// (`InPlaceStep`). An array values step is decided and made from one read of the
     /// record; the other kinds are decided as `iteration_step` decides them.
     #[inline(always)]
-    pub(in crate::vm) fn step_in_place(&mut self, iterator: Value, method: Value) -> InPlaceStep {
+    pub fn step_in_place(&mut self, iterator: Value, method: Value) -> InPlaceStep {
         let Some(record) = self.heap.iterator(iterator) else {
             return InPlaceStep::Call;
         };

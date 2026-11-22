@@ -3,7 +3,7 @@ use super::*;
 /// What a global name read finds (`Vm::global_name_read`): a value, with the hint naming the
 /// global object's own data field that held it, an uninitialized lexical binding, or nothing
 /// the lane's read takes.
-pub(super) enum GlobalNameRead {
+pub enum GlobalNameRead {
     Value(Value, Option<FieldCache>),
     Uninitialized,
     Miss,
@@ -61,7 +61,7 @@ impl Vm {
     /// A global name read as the lane takes it (`dispatch_fast::global_name_refresh_miss`):
     /// an initialized global lexical binding of the name, else the global object's own data
     /// field with the hint that names it, else the site's cached field.
-    pub(super) fn global_name_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> GlobalNameRead {
+    pub fn global_name_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> GlobalNameRead {
         let globals = self.realm.globals;
         if self.realm.global_lexical_declarations.contains(&atom) {
             return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
@@ -84,7 +84,7 @@ impl Vm {
     /// it is `atom`'s and initialized. The index is only a locator, so a stale one, or a binding
     /// in its temporal dead zone, gives `None` and the caller takes its walk or refresh.
     #[inline(always)]
-    pub(super) fn global_lexical_at(&self, atom: Atom, index: u16) -> Option<Value> {
+    pub fn global_lexical_at(&self, atom: Atom, index: u16) -> Option<Value> {
         self.realm
             .global_lexical_bindings
             .get_index(usize::from(index))
@@ -119,7 +119,7 @@ impl Vm {
     /// receiver: an ordinary object stores the virtual field names like any other property
     /// (`shape_answers`), so only a private name stays out.
     #[inline(always)]
-    pub(super) fn field_add_atom_eligible(&self, atom: Atom) -> bool {
+    pub fn field_add_atom_eligible(&self, atom: Atom) -> bool {
         !self.is_private_name(atom)
     }
 
@@ -226,7 +226,7 @@ enum ReceiverKind {
 }
 
 /// What the inline field caches know about one read.
-pub(super) enum FieldCacheProbe {
+pub enum FieldCacheProbe {
     Hit(Value),
     /// An ordinary object the caches do not cover yet.
     OrdinaryMiss,
@@ -240,7 +240,7 @@ impl Vm {
     /// immediate prototype, among its site's recorded entries (`megamorphic_field_cache`): the
     /// holder tier `polymorphic_field_hit` probes for a record receiver. Every function named
     /// differently has a shape of its own, so such a site records one entry per name.
-    pub(super) fn cell_polymorphic_holder_hit(&self, object: Value, site: u16) -> Option<Value> {
+    pub fn cell_polymorphic_holder_hit(&self, object: Value, site: u16) -> Option<Value> {
         let receiver = self.heap.object(object)?;
         let holder = self.heap.object(receiver.proto())?;
         let entry = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape())?;
@@ -249,7 +249,7 @@ impl Vm {
 
     /// Whether the field cache site `site`'s primary entry holds a receiver: a plan-time admission fact for a
     /// field row's direct arm. The arm checks the entry at run time, so a stale answer costs only a decline.
-    pub(in crate::vm) fn field_cache_filled(&self, site: u16) -> bool {
+    pub fn field_cache_filled(&self, site: u16) -> bool {
         // SAFETY: the active layout reserves every compiler-emitted site, as `cached_field_store_hit` reads it.
         let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
         cache.receiver != EMPTY_CACHE.receiver

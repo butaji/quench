@@ -55,3 +55,6 @@ kernels! {
     number_control_unit_chain: chain::<false>(UnitFractions),
     number_control_large_chain: chain::<false>(Fractions),
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;

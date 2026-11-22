@@ -11,10 +11,6 @@ description = "JavaScript and WebAssembly execution runtime for Quench"
 doctest = false
 name = "quench_runtime"
 
-[[bin]]
-name = "quench-runtime"
-path = "src/bin/quench-runtime.rs"
-
 [[bench]]
 name = "number_primitives"
 required-features = ["bench-primitives"]
@@ -116,6 +112,8 @@ phf = { version = "0.14", features = ["macros"] }
 
 [dev-dependencies]
 quench-tier-corpus = { path = "../quench-tier-corpus" }
+# Links the layer crates into the integration tests and examples (`extern crate quench_layers`).
+quench-layers = { path = "../quench-layers" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

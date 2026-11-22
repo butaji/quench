@@ -25,12 +25,12 @@ impl NativeJsOperands {
     }
 
     /// The operands of `instruction`, as its semantic entry reads them.
-    pub(crate) const fn of(instruction: WideInstruction) -> Self {
+    pub const fn of(instruction: WideInstruction) -> Self {
         Self::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
     }
 
     /// The record's two words, in layout order: what an image stores and a linker places.
-    pub(crate) const fn words(&self) -> [u64; 2] {
+    pub const fn words(&self) -> [u64; 2] {
         [self.registers, self.immediate]
     }
 
@@ -45,7 +45,7 @@ impl NativeJsOperands {
         bytes.extend_from_slice(&self.immediate.to_ne_bytes());
     }
 
-        pub(super) fn instruction(&self, opcode: Op) -> WideInstruction {
+        pub fn instruction(&self, opcode: Op) -> WideInstruction {
         WideInstruction::new(
             opcode,
             self.registers as u16,

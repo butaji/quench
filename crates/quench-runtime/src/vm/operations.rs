@@ -4,11 +4,11 @@ use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 mod number_operators;
 mod primitive_comparison;
-pub(crate) use number_operators::static_number_binary;
+pub use number_operators::static_number_binary;
 pub(super) use number_operators::immediate_number_pair;
 use number_operators::*;
 mod number_rows;
-pub(crate) use number_rows::*;
+pub use number_rows::*;
 
 // The operator codes the shared rows name (`number_rows::binary_operator`, `unary_operator`) are the parser's.
 const _: () = assert!(binary_operator::Equality == BinaryOperator::Equality as u32
@@ -51,7 +51,7 @@ pub(super) enum ArrayLikeElementKind {
 }
 
 /// The comparison operators occupy the binary operator discriminants up to this one.
-pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
+pub const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
 
 macro_rules! number_arithmetic_operators {
@@ -69,7 +69,7 @@ macro_rules! number_arithmetic_operators {
 
             /// `from_instruction` of an opcode and its operator field, for a caller that holds
             /// the opcode but no record: the record is built with the operator in its immediate.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+            pub fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
                 Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
             }
         }
@@ -81,7 +81,7 @@ impl NumberArithmetic {
     /// For signed-int32 inputs, addition and subtraction are exact binary64
     /// integers; a following ToInt32 therefore keeps their wrapping low bits.
     /// Multiplication can round before ToInt32 and does not have this law.
-    pub(super) const fn int32_projection_is_wrapping(self) -> bool {
+    pub const fn int32_projection_is_wrapping(self) -> bool {
         matches!(self, Self::Add | Self::Subtract)
     }
 }
@@ -119,7 +119,7 @@ macro_rules! number_unary_operators {
 
             /// The side-effect-free Number unary operation denoted by JavaScript bytecode.
             /// Other unary operators still require their normal coercion and effect paths.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+            pub fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
                 (instruction as u16 == crate::staged::UNARY_ROW)
                     .then(|| Self::from_operator(operator))
                     .flatten()
@@ -153,7 +153,7 @@ macro_rules! number_bitwise_operators {
 
             /// `from_instruction` of an opcode and its operator field, for a caller that holds
             /// the opcode but no record.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+            pub fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
                 Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
             }
         }
@@ -164,7 +164,7 @@ number_bitwise_rows!(number_bitwise_operators);
 impl NumberBitwise {
     /// A nonzero effective zero-fill shift clears the sign bit. All other
     /// bitwise operations already return signed Word32 values.
-    pub(super) fn result_is_int32(self, right: Option<f64>) -> bool {
+    pub fn result_is_int32(self, right: Option<f64>) -> bool {
         self != Self::ShiftRightUnsigned || right.is_some_and(|right|
             crate::value::number_to_u32(right) & crate::value::WORD32_SHIFT_MASK != 0)
     }
@@ -195,7 +195,7 @@ pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32
 /// `operation` of int32 operands as a value: the int32 result as it is, but for a zero-fill
 /// shift above `i32::MAX`, which is the Number of its unsigned bits.
 #[inline(always)]
-pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
+pub fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);
     if operation.keeps_int32(bits) {
         Value::integer(bits)
@@ -205,7 +205,7 @@ pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: 
 }
 
 #[inline(always)]
-pub(super) fn number_unary_result(operator: u32, value: f64) -> Option<f64> {
+pub fn number_unary_result(operator: u32, value: f64) -> Option<f64> {
     Some(NumberUnary::from_operator(operator)?.apply(&mut NumberF64Stage, value))
 }
 
@@ -219,7 +219,7 @@ fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) 
 /// result (`numeric_integer_result`); `None` for any other operator and for a result the
 /// integer case leaves to Numbers.
 #[inline(always)]
-pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
+pub fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
     if let Some(relation) = NumberRelation::from_operator(op) {
         return Some(if relation.apply(&mut PartialOrderStage, left, right) {
             Value::TRUE
@@ -233,7 +233,7 @@ pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
 /// A comparison operator on two Numbers, comparing integers as integers, with the value path
 /// that decided it; `None` for any other operator or value.
 #[inline(always)]
-pub(super) fn number_relation(
+pub fn number_relation(
     op: u32,
     left: Value,
     right: Value,
@@ -441,23 +441,23 @@ mod integer_arithmetic_tests {
 
 /// An arithmetic operator on two Numbers: `integer` when both are integers, else `number` on
 /// their IEEE 754 values.
-pub(super) const ADDITION: u32 = BinaryOperator::Addition as u32;
-pub(super) const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
-pub(super) const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
-pub(super) const DIVISION: u32 = BinaryOperator::Division as u32;
+pub const ADDITION: u32 = BinaryOperator::Addition as u32;
+pub const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
+pub const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
+pub const DIVISION: u32 = BinaryOperator::Division as u32;
 
-pub(super) const REMAINDER: u32 = BinaryOperator::Remainder as u32;
-pub(super) const SHIFT_LEFT: u32 = BinaryOperator::ShiftLeft as u32;
-pub(super) const SHIFT_RIGHT: u32 = BinaryOperator::ShiftRight as u32;
-pub(super) const SHIFT_RIGHT_ZERO_FILL: u32 = BinaryOperator::ShiftRightZeroFill as u32;
-pub(super) const BITWISE_OR: u32 = BinaryOperator::BitwiseOR as u32;
-pub(super) const BITWISE_XOR: u32 = BinaryOperator::BitwiseXOR as u32;
-pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
+pub const REMAINDER: u32 = BinaryOperator::Remainder as u32;
+pub const SHIFT_LEFT: u32 = BinaryOperator::ShiftLeft as u32;
+pub const SHIFT_RIGHT: u32 = BinaryOperator::ShiftRight as u32;
+pub const SHIFT_RIGHT_ZERO_FILL: u32 = BinaryOperator::ShiftRightZeroFill as u32;
+pub const BITWISE_OR: u32 = BinaryOperator::BitwiseOR as u32;
+pub const BITWISE_XOR: u32 = BinaryOperator::BitwiseXOR as u32;
+pub const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 
 /// Operator `OP` on two Numbers through their double values, as ECMA-262 defines it (an
 /// immediate primitive as its ToNumeric, `immediate_number_pair`); `None` for any other.
 #[inline(always)]
-pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+pub fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     let pair = Value::numeric_pair(left, right);
     if let Some(value) = bitwise_value_operator::<OP>(pair) {
         return Some(value);
@@ -498,7 +498,7 @@ fn bitwise_value_operator<const OP: u32>(pair: NumericPair) -> Option<Value> {
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
 /// `None` otherwise, leaving other Numbers to `number_binary`.
 #[inline(always)]
-pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+pub fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     // One operand at a time: each tag test needs a single scratch register, which keeps the
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
@@ -788,9 +788,10 @@ impl Vm {
             Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
             Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
             Native::WebAssemblyInitialize => self.install_webassembly(p).map(|()| Value::UNDEFINED),
-            Native::IntlInitialize => self
-                .install_intl_for_realm(p, self.realm.globals, self.object_proto)
-                .map(|()| Value::UNDEFINED),
+            Native::IntlInitialize => {
+                let (global, object_prototype) = (self.realm.globals, self.object_proto);
+                layer_hooks::install_intl_for_realm(self, p, global, object_prototype).map(|()| Value::UNDEFINED)
+            }
             Native::ReflectInitialize => self.install_reflect(p).map(|()| Value::UNDEFINED),
             Native::ProxyInitialize => self.install_proxy(p).map(|()| Value::UNDEFINED),
             Native::WeakRefInitialize => self.install_weak_ref(p).map(|()| Value::UNDEFINED),
@@ -798,7 +799,306 @@ impl Vm {
                 self.install_finalization_registry(p).map(|()| Value::UNDEFINED)
             }
             Native::DataViewInitialize => self.install_data_view(p).map(|()| Value::UNDEFINED),
-            Native::TemporalInitialize => self.install_temporal(p).map(|()| Value::UNDEFINED),
+            Native::TemporalInitialize
+            | Native::IntlNumberFormat
+            | Native::IntlNumberFormatSupportedLocalesOf
+            | Native::IntlDisplayNamesSupportedLocalesOf
+            | Native::IntlNumberFormatFormatGetter
+            | Native::IntlNumberFormatFormat
+            | Native::IntlNumberFormatFormatToParts
+            | Native::IntlNumberFormatFormatRange
+            | Native::IntlNumberFormatFormatRangeToParts
+            | Native::IntlNumberFormatResolvedOptions
+            | Native::IntlPluralRulesSupportedLocalesOf
+            | Native::IntlPluralRulesSelect
+            | Native::IntlPluralRulesSelectRange
+            | Native::IntlPluralRulesResolvedOptions
+            | Native::IntlGetCanonicalLocales
+            | Native::IntlSupportedValuesOf
+            | Native::IntlLocale
+            | Native::IntlLocaleToString
+            | Native::IntlLocaleMaximize
+            | Native::IntlLocaleMinimize
+            | Native::IntlLocaleGetCalendars
+            | Native::IntlLocaleGetCollations
+            | Native::IntlLocaleGetHourCycles
+            | Native::IntlLocaleGetNumberingSystems
+            | Native::IntlLocaleGetTimeZones
+            | Native::IntlLocaleGetTextInfo
+            | Native::IntlLocaleGetWeekInfo
+            | Native::IntlLocaleBaseNameGetter
+            | Native::IntlLocaleLanguageGetter
+            | Native::IntlLocaleScriptGetter
+            | Native::IntlLocaleRegionGetter
+            | Native::IntlLocaleVariantsGetter
+            | Native::IntlLocaleCalendarGetter
+            | Native::IntlLocaleCollationGetter
+            | Native::IntlLocaleHourCycleGetter
+            | Native::IntlLocaleCaseFirstGetter
+            | Native::IntlLocaleFirstDayOfWeekGetter
+            | Native::IntlLocaleNumberingSystemGetter
+            | Native::IntlLocaleNumericGetter
+            | Native::IntlRelativeTimeFormat
+            | Native::IntlRelativeTimeFormatResolvedOptions
+            | Native::IntlRelativeTimeFormatSupportedLocalesOf
+            | Native::IntlRelativeTimeFormatFormat
+            | Native::IntlRelativeTimeFormatFormatToParts
+            | Native::IntlSegmenterSupportedLocalesOf
+            | Native::IntlSegmenterSegment
+            | Native::IntlSegmenterResolvedOptions
+            | Native::IntlSegmenterSegmentsIterator
+            | Native::IntlSegmenterSegmentsContaining
+            | Native::IntlSegmenterIteratorNext
+            | Native::IntlCollator
+            | Native::IntlCollatorSupportedLocalesOf
+            | Native::IntlCollatorCompareGetter
+            | Native::IntlCollatorCompare
+            | Native::IntlCollatorResolvedOptions
+            | Native::IntlDateTimeFormat
+            | Native::IntlDisplayNamesOf
+            | Native::IntlDisplayNamesResolvedOptions
+            | Native::IntlDurationFormatSupportedLocalesOf
+            | Native::IntlDurationFormatFormatGetter
+            | Native::IntlDurationFormatFormat
+            | Native::IntlDurationFormatFormatToParts
+            | Native::IntlDurationFormatResolvedOptions
+            | Native::IntlListFormatFormatGetter
+            | Native::IntlListFormatFormat
+            | Native::IntlListFormatFormatToParts
+            | Native::IntlListFormatResolvedOptions
+            | Native::IntlListFormatSupportedLocalesOf
+            | Native::IntlDateTimeFormatFormatGetter
+            | Native::IntlDateTimeFormatFormat
+            | Native::IntlDateTimeFormatFormatToParts
+            | Native::IntlDateTimeFormatFormatRange
+            | Native::IntlDateTimeFormatFormatRangeToParts
+            | Native::IntlDateTimeFormatSupportedLocalesOf
+            | Native::IntlDateTimeFormatResolvedOptions
+            | Native::TemporalToLocaleString
+            | Native::TemporalDuration
+            | Native::TemporalDurationFrom
+            | Native::TemporalDurationCompare
+            | Native::TemporalDurationAdd
+            | Native::TemporalDurationSubtract
+            | Native::TemporalDurationWith
+            | Native::TemporalDurationAbs
+            | Native::TemporalDurationNegated
+            | Native::TemporalDurationTotal
+            | Native::TemporalDurationRound
+            | Native::TemporalDurationToString
+            | Native::TemporalDurationToJSON
+            | Native::TemporalDurationValueOf
+            | Native::TemporalDurationYearsGetter
+            | Native::TemporalDurationMonthsGetter
+            | Native::TemporalDurationWeeksGetter
+            | Native::TemporalDurationDaysGetter
+            | Native::TemporalDurationHoursGetter
+            | Native::TemporalDurationMinutesGetter
+            | Native::TemporalDurationSecondsGetter
+            | Native::TemporalDurationMillisecondsGetter
+            | Native::TemporalDurationMicrosecondsGetter
+            | Native::TemporalDurationNanosecondsGetter
+            | Native::TemporalDurationSignGetter
+            | Native::TemporalDurationBlankGetter
+            | Native::TemporalPlainDate
+            | Native::TemporalPlainDateFrom
+            | Native::TemporalPlainDateCompare
+            | Native::TemporalPlainDateCalendarIdGetter
+            | Native::TemporalPlainDateYearGetter
+            | Native::TemporalPlainDateMonthGetter
+            | Native::TemporalPlainDateMonthCodeGetter
+            | Native::TemporalPlainDateDayGetter
+            | Native::TemporalPlainDateEraGetter
+            | Native::TemporalPlainDateEraYearGetter
+            | Native::TemporalPlainDateDayOfWeekGetter
+            | Native::TemporalPlainDateDayOfYearGetter
+            | Native::TemporalPlainDateWeekOfYearGetter
+            | Native::TemporalPlainDateYearOfWeekGetter
+            | Native::TemporalPlainDateDaysInWeekGetter
+            | Native::TemporalPlainDateDaysInMonthGetter
+            | Native::TemporalPlainDateDaysInYearGetter
+            | Native::TemporalPlainDateMonthsInYearGetter
+            | Native::TemporalPlainDateInLeapYearGetter
+            | Native::TemporalPlainDateToString
+            | Native::TemporalPlainDateToJSON
+            | Native::TemporalPlainDateToLocaleString
+            | Native::TemporalPlainDateToPlainDateTime
+            | Native::TemporalPlainDateToPlainMonthDay
+            | Native::TemporalPlainDateToPlainYearMonth
+            | Native::TemporalPlainDateToZonedDateTime
+            | Native::TemporalPlainDateEquals
+            | Native::TemporalPlainDateWith
+            | Native::TemporalPlainDateWithCalendar
+            | Native::TemporalPlainDateValueOf
+            | Native::TemporalPlainDateAdd
+            | Native::TemporalPlainDateSubtract
+            | Native::TemporalPlainDateUntil
+            | Native::TemporalPlainDateSince
+            | Native::TemporalPlainDateTime
+            | Native::TemporalPlainDateTimeFrom
+            | Native::TemporalPlainDateTimeCompare
+            | Native::TemporalPlainDateTimeAdd
+            | Native::TemporalPlainDateTimeSubtract
+            | Native::TemporalPlainDateTimeRound
+            | Native::TemporalPlainDateTimeUntil
+            | Native::TemporalPlainDateTimeSince
+            | Native::TemporalPlainDateTimeToString
+            | Native::TemporalPlainDateTimeToJSON
+            | Native::TemporalPlainDateTimeToPlainDate
+            | Native::TemporalPlainDateTimeToPlainTime
+            | Native::TemporalPlainDateTimeValueOf
+            | Native::TemporalPlainDateTimeToZonedDateTime
+            | Native::TemporalPlainDateTimeWith
+            | Native::TemporalPlainDateTimeWithCalendar
+            | Native::TemporalPlainDateTimeWithPlainTime
+            | Native::TemporalPlainDateTimeCalendarIdGetter
+            | Native::TemporalPlainDateTimeYearGetter
+            | Native::TemporalPlainDateTimeMonthGetter
+            | Native::TemporalPlainDateTimeMonthCodeGetter
+            | Native::TemporalPlainDateTimeDayGetter
+            | Native::TemporalPlainDateTimeEraGetter
+            | Native::TemporalPlainDateTimeEraYearGetter
+            | Native::TemporalPlainDateTimeDayOfWeekGetter
+            | Native::TemporalPlainDateTimeDayOfYearGetter
+            | Native::TemporalPlainDateTimeWeekOfYearGetter
+            | Native::TemporalPlainDateTimeYearOfWeekGetter
+            | Native::TemporalPlainDateTimeDaysInWeekGetter
+            | Native::TemporalPlainDateTimeDaysInMonthGetter
+            | Native::TemporalPlainDateTimeDaysInYearGetter
+            | Native::TemporalPlainDateTimeMonthsInYearGetter
+            | Native::TemporalPlainDateTimeInLeapYearGetter
+            | Native::TemporalPlainDateTimeHourGetter
+            | Native::TemporalPlainDateTimeMinuteGetter
+            | Native::TemporalPlainDateTimeSecondGetter
+            | Native::TemporalPlainDateTimeMillisecondGetter
+            | Native::TemporalPlainDateTimeMicrosecondGetter
+            | Native::TemporalPlainDateTimeNanosecondGetter
+            | Native::TemporalPlainDateTimeEquals
+            | Native::TemporalPlainTime
+            | Native::TemporalPlainTimeFrom
+            | Native::TemporalPlainTimeCompare
+            | Native::TemporalPlainTimeAdd
+            | Native::TemporalPlainTimeSubtract
+            | Native::TemporalPlainTimeEquals
+            | Native::TemporalPlainTimeHourGetter
+            | Native::TemporalPlainTimeMinuteGetter
+            | Native::TemporalPlainTimeSecondGetter
+            | Native::TemporalPlainTimeMillisecondGetter
+            | Native::TemporalPlainTimeMicrosecondGetter
+            | Native::TemporalPlainTimeNanosecondGetter
+            | Native::TemporalPlainTimeValueOf
+            | Native::TemporalPlainTimeRound
+            | Native::TemporalPlainTimeUntil
+            | Native::TemporalPlainTimeSince
+            | Native::TemporalPlainTimeToString
+            | Native::TemporalPlainTimeToJSON
+            | Native::TemporalPlainTimeWith
+            | Native::TemporalPlainMonthDay
+            | Native::TemporalPlainMonthDayFrom
+            | Native::TemporalPlainMonthDayCompare
+            | Native::TemporalPlainMonthDayCalendarIdGetter
+            | Native::TemporalPlainMonthDayDayGetter
+            | Native::TemporalPlainMonthDayMonthCodeGetter
+            | Native::TemporalPlainMonthDayEquals
+            | Native::TemporalPlainMonthDayToPlainDate
+            | Native::TemporalPlainMonthDayWith
+            | Native::TemporalPlainMonthDayValueOf
+            | Native::TemporalPlainYearMonth
+            | Native::TemporalPlainYearMonthFrom
+            | Native::TemporalPlainYearMonthCompare
+            | Native::TemporalPlainYearMonthCalendarIdGetter
+            | Native::TemporalPlainYearMonthYearGetter
+            | Native::TemporalPlainYearMonthMonthGetter
+            | Native::TemporalPlainYearMonthMonthCodeGetter
+            | Native::TemporalPlainYearMonthEraGetter
+            | Native::TemporalPlainYearMonthEraYearGetter
+            | Native::TemporalPlainYearMonthReferenceISODayGetter
+            | Native::TemporalPlainYearMonthDaysInMonthGetter
+            | Native::TemporalPlainYearMonthDaysInYearGetter
+            | Native::TemporalPlainYearMonthMonthsInYearGetter
+            | Native::TemporalPlainYearMonthInLeapYearGetter
+            | Native::TemporalPlainYearMonthEquals
+            | Native::TemporalPlainYearMonthAdd
+            | Native::TemporalPlainYearMonthSubtract
+            | Native::TemporalPlainYearMonthUntil
+            | Native::TemporalPlainYearMonthSince
+            | Native::TemporalPlainYearMonthWith
+            | Native::TemporalPlainYearMonthValueOf
+            | Native::TemporalPlainYearMonthToPlainDate
+            | Native::TemporalZonedDateTime
+            | Native::TemporalZonedDateTimeFrom
+            | Native::TemporalZonedDateTimeCompare
+            | Native::TemporalZonedDateTimeEquals
+            | Native::TemporalZonedDateTimeWith
+            | Native::TemporalZonedDateTimeWithTimeZone
+            | Native::TemporalZonedDateTimeWithCalendar
+            | Native::TemporalZonedDateTimeWithPlainTime
+            | Native::TemporalZonedDateTimeToInstant
+            | Native::TemporalZonedDateTimeToPlainDate
+            | Native::TemporalZonedDateTimeToPlainDateTime
+            | Native::TemporalZonedDateTimeToPlainTime
+            | Native::TemporalZonedDateTimeValueOf
+            | Native::TemporalZonedDateTimeAdd
+            | Native::TemporalZonedDateTimeSubtract
+            | Native::TemporalZonedDateTimeGetTimeZoneTransition
+            | Native::TemporalZonedDateTimeStartOfDay
+            | Native::TemporalZonedDateTimeRound
+            | Native::TemporalZonedDateTimeUntil
+            | Native::TemporalZonedDateTimeSince
+            | Native::TemporalZonedDateTimeToString
+            | Native::TemporalZonedDateTimeToJSON
+            | Native::TemporalZonedDateTimeToLocaleString
+            | Native::TemporalZonedDateTimeEpochNanosecondsGetter
+            | Native::TemporalZonedDateTimeTimeZoneIdGetter
+            | Native::TemporalZonedDateTimeCalendarIdGetter
+            | Native::TemporalZonedDateTimeYearGetter
+            | Native::TemporalZonedDateTimeMonthGetter
+            | Native::TemporalZonedDateTimeMonthCodeGetter
+            | Native::TemporalZonedDateTimeDayGetter
+            | Native::TemporalZonedDateTimeHourGetter
+            | Native::TemporalZonedDateTimeMinuteGetter
+            | Native::TemporalZonedDateTimeSecondGetter
+            | Native::TemporalZonedDateTimeMillisecondGetter
+            | Native::TemporalZonedDateTimeMicrosecondGetter
+            | Native::TemporalZonedDateTimeNanosecondGetter
+            | Native::TemporalZonedDateTimeEraGetter
+            | Native::TemporalZonedDateTimeEraYearGetter
+            | Native::TemporalZonedDateTimeDayOfWeekGetter
+            | Native::TemporalZonedDateTimeDayOfYearGetter
+            | Native::TemporalZonedDateTimeWeekOfYearGetter
+            | Native::TemporalZonedDateTimeYearOfWeekGetter
+            | Native::TemporalZonedDateTimeDaysInWeekGetter
+            | Native::TemporalZonedDateTimeDaysInMonthGetter
+            | Native::TemporalZonedDateTimeDaysInYearGetter
+            | Native::TemporalZonedDateTimeMonthsInYearGetter
+            | Native::TemporalZonedDateTimeInLeapYearGetter
+            | Native::TemporalZonedDateTimeEpochMillisecondsGetter
+            | Native::TemporalZonedDateTimeHoursInDayGetter
+            | Native::TemporalZonedDateTimeOffsetGetter
+            | Native::TemporalZonedDateTimeOffsetNanosecondsGetter
+            | Native::TemporalInstant
+            | Native::TemporalInstantFrom
+            | Native::TemporalInstantCompare
+            | Native::TemporalInstantFromEpochMilliseconds
+            | Native::TemporalInstantFromEpochNanoseconds
+            | Native::TemporalInstantEpochNanosecondsGetter
+            | Native::TemporalInstantEpochMillisecondsGetter
+            | Native::TemporalInstantToString
+            | Native::TemporalInstantToJSON
+            | Native::TemporalInstantValueOf
+            | Native::TemporalInstantEquals
+            | Native::TemporalInstantAdd
+            | Native::TemporalInstantSubtract
+            | Native::TemporalInstantRound
+            | Native::TemporalInstantSince
+            | Native::TemporalInstantUntil
+            | Native::TemporalInstantToZonedDateTimeISO
+            | Native::TemporalNowInstant
+            | Native::TemporalNowPlainDateISO
+            | Native::TemporalNowPlainDateTimeISO
+            | Native::TemporalNowPlainTimeISO
+            | Native::TemporalNowTimeZoneId
+            | Native::TemporalNowZonedDateTimeISO => super::layer_hooks::intl_temporal_call(self, p, native, this, args),
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
             Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),
@@ -838,119 +1138,13 @@ impl Vm {
                 Ok(Value::UNDEFINED)
             }
             Native::Date => self.date_call(),
-            Native::IntlNumberFormat => self.intl_number_format_call(p, this, args),
-            Native::IntlNumberFormatSupportedLocalesOf
-            | Native::IntlDisplayNamesSupportedLocalesOf => {
-                self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
-            }
-            Native::IntlNumberFormatFormatGetter => self.intl_number_format_format_getter(p, this),
-            Native::IntlNumberFormatFormat => self.intl_number_format_format(p, this, args),
-            Native::IntlNumberFormatFormatToParts => {
-                self.intl_number_format_format_to_parts(p, this, args)
-            }
-            Native::IntlNumberFormatFormatRange => {
-                self.intl_number_format_format_range(p, this, args)
-            }
-            Native::IntlNumberFormatFormatRangeToParts => {
-                self.intl_number_format_format_range_to_parts(p, this, args)
-            }
-            Native::IntlNumberFormatResolvedOptions => {
-                self.intl_number_format_resolved_options(p, this)
-            }
             Native::IntlPluralRules => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlPluralRulesSupportedLocalesOf
-            | Native::IntlPluralRulesSelect
-            | Native::IntlPluralRulesSelectRange
-            | Native::IntlPluralRulesResolvedOptions => {
-                self.intl_plural_rules_native(p, native, this, args)
-            }
-            Native::IntlGetCanonicalLocales
-            | Native::IntlSupportedValuesOf
-            | Native::IntlLocale
-            | Native::IntlLocaleToString
-            | Native::IntlLocaleMaximize
-            | Native::IntlLocaleMinimize
-            | Native::IntlLocaleGetCalendars
-            | Native::IntlLocaleGetCollations
-            | Native::IntlLocaleGetHourCycles
-            | Native::IntlLocaleGetNumberingSystems
-            | Native::IntlLocaleGetTimeZones
-            | Native::IntlLocaleGetTextInfo
-            | Native::IntlLocaleGetWeekInfo
-            | Native::IntlLocaleBaseNameGetter
-            | Native::IntlLocaleLanguageGetter
-            | Native::IntlLocaleScriptGetter
-            | Native::IntlLocaleRegionGetter
-            | Native::IntlLocaleVariantsGetter
-            | Native::IntlLocaleCalendarGetter
-            | Native::IntlLocaleCollationGetter
-            | Native::IntlLocaleHourCycleGetter
-            | Native::IntlLocaleCaseFirstGetter
-            | Native::IntlLocaleFirstDayOfWeekGetter
-            | Native::IntlLocaleNumberingSystemGetter
-            | Native::IntlLocaleNumericGetter => self.intl_namespace_native(p, native, this, args),
-            Native::IntlRelativeTimeFormat => {
-                self.intl_relative_time_format_native(p, native, this, args)
-            }
-            Native::IntlRelativeTimeFormatResolvedOptions => {
-                self.intl_relative_time_format_resolved_options(p, this)
-            }
-            Native::IntlRelativeTimeFormatSupportedLocalesOf => {
-                self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
-            }
-            Native::IntlRelativeTimeFormatFormat | Native::IntlRelativeTimeFormatFormatToParts => {
-                self.intl_relative_time_format_native(p, native, this, args)
-            }
             Native::IntlSegmenter => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlSegmenterSupportedLocalesOf
-            | Native::IntlSegmenterSegment
-            | Native::IntlSegmenterResolvedOptions
-            | Native::IntlSegmenterSegmentsIterator
-            | Native::IntlSegmenterSegmentsContaining
-            | Native::IntlSegmenterIteratorNext => {
-                self.intl_segmenter_native(p, native, this, args)
-            }
-            Native::IntlCollator
-            | Native::IntlCollatorSupportedLocalesOf
-            | Native::IntlCollatorCompareGetter
-            | Native::IntlCollatorCompare
-            | Native::IntlCollatorResolvedOptions => {
-                self.intl_collator_native(p, native, this, args)
-            }
-            Native::IntlDateTimeFormat => self.intl_date_time_format_call(p, this, args),
             Native::IntlDisplayNames => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlDisplayNamesOf | Native::IntlDisplayNamesResolvedOptions => {
-                self.intl_display_names_native(p, native, this, args)
-            }
             Native::IntlDurationFormat => {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
-            Native::IntlDurationFormatSupportedLocalesOf => {
-                self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
-            }
-            Native::IntlDurationFormatFormatGetter
-            | Native::IntlDurationFormatFormat
-            | Native::IntlDurationFormatFormatToParts
-            | Native::IntlDurationFormatResolvedOptions => {
-                self.intl_duration_format_native(p, native, this, args)
-            }
             Native::IntlListFormat => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlListFormatFormatGetter
-            | Native::IntlListFormatFormat
-            | Native::IntlListFormatFormatToParts
-            | Native::IntlListFormatResolvedOptions
-            | Native::IntlListFormatSupportedLocalesOf => {
-                self.intl_list_format_native(p, native, this, args)
-            }
-            Native::IntlDateTimeFormatFormatGetter
-            | Native::IntlDateTimeFormatFormat
-            | Native::IntlDateTimeFormatFormatToParts
-            | Native::IntlDateTimeFormatFormatRange
-            | Native::IntlDateTimeFormatFormatRangeToParts
-            | Native::IntlDateTimeFormatSupportedLocalesOf
-            | Native::IntlDateTimeFormatResolvedOptions => {
-                self.intl_date_time_format_native(p, native, this, args)
-            }
             Native::DateNow => Ok(self.date_now()),
             Native::DateGetTime
             | Native::DateValueOf
@@ -1286,264 +1480,14 @@ impl Vm {
             | Native::SymbolValueOf
             | Native::SymbolDescriptionGetter => self.call_symbol_value_native(p, native, this),
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
-            Native::TemporalToLocaleString => match self.heap.get(this) {
-                Some(Cell::TemporalDuration { .. }) => {
-                    self.temporal_duration_to_locale_string(p, this, args)
-                }
-                _ => self.temporal_to_locale_string(p, this, args),
-            },
-            Native::TemporalDuration
-            | Native::TemporalDurationFrom
-            | Native::TemporalDurationCompare
-            | Native::TemporalDurationAdd
-            | Native::TemporalDurationSubtract
-            | Native::TemporalDurationWith
-            | Native::TemporalDurationAbs
-            | Native::TemporalDurationNegated
-            | Native::TemporalDurationTotal
-            | Native::TemporalDurationRound
-            | Native::TemporalDurationToString
-            | Native::TemporalDurationToJSON
-            | Native::TemporalDurationValueOf
-            | Native::TemporalDurationYearsGetter
-            | Native::TemporalDurationMonthsGetter
-            | Native::TemporalDurationWeeksGetter
-            | Native::TemporalDurationDaysGetter
-            | Native::TemporalDurationHoursGetter
-            | Native::TemporalDurationMinutesGetter
-            | Native::TemporalDurationSecondsGetter
-            | Native::TemporalDurationMillisecondsGetter
-            | Native::TemporalDurationMicrosecondsGetter
-            | Native::TemporalDurationNanosecondsGetter
-            | Native::TemporalDurationSignGetter
-            | Native::TemporalDurationBlankGetter => {
-                self.temporal_duration_native(p, native, this, args)
-            }
-            Native::TemporalPlainDate
-            | Native::TemporalPlainDateFrom
-            | Native::TemporalPlainDateCompare
-            | Native::TemporalPlainDateCalendarIdGetter
-            | Native::TemporalPlainDateYearGetter
-            | Native::TemporalPlainDateMonthGetter
-            | Native::TemporalPlainDateMonthCodeGetter
-            | Native::TemporalPlainDateDayGetter
-            | Native::TemporalPlainDateEraGetter
-            | Native::TemporalPlainDateEraYearGetter
-            | Native::TemporalPlainDateDayOfWeekGetter
-            | Native::TemporalPlainDateDayOfYearGetter
-            | Native::TemporalPlainDateWeekOfYearGetter
-            | Native::TemporalPlainDateYearOfWeekGetter
-            | Native::TemporalPlainDateDaysInWeekGetter
-            | Native::TemporalPlainDateDaysInMonthGetter
-            | Native::TemporalPlainDateDaysInYearGetter
-            | Native::TemporalPlainDateMonthsInYearGetter
-            | Native::TemporalPlainDateInLeapYearGetter
-            | Native::TemporalPlainDateToString
-            | Native::TemporalPlainDateToJSON
-            | Native::TemporalPlainDateToLocaleString
-            | Native::TemporalPlainDateToPlainDateTime
-            | Native::TemporalPlainDateToPlainMonthDay
-            | Native::TemporalPlainDateToPlainYearMonth
-            | Native::TemporalPlainDateToZonedDateTime
-            | Native::TemporalPlainDateEquals
-            | Native::TemporalPlainDateWith
-            | Native::TemporalPlainDateWithCalendar
-            | Native::TemporalPlainDateValueOf => {
-                self.temporal_plain_date_native(p, native, this, args)
-            }
-            Native::TemporalPlainDateAdd | Native::TemporalPlainDateSubtract => {
-                self.temporal_plain_date_arithmetic(p, native, this, args)
-            }
-            Native::TemporalPlainDateUntil | Native::TemporalPlainDateSince => {
-                self.temporal_plain_date_difference(p, native, this, args)
-            }
-            Native::TemporalPlainDateTime
-            | Native::TemporalPlainDateTimeFrom
-            | Native::TemporalPlainDateTimeCompare
-            | Native::TemporalPlainDateTimeAdd
-            | Native::TemporalPlainDateTimeSubtract
-            | Native::TemporalPlainDateTimeRound
-            | Native::TemporalPlainDateTimeUntil
-            | Native::TemporalPlainDateTimeSince
-            | Native::TemporalPlainDateTimeToString
-            | Native::TemporalPlainDateTimeToJSON
-            | Native::TemporalPlainDateTimeToPlainDate
-            | Native::TemporalPlainDateTimeToPlainTime
-            | Native::TemporalPlainDateTimeValueOf
-            | Native::TemporalPlainDateTimeToZonedDateTime
-            | Native::TemporalPlainDateTimeWith
-            | Native::TemporalPlainDateTimeWithCalendar
-            | Native::TemporalPlainDateTimeWithPlainTime
-            | Native::TemporalPlainDateTimeCalendarIdGetter
-            | Native::TemporalPlainDateTimeYearGetter
-            | Native::TemporalPlainDateTimeMonthGetter
-            | Native::TemporalPlainDateTimeMonthCodeGetter
-            | Native::TemporalPlainDateTimeDayGetter
-            | Native::TemporalPlainDateTimeEraGetter
-            | Native::TemporalPlainDateTimeEraYearGetter
-            | Native::TemporalPlainDateTimeDayOfWeekGetter
-            | Native::TemporalPlainDateTimeDayOfYearGetter
-            | Native::TemporalPlainDateTimeWeekOfYearGetter
-            | Native::TemporalPlainDateTimeYearOfWeekGetter
-            | Native::TemporalPlainDateTimeDaysInWeekGetter
-            | Native::TemporalPlainDateTimeDaysInMonthGetter
-            | Native::TemporalPlainDateTimeDaysInYearGetter
-            | Native::TemporalPlainDateTimeMonthsInYearGetter
-            | Native::TemporalPlainDateTimeInLeapYearGetter
-            | Native::TemporalPlainDateTimeHourGetter
-            | Native::TemporalPlainDateTimeMinuteGetter
-            | Native::TemporalPlainDateTimeSecondGetter
-            | Native::TemporalPlainDateTimeMillisecondGetter
-            | Native::TemporalPlainDateTimeMicrosecondGetter
-            | Native::TemporalPlainDateTimeNanosecondGetter
-            | Native::TemporalPlainDateTimeEquals => {
-                self.temporal_plain_date_time_native(p, native, this, args)
-            }
-            Native::TemporalPlainTime
-            | Native::TemporalPlainTimeFrom
-            | Native::TemporalPlainTimeCompare
-            | Native::TemporalPlainTimeAdd
-            | Native::TemporalPlainTimeSubtract
-            | Native::TemporalPlainTimeEquals
-            | Native::TemporalPlainTimeHourGetter
-            | Native::TemporalPlainTimeMinuteGetter
-            | Native::TemporalPlainTimeSecondGetter
-            | Native::TemporalPlainTimeMillisecondGetter
-            | Native::TemporalPlainTimeMicrosecondGetter
-            | Native::TemporalPlainTimeNanosecondGetter => {
-                self.temporal_plain_time_native(p, native, this, args)
-            }
-            Native::TemporalPlainTimeValueOf => {
-                self.temporal_plain_time_native(p, native, this, args)
-            }
-            Native::TemporalPlainTimeRound
-            | Native::TemporalPlainTimeUntil
-            | Native::TemporalPlainTimeSince
-            | Native::TemporalPlainTimeToString
-            | Native::TemporalPlainTimeToJSON
-            | Native::TemporalPlainTimeWith => {
-                self.temporal_plain_time_native(p, native, this, args)
-            }
-            Native::TemporalPlainMonthDay
-            | Native::TemporalPlainMonthDayFrom
-            | Native::TemporalPlainMonthDayCompare
-            | Native::TemporalPlainMonthDayCalendarIdGetter
-            | Native::TemporalPlainMonthDayDayGetter
-            | Native::TemporalPlainMonthDayMonthCodeGetter
-            | Native::TemporalPlainMonthDayEquals
-            | Native::TemporalPlainMonthDayToPlainDate
-            | Native::TemporalPlainMonthDayWith
-            | Native::TemporalPlainMonthDayValueOf
-            | Native::TemporalPlainYearMonth
-            | Native::TemporalPlainYearMonthFrom
-            | Native::TemporalPlainYearMonthCompare
-            | Native::TemporalPlainYearMonthCalendarIdGetter
-            | Native::TemporalPlainYearMonthYearGetter
-            | Native::TemporalPlainYearMonthMonthGetter
-            | Native::TemporalPlainYearMonthMonthCodeGetter
-            | Native::TemporalPlainYearMonthEraGetter
-            | Native::TemporalPlainYearMonthEraYearGetter
-            | Native::TemporalPlainYearMonthReferenceISODayGetter
-            | Native::TemporalPlainYearMonthDaysInMonthGetter
-            | Native::TemporalPlainYearMonthDaysInYearGetter
-            | Native::TemporalPlainYearMonthMonthsInYearGetter
-            | Native::TemporalPlainYearMonthInLeapYearGetter
-            | Native::TemporalPlainYearMonthEquals
-            | Native::TemporalPlainYearMonthAdd
-            | Native::TemporalPlainYearMonthSubtract
-            | Native::TemporalPlainYearMonthUntil
-            | Native::TemporalPlainYearMonthSince
-            | Native::TemporalPlainYearMonthWith
-            | Native::TemporalPlainYearMonthValueOf
-            | Native::TemporalPlainYearMonthToPlainDate => {
-                self.temporal_calendar_projection_native(p, native, this, args)
-            }
             Native::TemporalPlainMonthDayToString
             | Native::TemporalPlainMonthDayToJSON
             | Native::TemporalPlainMonthDayToLocaleString
             | Native::TemporalPlainYearMonthToString
             | Native::TemporalPlainYearMonthToJSON
             | Native::TemporalPlainYearMonthToLocaleString => {
-                super::temporal_date_projection::native(self, p, native, this, args)
+                layer_hooks::intl_temporal_call(self, p, native, this, args)
             }
-            Native::TemporalZonedDateTime
-            | Native::TemporalZonedDateTimeFrom
-            | Native::TemporalZonedDateTimeCompare
-            | Native::TemporalZonedDateTimeEquals
-            | Native::TemporalZonedDateTimeWith
-            | Native::TemporalZonedDateTimeWithTimeZone
-            | Native::TemporalZonedDateTimeWithCalendar
-            | Native::TemporalZonedDateTimeWithPlainTime
-            | Native::TemporalZonedDateTimeToInstant
-            | Native::TemporalZonedDateTimeToPlainDate
-            | Native::TemporalZonedDateTimeToPlainDateTime
-            | Native::TemporalZonedDateTimeToPlainTime
-            | Native::TemporalZonedDateTimeValueOf
-            | Native::TemporalZonedDateTimeAdd
-            | Native::TemporalZonedDateTimeSubtract
-            | Native::TemporalZonedDateTimeGetTimeZoneTransition
-            | Native::TemporalZonedDateTimeStartOfDay
-            | Native::TemporalZonedDateTimeRound
-            | Native::TemporalZonedDateTimeUntil
-            | Native::TemporalZonedDateTimeSince
-            | Native::TemporalZonedDateTimeToString
-            | Native::TemporalZonedDateTimeToJSON
-            | Native::TemporalZonedDateTimeToLocaleString
-            | Native::TemporalZonedDateTimeEpochNanosecondsGetter
-            | Native::TemporalZonedDateTimeTimeZoneIdGetter
-            | Native::TemporalZonedDateTimeCalendarIdGetter
-            | Native::TemporalZonedDateTimeYearGetter
-            | Native::TemporalZonedDateTimeMonthGetter
-            | Native::TemporalZonedDateTimeMonthCodeGetter
-            | Native::TemporalZonedDateTimeDayGetter
-            | Native::TemporalZonedDateTimeHourGetter
-            | Native::TemporalZonedDateTimeMinuteGetter
-            | Native::TemporalZonedDateTimeSecondGetter
-            | Native::TemporalZonedDateTimeMillisecondGetter
-            | Native::TemporalZonedDateTimeMicrosecondGetter
-            | Native::TemporalZonedDateTimeNanosecondGetter
-            | Native::TemporalZonedDateTimeEraGetter
-            | Native::TemporalZonedDateTimeEraYearGetter
-            | Native::TemporalZonedDateTimeDayOfWeekGetter
-            | Native::TemporalZonedDateTimeDayOfYearGetter
-            | Native::TemporalZonedDateTimeWeekOfYearGetter
-            | Native::TemporalZonedDateTimeYearOfWeekGetter
-            | Native::TemporalZonedDateTimeDaysInWeekGetter
-            | Native::TemporalZonedDateTimeDaysInMonthGetter
-            | Native::TemporalZonedDateTimeDaysInYearGetter
-            | Native::TemporalZonedDateTimeMonthsInYearGetter
-            | Native::TemporalZonedDateTimeInLeapYearGetter
-            | Native::TemporalZonedDateTimeEpochMillisecondsGetter
-            | Native::TemporalZonedDateTimeHoursInDayGetter
-            | Native::TemporalZonedDateTimeOffsetGetter
-            | Native::TemporalZonedDateTimeOffsetNanosecondsGetter => {
-                self.temporal_zoned_date_time_native(p, native, this, args)
-            }
-            Native::TemporalInstant
-            | Native::TemporalInstantFrom
-            | Native::TemporalInstantCompare
-            | Native::TemporalInstantFromEpochMilliseconds
-            | Native::TemporalInstantFromEpochNanoseconds
-            | Native::TemporalInstantEpochNanosecondsGetter
-            | Native::TemporalInstantEpochMillisecondsGetter
-            | Native::TemporalInstantToString
-            | Native::TemporalInstantToJSON
-            | Native::TemporalInstantValueOf
-            | Native::TemporalInstantEquals
-            | Native::TemporalInstantAdd
-            | Native::TemporalInstantSubtract
-            | Native::TemporalInstantRound
-            | Native::TemporalInstantSince
-            | Native::TemporalInstantUntil
-            | Native::TemporalInstantToZonedDateTimeISO => {
-                self.temporal_instant_native(p, native, this, args)
-            }
-            Native::TemporalNowInstant
-            | Native::TemporalNowPlainDateISO
-            | Native::TemporalNowPlainDateTimeISO
-            | Native::TemporalNowPlainTimeISO
-            | Native::TemporalNowTimeZoneId
-            | Native::TemporalNowZonedDateTimeISO => self.temporal_now_native(p, native, args),
             Native::Object
             | Native::Array
             | Native::Map
@@ -1612,7 +1556,7 @@ impl Vm {
     /// The operands are classified only for an operator that takes Numbers; a caller that has
     /// classified its operands already calls `number_binary_classified` instead.
     #[inline(always)]
-    pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+    pub fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         if NumberArithmetic::from_operator(op).is_none() && !is_numeric_binary_operator(op) {
             return None;
         }
@@ -1623,7 +1567,7 @@ impl Vm {
     /// right)`, which the caller made once and reuses here rather than classifying them again.
     /// Its result is `number_binary`'s for the same operands.
     #[inline(always)]
-    pub(super) fn number_binary_classified(
+    pub fn number_binary_classified(
         &mut self,
         op: u32,
         left: Value,
@@ -1672,7 +1616,7 @@ impl Vm {
     }
 
     #[inline]
-    pub(super) fn binary(
+    pub fn binary(
         &mut self,
         p: &ResidualProgram,
         op: u32,
@@ -1910,21 +1854,21 @@ impl Vm {
 
     /// `binary_bigint` where it succeeds, for callers that leave failures to it: the result
     /// allocated, or `None`.
-    pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+    pub fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         let value = self.bigint_operation(op, left, right)?.ok()?;
         Some(self.heap.alloc_bigint(value))
     }
 
     /// `Date.now()`: the host clock's milliseconds, truncated. It runs no guest code, so the
     /// lane answers it in place (`steady_native_value`) as the native call does.
-    pub(super) fn date_now(&mut self) -> Value {
+    pub fn date_now(&mut self) -> Value {
         Value::number(HostContext::new(&mut *self.host).invoke(CapabilityId::ClockMillis, None).trunc())
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
     /// code units, which runs no guest code. Identical Values name the same string, so they
     /// are equal without reading either; otherwise `order` compares them (in place when flat).
-    pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let relation = NumberRelation::from_operator(op)?;
         let (left_string, right_string) = (self.heap.string(left)?, self.heap.string(right)?);
         if left == right {
@@ -1934,7 +1878,7 @@ impl Vm {
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
-    pub(super) fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         if !(self.is_bigint(left) && self.is_bigint(right)) {
             return None;
         }
@@ -1971,7 +1915,7 @@ impl Vm {
     /// `+` of two operands that become strings without guest code, Numbers and strings,
     /// at least one a string: `concatenate`'s result. `None` for any other pair, or a result
     /// `concatenate` refuses, which leaves the operation to `binary_slow`.
-    pub(super) fn primitive_concatenation(
+    pub fn primitive_concatenation(
         &mut self,
         p: &ResidualProgram,
         left: Value,
@@ -2017,7 +1961,7 @@ impl Vm {
         Ok(if answer { Value::TRUE } else { Value::FALSE })
     }
     #[inline(always)]
-    pub(super) fn binary_truthy(
+    pub fn binary_truthy(
         &mut self,
         p: &ResidualProgram,
         op: u32,
@@ -2085,7 +2029,7 @@ impl Vm {
     /// object is never `document.all` (`is_html_dda`), so loose and strict equality agree.
     /// `None` leaves the operands to `identity_equality`.
     #[inline(always)]
-    pub(super) fn word_identity_equality(op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn word_identity_equality(op: u32, left: Value, right: Value) -> Option<bool> {
         let (_, negated) = equality_operator(op)?;
         let record = |value: Value| {
             value.direct_object_index().is_some() || value.direct_array_index().is_some()
@@ -2106,7 +2050,7 @@ impl Vm {
     /// objects; two distinct objects are loosely unequal. `None` leaves two Numbers, which
     /// Number comparison decides, and every comparison that may coerce to the full algorithm.
     #[inline(always)]
-    pub(super) fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (strict, negated) = equality_operator(op)?;
         match (left.as_number().is_some(), right.as_number().is_some()) {
             // Number comparison decides two Numbers (NaN, signed zeros).
@@ -2226,7 +2170,7 @@ impl Vm {
 }
 
 /// `Number ** Number` (`Math.pow`), the value `staged::math::power` computes.
-pub(super) fn exponentiate(base: f64, exponent: f64) -> f64 {
+pub fn exponentiate(base: f64, exponent: f64) -> f64 {
     crate::staged::math::power(base, exponent)
 }
 

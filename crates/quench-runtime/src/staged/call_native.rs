@@ -26,7 +26,7 @@ pub(crate) fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected:
 
 /// `admit_identity` on machine words, for the interpreter's native call handlers.
 #[inline(always)]
-pub(crate) fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
+pub fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
     admit_identity(&mut Concrete::new(std::ptr::null()), callee, expected, ()).is_some()
 }
 
@@ -34,7 +34,7 @@ pub(crate) fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
 /// each tier derives its dispatch.
 // No equality: it holds function pointers, whose addresses name no function uniquely.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum MathCall {
+pub enum MathCall {
     /// A machine operation of one Number (`staged::math::float_unary`), `Math.sign` included.
     Unary(FloatUnary),
     /// `Math.max` (true) or `Math.min` (false) of any count of Numbers.
@@ -58,7 +58,7 @@ impl MathCall {
 
     /// Whether a stage runs the function as a row (`math_call`), which native code lowers inline:
     /// every function but the libm and two-Number bodies.
-    pub(crate) const fn is_row(self) -> bool {
+    pub const fn is_row(self) -> bool {
         !matches!(self, Self::Libm(_) | Self::Binary(_))
     }
 
@@ -68,7 +68,7 @@ impl MathCall {
     }
 
     /// The number of arguments the function's operation reads: two for the binary functions, else one.
-    pub(crate) const fn arity(self) -> u16 {
+    pub const fn arity(self) -> u16 {
         match self {
             Self::Extreme(_) | Self::Imul | Self::Binary(_) => 2,
             Self::Unary(_) | Self::LeadingZeros | Self::Libm(_) => 1,
@@ -220,7 +220,7 @@ fn imul_pair<S: NumericStage>(stage: &mut S, (left, right): (S::Word, S::Word), 
 /// of one Number, or a two-Number function, whose missing argument is `undefined`, a NaN.
 /// `None` for any argument or count the row leaves at its miss.
 #[inline(always)]
-pub(crate) fn concrete_math_call(call: MathCall, args: &[Value]) -> Option<Value> {
+pub fn concrete_math_call(call: MathCall, args: &[Value]) -> Option<Value> {
     match (call, args) {
         (MathCall::Libm(operation), &[only]) => Some(Value::number(operation(only.as_number()?))),
         (MathCall::Binary(operation), _) if args.len() <= 2 => {

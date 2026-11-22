@@ -22,13 +22,13 @@
 //! (`LaneBody::tier_state`), and loop sites (`LoopBody` Idle/Compiling/Ready/Declined) the same way, and `JsTierState` (`js_tier_state`): Hot, PromotionPending and GeneralPromotionPending are
 //! Warming, GeneralCompileDue is Compiling, Compiled is UJit, Rejected is Retired, Unsupported
 //! is Declined. BaseJIT regions are BJit.
-use super::compiled::entry_cell::EntryCell;
-use super::compiled::PublishedLaneMethod;
+use super::engine_types::EntryCell;
+use crate::vm::engine_types::PublishedLaneMethod;
 use super::program_store::JsTierState;
 use crate::jit_mode::{quick_only, tiers_allowed, Tier};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TierState {
+pub enum TierState {
     Interpreter,
     Warming,
     Compiling,
@@ -40,7 +40,7 @@ pub(super) enum TierState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TierEvent {
+pub enum TierEvent {
     Warm,
     Compile,
     Publish(Tier),
@@ -99,15 +99,15 @@ pub(super) fn transition(from: TierState, event: TierEvent) -> Option<TierState>
 
 /// Publishes `method` to `cell` as the effect of `Publish` from `from`; the new state, or
 /// `None` (nothing published) where the machine does not take the transition.
-pub(super) fn publish(cell: &EntryCell, from: TierState, method: &PublishedLaneMethod) -> Option<TierState> {
-    let to = transition(from, Publish(super::compiled::tier_policy::body_tier_in_lane()))?;
+pub fn publish(cell: &EntryCell, from: TierState, method: &PublishedLaneMethod) -> Option<TierState> {
+    let to = transition(from, Publish(crate::vm::tier_policy::body_tier_in_lane()))?;
     cell.publish(method);
     Some(to)
 }
 
 /// Withdraws the entry cell's body as the effect of `event` (`Demote`, `Retire` or `Decline`)
 /// from the published state `from`; the new state.
-pub(super) fn withdraw(cell: &EntryCell, from: TierState, event: TierEvent) -> TierState {
+pub fn withdraw(cell: &EntryCell, from: TierState, event: TierEvent) -> TierState {
     let to = transition(from, event);
     debug_assert!(to.is_some(), "no transition from {from:?} on {event:?}");
     cell.withdraw();
@@ -115,7 +115,7 @@ pub(super) fn withdraw(cell: &EntryCell, from: TierState, event: TierEvent) -> T
 }
 
 /// A JavaScript function tier state's place in the machine.
-pub(super) fn js_tier_state(state: Option<&JsTierState>) -> TierState {
+pub fn js_tier_state(state: Option<&JsTierState>) -> TierState {
     match state {
         None => Interpreter,
         Some(JsTierState::Hot { .. } | JsTierState::PromotionPending) => Warming,

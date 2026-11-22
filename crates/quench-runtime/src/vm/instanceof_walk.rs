@@ -74,7 +74,7 @@ impl Vm {
 
     /// The facts a lowering may take of `instanceof constructor` as Stable, from what the steady case
     /// remembers of the constructor (`proved_constructor`): `None` where the steady case has not proved them.
-    pub(super) fn instanceof_fact(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
+    pub fn instanceof_fact(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
         let (object, link, slot) = self.proved_constructor(constructor)?;
         Some(crate::code_dependencies::InstanceofFact {
             link,

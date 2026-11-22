@@ -359,7 +359,7 @@ impl Vm {
 
     /// Materializes `holder`'s own property `key` when it is a lazy data property, so a
     /// reflective operation observes its data descriptor.
-    pub(super) fn materialize_lazy_data_property(
+    pub fn materialize_lazy_data_property(
         &mut self,
         p: &ResidualProgram,
         holder: Value,

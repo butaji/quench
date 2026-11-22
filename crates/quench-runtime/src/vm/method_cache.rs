@@ -2,7 +2,8 @@ use super::*;
 mod atoms;
 mod table;
 pub(super) use table::MethodCacheTable;
-pub(super) use atoms::{AtomBits, MethodCacheAtoms};
+#[allow(unused_imports)]
+pub use atoms::{AtomBits, MethodCacheAtoms};
 
 /// Entries of a call site's inline method cache, most recent first; a site that sees more
 /// moves to a megamorphic set.
@@ -27,7 +28,7 @@ impl Vm {
 
     /// Whether any method cache may name `atom`; `false` proves that none does.
     #[inline(always)]
-    pub(super) fn method_caches_may_name(&self, atom: Atom) -> bool {
+    pub fn method_caches_may_name(&self, atom: Atom) -> bool {
         self.method_cache_atoms.contains(atom)
     }
 
@@ -90,7 +91,7 @@ impl Vm {
         self.retain_megamorphic_sets();
     }
 
-    pub(super) fn is_function(&self, value: Value) -> bool {
+    pub fn is_function(&self, value: Value) -> bool {
         self.heap.is_function_value(value)
             || matches!(
                 self.heap.get(value),
@@ -238,7 +239,7 @@ impl Vm {
                 .find(|entry| entry.records_same(&cache))
             {
                 *entry = cache;
-            } else if usize::from(set.len) < super::compiled::tier_policy::POLYMORPHISM {
+            } else if usize::from(set.len) < crate::vm::tier_policy::POLYMORPHISM {
                 set.entries[usize::from(set.len)] = cache;
                 set.len += 1;
             }
@@ -257,7 +258,7 @@ impl Vm {
         let mut set = MethodCacheSet {
             site,
             len: (METHOD_CACHE_WAYS + 1) as u8,
-            entries: [EMPTY_METHOD_CACHE; super::compiled::tier_policy::POLYMORPHISM],
+            entries: [EMPTY_METHOD_CACHE; crate::vm::tier_policy::POLYMORPHISM],
         };
         set.entries[..METHOD_CACHE_WAYS].copy_from_slice(entries);
         set.entries[METHOD_CACHE_WAYS] = cache;
@@ -533,7 +534,7 @@ impl Vm {
 
     /// The method `atom` of `this` that method site `site` caches, loaded as `call_method_site_safe`
     /// loads it on a hit and without running guest code: `None` where the caches do not serve it.
-    pub(super) fn method_cache_load(&self, p: &ResidualProgram, site: usize, atom: Atom, this: Value) -> Option<Value> {
+    pub fn method_cache_load(&self, p: &ResidualProgram, site: usize, atom: Atom, this: Value) -> Option<Value> {
         let key = self.method_receiver_key(this);
         self.cached_method(self.method_cache_index(site), atom, key, this, self.specialized && p.specialized)
             .map(|(callee, _, _)| callee)

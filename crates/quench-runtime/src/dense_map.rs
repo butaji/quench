@@ -3,7 +3,7 @@
 
 /// Values by dense `u32` id; an id with no entry holds `None`.
 #[derive(Clone, Debug)]
-pub(crate) struct DenseMap<V> {
+pub struct DenseMap<V> {
     slots: Vec<Option<V>>,
     len: usize,
 }
@@ -18,7 +18,7 @@ impl<V> Default for DenseMap<V> {
 }
 
 impl<V> DenseMap<V> {
-    pub(crate) fn get(&self, id: &u32) -> Option<&V> {
+    pub fn get(&self, id: &u32) -> Option<&V> {
         self.slots.get(*id as usize)?.as_ref()
     }
 }
@@ -36,7 +36,7 @@ impl<V> DenseMap<V> {
         &mut self.slots[index]
     }
 
-    pub(crate) fn insert(&mut self, id: u32, value: V) {
+    pub fn insert(&mut self, id: u32, value: V) {
         let absent = self.slot(id).replace(value).is_none();
         self.len += usize::from(absent);
     }

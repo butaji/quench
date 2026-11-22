@@ -480,8 +480,7 @@ impl Vm {
                     native,
                     Native::StringToLocaleUpperCase | Native::StringToLocaleLowerCase
                 ) {
-                    let locale = self
-                        .canonical_locale_list(p, args.first().copied())?
+                    let locale = layer_hooks::canonical_locale_list(self, p, args.first().copied())?
                         .into_iter()
                         .next()
                         .unwrap_or_else(|| "en-US".into());
@@ -493,7 +492,8 @@ impl Vm {
             }
             Native::StringLocaleCompare => {
                 let other = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let collation = self.locale_compare_collation(
+                let collation = layer_hooks::locale_compare_collation(
+                    self,
                     p,
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),
@@ -912,7 +912,7 @@ impl Vm {
     /// `index`, NaN outside the string, surrogates raw. `None` where the receiver is no string
     /// or the index is no Number. Interpreter fast paths and the native both call this.
     #[inline(always)]
-    pub(in crate::vm) fn string_char_code_at_core(&mut self, receiver: Value, index: Value) -> Option<Value> {
+    pub fn string_char_code_at_core(&mut self, receiver: Value, index: Value) -> Option<Value> {
         let records = self.heap.string_record_base().unwrap_or(std::ptr::null());
         if let Some(code) = concrete_char_code_at(ConcreteString::Record { records, value: receiver }, index) {
             return Some(code);
@@ -931,7 +931,7 @@ impl Vm {
     /// `""` outside the string, shared strings for ASCII units. `None` where the receiver is no
     /// string or the index is no Number. Interpreter fast paths and the native both call this.
     #[inline(always)]
-    pub(in crate::vm) fn string_char_at_core(&mut self, receiver: Value, index: Value) -> Option<Value> {
+    pub fn string_char_at_core(&mut self, receiver: Value, index: Value) -> Option<Value> {
         let records = self.heap.string_record_base().unwrap_or(std::ptr::null());
         let table = self.heap.ascii_unit_strings_base().unwrap_or(std::ptr::null());
         if let Some(character) = concrete_char_at(ConcreteString::Record { records, value: receiver }, table, index) {

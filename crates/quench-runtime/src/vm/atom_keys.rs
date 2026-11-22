@@ -16,7 +16,7 @@ impl Vm {
         self.atom_sequence.appended(index - self.atom_text.len())
     }
 
-    pub(super) fn atom_units_equal_str(&self, atom: Atom, text: &str) -> bool {
+    pub fn atom_units_equal_str(&self, atom: Atom, text: &str) -> bool {
         let index = atom as usize;
         if index < self.atom_text.len() {
             // Both are UTF-8 text, whose UTF-16 forms are equal exactly when they are.

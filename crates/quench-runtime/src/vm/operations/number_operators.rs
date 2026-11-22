@@ -64,7 +64,7 @@ pub(super) fn numeric_number_result(operator: BinaryOperator, left: f64, right: 
 /// Operator `op` on two Numbers known before run time, as the interpreter computes it: a
 /// comparison's boolean, or a numeric operator's Number; `None` for any other operator. The
 /// compiler folds static operands through this (`compile::binding_time`).
-pub(crate) fn static_number_binary(op: u32, left: f64, right: f64) -> Option<Constant> {
+pub fn static_number_binary(op: u32, left: f64, right: f64) -> Option<Constant> {
     if op <= LAST_COMPARISON_OPERATOR {
         return Some(Constant::Boolean(number_comparison(op, left, right)));
     }
@@ -104,7 +104,7 @@ impl Vm {
     /// and their ToNumeric is `Value::immediate_number`, which runs no guest code, so they
     /// compute as those Numbers. Equality compares types first, and a heap operand may convert
     /// through guest code: `None` leaves both to the caller.
-    pub(in crate::vm) fn immediate_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+    pub fn immediate_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         // Int32 operands, a Boolean and `null` among them (`a + true`, `flags | null`), compute as
         // int32s (`integer_binary`), as two int32 Numbers do. Only a numeric or relational operator:
         // an equality compares types first, which `integer_binary`'s relations would not.

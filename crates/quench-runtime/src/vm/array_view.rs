@@ -97,7 +97,7 @@ impl Vm {
     /// declined before walking; `Err(Some(index))` when the walk stopped at a hole a prototype
     /// may fill, having covered every index before `index` from `fromIndex`. The generic
     /// algorithm resumes at that index rather than searching the prefix again.
-    pub(super) fn dense_search_resume(&self, native: Native, array: Value, args: &[Value]) -> Result<Value, Option<usize>> {
+    pub fn dense_search_resume(&self, native: Native, array: Value, args: &[Value]) -> Result<Value, Option<usize>> {
         // One proof of the backing serves the length and the search.
         let Some(elements) = self.array_search_elements(array) else {
             return Err(None);

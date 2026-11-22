@@ -317,6 +317,7 @@ fn an_int32_backing_turns_double_on_its_first_other_number() {
 }
 
 #[test]
+#[allow(dangerous_implicit_autorefs)] // the test writes the header it owns alone
 fn a_shared_double_backing_copies_generic_and_a_hole_reads_as_deleted() {
     with_doubles(|| {
         let mut elements = ArrayElements::from_slice(&[Value::integer(1), Value::integer(2)]);

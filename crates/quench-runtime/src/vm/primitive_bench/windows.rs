@@ -63,7 +63,7 @@ impl<const BLOCK: usize> WindowFill for Rounded<BLOCK> {
     }
 }
 
-fn window<F: WindowFill>(b: &mut Bencher, width: usize, argc: u16) {
+pub fn window<F: WindowFill>(b: &mut Bencher, width: usize, argc: u16) {
     assert!(usize::from(argc) <= width && usize::from(argc) <= ARGUMENTS.len());
     // Equal stride for every policy keeps address spacing and live storage fixed.
     let stride = fill_room::<LARGE_BLOCK>(width) + 1;

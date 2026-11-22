@@ -310,3 +310,94 @@ mod tests {
         assert!(error.to_string().contains("must begin with an Op match"));
     }
 }
+
+/// Turns an inherent `impl Type { .. }` into a public extension trait named by the attribute
+/// and its implementation, so the methods can live in a crate other than the one that defines
+/// `Type` (the runtime crate split: the VM core defines `Vm`, its layers add methods to it).
+/// Callers bring the trait into scope. Calls stay static, so code generation is unchanged.
+#[proc_macro_attribute]
+pub fn ext(attribute: TokenStream, input: TokenStream) -> TokenStream {
+    let name = parse_macro_input!(attribute as syn::Ident);
+    let block = parse_macro_input!(input as syn::ItemImpl);
+    derive_extension(name, block).unwrap_or_else(|error| error.to_compile_error()).into()
+}
+
+fn declaration_attributes(attributes: &[syn::Attribute]) -> Vec<syn::Attribute> {
+    attributes
+        .iter()
+        .filter(|attribute| {
+            let path = attribute.path();
+            ["cfg", "cfg_attr", "allow", "expect", "doc", "deprecated"].iter().any(|kept| path.is_ident(kept))
+        })
+        .cloned()
+        .collect()
+}
+
+fn derive_extension(name: syn::Ident, mut block: syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
+    if block.trait_.is_some() {
+        return Err(syn::Error::new_spanned(&block, "`ext` takes an inherent impl block"));
+    }
+    let mut declarations = Vec::new();
+    for item in &mut block.items {
+        match item {
+            syn::ImplItem::Fn(function) => {
+                function.vis = syn::Visibility::Inherited;
+                function.defaultness = None;
+                function.sig.constness = None;
+                let mut signature = function.sig.clone();
+                for input in &mut signature.inputs {
+                    match input {
+                        FnArg::Typed(typed) => typed.pat = Box::new(syn::parse_quote!(_)),
+                        // `mut self` is a pattern, which a declaration may not carry.
+                        FnArg::Receiver(receiver) if receiver.reference.is_none() => receiver.mutability = None,
+                        FnArg::Receiver(_) => {}
+                    }
+                }
+                let attributes = declaration_attributes(&function.attrs);
+                declarations.push(quote! { #(#attributes)* #signature; });
+            }
+            syn::ImplItem::Const(constant) => {
+                constant.vis = syn::Visibility::Inherited;
+                let attributes = declaration_attributes(&constant.attrs);
+                let (ident, ty) = (&constant.ident, &constant.ty);
+                declarations.push(quote! { #(#attributes)* const #ident: #ty; });
+            }
+            other => return Err(syn::Error::new_spanned(other, "`ext` supports functions and constants")),
+        }
+    }
+    let (impl_generics, type_generics, where_clause) = block.generics.split_for_impl();
+    let _ = type_generics;
+    let self_ty = &block.self_ty;
+    let attributes = &block.attrs;
+    let generic_params = &block.generics.params;
+    let trait_generics = if generic_params.is_empty() {
+        quote! {}
+    } else {
+        let arguments = generic_params.iter().map(|param| match param {
+            syn::GenericParam::Type(ty) => {
+                let ident = &ty.ident;
+                quote! { #ident }
+            }
+            syn::GenericParam::Lifetime(lifetime) => {
+                let lifetime = &lifetime.lifetime;
+                quote! { #lifetime }
+            }
+            syn::GenericParam::Const(constant) => {
+                let ident = &constant.ident;
+                quote! { #ident }
+            }
+        });
+        quote! { <#(#arguments),*> }
+    };
+    let items = &block.items;
+    Ok(quote! {
+        #(#attributes)*
+        pub trait #name #impl_generics: ::core::marker::Sized #where_clause {
+            #(#declarations)*
+        }
+        #(#attributes)*
+        impl #impl_generics #name #trait_generics for #self_ty #where_clause {
+            #(#items)*
+        }
+    })
+}

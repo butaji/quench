@@ -143,7 +143,7 @@ impl Native {
 
     /// `Array.prototype.forEach` and the other array methods that call a callback per index
     /// (`Vm::array_callback_native`), the reducers (`Native::is_array_reducer`) among them.
-    pub(crate) fn is_array_callback(self) -> bool {
+    pub fn is_array_callback(self) -> bool {
         matches!(
             self,
             Self::ArrayForEach
@@ -281,7 +281,7 @@ impl Native {
     /// iteration from a frameless activation). A keyed collection's or array's iterator
     /// creation, `%IteratorPrototype%[@@iterator]`, `concat`, `Array.from` and `Object.isExtensible` belong
     /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
-    pub(crate) fn runs_beside_activations(self) -> bool {
+    pub fn runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
             self,
             Self::ObjectLiteralPrototype
@@ -364,7 +364,7 @@ impl Native {
     /// call-forwarding natives push their target as a frame there (and run under a
     /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
     /// and exit change the running frame's object environment.
-    pub(crate) fn runs_from_lane(self) -> bool {
+    pub fn runs_from_lane(self) -> bool {
         !matches!(
             self,
             Self::FunctionCall

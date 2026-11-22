@@ -50,7 +50,7 @@ fn depart(vm: &mut Vm, anchor: Value, shape: u32, round: i32) -> u32 {
 
 /// The OSR site of `function_id`'s outermost loop: the first header's, closed by its last
 /// backward jump.
-fn osr_site(vm: &Vm, function_id: usize) -> crate::vm::dispatch_fast::OsrSiteDiagnostics {
+fn osr_site(vm: &Vm, function_id: usize) -> crate::vm::engine_types::OsrSiteDiagnostics {
     let osr = vm
         .programs
         .views_in_lane(crate::vm::program_store::ProgramId::MAIN)
@@ -66,7 +66,7 @@ fn osr_site(vm: &Vm, function_id: usize) -> crate::vm::dispatch_fast::OsrSiteDia
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(SOURCE, "osr-receiver-shape-departure.js")).unwrap();
     let function_id = function_named(&program, "sum");
     let mut vm = test_vm();
@@ -95,7 +95,7 @@ fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let source = r#"
         function f(a) {
           let s = 0;
@@ -120,7 +120,7 @@ fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() 
     assert_eq!(compiled, interpreted, "the widened loop computes the interpreter's sum");
     let site = osr_site(&vm, function_named(&program, "f"));
     assert!(
-        site.native_region_runs > 0 && site.exits <= u64::from(crate::vm::compiled::tier_policy::TierRows::PROCESS.table().loops.max_compilations),
+        site.native_region_runs > 0 && site.exits <= u64::from(crate::vm::tier_policy::TierRows::PROCESS.table().loops.max_compilations),
         "a sum that overflows on every run widens instead of exhausting the site: {site:?}"
     );
 }
@@ -128,7 +128,7 @@ fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() 
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_appends_match_the_interpreter_across_growth_doubles_and_prototype_setters() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     // Appends at the length store in place within the proved room and reserve past it: into
     // `[]` and a `slice(0)` copy, across capacity growths, of doubles, and after
     // `Array.prototype` gains an indexed setter between runs, which the next reserve sees.
@@ -236,7 +236,7 @@ fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::Executio
 /// the policy compiles loops. The throughput run's VM.
 fn assert_typed_osr(source: &str, native: &[&str]) -> Vm {
     // The fixtures are too small to repay a compile at the wall-clock cost the model has learned.
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-typed.js")).unwrap();
     let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
     for policy in crate::MemoryPolicy::ALL {
@@ -374,7 +374,7 @@ fn shared_osr_array_literals_allocate_in_native_loops() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_counted_loops_leave_at_nested_for_of_and_builtin_calls() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     // A `for...of` over an Array, then a Set, and a builtin method call, each on a path some
     // iterations take: the counted loop leaves there, and the iterator protocol and the call
     // run in the interpreter.
@@ -390,7 +390,7 @@ fn shared_osr_counted_loops_leave_at_nested_for_of_and_builtin_calls() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_leave_inside_an_inlined_callee_makes_its_activation() {
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     // The callee's loop overflows int32 (from `x = 72086`) on the last iterations of the
     // caller's native loop: the region leaves inside the inlined callee, whose live registers
     // make its activation.
@@ -454,7 +454,7 @@ fn repatch_leaves_in_mode(changes: i32) -> Vec<(u64, u64)> {
 fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave() {
     // The base tier's stencil rows are x86-64's.
     if !cfg!(target_arch = "x86_64") { return; }
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let (exits, runs) = repatch_leaves(1)[0];
     assert!(exits <= 1, "the miss leaves at most once; the refreshed cache then hits: {exits} exits");
     assert!(runs >= 2, "the region runs again after the leave: {runs} runs");
@@ -466,7 +466,7 @@ fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave
 fn bjit_site_whose_receiver_shape_changes_repeatedly_stays_native() {
     // The base tier's stencil rows are x86-64's.
     if !cfg!(target_arch = "x86_64") { return; }
-    crate::vm::compiled::tier_policy::force_admission();
+    crate::vm::tier_policy::force_admission();
     let leaves = repatch_leaves(8);
     assert!(leaves.iter().all(|(exits, runs)| *exits <= 1 && *runs >= 1), "each change leaves at most once and runs native: {leaves:?}");
 }

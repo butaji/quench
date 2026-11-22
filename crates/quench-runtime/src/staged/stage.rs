@@ -9,19 +9,19 @@ const WORD_BYTES: u32 = std::mem::size_of::<u64>() as u32;
 
 /// The byte offset of word `index` from a base.
 #[inline(always)]
-pub(crate) fn word_offset(index: u16) -> i32 {
+pub fn word_offset(index: u16) -> i32 {
     (u32::from(index) * WORD_BYTES) as i32
 }
 
 /// The byte count of `index` words.
 #[inline(always)]
-pub(crate) fn word_bytes(index: u16) -> u64 {
+pub fn word_bytes(index: u16) -> u64 {
     u64::from(u32::from(index) * WORD_BYTES)
 }
 
 /// The arguments a call passes, where the caller's registers hold them.
 #[derive(Clone, Copy)]
-pub(crate) enum Passed<'a, W> {
+pub enum Passed<'a, W> {
     /// `count` consecutive words at `arguments`.
     Window { arguments: W, count: u16 },
     /// The words of the caller's file at `file` that the register numbers `registers` name, in order.
@@ -41,7 +41,7 @@ impl<W> Passed<'_, W> {
 /// `fill_window` as one store per register of the window: the prefix, the arguments the window
 /// holds room for, then `undefined`.
 #[inline(always)]
-pub(crate) fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undefined: S::Word, prefix: &[u64],
+pub fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undefined: S::Word, prefix: &[u64],
     passed: Passed<'_, S::Word>, registers: u16) {
     let mut next = 0_u16;
     for bits in prefix.iter().take(usize::from(registers)) {
@@ -67,14 +67,14 @@ pub(crate) fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undef
 /// The two spaces share one block layout, so the gate's reading is one implementation that differs
 /// only in the mark block list it starts from.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum StagedRecordSpace {
+pub enum StagedRecordSpace {
     Object,
     Function,
 }
 
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
 /// a failed guard goes. A 32-bit load zero-extends.
-pub(crate) trait Stage {
+pub trait Stage {
     type Word: Copy;
     /// The layout proof a field operation carries (a projection for Emit, `()` for Concrete).
     type Proof: Copy;
@@ -268,7 +268,7 @@ pub(crate) trait Stage {
 
 /// The process tables an operation addresses from a base.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Table {
+pub enum Table {
     /// The property arena's values, where a flat object's run starts at its position.
     PropertyValues,
     /// The object layout table (`heap::layouts`): a record's header words at its layout id

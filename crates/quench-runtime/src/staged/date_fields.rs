@@ -4,7 +4,7 @@
 //! integer arithmetic (`civil_from_days`), with the local fields moved by the host's offset.
 
 /// The largest magnitude a time value holds (`TimeClip`'s limit).
-pub(crate) const DATE_TIME_CLIP_LIMIT_MS: f64 = 8.64e15;
+pub const DATE_TIME_CLIP_LIMIT_MS: f64 = 8.64e15;
 const DATE_MILLISECONDS_PER_DAY: i64 = 86_400_000;
 const DATE_SECONDS_PER_MINUTE_I64: i64 = 60;
 const DATE_MINUTES_PER_HOUR_I64: i64 = 60;

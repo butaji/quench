@@ -41,7 +41,7 @@ mod tests {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct GeneralCodeCursor {
+pub struct GeneralCodeCursor {
     program: ProgramId,
     pub(super) function: u32,
     code: *const Instr,
@@ -49,7 +49,7 @@ pub(super) struct GeneralCodeCursor {
     /// Fixed-width expansion of `code`; null while the function is cold.
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
-    pub(super) lane: *const dispatch_fast::LaneView,
+    pub(super) lane: *const crate::vm::engine_types::LaneView,
     /// The loop work the activation did in the general path while it may still gain a view
     /// (`note_back_edge`); `None` once it cannot.
     back_edges: Option<HotLoop>,
@@ -73,33 +73,33 @@ impl HotLoop {
     }
 }
 
-use crate::vm::compiled::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
+use crate::vm::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
-pub(super) struct PendingGeneralCall {
-    pub(super) caller: usize,
+pub struct PendingGeneralCall {
+    pub caller: usize,
     /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
     /// decoding, once built, never moves; a cold caller simply keeps reading packed code.
     /// Lane calls leave it to the general loop, which derives it only if it resumes the caller.
-    pub(super) caller_cursor: Option<GeneralCodeCursor>,
-    pub(super) call_pc: u32,
-    pub(super) destination: Register,
+    pub caller_cursor: Option<GeneralCodeCursor>,
+    pub call_pc: u32,
+    pub destination: Register,
     /// Constructor substitution, promise settlement or generator resumption;
     /// ordinary calls yield the returned value directly.
-    pub(super) completion: CallCompletion,
+    pub completion: CallCompletion,
     /// The call falls into a return of its result: the caller completes with the callee's
     /// value instead of storing it. Sloppy callers keep their frame (it stays visible to
     /// legacy `caller` reflection), so this chains returns rather than replacing frames.
-    pub(super) returns: bool,
+    pub returns: bool,
     /// `None` only for a lane activation materialized past the guest-call budget, which
     /// `WASM_ACTIVATION_LIMIT` bounds instead.
-    pub(super) call_guard: Option<crate::stack::GuestCallGuard>,
+    pub call_guard: Option<crate::stack::GuestCallGuard>,
     /// The caller's program when the callee belongs to another one: the return or unwind
     /// into the caller makes it executing again. `None` when both share their program.
-    pub(super) caller_program: Option<SavedProgram>,
+    pub caller_program: Option<SavedProgram>,
 }
 
 /// Already materialized calls, adopted by the ordinary return/unwind loop before resuming.
-pub(crate) struct RecoveredCalls {
+pub struct RecoveredCalls {
     pub(super) calls: Vec<PendingGeneralCall>,
     pub(super) failure: Option<(u32, JsError)>,
 }
@@ -107,9 +107,9 @@ pub(crate) struct RecoveredCalls {
 /// Where a lane run that no general loop started left its frames (`Vm::native_callback_in_lane`):
 /// the program the innermost executes and the error a call the lane made raised there, which
 /// the general loop resumes with as it does after its own lane run.
-pub(super) struct LaneExit {
-    pub(super) executing: ExecutingProgram,
-    pub(super) raised: Option<JsError>,
+pub struct LaneExit {
+    pub executing: ExecutingProgram,
+    pub raised: Option<JsError>,
 }
 
 /// Where a general loop resumes its entry frame other than at its PC: after a lane run
@@ -118,14 +118,14 @@ pub(super) struct LaneExit {
 pub(super) enum GeneralResume {
     Lane(LaneExit),
     #[cfg(feature = "native-execution")]
-    Native(super::compiled::JsNativeStep),
+    Native(crate::vm::engine_types::JsNativeStep),
 }
 
 /// The general loop's executing program: its id and the residual keeping it alive (`None`
 /// for the loop's entry program).
-pub(super) struct ExecutingProgram {
-    pub(super) id: ProgramId,
-    pub(super) retained: Option<Rc<ResidualProgram>>,
+pub struct ExecutingProgram {
+    pub id: ProgramId,
+    pub retained: Option<Rc<ResidualProgram>>,
 }
 
 impl ExecutingProgram {
@@ -163,17 +163,17 @@ pub(super) fn this_is_fixed(inherits_this: bool, this: Value) -> bool {
 }
 
 /// An executing program set aside while an in-loop callee of another program runs.
-pub(super) struct SavedProgram {
-    pub(super) id: ProgramId,
+pub struct SavedProgram {
+    pub id: ProgramId,
     /// The residual that kept it alive, `None` for the loop's entry program.
-    pub(super) retained: Option<Rc<ResidualProgram>>,
+    pub retained: Option<Rc<ResidualProgram>>,
 }
 
 /// Activations the dispatch loop holds before a Wasm call exhausts the call
 /// stack. A Wasm call in the loop pushes a heap frame instead of recursing
 /// natively, so the native stack guard does not bound it; the guest call
 /// depth does.
-pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
+pub const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
 
 impl GeneralCodeCursor {
     #[inline(always)]
@@ -251,7 +251,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
+    pub fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
         if strict {
             Ok(this)
         } else if this.is_null() || this.is_undefined() {
@@ -357,7 +357,7 @@ impl Vm {
     /// captured nor enters a `with` scope, so the callee's environment is
     /// the caller's: the instance environment.
     #[inline(always)]
-    pub(super) fn push_wasm_frame(
+    pub fn push_wasm_frame(
         &mut self,
         p: &ResidualProgram,
         caller: usize,
@@ -378,7 +378,7 @@ impl Vm {
     /// (`push_wasm_frame`), or a JavaScript call of an exported function
     /// (`dispatch_fast::lane_wasm_export_frame`).
     #[inline(always)]
-    pub(super) fn push_wasm_frame_over(
+    pub fn push_wasm_frame_over(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -418,7 +418,7 @@ impl Vm {
 
     /// Activate a Wasm function whose registers already hold `registers`:
     /// a lane activation becoming a frame. Its environment is the caller's.
-    pub(super) fn push_wasm_frame_with_registers(
+    pub fn push_wasm_frame_with_registers(
         &mut self,
         p: &ResidualProgram,
         env: Value,
@@ -456,7 +456,7 @@ impl Vm {
     /// `args` may borrow the caller's register window: setup only pushes the new activation,
     /// never touching or resizing another frame's register buffer, and frame-stack growth moves
     /// the boxed frames' pointers rather than their buffers.
-    pub(super) fn push_general_user_frame(
+    pub fn push_general_user_frame(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -516,7 +516,7 @@ impl Vm {
 
     /// The cursor of a call of function `id` of the active program `p` that enters `view`, a
     /// lane that runs it, at its first instruction.
-    pub(super) fn entry_cursor(&self, p: &ResidualProgram, id: u32, view: *const super::dispatch_fast::LaneView) -> GeneralCodeCursor {
+    pub(super) fn entry_cursor(&self, p: &ResidualProgram, id: u32, view: *const crate::vm::engine_types::LaneView) -> GeneralCodeCursor {
         let body = p.function(id as usize);
         GeneralCodeCursor {
             program: self.active_program,
@@ -537,7 +537,7 @@ impl Vm {
     /// instruction from a native (a promise job, a host callback), as a lane call of it would
     /// activate it (`Vm::resolve_script_call_target`): derived once its deferred runs complete
     /// (`ProgramStore::call_may_derive_in_lane`); null where the general loop runs it.
-    pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
+    pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const crate::vm::engine_types::LaneView {
         let program = self.active_program;
         let runs_in_lane = Self::FRAME_ENTRY_LANE_RUNS
             && !self.tier_may_run(crate::jit_mode::Tier::ANY);
@@ -555,7 +555,7 @@ impl Vm {
     /// stack, and yield its outcome; a constructor's with its receiver when
     /// `capture_constructor_this`.
     #[inline(always)]
-    pub(super) fn complete_user_frame(
+    pub fn complete_user_frame(
         &mut self,
         result: Result<FrameOutcome, JsError>,
         capture_constructor_this: bool,
@@ -718,7 +718,7 @@ impl Vm {
     /// activation its call would have pushed with the same callee, receiver and `passed`
     /// arguments, holding the activation's current registers.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn push_script_frame_with_registers(
+    pub fn push_script_frame_with_registers(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -744,7 +744,7 @@ impl Vm {
     /// would push held by the frame, and `registers` moved into its file once rather than
     /// over the values activation filled and placed. `None` for any other function, which
     /// takes the push.
-    pub(super) fn detached_plain_frame(
+    pub fn detached_plain_frame(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -1031,14 +1031,14 @@ impl Vm {
     /// The rest parameter's array of the arguments past the fixed parameters: a fresh array
     /// as an array literal of them makes (`literal_array`), in a young run where one is free.
     #[inline(never)]
-    pub(super) fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
+    pub fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
         self.literal_array(rest.len(), |index| rest[index])
     }
 
     /// A new activation's `arguments` object, mapped onto the parameters when the function's
     /// parameter list allows it; the rest array a rest alias names (`Function::rest_alias`).
     #[inline(never)]
-    pub(super) fn activation_arguments_object(
+    pub fn activation_arguments_object(
         &mut self,
         function: &crate::bytecode::Function,
         context: CallContext,
@@ -1277,7 +1277,7 @@ impl Vm {
         );
     }
 
-    pub(super) fn promote_frame_environment(&mut self, frame: usize) -> Value {
+    pub fn promote_frame_environment(&mut self, frame: usize) -> Value {
         if self.frames[frame].captured {
             return self.frames[frame].env;
         }
@@ -1329,7 +1329,7 @@ impl Vm {
         )
     }
 
-    pub(super) fn clone_frame_environment(
+    pub fn clone_frame_environment(
         &mut self,
         frame: usize,
         fresh: &[u16],
@@ -1349,7 +1349,7 @@ impl Vm {
     /// with the binding's owner, so closures of earlier iterations and the activation keep
     /// seeing one binding (`EnvironmentSlots::iteration_copy`). A frame's and an environment
     /// activation's window's clones (`clone_environment_of`) are this one copy.
-    pub(super) fn iteration_environment(
+    pub fn iteration_environment(
         &mut self,
         source: Value,
         program: ProgramId,
@@ -1429,19 +1429,19 @@ impl Vm {
 
     /// Drops the `with` scopes a finished (not suspended) activation entered.
     #[inline(always)]
-    pub(super) fn finish_frame_scopes(&mut self, frame: &Frame) {
+    pub fn finish_frame_scopes(&mut self, frame: &Frame) {
         self.with_stack.truncate(frame.with_base);
     }
 
     /// Return a Wasm frame the lane pushed to the pool.
     #[inline(always)]
-    pub(super) fn retire_wasm_frame(&mut self) {
+    pub fn retire_wasm_frame(&mut self) {
         let frame = self.frames.pop().expect("pending frame is active");
         self.with_stack.truncate(frame.with_base);
         self.pool_frame(frame);
     }
 
-    pub(super) fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
+    pub fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
         let mut frame = frame.into();
         Self::recycle_frame(&mut frame);
         self.frame_pool.push(frame);
@@ -1450,6 +1450,7 @@ impl Vm {
     /// Empties a finished frame's appendable buffers and drops its callee for reuse, bounding
     /// what the buffers retain. Every activation sets legacy argument reflection and
     /// `fixed_this` itself.
+    #[inline]
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
         frame.js_jit_interpreter_started = None;
@@ -1485,7 +1486,7 @@ impl Vm {
         frame.dynamic_bindings.shrink_to(RETAINED_FRAME_VALUES);
     }
 
-    pub(super) fn run_frame_general(
+    pub fn run_frame_general(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -1499,7 +1500,7 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-        entered: super::compiled::JsNativeStep,
+        entered: crate::vm::engine_types::JsNativeStep,
     ) -> Result<FrameOutcome, JsError> {
         self.run_frame_general_until::<false>(p, frame, None, None, Some(GeneralResume::Native(entered)))
     }
@@ -1542,7 +1543,7 @@ impl Vm {
     /// Finish the frames a lane run left at frame `frame`'s PC (`LaneExit`), the calls pending
     /// above the loop's entry frame in `pending_calls`: the general loop runs from there as it
     /// runs after its own lane run, until the entry frame returns.
-    pub(super) fn run_frames_after_lane_exit(
+    pub fn run_frames_after_lane_exit(
         &mut self,
         entry_program: &ResidualProgram,
         frame: usize,
@@ -1559,7 +1560,7 @@ impl Vm {
 
     /// Whether the general loop enters `view` at `pc`: where a lane run pays, or at the first instruction of
     /// the callee a due collection's lane stop left to it (`after_lane_exit`), as a native's call would.
-    fn enters_in_lane(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
+    fn enters_in_lane(view: *const crate::vm::engine_types::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
 
     /// Whether a frame entry may run the lane: execution-only support never
     /// interprets, and instruction profiling must observe every PC.
@@ -1708,7 +1709,7 @@ impl Vm {
 
     /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active
     /// program and realm around it; from a `resume`, it continues where that left.
-    #[inline(always)]
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     fn run_general_loop<const STOPS: bool>(
         &mut self,
@@ -1749,7 +1750,7 @@ impl Vm {
             .saturating_mul(std::mem::size_of::<Value>());
             Some(
                 crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
-                    .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?,
+                    .map_err(|crate::stack::StackExhausted| Self::wasm_call_stack_exhausted())?,
             )
         } else {
             None
@@ -1837,7 +1838,7 @@ impl Vm {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            let mut native_step: Option<super::compiled::JsNativeStep> = None;
+            let mut native_step: Option<crate::vm::engine_types::JsNativeStep> = None;
             let entering_after_lane_exit = std::mem::replace(&mut after_lane_exit, resumes_lane_exit);
             let resumed = std::mem::take(&mut resumes_lane_exit);
             #[cfg(feature = "native-execution")]
@@ -1848,13 +1849,9 @@ impl Vm {
             if native_step.is_none() && !self.execution_mode.allows_dynamic_execution()
                 && !(STOPS && stop_pc == Some(pc))
             {
-                self.record_native_execution_rejection();
-                return Err(JsError::validation(format!(
-                    "native guest code required: {} function {} at {}",
-                    p.source_name, self.frames[frame].function, pc,
-                )));
+                return Err(self.native_execution_rejected(p, frame, pc));
             }
-            if super::compiled::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed && pc == 0
+            if crate::vm::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed && pc == 0
                 && let Some(return_pc) = self.js_tier_frame_entry(p, frame)
             {
                 pc = return_pc;
@@ -2100,8 +2097,7 @@ impl Vm {
             let step = if let Some(step) = native_step {
                 step.result
             } else if !crate::DYNAMIC_EXECUTION_ENABLED {
-                self.record_native_execution_rejection();
-                return Err(JsError::validation("native guest code required: interpreter dispatch is unavailable".into()));
+                return Err(self.interpreter_unavailable());
             } else {
             #[cfg(feature = "profile-memory")]
             self.heap.set_memory_allocation_site(
@@ -2534,9 +2530,7 @@ impl Vm {
                     let caller_program = if callee_program == executing_program {
                         None
                     } else {
-                        let retained = self.programs.get(callee_program).ok_or_else(|| {
-                            JsError::validation("missing callee program".into())
-                        })?;
+                        let retained = self.programs.get(callee_program).ok_or_else(Self::missing_callee_program)?;
                         let saved = SavedProgram {
                             id: executing_program,
                             retained: current_program.replace(retained),
@@ -2588,9 +2582,7 @@ impl Vm {
                     if replacement_program != executing_program {
                         self.set_active_program(replacement_program);
                         current_program =
-                            Some(self.programs.get(replacement_program).ok_or_else(|| {
-                                JsError::validation("missing tail-call program".into())
-                            })?);
+                            Some(self.programs.get(replacement_program).ok_or_else(Self::missing_tail_call_program)?);
                     }
                     executing_program = replacement_program;
                     executing_residual = current_program.as_deref().unwrap_or(entry_program);
@@ -2668,6 +2660,47 @@ impl Vm {
                 Err(error) => unwind_at!(instruction_pc as u32, error),
             }
         }
+    }
+
+    /// The error for a Wasm call whose stack-frame storage exceeds the guest stack limit.
+    #[cold]
+    #[inline(never)]
+    fn wasm_call_stack_exhausted() -> JsError {
+        JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted)
+    }
+
+    /// Records a rejected native execution and builds the error for guest code at `pc` that native tiers may not run.
+    #[cold]
+    #[inline(never)]
+    fn native_execution_rejected(&mut self, p: &ResidualProgram, frame: usize, pc: usize) -> JsError {
+        self.record_native_execution_rejection();
+        JsError::validation(format!(
+            "native guest code required: {} function {} at {}",
+            p.source_name, self.frames[frame].function, pc,
+        ))
+    }
+
+    /// Records a rejected native execution and builds the error for a dispatch step that needs
+    /// the interpreter in a build without dynamic execution.
+    #[cold]
+    #[inline(never)]
+    fn interpreter_unavailable(&mut self) -> JsError {
+        self.record_native_execution_rejection();
+        JsError::validation("native guest code required: interpreter dispatch is unavailable".into())
+    }
+
+    /// The error for a callee whose residual program the VM no longer holds.
+    #[cold]
+    #[inline(never)]
+    fn missing_callee_program() -> JsError {
+        JsError::validation("missing callee program".into())
+    }
+
+    /// The error for a tail call whose residual program the VM no longer holds.
+    #[cold]
+    #[inline(never)]
+    fn missing_tail_call_program() -> JsError {
+        JsError::validation("missing tail-call program".into())
     }
 
     /// Finds the handler for `error` thrown at `throwing_pc`, popping in-loop activations
@@ -2855,7 +2888,7 @@ impl Vm {
     }
 
     #[inline(always)]
-    pub(super) fn read(&self, f: usize, r: u16) -> Value {
+    pub fn read(&self, f: usize, r: u16) -> Value {
         debug_assert!(std::ptr::eq(
             self.active_registers,
             self.frames[f].registers.as_ptr()
@@ -2868,7 +2901,7 @@ impl Vm {
     }
 
     #[inline(always)]
-    pub(super) fn write(&mut self, f: usize, r: u16, v: Value) {
+    pub fn write(&mut self, f: usize, r: u16, v: Value) {
         debug_assert!(std::ptr::eq(
             self.active_registers,
             self.frames[f].registers.as_ptr()
@@ -2885,7 +2918,7 @@ impl Vm {
     /// `frame` must identify an active frame, and `slot` must be less than the
     /// active function's local count. Frame initialization sizes locals to that
     /// count.
-    pub(super) unsafe fn read_validated_local(&self, frame: usize, slot: usize) -> Value {
+    pub unsafe fn read_validated_local(&self, frame: usize, slot: usize) -> Value {
         // SAFETY: the caller establishes that the frame is active and validation
         // established `slot < Function.locals`; invocation setup sizes this frame
         // to that function's local count.

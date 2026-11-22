@@ -3,9 +3,9 @@
 use super::Op;
 
 /// One entry per opcode, for a table keyed by an opcode value.
-pub(crate) const OPCODE_COUNT: usize = Op::COUNT;
+pub const OPCODE_COUNT: usize = Op::COUNT;
 
 /// The opcode's name for diagnostics; a value outside the table names no opcode.
-pub(crate) fn opcode_name(opcode: usize) -> &'static str {
+pub fn opcode_name(opcode: usize) -> &'static str {
     Op::NAMES.get(opcode).copied().unwrap_or("unknown-opcode")
 }

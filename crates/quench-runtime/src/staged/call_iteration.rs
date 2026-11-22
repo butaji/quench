@@ -27,26 +27,26 @@ use crate::Value;
 /// The atoms the records after a step read of its result: `done` and `value`
 /// (`Vm::runtime_atoms`), as raw words a tier compares the reads' operands against.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct StepAtoms {
-    pub(crate) done: u64,
-    pub(crate) value: u64,
+pub struct StepAtoms {
+    pub done: u64,
+    pub value: u64,
 }
 
 /// The registers a delivered step writes: the one its `done` read writes, the one its `value`
 /// read writes, and for a destructuring step (`lane_binding_step`) the pattern's done flag the
 /// record after the `done` read moves it to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct StepReads {
-    pub(crate) done: Register,
-    pub(crate) value: Register,
-    pub(crate) flag: Option<Register>,
+pub struct StepReads {
+    pub done: Register,
+    pub value: Register,
+    pub flag: Option<Register>,
 }
 
 /// Whether a step whose result goes to register `result` (the call record's A operand) may
 /// resume its generator as an activation: a returning call completes its caller, which a
 /// generator's step does not. A site operand, so a tier decides it at decode, no row.
 #[inline(always)]
-pub(crate) const fn resumes_at_site(result: Register) -> bool {
+pub const fn resumes_at_site(result: Register) -> bool {
     result & RETURN_REGISTER == 0
 }
 
@@ -63,7 +63,7 @@ pub(crate) fn admit_resume<S: Stage>(stage: &mut S, depth: S::Word, limit: S::Wo
 
 /// `admit_resume` on machine words, for the interpreter's own resume of a generator.
 #[inline(always)]
-pub(crate) fn concrete_admit_resume(depth: usize, limit: usize) -> Option<usize> {
+pub fn concrete_admit_resume(depth: usize, limit: usize) -> Option<usize> {
     admit_resume(&mut super::Concrete::new(std::ptr::null()), depth as u64, limit as u64, ()).map(|depth| depth as usize)
 }
 
@@ -79,7 +79,7 @@ pub(crate) fn reads_step<S: Stage>(stage: &mut S, done: S::Word, value: S::Word,
 
 /// `reads_step` on machine words: the reads' atom operands against the realm's atoms.
 #[inline(always)]
-pub(crate) fn concrete_reads_step(done: u32, value: u32, atoms: StepAtoms) -> bool {
+pub fn concrete_reads_step(done: u32, value: u32, atoms: StepAtoms) -> bool {
     reads_step(&mut super::Concrete::new(std::ptr::null()), u64::from(done), u64::from(value), atoms)
 }
 
@@ -116,13 +116,13 @@ pub(crate) fn step_finished<S: Stage>(stage: &mut S, registers: S::Word, reads: 
 
 /// `step_yielded` on the interpreter's window `registers` (register 0's address).
 #[inline(always)]
-pub(crate) fn concrete_step_yielded(registers: *mut Value, reads: StepReads, value: Value) {
+pub fn concrete_step_yielded(registers: *mut Value, reads: StepReads, value: Value) {
     step_yielded(&mut super::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, reads, value.to_bits());
 }
 
 /// `step_finished` on the interpreter's window `registers` (register 0's address).
 #[inline(always)]
-pub(crate) fn concrete_step_finished(registers: *mut Value, reads: StepReads) {
+pub fn concrete_step_finished(registers: *mut Value, reads: StepReads) {
     step_finished(&mut super::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, reads);
 }
 

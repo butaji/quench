@@ -500,7 +500,7 @@ impl Vm {
     /// other does not decode here (`decode_cached_program`). Without it, processes that run
     /// a module under each specialization replaced each other's entry, and each compiled it
     /// again (typescript.js, 9 MB of source, about 3 s per process).
-    pub(super) fn specialization_part(&self) -> &'static str {
+    pub fn specialization_part(&self) -> &'static str {
         if self.specialized { "specialized" } else { "unspecialized" }
     }
 
@@ -778,7 +778,7 @@ impl Vm {
     }
 
     #[cfg(feature = "native-execution")]
-    pub(crate) fn evaluate_prepared_global_script(
+    pub fn evaluate_prepared_global_script(
         &mut self, prepared: &crate::PreparedScript,
     ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
@@ -822,7 +822,7 @@ impl Vm {
     /// sloppy direct eval called from such code. The root of a direct eval
     /// running in a function's or module's scope is not.
     /// Whether a call of `callee` flagged as a direct eval is one: the running realm's `eval`.
-    pub(super) fn calls_direct_eval(&self, callee: Value) -> bool {
+    pub fn calls_direct_eval(&self, callee: Value) -> bool {
         matches!(
             self.heap.function(callee),
             Some(record @ FunctionRecord { kind: FunctionKind::Native(Native::Eval), .. }) if self.record_realm(record) == self.realm.globals
@@ -1029,7 +1029,7 @@ impl Vm {
 
     /// Whether the binding site resuming at `pc` of `function` of `program` records bindings,
     /// which a closure made there captures with its environment.
-    pub(super) fn site_has_bindings(&self, program: ProgramId, function: u32, pc: u32) -> bool {
+    pub fn site_has_bindings(&self, program: ProgramId, function: u32, pc: u32) -> bool {
         self.programs.get(program).is_some_and(|program| {
             program
                 .function_get(function as usize)
@@ -1050,7 +1050,7 @@ impl Vm {
     /// environment itself where there is no such site. A frame's closure
     /// (`capture_binding_environment`) and a window activation's (`scoped_names::scoped_closure_into`)
     /// make it the same way.
-    pub(super) fn site_environment(&mut self, environment: Value, site: Option<u32>) -> Result<Value, JsError> {
+    pub fn site_environment(&mut self, environment: Value, site: Option<u32>) -> Result<Value, JsError> {
         let Some(binding_site_pc) = site else {
             return Ok(environment);
         };

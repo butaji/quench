@@ -9,7 +9,7 @@ use std::mem::size_of_val;
 /// need: most functions use fewer than 64 registers, so their masks take half the space
 /// (V8-v7 RegExp: 95 KiB of masks at its heap's peak, all within 64 registers).
 #[derive(Clone, Debug)]
-pub(crate) enum RegisterMasks {
+pub enum RegisterMasks {
     Narrow(Box<[u64]>),
     Half(Box<[u128]>),
     Wide(Box<[RegisterSet]>),
@@ -26,7 +26,7 @@ pub(crate) const KEPT_MASK_BYTES: usize = 64 * 1024;
 impl RegisterMasks {
     /// Whether `function`'s table, at the width its registers need, would pass
     /// `KEPT_MASK_BYTES`.
-    pub(crate) fn too_large_to_keep(function: &Function) -> bool {
+    pub fn too_large_to_keep(function: &Function) -> bool {
         let width = if u32::from(function.registers) <= u64::BITS {
             std::mem::size_of::<u64>()
         } else if u32::from(function.registers) <= u128::BITS {
@@ -47,7 +47,7 @@ impl RegisterMasks {
     /// `masks` at the narrowest width that holds every one of them. Given the live sets a solve
     /// already returned (`analyze_with`), this builds the same masks `of` derives on its solved
     /// path, without solving again: that solve narrows its sets to the same width.
-    pub(crate) fn new(masks: Vec<RegisterSet>) -> Self {
+    pub fn new(masks: Vec<RegisterSet>) -> Self {
         if let Some(narrow) = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect::<Option<Box<[u64]>>>() { return Self::Narrow(narrow); }
         masks.iter().map(|&mask| mask.as_u128()).collect::<Option<Box<[u128]>>>().map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Half)
     }
@@ -76,7 +76,7 @@ impl RegisterMasks {
 
     /// The registers live before instruction `pc`, one past the last included. A windowed
     /// mask answers its first window; a register past the set's width is conservatively live.
-    pub(crate) fn get(&self, pc: usize) -> Option<RegisterSet> {
+    pub fn get(&self, pc: usize) -> Option<RegisterSet> {
         match self {
             Self::Narrow(masks) => masks.get(pc).map(|&mask| RegisterSet::from(mask)),
             Self::Half(masks) => masks.get(pc).map(|&mask| RegisterSet::from(mask)),
@@ -131,10 +131,10 @@ impl RegisterMasks {
     }
 
     /// Whether the mask holds more than one register window.
-    pub(crate) fn is_windowed(&self) -> bool { matches!(self, Self::Windowed { .. }) }
+    pub fn is_windowed(&self) -> bool { matches!(self, Self::Windowed { .. }) }
 
     /// A missing mask or a register outside its width remains conservatively live.
-    pub(crate) fn is_live(&self, pc: usize, register: crate::bytecode::Register) -> bool {
+    pub fn is_live(&self, pc: usize, register: crate::bytecode::Register) -> bool {
         self.get(pc).is_none_or(|mask| !register_dead(mask, usize::from(register)))
     }
 

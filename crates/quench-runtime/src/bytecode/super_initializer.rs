@@ -10,12 +10,12 @@ use smallvec::SmallVec;
 /// parameters take, in order, then the stores the body makes to the receiver the parent
 /// returned. Every value is a parameter as passed or a primitive constant, so the body runs
 /// no guest code of its own.
-pub(crate) struct SuperInitializer {
-    pub(crate) arguments: SmallVec<[InitializerValue; 4]>,
-    pub(crate) stores: SmallVec<[InitializerStore; 4]>,
+pub struct SuperInitializer {
+    pub arguments: SmallVec<[InitializerValue; 4]>,
+    pub stores: SmallVec<[InitializerStore; 4]>,
     /// Whether the body passes every argument it was given on to the parent
     /// (`constructor(...args) { super(...args); this.f = 1; }`), whose `arguments` are then none.
-    pub(crate) forwards: bool,
+    pub forwards: bool,
 }
 
 /// Whether `call` reads the active function's parent: the `SUPER_BASE_BINDING` intrinsic
@@ -100,7 +100,7 @@ fn super_base(records: &mut impl Iterator<Item = WideInstruction>, atoms: &AtomT
 impl Function {
     /// Whether the body is the return of `undefined` alone, as a class without a constructor
     /// or with an empty one has it.
-    pub(crate) fn only_returns_undefined(&self, constants: &[Constant]) -> bool {
+    pub fn only_returns_undefined(&self, constants: &[Constant]) -> bool {
         let mut records = self.instructions();
         let mut temporaries = Temporaries { params: self.params, constants, written: SmallVec::new() };
         self.handlers.is_empty()
@@ -136,7 +136,7 @@ impl Function {
     /// no fields or private elements of its own (`instance_initializer`): the parent read
     /// (`super_base`), the `super(...)` construction of parameters and primitive constants,
     /// the receiver's binding, stores of such values to `this`, and the return of `undefined`.
-    pub(crate) fn super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
+    pub fn super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
         if self.constructs_parent_with_rest() {
             return self.rest_super_initializer(atoms, constants);
         }

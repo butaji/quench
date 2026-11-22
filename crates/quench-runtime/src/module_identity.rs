@@ -80,7 +80,7 @@ pub(crate) fn normalize(path: &Path) -> ModuleIdentity {
     ModuleIdentity::File(PathBuf::from_iter(parts))
 }
 
-pub(crate) fn same_name(left: &str, right: &str) -> bool {
+pub fn same_name(left: &str, right: &str) -> bool {
     normalize(Path::new(left)) == normalize(Path::new(right))
 }
 

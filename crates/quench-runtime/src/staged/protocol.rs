@@ -41,7 +41,7 @@ pub(crate) struct WindowFill {
 /// checked or produced; a failed guard leaves at the frame's miss edge.
 #[derive(Clone, Copy)]
 #[cfg_attr(not(test), allow(dead_code))] // the guards and the window are rows for the form-generic lane helpers
-pub(crate) enum CallOperation<W> {
+pub enum CallOperation<W> {
     /// The operands of a call instruction, which no row runs alone (`Invocation::of`).
     Site(Invocation),
     /// Continue where `held` is the callee identity `expected` (a per-site operand).
@@ -97,7 +97,7 @@ pub(crate) fn guard_callee_word<S: Stage>(stage: &mut S, held: S::Word, expected
 /// Continues where a construction's receiver was allocated: the plan answers the deleted marker
 /// where it declines (a due collection, a plan that does not hold).
 #[inline(always)]
-pub(crate) fn guard_received<S: Stage>(stage: &mut S, receiver: S::Word, miss: S::Miss) -> Option<()> {
+pub fn guard_received<S: Stage>(stage: &mut S, receiver: S::Word, miss: S::Miss) -> Option<()> {
     let built = stage.ne_imm(receiver, Value::DELETED.to_bits());
     stage.guard(built, miss)
 }
@@ -151,7 +151,7 @@ pub(crate) fn bind_this_with<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut
 /// `bind_this` on machine words for the interpreter's own binding of a sloppy callee's `this`:
 /// the same row the native tiers emit.
 #[inline(always)]
-pub(crate) fn concrete_bind_this(receiver: u64, global: u64) -> Option<u64> {
+pub fn concrete_bind_this(receiver: u64, global: u64) -> Option<u64> {
     bind_this(&mut super::Concrete::new(std::ptr::null()), receiver, Some(global), ())
 }
 
@@ -167,7 +167,7 @@ pub(crate) fn fill_window<S: Stage>(stage: &mut S, top: S::Word, source: S::Word
 /// (constants of the plan), then the `passed` arguments, the rest undefined. One row for the
 /// register window, the register list and the bound prefix.
 #[inline(always)]
-pub(crate) fn fill_call<S: Stage>(stage: &mut S, top: S::Word, prefix: &[u64], passed: Passed<'_, S::Word>, registers: u16) {
+pub fn fill_call<S: Stage>(stage: &mut S, top: S::Word, prefix: &[u64], passed: Passed<'_, S::Word>, registers: u16) {
     let undefined = stage.constant(Value::UNDEFINED.to_bits());
     stage.fill_window(top, undefined, prefix, passed, registers);
 }
@@ -188,12 +188,12 @@ pub(crate) fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::
 /// A plain activation's frame header (call protocol v2 stage C), the context words below its
 /// window at `frame::CONTEXT_CALL`..`CONTEXT_CALLEE`, written in place of an activation record.
 #[derive(Clone, Copy)]
-pub(crate) struct PlainHeader<W> {
+pub struct PlainHeader<W> {
     /// The caller's call record.
-    pub(crate) call: W,
+    pub call: W,
     pub(crate) caller_registers: W,
     /// The caller's records (the lane context's `base`).
-    pub(crate) caller_base: W,
+    pub caller_base: W,
     /// `plain_packed`'s word.
     pub(crate) packed: W,
     pub(crate) callee: W,
@@ -206,7 +206,7 @@ impl PlainHeader<u64> {
     /// record-shaped push (`LaneStack::push_activation`), a proved call (`enter_plain_window`)
     /// and a native callback's trampoline header.
     #[inline(always)]
-    pub(crate) const fn new(call: u64, caller_registers: u64, caller_base: u64, function: u32, argc: u16, flags: u64,
+    pub const fn new(call: u64, caller_registers: u64, caller_base: u64, function: u32, argc: u16, flags: u64,
         callee: u64) -> Self {
         Self { call, caller_registers, caller_base, packed: plain_packed(function, argc, flags), callee }
     }
@@ -215,10 +215,10 @@ impl PlainHeader<u64> {
 /// What a plain activation's return reads of its header: the caller's call record, registers
 /// and records.
 #[derive(Clone, Copy)]
-pub(crate) struct PlainCaller<W> {
-    pub(crate) call: W,
-    pub(crate) registers: W,
-    pub(crate) base: W,
+pub struct PlainCaller<W> {
+    pub call: W,
+    pub registers: W,
+    pub base: W,
 }
 
 /// The header's packed word: `function`, the plain flag and `flags` (`frame::BODY_FLAG`,
@@ -237,7 +237,7 @@ const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
 /// and program. One row for the interpreter, the b-jit's direct calls and the u-jit's. The
 /// tier moves the values' top past the window itself.
 #[inline(always)]
-pub(crate) fn push_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, header: PlainHeader<S::Word>, program: S::Word) {
+pub fn push_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, header: PlainHeader<S::Word>, program: S::Word) {
     let depth = stage.load_u64(Region::Payload.mutable(), plain, frame::PLAIN_DEPTH_AT as i32);
     push_plain_at(stage, plain, window, header, program, depth);
 }
@@ -245,7 +245,7 @@ pub(crate) fn push_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Wor
 /// `push_plain` where the tier already holds the plain depth word `depth` (it loaded it for its
 /// admission, `LaneStack::plain_room`): the same stores, without reloading it.
 #[inline(always)]
-pub(crate) fn push_plain_at<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, header: PlainHeader<S::Word>, program: S::Word, depth: S::Word) {
+pub fn push_plain_at<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, header: PlainHeader<S::Word>, program: S::Word, depth: S::Word) {
     let at = Region::Frame.mutable();
     stage.store_u64(at, window, context_at(frame::CONTEXT_CALL), header.call);
     stage.store_u64(at, window, context_at(frame::CONTEXT_CALLER_REGISTERS), header.caller_registers);
@@ -263,7 +263,7 @@ pub(crate) fn push_plain_at<S: Stage>(stage: &mut S, plain: S::Word, window: S::
 /// at `plain` drop it and name its caller's window, which is the next plain activation's where
 /// one remains. Its caller, which the return resumes. The tier releases the window itself.
 #[inline(always)]
-pub(crate) fn pop_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word) -> PlainCaller<S::Word> {
+pub fn pop_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word) -> PlainCaller<S::Word> {
     let at = Region::Frame.mutable();
     let call = stage.load_u64(at, window, context_at(frame::CONTEXT_CALL));
     let registers = stage.load_u64(at, window, context_at(frame::CONTEXT_CALLER_REGISTERS));
@@ -461,7 +461,7 @@ mod tests {
 /// `LaneHelper::ConstructCall`): completed with its result written, missed before any effect,
 /// or raised with the exception stashed. Any other status leaves the region with it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum HelperOutcome {
+pub enum HelperOutcome {
     Completed,
     Missed,
     Raised,
@@ -470,7 +470,7 @@ pub(crate) enum HelperOutcome {
 #[cfg(not(stencil_build))]
 /// The helper statuses a call site tests, in the order it tests them (the common one first),
 /// paired with where each goes: the one table both the helper and its call sites share.
-pub(crate) const HELPER_OUTCOMES: [(u64, HelperOutcome); 3] = [
+pub const HELPER_OUTCOMES: [(u64, HelperOutcome); 3] = [
     (quench_bjit::call_record::LANE_CALL_COMPLETED, HelperOutcome::Completed),
     (quench_bjit::call_record::LANE_CALL_MISSED, HelperOutcome::Missed),
     (quench_bjit::call_record::LANE_CALL_RAISED, HelperOutcome::Raised),

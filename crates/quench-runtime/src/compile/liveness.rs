@@ -5,29 +5,29 @@ use crate::bytecode::{
 
 /// A set of registers, one bit each: the uses, definitions and live registers liveness
 /// derives, and the root masks a collection reads.
-pub(crate) use set::RegisterSet; mod set;
+pub use set::RegisterSet; mod set;
 
 mod solve; mod masks; pub(crate) mod windows; pub(crate) mod budget; pub(crate) mod buffers;
 // The interpreter runs raw webs once their opcode forms land (`raw-registers-design.md`).
 pub(crate) mod raw_webs;
-pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers, analyze_wide_with};
-pub(crate) use masks::RegisterMasks;
+pub use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers, analyze_wide_with};
+pub use masks::RegisterMasks;
 use solve::LiveMask;
 
 /// The registers a `RegisterSet` covers. Liveness, and with it root maps, register promotion
 /// and move coalescing, covers only functions whose registers fit.
-pub(crate) const ROOT_MAP_REGISTERS: u16 = RegisterSet::BITS as u16;
+pub const ROOT_MAP_REGISTERS: u16 = RegisterSet::BITS as u16;
 
 /// Whether `register` is in `set`; a register past the set's width never is.
 #[inline(always)]
-pub(crate) fn register_in(set: RegisterSet, register: usize) -> bool {
+pub fn register_in(set: RegisterSet, register: usize) -> bool {
     register < RegisterSet::BITS as usize && set.contains(register)
 }
 
 /// Whether `set`, a live set, proves `register` dead: it covers the register and leaves it
 /// out. A register past the set's width may be live.
 #[inline(always)]
-pub(crate) fn register_dead(set: RegisterSet, register: usize) -> bool {
+pub fn register_dead(set: RegisterSet, register: usize) -> bool {
     register < RegisterSet::BITS as usize && !register_in(set, register)
 }
 
@@ -138,7 +138,7 @@ fn entry_live(function: &Function, live: &RegisterMasks) -> u16 {
 /// Whether the `Call` `instruction` at `pc` writes its result to a register (no result flags)
 /// that is dead after the call, under `live`: a lane call may let the callee skip building a
 /// result nothing reads (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`).
-pub(crate) fn call_result_dead(instruction: WideInstruction, pc: usize, live: &RegisterMasks) -> bool {
+pub fn call_result_dead(instruction: WideInstruction, pc: usize, live: &RegisterMasks) -> bool {
     instruction.op().traits().has(crate::bytecode::Traits::PLAIN_CALL)
         && instruction.result_flags() == 0
         && live.get(pc + 1).is_some_and(|after| register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK)))
@@ -179,7 +179,7 @@ pub(super) fn all_transfers(
 }
 
 /// One instruction's (uses, definitions) register masks, the entry `transfers` records for it.
-pub(crate) fn transfer(
+pub fn transfer(
     instruction: WideInstruction,
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
@@ -378,7 +378,7 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
     }
 }
 
-pub(crate) fn definitions(
+pub fn definitions(
     instruction: WideInstruction,
     superinstructions: &[Superinstruction],
 ) -> RegisterSet {
@@ -481,7 +481,7 @@ fn range(base: u16, count: u16) -> RegisterSet {
 }
 
 /// The set of `register` alone; empty past the set's width.
-pub(crate) fn register_bit(register: u16) -> RegisterSet {
+pub fn register_bit(register: u16) -> RegisterSet {
     RegisterSet::bit(usize::from(register))
 }
 

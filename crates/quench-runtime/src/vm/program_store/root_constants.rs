@@ -76,7 +76,7 @@ impl ProgramStore {
 
     /// `subscribe_root_constant` for each of `programs`, the programs whose root constants a body
     /// folds (`LaneDependencies::root_programs`); whether all subscribed.
-    pub(crate) fn subscribe_root_constants(&self, programs: &[ProgramId], code: &Rc<dyn DependentCode>) -> bool {
+    pub fn subscribe_root_constants(&self, programs: &[ProgramId], code: &Rc<dyn DependentCode>) -> bool {
         programs.iter().all(|program| self.subscribe_root_constant(*program, code))
     }
 
@@ -93,7 +93,7 @@ impl ProgramStore {
 
     /// The root environment of program `id`: its module environment, or the one its root
     /// activation recorded (`note_root_environment`).
-    pub(crate) fn root_environment(&self, id: ProgramId) -> Option<Value> {
+    pub fn root_environment(&self, id: ProgramId) -> Option<Value> {
         self.module_environment(id).or_else(|| self.entry(id)?.root_constants.environment.get())
     }
 }

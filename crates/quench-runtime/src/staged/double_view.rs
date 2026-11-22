@@ -9,7 +9,7 @@ use super::region::Region;
 /// is double (`heap::DOUBLE_LEN`) and counts no hole, writable where `writable`: their first word
 /// and count. `None` (leaving at `miss`) for any other value or backing.
 #[inline(always)]
-pub(crate) fn double_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
+pub fn double_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
     miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let view = prove_view(stage, records, base, writable, miss)?;
     let flag = view.double?;
@@ -27,7 +27,7 @@ pub(crate) fn double_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Wo
 /// words are `Value`s again, `ArrayElements::make_mut`), so every access through the view leaves
 /// at its bounds test. A double backing gains no hole in place: its writers write Numbers alone.
 #[inline(always)]
-pub(crate) fn reloaded_double_view<S: Stage>(stage: &mut S, record: S::Word) -> (S::Word, S::Word) {
+pub fn reloaded_double_view<S: Stage>(stage: &mut S, record: S::Word) -> (S::Word, S::Word) {
     use crate::heap::{DOUBLE_LEN, ENCODED_LEN};
     let Backing { values, length, .. } = record_backing(stage, record);
     let flag = stage.and_imm(length, u64::from(DOUBLE_LEN));

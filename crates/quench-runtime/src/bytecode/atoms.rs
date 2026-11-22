@@ -7,7 +7,7 @@ use crate::vm::wtf16::JsString;
 
 /// A program's atom names, indexed by atom id.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct AtomTable {
+pub struct AtomTable {
     names: AtomNames,
 }
 
@@ -57,7 +57,7 @@ impl AtomTable {
     }
 
     /// The first `len` names of `sequence`, for a program whose atom ids are the VM's.
-    pub(crate) fn shared(sequence: Rc<AtomSequence>, len: usize) -> Self {
+    pub fn shared(sequence: Rc<AtomSequence>, len: usize) -> Self {
         assert!(
             len <= sequence.len(),
             "a shared atom prefix lies within its sequence"
@@ -100,7 +100,7 @@ impl AtomTable {
 
     // Every atom lookup compares an id against this count, so keep it in the caller.
     #[inline]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match &self.names {
             AtomNames::Packed { ends, .. } => ends.len(),
             AtomNames::Shared { len, .. } => len.get(),
@@ -109,11 +109,11 @@ impl AtomTable {
     }
 
     /// The atom's text, or `None` for an id outside the table.
-    pub(crate) fn get(&self, atom: usize) -> Option<&str> {
+    pub fn get(&self, atom: usize) -> Option<&str> {
         (atom < self.len()).then(|| &self[atom])
     }
 
-    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = &str> {
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &str> {
         (0..self.len()).map(|index| &self[index])
     }
 }
@@ -156,7 +156,7 @@ const ATOM_SEQUENCE_CHUNK: usize = 256;
 /// and the VM's only record of the names it appends. The base never changes and appended
 /// names are never removed or replaced, so a name borrowed from the sequence stays valid as
 /// long as the sequence does.
-pub(crate) struct AtomSequence {
+pub struct AtomSequence {
     base: AtomTable,
     /// Names after `base`, in chunks of `ATOM_SEQUENCE_CHUNK`. Only `append` mutates it, and
     /// only by pushing into the last chunk below its capacity or adding a chunk, so no name
@@ -175,7 +175,7 @@ impl AtomSequence {
     /// Ownership proves an unchanged prefix without reading its names. Independent tables
     /// and another sequence's appended names still need a semantic comparison at admission.
     #[cfg(any(feature = "native-execution", test))]
-    pub(crate) fn proves_prefix(self: &Rc<Self>, atoms: &AtomTable) -> bool {
+    pub fn proves_prefix(self: &Rc<Self>, atoms: &AtomTable) -> bool {
         if atoms.belongs_to(self) {
             return true;
         }
@@ -191,7 +191,7 @@ impl AtomSequence {
         Rc::ptr_eq(text, candidate_text) && Rc::ptr_eq(ends, candidate_ends)
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.base.len() + self.appended_len()
     }
 

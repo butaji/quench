@@ -38,7 +38,7 @@ impl Vm {
     /// `%TypedArray%.prototype.at` (`Native::TypedArrayAt`): the element at an int32 index, which
     /// a negative index counts from the end, as a Number; `undefined` past either end. `None`
     /// for a BigInt kind or an index that is not an int32.
-    pub(in crate::vm) fn plain_typed_at(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_typed_at(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if native != Native::TypedArrayAt {
             return None;
         }
@@ -53,7 +53,7 @@ impl Vm {
     /// `%TypedArray%.prototype.indexOf` (`Native::Uint8ArrayIndexOf`): the first index at or after
     /// `fromIndex` whose element is strictly equal to the Number search value, or -1. Any non-BigInt
     /// view; a NaN search never matches.
-    pub(in crate::vm) fn plain_typed_index_of(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_typed_index_of(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if native != Native::Uint8ArrayIndexOf {
             return None;
         }
@@ -62,7 +62,7 @@ impl Vm {
 
     /// `%TypedArray%.prototype.includes` (`Native::Uint8ArrayIncludes`): as `plain_typed_index_of`
     /// but by SameValueZero, so a NaN search matches a NaN element of a Float64 view.
-    pub(in crate::vm) fn plain_typed_includes(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_typed_includes(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if native != Native::Uint8ArrayIncludes {
             return None;
         }
@@ -74,7 +74,7 @@ impl Vm {
     /// clamps them. The element conversion is the kind's (`typed_array_element_bytes`: ToUint8,
     /// ToUint8Clamp, ToInt32 and so on). Returns the receiver. `None` for a BigInt kind, a value
     /// that is not a Number, an immutable buffer or a shared one.
-    pub(in crate::vm) fn plain_typed_fill(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_typed_fill(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if native != Native::Uint8ArrayFill {
             return None;
         }

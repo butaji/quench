@@ -70,3 +70,6 @@ fn a_product_that_is_a_negative_zero_addresses_the_first_element() {
         throw 'zero ' + zero(a, 100) + ' ' + zero(a, 6);";
     agree(source);
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;

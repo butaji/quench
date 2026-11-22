@@ -213,3 +213,6 @@ fn linked_images_run_without_external_sources_and_reject_an_incompatible_abi() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;

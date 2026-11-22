@@ -821,7 +821,7 @@ const sparse = (items) => {
 };
 for (let round = 0; round < 3; round++) out.push(sparse([1, 2, 3, 4]));
 // A closure assigning the shared binding from an earlier iteration.
-const writer = (n) => {
+pub const writer = (n) => {
   let total = 0;
   const adders = [];
   for (let i = 0; i < n; i++) { const k = i; adders.push(() => { total += k; }); }
@@ -1305,7 +1305,7 @@ const out = [];
 function foo(a, b) {}
 const viaFn = Object.create(foo);
 const viaObj = Object.create(Object.create(foo));
-const plain = { name: "p", length: 3 };
+pub const plain = { name: "p", length: 3 };
 const bare = {};
 let s = "";
 for (let i = 0; i < 2000; i++) { const o = [viaFn, viaObj, plain, bare][i % 4]; s = String(o.name) + o.length; }

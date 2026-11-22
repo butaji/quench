@@ -1,11 +1,12 @@
 //! The lane stack's activations: one allocation whose top is an address, as the values' top
 //! is (`LaneValues`), so a push or a pop moves one word and no length becomes a division.
 
-use super::dispatch_fast::{Activation, KIND_NATIVE, KIND_OFFSET};
+use super::engine_types::{Activation, KIND_OFFSET};
+use quench_bjit::shared_words::KIND_NATIVE;
 
 /// The activations of a lane stack, `base..top`, in an allocation of room up to `end`. An
 /// activation holds no drop glue, so truncation only moves the top.
-pub(super) struct LaneActivations {
+pub struct LaneActivations {
     base: *mut Activation,
     top: *mut Activation,
     end: *mut Activation,
@@ -32,19 +33,19 @@ impl LaneActivations {
     #[inline(always)]
     pub(super) fn len(&self) -> usize { Self::distance(self.base, self.top) }
     #[inline(always)]
-    pub(super) fn capacity(&self) -> usize { Self::distance(self.base, self.end) }
+    pub fn capacity(&self) -> usize { Self::distance(self.base, self.end) }
     /// The activations that fit above the top.
     #[inline(always)]
     pub(super) fn room(&self) -> usize { Self::distance(self.top, self.end) }
     /// The address the next activation is written at.
     #[inline(always)]
-    pub(super) fn top_ptr(&self) -> *mut Activation { self.top }
+    pub fn top_ptr(&self) -> *mut Activation { self.top }
     #[inline(always)]
     pub(super) fn is_empty(&self) -> bool { self.top == self.base }
 
     /// The address of the top word, which emitted code bumps through a pointer as the lane does.
     #[inline(always)]
-    pub(super) fn top_word(&mut self) -> *mut *mut Activation { &raw mut self.top }
+    pub fn top_word(&mut self) -> *mut *mut Activation { &raw mut self.top }
 
     /// The tag of the kind of `slot`'s activation, read without a reference to the activation:
     /// a native frame has written only its prefix and this tag.
@@ -57,13 +58,13 @@ impl LaneActivations {
     /// Whether the innermost activation is a native frame the lane has not linked
     /// (`ActivationKind::Native`): the one test a helper makes before it observes the stack.
     #[inline(always)]
-    pub(super) fn top_is_native(&self) -> bool {
+    pub fn top_is_native(&self) -> bool {
         // SAFETY: a non-empty region's slot below `top` holds at least its tag.
         !self.is_empty() && unsafe { Self::tag(self.top.sub(1)) } == KIND_NATIVE
     }
 
     /// How many native frames on top are unlinked, which a link walks outermost first.
-    pub(super) fn unlinked(&self) -> usize {
+    pub fn unlinked(&self) -> usize {
         let mut slot = self.top;
         // SAFETY: each slot below `top` holds at least its tag.
         while slot != self.base && unsafe { Self::tag(slot.sub(1)) } == KIND_NATIVE { slot = unsafe { slot.sub(1) }; }
@@ -73,7 +74,7 @@ impl LaneActivations {
     /// How many frames on top belong to a running native body, linked or not: those whose
     /// prefix names a callee, which the lane clears when it continues in them.
     #[inline]
-    pub(super) fn native_depth(&self) -> usize {
+    pub fn native_depth(&self) -> usize {
         let mut slot = self.top;
         // SAFETY: each slot below `top` holds at least its prefix.
         while slot != self.base && !unsafe { (*slot.sub(1)).callee.is_null() } { slot = unsafe { slot.sub(1) }; }
@@ -83,7 +84,7 @@ impl LaneActivations {
     /// Ends the native body of the frames below depth `above` that still name one, from the
     /// innermost out: the lane continues in them, so the context, not their descriptor, holds
     /// their state from now on.
-    pub(super) fn retire_bodies(&mut self, above: usize) {
+    pub fn retire_bodies(&mut self, above: usize) {
         for depth in (0..above).rev() {
             let slot = self.slot(depth);
             // SAFETY: each slot below `top` holds at least its prefix.
@@ -96,7 +97,7 @@ impl LaneActivations {
     /// The slot of the activation `depth` above the base, which holds at least its prefix
     /// below `top`: written whole once linked.
     #[inline(always)]
-    pub(super) fn slot(&mut self, depth: usize) -> *mut Activation { self.base.wrapping_add(depth) }
+    pub fn slot(&mut self, depth: usize) -> *mut Activation { self.base.wrapping_add(depth) }
 
     /// The innermost activation, read from the top address: no length is derived.
     #[inline(always)]
@@ -117,7 +118,7 @@ impl LaneActivations {
     /// # Safety
     /// The region is not empty.
     #[inline(always)]
-    pub(super) unsafe fn discard_top(&mut self) {
+    pub unsafe fn discard_top(&mut self) {
         // SAFETY: a non-empty region has an activation below `top`.
         self.top = unsafe { self.top.sub(1) };
     }
@@ -125,29 +126,29 @@ impl LaneActivations {
     /// # Safety
     /// `len` activations below it are initialized, within the capacity.
     #[inline(always)]
-    pub(super) unsafe fn set_len(&mut self, len: usize) { self.top = self.base.wrapping_add(len); }
+    pub unsafe fn set_len(&mut self, len: usize) { self.top = self.base.wrapping_add(len); }
 
     /// # Safety
     /// The activations' room holds one more.
     #[inline(always)]
-    pub(super) unsafe fn push_unchecked(&mut self, activation: Activation) {
+    pub unsafe fn push_unchecked(&mut self, activation: Activation) {
         // SAFETY: `top` lies below `end`, in the allocation.
         unsafe { self.top.write(activation); self.top = self.top.add(1); }
     }
 
     #[inline(always)]
-    pub(super) fn pop(&mut self) -> Option<Activation> {
+    pub fn pop(&mut self) -> Option<Activation> {
         if self.top == self.base { return None; }
         // SAFETY: the activation below `top` is initialized.
         unsafe { self.top = self.top.sub(1); Some(self.top.read()) }
     }
 
-    pub(super) fn truncate(&mut self, len: usize) {
+    pub fn truncate(&mut self, len: usize) {
         if len < self.len() { self.top = self.base.wrapping_add(len); }
     }
 
     /// Makes room for `additional` more activations; whether they moved.
-    pub(super) fn reserve(&mut self, additional: usize) -> bool {
+    pub fn reserve(&mut self, additional: usize) -> bool {
         if self.room() >= additional { return false; }
         let len = self.len();
         let mut grown = Vec::<Activation>::with_capacity(len + additional);

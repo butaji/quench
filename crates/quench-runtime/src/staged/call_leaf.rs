@@ -28,19 +28,19 @@ use crate::Value;
 /// What a leaf's records read of the context its call runs them in: which of the receiver and
 /// the environment the call makes the callee's. `NOT_LEAF` is a record of no leaf's records.
 pub(crate) type LeafForm = u8;
-pub(crate) const NOT_LEAF: LeafForm = 0;
+pub const NOT_LEAF: LeafForm = 0;
 /// Neither its receiver nor its captures: it runs in its caller's context.
-pub(crate) const PLAIN_LEAF: LeafForm = 1;
+pub const PLAIN_LEAF: LeafForm = 1;
 /// Its captures and not its receiver: the call makes the environment its own.
-pub(crate) const CAPTURE_LEAF: LeafForm = 2;
+pub const CAPTURE_LEAF: LeafForm = 2;
 /// Its receiver, and maybe its captures: the call makes the receiver and the environment its own.
-pub(crate) const CONTEXT_LEAF: LeafForm = 3;
+pub const CONTEXT_LEAF: LeafForm = 3;
 /// Its receiver and not its captures: the call binds the receiver and keeps the caller's environment.
-pub(crate) const THIS_LEAF: LeafForm = 4;
+pub const THIS_LEAF: LeafForm = 4;
 
 /// Whether a leaf of `form` runs with its receiver bound (`THIS_LEAF`, `CONTEXT_LEAF`).
 #[inline(always)]
-pub(crate) const fn binds_this(form: LeafForm) -> bool {
+pub const fn binds_this(form: LeafForm) -> bool {
     form == CONTEXT_LEAF || form == THIS_LEAF
 }
 
@@ -54,12 +54,12 @@ pub(crate) const fn swaps_env(form: LeafForm) -> bool {
 /// the caller's call record (0 while no leaf runs), registers and records, the target the call
 /// resolved, the values it passed (u16) and its form (u8). The record's other words (the
 /// caller's program of a crossing leaf) are the tier's.
-pub(crate) const LEAF_CALL_AT: i32 = 0;
-pub(crate) const LEAF_CALLER_REGISTERS_AT: i32 = 8;
-pub(crate) const LEAF_CALLER_BASE_AT: i32 = 16;
-pub(crate) const LEAF_TARGET_AT: i32 = 24;
-pub(crate) const LEAF_ARGC_AT: i32 = 32;
-pub(crate) const LEAF_FORM_AT: i32 = 34;
+pub const LEAF_CALL_AT: i32 = 0;
+pub const LEAF_CALLER_REGISTERS_AT: i32 = 8;
+pub const LEAF_CALLER_BASE_AT: i32 = 16;
+pub const LEAF_TARGET_AT: i32 = 24;
+pub const LEAF_ARGC_AT: i32 = 32;
+pub const LEAF_FORM_AT: i32 = 34;
 
 /// The byte offset of context word `word` below a window's register 0.
 #[inline(always)]
@@ -67,35 +67,35 @@ const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
 
 /// What a leaf call records in place of its activation (`enter_leaf`).
 #[derive(Clone, Copy)]
-pub(crate) struct LeafEntry<W> {
+pub struct LeafEntry<W> {
     /// The caller's call record.
-    pub(crate) call: W,
-    pub(crate) caller_registers: W,
+    pub call: W,
+    pub caller_registers: W,
     /// The caller's records (the lane context's `base`).
-    pub(crate) caller_base: W,
+    pub caller_base: W,
     /// The resolved target, which stays cached while the leaf runs.
-    pub(crate) target: W,
+    pub target: W,
     /// The values the call passed.
-    pub(crate) argc: W,
+    pub argc: W,
     /// The form the call runs as, a per-site constant.
-    pub(crate) form: LeafForm,
+    pub form: LeafForm,
 }
 
 /// The context words of the callee's window a leaf call may write: its bound receiver and its
 /// environment and captures (the target's).
 #[derive(Clone, Copy)]
-pub(crate) struct LeafContext<W> {
-    pub(crate) this: W,
-    pub(crate) env: W,
-    pub(crate) capture: W,
+pub struct LeafContext<W> {
+    pub this: W,
+    pub env: W,
+    pub capture: W,
 }
 
 /// What a leaf's return reads of its record: the caller's call record, registers and records.
 #[derive(Clone, Copy)]
-pub(crate) struct LeafCaller<W> {
-    pub(crate) call: W,
-    pub(crate) registers: W,
-    pub(crate) base: W,
+pub struct LeafCaller<W> {
+    pub call: W,
+    pub registers: W,
+    pub base: W,
 }
 
 /// Continues where the `this` of a callee for `receiver` is decided by the receiver's own bits
@@ -104,7 +104,7 @@ pub(crate) struct LeafCaller<W> {
 /// family or `null` (`protocol::bind_this`'s guard). Any other receiver (a primitive to box)
 /// leaves at `miss`. Reads and writes no memory.
 #[inline(always)]
-pub(crate) fn guard_receiver_binds<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: bool, miss: S::Miss) -> Option<()> {
+pub fn guard_receiver_binds<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: bool, miss: S::Miss) -> Option<()> {
     if !sloppy {
         return Some(());
     }
@@ -124,7 +124,7 @@ pub(crate) fn guard_receiver_binds<S: Stage>(stage: &mut S, receiver: S::Word, s
 /// Reads nothing. The tier fills the window and moves its own registers and records to the
 /// callee's; the stack's top stays where it is until the leaf materializes.
 #[inline(always)]
-pub(crate) fn enter_leaf<S: Stage>(stage: &mut S, leaf: S::Word, window: S::Word, entry: LeafEntry<S::Word>, context: LeafContext<S::Word>) {
+pub fn enter_leaf<S: Stage>(stage: &mut S, leaf: S::Word, window: S::Word, entry: LeafEntry<S::Word>, context: LeafContext<S::Word>) {
     let frame = Region::Frame.mutable();
     if binds_this(entry.form) {
         stage.store_u64(frame, window, context_at(frame::CONTEXT_THIS), context.this);
@@ -150,7 +150,7 @@ pub(crate) fn enter_leaf<S: Stage>(stage: &mut S, leaf: S::Word, window: S::Word
 /// the call's value to the record's result register and continues past the call record; a
 /// crossing leaf's tier enters the caller's program again.
 #[inline(always)]
-pub(crate) fn complete_leaf<S: Stage>(stage: &mut S, leaf: S::Word, miss: S::Miss) -> Option<LeafCaller<S::Word>> {
+pub fn complete_leaf<S: Stage>(stage: &mut S, leaf: S::Word, miss: S::Miss) -> Option<LeafCaller<S::Word>> {
     let record = Region::Dispatch.mutable();
     let call = stage.load_u64(record, leaf, LEAF_CALL_AT);
     let running = stage.ne_imm(call, 0u64);
@@ -170,7 +170,7 @@ pub(crate) fn complete_leaf<S: Stage>(stage: &mut S, leaf: S::Word, miss: S::Mis
 /// Reads nothing. The tier pushes the activation itself (`protocol::push_plain` for a plain
 /// completion).
 #[inline(always)]
-pub(crate) fn materialize_leaf_context<S: Stage>(stage: &mut S, window: S::Word, form: LeafForm, this: Option<S::Word>, env: S::Word, capture: S::Word) {
+pub fn materialize_leaf_context<S: Stage>(stage: &mut S, window: S::Word, form: LeafForm, this: Option<S::Word>, env: S::Word, capture: S::Word) {
     debug_assert_eq!(this.is_some(), !binds_this(form), "a form binding no receiver binds it at materialization");
     let frame = Region::Frame.mutable();
     if let Some(this) = this {

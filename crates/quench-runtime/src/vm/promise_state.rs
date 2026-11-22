@@ -3,7 +3,7 @@ use super::*;
 
 impl Vm {
     /// The state of `promise`, or `None` when the value is not a promise.
-    pub(super) fn promise_record(&self, promise: Value) -> Option<&super::promise::PromiseRecord> {
+    pub fn promise_record(&self, promise: Value) -> Option<&super::promise::PromiseRecord> {
         self.heap.promise(promise).map(|promise| &promise.record)
     }
 

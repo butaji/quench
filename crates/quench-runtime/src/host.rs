@@ -564,11 +564,11 @@ pub struct HostContext<'a> {
 }
 
 impl<'a> HostContext<'a> {
-    pub(crate) fn new(host: &'a mut dyn Host) -> Self {
+    pub fn new(host: &'a mut dyn Host) -> Self {
         Self { host }
     }
 
-    pub(crate) fn invoke(&mut self, capability: CapabilityId, text: Option<&str>) -> f64 {
+    pub fn invoke(&mut self, capability: CapabilityId, text: Option<&str>) -> f64 {
         match capability {
             CapabilityId::WriteLine => {
                 self.host.write_line(text.unwrap_or_default());

@@ -39,16 +39,16 @@ pub(super) enum Loaded {
 /// function whose code holds the instruction (the strictness a refusal throws by), and the PC
 /// after its instruction, which the binding rules of a name read for their error site.
 #[derive(Clone, Copy)]
-pub(super) struct CallSite {
-    pub(super) owner: VarOwner,
-    pub(super) function: u32,
-    pub(super) resume: usize,
+pub struct CallSite {
+    pub owner: VarOwner,
+    pub function: u32,
+    pub resume: usize,
 }
 
 impl Vm {
     /// The VM's operation `operation` at `site` of its operand values (`CallOut::operands`): the
     /// value it defines, if any. A for-in step defines `Value::DELETED` once no key is left.
-    pub(super) fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
+    pub fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
         operands: OperandValues<Value>) -> Result<Option<Value>, JsError> {
         let OperandValues { fixed: [first, second], list } = operands;
         let operand = second.unwrap_or(Value::UNDEFINED);
@@ -197,7 +197,7 @@ impl Vm {
     #[cold]
     #[inline(never)]
     pub(super) fn retire_int_speculation(&self) {
-        if super::dispatch_fast::note_int_speculation_retired() {
+        if crate::vm::engine_calls::note_int_speculation_retired() {
             self.programs.retire_int_speculation();
         }
     }
@@ -336,7 +336,7 @@ impl Vm {
     /// The owner a call-out of `operation` made by a lane's helper runs for: the running
     /// activation where the step reads its names or locals (`CallOut::names_activation`), else
     /// the innermost frame.
-    pub(super) fn call_out_owner(&mut self, operation: CallOut) -> VarOwner {
+    pub fn call_out_owner(&mut self, operation: CallOut) -> VarOwner {
         if operation.names_activation() { self.running_owner() } else { VarOwner::Frame(self.frames.len().saturating_sub(1)) }
     }
 

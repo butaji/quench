@@ -16,14 +16,14 @@ use crate::Value;
 /// (`RETURN_REGISTER` set): the completion of the callee then completes this call in turn.
 /// Reads `call` only; writes nothing.
 #[inline(always)]
-pub(crate) fn returns_callee_completion<S: Stage>(stage: &mut S, call: S::Word) -> S::Cond {
+pub fn returns_callee_completion<S: Stage>(stage: &mut S, call: S::Word) -> S::Cond {
     let bit = stage.and_imm(call, u64::from(RETURN_REGISTER));
     stage.ne_imm(bit, 0u64)
 }
 
 /// `returns_callee_completion` on machine words, for the interpreter's call records.
 #[inline(always)]
-pub(crate) fn concrete_returns_callee_completion(result: Register) -> bool {
+pub fn concrete_returns_callee_completion(result: Register) -> bool {
     returns_callee_completion(&mut super::Concrete::new(std::ptr::null()), u64::from(result))
 }
 
@@ -36,7 +36,7 @@ pub(crate) fn write_call_result<S: Stage>(stage: &mut S, registers: S::Word, res
 
 /// `write_call_result` on machine words: `registers` is the caller's window address.
 #[inline(always)]
-pub(crate) fn concrete_write_call_result(registers: u64, result: Register, value: Value) {
+pub fn concrete_write_call_result(registers: u64, result: Register, value: Value) {
     write_call_result(&mut super::Concrete::new(std::ptr::null()), registers, result, value.to_bits());
 }
 
@@ -49,7 +49,7 @@ pub(crate) fn call_result<S: Stage>(stage: &mut S, registers: S::Word, result: R
 
 /// `call_result` on machine words.
 #[inline(always)]
-pub(crate) fn concrete_call_result(registers: u64, result: Register) -> Value {
+pub fn concrete_call_result(registers: u64, result: Register) -> Value {
     Value::from_bits(call_result(&mut super::Concrete::new(std::ptr::null()), registers, result))
 }
 
@@ -63,7 +63,7 @@ pub(crate) fn returning_this<S: Stage>(stage: &mut S, window: S::Word) -> S::Wor
 
 /// `returning_this` on a machine word.
 #[inline(always)]
-pub(crate) fn concrete_returning_this(window: u64) -> Value {
+pub fn concrete_returning_this(window: u64) -> Value {
     Value::from_bits(returning_this(&mut super::Concrete::new(std::ptr::null()), window))
 }
 
@@ -84,7 +84,7 @@ pub(crate) fn plain_return_admits<S: Stage>(stage: &mut S, packed: S::Word, dest
 /// `plain_return_admits` of the frame at `window` returning into a call record whose result
 /// word is `destination`, its packed word loaded.
 #[inline(always)]
-pub(crate) fn concrete_plain_return_admits(window: u64, destination: Register, into_body: bool) -> bool {
+pub fn concrete_plain_return_admits(window: u64, destination: Register, into_body: bool) -> bool {
     let stage = &mut super::Concrete::new(std::ptr::null());
     let packed = frame_packed(stage, window);
     plain_return_admits(stage, packed, u64::from(destination), into_body)
@@ -100,7 +100,7 @@ pub(crate) fn settles_in_lane<S: Stage>(stage: &mut S, observes_lifecycle: S::Co
 
 /// `settles_in_lane` on a machine fact.
 #[inline(always)]
-pub(crate) fn concrete_settles_in_lane(observes_lifecycle: bool) -> bool {
+pub fn concrete_settles_in_lane(observes_lifecycle: bool) -> bool {
     settles_in_lane(&mut super::Concrete::new(std::ptr::null()), observes_lifecycle)
 }
 
@@ -115,7 +115,7 @@ pub(crate) fn settles_without_promise<S: Stage>(stage: &mut S, rooted: S::Cond, 
 
 /// `settles_without_promise` on machine facts.
 #[inline(always)]
-pub(crate) fn concrete_settles_without_promise(rooted: bool, object: bool) -> bool {
+pub fn concrete_settles_without_promise(rooted: bool, object: bool) -> bool {
     settles_without_promise(&mut super::Concrete::new(std::ptr::null()), rooted, object)
 }
 
@@ -130,14 +130,14 @@ pub(crate) fn admits_returning_call<S: Stage>(stage: &mut S, proper_tail_calls: 
 
 /// `admits_returning_call` on machine words.
 #[inline(always)]
-pub(crate) fn concrete_admits_returning_call(proper_tail_calls: bool, strict: bool) -> bool {
+pub fn concrete_admits_returning_call(proper_tail_calls: bool, strict: bool) -> bool {
     admits_returning_call(&mut super::Concrete::new(std::ptr::null()), proper_tail_calls, strict)
 }
 
 /// The packed word of the frame whose window is `window` (`frame::CONTEXT_PACKED`, call protocol
 /// v2 stage C): function, flags and argc. Reads one word of the frame region.
 #[inline(always)]
-pub(crate) fn frame_packed<S: Stage>(stage: &mut S, window: S::Word) -> S::Word {
+pub fn frame_packed<S: Stage>(stage: &mut S, window: S::Word) -> S::Word {
     stage.load_u64(Region::Frame.readonly(), window, -((frame::CONTEXT_PACKED * 8) as i32))
 }
 
@@ -145,7 +145,7 @@ pub(crate) fn frame_packed<S: Stage>(stage: &mut S, window: S::Word) -> S::Word 
 /// flag (`frame::SIDE_FLAGS`), so its return is the plain pop (`protocol::pop_plain`) and nothing
 /// more (one-frame-one-call.md F4). Any flag selects the side record's completion.
 #[inline(always)]
-pub(crate) fn completes_plainly<S: Stage>(stage: &mut S, packed: S::Word) -> S::Cond {
+pub fn completes_plainly<S: Stage>(stage: &mut S, packed: S::Word) -> S::Cond {
     let sided = stage.and_imm(packed, frame::SIDE_FLAGS);
     stage.eq_imm(sided, 0u64)
 }
@@ -185,7 +185,7 @@ pub(crate) fn side_flags<S: Stage>(stage: &mut S, keeps: S::Cond, env: S::Cond, 
 
 /// `side_flags` on machine facts.
 #[inline(always)]
-pub(crate) fn concrete_side_flags(keeps: bool, env: bool, crosses: bool, completes: bool, owns: bool) -> u64 {
+pub fn concrete_side_flags(keeps: bool, env: bool, crosses: bool, completes: bool, owns: bool) -> u64 {
     side_flags(&mut super::Concrete::new(std::ptr::null()), keeps, env, crosses, completes, owns)
 }
 
@@ -203,7 +203,7 @@ pub(crate) fn write_side_flags<S: Stage>(stage: &mut S, window: S::Word, flags: 
 
 /// `write_side_flags` on machine words.
 #[inline(always)]
-pub(crate) fn concrete_write_side_flags(window: u64, flags: u64) {
+pub fn concrete_write_side_flags(window: u64, flags: u64) {
     write_side_flags(&mut super::Concrete::new(std::ptr::null()), window, flags);
 }
 
@@ -211,9 +211,9 @@ pub(crate) fn concrete_write_side_flags(window: u64, flags: u64) {
 /// popped frame's packed word: the caller's program entered again (`crosses`); keeping and
 /// environment frames need nothing past the window's release.
 #[derive(Clone, Copy)]
-pub(crate) struct SideCompletion<C> {
-    pub(crate) sided: C,
-    pub(crate) crosses: C,
+pub struct SideCompletion<C> {
+    pub sided: C,
+    pub crosses: C,
 }
 
 /// The side completion row: which side steps the frame of packed word `packed` runs once its
@@ -229,7 +229,7 @@ pub(crate) fn side_completion<S: Stage>(stage: &mut S, packed: S::Word) -> SideC
 
 /// `side_completion` on a machine word.
 #[inline(always)]
-pub(crate) fn concrete_side_completion(packed: u64) -> SideCompletion<bool> {
+pub fn concrete_side_completion(packed: u64) -> SideCompletion<bool> {
     side_completion(&mut super::Concrete::new(std::ptr::null()), packed)
 }
 

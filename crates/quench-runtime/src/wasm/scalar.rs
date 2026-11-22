@@ -2,7 +2,7 @@
 
 use crate::bytecode::Constant;
 
-pub(crate) use crate::staged::wasm::V128_BYTES;
+pub use crate::staged::wasm::V128_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WasmType {
@@ -271,7 +271,7 @@ impl WasmValue {
     /// The scalar of type `ty` with bits `bits`, as `bits` reads it back
     /// (the low word for 32-bit types).
     #[inline(always)]
-    pub(crate) fn from_bits(ty: WasmType, bits: u64) -> Self {
+    pub fn from_bits(ty: WasmType, bits: u64) -> Self {
         match ty {
             WasmType::I32 => Self::I32(bits as u32 as i32),
             WasmType::F32 => Self::F32(bits as u32),
@@ -282,7 +282,7 @@ impl WasmValue {
     }
 
     #[inline(always)]
-    pub(crate) fn bits(self) -> Option<ScalarBits> {
+    pub fn bits(self) -> Option<ScalarBits> {
         Some(match self {
             Self::I32(value) => ScalarBits::Bits32(value as u32),
             Self::F32(bits) => ScalarBits::Bits32(bits),
@@ -374,7 +374,7 @@ pub struct WasmFunctionBody<I> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ScalarBits {
+pub enum ScalarBits {
     Bits32(u32),
     Bits64(u64),
     Bits128([u8; V128_BYTES]),
@@ -396,19 +396,19 @@ impl WasmType {
 }
 
 #[derive(Clone)]
-pub(crate) struct CallableImport {
-    pub(crate) name: super::WasmImportName,
+pub struct CallableImport {
+    pub name: super::WasmImportName,
     pub(crate) exact: bool,
 }
 
 mod canonical;
 mod interning;
-pub(crate) use canonical::CanonicalSignature;
+pub use canonical::CanonicalSignature;
 
 /// One signature pool; function indices project into its type-index domain.
 #[derive(Clone)]
-pub(crate) struct WasmSignatures {
-    pub(crate) declarations: super::WasmTypes,
+pub struct WasmSignatures {
+    pub declarations: super::WasmTypes,
     types: Vec<CallableSignature>,
     /// The type indices of `types`, by their declarations' fingerprints.
     by_fingerprint: rustc_hash::FxHashMap<Option<u64>, Vec<u32>>,
@@ -519,16 +519,16 @@ impl WasmSignatures {
         })
     }
 
-    pub(crate) fn imports(&self) -> &[CallableImport] {
+    pub fn imports(&self) -> &[CallableImport] {
         &self.imports
     }
 
-    pub(crate) fn defined_index(&self, function: u32) -> Option<u32> {
+    pub fn defined_index(&self, function: u32) -> Option<u32> {
         self.get(function as usize)?;
         function.checked_sub(self.imports.len() as u32)
     }
 
-    pub(crate) fn defined_signature(&self, function: u32) -> Option<&WasmSignature> {
+    pub fn defined_signature(&self, function: u32) -> Option<&WasmSignature> {
         self.get(function as usize + self.imports.len())
     }
 
@@ -540,11 +540,11 @@ impl WasmSignatures {
         self.functions.len()
     }
 
-    pub(crate) fn get(&self, function: usize) -> Option<&WasmSignature> {
+    pub fn get(&self, function: usize) -> Option<&WasmSignature> {
         self.type_signature(*self.functions.get(function)?)
     }
 
-    pub(crate) fn type_signature(&self, index: u32) -> Option<&WasmSignature> {
+    pub fn type_signature(&self, index: u32) -> Option<&WasmSignature> {
         Some(&self.types.get(index as usize)?.shape)
     }
 

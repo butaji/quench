@@ -21,15 +21,15 @@ fn emit(
 ) -> Result<(String, String, String), String> {
     program.freeze_native_diagnostics();
     let label = format!("test262_linked_{index}");
-    let module = quench_runtime::lower_native_js_module(program, &label)?;
+    let module = quench_layers::engine::lower_native_js_module(program, &label)?;
     let symbol = module.entry_table_symbol().to_owned();
     for f in &module.functions {
-        if let quench_runtime::NativeFunction::Import { name, .. } = f {
+        if let quench_layers::engine::NativeFunction::Import { name, .. } = f {
             exports.insert(name.clone());
         }
     }
     let object = root.join(format!("unit_{index}.o"));
-    fs::write(&object, quench_runtime::emit_native_module(&label, module.functions, module.data)?)
+    fs::write(&object, quench_layers::engine::emit_native_module(&label, module.functions, module.data)?)
         .map_err(|e| e.to_string())?;
     objects.push(object);
     let metadata = root.join(format!("unit_{index}.bin"));

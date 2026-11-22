@@ -10,7 +10,7 @@ use crate::typed_ir::{IntRange, Type};
 /// The variants are ordered narrowest to widest (`Int32`, `Int64`, `Float64`, `Tagged`), so the
 /// greatest of several representations is the widest one that holds all of them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) enum Representation {
+pub enum Representation {
     /// A `Value` whose tag the owner proved int32; the bits are the tagged word's.
     Int32,
     /// An integer Number of `IntRange::EXACT` in a signed 64-bit word: the Number's own value,
@@ -32,7 +32,7 @@ impl Representation {
             || (self == Self::Int64 && source == Self::Int32)
             || (self == Self::Float64 && matches!(source, Self::Int32 | Self::Int64))
     }
-    pub(crate) fn accepts(self, ty: Type) -> bool {
+    pub fn accepts(self, ty: Type) -> bool {
         ty != Type::NEVER
             && match self {
                 Self::Int32 => ty.is_subtype(Type::INT32),

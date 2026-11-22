@@ -21,7 +21,7 @@ impl Vm {
     /// `Number.prototype.toFixed(digits)` of a Number receiver (a double or an int32) with
     /// `digits` absent or an int32 in 0..=20. Finite magnitudes below 1e21 are written by
     /// `with_fixed_text`; NaN, the infinities, larger magnitudes and any other case answer `None`.
-    pub(in crate::vm) fn plain_number_to_fixed(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_number_to_fixed(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let number = receiver.as_number()?;
         if !number.is_finite() || number.abs() >= FIXED_EXPONENTIAL_FROM {
             return None;
@@ -34,7 +34,7 @@ impl Vm {
     /// Number's shortest decimal text (`number_to_string::write`), as the general path does. A
     /// finite Number with a radix in 2..=36 writes its digits in that radix (`radix_text`); NaN,
     /// the infinities and any other case answer `None`.
-    pub(in crate::vm) fn plain_number_to_string(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_number_to_string(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let radix = match args.first().copied() {
             None => DECIMAL_RADIX,
             Some(value) if value.is_undefined() => DECIMAL_RADIX,
@@ -55,7 +55,7 @@ impl Vm {
     /// `Object.getPrototypeOf(object)` of an ordinary object (`Heap::ordinary_object`), whose
     /// prototype is the record's own link. Proxies, primitives and every other argument answer
     /// `None`, which the general native handles (the receiver is ignored, as the call ignores it).
-    pub(in crate::vm) fn plain_object_get_prototype_of(&mut self, args: &[Value]) -> Option<Value> {
+    pub fn plain_object_get_prototype_of(&mut self, args: &[Value]) -> Option<Value> {
         let target = args.first().copied()?;
         if self.proxy_parts(target).is_some() {
             return None;

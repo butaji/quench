@@ -10,7 +10,7 @@ use crate::bytecode::{Class, WideInstruction};
 /// A family of staged operations. One record can mean more than one (a compare-jump is also a
 /// conditional jump), so a tier asks `means(instruction, meaning)` for each it cares about.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Meaning {
+pub enum Meaning {
     /// `Operation::LoadConst`, whatever the constant.
     LoadConst,
     /// A call through its forms (`Operation::Call`), not a construction.
@@ -56,7 +56,7 @@ pub(crate) enum Meaning {
 }
 
 /// Whether `instruction` denotes an operation of `meaning`.
-pub(crate) fn means(instruction: impl std::borrow::Borrow<WideInstruction>, meaning: Meaning) -> bool {
+pub fn means(instruction: impl std::borrow::Borrow<WideInstruction>, meaning: Meaning) -> bool {
     let op = instruction.borrow().op();
     match meaning {
         Meaning::LoadConst => op.is_load_const(),

@@ -105,7 +105,7 @@ impl super::Heap {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CollectionEntries<T> {
+pub struct CollectionEntries<T> {
     /// The slots and, per slot, its key's folded hash (`folded_hash`); a hole keeps its key's.
     table: table::Table<T>,
     live: u32,
@@ -251,7 +251,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     }
 
     /// The live entries in insertion order.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = T> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
         self.table.slots()[self.head as usize..]
             .iter()
             .copied()

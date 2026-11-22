@@ -4,14 +4,15 @@
 use super::{Concrete, Stage};
 use super::region::Region;
 #[cfg(not(stencil_build))]
-pub(crate) use super::double_view::{double_view, reloaded_double_view};
+#[allow(unused_imports)]
+pub use super::double_view::{double_view, reloaded_double_view};
 
 /// Element `index` of the dense backing of `length` values at `values`, with its address:
 /// `None` (leaving at `miss`) past the backing or at a hole (`Value::DELETED`), which the
 /// caller resolves the long way. `index` and `length` share one width; the address widens
 /// the index first, as an in-bounds int32 index's byte offset can pass `u32::MAX`.
 #[inline(always)]
-pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
+pub fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
     miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let in_bounds = stage.ult(index, length);
     stage.guard(in_bounds, miss)?;
@@ -21,7 +22,7 @@ pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S:
 /// `dense_element` where the hole's bits are a value like another, which the caller's proof
 /// rejects (`DenseView::packed`): only the backing's end leaves at `miss`.
 #[inline(always)]
-pub(crate) fn packed_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
+pub fn packed_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
     miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let in_bounds = stage.ult(index, length);
     stage.guard(in_bounds, miss)?;
@@ -31,7 +32,7 @@ pub(crate) fn packed_element<S: Stage>(stage: &mut S, values: S::Word, length: S
 /// `dense_element` of an `index` the caller proved below the backing's length (a range
 /// proof, `lane_region::int_ranges`): only a hole leaves at `miss`.
 #[inline(always)]
-pub(crate) fn present_element<S: Stage>(stage: &mut S, values: S::Word, index: S::Word,
+pub fn present_element<S: Stage>(stage: &mut S, values: S::Word, index: S::Word,
     miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let (address, value) = loaded_element(stage, values, index);
     let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
@@ -43,7 +44,7 @@ pub(crate) fn present_element<S: Stage>(stage: &mut S, values: S::Word, index: S
 /// below its length is an int32 and none is a hole, so each element's word is an int32's and needs
 /// no tag test (`int_element`). Leaves at `miss` otherwise, as a count of others does.
 #[inline(always)]
-pub(crate) fn int_only_backing<S: Stage>(stage: &mut S, values: S::Word, miss: S::Miss) -> Option<()> {
+pub fn int_only_backing<S: Stage>(stage: &mut S, values: S::Word, miss: S::Miss) -> Option<()> {
     let others = stage.load_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES);
     let none = stage.eq_imm(others, 0u32);
     stage.guard(none, miss)
@@ -53,7 +54,7 @@ pub(crate) fn int_only_backing<S: Stage>(stage: &mut S, values: S::Word, miss: S
 /// its word: no hole test, since none is present. An `index` the caller did not prove below `length`
 /// (`within` false) leaves at `miss` past it.
 #[inline(always)]
-pub(crate) fn int_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
+pub fn int_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
     within: bool, miss: S::Miss) -> Option<S::Word> {
     bounded(stage, within, length, index, miss)?;
     Some(loaded_element(stage, values, index).1)
@@ -93,26 +94,26 @@ fn bounded<S: Stage>(stage: &mut S, within: bool, length: S::Word, index: S::Wor
 /// A dense array's backing as an access reads it, once proved: its first value and its length,
 /// in one width.
 #[derive(Clone, Copy)]
-pub(crate) struct DenseView<W> {
-    pub(crate) values: W,
-    pub(crate) length: W,
+pub struct DenseView<W> {
+    pub values: W,
+    pub length: W,
     /// Whether a read needs no hole test of its own: the access consumes the element through a
     /// proof that rejects a hole's bits (a Number read, whose proof sees a NaN pattern and
     /// leaves). A fact of the proof, known before any run, so the read compiles without the test.
-    pub(crate) packed: bool,
+    pub packed: bool,
     /// Whether the access's index is proved below `length` (a range proof,
     /// `lane_region::int_ranges`), so only the hole test remains.
-    pub(crate) within: bool,
+    pub within: bool,
     /// The backing's double flag (`heap::DOUBLE_LEN` of its length word), nonzero for a double
     /// backing, where the view's proof admitted one (`prove_view`): each access then takes the
     /// backing's form. `None` where the proof admitted a wide backing alone (a loop's hoisted
     /// view, a loop entry's).
-    pub(crate) double: Option<W>,
+    pub double: Option<W>,
     /// Whether the backing counts no others for this view (`OTHERS_UNKNOWN`, as a loop's hoisted
     /// writable view holds it: `emit_dense_array_uncounted`), so a store through it writes the
     /// element alone (`replace_uncounted_element`). A view proved by a store's own check keeps the
     /// count, `false`.
-    pub(crate) uncounted: bool,
+    pub uncounted: bool,
 }
 
 /// The view of the direct array `base` among the array records at `records`, writable where
@@ -215,18 +216,18 @@ fn replace_double<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::W
 /// A dense array's backing as an access reaches it from the array value: the record, the
 /// backing's header, its first value and its length.
 #[derive(Clone, Copy)]
-pub(crate) struct Backing<W> {
+pub struct Backing<W> {
     pub(crate) record: W,
     pub(crate) header: W,
-    pub(crate) values: W,
-    pub(crate) length: W,
+    pub values: W,
+    pub length: W,
 }
 
 /// The backing of the direct array `base` among the array records at `record_base`: `None`
 /// (leaving at `miss`) for any other value, or before the first array record exists
 /// (`record_base` zero), or for a narrow or double backing (`ENCODED_LEN`).
 #[inline(always)]
-pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
+pub fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
     let backing = flagged_backing(stage, record_base, base, miss)?;
     // A narrow or double backing (`ArrayElements::is_encoded`) flags one of its length's top
     // two bits: it misses.
@@ -288,7 +289,7 @@ fn flagged_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word,
 /// `record_base`, which it proved present: the record's address is its index, `base`'s low half,
 /// times the record size past `record_base`.
 #[inline(always)]
-pub(crate) fn array_record<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word) -> S::Word {
+pub fn array_record<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word) -> S::Word {
     let index = stage.and_imm(base, u64::from(u32::MAX));
     let offset = stage.mul_imm(index, crate::heap::NATIVE_ARRAY_LAYOUT.record_size as u64);
     stage.add(record_base, offset)
@@ -297,7 +298,7 @@ pub(crate) fn array_record<S: Stage>(stage: &mut S, record_base: S::Word, base: 
 /// The backing of the array record `record`: its header is one load (`array_header`), its
 /// length word another, a narrow or double backing's flags (`ENCODED_LEN`) left in.
 #[inline(always)]
-pub(crate) fn record_backing<S: Stage>(stage: &mut S, record: S::Word) -> Backing<S::Word> {
+pub fn record_backing<S: Stage>(stage: &mut S, record: S::Word) -> Backing<S::Word> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let header = array_header(stage, record);
     let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
@@ -353,7 +354,7 @@ fn writable_array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S
 /// elements or a prototype watch), as `Vm::try_replace_record_element` requires. `None`
 /// leaves at `miss`.
 #[inline(always)]
-pub(crate) fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
+pub fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     unbarred_backing(stage, backing, ARRAY.frozen_mask, miss)
 }
@@ -389,7 +390,7 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
 /// as its length. `None` (leaving at `miss`) for any other value, an array with extras, or a
 /// length past int32.
 #[inline(always)]
-pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let is_array = super::value::is_direct_array(stage, base);
     stage.guard(is_array, miss)?;
@@ -414,7 +415,7 @@ pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: 
 /// the write, and a count native code made unknown (`OTHERS_UNKNOWN`) stays unknown. The
 /// count subtracts first, so an exact count never overflows on the way.
 #[inline(always)]
-pub(crate) fn replace_element<S: Stage>(stage: &mut S, values: S::Word, address: S::Word, old: S::Word, value: S::Word) {
+pub fn replace_element<S: Stage>(stage: &mut S, values: S::Word, address: S::Word, old: S::Word, value: S::Word) {
     let others = stage.load_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES);
     let (added, removed) = (other(stage, value), other(stage, old));
     let others = recount(stage, others, added, removed);
@@ -425,7 +426,7 @@ pub(crate) fn replace_element<S: Stage>(stage: &mut S, values: S::Word, address:
 /// Marks the backing at `values` as counting no others (`OTHERS_UNKNOWN`), so stores through a
 /// view of it need not keep the count (`replace_uncounted_element`).
 #[inline(always)]
-pub(crate) fn uncount_backing<S: Stage>(stage: &mut S, values: S::Word) {
+pub fn uncount_backing<S: Stage>(stage: &mut S, values: S::Word) {
     let unknown = stage.constant(u64::from(crate::heap::OTHERS_UNKNOWN));
     stage.store_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES, unknown);
 }
@@ -433,7 +434,7 @@ pub(crate) fn uncount_backing<S: Stage>(stage: &mut S, values: S::Word) {
 /// `replace_element` on a backing whose count is `OTHERS_UNKNOWN`: the count stays unknown
 /// (`recount`), so the write is the element's alone.
 #[inline(always)]
-pub(crate) fn replace_uncounted_element<S: Stage>(stage: &mut S, address: S::Word, value: S::Word) {
+pub fn replace_uncounted_element<S: Stage>(stage: &mut S, address: S::Word, value: S::Word) {
     stage.store_u64(Region::Elements.mutable(), address, 0, value);
 }
 
@@ -443,7 +444,7 @@ pub(crate) fn replace_uncounted_element<S: Stage>(stage: &mut S, address: S::Wor
 /// others as `replace_element` counts one, and the backing's length advances; the new
 /// length is the answer. `index`, `length` and `capacity` share one width.
 #[inline(always)]
-pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, capacity: S::Word,
+pub fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, capacity: S::Word,
     index: S::Word, value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let past = stage.sub(index, length);
     let at_end = stage.eq_imm(past, 0u32);
@@ -524,7 +525,7 @@ pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: 
 /// # Safety
 /// As `concrete_replace_element`, for every index.
 #[inline(always)]
-pub(crate) unsafe fn concrete_replace_elements(backing: *mut crate::Value, first: isize, step: isize, values: impl Iterator<Item = crate::Value>) {
+pub unsafe fn concrete_replace_elements(backing: *mut crate::Value, first: isize, step: isize, values: impl Iterator<Item = crate::Value>) {
     let mut stage = Concrete::new(std::ptr::null());
     let others = stage.load_u32(Region::Elements.mutable(), backing as u64, crate::heap::OTHERS_FROM_VALUES);
     let counted = others != u64::from(crate::heap::OTHERS_UNKNOWN);
@@ -550,7 +551,7 @@ pub(crate) unsafe fn concrete_replace_elements(backing: *mut crate::Value, first
 /// # Safety
 /// As `concrete_replace_element`, for every index.
 #[inline(always)]
-pub(crate) unsafe fn concrete_replace_run(backing: *mut crate::Value, first: usize, values: &[u64]) {
+pub unsafe fn concrete_replace_run(backing: *mut crate::Value, first: usize, values: &[u64]) {
     let mut stage = Concrete::new(std::ptr::null());
     // SAFETY: the caller's contract.
     let elements = unsafe { std::slice::from_raw_parts_mut(backing.add(first).cast::<u64>(), values.len()) };

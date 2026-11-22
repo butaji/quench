@@ -113,7 +113,7 @@ mod platform {
     extern "C" fn receive(signal: libc::c_int, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
         // Owned native poll/guard faults resume before ordinary Node delivery.
         // SAFETY: these are the original kernel-supplied SA_SIGINFO arguments.
-        if unsafe { quench_runtime::NativeFaultHandler::resume(signal, info, context) } { return; }
+        if unsafe { <quench_runtime::NativeFaultHandler as quench_layers::engine::NativeFaultHandlerOps1>::resume(signal, info, context) } { return; }
         ACTIVE_HANDLERS.fetch_add(1, Ordering::AcqRel);
         // No allocation, lock, VM access, or guest callback occurs in this handler.
         unsafe {
@@ -208,7 +208,7 @@ mod platform {
             let sequence = next_sequence()?;
             // Keep restoration order sound: our saved predecessor owns native
             // faults even when a listener is registered before the first tier-up.
-            quench_runtime::NativeFaultHandler::prepare(signal);
+            <quench_runtime::NativeFaultHandler as quench_layers::engine::NativeFaultHandlerOps1>::prepare(signal);
             if let std::collections::hash_map::Entry::Vacant(e) = self.previous.entry(signal) {
                 let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
                 let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };

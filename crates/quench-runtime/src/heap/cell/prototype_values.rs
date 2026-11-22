@@ -38,7 +38,7 @@ thread_local! {
 /// layout, or at an event every prototype shares (`advance_prototype_layout_epoch`); `false`
 /// where the reader table is full. The chain the value was read through is a dependency of its
 /// own (`Heap::subscribe_prototype_chain`).
-pub(crate) fn subscribe_prototype_values(holder: u32, code: &Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+pub fn subscribe_prototype_values(holder: u32, code: &Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
     PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().subscribe(holder, code))
 }
 
@@ -48,14 +48,14 @@ const ANY_PROTOTYPE: u32 = 0;
 /// Makes `code` retire when any prototype changes its layout: the fallback for a fact read
 /// through a chain with a link no dependency table watches, so no subject names it
 /// (`Heap::subscribe_prototype_chain`). `false` where the reader table is full.
-pub(crate) fn subscribe_prototype_layouts(code: &Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+pub fn subscribe_prototype_layouts(code: &Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
     PROTOTYPE_LAYOUT_READERS.with(|readers| readers.borrow_mut().subscribe(ANY_PROTOTYPE, code))
 }
 
 /// Makes `dependency` retire when a prototype of exact shape `holder` changes a value or its
 /// own layout, and at an event every prototype shares (`advance_prototype_layout_epoch`);
 /// `false` where the reader table is full. A layout change of another prototype leaves it.
-pub(crate) fn hold_prototype_values(holder: u32, dependency: &Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+pub fn hold_prototype_values(holder: u32, dependency: &Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
     PROTOTYPE_VALUE_WATCH_READERS.with(|readers| readers.borrow_mut().subscribe(holder, dependency))
 }
 
@@ -64,7 +64,7 @@ pub(crate) fn hold_prototype_values(holder: u32, dependency: &Rc<dyn crate::code
 /// (`hold_prototype_values`). A cache that read the value through other prototypes holds
 /// their chain's cell too. Every cache on the holder shares it, so it subscribes once per
 /// change; `None` where the reader table is full.
-pub(crate) fn watch_prototype_values(holder: u32) -> Option<PrototypeValueWatch> {
+pub fn watch_prototype_values(holder: u32) -> Option<PrototypeValueWatch> {
     PROTOTYPE_VALUE_WATCHES.with(|watches| {
         let mut watches = watches.borrow_mut();
         let index = holder as usize;
@@ -80,7 +80,7 @@ pub(crate) fn watch_prototype_values(holder: u32) -> Option<PrototypeValueWatch>
 }
 
 /// What `watch_prototype_values` gives: `is_published` while the values it watches hold.
-pub(crate) type PrototypeValueWatch = Rc<crate::code_dependencies::PublishedCode<()>>;
+pub type PrototypeValueWatch = Rc<crate::code_dependencies::PublishedCode<()>>;
 
 /// A write to a value of a prototype of exact shape `holder`: its readers retire, and where it
 /// had any, the intrinsic epoch advances (`note_intrinsic_change`), so a memo checked by epoch

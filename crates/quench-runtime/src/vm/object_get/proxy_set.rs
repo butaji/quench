@@ -36,7 +36,7 @@ impl Vm {
     /// `target` stands (ECMA-262 10.5.9 steps 9 to 14): a falsish result is the store's
     /// `TypeError` only where `strict`; a truthy one must not contradict a non-configurable
     /// own property of the target. Run after the trap, which may have changed the target.
-    pub(in crate::vm) fn validate_proxy_store(
+    pub fn validate_proxy_store(
         &mut self,
         p: &ResidualProgram,
         target: Value,

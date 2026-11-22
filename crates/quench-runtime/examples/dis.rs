@@ -4,3 +4,6 @@ fn main() {
     let program = quench_runtime::Engine::specialize(&source, "dis.js").unwrap_or_else(|_| panic!("compile"));
     println!("{}", program.disassemble());
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;

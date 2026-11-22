@@ -392,7 +392,7 @@ impl Vm {
         Ok(main)
     }
 
-    pub(super) fn restore_snapshot_state(
+    pub fn restore_snapshot_state(
         &mut self,
         bytes: crate::KeptBytes,
         native: Option<&ResidualProgram>,
@@ -506,7 +506,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn install_restored_main(&mut self, main: Rc<ResidualProgram>) {
+    pub fn install_restored_main(&mut self, main: Rc<ResidualProgram>) {
         self.programs.install_main(main.clone());
         self.rebuild_program_cache_layouts();
         self.keep_slot_representations();

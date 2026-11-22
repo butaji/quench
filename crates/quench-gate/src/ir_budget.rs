@@ -458,6 +458,7 @@ impl TierFault {
 }
 
 /// One op's fault, from its counts `[no-jit, b-jit, u-jit]` and its budget (C parity: max(C + 1, 1.25x C)) if it has one.
+#[cfg(test)]
 fn tier_fault([interpreter, baseline, optimized]: [f64; 3], budget: Option<f64>) -> TierFault {
     tier_fault_against([interpreter, baseline, optimized], budget, None)
 }
