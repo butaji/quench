@@ -171,13 +171,42 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
         if !code[..at].ends_with(ident_char) { add("fn:lane_*".to_owned()); }
     }
     // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
-    // no staged row. The stencils name rows by code numbers, not opcodes, so the terms above
-    // cannot see them.
+    // no staged row: it neither names `staged::` nor calls a function or module the file imports
+    // from `crate::staged` (`step_of(..)`, `object::instanceof_by_words(..)`). The stencils name rows
+    // by code numbers, not opcodes, so the terms above cannot see them.
     if file.contains("quench-bjit/stencils/") && file.ends_with("_rows.rs") {
+        let staged = staged_imports(code);
         for body in function_bodies(code) {
-            if !body.contains("staged::") { add("fn:stencil_hand".to_owned()); }
+            if !body.contains("staged::") && !calls_any(body, &staged) { add("fn:stencil_hand".to_owned()); }
         }
     }
+}
+
+/// The functions and modules `code` imports from `crate::staged`: the lower-case names of its
+/// `use crate::staged::...` items (types, traits and constants are not runs of a row).
+fn staged_imports(code: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in code.lines().map(str::trim).filter(|line| line.starts_with("use crate::staged")) {
+        let items = line.trim_start_matches("use crate::staged").trim_end_matches(';');
+        let items = items.split('{').next_back().unwrap_or(items).trim_end_matches('}');
+        for item in items.split(',') {
+            // `a::b`, `a::{self, b}` and `a as b` name the last segment or the alias.
+            let item = item.trim().rsplit(" as ").next().unwrap_or("").trim();
+            let name = item.rsplit("::").next().unwrap_or(item).trim();
+            let name = if name == "self" { item.trim_end_matches("::self").rsplit("::").next().unwrap_or("") } else { name };
+            let lower = name.chars().next().is_some_and(|c| c.is_ascii_lowercase());
+            if lower && name != "op_kind" && name.chars().all(ident_char) { names.push(name.to_owned()); }
+        }
+    }
+    names
+}
+
+/// Whether `body` calls one of `names` (`name(` or `name::`, at an identifier boundary).
+fn calls_any(body: &str, names: &[String]) -> bool {
+    names.iter().any(|name| body.match_indices(name.as_str()).any(|(at, _)| {
+        let rest = &body[at + name.len()..];
+        !body[..at].ends_with(ident_char) && !body[..at].ends_with('.') && (rest.starts_with('(') || rest.starts_with("::") || rest.starts_with("::<"))
+    }))
 }
 
 /// The bodies (from the opening brace to its match) of the functions `code` defines.
