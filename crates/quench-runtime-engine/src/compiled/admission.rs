@@ -342,6 +342,38 @@ fn bisected_out() -> bool {
     !within_trace_range(UnitBisect, number)
 }
 
+/// Where a function's lane body comes from (`lane_route`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LaneRoute {
+    /// The program's loaded AOT image serves it (`install_ahead_lane_body`): no warm-up, no runtime tier.
+    Ahead,
+    /// The stencil tier stitches it at once (`--b-jit`).
+    Base,
+    /// It waits for callees that still compile, to call their bodies by their entries.
+    Deferred,
+    /// The lane body tier plans it (`LanePlan` and the gates after it).
+    Lane,
+}
+
+/// The facts `lane_route` reads.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LaneRouteFacts {
+    /// The function's program has a loaded AOT image.
+    pub(crate) ahead_image: bool,
+    /// The process runs the stencil tier only (`jit_mode::base_only`).
+    pub(crate) base_only: bool,
+    /// A start whose direct callees still compile (`body_tier_in_lane::callees_compiling`).
+    pub(crate) callees_compiling: bool,
+}
+
+/// The route of a function's lane body: the specializer decides it, as it decides each unit after.
+pub(crate) fn lane_route(facts: LaneRouteFacts) -> LaneRoute {
+    if facts.ahead_image { LaneRoute::Ahead }
+    else if facts.base_only { LaneRoute::Base }
+    else if facts.callees_compiling { LaneRoute::Deferred }
+    else { LaneRoute::Lane }
+}
+
 /// How a callee would run: inlined into a lane unit under the call's `CalleeBinding`, or called
 /// frameless.
 #[derive(Clone, Copy)]

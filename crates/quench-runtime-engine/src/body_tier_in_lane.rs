@@ -374,11 +374,11 @@ pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) ->
 }
 
 
-/// What a first compile of `view` comes to before any planning. A function whose callees still compile waits for their bodies, which it then calls by their entries
-/// (`compiled::DirectCallee`); one whose callees only lack a body does not.
-pub(crate) fn start_gate(vm: &super::Vm, view: &LaneView, body: Option<&quench_runtime::bytecode::Function>) -> Option<crate::compiled::LaneBodyOutcome> {
-    use crate::compiled::LaneBodyOutcome;
-    let body = body?;
+/// Whether a first compile of `view` waits, before any planning, for callees that still compile: it
+/// then calls their bodies by their entries (`compiled::DirectCallee`). A callee that only lacks a
+/// body is asked to warm toward one and is not waited for. The fact `admission::lane_route` reads.
+pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, body: Option<&quench_runtime::bytecode::Function>) -> bool {
+    let Some(body) = body else { return false };
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
         body.widened(*packed).op().is_call()
             && site_target(vm, view, pc).is_some_and(|target| {
@@ -390,7 +390,7 @@ pub(crate) fn start_gate(vm: &super::Vm, view: &LaneView, body: Option<&quench_r
     // (`LaneView::demand_body`); until it publishes, the call takes the helper path, which runs
     // natively too, so nothing waits for it.
     calls(LaneView::demand_body);
-    calls(LaneView::compiling).then_some(LaneBodyOutcome::Deferred)
+    calls(LaneView::compiling)
 }
 
 /// Whether a compiling `body` lets this entry pass without looking for its code, counting it
