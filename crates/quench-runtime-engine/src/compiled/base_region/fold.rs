@@ -90,9 +90,9 @@ fn between(region: &LoopRegion, lands: &Bits, k: usize, plans: &impl Fn(WideInst
         if CallForm::of(next.split_return().0) == Some(CallForm::Plain) {
             return plans(next).then(|| Between { call: j, ..between });
         }
-        match next.op().class() {
-            Class::Move if next.result_flags() == 0 => between.reads.push(next.register_b()),
-            Class::LoadConst if next.result_flags() == 0 => {}
+        match () {
+            _ if quench_runtime::staged::meaning::means(next, quench_runtime::staged::meaning::Meaning::Move) && next.result_flags() == 0 => between.reads.push(next.register_b()),
+            _ if quench_runtime::staged::meaning::means(next, quench_runtime::staged::meaning::Meaning::LoadConst) && next.result_flags() == 0 => {}
             _ => {
                 let row = leaving_number(region, next)?;
                 between.reads.extend(row.registers().filter(|register| Some(*register) != row.dst));

@@ -393,7 +393,7 @@ impl<'a> Graph<'a> {
                 }
                 if matches!(staged_operation(instruction), Some(quench_runtime::staged::Operation::Jump)) {
                     self.join(&mut paths[target], (path, share))?;
-                } else if instruction.op() == quench_runtime::bytecode::Op::JumpBinaryFalse {
+                } else if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::CompareJump) {
                     let relation = NumberRelation::from_operator(instruction.binary_operator_field())?;
                     let a = self.operand(file, instruction.operand_b())?;
                     let b = self.operand(file, instruction.operand_c())?;
