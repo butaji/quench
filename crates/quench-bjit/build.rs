@@ -612,14 +612,16 @@ fn shard_command() -> Command {
 }
 
 /// Makes shard rustc `pid` the kernel's first out-of-memory victim (`oom_score_adj` 1000), and each shard started
-/// before it a later one (150 lower per shard, at least 400), so the kernel kills the shard with the least work done.
+/// before it a later one (40 lower per shard), so the kernel kills the shard with the least work done. The floor is 850:
+/// every shard must still outscore a runtime crate holding two thirds of the box's memory (a floor of 400 let the
+/// kernel kill quench-runtime-engine instead, which failed the build).
 /// The stencils build beside the runtime crates (`quench-stencils`): a shard killed for memory is compiled again
 /// (`compile`), where a killed runtime crate would fail the build.
 fn yield_to_oom_killer(pid: u32) {
     let mut order = OOM_ORDER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     order.push(pid);
     for (rank, running) in order.iter().rev().enumerate() {
-        let adj = 1000usize.saturating_sub(150 * rank).max(400);
+        let adj = 1000usize.saturating_sub(40 * rank).max(850);
         let _ = fs::write(format!("/proc/{running}/oom_score_adj"), adj.to_string());
     }
 }
