@@ -17710,7 +17710,7 @@ fn specialize_returning_binaries(decoded: &[WideInstruction], constants: &[Value
 /// `specialize_plain_operators` gives its operator's row.
 fn arithmetic_binary(instruction: WideInstruction) -> bool {
     macro_rules! pick { ($op:expr) => { () }; }
-    instruction.op() == quench_runtime::bytecode::Op::Binary && instruction.result_flags() == 0
+    quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary) && instruction.result_flags() == 0
         && arithmetic_operators!(instruction.binary_operator(), pick).is_some()
 }
 
@@ -17993,7 +17993,7 @@ fn prove_loop_steps(decoded: &[WideInstruction], records: &mut [LaneInstruction]
         };
         let Some((checked, proven)) = row_of(code) else { continue };
         let step = decoded[head];
-        if step.op() != Op::IncDec || step.numeric_local_target().is_some() || step.boolean_flag() != Some(false)
+        if !quench_runtime::staged::meaning::means(step, quench_runtime::staged::meaning::Meaning::IncDec) || step.numeric_local_target().is_some() || step.boolean_flag() != Some(false)
             || step.result_flags() != 0 || step.result_register() != step.register_b() {
             continue;
         }
@@ -18005,7 +18005,7 @@ fn prove_loop_steps(decoded: &[WideInstruction], records: &mut [LaneInstruction]
         let jump = head + 1;
         let Ok(target) = usize::try_from(jump as isize + records[jump].jump() / record) else { continue };
         let Some(&test) = decoded.get(target) else { continue };
-        if test.op() != Op::JumpBinaryFalse || Operand(records[target].b).register_index() != Some(counter) {
+        if !quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::CompareJump) || Operand(records[target].b).register_index() != Some(counter) {
             continue;
         }
         if kind == int_kinds::Kind::Speculative {

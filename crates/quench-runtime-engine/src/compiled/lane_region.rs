@@ -18,7 +18,6 @@
 //! lane resumes there. Nothing in a run allocates, collects or calls guest code.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::JsDenotation;
 use crate::compiled::regions;
 use super::*;
 use quench_runtime::vm::specializer::Specializer;
@@ -833,7 +832,7 @@ fn numeric_instruction(program: &ResidualProgram, instruction: WideInstruction) 
         _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) => program.constants.get(instruction.constant_index())
             .and_then(super::facts::immediate).is_some(),
         _ if instruction.op().traits().has(quench_runtime::bytecode::Traits::SCALAR_REGION) => true,
-        _ => instruction.op().js_denotation() == JsDenotation::NumericBinary
+        _ => quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary)
             && instruction.numeric_local_target().is_none(),
     }
 }
@@ -1392,7 +1391,7 @@ fn reads_only(constants: &[quench_runtime::bytecode::Constant], instruction: Wid
         _ if instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::UnaryOperator
             && crate::compiled::number_unary(instruction, instruction.unary_operator()).is_some() =>
             instruction.result_flags() == 0 && !instruction.writes_current_this(),
-        _ => instruction.op().js_denotation() == quench_runtime::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
+        _ => quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) && !instruction.returns_from_frame(),
     })
 }
 
@@ -3098,7 +3097,7 @@ impl Lowering<'_, '_> {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
             },
-            _ if plain && instruction.op().js_denotation() == JsDenotation::LoadConst => {
+            _ if plain && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) => {
                 let Some(constant) = self.program.constants.get(instruction.constant_index()) else { return false };
                 self.load_constant(state, pc, instruction, constant)
             }
@@ -3126,14 +3125,14 @@ impl Lowering<'_, '_> {
             _ if self.is_element_row(instruction) => Some(self.element_step(state, pc, instruction)),
             _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::SetFunctionName) && plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
-            _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
+            _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction).or_else(|| self.binary_call_out(state, pc, instruction))
             }
             _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Unary) && plain && instruction.unary_operator() == quench_runtime::bytecode::UNARY_TYPEOF_INDEX
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
             _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Unary) && quench_runtime::bytecode::typeof_test(instruction.unary_operator()).is_some()
                 && !self.helpers.is_numeric() => self.typeof_test(state, pc, instruction),
-            _ if instruction.op().js_denotation() == JsDenotation::NumericUnary
+            _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericUnary)
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             _ if self.allocation_row(pc, instruction) => Some(self.allocation(state, pc, instruction)),
             _ if self.is_construction(instruction) => self.construct(state, pc, instruction),
@@ -4155,7 +4154,7 @@ impl Lowering<'_, '_> {
             let instruction = self.unit.instructions[at];
             let operator = match () {
                 _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::CompareJump { .. })) => Some(instruction.binary_operator_field()),
-                _ if instruction.op().js_denotation() == JsDenotation::NumericBinary => Some(instruction.binary_operator()),
+                _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) => Some(instruction.binary_operator()),
                 _ => None,
             };
             if let Some(operator) = operator {
@@ -5078,7 +5077,7 @@ impl Lowering<'_, '_> {
         let bitwise = crate::compiled::number_bitwise(instruction, operator);
         // `%` is the shared Number remainder; the opcode's denotation is the catalog's, so the
         // meaning is not a second hand-written `Binary` arm.
-        let remainder = instruction.op().js_denotation() == quench_runtime::bytecode::JsDenotation::NumericBinary
+        let remainder = quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary)
             && operator == super::operations::REMAINDER;
         // Arithmetic takes Number constants; a relation decides its own (`relation`).
         if (arithmetic.is_some() || bitwise.is_some() || remainder) && [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)

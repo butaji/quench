@@ -74,7 +74,7 @@ pub(crate) unsafe fn activation_value_step(cx: *mut LaneContext, call_pc: u64, r
 /// # Safety
 /// As `activation_value_step`.
 unsafe fn activation_field_read(cx: *mut LaneContext, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
-    if !matches!(instruction.op().class(), quench_runtime::bytecode::Class::GetField) || instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
+    if !crate::compiled::meaning_compiled::is_get_field(instruction) || instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
     let Some(quench_runtime::bytecode::FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() else { return None };
     let r = unsafe { (*cx).registers };
     let object = if base == quench_runtime::bytecode::FieldBase::THIS { r.this() } else { r.get(base.register_index()?) };

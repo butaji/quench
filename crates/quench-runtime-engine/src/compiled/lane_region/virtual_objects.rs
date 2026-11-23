@@ -193,7 +193,7 @@ impl Lowering<'_, '_> {
             || instruction.returns_from_frame();
         if ends_block && state.virtuals.iter().any(|kept| self.is_live(pc + 1, kept.register)) { return false; }
         if virtual_use {
-            return instruction.op().is_get_field() && self.field_base(pc, instruction)
+            return crate::compiled::meaning_compiled::is_get_field(instruction) && self.field_base(pc, instruction)
                 .and_then(|base| base.register_index())
                 .is_some_and(|base| state.virtuals.iter().any(|kept| kept.register == base && self.virtual_reads(instruction, kept)));
         }
@@ -201,8 +201,8 @@ impl Lowering<'_, '_> {
         let numbers = || (0..state.values.len()).filter(|register| uses.contains(*register))
             .all(|register| state.values[register].value.ty.is_subtype(Type::NUMBER));
         op.copies_register()
-            || op.js_denotation() == JsDenotation::LoadConst
-            || matches!(op.js_denotation(), JsDenotation::NumericBinary | JsDenotation::NumericUnary) && numbers()
+            || quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)
+            || (quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) || quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericUnary)) && numbers()
     }
 
     /// Whether `kept`'s values answer the read `instruction`: one plain read of a field it keeps.
@@ -285,8 +285,7 @@ impl Lowering<'_, '_> {
         if self.hoisted.contains_key(&pc) { return true; }
         if self.unit.markers.contains(&pc) { return false; }
         if self.virtual_construct_plan(pc, instruction).is_some() { return true; }
-        let op = instruction.op();
-        if op.is_get_field() {
+        if crate::compiled::meaning_compiled::is_get_field(instruction) {
             return self.field_base(pc, instruction).and_then(|base| base.register_index())
                 .is_some_and(|base| state.virtuals.iter().any(|kept| kept.register == base
                     && self.is_live(pc, kept.register) && self.virtual_reads(instruction, kept)));
@@ -298,12 +297,12 @@ impl Lowering<'_, '_> {
         // and allocate nothing; on any other operand the step may.
         let operands = if means(instruction, Meaning::TruthJump) { Type::IMMEDIATE }
             else if compare_jump || means(instruction, Meaning::IncDec)
-                || matches!(op.js_denotation(), JsDenotation::NumericBinary | JsDenotation::NumericUnary) { Type::NUMBER }
+                || (quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) || quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericUnary)) { Type::NUMBER }
             else { return false };
         let typed = |register: Register| state.values.get(usize::from(register)).map_or(Type::ANY, |fact| fact.value.ty);
         // A binary step's operands may also be constants, fields or locals: a string constant
         // would concatenate, a field read run a getter.
-        if (compare_jump || op.js_denotation() == JsDenotation::NumericBinary)
+        if (compare_jump || quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary))
             && ![instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand|
                 super::super::facts::operand_type(&self.program.constants, operand, typed).is_subtype(Type::NUMBER)) {
             return false;

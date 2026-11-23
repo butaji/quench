@@ -22,7 +22,7 @@
 //! names the entry-live registers precisely (not windowed).
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::{ImmediateRole, Op, OperandKind, WideInstruction};
+use quench_runtime::bytecode::{ImmediateRole, OperandKind, WideInstruction};
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::value::Value;
 use quench_runtime::vm::operations::binary_operator as code;
@@ -121,19 +121,19 @@ fn kind_of(instruction: WideInstruction, constants: &[Value], kinds: &[Kind], sp
     if instruction.result_flags() != 0 {
         return Kind::Tagged;
     }
-    match instruction.op() {
-        Op::LoadConst => match constants.get(instruction.constant_index()) {
+    match () {
+        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) => match constants.get(instruction.constant_index()) {
             Some(constant) if constant.as_int().is_some() => Kind::Int32,
             _ => Kind::Tagged,
         },
-        Op::Move => register_kind(instruction.register_b()),
-        Op::IncDec if speculate && instruction.numeric_local_target().is_none() => {
+        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Move) => register_kind(instruction.register_b()),
+        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::IncDec) && speculate && instruction.numeric_local_target().is_none() => {
             match register_kind(instruction.register_b()) {
                 Kind::Tagged => Kind::Tagged,
                 _ => Kind::Speculative,
             }
         }
-        Op::Binary if instruction.numeric_local_target().is_none() => {
+        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary) && instruction.numeric_local_target().is_none() => {
             let operator = instruction.binary_operator();
             let bitwise = matches!(operator, code::BitwiseOR | code::BitwiseXOR | code::BitwiseAnd | code::ShiftLeft | code::ShiftRight);
             if !bitwise {

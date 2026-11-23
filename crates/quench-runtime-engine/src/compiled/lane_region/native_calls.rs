@@ -382,7 +382,7 @@ impl Lowering<'_, '_> {
         let at = (header..pc).rev().find(|&at| self.unit.instructions[at].written_registers().any(|written| written == register))?;
         if ((at + 1)..pc).any(|later| self.blocks.get(later).is_some_and(|block| block.is_some())) { return None; }
         let instruction = self.unit.instructions[at];
-        if instruction.op().js_denotation() == quench_runtime::bytecode::JsDenotation::LoadConst {
+        if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) {
             let constant = self.program.constants.get(instruction.constant_index())?;
             return super::super::facts::immediate(constant).map(ScalarArgument::Constant);
         }

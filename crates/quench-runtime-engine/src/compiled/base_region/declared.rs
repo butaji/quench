@@ -174,7 +174,7 @@ pub(crate) fn class_member_read(known: Known, object: Option<Register>, atom: qu
 /// entry test admits no other word, and no instruction writes the register, so the test is that Boolean,
 /// written to the destination as a constant. `None` for any other row.
 pub(crate) fn typeof_fold(function: &Function, instruction: WideInstruction) -> Option<Decoded> {
-    if instruction.op().class() != Class::Unary || instruction.result_flags() != 0 {
+    if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Unary) || instruction.result_flags() != 0 {
         return None;
     }
     let (index, negated) = quench_runtime::bytecode::typeof_test(instruction.unary_operator())?;
@@ -248,7 +248,7 @@ fn nullish_result(function: &Function, constants: &[Value], instruction: WideIns
 pub(crate) fn branch_fold(function: &Function, constants: &[Value], pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     let taken = match Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY) {
         Some(Operation::JumpIf { register, taken }) => constant_truth(guard_languages(function, register)?)? == taken,
-        _ if instruction.op().class() == Class::JumpBinaryFalse => !nullish_result(function, constants, instruction)?,
+        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::CompareJump) => !nullish_result(function, constants, instruction)?,
         _ => return None,
     };
     let target = if taken { instruction.jump_target() } else { pc + 1 };

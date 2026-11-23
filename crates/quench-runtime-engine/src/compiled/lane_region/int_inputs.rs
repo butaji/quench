@@ -5,7 +5,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::JsDenotation;
 use super::*;
 use super::super::operations::NumberArithmetic;
 use quench_runtime::staged::number_machine;
@@ -76,7 +75,7 @@ impl Lowering<'_, '_> {
 
 /// Whether `instruction` is an addition, subtraction or multiplication of Numbers.
 fn is_integral_arithmetic(instruction: WideInstruction) -> bool {
-    instruction.op().js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame()
+    quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) && !instruction.returns_from_frame()
         && instruction.result_flags() == 0
         && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator())
             .is_some_and(NumberArithmetic::integral)

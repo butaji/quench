@@ -11,7 +11,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::JsDenotation;
 use super::*;
 use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
 use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
@@ -131,7 +130,7 @@ impl Lowering<'_, '_> {
     fn signless_products(&self, instructions: &[WideInstruction]) -> Vec<usize> {
         use super::super::operations::NumberArithmetic;
         instructions.iter().enumerate().filter(|(pc, instruction)| {
-            instruction.op().js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame()
+            quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) && !instruction.returns_from_frame()
                 && instruction.result_flags() == 0
                 && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) == Some(NumberArithmetic::Multiply)
                 && self.demand_from(pc + 1, usize::from(instruction.result_register())).sign_insensitive()
@@ -257,7 +256,7 @@ impl Lowering<'_, '_> {
     /// The ranges of the operands of the `%` at `instruction` the point proves: a register's integer
     /// range, or an int32 constant's singleton. `None` for any other instruction or an unranged operand.
     fn remainder_ranges(&self, point: &Point, instruction: WideInstruction) -> Option<(IntRange, IntRange)> {
-        if instruction.op().js_denotation() != JsDenotation::NumericBinary || instruction.binary_operator() != quench_runtime::vm::operations::REMAINDER {
+        if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) || instruction.binary_operator() != quench_runtime::vm::operations::REMAINDER {
             return None;
         }
         let range = |operand: Operand| operand.register_index().map_or_else(

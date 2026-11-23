@@ -204,7 +204,7 @@ impl Callees {
 
     /// Whether every call of `code` is a direct one (`LaneMethod::closed`).
     pub(crate) fn closed(&self, code: &[WideInstruction]) -> bool {
-        code.iter().zip(&self.at).all(|(instruction, callee)| !instruction.op().is_call() || (callee.is_some() && !is_method_call(*instruction)))
+        code.iter().zip(&self.at).all(|(instruction, callee)| !crate::compiled::meaning_compiled::is_call(*instruction) || (callee.is_some() && !is_method_call(*instruction)))
     }
 
     /// What each call site recorded of every callee it reached, latest first, by PC: the targets of its

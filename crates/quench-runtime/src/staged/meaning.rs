@@ -53,6 +53,11 @@ pub enum Meaning {
     TruthJump,
     /// A jump taken on a binary comparison (`CompareJump`).
     CompareJump,
+    /// A binary operator of the numeric lowering: `Binary` and its Number forms (`NumericAdd`,
+    /// `NumericMultiply`), whose operator `binary_operator` names.
+    NumericBinary,
+    /// A unary operator of the numeric lowering (`Unary`), whose operator `unary_operator` names.
+    NumericUnary,
 }
 
 /// Whether `instruction` denotes an operation of `meaning`.
@@ -80,5 +85,7 @@ pub fn means(instruction: impl std::borrow::Borrow<WideInstruction>, meaning: Me
         Meaning::Jump => op.class() == Class::Jump,
         Meaning::TruthJump => matches!(op.class(), Class::JumpTrue | Class::JumpFalse),
         Meaning::CompareJump => op.class() == Class::JumpBinaryFalse,
+        Meaning::NumericBinary => op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
+        Meaning::NumericUnary => op.js_denotation() == crate::bytecode::JsDenotation::NumericUnary,
     }
 }
