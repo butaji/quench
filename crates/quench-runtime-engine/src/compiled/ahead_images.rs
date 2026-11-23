@@ -129,7 +129,7 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
 fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: &mut SymbolTable) -> BTreeMap<usize, u32> {
     unit.instructions.iter()
-        .filter(|instruction| instruction.op().js_denotation() == quench_runtime::bytecode::JsDenotation::LoadConst)
+        .filter(|instruction| quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::LoadConst))
         .filter_map(|instruction| {
             let slot = instruction.constant_index();
             let quench_runtime::bytecode::Constant::String(text) = program.constants.get(slot)? else { return None };

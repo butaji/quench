@@ -11,7 +11,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::JsDenotation;
 use super::*;
 use quench_runtime::compile::liveness::transfer;
 use quench_runtime::dataflow::{solve, Dataflow};
@@ -60,7 +59,7 @@ fn read_demand(instruction: WideInstruction, register: usize, after: &dyn Fn() -
         _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::CompareJump { .. }))
             && equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict) => Demand::NUMBER,
         _ if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })) => element_read_demand(instruction, register),
-        _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => binary_read_demand(instruction, after),
+        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) && !instruction.returns_from_frame() => binary_read_demand(instruction, after),
         _ => Demand::TAGGED,
     }
 }

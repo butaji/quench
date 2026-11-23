@@ -167,7 +167,7 @@ impl Vm {
                 let declared = program.function_get(function as usize)?.declared_captures.contains(&load.capture_slot());
                 return declared.then_some(Held::Captured { slot: load.capture_slot(), callee: callee.to_bits() });
             }
-            if !load.op().is_throwing_name_load() { return None; }
+            if !quench_runtime::staged::meaning::means(load, quench_runtime::staged::meaning::Meaning::ThrowingNameLoad) { return None; }
             let atom = load.atom_index();
             if !self.reads_global_scope(program, function, atom) {
                 return None;
@@ -187,7 +187,7 @@ impl Vm {
         -> Vec<Option<(quench_runtime::value::Value, quench_runtime::heap::Native, u32)>> {
         let entered = branch_targets(code);
         (0..code.len()).map(|call| {
-            if !code[call].op().is_call() { return None; }
+            if !crate::compiled::meaning_compiled::is_call(code[call]) { return None; }
             let member = straight_definition(code, &entered, call)?;
             self.native_member_callee(program, function, code, &entered, member)
         }).collect()
@@ -203,7 +203,7 @@ impl Vm {
         let read = member.checked_sub(1)?;
         if entered.contains(member) || base.register_index()? != code[read].result_register() { return None; }
         let load = code[read];
-        if !load.op().is_throwing_name_load() || !self.reads_global_scope(program, function, load.atom_index()) { return None; }
+        if !quench_runtime::staged::meaning::means(load, quench_runtime::staged::meaning::Meaning::ThrowingNameLoad) || !self.reads_global_scope(program, function, load.atom_index()) { return None; }
         let GlobalRead::Stable { value: object, .. } = self.stable_global_read(program, load.atom_index(), load.cache_site_index()) else { return None };
         let value = self.own_plain_data(object, atom)??;
         let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
@@ -215,7 +215,7 @@ impl Vm {
     /// (`lane_region::native_calls`), where the realm's prototype holds that native as an own
     /// data property now. The receiver is not known: the call guards the callee it reads.
     pub(crate) fn method_native(&mut self, instruction: &quench_runtime::bytecode::WideInstruction) -> Option<GlobalRead> {
-        if !instruction.op().is_get_field() { return None; }
+        if !crate::compiled::meaning_compiled::is_get_field(*instruction) { return None; }
         let Some(quench_runtime::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
         let name = self.atom_name(atom);
         let Some(row) = quench_runtime::vm::native_rows::lane_method(name) else { return self.cached_method_native(instruction) };

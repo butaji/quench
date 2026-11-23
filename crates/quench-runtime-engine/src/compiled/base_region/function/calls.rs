@@ -101,5 +101,5 @@ pub(crate) fn native_call(region: &LoopRegion, sites: &Sites, shape: &CallShape)
 pub(crate) fn radix_is_ten(region: &LoopRegion, sites: &Sites, local: usize, register: Register) -> bool {
     let Some(at) = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|written| written == register)) else { return false };
     let load = region.instructions()[at];
-    load.op().class() == Class::LoadConst && sites.known.constants.get(load.constant_index()).and_then(|value| value.as_number()) == Some(10.0)
+    quench_runtime::staged::meaning::means(load, quench_runtime::staged::meaning::Meaning::LoadConst) && sites.known.constants.get(load.constant_index()).and_then(|value| value.as_number()) == Some(10.0)
 }

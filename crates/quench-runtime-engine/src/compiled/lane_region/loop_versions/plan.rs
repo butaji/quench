@@ -4,7 +4,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::JsDenotation;
 use super::super::*;
 use super::{Hoist, Induction, Reach, Term, Version};
 use super::super::super::facts::{IndexProof, Model, Point};
@@ -75,7 +74,7 @@ fn access_registers(access: WideInstruction) -> Option<(Register, Register)> {
 
 /// The Number arithmetic `instruction` is, where it is a plain binary one.
 pub(crate) fn arithmetic_of(instruction: WideInstruction) -> Option<NumberArithmetic> {
-    (instruction.op().js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame()
+    (quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) && !instruction.returns_from_frame()
         && instruction.result_flags() == 0)
         .then(|| NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()))
         .flatten()

@@ -6,7 +6,7 @@ use crate::ext_traits::*;
 use super::lengths::Relations;
 use super::ranges::{self, Edge};
 use super::{hold_contracts, join_types, meet_relations, set, transfer_observed, Contract, Facts, Flow, Observed, INLINE_ANALYSIS_ITEMS};
-use quench_runtime::bytecode::{Class, Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
+use quench_runtime::bytecode::{Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
 use quench_runtime::typed_ir::{IntRange, Type, WIDENING_ROUNDS};
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::cell::{Cell, RefCell};
@@ -289,7 +289,7 @@ impl FactFlow<'_, '_, '_> {
         let text = self.text;
         let instruction = text.instructions[pc];
         let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
-        let comparison = instruction.op().is_jump_binary_false();
+        let comparison = quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::CompareJump);
         // Only a comparison refines its edges apart; any other conditional jump sends one state
         // both ways.
         let refines = conditional && comparison;
@@ -416,7 +416,7 @@ fn heads(text: &Text<'_>) -> Vec<usize> {
     add(text.entry);
     for (pc, instruction) in text.instructions.iter().enumerate() {
         let layout = instruction.op().control_flow_layout();
-        if layout.jumps() || instruction.op().class() == Class::JumpBinaryFalse { add(instruction.jump_target() as usize); }
+        if layout.jumps() || quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::CompareJump) { add(instruction.jump_target() as usize); }
         if layout == ControlFlowLayout::ConditionalJump { add(pc + 1); }
     }
     for &(_, target, _) in text.raises { add(target); }

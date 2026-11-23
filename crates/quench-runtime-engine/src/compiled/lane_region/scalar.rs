@@ -15,7 +15,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::JsDenotation;
 use super::super::lane_body_abi::body_signature_in_lane;
 use super::*;
 use quench_runtime::bytecode::ImmediateLayout;
@@ -169,7 +168,7 @@ fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSi
 fn requirement(program: &ResidualProgram, instruction: WideInstruction) -> Option<([Operand; 2], Type)> {
     let (operands, required) = match () {
         _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::CompareJump { .. })) => relation_requirement(program, instruction)?,
-        _ if instruction.op().js_denotation() == JsDenotation::NumericBinary =>
+        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) =>
             ([instruction.operand_b(), instruction.operand_c()], operator_requirement(instruction)?),
         _ => return None,
     };

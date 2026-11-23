@@ -462,7 +462,7 @@ fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
     match staged_of(instruction) {
         Some(Operation::GetField { .. }) if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         // derivation debt: no staged::Operation for a Binary with a Number constant operand (`Operation::Binary` takes registers only)
-        _ if instruction.op().class() == Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
+        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary) => membership_row(known, pc, instruction, instruction.result_register()),
         _ if instruction.op().traits().has(quench_runtime::bytecode::Traits::GLOBAL_NAME_ACCESS) => global_row(known, pc, instruction),
         _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,

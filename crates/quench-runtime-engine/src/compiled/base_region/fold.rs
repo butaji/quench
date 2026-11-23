@@ -50,7 +50,7 @@ fn fold_at(region: &LoopRegion, known: Known<'_>, plans: &impl Fn(WideInstructio
     let code = region.instructions();
     let read = code[k];
     let pc = region.header + k as u32;
-    (!lands.contains(k) && read.op().is_get_field() && read.result_flags() == 0).then_some(())?;
+    (!lands.contains(k) && crate::compiled::meaning_compiled::is_get_field(read) && read.result_flags() == 0).then_some(())?;
     let &GlobalRead::NativeMember { native, holder, cell, .. } = known.globals?.get(&(pc as usize))? else { return None };
     (native == quench_runtime::heap::Native::StringCharCodeAt || math_kind(native).is_some()).then_some(())?;
     let callee = read.result_register();
