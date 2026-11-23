@@ -6936,7 +6936,7 @@ fn count_arithmetic_leave(cx: *mut LaneContext, site: &LoopSite, pc: u32, region
             let instruction = body.widened(*packed);
             let op = instruction.op();
             crate::compiled::base_region::leave(site.function(), pc, op);
-            let stores = matches!(quench_runtime::staged::Operation::<u64, ()>::of(instruction), Some(quench_runtime::staged::Operation::SetField { .. })); // the decode's named field store (`decode_property`)
+            let stores = op.is_field_store() && matches!(op.staged(), Some(quench_runtime::bytecode::Decoder::Property)); // what decodes to `SetField` (`decode_property`), with no decode
             (quench_runtime::staged::computes_numeric_binary(op) || quench_runtime::staged::reads_element(op) || op.stores_element()
                 || stores || quench_runtime::staged::miss(op) == quench_runtime::staged::Miss::WalkScopes)
                 .then(|| (quench_runtime::staged::reads_element(op), stores))
