@@ -121,7 +121,10 @@ pub(crate) fn finish_array_iteration(cx: *mut LaneContext, resume: Ip) -> u64 {
 pub(crate) unsafe extern "C" fn body_call_helper(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
+    // An ahead image body binds no lane context (`lane_body_run::BodyRun`: its generic steps leave
+    // to the lane), so a call row it reaches has no activation to read: the miss leaves the body at
+    // the call, as `body_capture_in_lane` and the other context helpers do with none.
+    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext;
     if quench_runtime::trace::Channel::BodyLeave.on() { super::lane_body_stats::take_decline(); }
     let status = native_frames::in_innermost_frame(cx, || unsafe { body_call_in_lane(cx, call_pc) });
@@ -246,8 +249,9 @@ unsafe fn body_read_answer(cx: *mut LaneContext, call: &BodyCall, target: &Scrip
 /// than store fields, its activation, whose completion yields its returned object or the
 /// receiver. A returned construction takes the plan only. Its results are `body_call_helper`'s.
 pub(crate) unsafe extern "C" fn body_construct_helper(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    // As `body_call_helper`: static regions recover constructions through their semantic operation.
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
+    // As `body_call_helper`: static regions recover constructions through their semantic operation,
+    // and a body with no lane context leaves at the construction rather than reading none.
+    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext;
     let mut moved = true;
     if quench_runtime::trace::Channel::BodyLeave.on() { super::lane_body_stats::take_decline(); }

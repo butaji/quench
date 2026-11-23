@@ -57,6 +57,14 @@ impl Lowering<'_, '_> {
     /// ignores the sign of one (`truncated_sum_operand`), and a divisor no zero needs no zero test.
     pub(crate) fn remainder(&mut self, state: &mut State, pc: usize, destination: Register,
         [left, right]: [Operand; 2], exit: ir::Block) {
+        // A binary64 remainder is a leaf call whose target the staged row embeds as its process
+        // address (`number_machine::float_remainder`). Linking code (an AOT image) must not embed
+        // one: the address is the compiling process's, so the record leaves and the lane computes
+        // it (the image's `wrapUp` otherwise branched into that process's binary at load).
+        if self.helpers.links() {
+            self.exit(state, pc as u32);
+            return;
+        }
         let int = self.proved_int(state, [left, right]) && !self.left_here;
         let domain = if int {
             quench_runtime::staged::Domain::Int32

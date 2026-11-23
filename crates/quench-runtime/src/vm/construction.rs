@@ -565,7 +565,13 @@ impl Vm {
         if !self.with_scope_entered
             && let Some(template) = self.recorded_closure_template(id, realm)
         {
-            return Ok(self.closure_of_template(template, env));
+            let function = self.closure_of_template(template, env);
+            if let Some(slot) = p.functions.get(id as usize)
+                && self.records_closure(p, &slot.header(), id)
+            {
+                self.record_closure(self.active_program, id, function);
+            }
+            return Ok(function);
         }
         let chain = self.frames.last().map_or_else(Vec::new, |frame| {
             self.with_stack[frame.with_base.min(self.with_stack.len())..].to_vec()

@@ -2830,6 +2830,10 @@ fn window_closure_value_in_lane(
             closure_in_lane(vm, code, function, environment)
         }
     };
+    if let Some(value) = value {
+        // SAFETY: the context's program outlives the lane run.
+        vm.record_closure(unsafe { (*cx).program }, function, value);
+    }
     note_allocation(vm);
     value
 }
@@ -13448,8 +13452,9 @@ pub(crate) unsafe fn region_payload_in_lane(context: usize, payload: usize) -> u
 pub(crate) unsafe extern "C" fn region_call_in_lane(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     let status = unsafe { body_calls::body_call_helper(vm, residual, context, call_pc) };
-    // SAFETY: as above.
-    unsafe { refresh_region_bases_of(context) };
+    // SAFETY: as above. No context (a body that binds none, `body_call_helper`) has no region to
+    // refresh, and the miss already left the body.
+    if context != 0 { unsafe { refresh_region_bases_of(context) }; }
     status
 }
 

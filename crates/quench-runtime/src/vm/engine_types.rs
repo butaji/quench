@@ -441,6 +441,13 @@ pub struct CompiledProgram {
 pub type PublishedLaneMethod = crate::code_dependencies::PublishedCode<LaneMethod>;
 
 /// A program's ahead-of-time image, and its link into this process once a VM loads it.
+impl AheadImages {
+    /// Whether the image's value table names the closure of `function` (`HeapValueRecipe::ClosureOf`).
+    pub fn names_closure(&self, function: u32) -> bool {
+        self.image.heap_values.iter().any(|recipe| matches!(recipe, HeapValueRecipe::ClosureOf(found) if *found == function))
+    }
+}
+
 pub struct AheadImages {
     pub image: AotImage,
     /// The programs (by number) checked against it, and whether each is it.
