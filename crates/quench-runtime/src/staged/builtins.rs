@@ -171,6 +171,29 @@ pub fn array_pop<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Mi
     pop_last(stage, backing.values, backing.length, miss)
 }
 
+/// A native of a dense array's backing: `push(value)` within `room` values (`array_push_one`;
+/// the caller proves the store unlogged, `unreferenced`), or `pop()` (`array_pop`). The
+/// interpreter (`concrete_array_push`, `concrete_array_pop`), the b-jit's builtin rows and the
+/// u-jit's lowering run it through the one step, `step_array_native_of`.
+#[derive(Clone, Copy)]
+pub enum ArrayNative<W> {
+    /// `push(value)` where the backing has room for `room` values.
+    Push { room: W, value: W },
+    /// `pop()`.
+    Pop,
+}
+
+/// The value word `native` answers on the dense array `backing`: the one step of an array
+/// native, on any stage. `None` (leaving at `miss`, before any write) where its row leaves.
+#[inline(always)]
+pub fn step_array_native_of<S: Stage>(stage: &mut S, native: ArrayNative<S::Word>, backing: Backing<S::Word>, miss: S::Miss)
+    -> Option<S::Word> {
+    match native {
+        ArrayNative::Push { room, value } => array_push_one(stage, backing, room, value, miss),
+        ArrayNative::Pop => array_pop(stage, backing, miss),
+    }
+}
+
 /// Whether the Number word `number` of `domain` is a finite integral value
 /// (`Number.isInteger` of a Number): an int32 always, a double when truncation leaves it and
 /// it differs from itself by something other than NaN, which only infinities do.
@@ -188,32 +211,30 @@ pub fn is_integral<S: NumericStage>(stage: &mut S, domain: Domain, number: S::Wo
     }
 }
 
-/// The interpreter's `is_integral` of `value`: false for any value that is no Number.
+/// The interpreter's `Number.isInteger` of `value` (`call_native::step_number_native_of`): false for any value
+/// that is no Number.
 #[inline(always)]
 pub(crate) fn concrete_is_integral(value: Value) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    match (value.as_int(), value.as_number()) {
-        (Some(int), _) => is_integral(&mut stage, Domain::Int32, u64::from(int as u32)),
-        (None, Some(number)) => is_integral(&mut stage, Domain::Float64, number.to_bits()),
-        (None, None) => false,
-    }
+    let answer = super::call_native::step_number_native_of(&mut stage, super::call_native::NumberNative::IsInteger, &[value.to_bits()], ());
+    answer == Some(Value::boolean(true).to_bits())
 }
 
-/// The interpreter's `array_push_one` of `array`, a direct array among the records at
+/// The interpreter's `push` of `array` (`step_array_native_of`), a direct array among the records at
 /// `record_base` whose backing has room for `room` values: the new length.
 #[inline(always)]
 pub(crate) fn concrete_array_push(record_base: *const ArrayObject, array: Value, room: usize, value: Value) -> Option<Value> {
     let mut stage = Concrete::new(std::ptr::null());
     let backing = array_backing(&mut stage, record_base as u64, array.to_bits(), ())?;
-    array_push_one(&mut stage, backing, room as u64, value.to_bits(), ()).map(Value::from_bits)
+    step_array_native_of(&mut stage, ArrayNative::Push { room: room as u64, value: value.to_bits() }, backing, ()).map(Value::from_bits)
 }
 
-/// The interpreter's `array_pop` of `array`, a direct array among the records at `record_base`.
+/// The interpreter's `pop` of `array` (`step_array_native_of`), a direct array among the records at `record_base`.
 #[inline(always)]
 pub(crate) fn concrete_array_pop(record_base: *const ArrayObject, array: Value) -> Option<Value> {
     let mut stage = Concrete::new(std::ptr::null());
     let backing = array_backing(&mut stage, record_base as u64, array.to_bits(), ())?;
-    array_pop(&mut stage, backing, ()).map(Value::from_bits)
+    step_array_native_of(&mut stage, ArrayNative::Pop, backing, ()).map(Value::from_bits)
 }
 
 #[cfg(test)]

@@ -216,6 +216,48 @@ fn imul_pair<S: NumericStage>(stage: &mut S, (left, right): (S::Word, S::Word), 
     })
 }
 
+/// A native whose value is a function of Number value words: a Math function (`math_call`) or
+/// `Number.isInteger`. The interpreter (`concrete_math_call`, `builtins::concrete_is_integral`) and
+/// the b-jit's builtin rows run it through the one step, `step_number_native_of`.
+#[derive(Clone, Copy, Debug)]
+pub enum NumberNative {
+    /// A Math function of Numbers.
+    Math(MathCall),
+    /// `Number.isInteger` of its one argument.
+    IsInteger,
+}
+
+/// The value word `native` answers for the value words `args`: the one step of a native of
+/// Numbers, on any numeric stage. `None` (leaving at `miss`) for any case the native's own steps
+/// decide (`math_call`; for `Number.isInteger`, an argument that is no Number).
+#[inline(always)]
+pub fn step_number_native_of<S: NumericStage>(stage: &mut S, native: NumberNative, args: &[S::Word], miss: S::Miss)
+    -> Option<S::Word> {
+    match native {
+        NumberNative::Math(call) => math_call(stage, call, args, miss),
+        NumberNative::IsInteger => {
+            let &[value] = args else { return None };
+            let int = is_int(stage, value);
+            stage.choose_leaving(int, #[inline(always)] |stage| {
+                let payload = stage.narrow(value);
+                let integral = super::builtins::is_integral(stage, Domain::Int32, payload);
+                Some(boolean_word(stage, integral))
+            }, #[inline(always)] |stage| {
+                let number = number_word(stage, value, miss)?;
+                let integral = super::builtins::is_integral(stage, Domain::Float64, number);
+                Some(boolean_word(stage, integral))
+            })
+        }
+    }
+}
+
+/// The boolean value word of `cond`.
+#[inline(always)]
+fn boolean_word<S: Stage>(stage: &mut S, cond: S::Cond) -> S::Word {
+    let (yes, no) = (stage.constant(Value::boolean(true).to_bits()), stage.constant(Value::boolean(false).to_bits()));
+    stage.select(cond, yes, no)
+}
+
 /// `math_call` of `call` on the interpreter's values, and the bodies no stage runs: a libm function
 /// of one Number, or a two-Number function, whose missing argument is `undefined`, a NaN.
 /// `None` for any argument or count the row leaves at its miss.
@@ -236,9 +278,9 @@ pub fn concrete_math_call(call: MathCall, args: &[Value]) -> Option<Value> {
 fn concrete_row(call: MathCall, args: &[Value]) -> Option<Value> {
     let stage = &mut Concrete::new(std::ptr::null());
     match *args {
-        [] => math_call(stage, call, &[], ()),
-        [only] => math_call(stage, call, &[only.to_bits()], ()),
-        [left, right] => math_call(stage, call, &[left.to_bits(), right.to_bits()], ()),
+        [] => step_number_native_of(stage, NumberNative::Math(call), &[], ()),
+        [only] => step_number_native_of(stage, NumberNative::Math(call), &[only.to_bits()], ()),
+        [left, right] => step_number_native_of(stage, NumberNative::Math(call), &[left.to_bits(), right.to_bits()], ()),
         _ => None,
     }.map(Value::from_bits)
 }

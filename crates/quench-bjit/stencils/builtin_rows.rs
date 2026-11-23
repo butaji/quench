@@ -23,7 +23,7 @@ use crate::layout::{
 };
 use crate::stage::StencilStage;
 use crate::staged::region::Region;
-use crate::staged::{Concrete, Domain, builtins, elements, math, object, strings};
+use crate::staged::{Concrete, builtins, call_native, elements, object, strings};
 use crate::words::{S, hole64};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};
@@ -85,13 +85,6 @@ unsafe fn argument(s: &S, record: usize, index: usize) -> u64 {
     unsafe { frame_word(s, record_register(record, offset_of!(CallRecord, args_register)) + index) }
 }
 
-/// The Number argument `index` as a double, or `None` where it is no Number.
-#[inline(always)]
-unsafe fn number(s: &S, record: usize, index: usize) -> Option<f64> {
-    // SAFETY: as `argument`.
-    unsafe { Value::from_bits(argument(s, record, index)).as_number() }
-}
-
 /// Writes the result word to the call's result register.
 #[inline(always)]
 unsafe fn store_result(s: &S, record: usize, word: u64) {
@@ -110,7 +103,7 @@ unsafe fn char_code_at(s: &S, record: usize) -> Option<u64> {
         let records = word_at(payload(s), JS_STEP_STRING_RECORD_BASE);
         let mut stage = StencilStage::from_hole(0);
         let string = strings::flat_string(&mut stage, records, receiver(s, record), ())?;
-        strings::string_char_code_at(&mut stage, string, argument(s, record, 0), ())
+        strings::step_string_native_of(&mut stage, strings::StringNative::CharCodeAt { string, index: argument(s, record, 0) }, ())
     }
 }
 
@@ -127,13 +120,12 @@ unsafe fn char_at(s: &S, record: usize) -> Option<u64> {
         let table = word_at(payload(s), JS_STEP_ASCII_UNIT_STRINGS);
         let mut stage = StencilStage::from_hole(0);
         let string = strings::flat_string(&mut stage, records, receiver(s, record), ())?;
-        strings::string_char_at(&mut stage, string, argument(s, record, 0), table, ())
+        strings::step_string_native_of(&mut stage, strings::StringNative::CharAt { string, index: argument(s, record, 0), table }, ())
     }
 }
 
-/// `Number.isInteger` of a Number argument: `builtins::is_integral` of its binary64 word on the
-/// concrete numeric stage, as the u-jit's `IsInteger` lowers it (an int32 is integral as its double
-/// is). A non-Number misses.
+/// `Number.isInteger` of the argument: the interpreter's own step (`call_native::step_number_native_of`).
+/// A non-Number misses.
 #[inline(always)]
 unsafe fn is_integer(s: &S, record: usize) -> Option<u64> {
     // SAFETY: as `is_callee`.
@@ -141,14 +133,12 @@ unsafe fn is_integer(s: &S, record: usize) -> Option<u64> {
         if !is_callee(s, record) {
             return None;
         }
-        let value = number(s, record, 0)?;
-        let integral = builtins::is_integral(&mut Concrete::from_hole(0), Domain::Float64, value.to_bits());
-        Some(Value::boolean(integral).to_bits())
+        call_native::step_number_native_of(&mut Concrete::from_hole(0), call_native::NumberNative::IsInteger, &[argument(s, record, 0)], ())
     }
 }
 
-/// `Math.imul` of two int32 operands (`math::multiply` on the concrete numeric stage, which takes
-/// the int32s' low words), its result an int32. Any other operand misses.
+/// `Math.imul` of the two arguments: the interpreter's own step (`call_native::step_number_native_of`).
+/// An operand that is no Number misses.
 #[inline(always)]
 unsafe fn imul(s: &S, record: usize) -> Option<u64> {
     // SAFETY: as `is_callee`.
@@ -156,10 +146,8 @@ unsafe fn imul(s: &S, record: usize) -> Option<u64> {
         if !is_callee(s, record) {
             return None;
         }
-        let left = Value::from_bits(argument(s, record, 0)).as_int()?;
-        let right = Value::from_bits(argument(s, record, 1)).as_int()?;
-        let product = math::multiply(&mut Concrete::from_hole(0), u64::from(left as u32), u64::from(right as u32));
-        Some(Value::integer(product as u32 as i32).to_bits())
+        let args = [argument(s, record, 0), argument(s, record, 1)];
+        call_native::step_number_native_of(&mut Concrete::from_hole(0), call_native::NumberNative::Math(call_native::MathCall::Imul), &args, ())
     }
 }
 
@@ -197,7 +185,7 @@ unsafe fn array_push(s: &S, record: usize) -> Option<u64> {
         let room = stage.and_imm(word, u64::from(ARRAY.capacity_mask));
         let value = argument(s, record, 0);
         builtins::unreferenced(&mut stage, value, ())?;
-        builtins::array_push_one(&mut stage, backing, room, value, ())
+        builtins::step_array_native_of(&mut stage, builtins::ArrayNative::Push { room, value }, backing, ())
     }
 }
 
@@ -213,7 +201,7 @@ unsafe fn array_pop(s: &S, record: usize) -> Option<u64> {
         let records = word_at(payload(s), JS_STEP_ARRAY_RECORD_BASE);
         let mut stage = StencilStage::from_hole(0);
         let backing = elements::array_backing(&mut stage, records, receiver(s, record), ())?;
-        builtins::array_pop(&mut stage, backing, ())
+        builtins::step_array_native_of(&mut stage, builtins::ArrayNative::Pop, backing, ())
     }
 }
 
