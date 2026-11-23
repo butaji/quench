@@ -7935,7 +7935,7 @@ fn frame_state_in_lane(
                     kind,
                     live,
                     sites,
-                    vm.tier_may_run(crate::compiled::admission::Tier::ANY),
+                    crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
                     diagnostics,
                     tiers,
                 )
@@ -8881,7 +8881,7 @@ impl Vm {
                 kind,
                 live,
                 sites,
-                self.tier_may_run(crate::compiled::admission::Tier::ANY),
+                crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
                 diagnostics,
                 tiers,
             )
@@ -8926,7 +8926,7 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, &self.heap, kind, live, sites, false, false, self.programs.tiers())
+                    derive_lane_view(function, code, constants, &self.heap, kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers())
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -17073,10 +17073,11 @@ fn derive_lane_view<'live>(
     kind: quench_runtime::bytecode::ProgramKind,
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
     sites: &[quench_runtime::bytecode::FieldSite],
-    loop_tier: bool,
+    plan: crate::compiled::admission::RecordPlan,
     diagnostics: bool,
     tiers: &'static Tiers,
 ) -> LaneView {
+    let loop_tier = plan.loop_sites;
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
     // Every backward jump observes host termination, including allocation-free
@@ -17384,9 +17385,9 @@ fn derive_lane_view<'live>(
     // accumulator hazard check, which recognizes only generated rows.
     // The int32 kinds of the registers (`int_kinds`), which pick the operator records' proven forms.
     // A loop kernel or vector region writes its registers from its own code, under no kind.
-    let int_kinds = (!wasm && int_kinds::proven_forms_enabled() && loop_kernels.is_empty() && vector_regions.is_empty())
+    let int_kinds = (!wasm && loop_kernels.is_empty() && vector_regions.is_empty())
         .then(|| int_kinds::analyze(&decoded, constants, live().map(|masks| &**masks), usize::from(function.registers),
-            resolves_names, int_kinds::speculation_in_mode()))
+            resolves_names, plan.speculates))
         .flatten();
     let mut int_speculating = Vec::new();
     if !wasm {
@@ -18589,7 +18590,7 @@ impl Vm {
                     kind,
                     live,
                     sites,
-                    self.tier_may_run(crate::compiled::admission::Tier::ANY),
+                    crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
                     diagnostics,
                     tiers,
                 )

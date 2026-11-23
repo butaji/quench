@@ -362,6 +362,22 @@ pub(crate) fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions
 #[inline]
 pub(crate) fn interpreter_only() -> bool { quench_runtime::jit_mode::JitMode::process() == quench_runtime::jit_mode::JitMode::Interp }
 
+/// How a function's interpreter records specialize (`dispatch_fast::derive_lane_view`): the
+/// interpreter's own projection of the function, decided here as every compiled unit is.
+#[derive(Clone, Copy)]
+pub(crate) struct RecordPlan {
+    /// Loop records keep tier sites (`install_loop_sites`) and their jumps stay visible to them.
+    pub(crate) loop_sites: bool,
+    /// The int32 kinds may speculate: only where the interpreter alone runs, since it retires a
+    /// speculation whose `IncDec` overflows and a compiled tier's overflowing update does not.
+    pub(crate) speculates: bool,
+}
+
+/// The record plan of a function whose tiers may run (`tiers_run`: `Vm::tier_may_run`, any tier).
+pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
+    RecordPlan { loop_sites: tiers_run, speculates: interpreter_only() && crate::dispatch_fast::int_kinds::speculation_allowed() }
+}
+
 /// Where a function's lane body comes from (`lane_route`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LaneRoute {

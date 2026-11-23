@@ -61,21 +61,6 @@ pub(crate) fn note_retired() -> bool {
     !SPECULATION_RETIRED.replace(true)
 }
 
-/// Whether views select proven forms at all: in every mode. An `Int32` kind holds by the
-/// language (an int32 constant, a move of one, a bitwise result), so a tier that runs the
-/// function's instructions writes those registers as the interpreter does; the compiled tiers
-/// project the fast interpreter, not a slower one.
-pub(crate) fn proven_forms_enabled() -> bool {
-    true
-}
-
-/// Whether views may select `Speculative` kinds: only where the interpreter alone runs, since
-/// the interpreter retires speculation where an `IncDec` overflows, and a compiled tier's
-/// overflowing update writes its double without that retirement.
-pub(crate) fn speculation_in_mode() -> bool {
-    crate::compiled::admission::interpreter_only() && speculation_allowed()
-}
-
 /// The registers `masks` covers per pc, `None` for a windowed mask.
 pub(crate) fn covered(masks: &RegisterMasks) -> Option<usize> {
     match masks {
