@@ -252,10 +252,11 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
     // A call of a staged accessor or helper alone (`object_record_at`, `string_length::..`) is a
     // hand-written row built from staged parts, and still counts. The stencils name rows by code
     // numbers, not opcodes, so the terms above cannot see them.
+    // A row may run its step through a function of its own file (a numeric row's `number`, an add
+    // row's `add_row`): see `stencil_functions_staged`.
     if file.contains("quench-bjit/stencils/") && file.ends_with("_rows.rs") {
-        for body in function_bodies(code) {
-            if !body.contains("staged::") && !runs_staged_step(body) { add("fn:stencil_hand".to_owned()); }
-        }
+        let staged = stencil_functions_staged(code);
+        for runs in staged { if !runs { add("fn:stencil_hand".to_owned()); } }
     }
 }
 
@@ -298,6 +299,63 @@ fn function_bodies(code: &str) -> Vec<&str> {
         }
     }
     bodies
+}
+
+/// Each function of `code` with a body, by name: the bodies of `function_bodies` with the name that
+/// opens each.
+fn named_function_bodies(code: &str) -> Vec<(&str, &str)> {
+    let mut found = Vec::new();
+    for (at, _) in code.match_indices("fn ") {
+        if code[..at].ends_with(ident_char) { continue; }
+        let Some(open) = code[at..].find(['{', ';']).map(|n| at + n) else { continue };
+        if code.as_bytes()[open] == b';' { continue; }
+        let name = ident_at(code, at + 3);
+        if let Some(body) = function_bodies(&code[at..]).into_iter().next() { found.push((name, body)); }
+    }
+    found
+}
+
+/// Whether each function of a stencil rows file (`named_function_bodies`) runs its staged step: it
+/// calls `step_of` / `step_*_of` (or names `staged::`) itself, or reaches one through functions of its
+/// own file. A function that calls one such function runs that step; a dispatcher (one that calls
+/// more than one function of the file) runs staged steps only where every function it calls does, so
+/// one staged route does not clear a router that also reaches a hand-written row.
+fn stencil_functions_staged(code: &str) -> Vec<bool> {
+    let functions = named_function_bodies(code);
+    let direct: Vec<bool> = functions.iter().map(|(_, body)| body.contains("staged::") || runs_staged_step(body)).collect();
+    let callees: Vec<Vec<usize>> = functions.iter().map(|(_, body)| (0..functions.len())
+        .filter(|&callee| functions[callee].1 != *body && calls_function(body, functions[callee].0)).collect()).collect();
+    let mut staged = direct.clone();
+    loop {
+        let mut grew = false;
+        for index in 0..functions.len() {
+            if staged[index] || callees[index].is_empty() { continue; }
+            if callees[index].iter().all(|&callee| staged[callee]) { staged[index] = true; grew = true; }
+        }
+        if !grew { break; }
+    }
+    staged
+}
+
+#[test]
+fn stencil_rows_reach_their_step_through_own_helpers_only_when_every_route_is_staged() {
+    let code = "fn helper() { step_of::<1, _, _>(a, b, c) }\n\
+        fn row() { helper() }\n\
+        fn hand() { word_at(1) }\n\
+        fn mixed() { match k { 0 => row(), _ => hand() } }\n\
+        fn routed() { match k { 0 => row(), _ => helper() } }\n";
+    assert_eq!(stencil_functions_staged(code), [true, true, false, false, true]);
+}
+
+/// Whether `body` calls the function `name` (`name(`, or `name::<..>(`), at an identifier boundary
+/// and not as a method.
+fn calls_function(body: &str, name: &str) -> bool {
+    body.match_indices(name).any(|(at, _)| {
+        if body[..at].ends_with(|c: char| ident_char(c) || c == '.') { return false; }
+        let rest = body[at + name.len()..].trim_start();
+        let rest = match rest.strip_prefix("::<") { Some(generic) => generic.find('>').map_or("", |end| &generic[end + 1..]), None => rest };
+        rest.trim_start().starts_with('(')
+    })
 }
 
 /// The derivation debt of the tree, per (file, token).
