@@ -14,6 +14,10 @@ pub(super) struct Scope {
     pub(super) constants: Vec<Option<f64>>,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
+    /// The atom `prototype` interns to, if the program names it.
+    pub(super) prototype: Option<u32>,
+    /// Each String constant's atom, by constant index.
+    pub(super) constant_atoms: Vec<Option<u32>>,
 }
 
 impl Scope {
@@ -37,6 +41,11 @@ impl Scope {
                 .filter(|(_, name)| GLOBAL_OBJECT_NAMES.contains(name))
                 .map(|(atom, _)| atom as u32)
                 .collect(),
+            prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
+            constant_atoms: program.constants.iter().map(|constant| match constant {
+                Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
+                _ => None,
+            }).collect(),
         }
     }
 

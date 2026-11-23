@@ -15,6 +15,8 @@ pub(super) struct Ctx<'a> {
     /// Whether the function is a root, whose `this` is the global object in a script.
     pub(super) is_root: bool,
     pub(super) scope: &'a Scope,
+    /// Bindings the census proved hold one closure, so their loads carry its fact too.
+    pub(super) resolved: &'a std::collections::BTreeMap<Key, u32>,
     pub(super) registers: usize,
 }
 
@@ -55,6 +57,11 @@ fn is_global_load(instruction: WideInstruction) -> bool {
     traits.has(Traits::GLOBAL_NAME_ACCESS) && traits.has(Traits::NAME_LOAD)
 }
 
+/// The fact of a load from `key`: the closure the census proved there, else the binding.
+fn resolved(ctx: &Ctx<'_>, key: Key) -> Fact {
+    ctx.resolved.get(&key).copied().map_or(Fact::Binding(key), Fact::Closure)
+}
+
 /// The fact of the value `instruction` defines, read from the facts before it.
 fn value_of(
     ctx: &Ctx<'_>,
@@ -64,29 +71,40 @@ fn value_of(
     events: &mut Events,
 ) -> Fact {
     if let Some((_, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
+        if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Fact::Atom(atom); }
         return ctx.scope.constants.get(index).copied().flatten().map_or(Fact::Unknown, Fact::number);
     }
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && instruction.result_flags() == 0 && !instruction.writes_current_this()
-        && let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup()
+        && let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
     {
-        return Fact::Member(atom);
+        let owner = base.register_index().map(|register| state[usize::from(register)]);
+        return match owner {
+            Some(Fact::Closure(class)) if ctx.scope.prototype == Some(atom) => Fact::Prototype(class),
+            Some(Fact::Closure(class)) => Fact::MemberOn { class, instance: false, atom },
+            Some(Fact::Prototype(class) | Fact::Instance(class)) => Fact::MemberOn { class, instance: true, atom },
+            _ => Fact::Member(atom),
+        };
+    }
+    if instruction.op() == crate::bytecode::Op::Construct {
+        let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Fact::Unknown);
+        if let Fact::Closure(class) = callee { return Fact::Instance(class); }
     }
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
         events.wild_global |= ctx.scope.is_global_object(atom);
-        return Fact::Binding(Key::Global(atom));
+        return resolved(ctx, Key::Global(atom));
     }
     match operation {
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
             state[usize::from(source)]
         }
         Some(Operation::LoadEnvLocal { slot, .. } | Operation::LoadLocalPlain { slot, .. }) => {
-            Fact::Binding(Key::Slot { owner: ctx.id, slot })
+            resolved(ctx, Key::Slot { owner: ctx.id, slot })
         }
         Some(Operation::LoadCapture { depth, slot, .. }) => ctx
             .scope
             .owner(ctx.id, depth)
-            .map_or(Fact::Unknown, |owner| Fact::Binding(Key::Slot { owner, slot })),
+            .map_or(Fact::Unknown, |owner| resolved(ctx, Key::Slot { owner, slot })),
         Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Fact::Closure(function),
         Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::Closure { function }), .. }) => Fact::Closure(function),
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
@@ -151,6 +169,19 @@ fn writes(
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
 /// key that is no Number may name any property (`Events::wild_member`).
 fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
+    if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
+        let target = state[usize::from(instruction.register_b())];
+        let key = state[usize::from(instruction.register_c())];
+        if let Fact::Atom(atom) = key {
+            if let Some((class, instance)) = match target {
+                Fact::Closure(class) => Some((class, false)),
+                Fact::Prototype(class) | Fact::Instance(class) => Some((class, true)),
+                _ => None,
+            } {
+                events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
+            }
+        }
+    }
     match operation {
         Some(Operation::SetField { value, atom, .. }) => events.writes.push((Key::Member(atom), state[usize::from(value)])),
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {

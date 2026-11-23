@@ -91,9 +91,17 @@ pub(crate) fn analyze(program: &ResidualProgram) -> AotFacts {
         return AotFacts::default();
     }
     let scope = Scope::of(program);
-    let flows: Vec<FunctionFlow> = (0..program.function_count())
-        .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function, &scope)))
-        .collect();
+    let analyze = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>| -> Vec<FunctionFlow> {
+        (0..program.function_count())
+            .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function, &scope, resolved)))
+            .collect()
+    };
+    // The first pass finds the bindings that hold one closure; the second reads their loads as
+    // that closure, so a class object or prototype reached through a binding keeps its identity
+    // and its methods prove per class, not per property name.
+    let first = analyze(&std::collections::BTreeMap::new());
+    let resolved = Census::of(&first).singles();
+    let flows = analyze(&resolved);
     let census = Census::of(&flows);
     let mut facts = AotFacts::default();
     let mut constructed = BTreeSet::new();

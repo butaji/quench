@@ -71,8 +71,7 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let attempt = |numeric_only: bool| lane_unit::unit(program, function, body,
             &|caller, pc| closed_targets(program, facts, (caller, pc), numeric_only),
-            &|callee| program.function_get(callee as usize))
-        .filter(|unit| unit.frames.iter().all(|frame| frame.recovery == lane_unit::CallRecovery::RestartCall));
+            &|callee| program.function_get(callee as usize));
     // Every proven call target first; if one would rather not restart, the numeric calls alone,
     // which every image body could inline before (`numeric_restartable`).
     attempt(false).or_else(|| attempt(true)).ok_or("no restartable lane unit")

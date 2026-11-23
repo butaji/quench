@@ -10,6 +10,8 @@ pub(super) enum Key {
     Slot { owner: u32, slot: u16 },
     /// The named property `atom` of any object: every store of that name, wherever it lands.
     Member(u32),
+    /// A method `atom` stored on class `class`'s static object (`instance: false`) or its prototype.
+    MemberOn { class: u32, instance: bool, atom: u32 },
 }
 
 /// What a register is known to hold at a point.
@@ -23,6 +25,14 @@ pub(super) enum Fact {
     Binding(Key),
     /// The value of a named property `atom` read off some object (a method read before its call).
     Member(u32),
+    /// A property-key constant, by the atom its text interns to.
+    Atom(u32),
+    /// The prototype of class `function` (`Class.prototype`).
+    Prototype(u32),
+    /// An instance of class `function` (`new`).
+    Instance(u32),
+    /// A method `atom` read on class `function`'s static object (`instance: false`) or prototype.
+    MemberOn { class: u32, instance: bool, atom: u32 },
     /// A Number held as an int32.
     Int32,
     /// A Number.
