@@ -100,8 +100,8 @@ macro_rules! returning_row_of {
 /// `operator_return_code($op, $leaf)`, which its miss body (`returning_operator_miss_of`) completes.
 macro_rules! returning_operator_row_of {
     ($op:expr, $leaf:expr, $int32:expr) => {
-        returning_operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $op as u8 }, { $leaf }, { $int32 },
-            { operator_return_code($op as u8, $leaf) }> as Handler
+        const { returning_operator_row_handler::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $op as u8 }, { $leaf }, { $int32 },
+            { operator_return_code($op as u8, $leaf) }>() }
     };
 }
 
@@ -2599,52 +2599,24 @@ macro_rules! script_handler {
 /// `generated_row_handler` does. Only constant evaluation may call `$handler` (a compiled call would name every
 /// shard's instance), so a use names it through its call-site macro (`protocol_row!` and the rest).
 macro_rules! sharded_handler {
-    ($kind:ident, $mods:ident, $handler:ident; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
+    ($kind:ident, $mods:ident, $handler:ident; $($fn:tt)*) => { sharded_handler! { @shard (handler_shard) () $kind, $mods, $handler; $($fn)* } };
+    // `numeric(OPS)`: an instance whose opcode parameters `OPS` reach the Number operations keeps to shards 0 to 2.
+    ($kind:ident, $mods:ident, $handler:ident, numeric($($op:ident),*); $($fn:tt)*) => { sharded_handler! { @shard (numeric_handler_shard) ($($op),*) $kind, $mods, $handler; $($fn)* } };
+    (@module $shard:ident $kind:ident { $($item:tt)* }) => { pub(crate) mod $shard { #[allow(unused_imports)] use super::super::*; $kind! { $($item)* } } };
+    (@shard ($place:ident) ($($op:ident),*) $kind:ident, $mods:ident, $handler:ident; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
         #[allow(non_snake_case)]
         pub(crate) mod $mods {
-        pub(crate) mod s0 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s1 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s2 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s3 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s4 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s5 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s6 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s7 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
+            sharded_handler! { @module s0 $kind { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } }
+            sharded_handler! { @module s1 $kind { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } }
+            sharded_handler! { @module s2 $kind { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } }
+            sharded_handler! { @module s3 $kind { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } }
+            sharded_handler! { @module s4 $kind { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } }
+            sharded_handler! { @module s5 $kind { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } }
+            sharded_handler! { @module s6 $kind { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } }
+            sharded_handler! { @module s7 $kind { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } }
         }
         $vis const fn $handler<$(const $param: $ty),*>() -> Handler {
-            match crate::dispatch_fast::handler_shard(&[$($param as u64),*]) {
+            match crate::dispatch_fast::$place(&[$($op),*], &[$($param as u64),*]) {
             0 => $mods::s0::$name::<$($param),*>,
             1 => $mods::s1::$name::<$($param),*>,
             2 => $mods::s2::$name::<$($param),*>,
@@ -2658,8 +2630,24 @@ macro_rules! sharded_handler {
     };
 }
 
+/// Whether an opcode of `ops` has a step that reaches the Number operations (`staged::row_step`).
+pub(crate) const fn reaches_numeric(ops: &[u16]) -> bool {
+    use quench_runtime::staged::RowStep as R;
+    let mut at = 0;
+    while at < ops.len() {
+        if let Some(op) = Op::from_index(ops[at] as usize) && matches!(quench_runtime::staged::row_step(op), R::Number | R::Arith | R::Generic) { return true }
+        at += 1;
+    }
+    false
+}
+
+/// The shard (`sharded_handler!` `numeric(..)`): 0 to 2 for an instance whose opcodes reach the Number operations, else 3 to 7.
+pub(crate) const fn numeric_handler_shard(ops: &[u16], params: &[u64]) -> usize {
+    if reaches_numeric(ops) { handler_shard(&[], params) % 3 } else { 3 + handler_shard(&[], params) % 5 }
+}
+
 /// The shard (`sharded_handler!`) of a handler instance with const parameters `params`.
-pub(crate) const fn handler_shard(params: &[u64]) -> usize {
+pub(crate) const fn handler_shard(_: &[u16], params: &[u64]) -> usize {
     let mut hash = 0u64;
     let mut index = 0;
     while index < params.len() {
@@ -2760,7 +2748,7 @@ use lane_reads::RecordOperand;
 pub(crate) mod loop_body;
 pub(crate) mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_handler, returning_operator_row_handler, operator_row_handler, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 pub(crate) mod capture_append;
@@ -15438,7 +15426,7 @@ unsafe fn memo_read_in_lane<const SHAPE: u8>(
     }
 }
 
-script_handler! {
+sharded_handler! { script_handler, script_call_memo_miss_shards, script_call_memo_miss_handler;
     /// `script_call_full_miss` at a site whose read call made a memo (`memoize_read_in_lane`): the
     /// memo's hits, of its shape `SHAPE` (`MemoRead::shape`), answer the call as the read
     /// target's would. A call the memo does not answer takes the full form, which the site
@@ -15493,7 +15481,7 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
     else { None }
 }
 
-script_handler! {
+sharded_handler! { script_handler, returning_miss_shards, returning_miss_handler;
     /// A value record that returns its result from the frame (`returning_kind`): the value
     /// as the record's own handler computes it, then the activation's completion, or the VM
     /// frame's return of it from the general loop (`frame_return`). A value the
@@ -15516,7 +15504,7 @@ script_handler! {
                     });
                     let Some(value) = value else {
                         if KIND == RETURNING_FIELD_POLYMORPHIC {
-                            sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+                            sibling!(const { returning_miss_handler::<RETURNING_FIELD, LEAF>() }, r, ip, Carried::script_in(cx, view))
                         }
                         sibling!(row_returning_field_miss::<LEAF>, r, ip, Carried::script_in(cx, view))
                     };
@@ -15527,13 +15515,13 @@ script_handler! {
                     let value = field_base_in_lane(cx, r, quench_runtime::bytecode::FieldBase(i.b))
                         .and_then(|object| lane_frame::LaneFrame::<ACC_NONE>::private_value(cx, ip.addr(), code, object, i.imm()));
                     let Some(value) = value else {
-                        sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+                        sibling!(const { returning_miss_handler::<RETURNING_FIELD, LEAF>() }, r, ip, Carried::script_in(cx, view))
                     };
                     Some(value)
                 }
                 RETURNING_FIELD_NESTED => {
                     let Some(value) = lane_nested_value(cx, r, ip, i) else {
-                        sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+                        sibling!(const { returning_miss_handler::<RETURNING_FIELD, LEAF>() }, r, ip, Carried::script_in(cx, view))
                     };
                     Some(value)
                 }
@@ -15545,7 +15533,7 @@ script_handler! {
                         Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
                         // A native getter that raised is not called again: the general path raises it.
                         Err(next) if (vm(cx)).lane_completion.is_raised() => next,
-                        Err(_) => sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx)),
+                        Err(_) => sibling!(const { returning_miss_handler::<RETURNING_FIELD, LEAF>() }, r, ip, Carried::script(cx)),
                     };
                 }
                 RETURNING_FIELD => match field_value_in_lane(cx, r, i) {
@@ -15598,7 +15586,7 @@ fn operation_in_place(cx: *mut LaneContext, ip: Ip, r: Registers, i: &LaneInstru
     unwound_in_place(cx, ip, |vm, code| vm.binary(code, operator, left, right))
 }
 
-script_handler! {
+sharded_handler! { script_handler, returning_operator_miss_shards, returning_operator_miss_handler;
     /// A returning `Binary` of arithmetic operator `OP` on a register and a register or, where
     /// `CONSTANT`, a constant, resolved when the view was derived
     /// (`specialize_register_operands`) as `lane_operator` resolves a non-returning one: two
@@ -15607,7 +15595,7 @@ script_handler! {
     fn returning_operator_miss<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
         let right = if CONSTANT { i.constant() } else { r.get(i.c) };
         let Some(value) = quench_runtime::vm::operations::integer_operator::<OP>(r.get(i.b), right) else {
-            sibling!(returning_operator_other_in_lane::<OP, CONSTANT, LEAF>, r, ip, Carried::script_in(cx, view))
+            sibling!(const { returning_operator_other_in_lane_handler::<OP, CONSTANT, LEAF>() }, r, ip, Carried::script_in(cx, view))
         };
         lane_return_value!(cx, ip, value, LEAF)
     }
@@ -15619,13 +15607,13 @@ script_handler! {
 const fn returning_operator_miss_of<const LEAF: u8>(operator: u8) -> Option<Handler> {
     macro_rules! pick {
         ($op:expr) => {
-            returning_operator_miss::<{ $op }, true, LEAF> as Handler
+            const { returning_operator_miss_handler::<{ $op }, true, LEAF>() }
         };
     }
     arithmetic_operators!(operator as u32, pick)
 }
 
-script_handler! {
+sharded_handler! { script_handler, returning_operator_other_in_lane_shards, returning_operator_other_in_lane_handler;
     /// `returning_operator_miss` of operands other than two integers: other Numbers, then the
     /// concatenation and BigInt values `returning_binary_value_in_lane` decides; any other takes the
     /// general path. Out of line, so the integer case keeps few values live.
@@ -15736,7 +15724,7 @@ script_handler! {
         if let Some(handler) = handler {
             requicken(ip, handler);
         }
-        sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+        sibling!(const { returning_miss_handler::<RETURNING_FIELD, LEAF>() }, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -17772,11 +17760,11 @@ fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], 
         macro_rules! at_form {
             ($acc:expr, $op:expr) => {
                 match form {
-                    OPERANDS_REGISTERS => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTERS> as Handler,
-                    OPERANDS_REGISTER_INT32 => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_INT32> as Handler,
-                    OPERANDS_REGISTER_CONSTANT => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_CONSTANT> as Handler,
-                    OPERANDS_INT32 => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_INT32> as Handler,
-                    _ => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_ANY> as Handler,
+                    OPERANDS_REGISTERS => const { operator_row_handler::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTERS>() },
+                    OPERANDS_REGISTER_INT32 => const { operator_row_handler::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_INT32>() },
+                    OPERANDS_REGISTER_CONSTANT => const { operator_row_handler::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_CONSTANT>() },
+                    OPERANDS_INT32 => const { operator_row_handler::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_INT32>() },
+                    _ => const { operator_row_handler::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_ANY>() },
                 }
             };
         }
@@ -17802,9 +17790,9 @@ fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], 
             macro_rules! proven_at {
                 ($op:expr) => {
                     if proven_form == Some(OPERANDS_PROVEN) {
-                        operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN> as Handler
+                        const { operator_row_handler::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN>() }
                     } else {
-                        operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN_INT32> as Handler
+                        const { operator_row_handler::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN_INT32>() }
                     }
                 };
             }
