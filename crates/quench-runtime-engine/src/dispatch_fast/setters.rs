@@ -39,47 +39,6 @@ pub(crate) fn stored_setter(vm: &mut Vm, object: Value, atom: quench_runtime::by
     setter
 }
 
-/// What `trivial_setter_store` found of a setter's body.
-enum SetterStore {
-    /// It stores its first parameter to the own field `atom` of its receiver, whose store
-    /// entry for the receiver's exact shape is this one.
-    Store(quench_runtime::vm::FieldCache, quench_runtime::bytecode::Atom),
-    /// It is no such body, nor binds the receiver as its `this`: it never forwards.
-    Never,
-    /// It is such a body, but its store site holds no own entry for this receiver yet.
-    NotYet,
-}
-
-/// Recognizes a setter `target` whose whole effect is `this.f = v` of its first parameter,
-/// then returning (`Function::initializer_stores` of exactly one store of parameter 0 as
-/// passed): a call of it on `object`, which it binds as `this`, is that store. The store
-/// is exact where its entry, the setter's own store site's, is an own data field of
-/// `object`'s exact shape: such a store finds no setter, can't throw and runs no guest code;
-/// what the setter returns, an assignment ignores (`Completion::Assigns`). A private name's
-/// store is left to the call (its home is the setter's).
-fn trivial_setter_store(vm: &Vm, target: &ScriptCallTarget, object: Value) -> SetterStore {
-    if !target.entry.activates() || target.params == 0 || direct_call_this_in_lane(vm, target, object) != Some(object) {
-        return SetterStore::Never;
-    }
-    let Some(code) = vm.programs.residual(target.program()) else {
-        return SetterStore::Never;
-    };
-    let Some(body) = code.function_get(target.function as usize) else {
-        return SetterStore::Never;
-    };
-    let Some([store]) = body.initializer_stores(&code.constants) else {
-        return SetterStore::Never;
-    };
-    let parameter = quench_runtime::bytecode::InitializerValue::Parameter { parameter: 0, fallback: None };
-    if store.value != parameter || vm.is_private_name(store.atom) {
-        return SetterStore::Never;
-    }
-    // The setter is of the running program (`script_target_in_lane`), whose sites its store's are.
-    let cache = vm.field_cache_entry(store.site);
-    let holds = vm.heap.object_record(object).is_some_and(|receiver| cache.holder == quench_runtime::vm::NO_FIELD_HOLDER && cache.receiver == receiver.exact_shape());
-    if holds { SetterStore::Store(cache, store.atom) } else { SetterStore::NotYet }
-}
-
 /// What the call of the returned `frame`, which completed with `value` and receiver `this`, yields
 /// before a forwarder's or a promise's substitution: [[Construct]] of an ordinary constructor
 /// its returned object, otherwise the receiver it allocated; a setter's store

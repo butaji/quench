@@ -252,12 +252,14 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
     }
     // Hand-written lane handlers: a `fn lane_` a macro did not generate.
     // A `#[test]` function is no handler: it checks the lane, whatever its name. A handler that
-    // runs its staged step (`step_*_of`) is that step's projection, as a stencil row is (rule (a)).
+    // runs its staged step (`step_*_of`), itself or through a function of its own file that calls
+    // it, is that step's projection, as a stencil row is (rule (a)).
     let bodies = named_function_bodies(code);
+    let lane_staged = lane_handlers_staged(&bodies);
     for (at, _) in code.match_indices("fn lane_") {
         let test = code[..at].trim_end().rsplit('\n').next().is_some_and(|line| line.trim() == "#[test]");
         let name = ident_at(code, at + 3);
-        let staged = bodies.iter().any(|(function, body)| *function == name && runs_staged_step(body));
+        let staged = lane_staged.iter().any(|(function, staged)| *function == name && *staged);
         if !code[..at].ends_with(ident_char) && !test && !staged { add("fn:lane_*".to_owned()); }
     }
     // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
@@ -272,6 +274,24 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
         let staged = stencil_functions_staged(code);
         for runs in staged { if !runs { add("fn:stencil_hand".to_owned()); } }
     }
+}
+
+/// Whether each function of `bodies` runs a staged family step (`runs_staged_step`), itself or
+/// through one function of the same file that does (a lane handler's shared step wrapper).
+fn lane_handlers_staged<'a>(bodies: &[(&'a str, &'a str)]) -> Vec<(&'a str, bool)> {
+    let direct: Vec<bool> = bodies.iter().map(|(_, body)| runs_staged_step(body)).collect();
+    bodies.iter().map(|(name, body)| (*name, runs_staged_step(body)
+        || bodies.iter().zip(&direct).any(|((callee, other), staged)| *staged && other != body && calls_function(body, callee)))).collect()
+}
+
+#[test]
+fn lane_handlers_run_their_step_directly_or_through_one_own_wrapper() {
+    let code = "fn wrap() { step_in_place_call_of(a, b) }\n\
+        fn lane_wrapped() { if wrap().is_none() { miss() } }\n\
+        fn lane_hand() { r.set(a, b) }\n";
+    let bodies = named_function_bodies(code);
+    let staged: Vec<bool> = lane_handlers_staged(&bodies).into_iter().map(|(_, staged)| staged).collect();
+    assert_eq!(staged, [true, true, false]);
 }
 
 /// The staged Wasm operators a stencil row runs as its opcode's step (`staged::wasm`,

@@ -4,30 +4,8 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::call_complete::{concrete_returns_callee_completion, concrete_write_call_result};
-use quench_runtime::staged::strings::{ConcreteString, concrete_char_at, concrete_char_code_at};
 use quench_runtime::staged::Concrete;
 use quench_runtime::vm::object_get::ordinary_chain::ChainRead;
-
-/// `charCodeAt` of a flat string at an integer index (`staged::builtins::char_code_at`): the
-/// unit there, or NaN outside the string. `None` for any other receiver or index, which the
-/// native coerces, and for a rope, which it flattens.
-#[inline(always)]
-pub(crate) fn string_char_code_at(vm: &Vm, receiver: Value, index: Value) -> Option<Value> {
-    let records = vm.heap.string_record_base().unwrap_or(std::ptr::null());
-    concrete_char_code_at(ConcreteString::Record { records, value: receiver }, index)
-        .or_else(|| concrete_char_code_at(ConcreteString::Units(vm.heap.flat_text(receiver)?.units()), index))
-}
-
-/// `charAt` of a flat string at an integer index of an ASCII unit
-/// (`staged::builtins::char_at_ascii`): the unit's shared string (`Vm::ascii_byte_string`).
-/// Any other receiver, index or unit takes the native.
-pub(crate) fn string_char_at_ascii(vm: &mut Vm, receiver: Value, index: Value) -> Option<Value> {
-    let (records, table) = (vm.heap.string_record_base().unwrap_or(std::ptr::null()), vm.heap.ascii_unit_strings_base().unwrap_or(std::ptr::null()));
-    if let Some(character) = concrete_char_at(ConcreteString::Record { records, value: receiver }, table, index) {
-        return Some(character);
-    }
-    concrete_char_at(ConcreteString::Units(vm.heap.flat_text(receiver)?.units()), table, index)
-}
 
 /// The natives whose steady case (`Vm::steady_native_value`) a `Call` site makes under its own
 /// handler, one instantiation of `builtin_miss` per row: the native is a constant of the
@@ -418,10 +396,6 @@ const fn math_slot(row: u8) -> usize {
     BUILTIN_ROWS + row as usize
 }
 
-
-
-
-
 /// Whether `callee` is `native`, the native of identity slot `slot`: the row's admission, one
 /// compare of the callee word against the identity the lane proved
 /// (`staged::call_native::admit_identity`), else the proof from the callee's record, made once a
@@ -473,22 +447,14 @@ pub(crate) fn math_field_call_handlers() -> [*const (); 3] {
 }
 
 script_handler! {
-    /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): the
-    /// native's admission (`native_admitted`) and its staged row of Number arguments
-    /// (`staged::call_native::math_call`). Any other callee or argument takes `call_math_miss`.
+    /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): the shared
+    /// in-place call (`in_place_call`) of its staged row of Number arguments (`staged::call_native::math_call`).
+    /// Any other callee or argument takes `call_math_miss`.
     pub(crate) fn math_native_miss<ROW: u8>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let native = const { math_row_native(ROW) };
-        let value = if native_admitted(vm, r.get(i.b), const { math_slot(ROW) }, native) {
-            // SAFETY: the call's window is registers of the running function.
-            quench_runtime::staged::call_native::concrete_math_call(const { math_row_call(ROW) }, unsafe { call_window_in_lane(r, i) })
-        } else {
-            None
-        };
-        let Some(value) = value else {
+        let mut body = MathLane { call: const { math_row_call(ROW) }, count: usize::from(ImmediateLayout::argument_count(i.imm())) };
+        if in_place_call(cx, r, i, const { math_slot(ROW) }, const { math_row_native(ROW) }, &mut body).is_none() {
             sibling!(call_math_miss, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -576,49 +542,6 @@ fn install_math_field_call2(call_ip: Ip) {
             else { generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE) as Handler };
         requicken(field_ip, row);
     }
-}
-
-/// The steady case of builtin row `ROW`, which calls its native's one body directly. The row's
-/// native is a constant, so each `if const` arm not taken is dropped and no arm re-matches the
-/// native at run time. Every row of `builtin_rows` has its arm here; a native without one declines.
-#[inline(always)]
-fn builtin_row_value<const ROW: u8>(vm: &mut Vm, receiver: Value, args: &[Value]) -> Option<Value> {
-    // A new attempt clears any flag a previous attempt left for its general native.
-    vm.declined_fast = None;
-    let first = args.first().copied();
-    if const { matches!(row_native(ROW), Native::MapGet | Native::MapHas) } {
-        let found = vm.pure_collection_lookup(const { row_native(ROW) }, receiver, first.unwrap_or(Value::UNDEFINED));
-        return vm.fast_declined(const { row_native(ROW) }, found);
-    }
-    if const { matches!(row_native(ROW), Native::SetHas | Native::WeakMapGet | Native::WeakMapHas | Native::WeakSetHas) } {
-        return vm.pure_collection_lookup(const { row_native(ROW) }, receiver, first.unwrap_or(Value::UNDEFINED));
-    }
-    if const { matches!(row_native(ROW), Native::MapSet) } {
-        return if vm.map_set(receiver, args) { Some(receiver) } else { None };
-    }
-    if const { matches!(row_native(ROW), Native::ArrayPush) } {
-        return vm.array_push_dense(receiver, args);
-    }
-    if const { matches!(row_native(ROW), Native::ArrayPop) } {
-        return vm.array_pop_dense(receiver);
-    }
-    if const { matches!(row_native(ROW), Native::StringCharCodeAt) } {
-        return vm.string_char_code_at_core(receiver, first?);
-    }
-    if const { matches!(row_native(ROW), Native::StringCharAt) } {
-        return vm.string_char_at_core(receiver, first?);
-    }
-    if const { matches!(row_native(ROW), Native::ArrayIsArray) } {
-        return vm.steady_is_array(first.unwrap_or(Value::UNDEFINED)).map(Value::boolean);
-    }
-    if const { matches!(row_native(ROW), Native::JsonStringify) } {
-        let text = vm.json_stringify_steady(args);
-        return vm.fast_declined(const { row_native(ROW) }, text);
-    }
-    if const { matches!(row_native(ROW), Native::DateNow) } {
-        return Some(vm.date_now());
-    }
-    None
 }
 
 script_handler! {
@@ -715,65 +638,69 @@ script_handler! {
     /// native, in the same order, without its dispatch. Any other callee or case takes
     /// `native_call_miss`, which tries the same body again and then calls the native.
     fn lane_call_in_place<ROW: u8>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
         let native = const { in_place_row_native(ROW) };
-        let call = quench_runtime::staged::call_native::InPlaceCall {
-            callee: i.b,
-            receiver: i.c,
-            arguments: ImmediateLayout::call_window_base(i.imm()),
-            result: i.a,
-        };
         // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let count = usize::from(ImmediateLayout::argument_count(i.imm()));
-        let registers = r.0.expose_provenance() as u64;
-        let slot = const { in_place_slot(ROW) };
-        let mut stage = Concrete::new(std::ptr::null());
-        // The shared in-place call step (`call_native::step_in_place_call_of`, the b-jit's builtin rows'):
-        // the callee admitted against the identity the lane proved, the body, the result stored.
-        let identity = vm.lane_stack.native_identities.0[slot];
-        let mut body = InPlaceLane { vm: &mut *vm, code, native, callee: r.get(i.b), count };
-        let mut done = quench_runtime::staged::call_native::step_in_place_call_of(&mut stage, &mut body, registers, identity, call, ());
-        // A callee the slot does not hold yet: proved once (`prove_native_identity`), then the step again.
-        if done.is_none() && r.get(i.b).to_bits() != identity && prove_native_identity(vm, r.get(i.b), slot, native) {
-            let mut body = InPlaceLane { vm: &mut *vm, code, native, callee: r.get(i.b), count };
-            done = quench_runtime::staged::call_native::step_in_place_call_of(&mut stage, &mut body, registers, r.get(i.b).to_bits(), call, ());
-        }
-        if done.is_none() {
+        let mut body = InPlaceLane { cx, code: unsafe { &*(*cx).code }, native, callee: r.get(i.b), count: usize::from(ImmediateLayout::argument_count(i.imm())) };
+        if in_place_call(cx, r, i, const { in_place_slot(ROW) }, native, &mut body).is_none() {
             sibling!(native_call_miss, r, ip, Carried::script(cx))
         }
         // An in-place body may allocate; a due collection runs at the lane's next safepoint.
-        note_allocation(vm);
+        note_allocation(unsafe { vm(cx) });
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-/// The interpreter's in-place body of `native` (`call_native::InPlaceBody`): `Vm::in_place_native_value`
-/// of `callee` over the call's window of `count` values where it lies, a `DataView` float64 access first.
-struct InPlaceLane<'a> {
-    vm: &'a mut Vm,
-    code: &'a ResidualProgram,
-    native: Native,
-    callee: Value,
-    count: usize,
+/// The in-place call `i` of `native`, identity slot `slot`, by the shared step the b-jit's builtin rows
+/// run (`call_native::step_in_place_call_of`): the callee admitted against the identity the lane proved,
+/// `body` over the window where it lies, the result stored. A callee the slot does not hold yet is proved
+/// once (`prove_native_identity`), then stepped again. `None`, having written nothing, for any other.
+#[inline(always)]
+fn in_place_call<B: quench_runtime::staged::call_native::InPlaceBody<Concrete>>(cx: *mut LaneContext, r: Registers, i: &LaneInstruction,
+    slot: usize, native: Native, body: &mut B) -> Option<u64> {
+    let vm = unsafe { vm(cx) };
+    let call = quench_runtime::staged::call_native::InPlaceCall { callee: i.b, receiver: i.c, arguments: ImmediateLayout::call_window_base(i.imm()), result: i.a };
+    let (callee, identity) = (r.get(i.b).to_bits(), vm.lane_stack.native_identities.0[slot]);
+    let mut step = |identity| quench_runtime::staged::call_native::step_in_place_call_of(&mut Concrete::new(std::ptr::null()), &mut *body,
+        r.0.expose_provenance() as u64, identity, call, ());
+    step(identity).or_else(|| (callee != identity && prove_native_identity(vm, Value::from_bits(callee), slot, native)).then(|| step(callee)).flatten())
 }
+
+/// The window of `count` values at the address `arguments`.
+///
+/// # Safety
+/// `arguments` is a window of registers of the running function, which no in-place body moves.
+#[inline(always)]
+unsafe fn window_at<'a>(arguments: u64, count: usize) -> &'a [Value] {
+    unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<Value>(arguments as usize), count) }
+}
+
+/// The interpreter's in-place body of `native` (`call_native::InPlaceBody`): `Vm::in_place_native_value`
+/// of `callee` over the call's window of `count` values, a `DataView` float64 access first.
+struct InPlaceLane<'a> { cx: *mut LaneContext, code: &'a ResidualProgram, native: Native, callee: Value, count: usize }
 
 impl quench_runtime::staged::call_native::InPlaceBody<Concrete> for InPlaceLane<'_> {
     #[inline(always)]
     fn in_place_value(&mut self, _stage: &mut Concrete, receiver: u64, arguments: u64, _miss: ()) -> Option<u64> {
-        // SAFETY: the call's window is registers of the running function, which no in-place body moves.
-        let args = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<Value>(arguments as usize), self.count) };
-        let (vm, native, receiver) = (&mut *self.vm, self.native, Value::from_bits(receiver));
-        let float64 = if matches!(native, Native::DataViewGetFloat64 | Native::DataViewSetFloat64) {
-            let value = vm.data_view_access_of(native, receiver, args);
-            if value.is_some() && vm.execution_mode == quench_runtime::vm::ExecutionMode::Compiled {
-                vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
-            }
-            value
-        } else {
-            None
-        };
+        // SAFETY: `in_place_call`'s window; the running lane's context.
+        let (args, vm) = unsafe { (window_at(arguments, self.count), vm(self.cx)) };
+        let (native, receiver) = (self.native, Value::from_bits(receiver));
+        let float64 = matches!(native, Native::DataViewGetFloat64 | Native::DataViewSetFloat64).then(|| vm.data_view_access_of(native, receiver, args)).flatten();
+        if float64.is_some() && vm.execution_mode == quench_runtime::vm::ExecutionMode::Compiled {
+            vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
+        }
         float64.or_else(|| vm.in_place_native_value_inline(self.code, native, self.callee, receiver, args)).map(Value::to_bits)
+    }
+}
+
+/// The interpreter's in-place body of a Math function (`call_native::InPlaceBody`): its staged row of Number
+/// arguments over the call's window of `count` values (`call_native::concrete_math_call`).
+struct MathLane { call: quench_runtime::staged::call_native::MathCall, count: usize }
+
+impl quench_runtime::staged::call_native::InPlaceBody<Concrete> for MathLane {
+    #[inline(always)]
+    fn in_place_value(&mut self, _stage: &mut Concrete, _receiver: u64, arguments: u64, _miss: ()) -> Option<u64> {
+        // SAFETY: `in_place_call`'s window.
+        quench_runtime::staged::call_native::concrete_math_call(self.call, unsafe { window_at(arguments, self.count) }).map(Value::to_bits)
     }
 }
 
