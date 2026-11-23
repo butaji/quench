@@ -11,6 +11,7 @@ use super::super::decode::{staged_binary, staged_of, staged_unary};
 use super::super::super::{LaneHelper, LaneHelpers};
 use super::Step;
 use quench_runtime::staged::{Operation, Protocol};
+use quench_runtime::staged::meaning::{means, Meaning};
 
 /// The most registers a step the helper makes writes: its result, and the `this` a name call
 /// defines beside its callee.
@@ -49,13 +50,11 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
         Some(Operation::RequireObjectCoercible { .. }) => staged_plain_arm(instruction, numeric::row_names::STAGED_COERCIBLE),
         Some(Operation::Unary { .. }) => staged_unary_arm(instruction),
         Some(Operation::TypeofString { .. } | Operation::TypeofTest { .. }) => typeof_arm(instruction.unary_operator()),
-        _ => match instruction.op().class() {
-            // derivation debt: no staged::Operation for SetFunctionName (the naming is a recorded site, `names`)
-            Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
-            // derivation debt: no staged::Operation for a Binary with a Number constant operand (`Operation::Binary` takes registers only)
-            Class::Binary => staged_binary_arm(instruction),
-            _ => None,
-        },
+        // The naming is a recorded site (`names`); a binary with a Number constant operand has no
+        // `Operation::Binary` (it takes registers only), so both ask the staged meaning.
+        _ if means(instruction, Meaning::SetFunctionName) => names::of(known, instruction).map(names::Name::heap),
+        _ if means(instruction, Meaning::Binary) => staged_binary_arm(instruction),
+        _ => None,
     }
 }
 
@@ -96,7 +95,7 @@ fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, O
 /// The second register a staged binary's fast arm reads (its right operand), beside `fast_operands`' left.
 fn fast_right(instruction: WideInstruction, fast: Heap) -> Option<Source> {
     match fast {
-        Heap::Staged(_) if instruction.op().class() == Class::Binary => instruction.operand_c().register_index().map(Source::Register),
+        Heap::Staged(_) if means(instruction, Meaning::Binary) => instruction.operand_c().register_index().map(Source::Register),
         _ => None,
     }
 }
