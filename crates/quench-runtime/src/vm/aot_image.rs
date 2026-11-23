@@ -112,6 +112,10 @@ pub(crate) struct LaneImage {
     /// body through the resuming trampoline and binds the poll's page, as it does a lane body the
     /// JIT compiled with a poll.
     pub(crate) fault_poll: bool,
+    /// Per unit PC, the values a leave inside an inlined frame stores, as `(slot, scratch)` pairs
+    /// (`ExitTable::stores_by_pc`): the image's code was compiled with them, and the VM rebuilds
+    /// the exit table from them at install.
+    pub(crate) stored: Box<[Box<[(u16, u16)]>]>,
 }
 
 /// What a lowering of the image is for: its CPU baseline and target triple

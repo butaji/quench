@@ -10,7 +10,7 @@ use crate::vm::compiled::AHEAD_BUILD_ID;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x02";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x03";
 /// The shape prototype a shape with none names.
 const NO_PROTOTYPE: u32 = u32::MAX;
 const RECIPE_INTRINSIC: u8 = 0;
@@ -155,6 +155,14 @@ fn put_function(out: &mut Vec<u8>, function: &AotFunction) {
             out.push(1);
             out.push(u8::from(lane.fault_poll));
             put_code(out, &lane.code);
+            put_count(out, lane.stored.len());
+            for pairs in &lane.stored {
+                put_count(out, pairs.len());
+                for &(slot, scratch) in pairs.iter() {
+                    out.extend(slot.to_le_bytes());
+                    out.extend(scratch.to_le_bytes());
+                }
+            }
         }
         None => out.push(0),
     }
@@ -264,7 +272,9 @@ fn read_function(words: &mut Words<'_>) -> Result<AotFunction, String> {
         0 => None,
         _ => {
             let fault_poll = words.byte()? != 0;
-            Some(LaneImage { code: read_code(words)?, fault_poll })
+            let code = read_code(words)?;
+            let stored = (0..words.half()?).map(|_| read_pairs(words)).collect::<Result<_, String>>()?;
+            Some(LaneImage { code, fault_poll, stored })
         }
     };
     Ok(AotFunction { id, base, lane })
@@ -276,6 +286,10 @@ fn read_base(words: &mut Words<'_>) -> Result<BaseImage, String> {
     let generic = read_halves(words)?;
     let scratch = words.half()?;
     Ok(BaseImage { code, pc_offsets, generic, scratch })
+}
+
+fn read_pairs(words: &mut Words<'_>) -> Result<Box<[(u16, u16)]>, String> {
+    (0..words.half()?).map(|_| Ok((words.pair()?, words.pair()?))).collect()
 }
 
 fn read_halves(words: &mut Words<'_>) -> Result<Box<[u32]>, String> {

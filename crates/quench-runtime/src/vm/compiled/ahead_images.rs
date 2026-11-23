@@ -52,9 +52,14 @@ pub(crate) fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
 
 /// The calls the unit of an image's lane body inlines: each call whose target the closed world
 /// proves (`AotFacts::call_target`), bound by its function, which its admission does not compare
-/// (`Lowering::closed_call`), to a callee whose leaves restart the call (`numeric_restartable`).
-fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32)) -> Vec<lane_unit::CallTarget> {
-    let target = facts.function_facts(caller).call_target(pc).filter(|&callee| super::lane_facts::numeric_restartable(program, callee));
+/// (`Lowering::closed_call`), to a callee whose leaves restart the call (`unit_or_refusal`).
+fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32), numeric_only: bool) -> Vec<lane_unit::CallTarget> {
+    let target = facts.function_facts(caller).call_target(pc)
+        .filter(|&callee| program.function_get(callee as usize).is_some())
+        .filter(|&callee| !numeric_only || super::lane_facts::numeric_restartable(program, callee));
+    if crate::trace::Channel::AotLanes.on() && target.is_some() {
+        eprintln!("aot-lanes: closed target caller={caller} pc={pc} -> {target:?}");
+    }
     target.map(|function| lane_unit::CallTarget { callee: lane_unit::CalleeBinding::Function, function }).into_iter().collect()
 }
 
@@ -67,22 +72,26 @@ fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Option
 /// `unit_of`, or why there is none.
 fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Result<lane_unit::Unit, &'static str> {
     let body = program.function_get(function as usize).ok_or("no such function")?;
-    let unit = lane_unit::unit(program, function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))
-        .ok_or("no lane unit")?;
-    if !unit.frames.iter().all(|frame| frame.recovery == lane_unit::CallRecovery::RestartCall) { return Err("an inlined frame does not restart"); }
-    Ok(unit)
+    let attempt = |numeric_only: bool| lane_unit::unit(program, function, body,
+            &|caller, pc| closed_targets(program, facts, (caller, pc), numeric_only),
+            &|callee| program.function_get(callee as usize))
+        .filter(|unit| unit.frames.iter().all(|frame| frame.recovery == lane_unit::CallRecovery::RestartCall));
+    // Every proven call target first; if one would rather not restart, the numeric calls alone,
+    // which every image body could inline before (`numeric_restartable`).
+    attempt(false).or_else(|| attempt(true)).ok_or("no restartable lane unit")
 }
 
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &crate::vm::global_facts::GlobalReads))
-    -> Result<(RelocatableCode, bool), &'static str> {
+    -> Result<(RelocatableCode, bool, Box<[Box<[(u16, u16)]>]>), &'static str> {
     // An image has no feedback and no later tier: every record lowers as one a previous body left
     // at (`generic`), by the form whose miss calls the VM's own operation rather than leaving.
     let generic: Vec<usize> = (0..unit.instructions.len()).collect();
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
         global_reads, facts, &generic, &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
+    let stored = lowered.region.exits.stores_by_pc(unit.instructions.len());
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
     let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
@@ -97,7 +106,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     if let (Some(directory), Some(clif)) = (super::native_dump_directory(), lowered.clif.as_deref()) {
         let _ = std::fs::write(directory.join(format!("ahead-function-{function}.clif")), clif);
     }
-    Ok((code, lowered.region.fault_poll))
+    Ok((code, lowered.region.fault_poll, stored))
 }
 
 /// The lane body of `function` for an AOT image under the closed-world `facts`, whose leaves
@@ -111,8 +120,6 @@ pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32,
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Result<LaneImage, &'static str> {
     let unit = unit_or_refusal(program, function, facts)?;
-    // A VM installs no lane body that inlines a frame (`ahead_lane_method`): its leaves inside one have no store list.
-    if !unit.frames.is_empty() { return Err("inlines a call (not installable)"); }
     let proven = proven_calls(program, &unit, function, calls, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
     let strings = string_constants(program, &unit, symbols);
@@ -125,8 +132,8 @@ pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32,
         .then(|| lane_region::AheadLeaves { calls: &proven, strings: &strings });
     let facts = VmFacts { ahead, closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
-    let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
-    Ok(LaneImage { code, fault_poll })
+    let (code, fault_poll, stored) = lowered_code(program, &unit, function, (facts, &global_reads))?;
+    Ok(LaneImage { code, fault_poll, stored })
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
@@ -337,11 +344,14 @@ impl Vm {
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program))) else {
             refused("no unit"); return None;
         };
-        // An image has no lowering to ask which registers a leave inside an inlined frame stores.
-        if !unit.frames.is_empty() { refused("inlined frames"); return None; }
+        if crate::trace::Channel::AotLanes.on() && !unit.frames.is_empty() {
+            eprintln!("aot-lanes: install function {function}: {} inlined frame(s)", unit.frames.len());
+        }
         // The body's code is linked where it will run: its page- and displacement-relative
         // fields are its address's, so the placement comes first (`live::link_lane_at`).
-        let code = &images.image.functions.get(function as usize)?.lane.as_ref()?.code;
+        let image = images.image.functions.get(function as usize)?.lane.as_ref()?;
+        let code = &image.code;
+        if image.stored.len() != unit.instructions.len() { refused("stored list"); return None; }
         let mut linked = None;
         let memory = match super::code_heap::publishing("u-jit-lane", function as usize, || {
             // The body's value table follows its code in the block (`live::link_lane_at`).
@@ -359,7 +369,7 @@ impl Vm {
         // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() }, entry_types: Default::default(), summary: None,
-            exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
+            exits: ExitTable::of_unit_stores(&unit, &image.stored) };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
         let method = plan.finish_in(memory, None, None);
