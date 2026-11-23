@@ -262,7 +262,7 @@ pub(crate) fn loop_compile_in_lane(
     // the interpreter's jumps and the native iterations the loop took so far.
     let base = crate::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
         u64::from(site.taken.get()).saturating_add(tier.iterations));
-    tier.base = base && !quench_runtime::jit_mode::base_regions();
+    tier.base = base && !crate::compiled::admission::stencil_regions();
     tier.promote_at = crate::compiled::loop_model::promotion_taken(machine.programs.tiers(), site.span());
     let program = machine.programs.get(machine.active_program);
     let function = site.function();

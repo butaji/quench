@@ -167,7 +167,7 @@ impl Vm {
             inline_calls: inline_calls && code.kind == quench_runtime::bytecode::ProgramKind::Wasm,
             script_calls,
             script_constructs,
-            tiers_run: self.tier_may_run(quench_runtime::jit_mode::Tier::ANY),
+            tiers_run: self.tier_may_run(crate::compiled::admission::Tier::ANY),
             // `script_calls` starts on only where `inline_calls` is.
             returns_script_frame: false,
             instance: Value::DELETED,

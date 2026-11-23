@@ -11,7 +11,7 @@ impl Vm {
     /// execution keeps no history, as V8's jitless mode allocates no feedback for an
     /// optimizing compiler it never runs (mandreel: 12.5 MB of history at its peak).
     pub(crate) fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: crate::compiled::CallTarget) {
-        if self.tier_may_run(quench_runtime::jit_mode::Tier::ANY) {
+        if self.tier_may_run(crate::compiled::admission::Tier::ANY) {
             self.lane_stack.note_site_callee(link, target);
         }
     }

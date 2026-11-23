@@ -324,7 +324,90 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         }
         UnitKind::Body | UnitKind::Region(_) | UnitKind::Aot | UnitKind::Ahead(_) | UnitKind::Wasm => may_compile(kind),
     };
+    if cleared && bisected_out() { return Decision::Declined; }
     if cleared { Decision::Compile(CompiledUnit { _sealed: () }) } else { Decision::Declined }
+}
+
+/// Whether the `unit-bisect` range leaves out the unit `specialize` is about to clear: each cleared
+/// unit takes the next number, and only numbers in the range compile.
+fn bisected_out() -> bool {
+    use quench_runtime::trace::Dev::UnitBisect;
+    if !UnitBisect.on() { return false; }
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if UnitBisect.value().is_none_or(str::is_empty) {
+        eprintln!("unit-bisect {number}");
+        return false;
+    }
+    !within_trace_range(UnitBisect, number)
+}
+
+/// The tiers of the JIT mode, as the specializer names them.
+pub(crate) use quench_runtime::jit_mode::Tier;
+
+/// Whether the process's JIT mode lets `tiers` run: the specializer's one reading of the mode,
+/// which every other tier decision of the engine takes from here.
+#[inline]
+pub(crate) fn tier_runs(tiers: &[Tier]) -> bool { quench_runtime::jit_mode::tiers_allowed(tiers) }
+
+/// Whether the stencil tier is the only tier (`--b-jit`).
+#[inline]
+pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
+
+/// Whether loop regions take the stencil tier in place of Cranelift (`jit_mode::base_regions`).
+#[inline]
+pub(crate) fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
+
+/// Whether the interpreter is the only tier (`--no-jit`).
+#[inline]
+pub(crate) fn interpreter_only() -> bool { quench_runtime::jit_mode::JitMode::process() == quench_runtime::jit_mode::JitMode::Interp }
+
+/// How a function's interpreter records specialize (`dispatch_fast::derive_lane_view`): the
+/// interpreter's own projection of the function, decided here as every compiled unit is.
+#[derive(Clone, Copy)]
+pub(crate) struct RecordPlan {
+    /// Loop records keep tier sites (`install_loop_sites`) and their jumps stay visible to them.
+    pub(crate) loop_sites: bool,
+    /// The int32 kinds may speculate: only where the interpreter alone runs, since it retires a
+    /// speculation whose `IncDec` overflows and a compiled tier's overflowing update does not.
+    pub(crate) speculates: bool,
+}
+
+/// The record plan of a function whose tiers may run (`tiers_run`: `Vm::tier_may_run`, any tier).
+pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
+    RecordPlan { loop_sites: tiers_run, speculates: interpreter_only() && crate::dispatch_fast::int_kinds::speculation_allowed() }
+}
+
+/// Where a function's lane body comes from (`lane_route`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LaneRoute {
+    /// The program's loaded AOT image serves it (`install_ahead_lane_body`): no warm-up, no runtime tier.
+    Ahead,
+    /// The stencil tier stitches it at once (`--b-jit`).
+    Base,
+    /// It waits for callees that still compile, to call their bodies by their entries.
+    Deferred,
+    /// The lane body tier plans it (`LanePlan` and the gates after it).
+    Lane,
+}
+
+/// The facts `lane_route` reads.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LaneRouteFacts {
+    /// The function's program has a loaded AOT image.
+    pub(crate) ahead_image: bool,
+    /// The process runs the stencil tier only (`jit_mode::base_only`).
+    pub(crate) base_only: bool,
+    /// A start whose direct callees still compile (`body_tier_in_lane::callees_compiling`).
+    pub(crate) callees_compiling: bool,
+}
+
+/// The route of a function's lane body: the specializer decides it, as it decides each unit after.
+pub(crate) fn lane_route(facts: LaneRouteFacts) -> LaneRoute {
+    if facts.ahead_image { LaneRoute::Ahead }
+    else if facts.base_only { LaneRoute::Base }
+    else if facts.callees_compiling { LaneRoute::Deferred }
+    else { LaneRoute::Lane }
 }
 
 /// How a callee would run: inlined into a lane unit under the call's `CalleeBinding`, or called

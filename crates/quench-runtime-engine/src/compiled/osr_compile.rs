@@ -338,7 +338,7 @@ pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
 /// Its small monomorphic calls run as their callees' rows (`calls`, the function's and the realm's they were found in).
 fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::base_region::Known, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers,
     (function, calls, invalidation): (u32, RegionCalls, Invalidation), base: bool) -> Option<Option<PendingOsrRegion>> {
-    let base_only = quench_runtime::jit_mode::base_only();
+    let base_only = crate::compiled::admission::stencil_only();
     // A b-jit region the default mode picked that BaseJIT declines falls to Cranelift.
     if !base || region.inlining.is_some() {
         return base_only.then_some(None);

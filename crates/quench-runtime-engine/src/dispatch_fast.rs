@@ -7040,7 +7040,13 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
     // A function of a program with a loaded AOT image takes the image's body and no other
     // (`install_ahead_lane_body`): no warm-up, no runtime tier.
-    if vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some() {
+    // Where the body comes from is the specializer's decision (`admission::lane_route`): an ahead
+    // image, the stencil tier at once, a wait for callees still compiling, or the lane body tier.
+    let base_only = crate::compiled::admission::stencil_only();
+    let ahead_image = vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
+    if crate::compiled::admission::lane_route(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
+        == crate::compiled::admission::LaneRoute::Ahead
+    {
         let published = own.entry_published();
         let installed = own.install_ahead_lane_body(body_entry_row(), || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
         if !published && own.entry_published() {
@@ -7057,23 +7063,19 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
             poll => poll,
         };
         let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
-        // A function of a program with a loaded AOT image takes the image's body (`install_ahead_body`) before any tier's.
-        if let crate::compiled::LaneBodyWork::Start { generic, .. } = &work
-            && let Some(unit) = crate::compiled::admission::ahead_unit(function)
-            && let Some(published) = vm.install_ahead_body(unit, code, function, None, generic)
-        {
-            return crate::compiled::LaneBodyOutcome::Published(published);
-        }
-        // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
-        if quench_runtime::jit_mode::base_only() {
-            let crate::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
-            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
-            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
-        }
-        if matches!(work, crate::compiled::LaneBodyWork::Start { .. })
-            && let Some(outcome) = body_tier_in_lane::start_gate(vm, own, code.function_get(function as usize))
-        {
-            return outcome;
+        let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
+        // A start under the lane body tier waits for callees still compiling (`body_tier_in_lane::callees_compiling`).
+        let callees_compiling = starting && !base_only && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
+        match crate::compiled::admission::lane_route(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only, callees_compiling }) {
+            // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
+            crate::compiled::admission::LaneRoute::Base => {
+                let crate::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
+                let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
+                return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
+            }
+            crate::compiled::admission::LaneRoute::Deferred => return crate::compiled::LaneBodyOutcome::Deferred,
+            crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
+            crate::compiled::admission::LaneRoute::Lane => {}
         }
         let started: Option<Vec<crate::compiled::LaneExit>> = match &work { crate::compiled::LaneBodyWork::Start { generic, .. } => Some(generic.to_vec()), _ => None };
         let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc), &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
@@ -7698,7 +7700,7 @@ fn inlining_region_in_lane(
     site: &LoopSite,
 ) -> Option<crate::compiled::LoopRegion> {
     // `--b-jit` runs no inlining regions, so it does not analyze them.
-    if quench_runtime::jit_mode::base_only() { return None; }
+    if crate::compiled::admission::stencil_only() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };
@@ -7957,7 +7959,7 @@ fn frame_state_in_lane(
                     kind,
                     live,
                     sites,
-                    vm.tier_may_run(quench_runtime::jit_mode::Tier::ANY),
+                    crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
                     diagnostics,
                     tiers,
                 )
@@ -8486,7 +8488,7 @@ impl Vm {
     fn note_linked_callee_slow(&self, address: usize, link: &std::cell::Cell<u16>, index: usize) {
         let current = &self.lane_stack.script_targets.entries[index];
         // Where no tier runs, no region reads the record: the pair is marked only.
-        if self.tier_may_run(quench_runtime::jit_mode::Tier::ANY) {
+        if self.tier_may_run(crate::compiled::admission::Tier::ANY) {
             self.note_site_callee(link, crate::compiled::CallTarget {
                 callee: crate::compiled::CalleeBinding::Identity(current.callee), function: current.function });
         }
@@ -8903,7 +8905,7 @@ impl Vm {
                 kind,
                 live,
                 sites,
-                self.tier_may_run(quench_runtime::jit_mode::Tier::ANY),
+                crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
                 diagnostics,
                 tiers,
             )
@@ -8948,7 +8950,7 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, &self.heap, kind, live, sites, false, false, self.programs.tiers())
+                    derive_lane_view(function, code, constants, &self.heap, kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers())
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -13017,7 +13019,7 @@ pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc:
     let (sloppy, lexical) = match target.this_binding {
         ThisBinding::Sloppy => (Some(vm.realm.globals), false),
         ThisBinding::Strict => (None, false),
-        ThisBinding::Lexical if quench_runtime::jit_mode::base_only() => (None, true),
+        ThisBinding::Lexical if crate::compiled::admission::stencil_only() => (None, true),
         _ => return None,
     };
     (target.admission.current(vm.lane_stack.admission)
@@ -17095,10 +17097,11 @@ fn derive_lane_view<'live>(
     kind: quench_runtime::bytecode::ProgramKind,
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
     sites: &[quench_runtime::bytecode::FieldSite],
-    loop_tier: bool,
+    plan: crate::compiled::admission::RecordPlan,
     diagnostics: bool,
     tiers: &'static Tiers,
 ) -> LaneView {
+    let loop_tier = plan.loop_sites;
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
     // Every backward jump observes host termination, including allocation-free
@@ -17406,9 +17409,9 @@ fn derive_lane_view<'live>(
     // accumulator hazard check, which recognizes only generated rows.
     // The int32 kinds of the registers (`int_kinds`), which pick the operator records' proven forms.
     // A loop kernel or vector region writes its registers from its own code, under no kind.
-    let int_kinds = (!wasm && int_kinds::proven_forms_enabled() && loop_kernels.is_empty() && vector_regions.is_empty())
+    let int_kinds = (!wasm && loop_kernels.is_empty() && vector_regions.is_empty())
         .then(|| int_kinds::analyze(&decoded, constants, live().map(|masks| &**masks), usize::from(function.registers),
-            resolves_names, int_kinds::speculation_in_mode()))
+            resolves_names, plan.speculates))
         .flatten();
     let mut int_speculating = Vec::new();
     if !wasm {
@@ -18611,7 +18614,7 @@ impl Vm {
                     kind,
                     live,
                     sites,
-                    self.tier_may_run(quench_runtime::jit_mode::Tier::ANY),
+                    crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
                     diagnostics,
                     tiers,
                 )

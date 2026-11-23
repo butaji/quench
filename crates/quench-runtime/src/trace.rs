@@ -147,6 +147,11 @@ setting! {
         /// With `aot-bodies=a-b`, an ahead image installs a body (lane or base) only for the
         /// functions numbered `a` through `b`; the others run in the interpreter.
         AotBodies = "aot-bodies",
+        /// With `unit-bisect=a-b`, only the units numbered `a` through `b`, in the order the one
+        /// specializer clears them (`compiled::admission::specialize`), compile; the others are
+        /// declined and run where a declined unit runs. Bare `unit-bisect` numbers each cleared
+        /// unit on stderr. A miscompile's bisection under `sync-compile`.
+        UnitBisect = "unit-bisect",
         /// Number loop regions build from BaseJIT stencils (`quench-bjit`) where every
         /// instruction has a row, instead of Cranelift IR.
         Bjit = "bjit",

@@ -1460,7 +1460,7 @@ pub(crate) fn region(
     // The BaseJIT tier proves each operand where its row reads it and needs no roles: its plan
     // lowers every instruction, so a loop the role analysis rejects is still its span.
     match admitted {
-        Err(_) if quench_runtime::jit_mode::base_only() => LoopRegion::span(decoded[start..=end].to_vec(), constants, live, header).ok_or(RegionAnalysisFailure { reason: RegionRejection::RegionTooLarge, pc: backedge }),
+        Err(_) if crate::compiled::admission::stencil_only() => LoopRegion::span(decoded[start..=end].to_vec(), constants, live, header).ok_or(RegionAnalysisFailure { reason: RegionRejection::RegionTooLarge, pc: backedge }),
         admitted => admitted,
     }
 }
@@ -1484,7 +1484,7 @@ fn admit_region(
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     // Under `--b-jit` a loop whose every iteration leaves (at a call, a throw) is still a region:
     // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop.
-    if !quench_runtime::jit_mode::base_only()
+    if !crate::compiled::admission::stencil_only()
         && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls, native_call)
     {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));

@@ -134,7 +134,7 @@ pub(crate) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagno
     let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
     let net = net_planned_ns(priors, priors.body_share, (plan, priors.compile_ns_per_ir), compile_wall_permille(priors), observed);
     // In the default mode b-jit is the tier below u-jit: a function u-jit would not beat per entry takes it.
-    let base = quench_runtime::jit_mode::tiers_allowed(&[quench_runtime::jit_mode::Tier::Base]).then(|| (base_net_ns(priors, observed),
+    let base = crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]).then(|| (base_net_ns(priors, observed),
         saved_per_entry(priors, priors.base_body_share, priors.body_entry_ns, observed),
         saved_per_entry(priors, priors.body_share, priors.body_entry_ns, observed)));
     let picked = if tiers.admits_all { Pick::Ultra } else { pick(net, base) };
