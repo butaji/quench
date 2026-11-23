@@ -18,11 +18,13 @@ pub(crate) struct WasmHostFields {
 }
 
 impl WasmHostFields {
+    #[inline(always)]
     fn of(instruction: WideInstruction) -> Self {
         Self { op: instruction.op(), a: instruction.a(), b: instruction.b(), c: instruction.c(), imm: instruction.imm() }
     }
 
     /// The instruction these fields are.
+    #[inline(always)]
     pub(crate) fn instruction(self) -> WideInstruction {
         WideInstruction::new(self.op, self.a, self.b, self.c, self.imm)
     }
@@ -39,6 +41,7 @@ macro_rules! host_steps {
 
         impl WasmHostStep {
             /// The step `instruction` denotes among these opcodes; `None` for any other.
+            #[inline(always)]
             fn of(instruction: WideInstruction) -> Option<Self> {
                 let fields = WasmHostFields::of(instruction);
                 Some(match instruction.op() {
@@ -48,6 +51,7 @@ macro_rules! host_steps {
             }
 
             /// The fields of the step.
+            #[inline(always)]
             pub(crate) fn fields(self) -> WasmHostFields {
                 match self {
                     $(Self::$op(fields) => fields,)*
@@ -76,6 +80,7 @@ host_steps! {
 /// The registers `Vm::call_out` reads for `instruction`'s (at most two) operands: the first the
 /// tier reads as the first operand, the second as the second. Every other register the helper
 /// reads, it reads from the running frame.
+#[inline(always)]
 pub(crate) fn operands(instruction: WideInstruction) -> [Option<Register>; 2] {
     let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
     match instruction.op() {
@@ -96,7 +101,8 @@ pub(crate) fn operands(instruction: WideInstruction) -> [Option<Register>; 2] {
 
 /// Whether `instruction`'s opcode defines no register: a write, a fill, a copy or an
 /// initialization, which the interpreter's handler writes nothing for.
-fn defines_nothing(op: Op) -> bool {
+#[inline(always)]
+const fn defines_nothing(op: Op) -> bool {
     matches!(
         op,
         Op::WasmArrayCopy | Op::WasmArrayFill | Op::WasmArrayInitData | Op::WasmArrayInitElem

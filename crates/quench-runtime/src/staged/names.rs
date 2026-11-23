@@ -126,13 +126,17 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
             Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },
             Some(instruction.result_register()), [Some(instruction.register_b()), Some(instruction.register_c())]),
-        _ => return super::protocol_literals::decode(instruction)
-            .or_else(|| super::protocol_classes::decode(instruction))
-            .or_else(|| super::protocol_values::decode(instruction))
-            .or_else(|| super::protocol_owned::decode(instruction))
-            .or_else(|| super::protocol_wasm::decode(instruction))
-            .map(|(step, destination, operands)| Operation::Protocol { step, destination, operands })
-            .or_else(|| super::spread::decode(instruction)),
+        // A sequence of tests, not `Option::or_else`: its closures left out of line kept every
+        // decoder's test at run time in a row whose opcode is a constant (`generated_row`).
+        _ => {
+            let decoded = if let Some(decoded) = super::protocol_literals::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_classes::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_values::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_owned::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_wasm::decode(instruction) { decoded }
+                else { return super::spread::decode(instruction) };
+            decoded
+        }
     };
     Some(Operation::Protocol { step, destination, operands })
 }

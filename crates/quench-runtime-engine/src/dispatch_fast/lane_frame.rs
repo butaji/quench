@@ -2338,6 +2338,12 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             None => frame,
         };
     }
+    if const { quench_runtime::staged::wasm_gc::GcStep::of(LaneFields::<OP>::OPCODE).is_some() } {
+        // A Wasm GC value row reads nothing of the frame but its registers and the lane context its
+        // call-out runs in (`wasm_gc_in_lane`): none of the name rows' hosts below.
+        let names: NamesStep = fast_names_step;
+        return LaneFrame::<ACC> { names: Some((cx.cast(), names)), ..LaneFrame::<ACC>::new(r, view) };
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
         let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
         // A count the view proved to read its function's kept arguments (`FLAG_SET`) takes a

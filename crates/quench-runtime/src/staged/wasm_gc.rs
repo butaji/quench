@@ -450,6 +450,7 @@ const fn read_signed(access: GcFieldAccess) -> Option<bool> {
 
 impl GcStep {
     /// The step of `op`, `None` for an opcode that is no GC value operation (a call target is none).
+    #[inline(always)]
     pub const fn of(op: Op) -> Option<Self> {
         wasm_gc_table!(wasm_gc_step_of op)
     }

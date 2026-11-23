@@ -135,7 +135,9 @@ lane_handler! {
         let property_values = if property && !store {
             // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
             unsafe { vm(view.memory.bytes.cast::<LaneContext>()) }.heap.arena_values_base()
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names))
+            && quench_runtime::staged::wasm_gc::GcStep::of(LaneFields::<OP, FLAG>::OPCODE).is_none() } {
+            // A Wasm GC value row reads the Wasm heap through its call-out, no property arena slot.
             unsafe { vm(cx) }.heap.arena_values_base()
         } else { std::ptr::null() };
         let mut stage = if store {
