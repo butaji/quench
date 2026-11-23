@@ -145,7 +145,7 @@ fn count_staged_opcode_lists(root: &std::path::Path, words: &Vocabulary, debt: &
             let patterns = patterns.split(" if ").next().unwrap();
             let alternatives: Vec<&str> = patterns.split('|').collect();
             // A single-opcode alias the selector test pins (`ALIAS_SELECTORS`) is a checked name of its row.
-            if alternatives.len() == 1 && ALIAS_SELECTORS.contains(&enclosing_function(&code, at)) { continue; }
+            if alternatives.len() == 1 && (ALIAS_SELECTORS.contains(&enclosing_function(&code, at)) || CRATE_ALIAS_SELECTORS.contains(&enclosing_function(&code, at))) { continue; }
             for alternative in alternatives {
                 if let Some(name) = opcode_after(alternative) { add(&name); }
             }
@@ -497,6 +497,7 @@ fn row_selectors_decode_to_their_rows() {
     assert!(matches!(decoded(staged::COMPARE_JUMP_ROW, 0, 1, 2, 0), Some(Operation::CompareJump { .. })), "COMPARE_JUMP_ROW");
     assert!(matches!(decoded(staged::MOVE_ROW, 1, 2, 0, 0), Some(Operation::Move { destination: 1, source: 2 })), "MOVE_ROW");
     assert!(matches!(decoded(Row::RETURN_ROW, 1, 0, 0, 0), Some(Operation::Return { source: 1 })), "RETURN_ROW");
+    assert!((0..8).any(|slot| matches!(decoded(staged::ARGUMENT_GET_ROW, 1, 2, 0, slot), Some(Operation::ArgumentGet { destination: 1, index: 2, .. }))), "ARGUMENT_GET_ROW");
     // An element definition is a literal row: its decoder reads it under the tier's allocation proof.
     assert!(matches!(Row::decode_literal_with(record(Row::DEFINE_ELEMENT_OP as u16, 1, 2, 0, 3), None, ()),
         Some(Operation::DefineElement { array: 2, index: 3, value: 1 })), "DEFINE_ELEMENT_OP");
@@ -519,8 +520,23 @@ const ALIAS_SELECTORS: &[&str] = &[
     "reads_environment_slot", "defines_array_element", "requires_object_coercible", "writes_this_field", "makes_closure",
     "clones_environment", "stores_environment_slot", "writes_environment_slot", "writes_capture", "jumps_when_false",
     "does_nothing", "stores_var_binding", "loads_this", "awaits", "constructs", "selects_string_case",
-    "requires_iterator_result", "compare_jump", "binary", "copies_register",
+    "requires_iterator_result", "compare_jump", "binary", "copies_register", "calls_method_site",
 ];
+
+/// The single-opcode aliases over crate-private operations (the Wasm families), which the crate's
+/// `staged::alias_pins` pins as `alias_selectors_name_one_row` pins the public ones.
+const CRATE_ALIAS_SELECTORS: &[&str] = &[
+    "wasm_branch_table", "wasm_simd", "wasm_simd_shuffle", "wasm_memory_address", "wasm_memory_load", "wasm_memory_store",
+    "wasm_f64_unary", "wasm_instance_binding", "wasm_fill_registers",
+];
+
+#[test]
+fn crate_alias_selectors_name_one_row() {
+    let (names, failures) = quench_runtime::staged::alias_pins::crate_alias_failures();
+    let pinned: Vec<&str> = names.into_iter().filter(|name| !name.starts_with("wasm_array_new")).collect();
+    assert_eq!(pinned, CRATE_ALIAS_SELECTORS, "staged::alias_pins pins CRATE_ALIAS_SELECTORS, in order");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
 
 #[test]
 fn alias_selectors_name_one_row() {
@@ -564,6 +580,7 @@ fn alias_selectors_name_one_row() {
         ("compare_jump", staged::compare_jump, |o| matches!(o, Operation::CompareJump { .. })),
         ("binary", staged::binary, |o| matches!(o, Operation::Binary { .. } | Operation::Number(_) | Operation::Equality { .. })),
         ("copies_register", staged::copies_register, |o| matches!(o, Operation::Move { .. })),
+        ("calls_method_site", staged::calls_method_site, |o| matches!(o, Operation::Call(_))),
     ];
     assert_eq!(aliases.iter().map(|(name, ..)| *name).collect::<Vec<_>>(), ALIAS_SELECTORS, "the test's aliases are ALIAS_SELECTORS, in order");
     let constants = [Constant::untyped(quench_runtime::Value::UNDEFINED); 4];
