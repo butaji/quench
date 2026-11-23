@@ -376,7 +376,7 @@ pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) ->
 
 /// Whether a first compile of `view` waits, before any planning, for callees that still compile: it
 /// then calls their bodies by their entries (`compiled::DirectCallee`). A callee that only lacks a
-/// body is asked to warm toward one and is not waited for. The fact `admission::lane_route` reads.
+/// body is asked to warm toward one and is not waited for. The fact `admission::route_for_lane` reads.
 pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, body: Option<&quench_runtime::bytecode::Function>) -> bool {
     let Some(body) = body else { return false };
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {

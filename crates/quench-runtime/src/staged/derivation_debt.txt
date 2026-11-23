@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`tests/staged_guards/coverage.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 383
+# total 357
 ../../quench-bjit/stencils/builtin_rows.rs fn:stencil_hand 16
 ../../quench-bjit/stencils/call_rows.rs fn:stencil_hand 20
 ../../quench-bjit/stencils/environment_rows.rs fn:stencil_hand 11
@@ -65,32 +65,6 @@
 ../../quench-runtime-engine/src/compiled/lane_unit/admission.rs fn:lane_* 1
 ../../quench-runtime-engine/src/compiled/meaning_compiled.rs JsDenotation:NumericBinary 2
 ../../quench-runtime-engine/src/compiled/meaning_compiled.rs JsDenotation:NumericUnary 2
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_binary 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_binary_arithmetic 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_call 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_call_array 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_call_known 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_construct 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_get_field 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_get_index 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_inc_dec 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_jump 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_jump_binary_false 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_jump_false 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_jump_true 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_load_capture 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_load_env_local 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_load_this 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_move 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_nop 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_ordinary_call 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_require_object_coercible 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_return 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_set_index 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_store_capture 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_throw 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_to_numeric 1
-../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_unary 1
 ../../quench-runtime-engine/src/compiled/meaning_compiled.rs is:is_unit_rewritten 1
 ../../quench-runtime-engine/src/compiled/meaning_compiled.rs op:Call 3
 ../../quench-runtime-engine/src/compiled/meaning_compiled.rs op:Construct 1
