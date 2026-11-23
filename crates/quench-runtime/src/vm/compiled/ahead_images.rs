@@ -57,9 +57,6 @@ fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u3
     let target = facts.function_facts(caller).call_target(pc)
         .filter(|&callee| program.function_get(callee as usize).is_some())
         .filter(|&callee| !numeric_only || super::lane_facts::numeric_restartable(program, callee));
-    if crate::trace::Channel::AotLanes.on() && target.is_some() {
-        eprintln!("aot-lanes: closed target caller={caller} pc={pc} -> {target:?}");
-    }
     target.map(|function| lane_unit::CallTarget { callee: lane_unit::CalleeBinding::Function, function }).into_iter().collect()
 }
 

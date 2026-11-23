@@ -10,7 +10,6 @@
 
 use super::{CallSite, ImageTarget, symbols::SymbolTable};
 use crate::bytecode::ResidualProgram;
-use crate::compile::aot_facts::AotFacts;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 
 /// A base body: code, relocations, and where each record starts.
@@ -37,14 +36,13 @@ impl BaseImage {
 /// relocations to the symbols the loader resolves; and those calls' sites (`AotImage::calls`).
 pub(crate) fn lower(
     program: &ResidualProgram,
-    facts: &AotFacts,
     target: &ImageTarget,
     id: u32,
     symbols: &mut SymbolTable,
 ) -> Result<(BaseImage, Vec<CallSite>), String> {
     // The target changes no base row: the body names no target's layout.
     let _ = target;
-    let built = crate::vm::compiled::image_body(program, id, facts)?;
+    let built = crate::vm::compiled::image_body(program, id)?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
         Relocation { offset: site.offset, kind: site.kind, namespace, key, addend: 0 }

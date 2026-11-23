@@ -4,7 +4,7 @@ use super::scope::Scope;
 use super::value::{Fact, Key};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
 use crate::staged::protocol_literals::LiteralStep;
-use crate::staged::{DecodeContext, NumberOperation, Operation, Protocol};
+use crate::staged::{Allocation, DecodeContext, NumberOperation, Operation, Protocol};
 
 /// The function an instruction belongs to, and where its parameters end.
 pub(super) struct Ctx<'a> {
@@ -31,7 +31,9 @@ pub(super) struct Events {
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
 pub(super) fn decoded(instruction: WideInstruction) -> Option<Operation<(), ()>> {
-    Operation::<(), ()>::decode_completed(instruction, DecodeContext::EMPTY).map(|(operation, _)| operation)
+    Operation::<(), ()>::decode_completed(instruction, DecodeContext::EMPTY)
+        .or_else(|| Operation::<(), ()>::decode_literal_completed_with(instruction, None, ()))
+        .map(|(operation, _)| operation)
 }
 
 /// Applies `instruction` at `pc` to `state`, the facts before it, and returns its binding effects.
@@ -85,9 +87,8 @@ fn value_of(
             .scope
             .owner(ctx.id, depth)
             .map_or(Fact::Unknown, |owner| Fact::Binding(Key::Slot { owner, slot })),
-        Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::Closure { function }), .. }) => {
-            Fact::Closure(function)
-        }
+        Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Fact::Closure(function),
+        Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::Closure { function }), .. }) => Fact::Closure(function),
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
         _ => Fact::Unknown,
     }
@@ -196,34 +197,39 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
 /// Records the binding stores `operation` makes, with the facts they store.
 fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
     match operation {
-        Some(Operation::StoreEnvLocal { source, slot, .. } | Operation::StoreLocalPlain { source, slot, .. }) => {
-            write(ctx, pc, events, Key::Slot { owner: ctx.id, slot }, state[usize::from(source)]);
+        // A captured or global binding is no parameter: a store of it stays as the flow proves
+        // it even in the prologue, where a register store may be overwritten by an argument.
+        Some(Operation::StoreEnvLocal { source, slot, .. }) => {
+            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot }, state[usize::from(source)]);
+        }
+        Some(Operation::StoreLocalPlain { source, slot, .. }) => {
+            write(ctx, pc, false, events, Key::Slot { owner: ctx.id, slot }, state[usize::from(source)]);
         }
         Some(Operation::StoreCapture { source, depth, slot }) => match ctx.scope.owner(ctx.id, depth) {
-            Some(owner) => write(ctx, pc, events, Key::Slot { owner, slot }, state[usize::from(source)]),
+            Some(owner) => write(ctx, pc, true, events, Key::Slot { owner, slot }, state[usize::from(source)]),
             None => {
                 events.wild_global = true;
                 events.wild_owner = true;
             }
         },
         Some(Operation::IncDecLocal { local, .. }) => {
-            write(ctx, pc, events, Key::Slot { owner: ctx.id, slot: local }, Fact::Unknown);
+            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot: local }, Fact::Unknown);
         }
         Some(Operation::GlobalWrite { source, atom, .. }) => {
-            write(ctx, pc, events, Key::Global(atom), state[usize::from(source)]);
+            write(ctx, pc, true, events, Key::Global(atom), state[usize::from(source)]);
         }
         Some(
             Operation::SetField { atom, .. }
             | Operation::StoreField { atom, .. }
             | Operation::FieldStoreMiss { atom, .. }
             | Operation::FieldAdd { atom, .. },
-        ) => write(ctx, pc, events, Key::Global(atom), Fact::Unknown),
+        ) => write(ctx, pc, true, events, Key::Global(atom), Fact::Unknown),
         _ => {}
     }
 }
 
 /// Records a write of `fact` to `key` at `pc`; a store before the parameters end binds an argument.
-fn write(ctx: &Ctx<'_>, pc: usize, events: &mut Events, key: Key, fact: Fact) {
-    let fact = if pc < ctx.parameter_end { Fact::Unknown } else { fact };
+fn write(ctx: &Ctx<'_>, pc: usize, stable: bool, events: &mut Events, key: Key, fact: Fact) {
+    let fact = if !stable && pc < ctx.parameter_end { Fact::Unknown } else { fact };
     events.writes.push((key, fact));
 }
