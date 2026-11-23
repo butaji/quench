@@ -71,18 +71,23 @@ pub(crate) fn is_construct(instruction: WideInstruction) -> bool {
 
 /// A binary operation of two operands (`Binary`): its equality row or the VM's operator.
 pub(crate) fn is_binary(instruction: WideInstruction) -> bool {
-    match performed(instruction) {
+    // A record that also completes the frame (`return a * b`) has no plain decode; it is a binary
+    // record by the staged meaning, whatever operation its plain form decodes to.
+    match crate::compiled::decoded(instruction) {
         Some(Operation::Equality { .. } | Operation::Binary { .. }) => true,
-        _ => false,
+        Some(_) => false,
+        None => quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary),
     }
 }
 
 /// A binary arithmetic operation whose operator `binary_operator` names: the equality row or the
 /// VM's operator of a `Binary` record.
 pub(crate) fn is_binary_arithmetic(instruction: WideInstruction) -> bool {
-    match performed(instruction) {
+    // As `is_binary`: a completing record is one by the staged meaning (`Meaning::NumericBinary`).
+    match crate::compiled::decoded(instruction) {
         Some(Operation::Equality { .. } | Operation::Binary { .. }) => true,
-        _ => false,
+        Some(_) => false,
+        None => quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary),
     }
 }
 
