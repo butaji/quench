@@ -144,6 +144,10 @@ setting! {
         /// With `aot-bodies=a-b`, an ahead image installs a body (lane or base) only for the
         /// functions numbered `a` through `b`; the others run in the interpreter.
         AotBodies = "aot-bodies",
+        /// An image lane body's leaves continue in its base body at the same PC (`AheadLeaves`);
+        /// off because the join's store layout gives the base body the previous activation's
+        /// values (`fbits9`), so leaves return their exit word and the lane runs the record.
+        AheadJoins = "ahead-joins",
         /// Number loop regions build from BaseJIT stencils (`quench-bjit`) where every
         /// instruction has a row, instead of Cranelift IR.
         Bjit = "bjit",

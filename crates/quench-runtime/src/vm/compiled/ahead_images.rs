@@ -118,7 +118,12 @@ pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32,
     let strings = string_constants(program, &unit, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
-    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
+    // A lane body's leaves continue in its base body (`AheadLeaves`) only under the join
+    // experiment: the join's store layout hands the base body the previous activation's values
+    // (`fbits9`), so a leave returns its exit word and the lane runs the record.
+    let ahead = crate::trace::Dev::AheadJoins.on()
+        .then(|| lane_region::AheadLeaves { calls: &proven, strings: &strings });
+    let facts = VmFacts { ahead, closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
     Ok(LaneImage { code, fault_poll })
