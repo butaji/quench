@@ -339,23 +339,62 @@ fn tiers_derive_opcode_meaning_from_the_interpreter() {
     }
 }
 
-/// The encoders beside their decode arms (`Operation::encode_*`) write records the arm reads back:
-/// each carries a debug assertion of the round trip, which this runs.
+/// The encoders beside their decode arms (`Operation::encode_*`) write records the arm reads back as
+/// the same variant with the fields it keeps. Asserted here, not by the encoders' debug assertions,
+/// which this profile may compile out.
 #[test]
 fn staged_encoders_round_trip_through_their_decode_arms() {
     use quench_runtime::staged::Operation;
     type Row = Operation<u64, ()>;
     for (a, b, c, imm) in [(0u16, 1u16, 0u16, 0u32), (3, 7, 2, 5), (9, 4, 1, 40)] {
-        Row::encode_move(a, b);
-        Row::encode_jump(imm);
-        Row::encode_get_field(a, b, c, imm);
-        Row::encode_set_field(a, b, c, imm);
-        Row::encode_set_this_field(a, b, c, imm);
-        Row::encode_load_capture(a, b, c, imm);
-        Row::encode_call(a, b, c, imm);
-        Row::encode_construct(a, b, c, imm);
+        let record = Row::encode_move(a, b);
+        assert!(matches!(Row::of(record), Some(Operation::Move { destination, source }) if destination == a && source == b), "move {a} {b}");
+        let record = Row::encode_jump(imm);
+        assert!(matches!(Row::of(record), Some(Operation::Jump)) && record.imm() == imm, "jump {imm}");
+        let record = Row::encode_get_field(a, b, c, imm);
+        assert!(matches!(Row::of(record), Some(Operation::GetField { destination, .. }) if destination == a), "get_field {a} {b} {c} {imm}: {:?}", Row::of(record).is_some());
+        for record in [Row::encode_set_field(a, b, c, imm), Row::encode_set_this_field(a, b, c, imm)] {
+            assert!(matches!(Row::of(record), Some(Operation::SetField { value, atom, site, .. })
+                if value == a && atom == record.atom_index() && site == record.cache_site_index()), "set_field {a} {b} {c} {imm}");
+        }
+        let record = Row::encode_load_capture(a, b, c, imm);
+        assert!(matches!(Row::of(record), Some(Operation::LoadCapture { destination, depth, slot, .. })
+            if destination == a && depth == record.capture_depth() && slot == record.capture_slot()), "load_capture {a} {imm}");
+        assert!(matches!(Row::of(Row::encode_call(a, b, c, imm)), Some(Operation::Call(_))), "call {a} {b} {c} {imm}");
+        assert!(matches!(Row::of(Row::encode_construct(a, b, c, imm)), Some(Operation::Call(_))), "construct {a} {b} {c} {imm}");
     }
-    Row::encode_nop();
+    assert!(matches!(Row::of(Row::encode_nop()), Some(Operation::Nop)), "nop");
     assert!(Row::is_call_index(Row::encode_call(0, 1, 0, 0).op() as u16));
     assert!(!Row::is_call_index(Row::encode_nop().op() as u16));
+}
+
+/// Each row constant a tier selects a row by (`staged::*_ROW`) names the opcode whose decode arm
+/// its doc names: a record of that opcode decodes to that arm's variant. A constant naming another
+/// opcode fails here, so a selector is a checked name of its row, not a second home of the opcode.
+#[test]
+fn row_selectors_decode_to_their_rows() {
+    use quench_runtime::bytecode::{Op, WideInstruction};
+    use quench_runtime::staged::{self, Operation};
+    type Row = Operation<u64, ()>;
+    let record = |row: u16, a: u16, b: u16, c: u16, imm: u32| WideInstruction::new(Op::from_index(row as usize).unwrap(), a, b, c, imm);
+    let decoded = |row: u16, a: u16, b: u16, c: u16, imm: u32| Row::of(record(row, a, b, c, imm));
+    assert!(matches!(decoded(staged::forms::PLAIN_CALL_ROW, 3, 4, 5, 0), Some(Operation::Call(_))), "PLAIN_CALL_ROW");
+    // A method call names its site in the program's method-site table, so it decodes against one.
+    let sites = [quench_runtime::bytecode::MethodSite::plain(8, 3, 0, 2)];
+    let methods = staged::DecodeContext { constants: &[], constant_at: None, method_sites: &sites };
+    assert!(matches!(Row::decode(record(staged::METHOD_CALL_ROW, 3, 4, 5, 0), methods), Some(Operation::Call(_))), "METHOD_CALL_ROW");
+    assert!(matches!(decoded(staged::COMPARE_JUMP_ROW, 0, 1, 2, 0), Some(Operation::CompareJump { .. })), "COMPARE_JUMP_ROW");
+    assert!(matches!(decoded(staged::MOVE_ROW, 1, 2, 0, 0), Some(Operation::Move { destination: 1, source: 2 })), "MOVE_ROW");
+    assert!(matches!(decoded(Row::RETURN_ROW, 1, 0, 0, 0), Some(Operation::Return { source: 1 })), "RETURN_ROW");
+    // An element definition is a literal row: its decoder reads it under the tier's allocation proof.
+    assert!(matches!(Row::decode_literal_with(record(Row::DEFINE_ELEMENT_OP as u16, 1, 2, 0, 3), None, ()),
+        Some(Operation::DefineElement { array: 2, index: 3, value: 1 })), "DEFINE_ELEMENT_OP");
+    // A constant load reads its constant from the program's table, so it decodes against one.
+    let constants = [staged::Constant::untyped(quench_runtime::Value::UNDEFINED)];
+    let context = staged::DecodeContext { constants: &constants, constant_at: None, method_sites: &[] };
+    assert!(matches!(Row::decode(record(staged::LOAD_CONST_ROW, 1, 0, 0, 0), context), Some(Operation::LoadConst { destination: 1, .. })), "LOAD_CONST_ROW");
+    for (row, name) in [(staged::BINARY_ROW, "BINARY_ROW"), (staged::NUMERIC_ADD_ROW, "NUMERIC_ADD_ROW"), (staged::NUMERIC_MULTIPLY_ROW, "NUMERIC_MULTIPLY_ROW")] {
+        // The immediate names the operator, which a numeric-arithmetic row must hold as its own.
+        assert!((0..64).any(|operator| matches!(decoded(row, 1, 2, 3, operator), Some(Operation::Number(_)))), "{name}");
+    }
 }

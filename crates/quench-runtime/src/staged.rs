@@ -72,6 +72,8 @@ mod delete;
 mod operation;
 pub use operation::Operation;
 pub use operation::kind as op_kind;
+#[cfg(not(stencil_build))]
+pub use operation::{COMPARE_JUMP_ROW, METHOD_CALL_ROW};
 mod binary_class;
 #[allow(unused_imports)]
 pub use binary_class::BinaryClass;
@@ -169,7 +171,9 @@ pub(crate) use plan::Bound;
 pub use invoke::{CallFrame, Entered, Room};
 mod suspend;
 #[allow(unused_imports)]
-pub use suspend::{await_source, suspend as suspension_step, SuspendEffect, Suspending, Suspension, YieldConversion};
+pub use suspend::{await_source, suspend as suspension_step, SuspendRow, SuspendEffect, Suspending, Suspension, YieldConversion};
+#[cfg(not(stencil_build))]
+pub use suspend::suspend_row;
 mod delegation;
 pub use delegation::DelegationStep;
 mod allocation;

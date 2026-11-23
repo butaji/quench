@@ -5,7 +5,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::bytecode::Op;
 
 /// The lane unit's frames for an inlining region's inlined callees.
 pub(crate) fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) -> Vec<lane_unit::InlinedCall> {
@@ -91,7 +90,7 @@ pub(crate) fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &
         _ => None,
     }).collect();
     for &(at, call) in inserted.iter().rev() {
-        instructions.insert(at, WideInstruction::new(Op::Nop, 0, 0, 0, 0));
+        instructions.insert(at, quench_runtime::staged::Operation::<u64, ()>::encode_nop());
         origins.insert(at, lane_unit::Origin::Caller(call));
     }
     // A jump target lands on the marker at its own position, as the call's PC did: an

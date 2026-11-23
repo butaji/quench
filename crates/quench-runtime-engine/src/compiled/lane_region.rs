@@ -3139,7 +3139,7 @@ impl Lowering<'_, '_> {
                 self.arguments_length(state, pc32, instruction),
             _ if plain && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
                 self.arguments_get(state, pc32, instruction),
-            _ if plain && self.is_jump(instruction) => return self.jump(state, pc, instruction),
+            _ if plain && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Jump) => return self.jump(state, pc, instruction),
             _ if plain && instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable => return self.branch_table(state, pc, instruction),
             _ if plain && matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Number(quench_runtime::staged::NumberOperation::IntCase { .. }))) => self.int_case_index(state, pc, instruction),
             _ if plain && matches!(super::decoded(instruction), Some(quench_runtime::staged::Operation::JumpIf { .. })) => {

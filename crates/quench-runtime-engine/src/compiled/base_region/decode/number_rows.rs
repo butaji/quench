@@ -45,11 +45,13 @@ pub(crate) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
     if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
         return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
     }
-    Some(match instruction.op().class() {
-        Class::Binary => binary(numbers, instruction).ok().map(|row| Decoded { generic: true, ..row }).filter(|_| plain),
-        Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
-        _ => return None,
-    })
+    if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary) {
+        return Some(binary(numbers, instruction).ok().map(|row| Decoded { generic: true, ..row }).filter(|_| plain));
+    }
+    if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericArithmetic) {
+        return Some(binary(numbers, instruction).ok().filter(|_| plain));
+    }
+    None
 }
 
 /// A jump on `register`'s truthiness: taken where it is truthy (`taken`, `JumpTrue`) or falsy.

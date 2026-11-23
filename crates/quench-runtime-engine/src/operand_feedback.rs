@@ -130,7 +130,7 @@ impl OperandKinds {
 /// Whether an instruction's record has a feedback byte: the arithmetic and comparison
 /// instructions whose lane handlers quicken on int32 operands.
 pub(crate) fn has_operand_feedback(op: Op) -> bool {
-    op.is_binary_arithmetic() || op.compares_and_jumps() || matches!(op, Op::GetIndex | Op::SetIndex)
+    quench_runtime::staged::meaning::records_operand_feedback(op) || op.compares_and_jumps()
 }
 
 /// The feedback byte of the record at `ip` of the view whose first record is `base`.

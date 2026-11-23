@@ -421,6 +421,17 @@ pub mod kind {
         kind == ANY || !admits(kind, variants)
     }
 }
+
+/// The compare-and-jump row: a jump on the failing comparison of two operands, which `decode_generic`
+/// reads as `CompareJump` (`decode_compare`). A tier names the row by this constant.
+#[cfg(not(stencil_build))]
+pub const COMPARE_JUMP_ROW: u16 = Op::JumpBinaryFalse as u16;
+
+/// The method-call row: a call whose callee is a property of its receiver, through a method site, which
+/// `decode_call` reads as a call site (`Invocation::of`, its `method` form). A tier names the row by this constant.
+#[cfg(not(stencil_build))]
+pub const METHOD_CALL_ROW: u16 = Op::CallMethod as u16;
+
 /// Decoding reads instructions and the opcode catalog, which the stencil build (`quench-bjit`) does
 /// not have: a stencil row builds its operation from its holes instead.
 #[cfg(not(stencil_build))]
@@ -529,6 +540,10 @@ impl<W, P> Operation<W, P> {
         names::decode(instruction)
     }
 
+    /// The opcode of an element definition, which `decode_literal_with` reads as `DefineElement`
+    /// (its `DefineArrayElement` arm): the row a tier's literal step matches on.
+    pub const DEFINE_ELEMENT_OP: Op = Op::DefineArrayElement;
+
     /// The literal operations of `decode` (`Decoder::Literal`) under the tier's `proof` of the
     /// allocation: the allocation a literal, closure or constant array record makes
     /// (`Allocation::decode`, which an array literal's element definitions do not change: the
@@ -606,7 +621,7 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     pub fn encode_nop() -> WideInstruction {
         let record = WideInstruction::new(Op::Nop, 0, 0, 0, 0);
-        debug_assert!(matches!(Operation::<u64, ()>::of(record), Some(Operation::Nop) | None));
+        debug_assert!(matches!(Operation::<u64, ()>::of(record), Some(Operation::Nop)));
         record
     }
 
@@ -627,7 +642,7 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     pub fn encode_call(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
         let record = WideInstruction::new(Op::Call, a, b, c, imm);
-        debug_assert!(matches!(Operation::<u64, ()>::of(record), Some(Operation::Call(_)) | None));
+        debug_assert!(matches!(Operation::<u64, ()>::of(record), Some(Operation::Call(_))));
         record
     }
 
@@ -637,7 +652,7 @@ impl<W, P> Operation<W, P> {
     pub fn encode_construct(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
         let record = WideInstruction::new(Op::Construct, a, b, c, imm);
         debug_assert!(matches!(Operation::<u64, ()>::of(record),
-            Some(Operation::Call(_) | Operation::SuperCall { .. }) | None));
+            Some(Operation::Call(_) | Operation::SuperCall { .. })));
         record
     }
 
@@ -943,4 +958,12 @@ impl Operation<u64, ()> {
     pub fn is_unit_rewritten(instruction: WideInstruction) -> bool {
         instruction.op().is_unit_rewritten()
     }
+}
+
+// Queries the runtime's profile and VM ask of the rows.
+#[cfg(not(stencil_build))]
+impl Operation<u64, ()> {
+    /// The row that completes the activation (`Return`). `decode_flow` decodes it as its fallback arm
+    /// (`Self::Return`, `invoke::ret`); the profile's tests name a second physical row by it.
+    pub const RETURN_ROW: u16 = Op::Return as u16;
 }

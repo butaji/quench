@@ -28,11 +28,6 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// Whether `instruction` is the unconditional jump row, whose block layout the lowering owns.
-    pub(crate) fn is_jump(&self, instruction: WideInstruction) -> bool {
-        matches!(quench_runtime::staged::Operation::<ir::Value, EmitProof>::decode(instruction, quench_runtime::staged::DecodeContext::of(self.program)), Some(quench_runtime::staged::Operation::Jump))
-    }
-
     /// Whether `instruction` is a row `register_step` lowers.
     pub(crate) fn is_register_row(&self, instruction: WideInstruction) -> bool {
         self.register_row(instruction).is_some()

@@ -291,7 +291,7 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quenc
     let code: Vec<WideInstruction> = body.instructions().collect();
     // A dense int `switch` lowers to a `WasmBranchTable`, which the base body plans as a compare tree
     // (`Step::Switch`); every other Wasm opcode is the Wasm tiers'.
-    let planned = |instruction: &WideInstruction| instruction.op() == quench_runtime::bytecode::Op::WasmBranchTable
+    let planned = |instruction: &WideInstruction| quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::BranchTable)
         || super::base_region::covers(std::slice::from_ref(instruction));
     if let Some(wasm) = code.iter().find(|instruction| !planned(instruction)) {
         return Err(format!("function {function}: the wasm instruction {:?} has no base row", wasm.op()));

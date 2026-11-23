@@ -17,7 +17,7 @@
 //! would run that code. The explicit leave makes the tail call return from the function.
 //!
 //! Known deviation, b-jit only: the interpreter's Wasm tail call is a true tail call (`dispatch.rs`,
-//! the `Op::CallKnown` arm's `prepare_user_tail` for `ProgramKind::Wasm && returns_from_frame()`),
+//! the known-function call arm's `prepare_user_tail` for `ProgramKind::Wasm && returns_from_frame()`),
 //! so an unbounded tail-recursive loop runs in constant VM stack there. A stitched function grows
 //! the native stack per tail call and reaches the entry's stack limit (`CallStackExhausted`). The
 //! u-jit has no such growth for a call to a natively compiled callee (`return_call`). A true jump

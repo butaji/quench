@@ -827,7 +827,7 @@ impl Vm {
                 RowRun::Stop(stop) => stop,
                 // A unary's row leaves where its words decide nothing the frame proves (an immediate no tag class
                 // names, a Number row's miss); the VM's general unary (`Vm::unary`) answers every operand.
-                RowRun::Declined if i.op() == crate::bytecode::Op::Unary => {
+                RowRun::Declined if crate::staged::computes_unary(i.op()) => {
                     let value = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
                     self.write(f, i.result_register(), value);
                     if i.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
@@ -837,7 +837,7 @@ impl Vm {
                 }
                 // A named read whose row leaves (a form its decode or plan does not take) is the VM's named read
                 // (`load_field_step`), completed as the record asks: a `this` write, a return.
-                RowRun::Declined if i.op() == crate::bytecode::Op::GetField => {
+                RowRun::Declined if crate::staged::reads_named_field(i.op()) => {
                     let lookup = i.field_lookup().expect("a named read names its lookup");
                     let value = match self.load_field_step(p, f, *pc, lookup, Some(i.result_register()), allow_inline_calls && !i.writes_current_this())? {
                         super::call_out::Loaded::Value(value) => value,

@@ -82,7 +82,7 @@ pub(crate) fn specialize(
     let mut filters = Vec::new();
     let mut sites = Vec::new();
     for (pc, instruction) in decoded.iter().enumerate() {
-        if !instruction.op().is_string_case_index() {
+        if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::StringCaseIndex) {
             continue;
         }
         // The range `operand_in_lane` validated before installing the selector.
