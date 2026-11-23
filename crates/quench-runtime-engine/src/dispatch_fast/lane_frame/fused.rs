@@ -15,7 +15,7 @@ fn raw_word(raw: bool, value: u64) -> Value {
     if raw && double.is_nan() { Value::number(double) } else { Value::from_bits(value) }
 }
 
-sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler, numeric(A, B, TEST, PREFIX);
+sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler;
     /// Two adjacent rows as one record, generated from their staged rows (`staged::FUSED_ROWS`):
     /// row `A` steps over this record, then row `B` over the next one, with no dispatch between
     /// them. Neither row is written for the pair: each is its own row's decode and step, so the
@@ -156,7 +156,7 @@ sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler, numeric(
     }
 }
 
-sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler, numeric(L0, L1, L2, L3);
+sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler;
     /// Three or four adjacent rows as one record, generated from their staged rows
     /// (`staged::FUSED_CHAINS`): each link is its row's own decode and step over its record,
     /// with no dispatch between links, as `fused_rows` does for two. A link's miss takes its
