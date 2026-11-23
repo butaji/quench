@@ -228,6 +228,53 @@ impl Invocation {
     }
 }
 
+/// The form a call-family record makes, for every record of the family: also the ones with no
+/// staged operation (a direct or parameter eval, whose callee the host decides; a construction
+/// over an array of arguments). Where a record decodes, its operation has the same form
+/// (`Invocation`, `Operation::SpreadCall`, `Operation::SuperCall`); a tier that asks what kind of
+/// call a record is asks this, not the opcode.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CallForm {
+    /// A call through a callee register and a receiver register, over a window of arguments.
+    Plain,
+    /// A call of a function the record names.
+    Known,
+    /// A method call through a method site.
+    Method,
+    /// A call that passes the activation's `arguments` as its last argument.
+    Forwarding,
+    /// A construction, allocating its receiver.
+    Construct,
+    /// A call whose one argument register holds the array to apply.
+    Array,
+    /// A call whose one argument register holds the iterable to spread.
+    Spread,
+    /// A call whose one argument register holds a rest view.
+    Rest,
+    /// `super(...)`.
+    Super,
+}
+
+#[cfg(not(stencil_build))]
+impl CallForm {
+    /// The form of the call-family record `instruction`, whatever its result flags; `None` for a
+    /// record of no call family.
+    pub fn of(instruction: WideInstruction) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::Call => Self::Plain,
+            Op::CallForwardingArguments => Self::Forwarding,
+            Op::CallKnown => Self::Known,
+            Op::CallMethod | Op::CallThisMethod => Self::Method,
+            Op::Construct if instruction.is_super_construct() => Self::Super,
+            Op::Construct => Self::Construct,
+            Op::CallArray => Self::Array,
+            Op::CallSpread => Self::Spread,
+            Op::CallRest => Self::Rest,
+            _ => return None,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

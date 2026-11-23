@@ -3064,7 +3064,7 @@ impl Lowering<'_, '_> {
         // is its value, and an instruction that needs it as an object allocates it first.
         if !state.virtuals.is_empty() {
             state.virtuals.retain(|kept| self.is_live(pc, kept.register));
-            if instruction.op().is_get_field() && let Some(falls) = self.virtual_field(state, pc, instruction) {
+            if crate::compiled::meaning_compiled::is_get_field(instruction) && let Some(falls) = self.virtual_field(state, pc, instruction) {
                 self.native += 1;
                 return falls;
             }
@@ -3106,7 +3106,7 @@ impl Lowering<'_, '_> {
             // A read of a written-once root binding whose function is held (`root_constant_read`).
             _ if plain && self.root_constant_at(pc).is_some() => self.root_constant_read(state, pc, instruction),
             _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
-            _ if instruction.op().is_get_field() && instruction.result_flags() & !(quench_runtime::bytecode::SET_THIS_REGISTER | quench_runtime::bytecode::RETURN_REGISTER) == 0 => {
+            _ if crate::compiled::meaning_compiled::is_get_field(instruction) && instruction.result_flags() & !(quench_runtime::bytecode::SET_THIS_REGISTER | quench_runtime::bytecode::RETURN_REGISTER) == 0 => {
                 let ran = self.fold_native_member(state, pc, instruction)
                     .or_else(|| self.fold_own_constant(state, pc, instruction)).or_else(|| self.get_field(state, pc, instruction));
                 // A named read of a declared parameter's member enters its destination with the member's type.

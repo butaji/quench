@@ -153,7 +153,7 @@ pub mod call_native;
 pub mod call_complete;
 pub mod call_iteration;
 #[allow(unused_imports)]
-pub use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
+pub use forms::{Arguments, CallFacts, CallForm, Callee, FunctionId, Invocation, Receiver, RegisterList};
 pub use protocol::CallOperation;
 pub(crate) mod invoke;
 pub(crate) mod prologue;
