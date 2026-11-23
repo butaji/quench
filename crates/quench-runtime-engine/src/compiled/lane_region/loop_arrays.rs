@@ -90,7 +90,8 @@ pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             let resolved = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
                 |slot| typed_captures.contains(&slot), pc, base));
             let Some(source) = resolved else { continue };
-            let kind = base.and_then(|base| typed_kinds.iter().find(|(own, _)| *own == base).map(|(_, kind)| *kind))
+            let kind = base.filter(|base| !written.contains(base))
+                .and_then(|base| typed_kinds.iter().find(|(own, _)| *own == base).map(|(_, kind)| *kind))
                 .or_else(|| match source {
                     ArraySource::Register(register) => typed_kinds.iter().find(|(own, _)| *own == register).map(|(_, kind)| *kind),
                     ArraySource::Capture(_) => None,

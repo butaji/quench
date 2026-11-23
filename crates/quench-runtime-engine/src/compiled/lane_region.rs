@@ -1775,6 +1775,20 @@ thread_local! {
     static DECLINED: std::cell::Cell<Option<(&'static str, usize)>> = const { std::cell::Cell::new(None) };
     /// The opcodes this thread's current lowering leaves at because it has no lowering for them.
     static UNLOWERED: std::cell::RefCell<std::collections::BTreeSet<String>> = const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
+    /// Whether this thread's current lowering wrote a value whose lane disagrees with the
+    /// register's representation (`register_define`): the register's variable is per representation,
+    /// so the body is no well-formed lowering and is declined.
+    static MISMATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Notes that the lowering wrote a value of the wrong representation (`register_define`).
+pub(super) fn note_mismatch() {
+    MISMATCH.with(|mismatch| mismatch.set(true));
+}
+
+/// Whether the current lowering wrote a representation mismatch.
+fn mismatched() -> bool {
+    MISMATCH.with(std::cell::Cell::get)
 }
 
 /// Notes why the lowering declines, for `QUENCH_TRACE=aot-lanes`; the first reason stands.
@@ -1802,6 +1816,7 @@ pub(crate) fn lower_body(
     let isa = super::jit_backend::target_isa()?;
     DECLINED.with(|declined| declined.set(None));
     UNLOWERED.with(|unlowered| unlowered.borrow_mut().clear());
+    MISMATCH.with(|mismatch| mismatch.set(false));
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[], admitted,
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
@@ -2366,6 +2381,13 @@ pub(crate) fn lower(
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
+    // A body whose definitions wrote the wrong representation is no well-formed lowering: its
+    // registers' variables are per representation, and nothing may publish what the builder had to
+    // convert (`register_define`, `note_mismatch`).
+    if mismatched() {
+        declined("a definition's lane disagrees with its representation", usize::MAX);
+        return None;
+    }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types, exits })
 }
 
