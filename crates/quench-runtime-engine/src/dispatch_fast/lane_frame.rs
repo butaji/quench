@@ -1324,6 +1324,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
                 let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
                 decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
             }
+            // A Wasm GC value step: the interpreter's own (`Vm::wasm_gc_value_step`) over the running
+            // frame's registers, inlined, so a row of one opcode keeps only that opcode's arm. A trap or
+            // miss, which writes nothing, is the row's miss: the general step raises it.
+            CallOut::Protocol { step, .. } if let Some(instruction) = step.wasm_gc_instruction() => {
+                let (context, _) = self.names?;
+                // SAFETY: the running lane's context and register file, live for the row's step.
+                unsafe { super::wasm_gc::wasm_gc_in_lane(context.cast(), self.registers, instruction) }.map(|value| (value.to_bits(), Boxing::Value))
+            }
             CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
                 let (context, step) = self.names?;
                 let operands = operation.operands().fixed;

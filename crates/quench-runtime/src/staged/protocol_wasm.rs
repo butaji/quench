@@ -115,3 +115,20 @@ pub(super) fn decode(instruction: WideInstruction) -> Option<(Protocol, Option<R
     let destination = (!defines_nothing(instruction.op())).then(|| instruction.result_register());
     Some((Protocol::Wasm(step), destination, operands(instruction)))
 }
+
+#[cfg(not(stencil_build))]
+impl Protocol {
+    /// The Wasm GC value instruction this step makes (`GcStep::of` names its opcode), rebuilt from
+    /// the step's fields, for a tier whose host runs it over its own registers
+    /// (`Vm::wasm_gc_value_step`); `None` for every other step.
+    #[inline(always)]
+    pub fn wasm_gc_instruction(self) -> Option<WideInstruction> {
+        match self {
+            Protocol::Wasm(step) => {
+                let instruction = step.fields().instruction();
+                super::wasm_gc::GcStep::of(instruction.op()).map(|_| instruction)
+            }
+            _ => None,
+        }
+    }
+}

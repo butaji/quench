@@ -4,9 +4,6 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::dispatch_wasm::{wasm_gc_allocates, wasm_gc_reads_instance};
-use quench_runtime::vm::wasm_gc::stage::HeapStage;
-use quench_runtime::staged::wasm_gc::{Aggregate, field_read};
-use quench_runtime::wasm::gc::{GcField, GcFieldAccess, static_offset};
 use quench_runtime::staged::wasm_call::Call;
 
 /// The running program's signature pool, cached on the lane for the program it was found for
@@ -55,29 +52,22 @@ fn lane_indirect_target(cx: *mut LaneContext, vm: &Vm, i: WideInstruction, ip: I
     Some(value)
 }
 
-/// The `wasm_gc_value_op` numbered `OP`.
-const fn gc_op<const OP: u16>() -> Op {
-    Op::from_index(OP as usize).expect("a Wasm GC opcode")
-}
-
 lane_handler! {
-    /// The `wasm_gc_value_op` numbered `OP` of the running function's registers, made by the
-    /// interpreter's step; a trap, which writes nothing, takes the general path to raise it.
-    /// One handler per opcode: the record holds the instruction's operands, so the step needs
-    /// no decode, and the opcode is a constant its step folds.
+    /// An instance read of the running function's registers (`Call::IndirectTarget` where `INDIRECT`, else
+    /// `Call::RefFunc`), made by the interpreter's step; a trap, which writes nothing, takes the general
+    /// path to raise it. The record holds the instruction's operands, so the step needs no decode.
     #[inline(never)]
-    fn lane_wasm_gc_step<OP: u16>(cx, r, ip, i, view) {
+    fn lane_wasm_gc_step<INDIRECT: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let op = const { gc_op::<OP>() };
+        let op = const { (if INDIRECT { Call::IndirectTarget } else { Call::RefFunc }).instance_read_op().expect("an instance read") };
         // SAFETY: the context outlives the lane run.
         let program = unsafe { (*cx).program };
-        let env = if const { wasm_gc_reads_instance(gc_op::<OP>()) } { instance_env_in_lane(cx) } else { Value::UNDEFINED };
+        let env = instance_env_in_lane(cx);
         let instruction = WideInstruction::new(op, i.a, i.b, i.c, i.imm());
         // Every GC step is the interpreter's own (`Vm::wasm_gc_value_step`, inlined, so this handler keeps
-        // only `OP`'s arm); a trap or miss, which writes nothing, takes the general path to raise it. An
+        // only its opcode's arm); a trap or miss, which writes nothing, takes the general path to raise it. An
         // indirect target also records the row the reference call after it reads (`lane_indirect_target`).
-        let indirect = const { matches!(Call::of(gc_op::<OP>()), Some(Call::IndirectTarget)) };
-        let value = if indirect {
+        let value = if INDIRECT {
             match lane_indirect_target(cx, vm, instruction, ip, r) {
                 Some(value) => Some(value),
                 None => return exit(ip),
@@ -92,60 +82,41 @@ lane_handler! {
             r.set(instruction.result_register(), value);
         }
         // An allocating step can make a collection due.
-        if const { wasm_gc_allocates(gc_op::<OP>()) } {
+        if wasm_gc_allocates(op) {
             note_allocation(vm);
         }
         next!(cx, r, following(ip), view)
     }
 }
 
-lane_handler! {
-    /// A plain read of a value field (`GcStep::StructGet` or `ArrayGet` with no sign): the interpreter's own access
-    /// (`staged::wasm_gc::field_read`) with the record's operands read in place, a struct's field
-    /// or, where `ARRAY`, an array's element. Where `RAW` (a `*Raw` form, an i64 or f64 field in a
-    /// raw web), the field's bits go to the register as they are: no box, no tag. A trap takes the
-    /// general path, which raises it.
-    #[inline(never)]
-    fn lane_wasm_field_read<ARRAY: bool, RAW: bool>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let field = GcField::from_tag(i.imm()).expect("validated field operand");
-        let (aggregate, index) = if ARRAY {
-            let Some(index) = r.get(i.c).as_int() else { return exit(ip) };
-            (Aggregate::Array, index as u32)
-        } else {
-            (Aggregate::Struct, field.index())
-        };
-        let reference = r.get(i.b).to_bits();
-        let mut stage = HeapStage { vm };
-        let offset = if ARRAY { None } else { static_offset(i.c) };
-        let Ok(word) = field_read(&mut stage, aggregate, reference, u64::from(index), field, GcFieldAccess::Read, offset) else {
-            return exit(ip);
-        };
-        r.set(i.a, if RAW { Value::from_bits(word) } else { stage.vm.wasm_field_value(field, GcFieldAccess::Read, word) });
-        next!(cx, r, following(ip), view)
+/// The handler of a Wasm GC value opcode the catalog gives no row (`lane_wasm_gc_step`): the indirect
+/// target and `ref.func`, which read the running instance. Every other GC value opcode is its staged
+/// row (`ROW_HANDLER`), whose call-out the lane makes in place (`wasm_gc_in_lane`).
+pub(crate) const fn wasm_gc_handler(op: Op) -> Option<Handler> {
+    match Call::of(op) {
+        Some(Call::IndirectTarget) => Some(lane_wasm_gc_step::<true>),
+        Some(Call::RefFunc) => Some(lane_wasm_gc_step::<false>),
+        _ => None,
     }
 }
 
-/// The handler of a `wasm_gc_value_op` (`lane_wasm_gc_step`), for `op` if it is one.
-pub(crate) const fn wasm_gc_handler(op: Op) -> Option<Handler> {
-    let raw = op.traits().has(quench_runtime::bytecode::Traits::RAW_FORM);
-    match (quench_runtime::staged::wasm_gc::GcStep::of(op), raw) {
-        (Some(quench_runtime::staged::wasm_gc::GcStep::StructGet { signed: None }), false) => {
-            return Some(lane_wasm_field_read::<false, false>);
-        }
-        (Some(quench_runtime::staged::wasm_gc::GcStep::StructGet { signed: None }), true) => {
-            return Some(lane_wasm_field_read::<false, true>);
-        }
-        (Some(quench_runtime::staged::wasm_gc::GcStep::ArrayGet { signed: None }), false) => {
-            return Some(lane_wasm_field_read::<true, false>);
-        }
-        (Some(quench_runtime::staged::wasm_gc::GcStep::ArrayGet { signed: None }), true) => {
-            return Some(lane_wasm_field_read::<true, true>);
-        }
-        _ => {}
+/// The Wasm GC value step `instruction` of the running function's registers `r`, made by the
+/// interpreter's step (`Vm::wasm_gc_value_step`, inlined, so a row of one opcode keeps only its arm):
+/// the value it defines, or `undefined` where it defines none. `None` on a trap, which writes nothing
+/// and leaves to the row's miss, whose general step raises it.
+///
+/// # Safety
+/// `cx` is the running lane's context and `r` its running register file.
+#[inline(always)]
+pub(crate) unsafe fn wasm_gc_in_lane(cx: *mut LaneContext, r: Registers, instruction: WideInstruction) -> Option<Value> {
+    debug_assert!(!wasm_gc_reads_instance(instruction.op()), "an instance read has its own handler");
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context outlives the lane run.
+    let program = unsafe { (*cx).program };
+    let value = vm.wasm_gc_value_step(program, Value::UNDEFINED, instruction, |_, register| r.get(register)).ok()?;
+    // An allocating step can make a collection due.
+    if wasm_gc_allocates(instruction.op()) {
+        note_allocation(vm);
     }
-    macro_rules! handlers {
-        ($($name:ident)*) => { match op { $(Op::$name => Some(lane_wasm_gc_step::<{ Op::$name as u16 }>),)* _ => None } };
-    }
-    quench_runtime::wasm_gc_value_ops!(handlers)
+    Some(value.unwrap_or(Value::UNDEFINED))
 }

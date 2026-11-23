@@ -35,6 +35,16 @@ impl Call {
         }
     }
 
+    /// The one opcode of an instance read (`IndirectTarget`, `RefFunc`), for a tier that rebuilds its
+    /// instruction from a record; `None` for a call, which several opcodes make.
+    pub const fn instance_read_op(self) -> Option<Op> {
+        match self {
+            Self::IndirectTarget => Some(Op::WasmIndirectTarget),
+            Self::RefFunc => Some(Op::WasmRefFunc),
+            Self::Known | Self::Reference => None,
+        }
+    }
+
     /// The function a call names statically.
     pub(crate) fn callee(self, instruction: WideInstruction) -> Option<usize> {
         (self == Self::Known).then(|| usize::from(instruction.known_function_index()))

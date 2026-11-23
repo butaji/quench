@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`tests/staged_guards/coverage.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 238
+# total 237
 ../../quench-bjit/stencils/builtin_rows.rs fn:stencil_hand 16
 ../../quench-bjit/stencils/call_rows.rs fn:stencil_hand 20
 ../../quench-bjit/stencils/environment_rows.rs fn:stencil_hand 4
@@ -78,7 +78,7 @@
 ../../quench-runtime-engine/src/dispatch_fast/value_steps.rs op:DefineArrayElement 1
 ../../quench-runtime-engine/src/dispatch_fast/vm_steps.rs fn:lane_* 4
 ../../quench-runtime-engine/src/dispatch_fast/wasm_calls.rs fn:lane_* 4
-../../quench-runtime-engine/src/dispatch_fast/wasm_gc.rs fn:lane_* 4
+../../quench-runtime-engine/src/dispatch_fast/wasm_gc.rs fn:lane_* 3
 ../../quench-runtime-engine/src/dispatch_fast/wasm_instance.rs fn:lane_* 8
 ../../quench-runtime-engine/src/operand_feedback.rs is:is_binary_arithmetic 1
 ../../quench-runtime-engine/src/operand_feedback.rs op:GetIndex 1
