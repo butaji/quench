@@ -251,8 +251,10 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
         }
     }
     // Hand-written lane handlers: a `fn lane_` a macro did not generate.
+    // A `#[test]` function is no handler: it checks the lane, whatever its name.
     for (at, _) in code.match_indices("fn lane_") {
-        if !code[..at].ends_with(ident_char) { add("fn:lane_*".to_owned()); }
+        let test = code[..at].trim_end().rsplit('\n').next().is_some_and(|line| line.trim() == "#[test]");
+        if !code[..at].ends_with(ident_char) && !test { add("fn:lane_*".to_owned()); }
     }
     // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
     // no staged step of its opcode: it neither names `staged::` nor calls a family step
