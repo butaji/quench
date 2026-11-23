@@ -175,14 +175,15 @@ impl Decisions {
             prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext>()) }.instanceof_fact(constructor)
                 .map(|fact| fact.link),
             records: |context| unsafe { vm(context.cast::<LaneContext>()) }.heap.object_record_base().map(|base| base as u64),
-            instance: |context, value, constructor| {
-                let machine = unsafe { vm(context.cast::<LaneContext>()) };
-                // The proof is recorded here as well as read (`proved_instanceof`): the lane decides
-                // every steady `instanceof`, so no other path would record it.
-                machine.record_instanceof(value, constructor).or_else(|| machine.proved_instanceof(value, constructor))
-                    .or_else(|| machine.ordinary_instanceof(value, constructor))
-            } }
+            instance: instance_decision }
     }
+}
+
+/// `Decisions::instance`, recorded here as well as read (`proved_instanceof`) since the lane decides every steady `instanceof`. A named fn, not a closure, so rows in every shard inline it (earley-boyer +2.4% Ir otherwise).
+#[inline(always)]
+fn instance_decision(context: *mut (), value: Value, constructor: Value) -> Option<bool> {
+    let machine = unsafe { vm(context.cast::<LaneContext>()) };
+    machine.record_instanceof(value, constructor).or_else(|| machine.proved_instanceof(value, constructor)).or_else(|| machine.ordinary_instanceof(value, constructor))
 }
 
 /// The lane context's own-field store and add hits, erased of its host so the frame names no `H`:
