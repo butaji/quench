@@ -192,7 +192,7 @@ fn throws(instruction: WideInstruction) -> bool {
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
     match instruction.op() {
-        opcode if super::meaning_compiled::is_unit_rewritten(opcode) => true,
+        opcode if super::meaning_compiled::unit_rewritten(opcode) => true,
         _ if matches!(crate::compiled::decoded_completed(instruction), Some(quench_runtime::staged::Operation::GetField { .. }))
             && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
         _ => {
