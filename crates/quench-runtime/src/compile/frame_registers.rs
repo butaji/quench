@@ -332,7 +332,7 @@ pub(super) fn promote<'a>(
 /// reusing `packed`'s entry when it was wide.
 fn encode(instruction: WideInstruction, packed: Instr, wide: &mut Vec<WideInstruction>) -> Instr {
     if packed.is_wide() {
-        wide[packed.wide_index()] = instruction;
+        *crate::bytecode::wide_entry_mut(wide, packed) = instruction;
         return packed;
     }
     Instr::try_new(

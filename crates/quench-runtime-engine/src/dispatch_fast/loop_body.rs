@@ -183,7 +183,7 @@ pub(crate) fn left_for_tier_up(cx: *mut LaneContext, site: &LoopSite, pc: u32) -
     vm.programs.get(vm.active_program).as_deref().is_some_and(|program| {
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).is_some_and(|packed| {
-            matches!(quench_runtime::staged::Operation::<u64, ()>::decode(decoded_instruction(body, *packed), quench_runtime::staged::DecodeContext::EMPTY),
+            matches!(quench_runtime::staged::Operation::<u64, ()>::decode(body.widened(*packed), quench_runtime::staged::DecodeContext::EMPTY),
                 Some(quench_runtime::staged::Operation::Jump))
         })
     })

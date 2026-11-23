@@ -1208,17 +1208,6 @@ impl<'a> NativeContext<'a> {
         self.completion(result)
     }
 
-    /// Compile and evaluate host-owned Script source through the specializer.
-    /// Dynamic eval remains on `evaluate_script_rooted`.
-    pub fn evaluate_specialized_script_rooted(
-        &mut self,
-        source: &str,
-        name: &str,
-    ) -> Result<RootId, RootedError> {
-        let result = self.vm.evaluate_embedding_specialized_script(source, name);
-        self.completion(result)
-    }
-
     /// Compile a host-owned TypeScript Script with an explicit source origin.
     /// This is distinct from eval, whose grammar remains JavaScript.
     pub fn evaluate_typescript_script_with_origin_rooted(
@@ -1300,19 +1289,6 @@ impl<'a> NativeContext<'a> {
         name: &str,
     ) -> Result<RootId, RootedError> {
         self.evaluate_library_body(prefix, crate::bytecode::SourceText::Static(body), suffix, name)
-    }
-
-    /// `evaluate_specialized_static_body_rooted` for a library module text the host derived
-    /// from its embedded text (a projection), which the program retains instead.
-    pub fn evaluate_specialized_library_body_rooted(
-        &mut self,
-        prefix: &str,
-        body: String,
-        suffix: &str,
-        name: &str,
-    ) -> Result<RootId, RootedError> {
-        let body = crate::bytecode::SourceText::Owned(std::rc::Rc::new(body));
-        self.evaluate_library_body(prefix, body, suffix, name)
     }
 
     fn evaluate_library_body(

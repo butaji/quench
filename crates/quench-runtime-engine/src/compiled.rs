@@ -1527,8 +1527,9 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize))?;
+    let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Aot, facts: Default::default() }).compiled()?;
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
-        fields: &[], global_reads, facts, generic: &[],
+        fields: &[], global_reads, facts, generic: &[], admitted,
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
         entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
@@ -3240,11 +3241,11 @@ pub(crate) fn analyze_osr_region_detailed(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls, native_call)
 }
 
-/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).
-pub(crate) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
-    tier_policy::by_policy(policy).loop_tier
-}
 
+/// Whether the loop tier compiles regions under `policy`: `admission::may_compile` for a region.
+pub(crate) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
+    admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Region(policy), facts: Default::default() }).compiled().is_some()
+}
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
@@ -7592,8 +7593,23 @@ impl Vm {
     #[cfg(test)]
     pub(crate) fn methods_enrolled_in_lane(&self) -> bool { self.programs.js_jit_lane_methods_enabled() }
 
-    /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
-    pub(crate) fn compile_wasm_eagerly(&mut self) {
+    /// Whether the runtime compiles Wasm modules whole at their first entry.
+    pub(crate) fn wasm_compile_at_first_entry(&self) -> bool {
+        self.programs.wasm_modules_compile_at_first_entry()
+    }
+
+    /// The unit of a Wasm program's module compile at `root` (`UnitKind::WasmModule`); `None` where
+    /// the program is missing, not Wasm, or a root-only compile names no root.
+    pub(crate) fn wasm_module_unit(&self, program: ProgramId, root: Option<usize>, root_only: bool) -> Option<admission::CompiledUnit> {
+        let code = self.programs.get(program)?;
+        let facts = admission::UnitFacts { wasm_program: code.kind == quench_runtime::bytecode::ProgramKind::Wasm, root_ok: !(root_only && root.is_none()), ..Default::default() };
+        admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts }).compiled()
+    }
+
+    /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`), as
+    /// `unit` (`UnitKind::WasmEager`) says.
+    pub(crate) fn compile_wasm_eagerly(&mut self, unit: admission::CompiledUnit) {
+        let _ = unit;
         self.programs.compile_wasm_modules_at_first_entry();
     }
 
@@ -7633,10 +7649,11 @@ impl Vm {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils.
-        let claims = self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT)
-            || (self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[quench_runtime::jit_mode::Tier::Base]));
-        if !claims || program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
+        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
+        if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
+            cranelift_allowed: self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT),
+            base_lane_allowed: self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[quench_runtime::jit_mode::Tier::Base]),
+            wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
             return false;
         }
         // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size: its
@@ -7833,7 +7850,10 @@ impl Vm {
         program: &ResidualProgram,
         entry: &TierEntry,
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
-        if !self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT) || program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
+        // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
+        let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
+            facts: admission::UnitFacts { cranelift_allowed: self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+        if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
         let (program_id, function_id) = (entry.program, entry.function);
@@ -7875,7 +7895,7 @@ impl Vm {
                 if !self.programs.note_js_function_entry(program_id, function_id, numeric, numeric) || !numeric {
                     return None;
                 }
-                self.js_tier_compile(program_id, function_id)?
+                self.js_tier_compile(unit, program_id, function_id)?
             }
         };
         if compiled.params() != params {
@@ -7891,11 +7911,11 @@ impl Vm {
 
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
     /// the specializer declines it or the tier does not install it.
-    fn js_tier_compile(&mut self, program_id: ProgramId, function_id: u32) -> Option<Rc<CompiledJsFunction>> {
+    fn js_tier_compile(&mut self, unit: admission::CompiledUnit, program_id: ProgramId, function_id: u32) -> Option<Rc<CompiledJsFunction>> {
         let residual = self.programs.get(program_id)?;
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
-        let pending = self.js_tier_pending.remove(&key).or_else(|| crate::js_compiled::start(&residual, function_id));
+        let pending = self.js_tier_pending.remove(&key).or_else(|| crate::js_compiled::start(&residual, function_id, unit));
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
             Some((std::task::Poll::Pending, pending)) => {
                 self.js_tier_pending.insert(key, pending);
@@ -8039,8 +8059,8 @@ impl Vm {
 
     /// Compile every function of `program` that has a compiled denotation,
     /// with `env` as the instance whose bindings fix global types and memory.
-    fn compile_program(&self, program: ProgramId, env: Value) -> Option<CompiledProgram> {
-        self.compile_program_with_diagnostics(program, env, jit_diagnostics_enabled())
+    fn compile_program(&self, program: ProgramId, env: Value, unit: admission::CompiledUnit) -> Option<CompiledProgram> {
+        self.compile_program_with_diagnostics(program, env, jit_diagnostics_enabled(), unit)
     }
 
     fn compile_program_with_diagnostics(
@@ -8048,9 +8068,10 @@ impl Vm {
         program: ProgramId,
         env: Value,
         diagnostics_enabled: bool,
+        unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         let root = jit_root_override().ok()?;
-        self.compile_program_with_diagnostics_and_root(program, env, diagnostics_enabled, root)
+        self.compile_program_with_diagnostics_and_root(program, env, diagnostics_enabled, root, unit)
     }
 
     fn compile_program_with_diagnostics_and_root(
@@ -8059,6 +8080,7 @@ impl Vm {
         env: Value,
         diagnostics_enabled: bool,
         root: Option<usize>,
+        unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         self.compile_program_with_diagnostics_and_root_mode(
             program,
@@ -8066,6 +8088,7 @@ impl Vm {
             diagnostics_enabled,
             root,
             false,
+            unit,
         )
     }
 
@@ -8080,14 +8103,10 @@ impl Vm {
         diagnostics_enabled: bool,
         root: Option<usize>,
         root_only: bool,
+        unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
+        let _ = unit;
         let code = self.programs.get(program)?;
-        if code.kind != quench_runtime::bytecode::ProgramKind::Wasm {
-            return None;
-        }
-        if root_only && root.is_none() {
-            return None;
-        }
         let compile_started = diagnostics_enabled.then(std::time::Instant::now);
         let compile_rejections =
             diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
@@ -8347,11 +8366,13 @@ impl Vm {
                 let full_plan = full_plans[index].as_ref()?;
                 let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
                 let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
                 let built = WasmSpecializer {
                     index,
                     plans: &plans,
                     full_plan,
                     reference_site_ids: &reference_site_ids[index],
+                    admitted,
                     tier: WasmTierChoice::Optimizing { analysis: &analysis, isa, guarded, fixed_base, diagnostics_enabled },
                 }
                 .specialize(&code);
@@ -8384,11 +8405,13 @@ impl Vm {
                             return None;
                         }
                         let full_plan = full_plans[index].as_ref()?;
+                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
                         let residual = WasmSpecializer {
                             index,
                             plans: &plans,
                             full_plan,
                             reference_site_ids: &reference_site_ids[index],
+                            admitted,
                             tier: WasmTierChoice::Baseline {
                                 vm: self,
                                 program_id: program,
@@ -8578,8 +8601,7 @@ impl Vm {
         program: ProgramId,
         env: Value,
     ) -> bool {
-        let Some(compiled) = self
-            .compile_program_with_diagnostics(program, env, true)
+        let Some(compiled) = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program_with_diagnostics(program, env, true, unit))
             .map(Rc::new)
         else {
             return false;
@@ -8595,8 +8617,7 @@ impl Vm {
         env: Value,
         root: usize,
     ) -> bool {
-        let Some(compiled) = self
-            .compile_program_with_diagnostics_and_root(program, env, true, Some(root))
+        let Some(compiled) = self.wasm_module_unit(program, Some(root), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, true, Some(root), unit))
             .map(Rc::new)
         else {
             return false;
@@ -8612,8 +8633,7 @@ impl Vm {
         env: Value,
         root: usize,
     ) -> bool {
-        let Some(compiled) = self
-            .compile_program_with_diagnostics_and_root_mode(program, env, true, Some(root), true)
+        let Some(compiled) = self.wasm_module_unit(program, Some(root), true).and_then(|unit| self.compile_program_with_diagnostics_and_root_mode(program, env, true, Some(root), true, unit))
             .map(Rc::new)
         else {
             return false;
@@ -8738,13 +8758,7 @@ impl Vm {
                     let root = jit_root_override().ok().flatten();
                     let compiled = root
                         .and_then(|root| {
-                            self.compile_program_with_diagnostics_and_root_mode(
-                                program,
-                                env,
-                                diagnose,
-                                Some(root),
-                                true,
-                            )
+                            self.wasm_module_unit(program, Some(root), true).and_then(|unit| self.compile_program_with_diagnostics_and_root_mode(program, env, diagnose, Some(root), true, unit))
                         })
                         .map(Rc::new);
                     if diagnose && compiled.is_none() {
@@ -8784,7 +8798,7 @@ impl Vm {
                             .get(program)
                             .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
                     let started = diagnose.then(std::time::Instant::now);
-                    let compiled = self.compile_program(program, env).map(Rc::new);
+                    let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
                     if diagnose && compiled.is_none() {
                         let total_functions = self
                             .programs
@@ -8825,7 +8839,7 @@ impl Vm {
                 self.private_site_homes.clear();
             }
             let started = jit_diagnostics_enabled().then(std::time::Instant::now);
-            let compiled = self.compile_program(program, env).map(Rc::new);
+            let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
             if let Some(started) = started {
                 let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
                     (0..code.functions.len())
@@ -8863,14 +8877,7 @@ impl Vm {
             && self.programs.wasm_tier_has_room()
             && self.programs.note_wasm_tier_entry(program, id)
         {
-            let tier = self
-                .compile_program_with_diagnostics_and_root(
-                    program,
-                    env,
-                    jit_diagnostics_enabled(),
-                    Some(id as usize),
-                )
-                .map(Rc::new);
+            let tier = self.wasm_module_unit(program, Some(id as usize), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
             if let Some(tier) = tier
                 && self.programs.install_wasm_tier(program, id, tier)
             {
@@ -9151,7 +9158,7 @@ pub(crate) fn body_may_amortize_in_lane(tiers: &Tiers, body: &quench_runtime::by
 /// `body_may_amortize_in_lane` for the body of `tier`, whose length that tier must reach.
 pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: quench_runtime::jit_mode::Tier) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
-        || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(crate::dispatch_fast::decoded_instruction(body, *packed)))
+        || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(body.widened(*packed)))
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
@@ -10779,7 +10786,7 @@ mod tests {
         let mut program = quench_runtime::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
         let pc = body.instructions().position(|instruction| quench_runtime::staged::Operation::<u64, ()>::is_throw(instruction)).unwrap();
-        let instruction = quench_runtime::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let instruction = body.widened(body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);
         body.code[pc] = quench_runtime::bytecode::Instr::wide(wide_index).unwrap();

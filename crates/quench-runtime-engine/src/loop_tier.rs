@@ -292,9 +292,10 @@ pub(crate) fn loop_compile_in_lane(
         else { unit_region_calls(cx, machine, program, function) }).unwrap_or_default();
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
-    let started = program.as_deref().and_then(|program| crate::compiled::start_osr_region(region, tier.views,
-        &observation, (policy, machine.programs.tiers()), program, function, helpers,
-        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base,
+    let admitted = crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Region(policy), facts: Default::default() }).compiled();
+    let started = program.as_deref().zip(admitted).and_then(|(program, admitted)| crate::compiled::start_osr_region(region, tier.views,
+        &observation, machine.programs.tiers(), program, function, helpers,
+        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base, admitted,
         // A Cranelift region folds Stable facts under its code's dependencies, as a lane body does (`Division::Online`).
         if base { None } else { Some(crate::compiled::OsrOnline { atoms: unsafe { vm(cx) }.method_cache_atoms.bits().clone(),
             constants: unsafe { vm(cx) }.programs.constants(unsafe { vm(cx) }.active_program).to_vec(),

@@ -237,7 +237,6 @@ pub enum GenericStep {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnedStep {
     LoadLocal,
-    StoreVarBinding,
     StoreLocal,
     InitializeTdz,
     StoreEnvLocal,
@@ -247,8 +246,6 @@ pub enum OwnedStep {
     LoadNameCall,
     LoadNameTypeof,
     StoreName,
-    LoadGlobalLexical,
-    StoreGlobalLexical,
 }
 
 /// The step an opcode makes over operand values read from registers and constants, which an

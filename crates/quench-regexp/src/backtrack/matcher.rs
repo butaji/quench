@@ -8,7 +8,7 @@
 use crate::{Assertion, FOLDED_WORD_UNITS, LINE_TERMINATORS, WORD_UNITS};
 
 /// The dynamic accesses the operations make.
-pub trait MatchStage {
+pub trait MatchStage: quench_stack::projection::Sealed {
     /// A position in the subject; `0..=length`.
     type Pos: Copy;
     /// A unit of the subject.

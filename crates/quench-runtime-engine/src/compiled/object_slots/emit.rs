@@ -60,6 +60,8 @@ impl Emit<'_, '_> {
     fn widen(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::ZeroExtend(Lane::I64), a) }
 }
 
+quench_runtime::projection!(Emit<'_, '_> => Emit);
+
 impl Stage for Emit<'_, '_> {
     type Proof = super::super::EmitProof;
     type Word = ir::Value;
@@ -312,7 +314,7 @@ impl Stage for Emit<'_, '_> {
                 (None, None) => panic!("an operation addressing the arena has its base"),
             },
             // The table is a static that never moves; in-process code embeds its address.
-            Table::Layouts => self.builder.ins().iconst(types::I64, quench_runtime::heap::layouts::table_base() as i64),
+            Table::Layouts => self.constant(quench_runtime::heap::layouts::table_base() as u64),
         }
     }
     /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's

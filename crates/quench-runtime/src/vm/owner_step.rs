@@ -22,7 +22,6 @@ impl Vm {
     pub fn owner_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
         match i.op().owned_step().expect("an owner step is a catalog `owned` row") {
             OwnedStep::LoadLocal => self.load_local_step(p, owner, i),
-            OwnedStep::StoreVarBinding => self.store_var_binding_step(p, owner, i),
             OwnedStep::StoreLocal => self.store_local_step(p, owner, i),
             OwnedStep::InitializeTdz => self.initialize_tdz_step(p, owner, i),
             OwnedStep::StoreEnvLocal => self.store_env_local_step(p, owner, i),
@@ -32,21 +31,7 @@ impl Vm {
             OwnedStep::LoadNameCall => self.load_name_call_step(p, owner, i, pc),
             OwnedStep::LoadNameTypeof => self.load_name_typeof_step(p, owner, i, pc),
             OwnedStep::StoreName => self.store_name_step(p, owner, i, pc),
-            OwnedStep::LoadGlobalLexical => self.load_global_lexical_step(p, owner, i, pc),
-            OwnedStep::StoreGlobalLexical => self.store_global_lexical_step(p, owner, i, pc),
         }
-    }
-
-    fn load_global_lexical_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
-        let value = self.global_lexical_load(p, owner, (i.imm(), i.cache_site_index()), pc)?;
-        self.set_owner_register(owner, i.result_register(), value);
-        Ok(())
-    }
-
-    fn store_global_lexical_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
-        let value = self.owner_register(owner, i.register_a());
-        let initializing = i.boolean_field(InstructionField::B).expect("validated initialization flag");
-        self.global_lexical_store(p, owner, (i.imm(), i.cache_site_index(), initializing), value, pc)
     }
 
     /// `LoadGlobalLexical` of `declaration` through cache `cache`, at the binding site `pc` names: the
@@ -109,11 +94,6 @@ impl Vm {
             .owner_binding_mut(p, owner, i.local_slot())
             .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
         Ok(())
-    }
-
-    fn store_var_binding_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction) -> Result<(), JsError> {
-        let value = self.owner_register(owner, i.register_a());
-        self.store_var_binding(p, owner, i.local_slot(), value)
     }
 
     /// `StoreEnvLocal`: the environment slot's store, which also defines the optional register where it initialized the binding.

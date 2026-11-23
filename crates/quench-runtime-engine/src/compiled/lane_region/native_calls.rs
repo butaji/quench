@@ -245,15 +245,15 @@ impl Lowering<'_, '_> {
         }
         let argc = quench_runtime::bytecode::ImmediateLayout::argument_count(instruction.imm());
         let window = quench_runtime::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-        let undefined = self.builder.ins().iconst(ir::types::I64, Value::UNDEFINED.to_bits() as i64);
-        let count = self.builder.ins().iconst(ir::types::I64, i64::from(argc));
+        let undefined = self.raw_const(Lane::I64, Value::UNDEFINED.to_bits() as i64);
+        let count = self.raw_const(Lane::I64, i64::from(argc));
         let first = if argc >= 1 { self.tagged(state, window) } else { undefined };
         let second = if argc == 2 { self.tagged(state, window + 1) } else { undefined };
         // An in-place native's receiver (`Inline::InPlace`), and its flag to the helper in the count's high bit.
         let (this, count) = match receiver {
             Some(register) => {
                 let this = register.map_or(undefined, |register| self.tagged(state, register));
-                (this, self.builder.ins().iconst(ir::types::I64, i64::from(argc) | IN_PLACE_CALL as i64))
+                (this, self.raw_const(Lane::I64, i64::from(argc) | IN_PLACE_CALL as i64))
             }
             None => (undefined, count),
         };
@@ -359,11 +359,11 @@ impl Lowering<'_, '_> {
         for argument in arguments {
             values.push(match argument {
                 ScalarArgument::Register(register) => self.tagged(state, register),
-                ScalarArgument::Constant(value) => self.builder.ins().iconst(ir::types::I64, value.to_bits() as i64),
+                ScalarArgument::Constant(value) => self.raw_const(Lane::I64, value.to_bits() as i64),
             });
         }
-        let undefined = self.builder.ins().iconst(ir::types::I64, Value::UNDEFINED.to_bits() as i64);
-        let count = self.builder.ins().iconst(ir::types::I64, i64::from(argc));
+        let undefined = self.raw_const(Lane::I64, Value::UNDEFINED.to_bits() as i64);
+        let count = self.raw_const(Lane::I64, i64::from(argc));
         let second = if argc == 2 { values[1] } else { undefined };
         let value = self.helper_call(LaneHelper::ScalarNative, &[self.payload, entry, count, undefined, values[0], second]);
         let done = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);

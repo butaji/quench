@@ -6,9 +6,8 @@ use cranelift_codegen::{
     cursor::{Cursor, FuncCursor},
     ir::{self, InstBuilder},
 };
-use quench_runtime::{
-    Engine, NativeFunction, NativeJsModule, emit_native_module, lower_native_js_module,
-};
+use quench_layers::engine::{NativeFunction, NativeJsModule, emit_native_module, lower_native_js_module};
+use quench_runtime::Engine;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -26,7 +25,7 @@ fn entry_counter(module: &mut NativeJsModule, image: i64, export: &str, selects:
         signature.get_or_insert_with(|| counter.clone());
         let imported = function.import_signature(counter);
         let name = function.declare_imported_user_function(ir::UserExternalName::new(
-            quench_runtime::NATIVE_FUNCTION_NAMESPACE, index,
+            quench_layers::engine::NATIVE_FUNCTION_NAMESPACE, index,
         ));
         let callee = function.import_function(ir::ExtFuncData {
             name: ir::ExternalName::user(name), signature: imported, colocated: false, patchable: false,

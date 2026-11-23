@@ -156,16 +156,35 @@ impl Vm {
     /// showed and the places a predecessor left at (`generic`) specialize its rows, and `direct`
     /// (the callees each call site reached) its calls. Declined where the function has no row to
     /// run first, or is too short for its entry to pay (`amortizes_entry`).
-    pub(crate) fn base_body_work(&mut self, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
+    /// The unit `base_body_work` compiles `function` as, or the outcome the gate gives where it
+    /// declines (`admission::specialize`): not covered, too short to repay its entry (refused as
+    /// `NotAmortized`), or indexing a typed parameter.
+    pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+        let Some(body) = program.function_get(function as usize) else { return Err(LaneBodyOutcome::Declined) };
+        let code: Vec<_> = body.instructions().collect();
+        let facts = super::admission::UnitFacts {
+            covers: super::base_region::covers(&code),
+            amortizes: super::body_may_amortize(self.programs.tiers(), body, quench_runtime::jit_mode::Tier::Base),
+            called_by_bodies: caller.called_by_bodies(),
+            indexes_typed: indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))),
+            ..Default::default()
+        };
+        match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Base, facts }) {
+            super::admission::Decision::Compile(unit) => Ok(unit),
+            super::admission::Decision::Short => { refuse(self, Refusal::NotAmortized); Err(LaneBodyOutcome::Short) }
+            super::admission::Decision::Declined => Err(LaneBodyOutcome::Declined),
+            super::admission::Decision::Unpaid | super::admission::Decision::Base => unreachable!("a stencil body's gate decides only Short or Declined"),
+        }
+    }
+
+    /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
+    pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+        let _ = unit;
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let code: Vec<_> = body.instructions().collect();
-        if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
-        // A body whose entry its work cannot repay (no loop, no call, too short for the stencil
-        // tier) is not stitched only for `publish_base_body` to refuse it.
-        if !super::body_may_amortize(self.programs.tiers(), body, quench_runtime::jit_mode::Tier::Base) && !caller.called_by_bodies() { refuse(self, Refusal::NotAmortized); return LaneBodyOutcome::Short }
-        if indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))) { return LaneBodyOutcome::Declined }
         // The region keeps the function's whole code (a function's span is all of it), which the rest reads back.
         let Some(region) = LoopRegion::of_function(code, self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let seen = observed(parameters);

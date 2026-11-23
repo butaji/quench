@@ -124,6 +124,8 @@ impl Machine for Probe {
     type Word = usize;
 }
 
+crate::projection!(Probe => Concrete);
+
 impl MachineStage for Probe {
     type Exit = WasmTrap;
 

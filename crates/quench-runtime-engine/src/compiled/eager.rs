@@ -6,8 +6,9 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::ResidualProgram;
+use super::admission::CompiledUnit;
 
-pub(crate) fn compile_eager_native(program: ResidualProgram) -> Result<quench_runtime::NativeJsProgram, String> {
-    let _ = program;
+pub(crate) fn compile_eager_native(program: ResidualProgram, unit: CompiledUnit) -> Result<quench_runtime::NativeJsProgram, String> {
+    let _ = (program, unit);
     Err("eager publication links its image into a VM, and compile_eager has none yet".into())
 }

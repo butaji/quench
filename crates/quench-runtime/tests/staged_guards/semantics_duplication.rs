@@ -42,7 +42,7 @@ const FINGERPRINTS: &[Fingerprint] = &[
     },
     Fingerprint {
         name: "imul",
-        home: &["quench-runtime/src/staged/math.rs"],
+        home: &["quench-runtime/src/staged/int_math.rs", "quench-runtime/src/staged/math.rs"],
         groups: &[
             &["wrapping_mul", "i32"],
             &["wrapping_mul", "int32"],
@@ -74,12 +74,12 @@ const FINGERPRINTS: &[Fingerprint] = &[
     },
 ];
 
-/// The directories scanned, relative to `crates/`: the interpreter and the compiled tiers under `vm/`,
-/// and the b-jit stencils.
-const TIER_DIRECTORIES: &[&str] = &["quench-runtime/src/vm", "quench-bjit/stencils"];
+/// The directories scanned, relative to `crates/`: the interpreter under `vm/`, the engine crate that
+/// holds the lane and compiled tiers, and the b-jit stencils.
+const TIER_DIRECTORIES: &[&str] = &["quench-runtime/src/vm", "quench-runtime-engine/src", "quench-bjit/stencils"];
 
 /// The allowances: one `fingerprint path:text` line per hit that is allowed to stand.
-const DEBT_FILE: &str = include_str!("semantics_debt.txt");
+const DEBT_FILE: &str = include_str!("../../src/staged/semantics_debt.txt");
 
 /// A hit: a source line outside the home of its fingerprint.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -109,7 +109,8 @@ fn source_files(crates: &Path) -> Vec<(String, PathBuf)> {
     let mut pending: Vec<PathBuf> = TIER_DIRECTORIES.iter().map(|directory| crates.join(directory)).collect();
     let mut files = Vec::new();
     while let Some(directory) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else { continue };
+        let entries = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("semantics scan directory {}: {error}", directory.display()));
         for entry in entries.map(Result::unwrap) {
             let path = entry.path();
             if path.is_dir() { pending.push(path); continue; }
@@ -154,7 +155,7 @@ fn scan(relative: &str, source: &str, hits: &mut Vec<Hit>) {
 
 /// The debt file for `hits`: one `fingerprint path:text` line per hit.
 fn render_debt(hits: &[Hit]) -> String {
-    let mut out = String::from("# Semantic debt: each line allows one hit of a fingerprint (`staged/semantics_duplication_tests.rs`),\n\
+    let mut out = String::from("# Semantic debt: each line allows one hit of a fingerprint (`tests/staged_guards/semantics_duplication.rs`),\n\
         # `fingerprint path:text`, where text is the trimmed source line. A hit outside its home that no line\n\
         # allows fails, and so does a line no hit uses. Lines may only go away. Goal: an empty file.\n");
     for hit in hits { out.push_str(&format!("{} {}:{}\n", hit.fingerprint, hit.path, hit.text)); }

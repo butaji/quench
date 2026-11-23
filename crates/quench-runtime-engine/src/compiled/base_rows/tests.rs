@@ -9,7 +9,7 @@ use quench_runtime::vm::wtf16::native_string as form;
 #[path = "../../../../quench-bjit/stencils/layout.rs"]
 pub(crate) mod stencil_layout;
 mod stencil_units {
-    include!("../../../../../quench-bjit/stencils/units.rs");
+    include!("../../../../quench-bjit/stencils/units.rs");
 }
 
 

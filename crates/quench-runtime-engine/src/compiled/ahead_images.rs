@@ -85,8 +85,9 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     // An image has no feedback and no later tier: every record lowers as one a previous body left
     // at (`generic`), by the form whose miss calls the VM's own operation rather than leaving.
     let generic: Vec<usize> = (0..unit.instructions.len()).collect();
+    let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Aot, facts: Default::default() }).compiled().ok_or("the image lowering is declined")?;
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &generic, &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
+        global_reads, facts, &generic, &BTreeMap::new(), &[], None, &[], admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = quench_runtime::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
@@ -225,7 +226,9 @@ impl Vm {
     /// `function`'s body from the loaded images for this program, published as its lane body: its
     /// lane body linked to this VM, or where it has none (or none this VM can take) its base body
     /// where the image placed it.
-    pub(crate) fn install_ahead_body(&mut self, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
+    pub(crate) fn install_ahead_body(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
+        // The unit is the gate's proof that the trace range admits `function` (`admission::ahead_unit`).
+        let _ = unit;
         let traced = quench_runtime::trace::Channel::AotLanes.on();
         if entry.is_some() || !generic.is_empty() {
             if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}, {} generic leaves", generic.len()); }
@@ -235,12 +238,7 @@ impl Vm {
             if traced { eprintln!("aot-lanes: install function {function}: refused, no image for the program"); }
             return None;
         };
-        let within = |setting: quench_runtime::trace::Dev| !setting.on() || setting.value()
-            .and_then(|range| range.split_once('-'))
-            .and_then(|(low, high)| Some((low.parse::<u32>().ok()?, high.parse::<u32>().ok()?)))
-            .is_some_and(|(low, high)| (low..=high).contains(&function));
-        if !within(quench_runtime::trace::Dev::AotBodies) { return None; }
-        let lanes_allowed = within(quench_runtime::trace::Dev::AotLanes);
+        let lanes_allowed = super::admission::within_trace_range(quench_runtime::trace::Dev::AotLanes, function);
         let lane = if lanes_allowed { self.ahead_lane_method(program, &images, function) } else { None };
         let (mut method, kind) = match lane {
             Some(method) => (method, "lane"),

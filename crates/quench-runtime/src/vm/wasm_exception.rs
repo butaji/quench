@@ -14,6 +14,8 @@ impl Machine for ExceptionStage<'_> {
     type Word = u64;
 }
 
+crate::projection!(ExceptionStage<'_> => Concrete);
+
 impl MachineStage for ExceptionStage<'_> {
     type Exit = JsError;
 

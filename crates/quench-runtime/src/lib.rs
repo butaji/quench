@@ -103,6 +103,7 @@ pub mod staged;
 #[doc(hidden)]
 pub mod typed_ir;
 pub use quench_stack as stack;
+pub use quench_stack::projection;
 #[doc(hidden)]
 pub mod unicode;
 #[doc(hidden)]

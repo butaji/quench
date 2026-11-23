@@ -106,6 +106,7 @@ pub fn float_remainder<M: MachineAccess>(machine: &mut M, left: M::Word, right: 
 
 /// The ToBoolean stage of a machine: `number_truthiness`' predicates as comparison and bitwise rows.
 struct Truthiness<'a, M>(&'a mut M);
+crate::projection!([M: MachineScalar] Truthiness<'_, M> => as M);
 
 impl<M: MachineScalar> NumberTruthinessStage<M::Word> for Truthiness<'_, M> {
     type Predicate = M::Word;

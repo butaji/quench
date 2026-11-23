@@ -31,14 +31,14 @@ use crate::wasm::integer::{I64BinaryOperator as IntegerBinary, I64UnaryOperator 
 
 /// What every machine has: a word, an integer or float of some `Lane`, or a vector. A comparison's
 /// flag is a word that holds 0 or 1.
-pub trait Machine {
+pub trait Machine: crate::projection::Sealed {
     type Word: Copy;
 }
 
 /// The Wasm operator layer of a machine that runs integer, float and conversion operators: what a
 /// stage computes without a trap. The interpreter runs them on machine words (`ConcreteWasm`), a
 /// specializer composes them from its primitives (`Emitter`, `vm/compiled/emit_machine/scalar.rs`).
-pub trait MachineStage: Machine {
+pub trait MachineStage: Machine + crate::projection::Sealed {
     /// What a trap leaves with: the trap for the interpreter; nothing for a specializer, whose
     /// code branches to the trap's exit.
     type Exit;

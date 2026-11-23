@@ -29,8 +29,6 @@ enum Direction {
 enum Source {
     /// A file that must exist.
     File(&'static str),
-    /// A file counted when present.
-    Optional(&'static str),
     /// Every Rust file under a directory, outside test paths, whose name contains one of the fragments (any when empty).
     Tree(&'static str, &'static [&'static str]),
 }
@@ -49,10 +47,11 @@ struct Metric {
     extract: Extract,
 }
 
-const COMPILED: &str = "crates/quench-runtime/src/vm/compiled";
+const COMPILED: &str = "crates/quench-runtime-engine/src/compiled";
 const LOWERING_FRAGMENTS: &[&str] = &["lower", "region"];
 const RUNTIME: &str = "crates/quench-runtime/src";
-const LANE_DISPATCH: &str = "crates/quench-runtime/src/vm/dispatch_fast";
+const ENGINE: &str = "crates/quench-runtime-engine/src";
+const LANE_DISPATCH: &str = "crates/quench-runtime-engine/src/dispatch_fast";
 
 const METRICS: &[Metric] = &[
     Metric {
@@ -77,12 +76,12 @@ const METRICS: &[Metric] = &[
         name: "tier_opcode_arms",
         direction: Direction::Down,
         sources: &[
-            Source::Optional("crates/quench-runtime/src/vm/compiled/lane_region.rs"),
-            Source::Optional("crates/quench-runtime/src/vm/compiled/lane_unit.rs"),
-            Source::Optional("crates/quench-runtime/src/vm/compiled/osr_loop.rs"),
-            Source::Optional("crates/quench-runtime/src/vm/compiled.rs"),
-            Source::Optional("crates/quench-runtime/src/vm/js_compiled.rs"),
-            Source::Optional("crates/quench-runtime/src/vm/compiled/base_region/decode.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled/lane_region.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled/lane_unit.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled/osr_loop.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled.rs"),
+            Source::File("crates/quench-runtime-engine/src/js_compiled.rs"),
+            Source::File("crates/quench-runtime-engine/src/compiled/base_region/decode.rs"),
             Source::Tree(COMPILED, LOWERING_FRAGMENTS),
         ],
         extract: Extract::Syntax(extract::opcode_arms),
@@ -90,25 +89,25 @@ const METRICS: &[Metric] = &[
     Metric {
         name: "frame_structs",
         direction: Direction::Down,
-        sources: &[Source::Tree("crates/quench-runtime/src/vm", &[])],
+        sources: &[Source::Tree("crates/quench-runtime/src/vm", &[]), Source::Tree("crates/quench-runtime-engine/src", &[])],
         extract: Extract::Syntax(extract::frame_structs),
     },
     Metric {
         name: "exit_mechanisms",
         direction: Direction::Down,
-        sources: &[Source::File("crates/quench-runtime/src/vm/compiled.rs"), Source::Tree(COMPILED, &[])],
+        sources: &[Source::File("crates/quench-runtime-engine/src/compiled.rs"), Source::Tree(COMPILED, &[])],
         extract: Extract::Syntax(extract::exit_mechanisms),
     },
     Metric {
         name: "tier_policy_constants",
         direction: Direction::Down,
-        sources: &[Source::File("crates/quench-runtime/src/vm/compiled/tier_policy.rs")],
+        sources: &[Source::File("crates/quench-runtime/src/vm/tier_policy.rs")],
         extract: Extract::Syntax(extract::tier_policy_literals),
     },
     Metric {
         name: "entry_kinds",
         direction: Direction::Down,
-        sources: &[Source::File("crates/quench-runtime/src/vm/compiled.rs"), Source::Tree(COMPILED, &[])],
+        sources: &[Source::File("crates/quench-runtime-engine/src/compiled.rs"), Source::Tree(COMPILED, &[])],
         extract: Extract::Syntax(extract::entry_uses),
     },
     Metric {
@@ -120,43 +119,43 @@ const METRICS: &[Metric] = &[
     Metric {
         name: "stencil_opcodes",
         direction: Direction::Up,
-        sources: &[Source::File("crates/quench-runtime/src/vm/compiled/base_region/decode.rs")],
+        sources: &[Source::File("crates/quench-runtime-engine/src/compiled/base_region/decode.rs")],
         extract: Extract::Syntax(extract::decoder_classes),
     },
     Metric {
         name: "fact_homes",
         direction: Direction::Down,
-        sources: &[Source::Tree(RUNTIME, &[])],
+        sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
         extract: Extract::Syntax(extract::fact_homes),
     },
     Metric {
         name: "epoch_fields",
         direction: Direction::Down,
-        sources: &[Source::Tree(RUNTIME, &[])],
+        sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
         extract: Extract::Syntax(extract::epoch_fields),
     },
     Metric {
         name: "guest_reentries",
         direction: Direction::Down,
-        sources: &[Source::Tree(RUNTIME, &[])],
+        sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
         extract: Extract::Syntax(extract::guest_reentries),
     },
     Metric {
         name: "wall_clock_reads",
         direction: Direction::Down,
-        sources: &[Source::Tree(RUNTIME, &[])],
+        sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
         extract: Extract::Syntax(extract::wall_clock_reads),
     },
     Metric {
         name: "stable_epoch_reads",
         direction: Direction::Down,
-        sources: &[Source::Tree(RUNTIME, &[])],
+        sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
         extract: Extract::Syntax(extract::stable_epoch_reads),
     },
     Metric {
         name: "lane_dispatch_lines",
         direction: Direction::Down,
-        sources: &[Source::File("crates/quench-runtime/src/vm/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],
+        sources: &[Source::File("crates/quench-runtime-engine/src/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],
         extract: Extract::Text(extract::text_lines),
     },
 ];
@@ -188,7 +187,6 @@ fn source_files(sources: &[Source]) -> Result<Vec<PathBuf>, String> {
     for source in sources {
         match source {
             Source::File(path) => found.push(PathBuf::from(path)),
-            Source::Optional(path) => found.extend(Some(PathBuf::from(path)).filter(|path| path.exists())),
             Source::Tree(directory, fragments) => rust_files_under(Path::new(directory), fragments, &mut found)?,
         }
     }

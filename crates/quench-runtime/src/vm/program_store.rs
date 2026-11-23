@@ -1367,11 +1367,7 @@ impl ProgramStore {
         // A function its module lowers on its first call reads only the module's own pool.
         for function in entry.residual.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
             for instruction in &function.code {
-                let instruction = if instruction.is_wide() {
-                    function.wide[instruction.wide_index()]
-                } else {
-                    instruction.as_wide()
-                };
+                let instruction = function.widened(*instruction);
                 let valid = match crate::staged::wasm_record_check(instruction.op()) {
                     crate::staged::WasmRecordCheck::RefFunc => {
                         signatures.get(instruction.imm() as usize).is_some()
@@ -1792,6 +1788,12 @@ impl ProgramStore {
     /// claimed (`WasmModuleTier`).
     pub fn wasm_module_selective(&self, id: ProgramId) -> bool {
         self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_module_selective())
+    }
+
+    /// Whether Wasm modules compile whole at their first entry: not under a selective A/B arm that
+    /// keeps modules to their hot roots (`WasmModuleCompile::NEVER`).
+    pub fn wasm_modules_compile_at_first_entry(&self) -> bool {
+        self.wasm_module_compile != WasmModuleCompile::NEVER
     }
 
     /// Compile every Wasm module whole at its first entry (`WasmModuleCompile::EAGER`), unless

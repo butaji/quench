@@ -72,7 +72,7 @@ impl FunctionCompiler<'_, '_> {
             )
         };
         if self.code[first_pc..last].iter().any(|&instruction| {
-            let op = if instruction.is_wide() { self.wide[instruction.wide_index()].op() } else { instruction.op() };
+            let op = crate::bytecode::widen(instruction, &self.wide).op();
             jumps(op)
         }) {
             return false;

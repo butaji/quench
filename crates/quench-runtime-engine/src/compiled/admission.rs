@@ -5,7 +5,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lane_unit::CalleeBinding;
-use super::tier_model::Observed;
+use super::tier_model::{Observed, Pick};
 use super::tier_policy::Tiers;
 use quench_runtime::bytecode::{Function, ResidualProgram};
 use crate::dispatch_fast::lane_body_stats::{miss, Miss};
@@ -139,6 +139,192 @@ pub fn refusal_report() -> String {
 /// Prints `refusal_report` at process exit.
 extern "C" fn report() {
     eprintln!("{}", refusal_report());
+}
+
+/// The kinds of unit whose tier gate `may_compile` decides.
+#[derive(Clone, Copy)]
+pub(crate) enum UnitKind {
+    /// A function's lane body: u-jit under the Cranelift tiers, or b-jit stencils under `--b-jit`.
+    Body,
+    /// A loop region, under its memory policy's loop tier.
+    Region(quench_runtime::MemoryPolicy),
+    /// An eager (AOT) publication: no JIT mode or memory policy gates it.
+    Aot,
+    /// An ahead image's body of this function, under the `AotBodies` trace range.
+    Ahead(u32),
+    /// A b-jit (stencil) body: its facts decide it (`specialize`).
+    Base,
+    /// A Wasm function's specialization (its lowered body and entry): always cleared.
+    Wasm,
+    /// A Wasm module compiled whole at its first entry, when the runtime's first-entry flag allows it.
+    WasmEager,
+    /// A JavaScript function's numeric or lane compile at an entry, when the Cranelift tiers run here.
+    Entry,
+    /// A Wasm program's module compile at a root (`Vm::wasm_module_unit`): the program is Wasm, and a
+    /// root-only compile names its root.
+    WasmModule,
+    /// A lane body's plan from an entry, before planning (phase A): the compile bound, the pick the entries
+    /// price, the looped iterations' payment. Its unit is the proof every later lane gate needs.
+    LanePlan,
+    /// A lane body's entry gate during planning (phase B, inside the plan): the plan's unit, the amortization
+    /// of its entry, and the callers that want it anyway.
+    LaneEntry(CompiledUnit),
+    /// A lane body's install gate after planning (phase B, before the plan binds its callees): the plan's
+    /// unit, the callers of regions, the observed and looped entries, and the amortization of its entry.
+    LaneInstall(CompiledUnit),
+    /// A JavaScript function claimed by a tier at an entry: the Cranelift tiers, or lane bodies on the
+    /// stencil tier, for a function that is not Wasm.
+    Claim,
+}
+
+/// What the gate's decisions read of the unit, computed by the entry that asks, and carried by the
+/// request so proven facts can flow through the same path.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct UnitFacts {
+    /// The body's rows cover the stencil tier (`base_region::covers`).
+    pub(crate) covers: bool,
+    /// The body amortizes its b-jit entry (`body_may_amortize` for `Tier::Base`).
+    pub(crate) amortizes: bool,
+    /// The caller is native code or a body that calls the function (`LaneView::called_by_bodies`).
+    pub(crate) called_by_bodies: bool,
+    /// The body indexes a parameter that is a typed array (`indexes_typed_parameter`).
+    pub(crate) indexes_typed: bool,
+    /// The Cranelift function tiers run in this VM (`Vm::tier_may_run`), for `UnitKind::Entry`.
+    pub(crate) cranelift_allowed: bool,
+    /// The runtime compiles Wasm modules whole at their first entry (`wasm_modules_compile_at_first_entry`).
+    pub(crate) wasm_first_entry: bool,
+    /// The program is a Wasm program (`ProgramKind::Wasm`), for `UnitKind::WasmModule`.
+    pub(crate) wasm_program: bool,
+    /// A root-only compile names its root (`WasmModule`).
+    pub(crate) root_ok: bool,
+    /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
+    pub(crate) compiles_left: bool,
+    /// Lane phase A: the pick the entries price (`pays_compile`), where the entries were observed and the
+    /// body is not optimizing.
+    pub(crate) pick: Option<Pick>,
+    /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
+    pub(crate) called_by_regions: bool,
+    /// Lane phase A: the looped iterations pay for the body at its planned size (`loop_model::body_taken`).
+    pub(crate) looped_taken: bool,
+    /// The compile is from the function's own entry, not a loop's (`entry.is_none()`).
+    pub(crate) entry_none: bool,
+    /// The function calls itself back through other functions (`recursive`).
+    pub(crate) recursive: bool,
+    /// Lane phase B: the entry counts were not observed (`observed.is_none()`).
+    pub(crate) observed_none: bool,
+    /// Lane phase B: no looped iterations were observed (`looped.is_none()`).
+    pub(crate) looped_none: bool,
+    /// The body's entry amortizes its work (`lane_facts::amortizes_entry`), or the gate does not ask.
+    pub(crate) amortizes_entry: bool,
+    /// A lane body may run on the stencil tier here: lane methods are enabled and b-jit runs (`UnitKind::Claim`).
+    pub(crate) base_lane_allowed: bool,
+}
+
+/// Whether a unit of `kind` may compile at all, under the process's JIT mode and, for a loop
+/// region, its memory policy. Only `specialize` asks this.
+fn may_compile(kind: UnitKind) -> bool {
+    match kind {
+        UnitKind::Body => quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) || quench_runtime::jit_mode::base_only(),
+        UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
+        UnitKind::Aot => true,
+        UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
+        UnitKind::Wasm | UnitKind::Base => true,
+        UnitKind::WasmEager | UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
+            unreachable!("facts decide these kinds, in `specialize`"),
+    }
+}
+
+/// Whether the trace setting `setting` (a `LOOP_RANGE` style `low-high` range, or off) admits
+/// `function`. Off admits every function.
+pub(crate) fn within_trace_range(setting: quench_runtime::trace::Dev, function: u32) -> bool {
+    !setting.on() || setting.value()
+        .and_then(|range| range.split_once('-'))
+        .and_then(|(low, high)| Some((low.parse::<u32>().ok()?, high.parse::<u32>().ok()?)))
+        .is_some_and(|(low, high)| (low..=high).contains(&function))
+}
+
+/// The unit of an ahead image's body of `function`, where the trace range admits it.
+pub(crate) fn ahead_unit(function: u32) -> Option<CompiledUnit> {
+    specialize(UnitRequest { kind: UnitKind::Ahead(function), facts: UnitFacts::default() }).compiled()
+}
+
+/// One request to specialize a unit (`specialize`): what it is and the facts its decisions read.
+#[derive(Clone, Copy)]
+pub(crate) struct UnitRequest {
+    pub(crate) kind: UnitKind,
+    pub(crate) facts: UnitFacts,
+}
+
+/// The outcome of `specialize`: a unit cleared to compile, a body too short to amortize its
+/// entry (`Short`, refused as `NotAmortized`), or declined by the mode, the policy or its facts.
+pub(crate) enum Decision<T> {
+    Compile(T),
+    Short,
+    Declined,
+    /// The body does not repay its compile yet (`LaneBodyOutcome::Unpaid`).
+    Unpaid,
+    /// The stencil tier serves the body (`LaneBodyOutcome::Base`).
+    Base,
+}
+
+impl<T> Decision<T> {
+    /// The unit, where the decision cleared it.
+    pub(crate) fn compiled(self) -> Option<T> {
+        match self { Self::Compile(unit) => Some(unit), _ => None }
+    }
+}
+
+/// A unit cleared to compile. Its only field is private to this module, so `specialize` is the
+/// only way to obtain one; copies of it are the same proof.
+#[derive(Clone, Copy)]
+pub(crate) struct CompiledUnit {
+    _sealed: (),
+}
+
+/// A unit minted for a test, through `specialize` (an AOT unit, which no mode gates).
+#[cfg(test)]
+pub(crate) fn test_unit() -> CompiledUnit {
+    specialize(UnitRequest { kind: UnitKind::Aot, facts: UnitFacts::default() }).compiled().expect("an AOT unit always compiles")
+}
+
+/// The one specializer entry: whether the request's unit may compile, under the process's JIT
+/// mode and memory policy. Every compile entry obtains its unit here.
+pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
+    let UnitRequest { kind, facts } = request;
+    // Each kind's gates run in the order its entry always ran them; the first that refuses decides.
+    let cleared = match kind {
+        UnitKind::Base => {
+            if !facts.covers { return Decision::Declined; }
+            if !facts.amortizes && !facts.called_by_bodies { return Decision::Short; }
+            !facts.indexes_typed
+        }
+        UnitKind::WasmEager => facts.wasm_first_entry,
+        UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
+        UnitKind::Entry => facts.cranelift_allowed,
+        UnitKind::WasmModule => facts.wasm_program && facts.root_ok,
+        // Phase A: the compile bound, then the pick, then the looped iterations.
+        UnitKind::LanePlan => {
+            if !facts.compiles_left { return Decision::Declined; }
+            match facts.pick {
+                Some(Pick::Interpreter) if !facts.called_by_regions => { record(Refusal::NotAmortized); return Decision::Unpaid; }
+                Some(Pick::Base) => return Decision::Base,
+                _ => {}
+            }
+            facts.looped_taken
+        }
+        // Phase B, during planning: the entry gate.
+        UnitKind::LaneEntry(_) => {
+            if facts.entry_none && !facts.called_by_bodies && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
+            true
+        }
+        // Phase B, after planning: the install gate.
+        UnitKind::LaneInstall(_) => {
+            if facts.entry_none && !facts.called_by_regions && facts.observed_none && facts.looped_none && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
+            true
+        }
+        UnitKind::Body | UnitKind::Region(_) | UnitKind::Aot | UnitKind::Ahead(_) | UnitKind::Wasm => may_compile(kind),
+    };
+    if cleared { Decision::Compile(CompiledUnit { _sealed: () }) } else { Decision::Declined }
 }
 
 /// How a callee would run: inlined into a lane unit under the call's `CalleeBinding`, or called
