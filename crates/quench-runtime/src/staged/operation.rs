@@ -579,6 +579,37 @@ impl<W, P> Operation<W, P> {
         })
     }
 
+    /// The record the `Op::Move` arm of `decode_flow` reads as `Move { destination: a, source: b }`:
+    /// that arm's inverse, which a tier's rewrite writes a copy with.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_move(a: Register, b: Register) -> WideInstruction {
+        let record = WideInstruction::new(Op::Move, a, b, 0, 0);
+        debug_assert!(matches!(Operation::<u64, ()>::of(record),
+            Some(Operation::Move { destination, source }) if destination == record.result_register() && source == b));
+        record
+    }
+
+    /// The record the `Op::Jump` arm of `decode_flow` reads as `Jump`, to the PC `target` (the field
+    /// the decode leaves to the dispatcher).
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_jump(target: u32) -> WideInstruction {
+        let record = WideInstruction::new(Op::Jump, 0, 0, 0, target);
+        debug_assert!(matches!(Operation::<u64, ()>::of(record), Some(Operation::Jump)) && record.imm() == target);
+        record
+    }
+
+    /// The record the `Op::Nop` arm of `decode_flow` reads as `Nop`: a marker a rewrite leaves or a
+    /// slot a residual clears.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_nop() -> WideInstruction {
+        let record = WideInstruction::new(Op::Nop, 0, 0, 0, 0);
+        debug_assert!(matches!(Operation::<u64, ()>::of(record), Some(Operation::Nop) | None));
+        record
+    }
+
     /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
     /// except `super(...)`, whose arguments the VM gathers (`spread`). Inlined: a call row decodes
     /// its record on every run, which its constant opcode folds only once the decode is in place.
@@ -588,6 +619,33 @@ impl<W, P> Operation<W, P> {
             return spread::decode(instruction);
         }
         Some(Self::Call(CallOperation::Site(Invocation::of(instruction, context)?)))
+    }
+
+    /// The plain call record `decode_call` reads as a call site: callee in `b`, result in `a`,
+    /// receiver and arguments from `c` as `imm` lays them out.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_call(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+        let record = WideInstruction::new(Op::Call, a, b, c, imm);
+        debug_assert!(matches!(Operation::<u64, ()>::of(record), Some(Operation::Call(_)) | None));
+        record
+    }
+
+    /// The construction record `decode_call` reads, over the operands of an original construction.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_construct(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+        let record = WideInstruction::new(Op::Construct, a, b, c, imm);
+        debug_assert!(matches!(Operation::<u64, ()>::of(record),
+            Some(Operation::Call(_) | Operation::SuperCall { .. }) | None));
+        record
+    }
+
+    /// Whether an opcode index is the plain call `encode_call` writes: the stop the inliner takes
+    /// over once the call site is hot.
+    #[inline(always)]
+    pub const fn is_call_index(opcode: u16) -> bool {
+        opcode == Op::Call as u16
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
@@ -615,6 +673,45 @@ impl<W, P> Operation<W, P> {
             FieldLookup::Site(_) => FieldBase(FieldBase::NESTED),
         };
         Some(Self::GetField { base, lookup, destination: instruction.result_register() })
+    }
+
+    /// The record `decode_get_field` reads as `GetField`: a named read into `a` through the base in
+    /// `b`, the lookup in `c` and the atom in `imm`. A record whose `a` carries result flags is one
+    /// the decode leaves to the frame, as it leaves any such read.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_get_field(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+        let record = WideInstruction::new(Op::GetField, a, b, c, imm);
+        debug_assert!(record.result_flags() != 0 || record.field_lookup().is_none() || matches!(Operation::<u64, ()>::of(record),
+            Some(Operation::GetField { destination, .. }) if destination == record.result_register()));
+        record
+    }
+
+    /// The record the field-store arm of `decode_property` reads as `SetField` of `a` into the
+    /// object in `b`, through the lookup in `c` and atom `imm`.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_set_field(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+        let record = WideInstruction::new(Op::SetField, a, b, c, imm);
+        debug_assert!(Self::stores_field(record, a));
+        record
+    }
+
+    /// The record the field-store arm of `decode_property` reads as the `SetField` of `a` into the
+    /// `this` field named by the site in `c` and atom `imm`: the sink of a fused read.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_set_this_field(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+        let record = WideInstruction::new(Op::SetThisField, a, b, c, imm);
+        debug_assert!(Self::stores_field(record, a));
+        record
+    }
+
+    /// Whether `record` decodes as the field store of `value` with the atom and site it holds.
+    #[cfg(not(stencil_build))]
+    fn stores_field(record: WideInstruction, value: Register) -> bool {
+        matches!(Operation::<u64, ()>::of(record), Some(Operation::SetField { value: stored, atom, site, .. })
+            if stored == value && atom == record.atom_index() && site == record.cache_site_index())
     }
 
     /// The value-level operations of `decode`.
@@ -646,6 +743,18 @@ impl<W, P> Operation<W, P> {
             Op::Unary => Self::decode_unary(instruction),
             _ => return None,
         })
+    }
+
+    /// The record the `Op::LoadCapture` arm of `decode_value` reads as `LoadCapture` into `a` at the
+    /// depth and slot `imm` names; a record whose `a` carries result flags the decode leaves to the frame.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn encode_load_capture(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+        let record = WideInstruction::new(Op::LoadCapture, a, b, c, imm);
+        debug_assert!(record.result_flags() != 0 || matches!(Operation::<u64, ()>::of(record),
+            Some(Operation::LoadCapture { destination, depth, slot, .. })
+                if destination == record.result_register() && depth == record.capture_depth() && slot == record.capture_slot()));
+        record
     }
 
     /// The unary operators of `decode_value`.
@@ -831,7 +940,7 @@ impl Operation<u64, ()> {
 
     /// Whether a unit holds `instruction` by its own rewrite or an exit rather than by renaming
     /// (the catalog's `UNIT_REWRITTEN` trait).
-    pub(crate) fn is_unit_rewritten(instruction: WideInstruction) -> bool {
+    pub fn is_unit_rewritten(instruction: WideInstruction) -> bool {
         instruction.op().is_unit_rewritten()
     }
 }

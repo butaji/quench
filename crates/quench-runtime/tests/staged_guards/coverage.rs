@@ -74,6 +74,38 @@ fn debt_exempt(file: &str) -> bool {
         || DEBT_EXEMPT_DIRECTORIES.iter().any(|directory| file.starts_with(&format!("{directory}/"))))
 }
 
+/// Files of `staged/` that name opcodes in code but decode none: no `match` over a record's opcode
+/// (`.op()`) and no opcode or class arm (`Op::X =>`, `Class::X |`). A row decodes its records where it names their opcodes;
+/// a table-only file that names opcodes without decoding them is a tier's opcode knowledge moved
+/// into `staged/`, and counts as debt like any tier file. `wasm_emit/` is the Wasm compiler, which
+/// emits opcodes as `compile/` does.
+fn undecoding_staged_files(root: &std::path::Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.join("staged")];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
+            let path = entry.path();
+            if path.is_dir() { pending.push(path); continue; }
+            let file = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+            if !file.ends_with(".rs") || is_test_file(&file) || file.starts_with("staged/wasm_emit/") { continue; }
+            let source = std::fs::read_to_string(&path).unwrap();
+            let code = source.split("#[cfg(test)]\nmod ").next().unwrap();
+            // Code only: an opcode named in a comment is no knowledge of it.
+            let code: String = code.lines().filter(|line| !line.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
+            let arm = |prefix: &str| code.match_indices(prefix).any(|(at, _)| {
+                let rest = &code[at + prefix.len()..];
+                let name_end = rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_').unwrap_or(rest.len());
+                let after = rest[name_end..].trim_start();
+                after.starts_with("=>") || after.starts_with('|')
+            });
+            let names = code.contains("Op::") || code.contains("Class::");
+            let decodes = code.contains(".op()") || code.contains("Op::$") || arm("Op::") || arm("Class::");
+            if names && !decodes { found.push(file); }
+        }
+    }
+    found
+}
+
 /// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
 fn is_test_file(file: &str) -> bool {
     file.split('/').map(|part| part.strip_suffix(".rs").unwrap_or(part)).any(|part| part == "tests" || part.ends_with("_tests"))
@@ -242,6 +274,7 @@ fn derivation_debt() -> std::collections::BTreeMap<(String, String), usize> {
             if !debt_exempt(&file) { files.insert(file); }
         }
     }
+    files.extend(undecoding_staged_files(&root));
     let mut debt = std::collections::BTreeMap::new();
     for file in files {
         if !file.ends_with(".rs") || is_test_file(&file) { continue; }
@@ -304,4 +337,25 @@ fn tiers_derive_opcode_meaning_from_the_interpreter() {
                 allowed.values().sum::<usize>(), found.values().sum::<usize>());
         }
     }
+}
+
+/// The encoders beside their decode arms (`Operation::encode_*`) write records the arm reads back:
+/// each carries a debug assertion of the round trip, which this runs.
+#[test]
+fn staged_encoders_round_trip_through_their_decode_arms() {
+    use quench_runtime::staged::Operation;
+    type Row = Operation<u64, ()>;
+    for (a, b, c, imm) in [(0u16, 1u16, 0u16, 0u32), (3, 7, 2, 5), (9, 4, 1, 40)] {
+        Row::encode_move(a, b);
+        Row::encode_jump(imm);
+        Row::encode_get_field(a, b, c, imm);
+        Row::encode_set_field(a, b, c, imm);
+        Row::encode_set_this_field(a, b, c, imm);
+        Row::encode_load_capture(a, b, c, imm);
+        Row::encode_call(a, b, c, imm);
+        Row::encode_construct(a, b, c, imm);
+    }
+    Row::encode_nop();
+    assert!(Row::is_call_index(Row::encode_call(0, 1, 0, 0).op() as u16));
+    assert!(!Row::is_call_index(Row::encode_nop().op() as u16));
 }

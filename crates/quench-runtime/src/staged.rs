@@ -81,7 +81,6 @@ pub use edge::Edge;
 mod decode;
 pub mod meaning_fast;
 pub mod meaning;
-pub mod records;
 mod captures;
 pub mod compare;
 pub(crate) mod meaning_dispatch;
