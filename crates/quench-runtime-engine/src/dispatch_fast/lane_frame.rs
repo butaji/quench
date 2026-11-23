@@ -2772,18 +2772,17 @@ macro_rules! target_prefix_row {
 macro_rules! target_run {
     (@held none) => { None };
     (@held $held:ident) => { Some($held) };
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => {
-        target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, 0)
-    };
+    // A rare comparison: a lone jump's run (`inline`) keeps the record's switch; a pair's (`dispatch`) runs the record's row.
+    (@rare inline, $($_:tt)*) => { {} }; (@rare dispatch, $cx:ident, $r:ident, $at:ident, $c:ident) => { { std::hint::cold_path(); next!($cx, $r, $at, $c) } };
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => { target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, 0, none, inline) };
     // `$cmp`, where not 0, is the test's comparison and operand form fixed at install
     // (`target_comparison`): the arm runs that test alone, with no switch on the record's operator.
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr) => {
-        target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, $cmp, none)
-    };
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr) => { target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, $cmp, none) };
     // `$held`, where given, is the int32 the test's left register holds, which the run just wrote
     // (`PROVEN_STEP`): the test reads it as its record's immediate, the left operand taken for a
     // constant, with no load or tag test. Given only with a fixed register-register comparison.
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr, $held:tt) => {{
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr, $held:tt) => { target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, $cmp, $held, dispatch) };
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr, $held:tt, $rare:ident) => {{
         // SAFETY: the view records the distance to a validated jump target.
         let target: crate::dispatch_fast::Ip = unsafe { $ip.byte_offset((*$ip).jump()) };
         if script_fuel_out($cx) {
@@ -2870,7 +2869,7 @@ macro_rules! target_run {
                 GE => formed!(GE),
                 SEQ => formed!(SEQ),
                 SNE => formed!(SNE),
-                _ => next!($cx, $r, at, carried),
+                _ => target_run!(@rare $rare, $cx, $r, at, carried),
             }
         }
         test_run!(None::<Comparison>, None::<bool>)
