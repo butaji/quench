@@ -5,6 +5,7 @@
 //! an instruction is (to pick a path, to scan a loop for effects) asks here instead of naming
 //! opcodes: the semantics own the mapping from records to meanings, every tier reads it.
 
+use super::frame_arm::{frame_arm, FrameArm};
 use crate::bytecode::{Class, Op, WideInstruction};
 
 /// A family of staged operations. One record can mean more than one (a compare-jump is also a
@@ -99,15 +100,14 @@ pub fn means(instruction: impl std::borrow::Borrow<WideInstruction>, meaning: Me
         Meaning::NumericUnary => op.js_denotation() == crate::bytecode::JsDenotation::NumericUnary,
         Meaning::BranchTable => op.class() == Class::WasmBranchTable,
         Meaning::MethodCall => op.class() == Class::CallMethod,
-        Meaning::NumericArithmetic => matches!(op, Op::NumericAdd | Op::NumericMultiply),
-        Meaning::StringCaseIndex => op == Op::StringCaseIndex,
+        Meaning::NumericArithmetic => matches!(frame_arm(op), FrameArm::NumericArith),
+        Meaning::StringCaseIndex => op.is_string_case_index(),
     }
 }
 
-/// Whether the record of `op` carries an operand feedback byte (`operand_feedback`): the binary arithmetic records
-/// (`Binary`, `NumericAdd`, `NumericMultiply`, which `decode_generic` reads) and the element accesses (`GetIndex`,
-/// `SetIndex`, which `decode_element` reads).
+/// Whether the record of `op` carries an operand feedback byte (`operand_feedback`): the loop arms that read
+/// one (`frame_arm`, the one opcode-to-arm map): the generic and numeric arithmetic and the element accesses.
 #[inline(always)]
 pub const fn records_operand_feedback(op: Op) -> bool {
-    matches!(op, Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::GetIndex | Op::SetIndex)
+    matches!(frame_arm(op), FrameArm::Binary | FrameArm::NumericArith | FrameArm::GetIndex | FrameArm::SetIndex)
 }

@@ -106,6 +106,50 @@ fn undecoding_staged_files(root: &std::path::Path) -> Vec<String> {
     found
 }
 
+/// Opcode lists in the staged layer outside its decode arms: `op == Op::X`, `op != Op::X` and
+/// `matches!(op, Op::A | Op::B ..)`. A decode arm (`Op::X => ..`) gives an opcode its meaning once;
+/// a list beside it is a second home of the same knowledge, so each opcode such a list names
+/// counts (`list:X`), as a tier's would.
+fn count_staged_opcode_lists(root: &std::path::Path, words: &Vocabulary, debt: &mut std::collections::BTreeMap<(String, String), usize>) {
+    let mut pending = vec![root.join("staged")];
+    let mut files = vec!["staged.rs".to_owned()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
+            let path = entry.path();
+            if path.is_dir() { pending.push(path); continue; }
+            files.push(path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"));
+        }
+    }
+    for file in files {
+        if !file.ends_with(".rs") || is_test_file(&file) { continue; }
+        let source = std::fs::read_to_string(root.join(&file)).unwrap();
+        let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap();
+        let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
+        let code: String = code.lines().filter(|line| !line.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
+        let mut add = |name: &str| if words.opcodes.contains(name) { *debt.entry((file.clone(), format!("list:{name}"))).or_insert(0) += 1; };
+        let opcode_after = |rest: &str| -> Option<String> {
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix("crate::bytecode::").or_else(|| rest.strip_prefix("bytecode::")).unwrap_or(rest);
+            rest.strip_prefix("Op::").map(|rest| rest.chars().take_while(|c| ident_char(*c)).collect())
+        };
+        for operator in ["==", "!="] {
+            for (at, _) in code.match_indices(operator) {
+                if let Some(name) = opcode_after(&code[at + 2..]) { add(&name); }
+            }
+        }
+        for (at, _) in code.match_indices("matches!(") {
+            let body = &code[at + 9..];
+            let mut depth = 1usize;
+            let end = body.char_indices().find_map(|(i, c)| { match c { '(' => depth += 1, ')' => { depth -= 1; if depth == 0 { return Some(i); } } _ => {} } None }).unwrap_or(body.len());
+            let Some((_, patterns)) = body[..end].split_once(',') else { continue };
+            let patterns = patterns.split(" if ").next().unwrap();
+            for alternative in patterns.split('|') {
+                if let Some(name) = opcode_after(alternative) { add(&name); }
+            }
+        }
+    }
+}
+
 /// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
 fn is_test_file(file: &str) -> bool {
     file.split('/').map(|part| part.strip_suffix(".rs").unwrap_or(part)).any(|part| part == "tests" || part.ends_with("_tests"))
@@ -284,6 +328,7 @@ fn derivation_debt() -> std::collections::BTreeMap<(String, String), usize> {
         let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
         count_decisions(code, &file, &words, &mut debt);
     }
+    count_staged_opcode_lists(&root, &words, &mut debt);
     // Opcodes with no staged row: a JS opcode the catalog gives no staged decoder, a Wasm opcode
     // no `wasm_step::Step` describes. An op the catalog marks `NO_STEP` has no meaning to derive:
     // the wide prefix (`Wide`) is never dispatched, and `Nop` does nothing.
