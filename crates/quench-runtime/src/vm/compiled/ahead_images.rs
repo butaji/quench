@@ -300,13 +300,21 @@ impl Vm {
         let lane = if lanes_allowed { self.ahead_lane_method(program, &images, function) } else { None };
         let (mut method, kind) = match lane {
             Some(method) => (method, "lane"),
-            None => match Self::ahead_base_method(program, &images, function) {
+            // An image's base body is installed only under its experiment: its generic rows and
+            // entry do not run a lane-run activation (`fbits9` faults; raytrace's `wrapUp` base
+            // body faults), so by default a function the image gives no lane body runs in the
+            // interpreter.
+            None if crate::trace::Dev::AheadBaseBodies.on() => match Self::ahead_base_method(program, &images, function) {
                 Some(method) => (method, "base"),
                 None => {
                     if traced { eprintln!("aot-lanes: install function {function}: refused, no base body"); }
                     return None;
                 }
             },
+            None => {
+                if traced { eprintln!("aot-lanes: install function {function}: no lane body"); }
+                return None;
+            }
         };
         if crate::trace::Channel::AotLanes.on() {
             let name = program.functions.get(function as usize)
@@ -367,7 +375,6 @@ impl Vm {
         Some(LaneMethod::of_linked_base(*linked_live.bases.get(function as usize)?, registers, base.scratch as usize, linked_live.invalidation.clone()))
     }
 
-
     /// The callees of `function`'s proven call sites (`AotImage::calls`) that bind now, each by its
     /// record's key: the closure each site resolved of the function the closed world proves it calls
     /// (`Vm::proven_callee`), where the site's row admits it (`admits_proven`). A site that binds
@@ -413,6 +420,7 @@ impl Vm {
     pub fn load_ahead_images(&mut self, mut images: AheadImages) {
         images.linked = live::install(&images.image, self).ok();
         self.programs.add_ahead_images(images);
+        if crate::trace::Dev::AheadBodies.on() { self.programs.enable_ahead_lane_bodies(); }
     }
 
     /// Keeps the image the system linker placed at `table` for the program it was compiled from
@@ -422,6 +430,7 @@ impl Vm {
         if self.programs.has_linked_image(table) { return Ok(()); }
         for index in 0..program.function_count() { program.lowered_function(index); }
         self.programs.add_ahead_images(AheadImages::of_linked(table)?);
+        if crate::trace::Dev::AheadBodies.on() { self.programs.enable_ahead_lane_bodies(); }
         Ok(())
     }
 }

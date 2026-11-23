@@ -5193,7 +5193,7 @@ impl Lowering<'_, '_> {
             return Some(true);
         }
         match (arithmetic, bitwise) {
-            _ if remainder => { self.remainder(state, pc, destination, [left, right], exit); }
+            _ if remainder => { if !self.remainder(state, pc, destination, [left, right], exit) { return Some(false); } }
             (Some(arithmetic), _) => { self.arithmetic(state, pc, instruction, arithmetic, exit)?; }
             (_, Some(bitwise)) => {
                 let left_int = self.operand_to_int32(state, left, exit)?;

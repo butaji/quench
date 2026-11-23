@@ -2005,6 +2005,8 @@ impl ProgramStore {
         { self.js_jit_lane_methods_enabled = true; }
     }
 
+    pub(super) fn enable_ahead_lane_bodies(&mut self) { self.js_jit_lane_methods_enabled = true; }
+
     /// Set before loading a test program; general/OSR coverage then owns entry.
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn disable_js_entry_specializations(&mut self) {

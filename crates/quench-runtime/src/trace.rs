@@ -148,6 +148,12 @@ setting! {
         /// off because the join's store layout gives the base body the previous activation's
         /// values (`fbits9`), so leaves return their exit word and the lane runs the record.
         AheadJoins = "ahead-joins",
+        /// An ahead image's lane bodies install on a VM whose runtime lane-body compiles are off
+        /// (AArch64). Off while `rayTrace`'s image body miscomputes (scene check).
+        AheadBodies = "ahead-bodies",
+        /// An image's base body installs where its lane body is refused. Off: the base body's
+        /// generic rows and entry do not run a lane-run activation (`fbits9`, raytrace `wrapUp`).
+        AheadBaseBodies = "ahead-base-bodies",
         /// Number loop regions build from BaseJIT stencils (`quench-bjit`) where every
         /// instruction has a row, instead of Cranelift IR.
         Bjit = "bjit",
