@@ -143,11 +143,19 @@ fn count_staged_opcode_lists(root: &std::path::Path, words: &Vocabulary, debt: &
             let end = body.char_indices().find_map(|(i, c)| { match c { '(' => depth += 1, ')' => { depth -= 1; if depth == 0 { return Some(i); } } _ => {} } None }).unwrap_or(body.len());
             let Some((_, patterns)) = body[..end].split_once(',') else { continue };
             let patterns = patterns.split(" if ").next().unwrap();
-            for alternative in patterns.split('|') {
+            let alternatives: Vec<&str> = patterns.split('|').collect();
+            // A single-opcode alias the selector test pins (`ALIAS_SELECTORS`) is a checked name of its row.
+            if alternatives.len() == 1 && ALIAS_SELECTORS.contains(&enclosing_function(&code, at)) { continue; }
+            for alternative in alternatives {
                 if let Some(name) = opcode_after(alternative) { add(&name); }
             }
         }
     }
+}
+
+/// The name of the last function `code` opens before `at`: the function a position of a source falls in.
+fn enclosing_function(code: &str, at: usize) -> &str {
+    code[..at].rmatch_indices("fn ").find(|(start, _)| !code[..*start].ends_with(ident_char)).map_or("", |(start, _)| ident_at(code, start + 3))
 }
 
 /// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
@@ -500,4 +508,84 @@ fn row_selectors_decode_to_their_rows() {
         // The immediate names the operator, which a numeric-arithmetic row must hold as its own.
         assert!((0..64).any(|operator| matches!(decoded(row, 1, 2, 3, operator), Some(Operation::Number(_)))), "{name}");
     }
+}
+
+/// The staged single-opcode aliases (`staged::jumps`, `staged::calls`, ...) that `alias_selectors_name_one_row`
+/// pins: each is true for exactly one opcode, whose record decodes to the operation its doc names. The debt
+/// scan counts an alias's opcode as derived only when this list names the alias.
+const ALIAS_SELECTORS: &[&str] = &[
+    "reads_named_field", "reads_element", "writes_element", "computes_binary", "computes_unary", "loads_constant",
+    "converts_numeric", "increments", "calls", "calls_array", "jumps", "returns", "reads_capture", "reads_name",
+    "reads_environment_slot", "defines_array_element", "requires_object_coercible", "writes_this_field", "makes_closure",
+    "clones_environment", "stores_environment_slot", "writes_environment_slot", "writes_capture", "jumps_when_false",
+    "does_nothing", "stores_var_binding", "loads_this", "awaits", "constructs", "selects_string_case",
+    "requires_iterator_result", "compare_jump", "binary", "copies_register",
+];
+
+#[test]
+fn alias_selectors_name_one_row() {
+    use quench_runtime::bytecode::{MethodSite, Op, WideInstruction};
+    use quench_runtime::staged::{self, Constant, DecodeContext, Operation};
+    type Row = Operation<u64, ()>;
+    type Is = fn(&Row) -> bool;
+    let aliases: Vec<(&str, fn(Op) -> bool, Is)> = vec![
+        ("reads_named_field", staged::reads_named_field, |o| matches!(o, Operation::GetField { .. })),
+        ("reads_element", staged::reads_element, |o| matches!(o, Operation::ElementRead { .. } | Operation::ElementReadOperand { .. })),
+        ("writes_element", staged::writes_element, |o| matches!(o, Operation::ElementWrite { .. } | Operation::IndexWrite { .. })),
+        ("computes_binary", staged::computes_binary, |o| matches!(o, Operation::Binary { .. } | Operation::Number(_) | Operation::Equality { .. })),
+        ("computes_unary", staged::computes_unary, |o| matches!(o, Operation::Unary { .. } | Operation::Number(_) | Operation::LogicalNot { .. }
+            | Operation::TypeofTest { .. } | Operation::TypeofIndex { .. } | Operation::TypeofString { .. } | Operation::Void { .. })),
+        ("loads_constant", staged::loads_constant, |o| matches!(o, Operation::LoadConst { .. })),
+        ("converts_numeric", staged::converts_numeric, |o| matches!(o, Operation::Number(_))),
+        ("increments", staged::increments, |o| matches!(o, Operation::Number(_) | Operation::IncDecLocal { .. })),
+        ("calls", staged::calls, |o| matches!(o, Operation::Call(_))),
+        ("calls_array", staged::calls_array, |o| matches!(o, Operation::SpreadCall { .. })),
+        ("jumps", staged::jumps, |o| matches!(o, Operation::Jump)),
+        ("returns", staged::returns, |o| matches!(o, Operation::Return { .. })),
+        ("reads_capture", staged::reads_capture, |o| matches!(o, Operation::LoadCapture { .. })),
+        ("reads_name", staged::reads_name, |o| matches!(o, Operation::LoadName { .. })),
+        ("reads_environment_slot", staged::reads_environment_slot, |o| matches!(o, Operation::LoadEnvLocal { .. })),
+        ("defines_array_element", staged::defines_array_element, |o| matches!(o, Operation::DefineElement { .. })),
+        ("requires_object_coercible", staged::requires_object_coercible, |o| matches!(o, Operation::RequireObjectCoercible { .. })),
+        ("writes_this_field", staged::writes_this_field, |o| matches!(o, Operation::SetField { .. })),
+        ("makes_closure", staged::makes_closure, |o| matches!(o, Operation::Allocate { .. })),
+        ("clones_environment", staged::clones_environment, |o| matches!(o, Operation::CloneEnv { .. })),
+        ("stores_environment_slot", staged::stores_environment_slot, |o| matches!(o, Operation::StoreEnvLocal { .. })),
+        ("writes_environment_slot", staged::writes_environment_slot, |o| matches!(o, Operation::StoreEnvLocal { .. })),
+        ("writes_capture", staged::writes_capture, |o| matches!(o, Operation::StoreCapture { .. })),
+        ("jumps_when_false", staged::jumps_when_false, |o| matches!(o, Operation::JumpIf { taken: false, .. })),
+        ("does_nothing", staged::does_nothing, |o| matches!(o, Operation::Nop)),
+        ("stores_var_binding", staged::stores_var_binding, |o| matches!(o, Operation::Protocol { .. })),
+        ("loads_this", staged::loads_this, |o| matches!(o, Operation::LoadThis { .. })),
+        ("awaits", staged::awaits, |o| matches!(o, Operation::Suspend { .. })),
+        ("constructs", staged::constructs, |o| matches!(o, Operation::Call(_) | Operation::SuperCall { .. })),
+        ("selects_string_case", staged::selects_string_case, |o| matches!(o, Operation::StringCaseIndex { .. })),
+        ("requires_iterator_result", staged::requires_iterator_result, |o| matches!(o, Operation::RequireIteratorResult { .. })),
+        ("compare_jump", staged::compare_jump, |o| matches!(o, Operation::CompareJump { .. })),
+        ("binary", staged::binary, |o| matches!(o, Operation::Binary { .. } | Operation::Number(_) | Operation::Equality { .. })),
+        ("copies_register", staged::copies_register, |o| matches!(o, Operation::Move { .. })),
+    ];
+    assert_eq!(aliases.iter().map(|(name, ..)| *name).collect::<Vec<_>>(), ALIAS_SELECTORS, "the test's aliases are ALIAS_SELECTORS, in order");
+    let constants = [Constant::untyped(quench_runtime::Value::UNDEFINED); 4];
+    let sites = [MethodSite::plain(8, 3, 0, 2); 4];
+    let contexts = [DecodeContext::EMPTY, DecodeContext { constants: &constants, constant_at: None, method_sites: &sites }];
+    let decodes = |op: Op, is: Is| {
+        (0..48u32).any(|imm| [(1u16, 2u16, 3u16), (0, 1, 0), (1, 0, 0)].iter().any(|&(a, b, c)| {
+            let record = WideInstruction::new(op, a, b, c, imm);
+            contexts.iter().any(|&context| Row::decode(record, context).is_some_and(|o| is(&o)))
+                || Row::decode_literal_with(record, None, ()).is_some_and(|o| is(&o))
+                || Row::decode_lane(record).is_some_and(|o| is(&o))
+                || Row::decode_load_name(record, ()).is_some_and(|o| is(&o))
+        }))
+    };
+    let mut failures = Vec::new();
+    for (name, alias, is) in &aliases {
+        let ops: Vec<Op> = (0..Op::COUNT).map(|index| Op::from_index(index).unwrap()).filter(|&op| alias(op)).collect();
+        match ops.as_slice() {
+            [op] if decodes(*op, *is) => {}
+            [op] => failures.push(format!("{name}: {} does not decode to the documented operation", Op::NAMES[*op as usize])),
+            _ => failures.push(format!("{name}: true for {} opcodes, not one", ops.len())),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

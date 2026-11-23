@@ -3,7 +3,7 @@
 //! miss edge. A tier decides by these, never by the opcode the operation decoded from.
 
 use super::{NumberOperation, Operation, Register};
-use crate::bytecode::{InstructionField, Op, WideInstruction};
+use crate::bytecode::{InstructionField, Op, Traits, WideInstruction};
 
 impl<W, P> Operation<W, P> {
     /// The registers of a row over registers, locals and `this` (at most two), which the tier
@@ -41,37 +41,32 @@ impl Op {
     /// `new_object_pair_in_lane`, `new_array_in_lane`) or a construction by its callee's plan
     /// (`construct_in_lane`). A due collection leaves before it, so native code never collects.
     pub const fn allocates(self) -> bool {
-        matches!(self, Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral | Op::MakeArray | Op::Construct)
+        self.traits().has(Traits::ALLOCATES)
     }
 
     /// An instruction whose result register a loop region defines natively, as a Number or as a
     /// tagged value.
     pub const fn defines_loop_result(self) -> bool {
-        self.allocates() || matches!(self, Op::LoadConst | Op::Move | Op::LoadCapture | Op::Binary | Op::NumericAdd
-            | Op::NumericMultiply | Op::IncDec | Op::Unary | Op::ToNumeric | Op::GetIndex | Op::GetField
-            | Op::LoadEnvLocal | Op::LoadName)
+        self.allocates() || self.traits().has(Traits::DEFINES_LOOP_RESULT)
     }
 
     /// An instruction a loop region may lower to native code; any other leaves at its exact PC.
     /// A conditional jump on two values is further bounded by its operator
     /// (`osr_loop::lowered_natively`).
     pub const fn lowers_in_loop(self) -> bool {
-        self.defines_loop_result() || self.is_truthiness_jump() || matches!(self, Op::StoreCapture
-            | Op::RequireObjectCoercible | Op::SetIndex | Op::DefineArrayElement | Op::Return | Op::Jump)
+        self.defines_loop_result() || self.is_truthiness_jump() || self.traits().has(Traits::LOWERS_IN_LOOP)
     }
 
     /// An instruction whose result may hold any boxed value: an allocation, a copy, or a read of
     /// a capture, a field, an element, an environment local or a global.
     pub const fn carries_boxed_value(self) -> bool {
-        self.allocates() || matches!(self, Op::GetIndex | Op::GetField | Op::Move | Op::LoadCapture
-            | Op::LoadEnvLocal | Op::LoadName)
+        self.allocates() || self.traits().has(Traits::CARRIES_BOXED_VALUE)
     }
 
     /// An instruction whose register and operand fields a loop region reads as values, the
     /// receiver of an indexed access aside (`WideInstruction::value_registers`).
     pub const fn reads_values(self) -> bool {
-        self.is_truthiness_jump() || self.is_binary_arithmetic() || matches!(self, Op::Move | Op::IncDec | Op::Unary
-            | Op::ToNumeric | Op::JumpBinaryFalse | Op::GetIndex | Op::SetIndex)
+        self.is_truthiness_jump() || self.is_binary_arithmetic() || self.traits().has(Traits::READS_VALUES)
     }
 }
 

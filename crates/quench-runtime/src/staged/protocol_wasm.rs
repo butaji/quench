@@ -3,7 +3,7 @@
 //! interpreter's own helper (`vm/dispatch_wasm`), which the host makes (`Vm::call_out` ->
 //! `Vm::wasm_host_step`).
 use super::Protocol;
-use crate::bytecode::{Op, Register, WideInstruction};
+use crate::bytecode::{Op, Register, Traits, WideInstruction};
 
 /// The fields of the instruction a host step runs: its opcode, its three register fields and its
 /// immediate. The host rebuilds the instruction from them, so its helper reads what the
@@ -103,13 +103,7 @@ pub(crate) fn operands(instruction: WideInstruction) -> [Option<Register>; 2] {
 /// initialization, which the interpreter's handler writes nothing for.
 #[inline(always)]
 const fn defines_nothing(op: Op) -> bool {
-    matches!(
-        op,
-        Op::WasmArrayCopy | Op::WasmArrayFill | Op::WasmArrayInitData | Op::WasmArrayInitElem
-            | Op::WasmArraySet | Op::WasmStructSet | Op::WasmArraySetRaw | Op::WasmStructSetRaw | Op::WasmTableSet | Op::WasmTableFill
-            | Op::WasmTableCopy | Op::WasmTableInit | Op::WasmMemoryInit | Op::WasmAtomicFence
-            | Op::WasmThrowRef
-    )
+    op.traits().has(Traits::DEFINES_NOTHING)
 }
 
 #[cfg(not(stencil_build))]
