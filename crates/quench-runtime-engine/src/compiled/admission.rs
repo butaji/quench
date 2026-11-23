@@ -324,7 +324,22 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         }
         UnitKind::Body | UnitKind::Region(_) | UnitKind::Aot | UnitKind::Ahead(_) | UnitKind::Wasm => may_compile(kind),
     };
+    if cleared && bisected_out() { return Decision::Declined; }
     if cleared { Decision::Compile(CompiledUnit { _sealed: () }) } else { Decision::Declined }
+}
+
+/// Whether the `unit-bisect` range leaves out the unit `specialize` is about to clear: each cleared
+/// unit takes the next number, and only numbers in the range compile.
+fn bisected_out() -> bool {
+    use quench_runtime::trace::Dev::UnitBisect;
+    if !UnitBisect.on() { return false; }
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if UnitBisect.value().is_none_or(str::is_empty) {
+        eprintln!("unit-bisect {number}");
+        return false;
+    }
+    !within_trace_range(UnitBisect, number)
 }
 
 /// How a callee would run: inlined into a lane unit under the call's `CalleeBinding`, or called
