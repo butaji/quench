@@ -3,10 +3,9 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::vm::dispatch_wasm::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance};
-use quench_runtime::vm::wasm_gc::GcFieldIndex;
+use quench_runtime::vm::dispatch_wasm::{wasm_gc_allocates, wasm_gc_reads_instance};
 use quench_runtime::vm::wasm_gc::stage::HeapStage;
-use quench_runtime::staged::wasm_gc::{Aggregate, GcStep, array_copy, array_fill, array_length, field_read, field_write, non_null};
+use quench_runtime::staged::wasm_gc::{Aggregate, field_read};
 use quench_runtime::wasm::gc::{GcField, GcFieldAccess, static_offset};
 use quench_runtime::staged::wasm_call::Call;
 
@@ -61,79 +60,6 @@ const fn gc_op<const OP: u16>() -> Op {
     Op::from_index(OP as usize).expect("a Wasm GC opcode")
 }
 
-/// A struct or array field access of the GC step `step`: its operands decoded from `i`'s registers
-/// (`Vm::wasm_field_operands`), then the staged `field_write` or `field_read` over the heap. `Some`
-/// of a read's value (`None` for a write); `None` for a miss or trap, which takes the general path.
-#[inline(always)]
-fn lane_gc_field(
-    vm: &mut Vm,
-    step: GcStep,
-    i: WideInstruction,
-    read: impl Fn(&Vm, u16) -> Value,
-) -> Option<Option<Value>> {
-    let operands = vm.wasm_field_operands(step, i, read).ok()?;
-    let (aggregate, index) = match operands.location {
-        GcFieldIndex::Struct(index) => (Aggregate::Struct, index),
-        GcFieldIndex::Array(index) => (Aggregate::Array, index),
-    };
-    let (reference, index) = (operands.reference.to_bits(), u64::from(index));
-    let mut stage = HeapStage { vm };
-    match operands.value {
-        Some(value) => {
-            let bits = if operands.raw { value.to_bits() } else { stage.vm.wasm_stored_bits(operands.field, value) };
-            field_write(&mut stage, aggregate, reference, index, operands.field, bits, operands.offset).ok().map(|()| None)
-        }
-        None => {
-            let word = field_read(&mut stage, aggregate, reference, index, operands.field, operands.access, operands.offset).ok()?;
-            Some(Some(if operands.raw { Value::from_bits(word) } else { stage.vm.wasm_field_value(operands.field, operands.access, word) }))
-        }
-    }
-}
-
-/// `array.fill` and `array.copy` (`GcStep::ArrayFill`, `ArrayCopy`) as the staged rules run them
-/// over the heap, their operands decoded by `Vm::wasm_array_bulk_operands`.
-#[inline(always)]
-fn lane_gc_array_bulk(
-    vm: &mut Vm,
-    step: GcStep,
-    i: WideInstruction,
-    read: impl Fn(&Vm, u16) -> Value,
-) -> Result<Option<Value>, quench_runtime::vm::JsError> {
-    let copy = step == GcStep::ArrayCopy;
-    let ops = vm.wasm_array_bulk_operands(i, read, copy)?;
-    if copy {
-        array_copy(&mut HeapStage { vm }, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.input, ops.count)?;
-    } else {
-        array_fill(&mut HeapStage { vm }, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.count)?;
-    }
-    Ok(None)
-}
-
-/// The non-field GC steps the lane runs as the staged rules over the heap: `ref.as_non_null`,
-/// `array.len`, `array.fill` and `array.copy`. `None` for the others, which the interpreter's step
-/// makes (`Vm::wasm_gc_value_step`).
-#[inline(always)]
-fn lane_gc_rule(
-    vm: &mut Vm,
-    step: GcStep,
-    i: WideInstruction,
-    read: impl Fn(&Vm, u16) -> Value + Copy,
-) -> Option<Result<Option<Value>, quench_runtime::vm::JsError>> {
-    match step {
-        GcStep::AsNonNull => {
-            let check = quench_runtime::wasm::reference::NonNullCheck::from_tag(i.imm()).expect("validated non-null check");
-            let reference = read(vm, i.register_b()).to_bits();
-            Some(non_null(&mut HeapStage { vm }, reference, check.trap()).map(|word| Some(Value::from_bits(word))))
-        }
-        GcStep::ArrayLen => {
-            let reference = read(vm, i.register_b()).to_bits();
-            Some(array_length(&mut HeapStage { vm }, reference).map(|length| Some(Value::integer(length as i32))))
-        }
-        GcStep::ArrayFill | GcStep::ArrayCopy => Some(lane_gc_array_bulk(vm, step, i, read)),
-        _ => None,
-    }
-}
-
 lane_handler! {
     /// The `wasm_gc_value_op` numbered `OP` of the running function's registers, made by the
     /// interpreter's step; a trap, which writes nothing, takes the general path to raise it.
@@ -147,36 +73,20 @@ lane_handler! {
         let program = unsafe { (*cx).program };
         let env = if const { wasm_gc_reads_instance(gc_op::<OP>()) } { instance_env_in_lane(cx) } else { Value::UNDEFINED };
         let instruction = WideInstruction::new(op, i.a, i.b, i.c, i.imm());
-        // A field access allocates nothing and reads no instance state: a miss, which traps,
-        // takes the general path, which raises it.
-        if const { wasm_gc_field_op(gc_op::<OP>()) } {
-            let Some(step) = GcStep::of(op) else { return exit(ip) };
-            let Some(value) = lane_gc_field(vm, step, instruction, |_, register| r.get(register)) else {
-                return exit(ip);
-            };
-            if let Some(value) = value {
-                r.set(instruction.result_register(), value);
-            }
-            next!(cx, r, following(ip), view)
-        }
-        let rule = match GcStep::of(op) {
-            Some(step) => lane_gc_rule(vm, step, instruction, |_, register| r.get(register)),
-            None => None,
-        };
+        // Every GC step is the interpreter's own (`Vm::wasm_gc_value_step`, inlined, so this handler keeps
+        // only `OP`'s arm); a trap or miss, which writes nothing, takes the general path to raise it. An
+        // indirect target also records the row the reference call after it reads (`lane_indirect_target`).
         let indirect = const { matches!(Call::of(gc_op::<OP>()), Some(Call::IndirectTarget)) };
-        let value = match rule {
-            Some(Ok(value)) => value,
-            Some(Err(_)) => return exit(ip),
-            None if indirect => match lane_indirect_target(cx, vm, instruction, ip, r) {
+        let value = if indirect {
+            match lane_indirect_target(cx, vm, instruction, ip, r) {
                 Some(value) => Some(value),
                 None => return exit(ip),
-            },
-            None => {
-                let Ok(value) = vm.wasm_gc_value_step(program, env, instruction, |_, register| r.get(register)) else {
-                    return exit(ip);
-                };
-                value
             }
+        } else {
+            let Ok(value) = vm.wasm_gc_value_step(program, env, instruction, |_, register| r.get(register)) else {
+                return exit(ip);
+            };
+            value
         };
         if let Some(value) = value {
             r.set(instruction.result_register(), value);
