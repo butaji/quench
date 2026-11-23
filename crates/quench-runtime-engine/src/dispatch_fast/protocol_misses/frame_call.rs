@@ -10,14 +10,14 @@ use super::super::*;
 /// parameters, which are the codes `script_call_memo_handler` installs.
 pub(crate) const fn frame_call_miss_of(parameters: u8) -> Handler {
     match parameters {
-        _ if parameters == MEMO_FIELD => const { script_call_memo_miss_handler::<MEMO_FIELD>() },
-        _ if parameters == MEMO_ELEMENT => const { script_call_memo_miss_handler::<MEMO_ELEMENT>() },
-        _ if parameters == MEMO_LENGTH => const { script_call_memo_miss_handler::<MEMO_LENGTH>() },
-        _ if parameters == MEMO_NESTED => const { script_call_memo_miss_handler::<MEMO_NESTED>() },
-        _ if parameters == MEMO_FORWARD | MEMO_FIELD => const { script_call_memo_miss_handler::<{ MEMO_FORWARD | MEMO_FIELD }>() },
-        _ if parameters == MEMO_FORWARD | MEMO_ELEMENT => const { script_call_memo_miss_handler::<{ MEMO_FORWARD | MEMO_ELEMENT }>() },
-        _ if parameters == MEMO_FORWARD | MEMO_LENGTH => const { script_call_memo_miss_handler::<{ MEMO_FORWARD | MEMO_LENGTH }>() },
-        _ if parameters == MEMO_FORWARD | MEMO_NESTED => const { script_call_memo_miss_handler::<{ MEMO_FORWARD | MEMO_NESTED }>() },
+        _ if parameters == MEMO_FIELD => script_call_memo_miss::<MEMO_FIELD> as Handler,
+        _ if parameters == MEMO_ELEMENT => script_call_memo_miss::<MEMO_ELEMENT> as Handler,
+        _ if parameters == MEMO_LENGTH => script_call_memo_miss::<MEMO_LENGTH> as Handler,
+        _ if parameters == MEMO_NESTED => script_call_memo_miss::<MEMO_NESTED> as Handler,
+        _ if parameters == MEMO_FORWARD | MEMO_FIELD => script_call_memo_miss::<{ MEMO_FORWARD | MEMO_FIELD }> as Handler,
+        _ if parameters == MEMO_FORWARD | MEMO_ELEMENT => script_call_memo_miss::<{ MEMO_FORWARD | MEMO_ELEMENT }> as Handler,
+        _ if parameters == MEMO_FORWARD | MEMO_LENGTH => script_call_memo_miss::<{ MEMO_FORWARD | MEMO_LENGTH }> as Handler,
+        _ if parameters == MEMO_FORWARD | MEMO_NESTED => script_call_memo_miss::<{ MEMO_FORWARD | MEMO_NESTED }> as Handler,
         _ => general_step_in_lane,
     }
 }
