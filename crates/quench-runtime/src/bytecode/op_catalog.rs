@@ -572,6 +572,34 @@ impl Traits {
     /// A binary operation whose arithmetic operator the operand's `binary_operator` names (`Binary`,
     /// `NumericAdd`, `NumericMultiply`).
     pub(crate) const ARITHMETIC_BINARY: Self = Self(0, 1 << 6);
+    /// A conditional jump: on the truthiness of its register, or on a comparison it fuses.
+    pub(crate) const CONDITIONAL_JUMP: Self = Self(0, 1 << 7);
+    /// A read of a variable's value into a register: a plain local read or a capture read.
+    pub(crate) const READS_VARIABLE: Self = Self(0, 1 << 8);
+    /// A checked frame local access: it reads and writes the frame's locals in place, and leaves for a slot they do not hold.
+    pub(crate) const CHECKED_LOCAL: Self = Self(0, 1 << 9);
+    /// An op whose answered value the lane writes into its result register, not its row.
+    pub(crate) const LANE_WRITES_RESULT: Self = Self(0, 1 << 10);
+    /// An access to a local slot of the frame or the environment: a load, a store or an initialization.
+    pub(crate) const ACCESSES_LOCAL_SLOT: Self = Self(0, 1 << 11);
+    /// A store to a local slot of the frame or the environment.
+    pub(crate) const STORES_LOCAL_SLOT: Self = Self(0, 1 << 12);
+    /// A call through its callee register, with positional or forwarded arguments.
+    pub(crate) const CALLS_POSITIONAL: Self = Self(0, 1 << 13);
+    /// A call in any form other than a construction.
+    pub(crate) const MAKES_CALL: Self = Self(0, 1 << 14);
+    /// An allocation the lane makes in place, running no guest code.
+    pub(crate) const ALLOCATES: Self = Self(0, 1 << 15);
+    /// A result a loop region defines natively, beyond an allocation.
+    pub(crate) const DEFINES_LOOP_RESULT: Self = Self(0, 1 << 16);
+    /// An op a loop region lowers to native code, besides the loop-result and truthiness-jump ops.
+    pub(crate) const LOWERS_IN_LOOP: Self = Self(0, 1 << 17);
+    /// A result that may hold any boxed value: an allocation, a copy, or a read of a capture, field, element, environment local or global.
+    pub(crate) const CARRIES_BOXED_VALUE: Self = Self(0, 1 << 18);
+    /// Register and operand fields a loop region reads as values, beyond its binary arithmetic and truthiness jumps.
+    pub(crate) const READS_VALUES: Self = Self(0, 1 << 19);
+    /// A Wasm op that defines no register: a write, a fill, a copy or an initialization.
+    pub(crate) const DEFINES_NOTHING: Self = Self(0, 1 << 20);
 
     #[inline(always)]
     pub const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 || self.1 & other.1 != 0 }

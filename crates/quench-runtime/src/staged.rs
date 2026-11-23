@@ -14,7 +14,7 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::{Decoder, Op, Register, WideInstruction};
+use crate::bytecode::{Decoder, Op, Register, Traits, WideInstruction};
 #[allow(unused_imports)] // the leaves' `use super::*` take these names
 use crate::bytecode::{FieldBase, FieldLookup, Operand};
 #[allow(unused_imports)]
@@ -830,7 +830,7 @@ pub const fn binary(op: Op) -> bool {
 /// Whether `op` is a conditional jump on a truthy or falsy value (`JumpTrue`, `JumpFalse`) or on a
 /// comparison (`JumpBinaryFalse`): the guards a function's census counts.
 pub(crate) const fn conditional_jump(op: Op) -> bool {
-    matches!(op, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+    op.traits().has(Traits::CONDITIONAL_JUMP)
 }
 
 /// Whether `op` is a conditional test a backward jump may run in its target's place
@@ -843,7 +843,7 @@ pub(crate) const fn jump_target_test(op: Op) -> bool {
 /// Whether `op` reads a variable's value into a register (a plain local or a capture read), the prefix
 /// a back edge's target run may begin with (`FUSED_TARGET_PREFIX_ROWS`).
 pub(crate) const fn reads_variable(op: Op) -> bool {
-    matches!(op, Op::LoadLocalPlain | Op::LoadCapture)
+    op.traits().has(Traits::READS_VARIABLE)
 }
 
 /// Whether `op` may begin a back edge's target run (`FUSED_TARGET`): a variable read the test after it
@@ -938,7 +938,7 @@ pub const fn local_access_row(op: Op) -> Option<u16> {
 /// Whether `op` is a checked local access: its row reads and writes the frame's own locals in
 /// place, and leaves to the general step (`Miss::General`) for any slot those locals do not hold.
 pub const fn checked_local(op: Op) -> bool {
-    matches!(op, Op::LoadLocal | Op::StoreLocal | Op::InitializeTdz)
+    op.traits().has(Traits::CHECKED_LOCAL)
 }
 
 
@@ -960,8 +960,7 @@ pub const fn row_writes_result(op: Op) -> bool {
     }
     // A keyed read's answer is written by the lane (its record's result register, as every
     // producer writes it beside the carried value).
-    !matches!(op, Op::GetEnumerated | Op::GetIndex | Op::StoreName | Op::StoreLocal | Op::InitializeTdz | Op::DefineArrayElement
-        | Op::IteratorCleanupPush | Op::IteratorCleanupPop)
+    !op.traits().has(Traits::LANE_WRITES_RESULT)
 }
 
 /// The truthiness on which `op` jumps, for a jump on its register's truthiness
@@ -1005,11 +1004,11 @@ pub const fn writes_element(op: Op) -> bool { matches!(op, Op::SetIndex) }
 pub(crate) const fn keyed_element(op: Op) -> bool { reads_element(op) || writes_element(op) }
 /// Accesses an element through its object register as an indexed receiver (`GetIndex`,
 /// `SetIndex`, `RequireObjectCoercible`).
-pub const fn indexes_receiver(op: Op) -> bool { matches!(op, Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible) }
+pub const fn indexes_receiver(op: Op) -> bool { op.traits().has(Traits::INDEXED_RECEIVER) }
 /// Computes a binary operator of two registers (`Binary`).
 pub const fn computes_binary(op: Op) -> bool { matches!(op, Op::Binary) }
 /// Computes an arithmetic binary operator (`Binary`, `NumericAdd`, `NumericMultiply`).
-pub const fn computes_arithmetic(op: Op) -> bool { matches!(op, Op::Binary | Op::NumericAdd | Op::NumericMultiply) }
+pub const fn computes_arithmetic(op: Op) -> bool { op.traits().has(Traits::ARITHMETIC_BINARY) }
 /// Computes a unary operator (`Unary`).
 pub const fn computes_unary(op: Op) -> bool { matches!(op, Op::Unary) }
 /// Defines a register from a constant (`LoadConst`).
@@ -1023,7 +1022,7 @@ pub const fn calls(op: Op) -> bool { matches!(op, Op::Call) }
 /// Makes a call of an argument array (`CallArray`).
 pub const fn calls_array(op: Op) -> bool { matches!(op, Op::CallArray) }
 /// Makes an ordinary call (`Call`, `CallArray`).
-pub const fn calls_ordinary(op: Op) -> bool { matches!(op, Op::Call | Op::CallArray) }
+pub const fn calls_ordinary(op: Op) -> bool { op.traits().has(Traits::ORDINARY_CALL) }
 /// Continues at the jump target (`Jump`).
 pub const fn jumps(op: Op) -> bool { matches!(op, Op::Jump) }
 /// Completes the activation (`Return`).
@@ -1048,15 +1047,14 @@ pub const fn clones_environment(op: Op) -> bool { matches!(op, Op::CloneEnv) }
 /// (`LoadLocal`, `LoadLocalPlain`, `LoadEnvLocal`, `StoreLocal`, `StoreLocalPlain`, `StoreEnvLocal`,
 /// `InitializeTdz`).
 pub const fn accesses_local_slot(op: Op) -> bool {
-    matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain
-        | Op::StoreEnvLocal | Op::InitializeTdz)
+    op.traits().has(Traits::ACCESSES_LOCAL_SLOT)
 }
 /// Stores a local slot of its frame or its environment (`StoreLocal`, `StoreLocalPlain`, `StoreEnvLocal`).
-pub const fn stores_local_slot(op: Op) -> bool { matches!(op, Op::StoreLocal | Op::StoreLocalPlain | Op::StoreEnvLocal) }
+pub const fn stores_local_slot(op: Op) -> bool { op.traits().has(Traits::STORES_LOCAL_SLOT) }
 /// Stores an environment slot (`StoreEnvLocal`).
 pub const fn stores_environment_slot(op: Op) -> bool { matches!(op, Op::StoreEnvLocal) }
 /// Loads or stores an environment slot (`LoadEnvLocal`, `StoreEnvLocal`).
-pub const fn addresses_environment_slot(op: Op) -> bool { matches!(op, Op::LoadEnvLocal | Op::StoreEnvLocal) }
+pub const fn addresses_environment_slot(op: Op) -> bool { op.traits().has(Traits::ENV_LOCAL_ACCESS) }
 /// Stores a captured slot (`StoreCapture`).
 pub const fn writes_capture(op: Op) -> bool { matches!(op, Op::StoreCapture) }
 /// Jumps on a falsy register (`JumpFalse`).
@@ -1071,13 +1069,13 @@ pub const fn loads_this(op: Op) -> bool { matches!(op, Op::LoadThis) }
 pub(crate) const fn reads_argument(op: Op) -> bool { matches!(op, Op::ArgumentGet) }
 /// Makes a call through its callee register with its arguments positional (`Call`) or forwarded
 /// from the caller's `arguments` (`CallForwardingArguments`).
-pub(crate) const fn calls_positional(op: Op) -> bool { matches!(op, Op::Call | Op::CallForwardingArguments) }
+pub(crate) const fn calls_positional(op: Op) -> bool { op.traits().has(Traits::CALLS_POSITIONAL) }
 /// Makes a call through a method site (`CallMethod`), whose callee is a property of its receiver.
 pub(crate) const fn calls_method_site(op: Op) -> bool { matches!(op, Op::CallMethod) }
 /// Makes a call in any form that is not a construction (`Call`, `CallArray`, `CallSpread`,
 /// `CallForwardingArguments`, `CallMethod`).
 pub(crate) const fn makes_call(op: Op) -> bool {
-    matches!(op, Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments | Op::CallMethod)
+    op.traits().has(Traits::MAKES_CALL)
 }
 /// Whether `op` is a leaf record that only moves or computes an immediate value, or a branch a
 /// leaf may hold (the catalog's `LEAF_VALUE` and `LEAF_JUMP` traits).
