@@ -179,16 +179,11 @@ impl Decisions {
     }
 }
 
-/// `Decisions::instance`: a named function rather than a closure so that it is inlined wherever a row's
-/// call through the pointer is resolved, in whichever shard's codegen unit the row is (a closure is one
-/// instance in this module's unit, which a row in another unit called out of line: earley-boyer +2.4% Ir).
+/// `Decisions::instance`, recorded here as well as read (`proved_instanceof`) since the lane decides every steady `instanceof`. A named fn, not a closure, so rows in every shard inline it (earley-boyer +2.4% Ir otherwise).
 #[inline(always)]
 fn instance_decision(context: *mut (), value: Value, constructor: Value) -> Option<bool> {
     let machine = unsafe { vm(context.cast::<LaneContext>()) };
-    // The proof is recorded here as well as read (`proved_instanceof`): the lane decides
-    // every steady `instanceof`, so no other path would record it.
-    machine.record_instanceof(value, constructor).or_else(|| machine.proved_instanceof(value, constructor))
-        .or_else(|| machine.ordinary_instanceof(value, constructor))
+    machine.record_instanceof(value, constructor).or_else(|| machine.proved_instanceof(value, constructor)).or_else(|| machine.ordinary_instanceof(value, constructor))
 }
 
 /// The lane context's own-field store and add hits, erased of its host so the frame names no `H`:
@@ -3032,7 +3027,7 @@ pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     None
 }
 
-sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, numeric(OP, PREFIX, COPY, TEST);
+sharded_handler! { lane_handler, row_jump_shards, row_jump_handler;
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
@@ -3272,18 +3267,9 @@ const fn accumulator_readable(op: Op, acc: u8) -> bool {
     acc == ACC_PAIR && matches!(op.immediate_layout(), ImmediateLayout::RegisterPair)
 }
 
-/// The shard module of `generated_row!(OP, ACC, FLAG)`'s body (`generated_rows_*`). The rows
-/// whose step reaches the Number operations (`staged::row_step` Number, Arith or Generic) keep to
-/// shards 0 to 3 and the others to 4 to 15, so an edit to `staged::numeric` recompiles the
-/// numeric shards' codegen units, not every shard's.
+/// The shard module of `generated_row!(OP, ACC, FLAG)`'s body (`generated_rows_*`).
 const fn generated_row_shard(op: u16, acc: u8, flag: u8) -> usize {
-    use quench_runtime::staged::RowStep as R;
-    let hash = op as usize * 7 + flag as usize * 3 + acc as usize;
-    let numeric = match Op::from_index(op as usize) {
-        Some(opcode) => matches!(quench_runtime::staged::row_step(opcode), R::Number | R::Arith | R::Generic),
-        None => false,
-    };
-    if numeric { hash % 4 } else { 4 + hash % 12 }
+    (op as usize * 7 + flag as usize * 3 + acc as usize) % 16
 }
 
 /// The lane handler of opcode `OP`'s staged row at accumulator field `ACC` and site fact `FLAG`
