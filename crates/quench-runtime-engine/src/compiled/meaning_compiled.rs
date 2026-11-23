@@ -9,47 +9,15 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{Op, Register, WideInstruction};
-use quench_runtime::staged::{CallOperation, Callee, Invocation, NumberOperation, Operation, Passing, Protocol, Receiver};
+use quench_runtime::staged::{NumberOperation, Operation, Protocol};
 use crate::compiled::performed;
 
-/// The form a call-family record makes (`Operation::Call`, `SpreadCall`, `SuperCall`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CallForm {
-    /// A call through a callee register and a receiver register, over a window of arguments.
-    Plain,
-    /// A call of a function the record names.
-    Known,
-    /// A method call through a method site.
-    Method,
-    /// A call that passes the activation's `arguments` as its last argument.
-    Forwarding,
-    /// A construction over a window, allocating its receiver.
-    Construct,
-    /// A call whose one argument register holds the array to apply.
-    Array,
-    /// A call whose one argument register holds the iterable to spread.
-    Spread,
-    /// A call whose one argument register holds a rest view.
-    Rest,
-    /// `super(...)`.
-    Super,
-}
+pub(crate) use quench_runtime::staged::CallForm;
 
-/// The call form `instruction` makes, where its record decodes (`performed`, so a return
-/// completes the call without changing its form).
+/// The call form `instruction` makes (`CallForm::of`, the staged module's form of every
+/// call-family record, eval calls and array constructions included).
 pub(crate) fn call_form(instruction: WideInstruction) -> Option<CallForm> {
-    Some(match performed(instruction)? {
-        Operation::Call(CallOperation::Site(Invocation { forwards: true, .. })) => CallForm::Forwarding,
-        Operation::Call(CallOperation::Site(Invocation { callee: Callee::Known(_), .. })) => CallForm::Known,
-        Operation::Call(CallOperation::Site(Invocation { callee: Callee::Method { .. }, .. })) => CallForm::Method,
-        Operation::Call(CallOperation::Site(Invocation { receiver: Receiver::Allocated, .. })) => CallForm::Construct,
-        Operation::Call(CallOperation::Site(Invocation { callee: Callee::Register(_), receiver: Receiver::Register(_), .. })) => CallForm::Plain,
-        Operation::SpreadCall { passing: Passing::Array, .. } => CallForm::Array,
-        Operation::SpreadCall { passing: Passing::Iterable, .. } => CallForm::Spread,
-        Operation::SpreadCall { passing: Passing::Rest, .. } => CallForm::Rest,
-        Operation::SuperCall { .. } => CallForm::Super,
-        _ => return None,
-    })
+    CallForm::of(instruction)
 }
 
 /// A plain call through a callee register and a window (`Call`).
