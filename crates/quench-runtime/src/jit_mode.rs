@@ -64,6 +64,11 @@ impl JitMode {
     pub fn allows(self, tier: Tier) -> bool {
         match (self, tier) {
             (Self::Interp, _) => false,
+            // AArch64's stitched region starts an induction at 0 when it is entered mid-loop
+            // (`Self::Full` leaves Base out for the same reason), so `--b-jit` runs no tier here:
+            // its rows stay for the AOT image's base bodies, and the interpreter gives the exact
+            // results the mode's gate compares. Debt (TOD-1202).
+            (Self::BaseOnly, _) if cfg!(target_arch = "aarch64") => false,
             (Self::BaseOnly, tier) => tier == Tier::Base,
             (Self::QuickOnly, tier) => tier == Tier::Quick,
             (Self::UltraOnly, tier) => tier == Tier::Ultra,
