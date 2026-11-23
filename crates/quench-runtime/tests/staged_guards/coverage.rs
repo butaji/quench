@@ -171,13 +171,34 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
         if !code[..at].ends_with(ident_char) { add("fn:lane_*".to_owned()); }
     }
     // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
-    // no staged row. The stencils name rows by code numbers, not opcodes, so the terms above
-    // cannot see them.
+    // no staged step of its opcode: it neither names `staged::` nor calls a family step
+    // (`step_of`, `step_local_of`, ...) or one of the staged Wasm operators of `STAGED_WASM_STEPS`.
+    // A call of a staged accessor or helper alone (`object_record_at`, `string_length::..`) is a
+    // hand-written row built from staged parts, and still counts. The stencils name rows by code
+    // numbers, not opcodes, so the terms above cannot see them.
     if file.contains("quench-bjit/stencils/") && file.ends_with("_rows.rs") {
         for body in function_bodies(code) {
-            if !body.contains("staged::") { add("fn:stencil_hand".to_owned()); }
+            if !body.contains("staged::") && !runs_staged_step(body) { add("fn:stencil_hand".to_owned()); }
         }
     }
+}
+
+/// The staged Wasm operators a stencil row runs as its opcode's step (`staged::wasm`,
+/// `wasm_float`, `wasm_memory`, `wasm_call`): the Wasm rows have no `step_*_of` family step.
+const STAGED_WASM_STEPS: &[&str] = &["integer_binary", "float_binary", "unary_operator", "load", "store", "call_entry"];
+
+/// Whether `body` calls a staged family step (`step_of`, `step_<family>_of`, with or without a
+/// turbofish) or one of `STAGED_WASM_STEPS`, at an identifier boundary.
+fn runs_staged_step(body: &str) -> bool {
+    let called = |at: usize, name: &str| {
+        let rest = &body[at + name.len()..];
+        !body[..at].ends_with(ident_char) && !body[..at].ends_with('.') && (rest.starts_with('(') || rest.starts_with("::<"))
+    };
+    let family = body.match_indices("step_").any(|(at, _)| {
+        let name = ident_at(body, at);
+        name.ends_with("_of") || name == "step_of"
+    } && called(at, ident_at(body, at)));
+    family || STAGED_WASM_STEPS.iter().any(|name| body.match_indices(name).any(|(at, _)| called(at, name)))
 }
 
 /// The bodies (from the opening brace to its match) of the functions `code` defines.

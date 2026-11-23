@@ -1,18 +1,17 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`tests/staged_guards/coverage.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 292
+# total 241
 ../../quench-bjit/stencils/builtin_rows.rs fn:stencil_hand 16
 ../../quench-bjit/stencils/call_rows.rs fn:stencil_hand 20
-../../quench-bjit/stencils/environment_rows.rs fn:stencil_hand 11
-../../quench-bjit/stencils/heap_rows.rs fn:stencil_hand 30
-../../quench-bjit/stencils/ic_rows.rs fn:stencil_hand 11
-../../quench-bjit/stencils/key_rows.rs fn:stencil_hand 8
-../../quench-bjit/stencils/name_rows.rs fn:stencil_hand 5
-../../quench-bjit/stencils/site_rows.rs fn:stencil_hand 8
-../../quench-bjit/stencils/staged_rows.rs fn:stencil_hand 10
+../../quench-bjit/stencils/environment_rows.rs fn:stencil_hand 4
+../../quench-bjit/stencils/heap_rows.rs fn:stencil_hand 15
+../../quench-bjit/stencils/ic_rows.rs fn:stencil_hand 9
+../../quench-bjit/stencils/key_rows.rs fn:stencil_hand 2
+../../quench-bjit/stencils/name_rows.rs fn:stencil_hand 3
+../../quench-bjit/stencils/site_rows.rs fn:stencil_hand 1
+../../quench-bjit/stencils/staged_rows.rs fn:stencil_hand 5
 ../../quench-bjit/stencils/supernode_rows.rs fn:stencil_hand 3
-../../quench-bjit/stencils/wasm_rows.rs fn:stencil_hand 7
 ../../quench-runtime-engine/src/compiled.rs fn:lane_* 1
 ../../quench-runtime-engine/src/compiled/base_body.rs op:WasmBranchTable 1
 ../../quench-runtime-engine/src/compiled/base_region/call_plan.rs op:CallMethod 1
