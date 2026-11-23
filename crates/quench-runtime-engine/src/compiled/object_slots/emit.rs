@@ -148,8 +148,7 @@ impl Stage for Emit<'_, '_> {
     }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
         let low = self.narrow(a);
-        let by = self.raw_const(Lane::I32, i64::from(shift));
-        let shifted = self.raw_binary(Binary::ShiftRightSigned, low, by);
+        let shifted = self.builder.ins().sshr_imm_s(low, i64::from(shift));
         self.widen(shifted)
     }
     /// Compared at `a`'s width: a record's 32-bit shape word against a shape id is a 32-bit test.
