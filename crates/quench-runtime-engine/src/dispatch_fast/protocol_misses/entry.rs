@@ -4,7 +4,7 @@
 use crate::ext_traits::*;
 use super::super::*;
 
-/// Parameter codes of the call records (`Op::Call`, `Op::CallForwardingArguments`).
+/// Parameter codes of the call records (the plain and the forwarding call family).
 /// A call of a target that keeps its activation (`script_call_keeping_miss`).
 pub(crate) const SCRIPT_CALL_KEEPING: u8 = 0;
 /// A forwarding call (`forward_call_miss`).

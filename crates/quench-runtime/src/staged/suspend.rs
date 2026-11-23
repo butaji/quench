@@ -73,18 +73,34 @@ impl<W> Suspending<W> {
     }
 }
 
+/// The suspension row an opcode is, before its operands: the one opcode-to-suspension map, which
+/// `decode_suspend` reads its records through and a tier picks a suspension's handler by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SuspendRow { Await, Yield, YieldStar }
+
+/// The suspension row of `op` (`SuspendRow`); `None` for an opcode that suspends nothing.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub const fn suspend_row(op: Op) -> Option<SuspendRow> {
+    match op {
+        Op::Await => Some(SuspendRow::Await),
+        Op::Yield => Some(SuspendRow::Yield),
+        Op::YieldStar => Some(SuspendRow::YieldStar),
+        _ => None,
+    }
+}
+
 #[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     /// The suspension row of `instruction` (`decode_flow`); `None` for any other opcode.
     pub(super) fn decode_suspend(instruction: WideInstruction) -> Option<Self> {
-        let kind = match instruction.op() {
-            Op::Await => Suspension::Await,
-            Op::Yield => Suspension::Yield { conversion: YieldConversion::Resolve },
-            Op::YieldStar => {
+        let kind = match suspend_row(instruction.op())? {
+            SuspendRow::Await => Suspension::Await,
+            SuspendRow::Yield => Suspension::Yield { conversion: YieldConversion::Resolve },
+            SuspendRow::YieldStar => {
                 let (state, next) = instruction.register_pair();
                 Suspension::YieldStar { iterator: instruction.register_c(), state, next }
             }
-            _ => return None,
         };
         Some(Self::Suspend { kind, destination: instruction.result_register(), value: instruction.register_b() })
     }

@@ -6,7 +6,7 @@ use super::super::*;
 
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row!(OP, ACC, { protocol_family::FRAME_CALL | parameters })`). A memoized script
-/// call (`Op::Call`) takes its memo shape (`MEMO_FIELD` .. `MEMO_FORWARD | MEMO_NESTED`) as its
+/// call (the plain call row) takes its memo shape (`MEMO_FIELD` .. `MEMO_FORWARD | MEMO_NESTED`) as its
 /// parameters, which are the codes `script_call_memo_handler` installs.
 pub(crate) const fn frame_call_miss_of(parameters: u8) -> Handler {
     match parameters {

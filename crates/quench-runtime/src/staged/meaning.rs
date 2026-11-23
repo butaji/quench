@@ -5,7 +5,8 @@
 //! an instruction is (to pick a path, to scan a loop for effects) asks here instead of naming
 //! opcodes: the semantics own the mapping from records to meanings, every tier reads it.
 
-use crate::bytecode::{Class, WideInstruction};
+use super::frame_arm::{frame_arm, FrameArm};
+use crate::bytecode::{Class, Op, WideInstruction};
 
 /// A family of staged operations. One record can mean more than one (a compare-jump is also a
 /// conditional jump), so a tier asks `means(instruction, meaning)` for each it cares about.
@@ -58,9 +59,19 @@ pub enum Meaning {
     NumericBinary,
     /// A unary operator of the numeric lowering (`Unary`), whose operator `unary_operator` names.
     NumericUnary,
+    /// A Wasm branch table (`WasmBranchTable`), which `Wasm` jump decoding reads as a `BranchTable` (`wasm_flow`).
+    BranchTable,
+    /// A method call through its receiver register (`CallMethod`), whose method site `Invocation::method` reads.
+    MethodCall,
+    /// `NumericAdd` and `NumericMultiply`: the Number arithmetic of their own operator, which `decode_generic` reads
+    /// with `Binary`'s operation.
+    NumericArithmetic,
+    /// A string-case index over a constant table (`StringCaseIndex`), which `decode_lane` reads.
+    StringCaseIndex,
 }
 
 /// Whether `instruction` denotes an operation of `meaning`.
+#[inline(always)]
 pub fn means(instruction: impl std::borrow::Borrow<WideInstruction>, meaning: Meaning) -> bool {
     let op = instruction.borrow().op();
     match meaning {
@@ -87,5 +98,16 @@ pub fn means(instruction: impl std::borrow::Borrow<WideInstruction>, meaning: Me
         Meaning::CompareJump => op.class() == Class::JumpBinaryFalse,
         Meaning::NumericBinary => op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
         Meaning::NumericUnary => op.js_denotation() == crate::bytecode::JsDenotation::NumericUnary,
+        Meaning::BranchTable => op.class() == Class::WasmBranchTable,
+        Meaning::MethodCall => op.class() == Class::CallMethod,
+        Meaning::NumericArithmetic => matches!(frame_arm(op), FrameArm::NumericArith),
+        Meaning::StringCaseIndex => op.is_string_case_index(),
     }
+}
+
+/// Whether the record of `op` carries an operand feedback byte (`operand_feedback`): the loop arms that read
+/// one (`frame_arm`, the one opcode-to-arm map): the generic and numeric arithmetic and the element accesses.
+#[inline(always)]
+pub const fn records_operand_feedback(op: Op) -> bool {
+    matches!(frame_arm(op), FrameArm::Binary | FrameArm::NumericArith | FrameArm::GetIndex | FrameArm::SetIndex)
 }

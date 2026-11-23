@@ -2308,7 +2308,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         let complete: unsafe fn(*mut (), Value) -> Option<Resumed> = |context, value| super::lane_complete_wasm_activation(context.cast(), value);
         return LaneFrame::<ACC> { wasm_return: Some((cx.cast(), complete)), ..LaneFrame::<ACC>::new(r, view) };
     }
-    if const { LaneFields::<OP>::OPCODE.is_truthiness_jump() } {
+    if const { quench_runtime::staged::truth_jump(LaneFields::<OP>::OPCODE).is_some() } {
         // A jump on a string's (or another cell's) truth decides it from the heap (`truthiness`).
         let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
@@ -2546,7 +2546,7 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 /// (`store_name_first_miss`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
     // A `Binary` the row leaves tries the lane's pure operation before the general step.
-    if matches!(op, Op::Binary) && matches!(quench_runtime::staged::miss(op), quench_runtime::staged::Miss::General) {
+    if quench_runtime::staged::computes_binary(op) && matches!(quench_runtime::staged::miss(op), quench_runtime::staged::Miss::General) {
         return super::binary_miss_in_lane;
     }
     match quench_runtime::staged::miss(op) {
@@ -2835,11 +2835,11 @@ macro_rules! target_run {
                 Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
             }
         }}; }
-        if const { $test == quench_runtime::bytecode::Op::JumpBinaryFalse as u16 && $cmp != 0 } {
+        if const { $test == quench_runtime::staged::COMPARE_JUMP_ROW && $cmp != 0 } {
             let (operator, constant) = const { target_comparison_of($cmp) };
             test_run!(Some(Comparison::of_operator(operator)), Some(constant))
         }
-        if const { $test == quench_runtime::bytecode::Op::JumpBinaryFalse as u16 } {
+        if const { $test == quench_runtime::staged::COMPARE_JUMP_ROW } {
             // A loop's test is almost always a relation or a strict equality, each its own arm; any other runs its record's own row.
             use oxc_ast::ast::BinaryOperator as B;
             const LT: u32 = B::LessThan as u32;
@@ -2999,7 +2999,7 @@ const fn compare_operands(flag: u8) -> Option<bool> {
 /// Whether `handler`, a `compare_jump_row` instance, fixes its right operand as a constant: one of the
 /// formed register-constant instances (`compare_operands`).
 fn compare_operands_of<const BACKWARD: bool>(handler: Handler) -> Option<bool> {
-    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
+    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
     macro_rules! constant_formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
     let constant: [Handler; FORMED_COMPARISONS.len()] = constant_formed!(1 3 5 7 9 11);
     Some(constant.iter().any(|row| *row as *const () == handler as *const ()))
@@ -3010,7 +3010,7 @@ fn compare_operands_of<const BACKWARD: bool>(handler: Handler) -> Option<bool> {
 /// register or a constant; `None` past the codes.
 fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: Operand) -> Option<Handler> {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
-    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
+    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
     macro_rules! formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
     let form = match (left.kind(), right.kind()) {
         (Some(Register), Some(Register)) => Some(0),
@@ -3031,14 +3031,13 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
 /// takes its instance again at its next run, so the move undoes only what the run learned.
 pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len()] {
-        macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
+        macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
         macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
         rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33)
     }
     const _: () = assert!(COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() == 34);
-    const JUMP_BINARY_FALSE: u16 = quench_runtime::bytecode::Op::JumpBinaryFalse as u16;
-    if instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<JUMP_BINARY_FALSE>(false)) }
-    if instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<JUMP_BINARY_FALSE>(true)) }
+    if instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
+    if instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(true)) }
     None
 }
 
@@ -3066,7 +3065,7 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler;
         // A comparison jump's operator is a constant of its record: its first run moves the record to
         // the instance whose `FLAG` names the operator (`compare_jump_row`), where the comparison is a
         // constant and its row folds to that operator's test rather than matching every comparison.
-        if const { OP == quench_runtime::bytecode::Op::JumpBinaryFalse as u16 && FLAG == FLAG_UNREAD
+        if const { OP == quench_runtime::staged::COMPARE_JUMP_ROW && FLAG == FLAG_UNREAD
             && PREFIX == quench_runtime::staged::NO_LINK && COPY == quench_runtime::staged::NO_LINK && TEST == quench_runtime::staged::NO_LINK } {
             // The operator is the record's field A (`binary_operator_field`); the instance is taken only
             // where that operator names the comparison the record decodes to.
@@ -3425,7 +3424,7 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler;
             let mut frame = call_frame::<OP, ACC, MISS>(cx, r, ip, i, view);
             // The call decoder makes a call site, or for a `super(...)` construction a spread call: only a
             // construction's row keeps more than the call arm of the step (every arm was ~10 KB per instance).
-            let step = if const { matches!(LaneFields::<OP>::OPCODE, quench_runtime::bytecode::Op::Construct) } {
+            let step = if const { quench_runtime::staged::constructs(LaneFields::<OP>::OPCODE) } {
                 quench_runtime::staged::step(&mut stage, &mut frame, operation)
             } else {
                 quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::CALL }, _, _>(&mut stage, &mut frame, operation)

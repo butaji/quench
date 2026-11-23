@@ -3685,6 +3685,14 @@ pub struct MethodSite {
     pub receiver_path: ReceiverPath,
 }
 
+impl MethodSite {
+    /// A site whose receiver is its own register (no receiver path): `atom` read through `cache`,
+    /// with `argument_count` arguments from `argument_start` of the call's window.
+    pub const fn plain(atom: Atom, cache: u16, argument_start: u32, argument_count: u16) -> Self {
+        Self { atom, cache, argument_start, argument_count, receiver_path: ReceiverPath::NONE }
+    }
+}
+
 const _: () = assert!(size_of::<MethodSite>() == 20);
 
 #[derive(Clone, Debug)]

@@ -142,7 +142,7 @@ pub(crate) fn chains(instruction: WideInstruction) -> bool {
 /// Whether `instruction` is a method call `o.m(args)`, whose callee its site's call feedback records and whose chain reads it
 /// (`call_plan::Method`).
 pub(crate) fn is_method_call(instruction: WideInstruction) -> bool {
-    instruction.op() == quench_runtime::bytecode::Op::CallMethod && CallForm::of(instruction) == Some(CallForm::Stepped)
+    quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::MethodCall) && CallForm::of(instruction) == Some(CallForm::Stepped)
 }
 
 /// The callee the call site `instruction` makes calls, if its body's call chain makes it: the

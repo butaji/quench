@@ -6,37 +6,6 @@ use super::*;
 use quench_runtime::vm::AccessorForward;
 use quench_runtime::vm::accessor_cache::GetterEntryRead;
 
-/// A read whose site caches an accessor (`Vm::cached_field_getter`) whose getter is a pure
-/// native read (`Vm::pure_native_getter_value`) or a frameless read target, answered as the
-/// getter's call would return (`call_read_in_lane`): `[[Get]]` calls it on the base with no
-/// arguments, and neither runs guest code. `Some(None)` is a cached getter that must be
-/// called (`getter_activation_in_lane`); `None`, a site with no accessor entry for `object`.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-#[inline(never)]
-pub(crate) unsafe fn lane_getter_read(
-    cx: *mut LaneContext,
-    object: Value,
-    atom: quench_runtime::bytecode::Atom,
-    site: u16,
-) -> Option<Option<Value>> {
-    let vm = unsafe { vm(cx) };
-    let index = vm.field_cache_index(site);
-    // One walk of the site's entries: the forward, or the getter to call
-    // (`Vm::getter_entry_read`); the fact table only where no entry proves `object`.
-    let getter = match vm.getter_entry_read(object, index) {
-        GetterEntryRead::Answer(value, _) => return Some(Some(value)),
-        GetterEntryRead::Call(getter) => getter,
-        GetterEntryRead::Miss => vm.cached_getter_after_miss(object, atom, index)?,
-    };
-    let Some(value) = (unsafe { lane_getter_answer(cx, getter, object) }) else {
-        return Some(None);
-    };
-    lane_memoize_getter(cx, getter, object, index);
-    Some(Some(value))
-}
-
 /// Memoizes at the accessor entry of cache index `site` that proves `object` what `getter`,
 /// whose call on `object` a read just answered, returns for receivers of its layout
 /// (`Vm::memoize_getter_answer`, `getter_forward`).
@@ -112,20 +81,6 @@ unsafe fn constant_body_value(target: &ScriptCallTarget) -> Option<Value> {
     constant.then(|| first.constant())
 }
 
-/// What `getter` returns for a read of `object` where its call runs no guest code: a pure
-/// native read, or a frameless read target (`lane_getter_read`).
-///
-/// # Safety
-/// `cx` is the running lane's context.
-#[inline(never)]
-unsafe fn lane_getter_answer(cx: *mut LaneContext, getter: Value, object: Value) -> Option<Value> {
-    if let Some(value) = (unsafe { vm(cx) }).pure_native_getter_value(getter, object) {
-        return Some(value);
-    }
-    let target = script_target_in_lane(cx, getter)?;
-    unsafe { lane_script_getter_answer(cx, &target, object) }
-}
-
 /// What the frameless script getter `target` returns for a read of `object` where a read
 /// answers its call (`CallEntry::answered_by_read`); `None` for any other getter.
 ///
@@ -152,7 +107,7 @@ unsafe fn lane_script_getter_answer(cx: *mut LaneContext, target: &ScriptCallTar
 }
 
 /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: its value where a read
-/// answers the getter's call (`lane_getter_answer`), else the getter's activation
+/// answers the getter's call, else the getter's activation
 /// (`activate_getter_in_lane`), whose completion is the read's value. Only a read that writes its
 /// register is answered in place: a returning read (`RETURN_REGISTER`) completes its
 /// activation, which only the getter's activation does. A native getter is called in place

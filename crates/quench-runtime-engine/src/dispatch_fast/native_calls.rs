@@ -4,7 +4,6 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::call_complete::{concrete_returns_callee_completion, concrete_write_call_result};
-use quench_runtime::bytecode::index as opc;
 use quench_runtime::staged::strings::{ConcreteString, concrete_char_at, concrete_char_code_at};
 use quench_runtime::vm::object_get::ordinary_chain::ChainRead;
 
@@ -42,7 +41,7 @@ macro_rules! builtin_rows {
         }
         /// The protocol row of a Call of builtin row `row` (`native_call_handler`).
         const fn builtin_handler(row: u8) -> Handler {
-            match row { $($row => protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (BUILTIN_KIND | $row) as u16 }>(),)* _ => call_row::<{ protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() }
+            match row { $($row => protocol_handler::<{ quench_runtime::staged::forms::PLAIN_CALL_ROW }, ACC_NONE, { protocol_family::LEAF_CALL | (BUILTIN_KIND | $row) as u16 }>(),)* _ => call_row::<{ protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() }
         }
         /// The miss body of builtin row `row` (`leaf_call_miss_of`).
         pub(crate) const fn builtin_miss_of(row: u8) -> Handler {
@@ -68,7 +67,7 @@ macro_rules! math_rows {
             match row { $($row => Native::$native,)* _ => unreachable!() }
         }
         fn math_handler(native: Native) -> Option<Handler> {
-            match native { $(Native::$native => Some(protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (MATH_KIND | $row) as u16 }>()),)* _ => None }
+            match native { $(Native::$native => Some(protocol_handler::<{ quench_runtime::staged::forms::PLAIN_CALL_ROW }, ACC_NONE, { protocol_family::LEAF_CALL | (MATH_KIND | $row) as u16 }>()),)* _ => None }
         }
         /// The miss body of Math row `row` (`leaf_call_miss_of`).
         pub(crate) const fn math_miss_of(row: u8) -> Handler {
@@ -550,7 +549,7 @@ pub(crate) fn install_math_field_call(cx: *mut LaneContext, call_ip: Ip, native:
     let (call, copy, field) = unsafe { (&*call_ip, &*copy_ip, &*field_ip) };
     let one_argument = ImmediateLayout::argument_count(call.imm()) == 1
         && ImmediateLayout::call_window_base(call.imm()) == copy.a;
-    let copies = copy.handler == generated_row!(opc::Move, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
+    let copies = copy.handler == generated_row!(quench_runtime::staged::MOVE_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
     let reads_callee = field.a == call.b
         && own_bound_handlers()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if one_argument && copies && reads_callee && copy.a != field.a {
@@ -565,8 +564,8 @@ fn install_math_field_call2(call_ip: Ip) {
     let (second_ip, first_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2), call_ip.sub(3)) };
     let (call, second, first, field) = unsafe { (&*call_ip, &*second_ip, &*first_ip, &*field_ip) };
     let window = ImmediateLayout::call_window_base(call.imm());
-    let copy = generated_row!(opc::Move, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
-    let constant_second = second.handler == generated_row!(opc::LoadConst, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
+    let copy = generated_row!(quench_runtime::staged::MOVE_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
+    let constant_second = second.handler == generated_row!(quench_runtime::staged::LOAD_CONST_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
     let shaped = first.handler == copy && (second.handler == copy || constant_second)
         && first.a == window && second.a == window + 1;
     let reads_callee = field.a == call.b && field.a != window && field.a != window + 1
@@ -763,9 +762,9 @@ pub(crate) fn native_call_handler(native: Native, i: &LaneInstruction, result_de
         native if let Some(handler) = math_handler(native) => handler,
         Native::StringReplace if length_only() => super::regexp_calls::replace_length_handler(),
         native if let Some(handler) = in_place_handler(native) => handler,
-        native if super::number::math_numbers_inline(native) => protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_MATH as u16 }>(),
-        native if native.is_array_callback() && result_dead() => protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK_DISCARDING as u16 }>(),
-        native if native.is_array_callback() => protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK as u16 }>(),
+        native if super::number::math_numbers_inline(native) => protocol_handler::<{ quench_runtime::staged::forms::PLAIN_CALL_ROW }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_MATH as u16 }>(),
+        native if native.is_array_callback() && result_dead() => protocol_handler::<{ quench_runtime::staged::forms::PLAIN_CALL_ROW }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK_DISCARDING as u16 }>(),
+        native if native.is_array_callback() => protocol_handler::<{ quench_runtime::staged::forms::PLAIN_CALL_ROW }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK as u16 }>(),
         _ => call_row::<{ protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>(),
     }
 }
@@ -829,7 +828,7 @@ script_handler! {
 
 /// The handler of a `Reflect.get` call site (`native_call_miss`'s sibling).
 pub(crate) fn reflect_get_call_handler() -> Handler {
-    protocol_handler::<{ quench_runtime::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | REFLECT_GET_KIND as u16 }>()
+    protocol_handler::<{ quench_runtime::staged::forms::PLAIN_CALL_ROW }, ACC_NONE, { protocol_family::LEAF_CALL | REFLECT_GET_KIND as u16 }>()
 }
 
 /// `body_native_call_in_lane` of a native that is not in place: the lane's own call of it

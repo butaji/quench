@@ -150,8 +150,6 @@ fn object_literal_site(
     function: &crate::bytecode::Function,
     program: &crate::bytecode::ResidualProgram,
 ) -> Option<(crate::bytecode::Op, crate::bytecode::Op, usize)> {
-    use crate::bytecode::Op;
-
     let (op, site) = if encoded.is_wide() {
         let instruction = function.widened(encoded);
         match instruction.op() {
@@ -168,7 +166,7 @@ fn object_literal_site(
             _ => return None,
         }
     };
-    let object = (op == Op::SuperConstArrayObject2).then(|| program.superinstructions[site].wide).map(|[.., object]| object);
+    let object = (op == crate::bytecode::SUPER_CONST_ARRAY_OBJECT).then(|| program.superinstructions[site].wide).map(|[.., object]| object);
     let site_op = object.map_or(op, |instruction| instruction.op());
     let site = object.map_or(site, |instruction| instruction.object_site_index());
     Some((op, site_op, site))
@@ -918,28 +916,28 @@ impl Profile {
 #[cfg(all(test, feature = "profile-aggregate"))]
 mod tests {
     use super::Profile;
-    use crate::bytecode::Op;
+    use crate::staged::{BINARY_ROW, LOCAL_LOAD_ROW, NUMERIC_ADD_ROW, Operation};
 
     #[test]
     fn physical_dispatch_counts_exclude_virtual_fusion_steps() {
         let mut profile = Profile::default();
-        profile.opcode(Op::NumericAdd as usize, 0, 0, 0, 0);
-        profile.virtual_opcode(0, Op::Binary as usize);
+        profile.opcode(NUMERIC_ADD_ROW as usize, 0, 0, 0, 0);
+        profile.virtual_opcode(0, BINARY_ROW as usize);
 
-        assert_eq!(profile.dispatched_opcodes[0][Op::NumericAdd as usize], 1);
-        assert_eq!(profile.dispatched_opcodes[0][Op::Binary as usize], 0);
-        assert_eq!(profile.opcodes[0][Op::Binary as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[0][NUMERIC_ADD_ROW as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[0][BINARY_ROW as usize], 0);
+        assert_eq!(profile.opcodes[0][BINARY_ROW as usize], 1);
     }
 
     #[test]
     fn physical_sites_are_scoped_to_their_residual_program() {
         let mut profile = Profile::default();
-        profile.opcode(Op::LoadLocal as usize, 0, 0, 0, 0);
-        profile.opcode(Op::Return as usize, 1, 1, 0, 0);
+        profile.opcode(LOCAL_LOAD_ROW as usize, 0, 0, 0, 0);
+        profile.opcode(Operation::<u64, ()>::RETURN_ROW as usize, 1, 1, 0, 0);
 
         assert_eq!(profile.site_counts[0][0][0], 1);
         assert_eq!(profile.site_counts[1][0][0], 1);
-        assert_eq!(profile.dispatched_opcodes[0][Op::LoadLocal as usize], 1);
-        assert_eq!(profile.dispatched_opcodes[1][Op::Return as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[0][LOCAL_LOAD_ROW as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[1][Operation::<u64, ()>::RETURN_ROW as usize], 1);
     }
 }

@@ -243,7 +243,7 @@ impl Vm {
                 let binding = self.load_local_binding(p, VarOwner::Frame(frame), usize::from(slot), None)?;
                 self.read_arguments_binding(p, frame, binding, None).map(Some)
             }
-            // The element at `value` (the index operand), as `Op::ArgumentGet` reads it.
+            // The element at `value` (the index operand), as the argument-get row reads it.
             CallOut::ArgumentGet { slot, .. } => {
                 let frame = self.own_frame();
                 let binding = self.load_local_binding(p, VarOwner::Frame(frame), usize::from(slot), None)?;
@@ -263,7 +263,7 @@ impl Vm {
             }
             CallOut::LoadName { atom, site } =>
                 self.at_binding_site(owner, resume, |vm| vm.load_name(p, owner, atom, Some(site))).map(Some),
-            // The frame's own clone, as `Op::CloneEnv` makes it and the lane's clone did: the frame's
+            // The frame's own clone, as the environment-clone row makes it and the lane's clone did: the frame's
             // environment becomes its iteration copy where a closure captured it. Defines no register.
             CallOut::CloneEnv { plan } => {
                 let frame = self.owner_frame(owner).expect("a clone names its frame");

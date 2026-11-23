@@ -15,6 +15,12 @@ use super::DecodeContext;
 use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, WideInstruction, RETURN_REGISTER};
 use crate::bytecode::Register;
 
+/// The row of a plain call: a call through a callee register, a receiver register and a window
+/// of arguments. `CallForm::of` reads its record as `CallForm::Plain` (the call arm), and
+/// `Invocation::operands` reads the same record's callee and receiver.
+#[cfg(not(stencil_build))]
+pub const PLAIN_CALL_ROW: u16 = Op::Call as u16;
+
 /// A function of the running program, by its index (`CallKnown`).
 pub type FunctionId = u16;
 

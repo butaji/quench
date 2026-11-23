@@ -6936,9 +6936,10 @@ fn count_arithmetic_leave(cx: *mut LaneContext, site: &LoopSite, pc: u32, region
             let instruction = body.widened(*packed);
             let op = instruction.op();
             crate::compiled::base_region::leave(site.function(), pc, op);
+            let stores = matches!(quench_runtime::staged::Operation::<u64, ()>::of(instruction), Some(quench_runtime::staged::Operation::SetField { .. })); // the decode's named field store (`decode_property`)
             (quench_runtime::staged::computes_numeric_binary(op) || quench_runtime::staged::reads_element(op) || op.stores_element()
-                || op.is_field_store() || quench_runtime::staged::miss(op) == quench_runtime::staged::Miss::WalkScopes)
-                .then(|| (quench_runtime::staged::reads_element(op), op.is_field_store()))
+                || stores || quench_runtime::staged::miss(op) == quench_runtime::staged::Miss::WalkScopes)
+                .then(|| (quench_runtime::staged::reads_element(op), stores))
         })
     });
     match counted {
@@ -12953,9 +12954,10 @@ fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, program: &que
 /// The arguments a call instruction passes its direct row: a method call's are its method site's count, which only the
 /// site names (`None` where the program holds no such site).
 fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, instruction: WideInstruction) -> Option<u16> {
-    match instruction.op() {
-        quench_runtime::bytecode::Op::CallMethod => quench_runtime::staged::DecodeContext::of(program).method_site(instruction.method_site_index()).map(|site| site.argument_count),
-        _ => Some(ImmediateLayout::argument_count(instruction.imm())),
+    if instruction.op() as u16 == quench_runtime::staged::METHOD_CALL_ROW {
+        quench_runtime::staged::DecodeContext::of(program).method_site(instruction.method_site_index()).map(|site| site.argument_count)
+    } else {
+        Some(ImmediateLayout::argument_count(instruction.imm()))
     }
 }
 
@@ -17976,7 +17978,7 @@ fn pair_target_form<const A: u16, const B: u16, const PREFIX: u16, const TEST: u
 /// comparison fixed (`CMP`, `lane_frame::target_comparison`).
 const fn inc_dec_test_row<const CMP: u8>() -> Handler {
     fused_rows!({ quench_runtime::staged::INC_DEC_ROW }, { quench_runtime::staged::JUMP_ROW }, false, { quench_runtime::staged::FUSED_TARGET },
-        { quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, { quench_runtime::staged::NO_LINK }, CMP) as Handler
+        { quench_runtime::staged::COMPARE_JUMP_ROW }, { quench_runtime::staged::NO_LINK }, CMP) as Handler
 }
 
 /// The `(IncDec, Jump)` back edges whose step and test the registers' int32 kinds prove
@@ -18349,9 +18351,9 @@ fn specialize_register_operands(records: &mut [LaneInstruction]) {
         if !lane_frame::register_operands(record) {
             continue;
         }
-        let row = lane_frame::registers_row::<{ quench_runtime::bytecode::Op::Binary as u16 }>(record.handler)
-            .or_else(|| lane_frame::registers_row::<{ quench_runtime::bytecode::Op::NumericAdd as u16 }>(record.handler))
-            .or_else(|| lane_frame::registers_row::<{ quench_runtime::bytecode::Op::NumericMultiply as u16 }>(record.handler));
+        let row = lane_frame::registers_row::<{ quench_runtime::staged::BINARY_ROW }>(record.handler)
+            .or_else(|| lane_frame::registers_row::<{ quench_runtime::staged::NUMERIC_ADD_ROW }>(record.handler))
+            .or_else(|| lane_frame::registers_row::<{ quench_runtime::staged::NUMERIC_MULTIPLY_ROW }>(record.handler));
         if let Some(row) = row {
             record.handler = row as *const ();
         }

@@ -2,8 +2,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::vm::AccessorForward;
-use quench_runtime::vm::accessor_cache::SetterForward;
 
 use quench_runtime::vm::engine_types::SETTER_SITE_BITS;
 
@@ -39,70 +37,6 @@ pub(crate) fn stored_setter(vm: &mut Vm, object: Value, atom: quench_runtime::by
     let setter = vm.property_accessor(object, atom)?.setter;
     vm.record_accessor_field_cache(object, atom, site, true);
     setter
-}
-
-/// A store of the record `i` (at `ip`) to `object` that meets a setter of the running
-/// program the lane activates: its activation with the stored value as its one argument and
-/// `object` as its receiver, whose completion leaves the record's registers as they are
-/// (`Completion::Assigns`). `None`, before any effect, leaves any other store to its path;
-/// an activation the lane has no room for exits at the record, where the general path makes
-/// the call.
-pub(crate) fn lane_store_setter(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    let site = vm.field_cache_index(i.c);
-    if !met_setter(&vm.lane_stack, site) {
-        return None;
-    }
-    let setter = stored_setter(vm, object, i.imm(), site)?;
-    let target = script_target_in_lane(cx, setter).filter(|target| !target.forwards())?;
-    // A trivial setter (`this.f = v`) is the store it makes (getters-as-calls.md): no call.
-    if lane_forwarded_setter_store(vm, &target, object, site, setter, r.get(i.a)) {
-        return Some(Resumed::At(r, following(ip), Carried::script(cx)));
-    }
-    let this = call_this_in_lane(vm, &target, object)?;
-    // SAFETY: the record's value register is one of the running function's.
-    let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
-    Some(match activate_kept_in_lane::<false>(cx, r, ip, &target, stored, this) {
-        Ok((registers, next)) => {
-            vm.lane_stack.recomplete_top(Completion::Assigns);
-            Resumed::At(registers, next, Carried::script(cx))
-        }
-        Err(next) => Resumed::Exit(next),
-    })
-}
-
-/// Whether the store of `value` to `object` at cache index `site` was made as the call of
-/// `setter` (`target`) would make it, without the call: the site's accessor entry for
-/// `object`'s layout recorded that the setter's body is a forward store
-/// (`trivial_setter_store`), and that store's own field entry holds for `object`
-/// (`Vm::hinted_own_field_store_hit`, which makes the logged store or nothing). A setter
-/// the entry knows nothing of is recognized once and recorded either way, so a setter that
-/// forwards nothing costs one entry walk per store after its first.
-fn lane_forwarded_setter_store(
-    vm: &mut Vm,
-    target: &ScriptCallTarget,
-    object: Value,
-    site: usize,
-    setter: Value,
-    value: Value,
-) -> bool {
-    let (cache, atom) = match vm.setter_entry_forward(object, site, setter) {
-        SetterForward::Store(cache, atom) => (cache, atom),
-        SetterForward::Declined => return false,
-        SetterForward::Unknown => match trivial_setter_store(vm, target, object) {
-            SetterStore::Store(cache, atom) => {
-                vm.memoize_getter_answer(object, site, setter, AccessorForward::Store { cache, atom });
-                (cache, atom)
-            }
-            SetterStore::Never => {
-                vm.memoize_getter_answer(object, site, setter, AccessorForward::None);
-                return false;
-            }
-            // The body's own store site has no entry for this receiver yet: the call fills it.
-            SetterStore::NotYet => return false,
-        },
-    };
-    vm.hinted_own_field_store_hit(cache, object, atom, value)
 }
 
 /// What `trivial_setter_store` found of a setter's body.

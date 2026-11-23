@@ -163,7 +163,7 @@ impl Vm {
         recorded.iter().enumerate().map(|(call, callee)| {
             let callee = (*callee)?;
             let load = code[straight_definition(code, &entered, call)?];
-            if load.op() == quench_runtime::bytecode::Op::LoadCapture && load.result_flags() == 0 && load.capture_depth() == 0 {
+            if matches!(quench_runtime::staged::Operation::<u64, ()>::of(load), Some(quench_runtime::staged::Operation::LoadCapture { depth: 0, .. })) {
                 let declared = program.function_get(function as usize)?.declared_captures.contains(&load.capture_slot());
                 return declared.then_some(Held::Captured { slot: load.capture_slot(), callee: callee.to_bits() });
             }

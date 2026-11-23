@@ -171,7 +171,7 @@ impl CallShape {
 /// its arguments a window of consecutive registers the direct row reads. `None` for any other call, or one whose
 /// arguments are not consecutive (`Arguments::List` is a list of registers, not a window).
 pub(crate) fn method_shape(program: &quench_runtime::bytecode::ResidualProgram, instruction: WideInstruction, call_pc: u32, scratch: Register, returning: bool) -> Option<CallShape> {
-    if instruction.op() != quench_runtime::bytecode::Op::CallMethod || instruction.writes_current_this() || instruction.resolves_dynamic_scope()
+    if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::MethodCall) || instruction.writes_current_this() || instruction.resolves_dynamic_scope()
         || instruction.direct_eval() || instruction.parameter_eval() {
         return None;
     }

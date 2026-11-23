@@ -78,28 +78,6 @@ impl Vm {
         Ok(next)
     }
 
-    /// `Promise.prototype.then` of a receiver whose species steps provably answer the
-    /// intrinsic `%Promise%` without running guest code (`promise_species_intrinsic`), made
-    /// without a frame for the lane. `None` leaves any other receiver, an impure species
-    /// read, or a lifecycle-observing host, whose hooks run guest code, to the general call.
-    pub(in crate::vm) fn lane_promise_then(
-        &mut self,
-        p: &ResidualProgram,
-        promise: Value,
-        on_fulfilled: Value,
-        on_rejected: Value,
-    ) -> Option<Value> {
-        if self.host.observes_promise_lifecycle()
-            || !self.is_promise(promise)
-            || !self.promise_species_intrinsic(promise)
-        {
-            return None;
-        }
-        // Nothing below runs guest code or collects, so the receiver and handlers stay
-        // live in the caller's registers, as `lane_new_array`'s arguments do.
-        self.then_unrooted(p, promise, on_fulfilled, on_rejected, ThenCapability::ProvedIntrinsic).ok()
-    }
-
     /// The result promise a `then` on `promise` derives for `capability`. A capability other
     /// than a fresh intrinsic promise's is registered for `settle_reaction`.
     fn derive_then_promise(

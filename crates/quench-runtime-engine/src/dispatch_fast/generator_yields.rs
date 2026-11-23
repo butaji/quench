@@ -8,7 +8,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::bytecode::Class;
 use super::lane_frame::{suspension_row_in_lane, yield_star_kind, Suspender, LANE_YIELD};
 use quench_runtime::vm::activation::{JobRoot, SuspendKind};
 use quench_runtime::staged::{SuspendEffect, Suspending, Suspension};
@@ -157,11 +156,12 @@ script_handler! {
 /// The handlers of a frame's suspensions: each runs its staged `Suspend` row on the lane's frame
 /// (`suspension_row_in_lane`), with the suspender its record's activation makes.
 pub(crate) const fn suspend_handler(opcode: Op) -> Option<Handler> {
-    match opcode.class() {
-        Class::Yield => Some(yield_row),
-        Class::YieldStar => Some(yield_star_row),
-        Class::Await => Some(await_row),
-        _ => None,
+    use quench_runtime::staged::SuspendRow;
+    match quench_runtime::staged::suspend_row(opcode) {
+        Some(SuspendRow::Yield) => Some(yield_row),
+        Some(SuspendRow::YieldStar) => Some(yield_star_row),
+        Some(SuspendRow::Await) => Some(await_row),
+        None => None,
     }
 }
 

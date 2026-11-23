@@ -73,7 +73,7 @@ impl FunctionValues {
 
 /// The hoisted function declarations of each module instance (one `ProgramId`), by function id.
 /// `Vm::instantiate_module_environment` makes each one, and the module body's own declaration of
-/// it (`Op::MakeClosure` at the root) finds it here. Weak, as `FunctionValues` holds closures: the
+/// it (the make-closure row at the root) finds it here. Weak, as `FunctionValues` holds closures: the
 /// module environment's binding keeps each one alive while it holds it.
 #[derive(Default)]
 pub(super) struct ModuleFunctions {
@@ -130,7 +130,7 @@ impl Vm {
         self.module_functions.contains(program, id)
     }
 
-    /// Whether `Op::MakeClosure` of function `id` in frame `frame` is a module's hoisted
+    /// Whether the make-closure row of function `id` in frame `frame` is a module's hoisted
     /// declaration, which the frame's instance made at instantiation.
     pub(super) fn is_module_root_hoisted(&self, p: &ResidualProgram, frame: usize, id: u32) -> bool {
         p.is_module()
