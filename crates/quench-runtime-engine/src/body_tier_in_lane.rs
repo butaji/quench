@@ -380,7 +380,7 @@ pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) ->
 pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, body: Option<&quench_runtime::bytecode::Function>) -> bool {
     let Some(body) = body else { return false };
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
-        body.widened(*packed).op().is_call()
+        crate::compiled::meaning_compiled::is_call(body.widened(*packed))
             && site_target(vm, view, pc).is_some_and(|target| {
                 // SAFETY: a resolved target's view outlives its program.
                 target.program() == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })

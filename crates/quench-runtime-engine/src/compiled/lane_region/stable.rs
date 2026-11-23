@@ -350,7 +350,7 @@ impl Lowering<'_, '_> {
             _ if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })) => true,
             _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. })) => self.store_keeps_facts(pc, instruction),
             _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Call) => super::native_calls::keeps_arrays(&self.intrinsics, pc),
-            _ if instruction.op().js_denotation() == quench_runtime::bytecode::JsDenotation::NumericBinary => true,
+            _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) => true,
             _ => reads_only(&self.program.constants, instruction),
         }
     }

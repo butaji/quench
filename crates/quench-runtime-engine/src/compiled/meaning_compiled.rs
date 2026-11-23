@@ -263,13 +263,13 @@ pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
 /// of the opcode, which `numeric_binary` rows and the stage admit by their operator.
 #[inline(always)]
 pub(crate) fn is_numeric_binary(instruction: WideInstruction) -> bool {
-    instruction.op().js_denotation() == quench_runtime::bytecode::JsDenotation::NumericBinary
+    quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary)
 }
 
 /// A unary operation of the numeric lowering (`JsDenotation::NumericUnary`), as `is_numeric_binary`.
 #[inline(always)]
 pub(crate) fn is_numeric_unary(instruction: WideInstruction) -> bool {
-    instruction.op().js_denotation() == quench_runtime::bytecode::JsDenotation::NumericUnary
+    quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericUnary)
 }
 
 /// Whether a region rejection's opcode is a plain call (`Op::Call`), the stop the inliner takes over

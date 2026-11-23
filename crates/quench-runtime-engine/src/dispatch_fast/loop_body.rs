@@ -102,7 +102,7 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
         })
     });
     let calls = (site.header as usize..=site.backedge as usize)
-        .filter(|pc| function.code.get(*pc).is_some_and(|packed| function.widened(*packed).op().is_call()));
+        .filter(|pc| function.code.get(*pc).is_some_and(|packed| crate::compiled::meaning_compiled::is_call(function.widened(*packed))));
     // A loop no region runs (its analysis rejected an instruction) that holds an inner loop
     // enters the inner loop's region on every pass: a body runs both natively, its calls
     // whatever they are, which the tier model prices. Without an inner loop the interpreter
