@@ -81,7 +81,7 @@ fn drop_dead_temps(shape: &mut Shape, decoded: &[WideInstruction], header: usize
     let Some(masks) = live else { return guarded };
     let Some(width) = super::int_kinds::covered(masks) else { return guarded };
     let exits: Vec<usize> = (header..=backedge)
-        .filter(|&pc| decoded[pc].op() == quench_runtime::bytecode::Op::JumpBinaryFalse)
+        .filter(|&pc| quench_runtime::staged::meaning::means(decoded[pc], quench_runtime::staged::meaning::Meaning::CompareJump))
         .map(|pc| decoded[pc].jump_target() as usize)
         .collect();
     let Some(&exit) = exits.first() else { return guarded };
@@ -109,7 +109,7 @@ fn never_number_scalar(shape: &Shape, decoded: &[WideInstruction], constants: &[
             if !register_in(definitions(instruction, &[]), usize::from(register)) {
                 continue;
             }
-            let non_number = instruction.op() == quench_runtime::bytecode::Op::LoadConst
+            let non_number = quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)
                 && instruction.result_flags() == 0
                 && constants.get(instruction.constant_index()).is_some_and(|constant| constant.as_number().is_none());
             if !non_number {

@@ -183,11 +183,7 @@ fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Cont
 
 /// Whether `instruction` reads the callee's `this`: a `LoadThis`, or a field read whose base is `this`.
 fn reads_receiver(instruction: WideInstruction) -> bool {
-    match instruction.op().class() {
-        Class::LoadThis => true,
-        Class::GetField => instruction.b() == FieldBase::THIS.0,
-        _ => false,
-    }
+    crate::compiled::meaning_compiled::is_load_this(instruction) || (crate::compiled::meaning_compiled::is_get_field(instruction) && instruction.b() == FieldBase::THIS.0)
 }
 
 /// Whether `row` reads the register it writes.
@@ -277,9 +273,9 @@ impl Emitter<'_> {
         if plain.result_flags() != 0 {
             return None;
         }
-        match renamed.op().class() {
-            Class::LoadThis => Some(Decoded::number(Kind::Move, Some(renamed.result_register()), Some(Source::Register(self.shape.this)), None, None)),
-            Class::GetField => match renamed.field_lookup()? {
+        match () {
+            _ if crate::compiled::meaning_compiled::is_load_this(renamed) => Some(Decoded::number(Kind::Move, Some(renamed.result_register()), Some(Source::Register(self.shape.this)), None, None)),
+            _ if crate::compiled::meaning_compiled::is_get_field(renamed) => match renamed.field_lookup()? {
                 FieldLookup::Atom { base, cache_site, .. } => Some(site_read_row(base.register_index()?, cache_site, renamed.result_register())),
                 FieldLookup::Site(_) => None,
             },

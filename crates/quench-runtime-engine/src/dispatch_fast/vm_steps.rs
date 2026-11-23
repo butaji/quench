@@ -379,7 +379,7 @@ unsafe fn decided_compare_jump(cx: *mut LaneContext, call_pc: u64) -> Option<u64
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(running_function_in_lane(cx) as usize);
     let instruction = body.widened(*body.code.get(call_pc as usize)?);
-    if instruction.op() != quench_runtime::bytecode::Op::JumpBinaryFalse || instruction.result_flags() != 0 { return None; }
+    if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::CompareJump) || instruction.result_flags() != 0 { return None; }
     let stack = &unsafe { vm(cx) }.lane_stack;
     let r = if stack.top_is_native() || stack.top_native().is_some() {
         let local = |encoded: u16| quench_runtime::bytecode::Operand(encoded).kind() == Some(quench_runtime::bytecode::OperandKind::Local);

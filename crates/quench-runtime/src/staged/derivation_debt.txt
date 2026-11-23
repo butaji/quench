@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`tests/staged_guards/coverage.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 311
+# total 292
 ../../quench-bjit/stencils/builtin_rows.rs fn:stencil_hand 16
 ../../quench-bjit/stencils/call_rows.rs fn:stencil_hand 20
 ../../quench-bjit/stencils/environment_rows.rs fn:stencil_hand 11
@@ -16,17 +16,11 @@
 ../../quench-runtime-engine/src/compiled.rs fn:lane_* 1
 ../../quench-runtime-engine/src/compiled/base_body.rs op:WasmBranchTable 1
 ../../quench-runtime-engine/src/compiled/base_region/call_plan.rs op:CallMethod 1
-../../quench-runtime-engine/src/compiled/base_region/call_plan/inline.rs Class:GetField 2
-../../quench-runtime-engine/src/compiled/base_region/call_plan/inline.rs Class:LoadThis 2
 ../../quench-runtime-engine/src/compiled/base_region/callees.rs op:CallMethod 1
 ../../quench-runtime-engine/src/compiled/base_region/decode.rs is:is_field_store 1
 ../../quench-runtime-engine/src/compiled/base_region/decode/number_rows.rs Class:Binary 1
 ../../quench-runtime-engine/src/compiled/base_region/decode/number_rows.rs Class:NumericAdd 1
 ../../quench-runtime-engine/src/compiled/base_region/decode/number_rows.rs Class:NumericMultiply 1
-../../quench-runtime-engine/src/compiled/base_region/fold.rs Class:LoadConst 1
-../../quench-runtime-engine/src/compiled/base_region/fold.rs Class:Move 1
-../../quench-runtime-engine/src/compiled/base_region/function/rows.rs Class:Return 1
-../../quench-runtime-engine/src/compiled/base_region/globals.rs Class:StoreName 1
 ../../quench-runtime-engine/src/compiled/lane_allocations.rs fn:lane_* 1
 ../../quench-runtime-engine/src/compiled/lane_region.rs is:is_jump 1
 ../../quench-runtime-engine/src/compiled/lane_region/scalar.rs fn:lane_* 1
@@ -50,10 +44,9 @@
 ../../quench-runtime-engine/src/compiled/wasm_stitch_tail.rs op:CallKnown 1
 ../../quench-runtime-engine/src/dispatch_fast.rs fn:lane_* 14
 ../../quench-runtime-engine/src/dispatch_fast.rs is:is_field_store 2
-../../quench-runtime-engine/src/dispatch_fast.rs op:Binary 2
+../../quench-runtime-engine/src/dispatch_fast.rs op:Binary 1
 ../../quench-runtime-engine/src/dispatch_fast.rs op:CallMethod 1
-../../quench-runtime-engine/src/dispatch_fast.rs op:IncDec 1
-../../quench-runtime-engine/src/dispatch_fast.rs op:JumpBinaryFalse 2
+../../quench-runtime-engine/src/dispatch_fast.rs op:JumpBinaryFalse 1
 ../../quench-runtime-engine/src/dispatch_fast.rs op:NumericAdd 1
 ../../quench-runtime-engine/src/dispatch_fast.rs op:NumericMultiply 1
 ../../quench-runtime-engine/src/dispatch_fast/array_steps.rs fn:lane_* 2
@@ -64,10 +57,6 @@
 ../../quench-runtime-engine/src/dispatch_fast/generator_yields.rs fn:lane_* 1
 ../../quench-runtime-engine/src/dispatch_fast/getters.rs fn:lane_* 9
 ../../quench-runtime-engine/src/dispatch_fast/i64_operators.rs fn:lane_* 2
-../../quench-runtime-engine/src/dispatch_fast/int_kinds.rs op:Binary 1
-../../quench-runtime-engine/src/dispatch_fast/int_kinds.rs op:IncDec 1
-../../quench-runtime-engine/src/dispatch_fast/int_kinds.rs op:LoadConst 1
-../../quench-runtime-engine/src/dispatch_fast/int_kinds.rs op:Move 1
 ../../quench-runtime-engine/src/dispatch_fast/lane_frame.rs fn:lane_* 1
 ../../quench-runtime-engine/src/dispatch_fast/lane_frame.rs is:is_truthiness_jump 1
 ../../quench-runtime-engine/src/dispatch_fast/lane_frame.rs op:Binary 1
@@ -75,9 +64,6 @@
 ../../quench-runtime-engine/src/dispatch_fast/lane_frame.rs op:JumpBinaryFalse 7
 ../../quench-runtime-engine/src/dispatch_fast/lane_stack_trace.rs fn:lane_* 1
 ../../quench-runtime-engine/src/dispatch_fast/leaf_calls.rs fn:lane_* 3
-../../quench-runtime-engine/src/dispatch_fast/loop_kernel.rs op:JumpBinaryFalse 1
-../../quench-runtime-engine/src/dispatch_fast/loop_kernel.rs op:LoadConst 1
-../../quench-runtime-engine/src/dispatch_fast/loop_kernel/shape.rs op:JumpBinaryFalse 1
 ../../quench-runtime-engine/src/dispatch_fast/native_calls.rs fn:lane_* 1
 ../../quench-runtime-engine/src/dispatch_fast/native_calls.rs op:Call 6
 ../../quench-runtime-engine/src/dispatch_fast/native_calls.rs op:LoadConst 1
@@ -92,7 +78,6 @@
 ../../quench-runtime-engine/src/dispatch_fast/setters.rs fn:lane_* 2
 ../../quench-runtime-engine/src/dispatch_fast/value_steps.rs op:DefineArrayElement 1
 ../../quench-runtime-engine/src/dispatch_fast/vm_steps.rs fn:lane_* 4
-../../quench-runtime-engine/src/dispatch_fast/vm_steps.rs op:JumpBinaryFalse 1
 ../../quench-runtime-engine/src/dispatch_fast/wasm_calls.rs fn:lane_* 4
 ../../quench-runtime-engine/src/dispatch_fast/wasm_gc.rs fn:lane_* 7
 ../../quench-runtime-engine/src/dispatch_fast/wasm_instance.rs fn:lane_* 8
