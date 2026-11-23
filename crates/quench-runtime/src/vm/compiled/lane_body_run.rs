@@ -102,7 +102,7 @@ impl Vm {
             let bound = LaneRun {
                 vm: std::ptr::from_ref(self).addr(),
                 program_id: run.program,
-                lane_context: run.lane_context.addr(),
+                lane_context: if run.method.ahead { 0 } else { run.lane_context.addr() },
                 residual: std::ptr::from_ref(run.residual).addr(),
                 stores_specialized: usize::from(self.specialized && run.residual.specialized),
             };

@@ -149,7 +149,8 @@ setting! {
         /// values (`fbits9`), so leaves return their exit word and the lane runs the record.
         AheadJoins = "ahead-joins",
         /// An ahead image's lane bodies install on a VM whose runtime lane-body compiles are off
-        /// (AArch64). Off while `rayTrace`'s image body miscomputes (scene check).
+        /// (AArch64). Off: with them raytrace runs 7524 ms against 7260, deltablue 4470 against
+        /// 4379, richards 6097 against 6089 (image bodies, 2026-11-22).
         AheadBodies = "ahead-bodies",
         /// An image's base body installs where its lane body is refused. Off: the base body's
         /// generic rows and entry do not run a lane-run activation (`fbits9`, raytrace `wrapUp`).
