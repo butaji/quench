@@ -2297,6 +2297,9 @@ fn row_frame<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext,
     frame
 }
 
+/// A generic row's pure binary (`binary_values`), out of line: inlined, it grew the frame of a fused loop test's hot path.
+#[inline(never)] unsafe fn generic_binary_values(context: *mut (), operator: u32, left: Value, right: Value) -> Option<Value> { unsafe { super::binary_values(context.cast(), operator, left, right) } }
+
 /// `row_frame` before its accumulated register.
 #[inline(always)]
 fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
@@ -2451,8 +2454,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
         // A generic row's word-decided answers, and the pure binary of its call-outs (`binary_values`).
-        let binary: unsafe fn(*mut (), u32, Value, Value) -> Option<Value> =
-            |context, operator, left, right| unsafe { super::binary_values(context.cast(), operator, left, right) };
+        let binary: unsafe fn(*mut (), u32, Value, Value) -> Option<Value> = generic_binary_values;
         // Its operands may name a constant, a plain local or a capture, and a comparison pair its words
         // leave is the VM's steady decision (`staged::step` over the comparison).
         // Its `ToPropertyKey` answers a primitive's key through the names step (`fast_names_step`).
@@ -2838,8 +2840,7 @@ macro_rules! target_run {
             test_run!(Some(Comparison::of_operator(operator)), Some(constant))
         }
         if const { $test == quench_runtime::bytecode::Op::JumpBinaryFalse as u16 } {
-            // A loop's test is almost always a relation or a strict equality: each of those runs its own
-            // arm, any other comparison the record's decode.
+            // A loop's test is almost always a relation or a strict equality, each its own arm; any other runs its record's own row.
             use oxc_ast::ast::BinaryOperator as B;
             const LT: u32 = B::LessThan as u32;
             const LE: u32 = B::LessEqualThan as u32;
@@ -2869,7 +2870,7 @@ macro_rules! target_run {
                 GE => formed!(GE),
                 SEQ => formed!(SEQ),
                 SNE => formed!(SNE),
-                _ => {}
+                _ => next!($cx, $r, at, carried),
             }
         }
         test_run!(None::<Comparison>, None::<bool>)
