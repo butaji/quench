@@ -1,16 +1,16 @@
 //! What an instruction means to the compiled tiers, classified from the shared decode.
 //!
-//! A classification asks the decoded operation first (`decoded`, `decoded_completed`). Each decoded
-//! operation belongs to one opcode family, so a decoded operation outside the family is an exact
-//! no. Where the decode returns `None` (an eval call, a record whose result flags or operands the
-//! decode does not take, an opcode with no staged row such as `NumericAdd`), the catalog's own
-//! trait for the opcode decides, as it did before. Nothing here matches on an opcode name.
+//! A classification asks the operation the record performs (`performed`: the staged decode of the
+//! record without its result flags, so a record that also returns or writes `this` is classified by
+//! its operation). Each decoded operation belongs to one opcode family, so a decoded operation
+//! outside the family is an exact no, and a record with no staged operation is no member of any
+//! family. Nothing here asks the opcode's identity.
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{Op, Register, WideInstruction};
 use quench_runtime::staged::{CallOperation, Callee, Invocation, NumberOperation, Operation, Passing, Protocol, Receiver};
-use crate::compiled::{decoded, decoded_completed};
+use crate::compiled::performed;
 
 /// The form a call-family record makes (`Operation::Call`, `SpreadCall`, `SuperCall`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -35,10 +35,10 @@ pub(crate) enum CallForm {
     Super,
 }
 
-/// The call form `instruction` makes, where its record decodes (`decoded_completed`, so a return
+/// The call form `instruction` makes, where its record decodes (`performed`, so a return
 /// completes the call without changing its form).
 pub(crate) fn call_form(instruction: WideInstruction) -> Option<CallForm> {
-    Some(match decoded_completed(instruction)? {
+    Some(match performed(instruction)? {
         Operation::Call(CallOperation::Site(Invocation { forwards: true, .. })) => CallForm::Forwarding,
         Operation::Call(CallOperation::Site(Invocation { callee: Callee::Known(_), .. })) => CallForm::Known,
         Operation::Call(CallOperation::Site(Invocation { callee: Callee::Method { .. }, .. })) => CallForm::Method,
@@ -54,27 +54,20 @@ pub(crate) fn call_form(instruction: WideInstruction) -> Option<CallForm> {
 
 /// A plain call through a callee register and a window (`Call`).
 pub(crate) fn is_call(instruction: WideInstruction) -> bool {
-    match call_form(instruction) {
-        Some(form) => form == CallForm::Plain,
-        None => instruction.op().is_call(),
-    }
+    call_form(instruction).is_some_and(|form| form == CallForm::Plain)
 }
 
 /// A call of a function the record names (`CallKnown`).
 pub(crate) fn is_call_known(instruction: WideInstruction) -> bool {
-    match call_form(instruction) {
-        Some(form) => form == CallForm::Known,
-        None => instruction.op().is_call_known(),
-    }
+    call_form(instruction).is_some_and(|form| form == CallForm::Known)
 }
 
 /// A `JumpBinaryFalse`: a branch where the comparison of its two operands fails.
 #[inline(always)]
 pub(crate) fn is_jump_binary_false(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::CompareJump { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_jump_binary_false(),
+        _ => false,
     }
 }
 
@@ -85,229 +78,198 @@ pub(crate) fn loads_name(instruction: WideInstruction) -> bool {
     if Operation::<(), ()>::decode_load_name(instruction, ()).is_some() {
         return true;
     }
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::GlobalTypeof { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().loads_name(),
+        _ => false,
     }
 }
 
 /// An ordinary call: a plain call or a call of a spread array (`Call`, `CallArray`).
 #[inline(always)]
 pub(crate) fn is_ordinary_call(instruction: WideInstruction) -> bool {
-    match call_form(instruction) {
-        Some(form) => matches!(form, CallForm::Plain | CallForm::Array),
-        None => instruction.op().is_ordinary_call(),
-    }
+    call_form(instruction).is_some_and(|form| matches!(form, CallForm::Plain | CallForm::Array))
 }
 
 /// A call whose one argument register holds the array to apply.
 pub(crate) fn is_call_array(instruction: WideInstruction) -> bool {
-    match call_form(instruction) {
-        Some(form) => form == CallForm::Array,
-        None => instruction.op().is_call_array(),
-    }
+    call_form(instruction).is_some_and(|form| form == CallForm::Array)
 }
 
 /// A construction, plain or `super(...)`.
 #[inline(always)]
 pub(crate) fn is_construct(instruction: WideInstruction) -> bool {
-    match call_form(instruction) {
-        Some(form) => matches!(form, CallForm::Construct | CallForm::Super),
-        None => instruction.op().is_construct(),
-    }
+    call_form(instruction).is_some_and(|form| matches!(form, CallForm::Construct | CallForm::Super))
 }
 
 /// A binary operation of two operands (`Binary`): its equality row or the VM's operator.
 pub(crate) fn is_binary(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Equality { .. } | Operation::Binary { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_binary(),
+        _ => false,
     }
 }
 
-/// A binary arithmetic operation: `Binary`, `NumericAdd` or `NumericMultiply`, whose operator
-/// `binary_operator` names. The numeric forms have no staged row, so they take the catalog's trait.
+/// A binary arithmetic operation whose operator `binary_operator` names: the equality row or the
+/// VM's operator of a `Binary` record.
 pub(crate) fn is_binary_arithmetic(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Equality { .. } | Operation::Binary { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_binary_arithmetic(),
+        _ => false,
     }
 }
 
 /// A unary operation (`Unary`): a logical not, a `typeof` index, `void` or a bitwise not.
 pub(crate) fn is_unary(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::LogicalNot { .. } | Operation::TypeofIndex { .. } | Operation::Void { .. } | Operation::Unary { .. }
             | Operation::Number(NumberOperation::BitwiseNot { .. })) => true,
-        Some(_) => false,
-        None => instruction.op().is_unary(),
+        _ => false,
     }
 }
 
 /// A numeric increment or decrement (`IncDec`), into a register or a numeric local.
 pub(crate) fn is_inc_dec(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Number(NumberOperation::IncDec { .. }) | Operation::IncDecLocal { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_inc_dec(),
+        _ => false,
     }
 }
 
 /// A conversion to a numeric value (`ToNumeric`).
 pub(crate) fn is_to_numeric(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Number(NumberOperation::ToNumeric { .. })) => true,
-        Some(_) => false,
-        None => instruction.op().is_to_numeric(),
+        _ => false,
     }
 }
 
 /// An indexed read of an array (`GetIndex`), of a register or of a local operand.
 pub(crate) fn is_get_index(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::ElementRead { .. } | Operation::ElementReadOperand { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_get_index(),
+        _ => false,
     }
 }
 
 /// An indexed store into an array (`SetIndex`).
 pub(crate) fn is_set_index(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::ElementWrite { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_set_index(),
+        _ => false,
     }
 }
 
 /// A named property read (`GetField`).
 #[inline(always)]
 pub(crate) fn is_get_field(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::GetField { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_get_field(),
+        _ => false,
     }
 }
 
 /// A copy of a register into another (`Move`).
 pub(crate) fn is_move(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Move { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_move(),
+        _ => false,
     }
 }
 
 /// A read of a capture (`LoadCapture`), whose result flags the decode takes as none.
 pub(crate) fn is_load_capture(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::LoadCapture { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_load_capture(),
+        _ => false,
     }
 }
 
 /// A write of a capture (`StoreCapture`).
 pub(crate) fn is_store_capture(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::StoreCapture { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_store_capture(),
+        _ => false,
     }
 }
 
 /// A read of an environment-resident local (`LoadEnvLocal`).
 pub(crate) fn is_load_env_local(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::LoadEnvLocal { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_load_env_local(),
+        _ => false,
     }
 }
 
 /// A read of `this` (`LoadThis`).
 pub(crate) fn is_load_this(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::LoadThis { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_load_this(),
+        _ => false,
     }
 }
 
 /// A `RequireObjectCoercible` check of a register.
 pub(crate) fn is_require_object_coercible(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::RequireObjectCoercible { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_require_object_coercible(),
+        _ => false,
     }
 }
 
 /// An unconditional jump (`Jump`).
 pub(crate) fn is_jump(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Jump) => true,
-        Some(_) => false,
-        None => instruction.op().is_jump(),
+        _ => false,
     }
 }
 
 /// A jump on a register's truthiness, taken where the register is truthy (`JumpTrue`).
 pub(crate) fn is_jump_true(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::JumpIf { taken, .. }) => taken,
-        Some(_) => false,
-        None => instruction.op().is_jump_true(),
+        _ => false,
     }
 }
 
 /// A jump on a register's truthiness, taken where the register is falsy (`JumpFalse`).
 pub(crate) fn is_jump_false(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::JumpIf { taken, .. }) => !taken,
-        Some(_) => false,
-        None => instruction.op().is_jump_false(),
+        _ => false,
     }
 }
 
 /// A record that does nothing (`Nop`).
 pub(crate) fn is_nop(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Nop) => true,
-        Some(_) => false,
-        None => instruction.op().is_nop(),
+        _ => false,
     }
 }
 
 /// A return of a register (`Return`).
 pub(crate) fn is_return(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Return { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_return(),
+        _ => false,
     }
 }
 
 /// A raise of its operand (`Throw`): the owned step that throws the register.
 pub(crate) fn is_throw(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::Throw { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_throw(),
+        _ => false,
     }
 }
 
 /// A read of a frame-resident local (`LoadLocal`, `LoadLocalPlain`), the catalog's `loads_frame_local`.
 pub(crate) fn loads_frame_local(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::LoadLocalPlain { .. }
             | Operation::Protocol { step: Protocol::Owned(quench_runtime::staged::protocol_owned::OwnedVarStep::LoadLocal { .. }), .. }) => true,
-        Some(_) => false,
-        None => instruction.op().loads_frame_local(),
+        _ => false,
     }
 }
 
@@ -323,10 +285,9 @@ pub(crate) fn stitchable(instruction: WideInstruction) -> bool {
 
 /// A store of a binding by name (`StoreName`), which the global store row decodes.
 pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
+    match performed(instruction) {
         Some(Operation::GlobalWrite { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().stores_name(),
+        _ => false,
     }
 }
 

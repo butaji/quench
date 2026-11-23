@@ -378,7 +378,7 @@ pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
     RecordPlan { loop_sites: tiers_run, speculates: interpreter_only() && crate::dispatch_fast::int_kinds::speculation_allowed() }
 }
 
-/// Where a function's lane body comes from (`lane_route`).
+/// Where a function's lane body comes from (`route_for_lane`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LaneRoute {
     /// The program's loaded AOT image serves it (`install_ahead_lane_body`): no warm-up, no runtime tier.
@@ -391,7 +391,7 @@ pub(crate) enum LaneRoute {
     Lane,
 }
 
-/// The facts `lane_route` reads.
+/// The facts `route_for_lane` reads.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct LaneRouteFacts {
     /// The function's program has a loaded AOT image.
@@ -403,7 +403,7 @@ pub(crate) struct LaneRouteFacts {
 }
 
 /// The route of a function's lane body: the specializer decides it, as it decides each unit after.
-pub(crate) fn lane_route(facts: LaneRouteFacts) -> LaneRoute {
+pub(crate) fn route_for_lane(facts: LaneRouteFacts) -> LaneRoute {
     if facts.ahead_image { LaneRoute::Ahead }
     else if facts.base_only { LaneRoute::Base }
     else if facts.callees_compiling { LaneRoute::Deferred }

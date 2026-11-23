@@ -7040,11 +7040,11 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
     // A function of a program with a loaded AOT image takes the image's body and no other
     // (`install_ahead_lane_body`): no warm-up, no runtime tier.
-    // Where the body comes from is the specializer's decision (`admission::lane_route`): an ahead
+    // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead
     // image, the stencil tier at once, a wait for callees still compiling, or the lane body tier.
     let base_only = crate::compiled::admission::stencil_only();
     let ahead_image = vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
-    if crate::compiled::admission::lane_route(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
+    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
         let published = own.entry_published();
@@ -7066,7 +7066,7 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
         // A start under the lane body tier waits for callees still compiling (`body_tier_in_lane::callees_compiling`).
         let callees_compiling = starting && !base_only && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
-        match crate::compiled::admission::lane_route(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only, callees_compiling }) {
+        match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only, callees_compiling }) {
             // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
             crate::compiled::admission::LaneRoute::Base => {
                 let crate::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
