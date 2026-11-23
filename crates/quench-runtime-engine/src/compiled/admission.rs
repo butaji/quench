@@ -342,6 +342,26 @@ fn bisected_out() -> bool {
     !within_trace_range(UnitBisect, number)
 }
 
+/// The tiers of the JIT mode, as the specializer names them.
+pub(crate) use quench_runtime::jit_mode::Tier;
+
+/// Whether the process's JIT mode lets `tiers` run: the specializer's one reading of the mode,
+/// which every other tier decision of the engine takes from here.
+#[inline]
+pub(crate) fn tier_runs(tiers: &[Tier]) -> bool { quench_runtime::jit_mode::tiers_allowed(tiers) }
+
+/// Whether the stencil tier is the only tier (`--b-jit`).
+#[inline]
+pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
+
+/// Whether loop regions take the stencil tier in place of Cranelift (`jit_mode::base_regions`).
+#[inline]
+pub(crate) fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
+
+/// Whether the interpreter is the only tier (`--no-jit`).
+#[inline]
+pub(crate) fn interpreter_only() -> bool { quench_runtime::jit_mode::JitMode::process() == quench_runtime::jit_mode::JitMode::Interp }
+
 /// Where a function's lane body comes from (`lane_route`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LaneRoute {

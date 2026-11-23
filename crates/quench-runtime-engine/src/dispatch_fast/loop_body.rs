@@ -17,7 +17,7 @@ impl LoopBody {
     /// A new loop site's body: none is planned while loop bodies are off (`tier_policy::LOOP_BODIES`)
     /// outside `tier-stress`, which keeps compiling every eligible body,
     /// or where the process runs no Cranelift function tiers (`--b-jit`).
-    pub(crate) fn initial(tiers: &Tiers) -> Self { if (crate::compiled::tier_policy::LOOP_BODIES || tiers.admits_all) && quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
+    pub(crate) fn initial(tiers: &Tiers) -> Self { if (crate::compiled::tier_policy::LOOP_BODIES || tiers.admits_all) && crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
@@ -91,7 +91,7 @@ impl LoopBody {
 pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) -> bool {
     let vm = unsafe { vm(cx) };
     if (site.call_boundary_pcs.is_empty() && site.analysis_failure.is_none()) || site.body_offered.replace(true) || !vm.programs.js_jit_lane_methods_enabled()
-        || !quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) { return false; }
+        || !crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { return false; }
     // SAFETY: the context's program outlives the lane run.
     let Some(function) = unsafe { &*(*cx).code }.function_get(site.function as usize) else { return false };
     let inline = |pc: usize| function.code.get(pc).is_some_and(|packed| {

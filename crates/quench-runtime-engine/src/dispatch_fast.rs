@@ -7018,7 +7018,7 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     // (`install_ahead_lane_body`): no warm-up, no runtime tier.
     // Where the body comes from is the specializer's decision (`admission::lane_route`): an ahead
     // image, the stencil tier at once, a wait for callees still compiling, or the lane body tier.
-    let base_only = quench_runtime::jit_mode::base_only();
+    let base_only = crate::compiled::admission::stencil_only();
     let ahead_image = vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
     if crate::compiled::admission::lane_route(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
@@ -7676,7 +7676,7 @@ fn inlining_region_in_lane(
     site: &LoopSite,
 ) -> Option<crate::compiled::LoopRegion> {
     // `--b-jit` runs no inlining regions, so it does not analyze them.
-    if quench_runtime::jit_mode::base_only() { return None; }
+    if crate::compiled::admission::stencil_only() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };
@@ -7935,7 +7935,7 @@ fn frame_state_in_lane(
                     kind,
                     live,
                     sites,
-                    vm.tier_may_run(quench_runtime::jit_mode::Tier::ANY),
+                    vm.tier_may_run(crate::compiled::admission::Tier::ANY),
                     diagnostics,
                     tiers,
                 )
@@ -8464,7 +8464,7 @@ impl Vm {
     fn note_linked_callee_slow(&self, address: usize, link: &std::cell::Cell<u16>, index: usize) {
         let current = &self.lane_stack.script_targets.entries[index];
         // Where no tier runs, no region reads the record: the pair is marked only.
-        if self.tier_may_run(quench_runtime::jit_mode::Tier::ANY) {
+        if self.tier_may_run(crate::compiled::admission::Tier::ANY) {
             self.note_site_callee(link, crate::compiled::CallTarget {
                 callee: crate::compiled::CalleeBinding::Identity(current.callee), function: current.function });
         }
@@ -8881,7 +8881,7 @@ impl Vm {
                 kind,
                 live,
                 sites,
-                self.tier_may_run(quench_runtime::jit_mode::Tier::ANY),
+                self.tier_may_run(crate::compiled::admission::Tier::ANY),
                 diagnostics,
                 tiers,
             )
@@ -12995,7 +12995,7 @@ pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc:
     let (sloppy, lexical) = match target.this_binding {
         ThisBinding::Sloppy => (Some(vm.realm.globals), false),
         ThisBinding::Strict => (None, false),
-        ThisBinding::Lexical if quench_runtime::jit_mode::base_only() => (None, true),
+        ThisBinding::Lexical if crate::compiled::admission::stencil_only() => (None, true),
         _ => return None,
     };
     (target.admission.current(vm.lane_stack.admission)
@@ -18589,7 +18589,7 @@ impl Vm {
                     kind,
                     live,
                     sites,
-                    self.tier_may_run(quench_runtime::jit_mode::Tier::ANY),
+                    self.tier_may_run(crate::compiled::admission::Tier::ANY),
                     diagnostics,
                     tiers,
                 )

@@ -2710,7 +2710,7 @@ fn stitched_entry(
     (full_plan, sites, env): (&Plan, &[(usize, usize)], Value),
 ) -> Option<Vec<u8>> {
     // The indirect call row calls the non-diagnostic reference callout.
-    if !quench_runtime::jit_mode::base_only() || vm.programs.js_jit_diagnostics_enabled() {
+    if !crate::compiled::admission::stencil_only() || vm.programs.js_jit_diagnostics_enabled() {
         return None;
     }
     let function = code.function_get(index)?;
@@ -3820,7 +3820,7 @@ impl Vm {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap.function_shapes());
         // Base regions read the live cache, whose entries name no form (`loop_tier::native_field_loads`).
-        let view = view.filter(|_| !quench_runtime::jit_mode::base_regions());
+        let view = view.filter(|_| !crate::compiled::admission::stencil_regions());
         let sites = unit.instructions
             .iter()
             .enumerate()
@@ -7635,7 +7635,7 @@ impl Vm {
     /// that compiles them (`PolicyTiers::js_function_tiers`) and a JIT mode that allows one, in a build whose profiles do not count
     /// interpreted work exactly.
     #[inline]
-    pub(crate) fn tier_may_run(&self, tiers: &[quench_runtime::jit_mode::Tier]) -> bool {
+    pub(crate) fn tier_may_run(&self, tiers: &[crate::compiled::admission::Tier]) -> bool {
         !cfg!(quench_profiled)
             && self.execution_mode == ExecutionMode::Compiled
             && tier_policy::tier_may_run(self.memory_policy(), tiers)
@@ -7651,8 +7651,8 @@ impl Vm {
     ) -> bool {
         // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
-            cranelift_allowed: self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT),
-            base_lane_allowed: self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[quench_runtime::jit_mode::Tier::Base]),
+            cranelift_allowed: self.tier_may_run(crate::compiled::admission::Tier::CRANELIFT),
+            base_lane_allowed: self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::compiled::admission::Tier::Base]),
             wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
             return false;
         }
@@ -7852,7 +7852,7 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
         let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
-            facts: admission::UnitFacts { cranelift_allowed: self.tier_may_run(quench_runtime::jit_mode::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+            facts: admission::UnitFacts { cranelift_allowed: self.tier_may_run(crate::compiled::admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
@@ -7986,7 +7986,7 @@ impl Vm {
         arguments: &[Value],
     ) -> Option<Value> {
         if returns
-            || !self.tier_may_run(quench_runtime::jit_mode::Tier::ANY)
+            || !self.tier_may_run(crate::compiled::admission::Tier::ANY)
             || program_id != self.active_program
             || program.kind == quench_runtime::bytecode::ProgramKind::Wasm
         {
@@ -8291,7 +8291,7 @@ impl Vm {
             })
             .flatten();
         // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
-        let base_only = quench_runtime::jit_mode::base_only();
+        let base_only = crate::compiled::admission::stencil_only();
         let isa = if base_only {
             None
         } else {
@@ -9156,7 +9156,7 @@ pub(crate) fn body_may_amortize_in_lane(tiers: &Tiers, body: &quench_runtime::by
 }
 
 /// `body_may_amortize_in_lane` for the body of `tier`, whose length that tier must reach.
-pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: quench_runtime::jit_mode::Tier) -> bool {
+pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: crate::compiled::admission::Tier) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
         || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(body.widened(*packed)))
 }

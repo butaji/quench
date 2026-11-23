@@ -110,6 +110,13 @@ const CONCEPTS: &[Concept] = &[
         marks: &[Mark::Named(&["specialize"])],
     },
     Concept {
+        // One reading of the JIT mode: the specializer decides what each tier may do
+        // (`admission::tier_runs`, `stencil_only`); a tier that reads the mode itself decides again.
+        name: "mode-read",
+        homes: &["quench-runtime-engine/src/compiled/admission.rs", "quench-runtime/src/jit_mode.rs"],
+        marks: &[Mark::Spelled("jit_mode::")],
+    },
+    Concept {
         // u-jit HOW is the Cranelift stage of the staged rows; CLIF built by hand elsewhere is
         // semantics the rows do not define.
         name: "hand-clif",

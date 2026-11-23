@@ -109,7 +109,7 @@ pub(crate) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, tak
 /// it (`ultra_ahead_of_base`): u-jit stays ahead of b-jit by construction, and a loop takes
 /// u-jit once its iterations repay that compile over the stencil region (`promotes`).
 pub(crate) fn base_region(tiers: &Tiers, span: u64, taken: u64) -> bool {
-    use quench_runtime::jit_mode::{base_regions, tiers_allowed, Tier};
+    use crate::compiled::admission::{stencil_regions as base_regions, tier_runs as tiers_allowed, Tier};
     if base_regions() { return true; }
     if !tiers_allowed(&[Tier::Base]) || tiers.admits_all { return false; }
     !ultra_ahead_of_base(&tiers.priors, &tiers.loops, span, taken, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors))
@@ -127,7 +127,7 @@ pub(crate) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
 /// Whether a loop running a b-jit region in the default mode moves to a u-jit region after
 /// `taken` iterations in all: where `base_region` no longer picks b-jit for it.
 pub(crate) fn promotes(tiers: &Tiers, span: u64, taken: u64) -> bool {
-    !quench_runtime::jit_mode::base_regions() && !base_region(tiers, span, taken)
+    !crate::compiled::admission::stencil_regions() && !base_region(tiers, span, taken)
 }
 
 #[cfg(test)]

@@ -73,7 +73,7 @@ pub(crate) fn proven_forms_enabled() -> bool {
 /// the interpreter retires speculation where an `IncDec` overflows, and a compiled tier's
 /// overflowing update writes its double without that retirement.
 pub(crate) fn speculation_in_mode() -> bool {
-    quench_runtime::jit_mode::JitMode::process() == quench_runtime::jit_mode::JitMode::Interp && speculation_allowed()
+    crate::compiled::admission::interpreter_only() && speculation_allowed()
 }
 
 /// The registers `masks` covers per pc, `None` for a windowed mask.
