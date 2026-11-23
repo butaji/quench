@@ -106,25 +106,45 @@ impl Stage for Emit<'_, '_> {
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Or, a, b) }
     fn and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
     fn shr(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::ShiftRightUnsigned, a, b) }
+    /// The immediate forms (`iadd_imm_s`, `imul_imm_s`, ...): a constant an operand of the
+    /// instruction, not a register holding it. An element's address is then an index scaled in
+    /// the load itself (`[values, index, lsl #3]`) where a `mov` of 8 and a `mul` left two
+    /// instructions the C a programmer writes for the same access never executes.
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.add(a, v)
+        match imm.into() {
+            EmitImm::Const(bits) => self.builder.ins().iadd_imm_s(a, bits as i64),
+        }
     }
     fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.raw_binary(Binary::Mul, a, v)
+        match (imm.into(), self.raw_lane(a)) {
+            // A power of two is a shift, which the backend folds into the addressing mode of
+            // the access that follows (`[values, index, lsl #3]`): an element's index costs no
+            // instruction of its own, where `mul` by a register holding 8 costs two.
+            (EmitImm::Const(0), _) => self.constant(0),
+            (EmitImm::Const(bits), Lane::I64) if bits.is_power_of_two() => {
+                self.builder.ins().ishl_imm_s(a, bits.trailing_zeros() as i64)
+            }
+            (EmitImm::Const(bits), Lane::I64) => self.builder.ins().imul_imm_s(a, bits as i64),
+            (imm, _) => {
+                let v = self.word(imm);
+                self.raw_binary(Binary::Mul, a, v)
+            }
+        }
     }
     fn and_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.raw_binary(Binary::And, a, v)
+        match imm.into() {
+            EmitImm::Const(bits) => self.builder.ins().band_imm_s(a, bits as i64),
+        }
     }
     fn or_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.or(a, v)
+        match imm.into() {
+            EmitImm::Const(bits) => self.builder.ins().bor_imm_s(a, bits as i64),
+        }
     }
     fn shr_imm(&mut self, a: ir::Value, shift: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(shift.into());
-        self.raw_binary(Binary::ShiftRightUnsigned, a, v)
+        match shift.into() {
+            EmitImm::Const(bits) => self.builder.ins().ushr_imm_s(a, bits as i64),
+        }
     }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
         let low = self.narrow(a);
