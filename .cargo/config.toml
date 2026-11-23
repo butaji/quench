@@ -9,12 +9,14 @@
 # the -no-pie executable kept a 71 KB GOT of link-time constants that every run reads
 # (16 resident pages at JS3 Air's peak) and an extra load per such call. Relaxed, the linker
 # turns them into direct calls and LEAs and the GOT is 4.7 KB.
-rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "relax-elf-relocations=yes", "-Z", "merge-functions=disabled"]
+# Front ends run on 4 threads: quench-runtime-engine's monomorphization walk is serial otherwise,
+# 78 s of every engine rebuild after a hot core edit (4 s on 4 threads, 2026-11-22).
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "relax-elf-relocations=yes", "-Z", "merge-functions=disabled", "-Z", "threads=4"]
 
 # Use LLVM's target alignment on Apple ARM; the forced alignment above is a
 # Linux measurement. Host-specific qualification and code residency: Linear TOD-8.
 [target.aarch64-apple-darwin]
-rustflags = ["-D", "warnings", "-Z", "merge-functions=disabled"]
+rustflags = ["-D", "warnings", "-Z", "merge-functions=disabled", "-Z", "threads=4"]
 
 # x86-64 Linux links OpenSSL statically: the shared libssl/libcrypto pair costs
 # about 1 MiB of resident set in every process at load (relocations and

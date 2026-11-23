@@ -546,12 +546,29 @@ fn compile(job: &Shard, shard: usize) {
         let child = shard_command().args(&job.args).args(["-Z", "print-mono-items=yes"])
             .envs(job.envs.iter().map(|(name, path)| (*name, path))).stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit()).spawn().expect("run rustc");
-        yield_to_oom_killer(child.id());
-        child.wait_with_output().expect("run rustc")
+        let pid = child.id();
+        yield_to_oom_killer(pid);
+        let output = child.wait_with_output().expect("run rustc");
+        OOM_ORDER.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|running| *running != pid);
+        output
     };
-    let mut output = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
+    let mut output = {
+        let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _flight = wait_for_memory(SHARD_MEMORY);
+        run()
+    };
+    // A killed shard runs again beside the others once the box has room for it twice over, rather than after every
+    // other shard: alone, it was the build's tail. Killed once more, it runs alone.
     if killed(&output.status) {
-        println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again alone");
+        println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again");
+        output = {
+            let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _flight = wait_for_memory(2 * SHARD_MEMORY);
+            run()
+        };
+    }
+    if killed(&output.status) {
+        println!("cargo::warning=stencil shard {shard} was killed again; compiling it again alone");
         let _alone = MEMORY.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         output = run();
     }
@@ -591,11 +608,45 @@ fn shard_command() -> Command {
     }
 }
 
-/// Makes shard rustc `pid` the kernel's first out-of-memory victim (`oom_score_adj` 1000). The stencils build beside
-/// the runtime crates (`quench-stencils`): a shard killed for memory is compiled again alone (`compile`), where a
-/// killed runtime crate would fail the build.
+/// Makes shard rustc `pid` the kernel's first out-of-memory victim (`oom_score_adj` 1000), and each shard started
+/// before it a later one (150 lower per shard, at least 400), so the kernel kills the shard with the least work done.
+/// The stencils build beside the runtime crates (`quench-stencils`): a shard killed for memory is compiled again
+/// (`compile`), where a killed runtime crate would fail the build.
 fn yield_to_oom_killer(pid: u32) {
-    let _ = fs::write(format!("/proc/{pid}/oom_score_adj"), "1000");
+    let mut order = OOM_ORDER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    order.push(pid);
+    for (rank, running) in order.iter().rev().enumerate() {
+        let adj = 1000usize.saturating_sub(150 * rank).max(400);
+        let _ = fs::write(format!("/proc/{running}/oom_score_adj"), adj.to_string());
+    }
+}
+
+/// The running shard rustc processes, oldest first (`yield_to_oom_killer`).
+static OOM_ORDER: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+/// The shard compiles running now (`wait_for_memory`).
+static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// One shard compile in flight; dropping it ends it.
+struct Flight;
+
+impl Drop for Flight {
+    fn drop(&mut self) { IN_FLIGHT.fetch_sub(1, Ordering::SeqCst); }
+}
+
+/// Waits, while another shard compiles, until the box's available memory is at least `need` (one shard's rustc is
+/// `SHARD_MEMORY`). The runtime crates compile beside the stencils and grow past what the box had when the
+/// workers were counted (`memory_workers`); a shard started into that is killed and compiled again alone,
+/// which costs its whole compile twice (2026-11-22: one in two hot edits on the 4-core, 15 GB box).
+fn wait_for_memory(need: u64) -> Flight {
+    let available = || fs::read_to_string("/proc/meminfo").ok().and_then(|info| info.lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()))
+        .map_or(u64::MAX, |kib| kib << 10);
+    while IN_FLIGHT.load(Ordering::SeqCst) > 0 && available() < need {
+        thread::sleep(std::time::Duration::from_millis(500));
+    }
+    IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+    Flight
 }
 
 /// Held for reading by every shard compile, and for writing by the rerun of one the kernel killed.

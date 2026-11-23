@@ -2600,6 +2600,13 @@ macro_rules! script_handler {
 /// shard's instance), so a use names it through its call-site macro (`protocol_row!` and the rest).
 macro_rules! sharded_handler {
     ($kind:ident, $mods:ident, $handler:ident; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
+        sharded_handler! { @shard (crate::dispatch_fast::handler_shard(&[$($param as u64),*])) $kind, $mods, $handler; $(#[$meta])* $vis fn $name<$($param: $ty),*>($($arg),*) $body }
+    };
+    // `numeric(OPS)`: the opcode parameters `OPS` place the instance (`numeric_handler_shard`).
+    ($kind:ident, $mods:ident, $handler:ident, numeric($($op:ident),*); $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
+        sharded_handler! { @shard (crate::dispatch_fast::numeric_handler_shard(&[$($op),*], &[$($param as u64),*])) $kind, $mods, $handler; $(#[$meta])* $vis fn $name<$($param: $ty),*>($($arg),*) $body }
+    };
+    (@shard ($shard:expr) $kind:ident, $mods:ident, $handler:ident; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
         #[allow(non_snake_case)]
         pub(crate) mod $mods {
         pub(crate) mod s0 {
@@ -2644,7 +2651,7 @@ macro_rules! sharded_handler {
         }
         }
         $vis const fn $handler<$(const $param: $ty),*>() -> Handler {
-            match crate::dispatch_fast::handler_shard(&[$($param as u64),*]) {
+            match $shard {
             0 => $mods::s0::$name::<$($param),*>,
             1 => $mods::s1::$name::<$($param),*>,
             2 => $mods::s2::$name::<$($param),*>,
@@ -2656,6 +2663,23 @@ macro_rules! sharded_handler {
             }
         }
     };
+}
+
+/// The shard (`sharded_handler!` with `numeric(..)`) of a handler instance whose opcode parameters
+/// are `ops` and const parameters `params`: an instance with an opcode whose step reaches the Number
+/// operations (`staged::row_step` Number, Arith or Generic) keeps to shards 0 to 2, the others to 3
+/// to 7, so an edit to `staged::numeric` recompiles the numeric shards' codegen units only.
+pub(crate) const fn numeric_handler_shard(ops: &[u16], params: &[u64]) -> usize {
+    use quench_runtime::staged::RowStep as R;
+    let hash = handler_shard(params);
+    let mut at = 0;
+    while at < ops.len() {
+        if let Some(op) = quench_runtime::bytecode::Op::from_index(ops[at] as usize) {
+            if matches!(quench_runtime::staged::row_step(op), R::Number | R::Arith | R::Generic) { return hash % 3 }
+        }
+        at += 1;
+    }
+    3 + hash % 5
 }
 
 /// The shard (`sharded_handler!`) of a handler instance with const parameters `params`.
