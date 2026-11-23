@@ -70,20 +70,20 @@ pub(crate) fn admit_construct<S: Stage>(stage: &mut S, gate: ConstructGate<S::Wo
 
 /// `admit_construct` on machine words, for the interpreter's construct handlers.
 #[inline(always)]
-pub(crate) fn concrete_admits_construct(calls: bool, constructs: bool, pending: bool) -> bool {
+pub fn concrete_admits_construct(calls: bool, constructs: bool, pending: bool) -> bool {
     let gate = ConstructGate { calls: u64::from(calls), constructs: u64::from(constructs), pending: u64::from(pending) };
     admit_construct(&mut super::Concrete::new(std::ptr::null()), gate, ()).is_some()
 }
 
 /// `admit_construct_run` on machine words.
 #[inline(always)]
-pub(crate) fn concrete_admits_construct_run(calls: bool, constructs: bool) -> bool {
+pub fn concrete_admits_construct_run(calls: bool, constructs: bool) -> bool {
     admit_construct_run(&mut super::Concrete::new(std::ptr::null()), u64::from(calls), u64::from(constructs), ()).is_some()
 }
 
 /// `guard_unpending` on machine words.
 #[inline(always)]
-pub(crate) fn concrete_unpending(pending: bool) -> bool {
+pub fn concrete_unpending(pending: bool) -> bool {
     guard_unpending(&mut super::Concrete::new(std::ptr::null()), u64::from(pending), ()).is_some()
 }
 
@@ -104,13 +104,13 @@ pub(crate) fn complete_construct<S: Stage>(stage: &mut S, window: S::Word, value
 
 /// `construct_value` on machine words.
 #[inline(always)]
-pub(crate) fn concrete_construct_value(value: u64, receiver: u64, object: bool) -> u64 {
+pub fn concrete_construct_value(value: u64, receiver: u64, object: bool) -> u64 {
     construct_value(&mut super::Concrete::new(std::ptr::null()), value, receiver, object)
 }
 
 /// `complete_construct` on machine words: `window` is the returning activation's register 0.
 #[inline(always)]
-pub(crate) fn concrete_complete_construct(window: u64, value: u64, object: bool) -> u64 {
+pub fn concrete_complete_construct(window: u64, value: u64, object: bool) -> u64 {
     complete_construct(&mut super::Concrete::new(std::ptr::null()), window, value, object)
 }
 
@@ -118,7 +118,7 @@ pub(crate) fn concrete_complete_construct(window: u64, value: u64, object: bool)
 /// whatever the method returned (`_value` is not read). Its body returns `undefined` after the
 /// method, so the receiver is the construction's value.
 #[inline(always)]
-pub(crate) fn concrete_forwarder_value(_value: u64, receiver: u64) -> u64 {
+pub fn concrete_forwarder_value(_value: u64, receiver: u64) -> u64 {
     receiver
 }
 

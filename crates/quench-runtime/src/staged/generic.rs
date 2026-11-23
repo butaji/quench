@@ -26,7 +26,7 @@ impl<W, P> Operation<W, P> {
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where a `Binary`
     /// carries a result flag (`decode_completed` strips it first).
     #[inline(always)]
-    pub(crate) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_generic(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::ToPropertyKey => Self::PropertyKey {
                 destination: instruction.result_register(), source: instruction.register_b() },

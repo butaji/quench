@@ -139,7 +139,7 @@ fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
     (object, shape)
 }
 
-fn records(heap: &Heap) -> u64 { heap.object_record_base().map_or(0, |base| base as u64) }
+pub fn records(heap: &Heap) -> u64 { heap.object_record_base().map_or(0, |base| base as u64) }
 
 /// `plan` read from `object` on the concrete stage, by a frame that holds no proof.
 fn read(heap: &Heap, plan: FieldPlan<'static>, object: Value) -> Option<Value> {

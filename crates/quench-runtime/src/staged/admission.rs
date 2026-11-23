@@ -8,7 +8,7 @@ use crate::bytecode::{InstructionField, Op, WideInstruction};
 impl<W, P> Operation<W, P> {
     /// The registers of a row over registers, locals and `this` (at most two), which the tier
     /// must hold in its window to step it; `None` for any other row.
-    pub(crate) const fn registers(&self) -> Option<[Option<Register>; 2]> {
+    pub const fn registers(&self) -> Option<[Option<Register>; 2]> {
         Some(match *self {
             Self::Move { destination, source } | Self::LogicalNot { destination, source }
                 | Self::Number(NumberOperation::ToNumeric { destination, source } | NumberOperation::IncDec { destination, source, .. }) =>
@@ -24,14 +24,14 @@ impl<W, P> Operation<W, P> {
 
     /// Whether the row reads or writes the activation's local slots (`Frame::load_local`), which a
     /// numeric region's activation has none of.
-    pub(crate) const fn uses_locals(&self) -> bool {
+    pub const fn uses_locals(&self) -> bool {
         matches!(self, Self::LoadLocalPlain { .. } | Self::StoreLocalPlain { .. } | Self::LoadLocalChecked { .. }
             | Self::StoreLocalChecked { .. } | Self::InitializeLocal { .. })
     }
 
     /// Whether a frame's step of the row can leave at its miss edge: a row that only copies or
     /// defines a constant word never does.
-    pub(crate) const fn leaves(&self) -> bool {
+    pub const fn leaves(&self) -> bool {
         !matches!(self, Self::Move { .. } | Self::LoadLocalPlain { .. } | Self::StoreLocalPlain { .. } | Self::Void { .. })
     }
 }
@@ -40,13 +40,13 @@ impl Op {
     /// An allocation the lane makes in place, running no guest code: a literal (`compiled_new_object`,
     /// `new_object_pair_in_lane`, `new_array_in_lane`) or a construction by its callee's plan
     /// (`construct_in_lane`). A due collection leaves before it, so native code never collects.
-    pub(crate) const fn allocates(self) -> bool {
+    pub const fn allocates(self) -> bool {
         matches!(self, Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral | Op::MakeArray | Op::Construct)
     }
 
     /// An instruction whose result register a loop region defines natively, as a Number or as a
     /// tagged value.
-    pub(crate) const fn defines_loop_result(self) -> bool {
+    pub const fn defines_loop_result(self) -> bool {
         self.allocates() || matches!(self, Op::LoadConst | Op::Move | Op::LoadCapture | Op::Binary | Op::NumericAdd
             | Op::NumericMultiply | Op::IncDec | Op::Unary | Op::ToNumeric | Op::GetIndex | Op::GetField
             | Op::LoadEnvLocal | Op::LoadName)
@@ -55,7 +55,7 @@ impl Op {
     /// An instruction a loop region may lower to native code; any other leaves at its exact PC.
     /// A conditional jump on two values is further bounded by its operator
     /// (`osr_loop::lowered_natively`).
-    pub(crate) const fn lowers_in_loop(self) -> bool {
+    pub const fn lowers_in_loop(self) -> bool {
         // A dense int switch is a case slot and the branch table that selects it: `lane_region`'s
         // `int_case_index`/`branch_table` lower both, so a loop that dispatches compiles.
         self.defines_loop_result() || self.is_truthiness_jump() || matches!(self, Op::StoreCapture
@@ -66,14 +66,14 @@ impl Op {
 
     /// An instruction whose result may hold any boxed value: an allocation, a copy, or a read of
     /// a capture, a field, an element, an environment local or a global.
-    pub(crate) const fn carries_boxed_value(self) -> bool {
+    pub const fn carries_boxed_value(self) -> bool {
         self.allocates() || matches!(self, Op::GetIndex | Op::GetField | Op::Move | Op::LoadCapture
             | Op::LoadEnvLocal | Op::LoadName)
     }
 
     /// An instruction whose register and operand fields a loop region reads as values, the
     /// receiver of an indexed access aside (`WideInstruction::value_registers`).
-    pub(crate) const fn reads_values(self) -> bool {
+    pub const fn reads_values(self) -> bool {
         self.is_truthiness_jump() || self.is_binary_arithmetic() || matches!(self, Op::Move | Op::IncDec | Op::Unary
             | Op::ToNumeric | Op::JumpBinaryFalse | Op::GetIndex | Op::SetIndex)
     }
@@ -93,7 +93,7 @@ impl WideInstruction {
 
     /// The registers a value-reading instruction (`Op::reads_values`) reads as values, in field
     /// order; an indexed access's receiver (field B) is a heap view, not a value.
-    pub(crate) fn value_registers(self) -> impl Iterator<Item = Register> {
+    pub fn value_registers(self) -> impl Iterator<Item = Register> {
         let receiver = self.op().is_indexed_access();
         InstructionField::ALL.iter().copied()
             .filter(move |field| !(receiver && *field == InstructionField::B))

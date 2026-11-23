@@ -11,17 +11,17 @@ use crate::{WasmTrap, WasmType};
 
 /// The bytes of a v128: the one definition, which the runtime's and the stencil's `crate::wasm`
 /// re-export.
-pub(crate) const V128_BYTES: usize = core::mem::size_of::<u128>();
+pub const V128_BYTES: usize = core::mem::size_of::<u128>();
 
 /// The integer width an operation runs at; an i32 operator is its i64 namesake at `I32`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Width {
+pub enum Width {
     I32,
     I64,
 }
 
 impl Width {
-    pub(crate) const fn bits(self) -> u32 {
+    pub const fn bits(self) -> u32 {
         match self {
             Self::I32 => i32::BITS,
             Self::I64 => i64::BITS,
@@ -37,7 +37,7 @@ impl Width {
         }
     }
 
-    pub(crate) const fn ty(self) -> WasmType {
+    pub const fn ty(self) -> WasmType {
         match self {
             Self::I32 => WasmType::I32,
             Self::I64 => WasmType::I64,
@@ -108,7 +108,7 @@ const fn divides(operator: Binary) -> bool {
 /// `operator` on `left` and `right`: a division by zero traps, then a signed quotient that
 /// overflows traps. The one place these rules are written.
 #[inline(always)]
-pub(crate) fn integer_binary<S: WasmStage>(
+pub fn integer_binary<S: WasmStage>(
     stage: &mut S,
     operator: Binary,
     width: Width,

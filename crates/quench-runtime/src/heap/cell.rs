@@ -26,7 +26,7 @@ mod array_record_tests;
 #[cfg(test)]
 mod cell_layout_tests;
 mod cell_variants;
-pub(crate) use cell_variants::*;
+pub use cell_variants::*;
 mod environment_slots;
 mod native_dispatch;
 mod native_kinds;
@@ -35,12 +35,15 @@ mod object_layout;
 mod object_payload_tests;
 mod object_state;
 mod object_storage;
-pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
-pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmTableElements};
-pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow, for_each_typed_array};
+pub use await_state::{AwaitKind, AwaitRole, AwaitState};
+pub use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmTableElements};
+pub use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
+pub(crate) use typed_array_kind::for_each_typed_array;
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
-pub(crate) use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
-pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
+#[allow(unused_imports)]
+pub use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
+#[allow(unused_imports)]
+pub use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
 #[cfg(test)]
 pub(crate) use global_values::new_table;
 
@@ -97,13 +100,13 @@ macro_rules! natives {
     ($( $(#[$meta:meta])* $variant:ident $(: $flag:ident)? ),* $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[repr(u16)]
-        pub(crate) enum Native {
+        pub enum Native {
             $( $(#[$meta])* $variant, )*
         }
 
         impl Native {
             /// Every native in discriminant order: `ALL[n as usize]` has discriminant `n`.
-            pub(crate) const ALL: [Native; Native::COUNT as usize] = [$(Native::$variant),*];
+            pub const ALL: [Native; Native::COUNT as usize] = [$(Native::$variant),*];
 
             /// Whether this native is a shared function object, which `Vm::native_value` builds on
             /// first read and every realm shares.
@@ -665,9 +668,9 @@ pub(crate) struct WasmGlobalHeader {
 
 /// A memory's cold facts, boxed with its object part so the cell stays compact.
 #[derive(Clone, Debug)]
-pub(crate) struct WasmMemoryHeader {
+pub struct WasmMemoryHeader {
     pub(crate) object: Object,
-    pub(crate) ty: wasmparser::MemoryType,
+    pub ty: wasmparser::MemoryType,
 }
 
 /// The internal slot of a `Cell::WasmObject`.
@@ -729,12 +732,12 @@ pub(crate) struct ArrayFromAsyncState {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum FunctionKind {
+pub enum FunctionKind {
     User(ProgramId, u32),
     Native(Native),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum IteratorKind {
+pub enum IteratorKind {
     Array,
     ArrayKeys,
     ArrayValues,
@@ -777,7 +780,7 @@ impl IteratorKind {
     }
 }
 #[derive(Clone, Debug)]
-pub(crate) enum IteratorHelper {
+pub enum IteratorHelper {
     RegExpStringMatchAll {
         input: Value, // The string matched, the value each step passes to `exec`.
         global: bool,
@@ -825,7 +828,7 @@ pub(crate) enum IteratorZipMode {
     Strict,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IteratorConsumer {
+pub enum IteratorConsumer {
     Reduce,
     ToArray,
     ForEach,
@@ -837,7 +840,7 @@ pub(crate) enum IteratorConsumer {
 /// `Object::with_property_storage` sets them: derived once by a construct plan, so each
 /// planned construction allocates without encoding the prototype or the storage again.
 #[derive(Clone, Copy)]
-pub(crate) struct InlineObjectHeader {
+pub struct InlineObjectHeader {
     /// The interned header (`Object::layout`).
     layout: u32,
 }
@@ -851,14 +854,14 @@ impl InlineObjectHeader {
     /// No receiver's header: an unplanned entry's, which no construction reads.
     pub(crate) const EMPTY: Self = Self { layout: 0 };
 
-    pub(crate) fn of(proto: Value, shape: u32) -> Self {
+    pub fn of(proto: Value, shape: u32) -> Self {
         Self::of_storage(proto, ValueVec::inline_property_storage(shape))
     }
 
     /// The header words of an object with prototype `proto` whose `shape`'s values live in an
     /// arena run (`Object::from_run_header`), as `Object::with_property_storage` sets them
     /// apart from the run's position.
-    pub(crate) fn of_run(proto: Value, shape: u32) -> Self {
+    pub fn of_run(proto: Value, shape: u32) -> Self {
         Self::of_storage(proto, ValueVec::from_parts(0, shape))
     }
 
@@ -892,7 +895,7 @@ pub(crate) enum ExactStorage {
 /// array's element backing) and the layout id (`ObjectHead::layout`, interned in `heap::layouts`,
 /// which keeps the prototype, the `OBJECT_*` flags and the shape, so the record keeps four bytes
 /// for them where it kept eight). Field accesses reach the head through `Deref`.
-pub(crate) struct Object {
+pub struct Object {
     head: ObjectHead,
 }
 
@@ -972,7 +975,7 @@ fn overflow_link(prototype: Value) -> u32 {
 /// An object's encoded prototype reference (`PROTO_INDEX_BITS`). Equal links name the same
 /// prototype, so a chain walk compares links instead of decoding each to a `Value`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct ProtoLink(u32);
+pub struct ProtoLink(u32);
 
 impl ProtoLink {
     pub(crate) const NULL: Self = Self(PROTO_NULL);
@@ -988,7 +991,7 @@ impl ProtoLink {
 
     /// The link as the object header encodes it (`OBJECT.proto_mask`).
     #[inline(always)]
-    pub(crate) fn bits(self) -> u32 {
+    pub fn bits(self) -> u32 {
         self.0
     }
 
@@ -1001,7 +1004,7 @@ impl ProtoLink {
 
     /// The object record this link names, if it names one.
     #[inline(always)]
-    pub(crate) fn object_record_id(self) -> Option<u32> {
+    pub fn object_record_id(self) -> Option<u32> {
         // The object range starts at a power of two above its own power-of-two span, so a
         // link in it holds the record id in its low bits: a mask, which addresses the record
         // without the subtracted base as a 64-bit displacement.
@@ -1063,7 +1066,7 @@ const EMPTY_POSITION: u32 = ValueVec::new().into_parts().0 & VALUE_VEC_START_BIT
 /// Storage forms whose complete layout is in the ordinary object's record.
 /// This is an observation until a native receiver guard establishes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PlainPropertyStorage {
+pub enum PlainPropertyStorage {
     PackedInline,
     Arena,
 }
@@ -1149,7 +1152,7 @@ impl Drop for Object {
 /// property store (`Object::set_storage_position`); with extras, they hold it
 /// (`ObjectExtras::elements`). `OBJECT_ARRAY` tells the object's own readers which.
 #[repr(C)]
-pub(crate) struct ArrayObject {
+pub struct ArrayObject {
     object: Object,
 }
 
@@ -1181,7 +1184,7 @@ const _: () = assert!(
 );
 
 #[derive(Clone, Debug)]
-pub(crate) enum CallSiteLocation {
+pub enum CallSiteLocation {
     Source {
         file_name: String,
         line: u32,
@@ -1191,7 +1194,7 @@ pub(crate) enum CallSiteLocation {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum CallSiteName {
+pub enum CallSiteName {
     /// Resolve the safe debug name when a CallSite is read, not at capture.
     Callable(Value),
     Static(JsString),
@@ -1199,7 +1202,7 @@ pub(crate) enum CallSiteName {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CallSiteRecord {
+pub struct CallSiteRecord {
     pub(crate) location: CallSiteLocation,
     pub(crate) name: CallSiteName,
     pub(crate) this_value: Value,
@@ -1218,7 +1221,7 @@ impl CallSiteRecord {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum StackData {
+pub enum StackData {
     Captured {
         records: Vec<CallSiteRecord>,
         source: Option<crate::bytecode::ProgramSource>,
@@ -1369,7 +1372,7 @@ impl StackData {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PrivateBrand {
+pub struct PrivateBrand {
     pub home: Value,
     pub name: Atom,
 }
@@ -1401,7 +1404,7 @@ const _: () = assert!(INLINE_PROPERTY_COUNT * u32::BITS as usize == u64::BITS as
 
 /// Internal methods installed by ProxyCreate, retained after target release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ProxyKind {
+pub enum ProxyKind {
     Object,
     Callable,
     Constructor,
@@ -1458,11 +1461,11 @@ impl EnvironmentSlot {
 /// An environment: a function activation's captured bindings (`slots`), its parent's link,
 /// its function and its scope. A record of its own family (`Value::direct_environment`).
 #[derive(Debug)]
-pub(crate) struct EnvironmentRecord {
-    pub(crate) parent: Value,
-    pub(crate) function: u32,
-    pub(crate) slots: EnvironmentSlots,
-    pub(crate) scope: EnvironmentScopeRef,
+pub struct EnvironmentRecord {
+    pub parent: Value,
+    pub function: u32,
+    pub slots: EnvironmentSlots,
+    pub scope: EnvironmentScopeRef,
 }
 
 // Size pins. The record is 32 bytes: parent, slots and scope are one word each, and the u32
@@ -1477,14 +1480,14 @@ const _: () = assert!(std::mem::size_of::<EnvironmentScopeRef>() == std::mem::si
 /// An environment's provenance and dynamic-scope state: consulted for eval, `with` and
 /// name resolution, while slot reads only need `parent`, `function` and `slots`.
 #[derive(Debug, Clone)]
-pub(crate) struct EnvironmentScope {
-    pub(crate) program: Option<u32>,
-    pub(crate) root_eval_scope: bool,
+pub struct EnvironmentScope {
+    pub program: Option<u32>,
+    pub root_eval_scope: bool,
     // A captured lexical scope selects its names from the owning function's
     // binding-site table; slot values remain shared with that activation.
-    pub(crate) binding_site_pc: Option<u32>,
-    pub(crate) dynamic_bindings: EnvironmentBindings,
-    pub(crate) with_objects: Box<[Value]>,
+    pub binding_site_pc: Option<u32>,
+    pub dynamic_bindings: EnvironmentBindings,
+    pub with_objects: Box<[Value]>,
 }
 
 impl EnvironmentScope {
@@ -1500,7 +1503,7 @@ impl EnvironmentScope {
 /// An environment's `EnvironmentScope` in one word. Most environments are a function's
 /// activation, whose scope names only its program: that scope is the word itself, tagged by
 /// `INLINE_SCOPE_TAG`, and needs no allocation. Any other scope is a box the word points to.
-pub(crate) struct EnvironmentScopeRef(std::num::NonZeroUsize);
+pub struct EnvironmentScopeRef(std::num::NonZeroUsize);
 
 /// The low bit, never set in a box pointer, marks an inline program-only scope.
 const INLINE_SCOPE_TAG: usize = 1;
@@ -1510,7 +1513,7 @@ const _: () = assert!(align_of::<EnvironmentScope>() > INLINE_SCOPE_TAG);
 static NO_DYNAMIC_BINDINGS: EnvironmentBindings = EnvironmentBindings::Owned(Vec::new());
 
 impl EnvironmentScopeRef {
-    pub(crate) fn new(scope: EnvironmentScope) -> Self {
+    pub fn new(scope: EnvironmentScope) -> Self {
         if scope.is_program_only()
             && let Some(inline) = Self::inline(scope.program)
         {
@@ -1521,7 +1524,7 @@ impl EnvironmentScopeRef {
 
     /// The scope of a function's activation, which names only its `program`: `new` of that
     /// scope, without building it first.
-    pub(crate) fn of_program(program: u32) -> Self {
+    pub fn of_program(program: u32) -> Self {
         Self::inline(Some(program)).unwrap_or_else(|| {
             Self::boxed(EnvironmentScope {
                 program: Some(program),
@@ -1556,7 +1559,7 @@ impl EnvironmentScopeRef {
     }
 
     #[inline(always)]
-    pub(crate) fn program(&self) -> Option<u32> {
+    pub fn program(&self) -> Option<u32> {
         match self.scope() {
             Some(scope) => scope.program,
             None => (self.0.get() >> INLINE_PROGRAM_SHIFT)
@@ -1635,10 +1638,10 @@ impl std::fmt::Debug for EnvironmentScopeRef {
 /// with the default owner, sorted by index; every other slot is shared with that owner. The
 /// slice header's mark tells the two apart, so a dense read tests one bit it loads anyway.
 #[repr(transparent)]
-pub(crate) struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>);
+pub struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>);
 
 /// Words an `EnvironmentSlots::lay_out_in_place` storage takes before its slots.
-pub(crate) const IN_PLACE_SLOTS_WORDS: usize =
+pub const IN_PLACE_SLOTS_WORDS: usize =
     super::thin_slice::ThinBoxSlice::<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>::IN_PLACE_WORDS;
 
 /// Words before an environment's slot storage header (`ThinBoxSlice`'s prefix): the capture
@@ -1656,7 +1659,7 @@ const SPARSE_ENTRIES_START: usize = 2;
 const SPARSE_ENTRY_WORDS: usize = 2;
 
 #[derive(Clone, Debug)]
-pub(crate) enum EnvironmentBindings {
+pub enum EnvironmentBindings {
     Owned(Vec<(Atom, Value)>),
     Shared(Value),
 }
@@ -1671,7 +1674,7 @@ impl From<Vec<(Atom, Value)>> for EnvironmentBindings {
 /// helpers, wrapped iterators and generators, while built-in stepping only reads
 /// `source`, `kind`, `index` and `done`.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct IteratorExt {
+pub struct IteratorExt {
     /// Upper half of the iterator position; nonzero only for array-likes iterated past
     /// 2^32 elements, whose lengths reach 2^53 - 1.
     pub(crate) position_high: u32,
@@ -1679,19 +1682,19 @@ pub(crate) struct IteratorExt {
     pub(crate) helper: Option<Box<IteratorHelper>>,
     /// Where `helper` is in its life; the record's `done` ends it.
     pub(crate) helper_phase: HelperPhase,
-    pub(crate) generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
+    pub generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
 }
 
 impl IteratorExt {
     /// The full position whose low half is the cell's `index`.
     #[inline]
-    pub(crate) fn position(&self, low: u32) -> usize {
+    pub fn position(&self, low: u32) -> usize {
         ((u64::from(self.position_high) << u32::BITS) | u64::from(low)) as usize
     }
 
     /// Splits `position` between the cell's `index` and this box.
     #[inline]
-    pub(crate) fn store_position(&mut self, low: &mut u32, position: usize) {
+    pub fn store_position(&mut self, low: &mut u32, position: usize) {
         let position = position as u64;
         *low = position as u32;
         self.position_high = (position >> u32::BITS) as u32;
@@ -1710,7 +1713,7 @@ pub(crate) struct CollectionRecord {
 /// collections stay empty (jsdom-d3: 107K of 132K Maps, 152K of 153K Sets), so the record
 /// holds the entries inline beside its object.
 #[derive(Clone, Debug)]
-pub(crate) enum CollectionStorage {
+pub enum CollectionStorage {
     Map(super::Entries<(Value, Value)>),
     Set(super::Entries<Value>),
 }
@@ -1739,15 +1742,15 @@ impl CollectionRecord {
 /// An iterator object: built-in iterators, iterator helpers and generators. The heap keeps
 /// it in the iterator record family (`Heap::iterator`).
 #[derive(Clone, Debug)]
-pub(crate) struct IteratorRecord {
-    pub(crate) object: Object,
-    pub(crate) source: Value,
-    pub(crate) kind: IteratorKind,
+pub struct IteratorRecord {
+    pub object: Object,
+    pub source: Value,
+    pub kind: IteratorKind,
     /// Low half of the position within `source`; `IteratorExt::position` joins it with
     /// the upper half.
-    pub(crate) index: u32,
-    pub(crate) done: bool,
-    pub(crate) ext: IteratorExt,
+    pub index: u32,
+    pub done: bool,
+    pub ext: IteratorExt,
 }
 
 impl IteratorRecord {
@@ -1769,7 +1772,7 @@ impl IteratorRecord {
 /// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
 /// `Cell::Function` slot. Its layout is `staged::record_heads::FunctionRecord`, instantiated with the
 /// runtime's `Object`, `FunctionKind` and `Value`, so its fields are named there.
-pub(crate) type FunctionRecord = crate::staged::record_heads::FunctionRecord<Object, FunctionKind, Value>;
+pub type FunctionRecord = crate::staged::record_heads::FunctionRecord<Object, FunctionKind, Value>;
 
 const _: () = assert!(size_of::<FunctionRecord>() == 32);
 
@@ -1827,17 +1830,17 @@ impl std::ops::DerefMut for BufferViewObject {
 /// A PlainDateTime's ISO year, month and day with its hour-through-nanosecond fields, boxed
 /// together so the cell keeps four words.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct IsoDateTimeFields {
-    pub(crate) date: (i32, u32, u32),
-    pub(crate) time: [u32; 6],
+pub struct IsoDateTimeFields {
+    pub date: (i32, u32, u32),
+    pub time: [u32; 6],
 }
 
 /// A ZonedDateTime's exact time and time-zone identifier, boxed together so the cell keeps
 /// four words.
 #[derive(Clone, Debug)]
-pub(crate) struct ZonedInstant {
-    pub(crate) epoch_nanoseconds: i128,
-    pub(crate) time_zone: String,
+pub struct ZonedInstant {
+    pub epoch_nanoseconds: i128,
+    pub time_zone: String,
 }
 
 /// A RegExp's source text, flags, legacy-constructor owner and compiled matcher: all fixed
@@ -1891,7 +1894,7 @@ impl RegExpLegacyOwner {
 /// Native host-private keys remain symbol primitives, but do not participate in
 /// ordinary property reflection, inheritance, or proxy interception.
 #[derive(Clone, Debug)]
-pub(crate) struct SymbolData {
+pub struct SymbolData {
     // Descriptions are immutable; a slice avoids String capacity metadata so
     // the private-kind tag fits without growing every arena cell.
     pub(crate) description: Option<Box<str>>,
@@ -1903,7 +1906,7 @@ pub(crate) enum SymbolKind {
     HostPrivate,
 }
 impl SymbolData {
-    pub(crate) fn public(description: Option<String>) -> Self {
+    pub fn public(description: Option<String>) -> Self {
         Self {
             description: description.map(String::into_boxed_str),
             kind: SymbolKind::Public,

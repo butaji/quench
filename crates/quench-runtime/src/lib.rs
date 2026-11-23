@@ -1,7 +1,7 @@
 #![deny(warnings)]
 // The v2-merged sync left items both sides added in different places, one copy unused, and AOT items
 // named in wider interfaces than their types: allowed until the merge's dead copies are removed.
-#![allow(dead_code, private_interfaces)]
+#![allow(dead_code, private_interfaces, private_bounds, unused_features)]
 #![feature(rust_preserve_none_cc)]
 // Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
 // whatever the handler body keeps on its stack (`vm::dispatch_fast`).
@@ -15,7 +15,8 @@
 #![feature(stmt_expr_attributes)]
 #![cfg_attr(all(test, feature = "bench-primitives"), feature(test))]
 
-mod execution_interrupt;
+#[doc(hidden)]
+pub mod execution_interrupt;
 /// Numeric facts shared by the runtime and its hosts.
 pub mod units {
     pub use quench_temporal::units::*;
@@ -45,45 +46,74 @@ pub use vm::value_serializer::DESERIALIZATION_ERROR;
 pub use execution_interrupt::ExecutionInterrupt;
 #[cfg(unix)]
 pub use vm::NativeFaultHandler;
-mod bigint;
-mod bitset;
-mod dataflow;
-mod webs;
-mod dense_map;
-mod bytecode;
-mod compile;
-mod code_dependencies;
-mod folded_roots;
-mod float_layout;
-mod heap;
+#[doc(hidden)]
+pub mod bigint;
+#[doc(hidden)]
+pub mod bitset;
+#[doc(hidden)]
+pub mod dataflow;
+#[doc(hidden)]
+pub mod webs;
+#[doc(hidden)]
+pub mod dense_map;
+#[doc(hidden)]
+pub mod bytecode;
+#[doc(hidden)]
+pub mod compile;
+#[doc(hidden)]
+pub mod code_dependencies;
+#[doc(hidden)]
+pub mod folded_roots;
+#[doc(hidden)]
+pub mod float_layout;
+#[doc(hidden)]
+pub mod heap;
 #[cfg_attr(
     not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))),
     allow(dead_code)
 )]
-mod jit_coverage;
-mod jit_mode;
+#[doc(hidden)]
+pub mod jit_coverage;
+#[doc(hidden)]
+pub mod jit_mode;
 pub use jit_mode::JitMode;
-mod host;
-mod integer_conversion;
+#[doc(hidden)]
+pub mod host;
+#[doc(hidden)]
+pub mod integer_conversion;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
-mod memory_edge;
-mod module_identity;
-mod number_to_string;
+#[doc(hidden)]
+pub mod memory_edge;
+#[doc(hidden)]
+pub mod module_identity;
+#[doc(hidden)]
+pub mod number_to_string;
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "../benches/support/number_inputs.rs"]
-mod number_inputs;
-mod profile;
+#[doc(hidden)]
+pub mod number_inputs;
+#[doc(hidden)]
+pub mod profile;
 pub mod trace;
 pub mod clock;
-mod snapshot;
-mod staged;
-mod typed_ir;
-pub(crate) use quench_stack as stack;
-mod unicode;
-mod value;
-mod value_vec;
-mod vm;
-mod wasm;
+#[doc(hidden)]
+pub mod snapshot;
+#[doc(hidden)]
+pub mod staged;
+#[doc(hidden)]
+pub mod typed_ir;
+pub use quench_stack as stack;
+pub use quench_stack::projection;
+#[doc(hidden)]
+pub mod unicode;
+#[doc(hidden)]
+pub mod value;
+#[doc(hidden)]
+pub mod value_vec;
+#[doc(hidden)]
+pub mod vm;
+#[doc(hidden)]
+pub mod wasm;
 pub use wasm::{
     WasmCallableType, WasmConstantExpression, WasmData, WasmDataMode, WasmElement, WasmElementItems, WasmElementMode,
     WasmCustomSection, WasmExport,
@@ -99,7 +129,7 @@ pub use bytecode::{set_record_built, set_record_read, KeptBytes, ResidualProgram
 pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use compile::{CheckedParameters, ParameterSite};
-pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
+pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, memory_mix_has};
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,
@@ -121,7 +151,8 @@ const _: fn() = || {
     sendable::<SerializedValue>();
 };
 
-mod api;
+#[doc(hidden)]
+pub mod api;
 pub use api::{
     CollectionContext,
     BufferStorage, Detach, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin,
@@ -132,19 +163,26 @@ pub use api::{
 };
 
 #[cfg(test)]
-mod host_stack_tests;
+#[doc(hidden)]
+pub mod host_stack_tests;
 #[cfg(test)]
-mod test_host;
+#[doc(hidden)]
+pub mod test_host;
 #[cfg(test)]
-mod cross_program_call_tests;
+#[doc(hidden)]
+pub mod cross_program_call_tests;
 #[cfg(test)]
-mod eval_name_scope_tests;
+#[doc(hidden)]
+pub mod eval_name_scope_tests;
 #[cfg(test)]
-mod subset_scope_tests;
+#[doc(hidden)]
+pub mod subset_scope_tests;
 #[cfg(test)]
-mod subset_tests;
+#[doc(hidden)]
+pub mod subset_tests;
 #[cfg(test)]
-mod string_parts_tests;
+#[doc(hidden)]
+pub mod string_parts_tests;
 
 pub mod owned_clone;
 
@@ -154,17 +192,10 @@ pub mod shared_backing;
 pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_LANE_HELPERS_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS_OPERATION_PREFIX, NativeProgramNamespace};
 #[cfg(feature = "native-execution")]
 pub use vm::{
-    NativeJsOperands, NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
-    native_program::{NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
+    NativeJsOperands, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
+    engine_types::{NativeJsOperationEntry, NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
 };
-pub use vm::{
-    IsaBaseline, NativeTarget,
-    native_object::{
-        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeDataAddress, NativeFunction, NativeFunctionAddress,
-        NativeJsModule, NativeReloc, emit_native_module, emit_native_module_for, emit_native_object, lower_native_js_module,
-        lower_native_js_module_for,
-    },
-};
+pub use vm::{IsaBaseline, NativeTarget};
 
 pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};
@@ -172,7 +203,7 @@ pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, ST
 /// Ordinary builds and producers (with the JIT) support dynamic compilation and execution.
 /// Execution-only native support (a static AOT image's, built without the JIT) requires
 /// linked code and archived records.
-pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(feature = "jit");
+pub const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(feature = "jit");
 
 /// Whether this build requires linked native code and archived program facts.
 pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
@@ -180,8 +211,25 @@ pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
 #[cfg(feature = "native-execution")]
 pub use host::NativeSourceError;
 
-mod native_image;
+#[doc(hidden)]
+pub mod native_image;
 #[cfg(feature = "native-execution")]
 pub use native_image::NativeImageSupport;
 
 pub mod native_link;
+
+// Library tests run with the layer crates compiled in as modules: a layer crate names this crate
+// `quench_runtime` and its own root `crate`, so both resolve here (`quench-layers` links the
+// layer crates into every other build).
+#[cfg(test)]
+extern crate self as quench_runtime;
+#[cfg(test)]
+#[path = "../../quench-runtime-intl/src/lib.rs"]
+mod intl_layer;
+#[cfg(test)]
+use intl_layer::*;
+#[cfg(test)]
+#[path = "../../quench-runtime-engine/src/lib.rs"]
+mod engine_layer;
+#[cfg(test)]
+use engine_layer::*;

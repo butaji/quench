@@ -6,7 +6,7 @@ impl Heap {
     /// many records as the legacy slots do (`STRING_RECORD_CAPACITY`); exhausting it is out
     /// of memory, as exhausting the slots is.
     #[inline(always)]
-    pub(crate) fn alloc_string(&mut self, string: JsString) -> Value {
+    pub fn alloc_string(&mut self, string: JsString) -> Value {
         match string.single_ascii_unit() {
             None => self.alloc_string_record(string),
             Some(unit) => self.alloc_ascii_unit_string(string, unit),
@@ -16,7 +16,7 @@ impl Heap {
     /// `alloc_string` of the string of `units` (`JsString::from_unit_run`): a one-unit ASCII
     /// run that has its record is answered without building the string.
     #[inline]
-    pub(crate) fn alloc_unit_run(&mut self, units: crate::vm::wtf16::Units<'_>) -> Value {
+    pub fn alloc_unit_run(&mut self, units: crate::vm::wtf16::Units<'_>) -> Value {
         if let crate::vm::wtf16::Units::Ascii(&[unit]) = units
             && let Some(strings) = &self.ascii_unit_strings
             && !strings[usize::from(unit)].is_undefined()

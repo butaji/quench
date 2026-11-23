@@ -20,7 +20,7 @@ impl WasmSignatures {
 
     /// The canonical id of the pool's type `index`.
     #[inline]
-    pub(crate) fn type_canonical(&self, index: u32) -> Option<CanonicalSignature> {
+    pub fn type_canonical(&self, index: u32) -> Option<CanonicalSignature> {
         Some(self.types.get(index as usize)?.canonical)
     }
 

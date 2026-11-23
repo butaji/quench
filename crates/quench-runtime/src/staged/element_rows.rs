@@ -14,7 +14,7 @@
 
 use super::elements::{prove_view, read_element, replace_present, DenseView};
 use super::property::Owner;
-use super::typed_elements::{typed_read, typed_read_integer, typed_write, TypedView};
+use super::typed_elements::{typed_read, typed_read_integer, typed_read_value, typed_write, TypedView};
 use super::{Concrete, ElementFrame, NumericFrame, NumericStage, Operation, Stage, Step};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
@@ -24,7 +24,7 @@ use crate::typed_ir::Type;
 /// An array's elements as an access reads them, once proved: a dense array's backing or a
 /// typed array's elements, whose kind the proof carries.
 #[derive(Clone, Copy)]
-pub(crate) enum ElementView<W> {
+pub enum ElementView<W> {
     Dense(DenseView<W>),
     Typed(TypedView<W>),
 }
@@ -36,7 +36,7 @@ impl<W, P> Operation<W, P> {
     /// key (the tier defines the result register), and `SetIndex`; `None` where the instruction
     /// completes a frame or an operand names a local or a field.
     #[inline(always)]
-    pub(crate) fn decode_element(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_element(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         Some(match instruction.op() {
             Op::GetIndex => match instruction.operand_b().register_index() {
@@ -104,6 +104,7 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
     let index = frame.index_key(stage, key, miss)?;
     let index = stage.uextend32(index);
     match view {
+        ElementView::Typed(view) if frame.typed_values() => typed_read_value(stage, view, index, miss),
         // An integer element that fits int32 is the int itself (`typed_read_integer`: the load,
         // with no Number made of it), so a consumer that wants an int -- a `switch`'s
         // `IntCaseIndex`, which otherwise converts a double on every dispatch -- reads it as one.

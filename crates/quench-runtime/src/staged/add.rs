@@ -25,10 +25,10 @@ use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 /// the layout id it moves to, and the slot the value takes, which is the storage length of the
 /// first's shape.
 #[derive(Clone, Copy)]
-pub(crate) struct Edge<W> {
-    pub(crate) before: W,
-    pub(crate) after: W,
-    pub(crate) slot: W,
+pub struct Edge<W> {
+    pub before: W,
+    pub after: W,
+    pub slot: W,
 }
 
 /// What the object at `record` (id `record_id`) must hold for the add of `value`: exactly the

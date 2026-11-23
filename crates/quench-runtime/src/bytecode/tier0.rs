@@ -205,7 +205,7 @@ impl ResidualProgram {
     /// Function `index`'s lowered record, lowering it now where it would run unlowered: what an
     /// ahead compile reads, since a tier-0 record has no liveness (`RegisterRoots::new(false)`)
     /// and its PCs are not the lowered record's, which every later run executes.
-    pub(crate) fn lowered_function(&self, index: usize) -> &Function {
+    pub fn lowered_function(&self, index: usize) -> &Function {
         self.function(index);
         self.promote_tier0(index);
         self.function(index)

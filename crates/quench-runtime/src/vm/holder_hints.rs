@@ -80,7 +80,7 @@ impl Vm {
     /// receiver of the hint's shape and prototype while the watch holds. `None` for any other
     /// name, or no such hint.
     #[inline(always)]
-    pub(super) fn getter_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64, u16)> {
+    pub fn getter_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64, u16)> {
         let hint = self.holder_hints.getter.get(usize::from(index))?;
         (hint.atom == atom).then(|| (hint.guard, std::rc::Rc::as_ptr(&hint.watch) as u64, hint.slot))
     }
@@ -90,7 +90,7 @@ impl Vm {
     /// record holds, else as a new one, its index below `limit`. `None` once the record has made
     /// its hint again too often, or for another receiver. The prototype is marked first, so a
     /// change to its values retires the hint's watch.
-    pub(super) fn hold_getter_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, slot: u16, limit: u16) -> Option<u16> {
+    pub fn hold_getter_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, slot: u16, limit: u16) -> Option<u16> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let (guard, prototype) = (receiver.guard_word(), receiver.proto());
         let owned = owned.filter(|&index| usize::from(index) < self.holder_hints.getter.len());
@@ -154,7 +154,7 @@ impl Vm {
     /// index: no atom compare. A swept object's hint has its watch retired (`retire_dead`)
     /// before its record id can name another object.
     #[inline(always)]
-    pub(super) fn own_constant_word_operands(&self, index: u16) -> Option<(u64, u64, u64)> {
+    pub fn own_constant_word_operands(&self, index: u16) -> Option<(u64, u64, u64)> {
         let hint = self.holder_hints.own.get(usize::from(index))?;
         Some((hint.holder.to_bits(), std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
     }
@@ -164,7 +164,7 @@ impl Vm {
     /// the same object twice; `None` the first time, and for a site that met another object or
     /// was refused (`refuse_own_constant`), which never probes again.
     #[cold]
-    pub(super) fn probe_own_constant(&mut self, site: usize, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
+    pub fn probe_own_constant(&mut self, site: usize, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
         let bits = object.to_bits();
         match self.holder_hints.probes.get(&site).copied() {
             None => { self.holder_hints.probes.insert(site, bits); None }
@@ -184,20 +184,20 @@ impl Vm {
 
     /// Whether the record at `site` has probed: it met an object, or was refused.
     #[inline(always)]
-    pub(super) fn own_constant_probed(&self, site: usize) -> bool {
+    pub fn own_constant_probed(&self, site: usize) -> bool {
         self.holder_hints.probes.contains_key(&site)
     }
 
     /// Makes the record at `site` refuse own-constant hints from now on: it met another object,
     /// or the object it read was written.
     #[cold]
-    pub(super) fn refuse_own_constant(&mut self, site: usize) {
+    pub fn refuse_own_constant(&mut self, site: usize) {
         self.holder_hints.probes.insert(site, OWN_CONSTANT_REFUSED);
     }
 
     /// Whether the record at `site` may still probe for an own-constant hint.
     #[inline(always)]
-    pub(super) fn probes_own_constant(&self, site: usize) -> bool {
+    pub fn probes_own_constant(&self, site: usize) -> bool {
         self.holder_hints.probes.get(&site) != Some(&OWN_CONSTANT_REFUSED)
     }
 
@@ -213,7 +213,7 @@ impl Vm {
     /// under an identity guard on the object, so a hint for another object only costs the guard.
     /// Every atom's answer from `own_constant_of` that holds now, by atom: what a lowering off
     /// the program's thread may fold (`FactTables`).
-    pub(super) fn own_constants(&self) -> std::collections::BTreeMap<Atom, super::compiled::OwnConstant> {
+    pub fn own_constants(&self) -> std::collections::BTreeMap<Atom, crate::vm::engine_types::OwnConstant> {
         let mut constants = std::collections::BTreeMap::new();
         for hint in self.holder_hints.own.iter().filter(|hint| hint.watch.is_published()) {
             if !constants.contains_key(&hint.atom) && let Some(constant) = self.own_constant_of(hint.atom) {
@@ -223,10 +223,10 @@ impl Vm {
         constants
     }
 
-    pub(super) fn own_constant_of(&self, atom: Atom) -> Option<super::compiled::OwnConstant> {
+    pub(super) fn own_constant_of(&self, atom: Atom) -> Option<crate::vm::engine_types::OwnConstant> {
         let hint = self.holder_hints.own.iter().find(|hint| hint.atom == atom && hint.watch.is_published())?;
         let shape = self.heap.object(hint.holder)?.exact_shape();
-        Some(super::compiled::OwnConstant { object: hint.holder, shape, value: hint.value })
+        Some(crate::vm::engine_types::OwnConstant { object: hint.holder, shape, value: hint.value })
     }
 }
 

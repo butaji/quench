@@ -119,7 +119,7 @@ const PUSH_FROM_MAX: u64 = INT32_MAX - 1;
 /// refuse. The caller proves the prototype chain holds no index (`Vm::chain_holds_no_index`),
 /// a dependency, and that the store of `value` passes the write barrier unlogged.
 #[inline(always)]
-pub(crate) fn array_push_one<S: Stage>(stage: &mut S, backing: Backing<S::Word>, room: S::Word, value: S::Word,
+pub fn array_push_one<S: Stage>(stage: &mut S, backing: Backing<S::Word>, room: S::Word, value: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     resizable_backing(stage, backing, miss)?;
     let past = stage.ugt_imm(backing.length, PUSH_FROM_MAX);
@@ -133,7 +133,7 @@ pub(crate) fn array_push_one<S: Stage>(stage: &mut S, backing: Backing<S::Word>,
 /// the write barrier unlogged; `None` (leaving at `miss`) for a reference, whose store the
 /// heap logs (`Heap::record_array_store_mut`).
 #[inline(always)]
-pub(crate) fn unreferenced<S: Stage>(stage: &mut S, value: S::Word, miss: S::Miss) -> Option<()> {
+pub fn unreferenced<S: Stage>(stage: &mut S, value: S::Word, miss: S::Miss) -> Option<()> {
     let reference = super::value::is_heap(stage, value);
     let plain = stage.not(reference);
     stage.guard(plain, miss)
@@ -166,7 +166,7 @@ pub(crate) fn pop_last<S: Stage>(stage: &mut S, values: S::Word, length: S::Word
 /// (`elements::resizable_backing`): the generic steps' Set of `length` is then one store. The
 /// caller retires the array storage proofs a shrinking backing falsifies.
 #[inline(always)]
-pub(crate) fn array_pop<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<S::Word> {
+pub fn array_pop<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<S::Word> {
     resizable_backing(stage, backing, miss)?;
     pop_last(stage, backing.values, backing.length, miss)
 }
@@ -175,7 +175,7 @@ pub(crate) fn array_pop<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss
 /// (`Number.isInteger` of a Number): an int32 always, a double when truncation leaves it and
 /// it differs from itself by something other than NaN, which only infinities do.
 #[inline(always)]
-pub(crate) fn is_integral<S: NumericStage>(stage: &mut S, domain: Domain, number: S::Word) -> S::Cond {
+pub fn is_integral<S: NumericStage>(stage: &mut S, domain: Domain, number: S::Word) -> S::Cond {
     match domain {
         Domain::Int32 => stage.relation(NumberRelation::Equal, domain, number, number),
         Domain::Float64 => {

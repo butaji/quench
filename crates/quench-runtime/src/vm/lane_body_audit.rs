@@ -13,8 +13,8 @@
 //! deciding it. Per function this holds the invariant that compiled code is never slower than
 //! the interpreter, from the one statistic it is about.
 
-use super::{LaneBody, LaneView};
-use super::super::compiled::tier_policy::PER_MILLE;
+use super::engine_types::{LaneBody, LaneView};
+use crate::vm::tier_policy::PER_MILLE;
 
 /// The CPU time the calling thread has run, in nanoseconds (`CLOCK_THREAD_CPUTIME_ID`); where
 /// the clock cannot be read, the monotonic clock's time.
@@ -56,7 +56,7 @@ pub(in crate::vm) struct Audit {
 
 /// The audit's epochs: when the running one began, and each side's booked durations.
 #[derive(Clone, Copy, Default)]
-pub(in crate::vm) struct Epochs {
+pub struct Epochs {
     started: Option<u64>,
     nanos: [[u32; MAX_EPOCHS]; SIDES],
     filled: [u8; SIDES],
@@ -81,7 +81,7 @@ impl LaneView {
     /// hold a fraction of the body epoch's work (fib(10)'s 177 activations against the body's
     /// one entry retired a body 3.8x cheaper). Asked only while the audit runs.
     #[inline(always)]
-    pub(in crate::vm) fn audit_entry(&self, counts_interpreted: bool, recursive: impl FnOnce() -> bool) -> bool {
+    pub fn audit_entry(&self, counts_interpreted: bool, recursive: impl FnOnce() -> bool) -> bool {
         let mut history = self.tier().history.get();
         if history.audit.done {
             return false;
@@ -90,7 +90,7 @@ impl LaneView {
         let me = std::ptr::from_ref(self) as usize;
         if AUDITOR.get() != me {
             let waited = WAITED.get();
-            if AUDITOR.get() != 0 && waited < super::super::compiled::tier_policy::AUDIT_LEASE_ENTRIES {
+            if AUDITOR.get() != 0 && waited < crate::vm::tier_policy::AUDIT_LEASE_ENTRIES {
                 WAITED.set(waited + 1);
                 return false;
             }
@@ -155,7 +155,9 @@ impl LaneView {
         };
         let verdict = Verdict::of(median(BODY), median(INTERPRETER), self.tiers.lane_body.audit_margin_permille);
         self.tier().body_stats.audit.set(Some(verdict));
-        if !verdict.retire {
+        // A loop region that calls it would leave to run it in the lane, a crossing the interpreter's
+        // epochs do not time (`called_by_regions`): its body stays.
+        if !verdict.retire || self.called_by_regions() {
             return;
         }
         // SAFETY: as `lane_body`; the verdict runs between runs, at an entry's count.
@@ -167,7 +169,7 @@ impl LaneView {
     }
 
     /// Starts the audit of a body just specialized.
-    pub(super) fn audit_restart(&self) {
+    pub fn audit_restart(&self) {
         let mut history = self.tier().history.get();
         history.audit = Audit::default();
         self.tier().history.set(history);
@@ -178,10 +180,10 @@ impl LaneView {
 
 /// What an audit concluded: each side's median epoch and whether the body retires.
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct Verdict {
+pub struct Verdict {
     body_nanos: u64,
     interpreter_nanos: u64,
-    retire: bool,
+    pub retire: bool,
 }
 
 impl Verdict {

@@ -11,15 +11,15 @@ use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 /// Where a record space's mark block list lies in the dispatch payload: the byte offsets of its
 /// block table pointer and of its block count.
 #[derive(Clone, Copy)]
-pub(crate) struct MarkList {
-    pub(crate) blocks: usize,
-    pub(crate) count: usize,
+pub struct MarkList {
+    pub blocks: usize,
+    pub count: usize,
 }
 
 /// Continues where the record `record_id` is unmarked: its block lies below the count `list` names
 /// in the dispatch `payload`, and its mark bit is clear. A failed condition leaves at `miss`.
 #[inline(always)]
-pub(crate) fn unmarked<S: Stage>(stage: &mut S, payload: S::Word, list: MarkList, record_id: S::Word,
+pub fn unmarked<S: Stage>(stage: &mut S, payload: S::Word, list: MarkList, record_id: S::Word,
     miss: S::Miss) -> Option<()> {
     let blocks = stage.load_u64(Region::Dispatch.mutable(), payload, list.blocks as i32);
     let count = stage.load_u64(Region::Dispatch.mutable(), payload, list.count as i32);

@@ -8,7 +8,7 @@ impl Vm {
     /// `==`, `!=` or a relational operator of two primitives, which each decide as the
     /// specification's tables do; `None` for strict equality (`identity_equality` decides it),
     /// any other operator, an object, and a pair that converts through a BigInt or raises.
-    pub(in crate::vm) fn primitive_comparison(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+    pub fn primitive_comparison(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         if left.is_deleted() || right.is_deleted() {
             return None;
         }

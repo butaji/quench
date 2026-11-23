@@ -9,7 +9,7 @@ impl Vm {
     /// constants share one cell, so the first match by identity or by text is the first case
     /// whose `===` test holds.
     #[inline]
-    pub(in crate::vm) fn string_case_index(&self, value: Value, cases: &[Value]) -> u32 {
+    pub fn string_case_index(&self, value: Value, cases: &[Value]) -> u32 {
         let position = self.heap.string(value).and_then(|text| {
             cases.iter().position(|case| {
                 *case == value || self.heap.string(*case).is_some_and(|case| case == text)

@@ -59,7 +59,7 @@ impl NumericFrame<Concrete> for ScopeFrame {
     fn number_fact(&self) {}
 }
 
-fn frame(registers: Vec<u64>) -> ScopeFrame {
+pub fn frame(registers: Vec<u64>) -> ScopeFrame {
     ScopeFrame { registers, returned: None }
 }
 

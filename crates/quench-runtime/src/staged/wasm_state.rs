@@ -53,7 +53,7 @@ impl WasmStateOperation {
 
 impl<W, P> Operation<W, P> {
     /// The instance-state operation `instruction` denotes (`Decoder::WasmState`).
-    pub(crate) fn decode_wasm_state<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_wasm_state<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         WasmStateOperation::decode(instruction, context).map(Self::WasmState)
     }
 }

@@ -8,7 +8,7 @@ impl Heap {
     /// Moves `object`'s inline property values to the arena, as a store its payload word
     /// cannot hold does, so each slot has an address native code can write
     /// (`flat_property_mut_ptr_unchecked`). It may grow the arena: take no slot address first.
-    pub(crate) fn spill_inline_properties(&mut self, object: Value) {
+    pub fn spill_inline_properties(&mut self, object: Value) {
         let Some((data, properties)) = self.object_and_arena_mut(object) else { return };
         let length = properties.len(data.properties());
         let Some(values) = data.inline_properties().filter(|_| length > 0) else { return };

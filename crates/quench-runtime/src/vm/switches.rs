@@ -19,7 +19,7 @@ thread_local! {
 /// and no tag test. Slot types are kept only where native code runs (`ValueArena::track`).
 /// Read per slot decode (`value_vec::read_type`), so the initialized value is one inlined load.
 #[inline(always)]
-pub(crate) fn float_slots() -> bool {
+pub fn float_slots() -> bool {
     #[cfg(test)]
     if FLOAT_SLOTS_FOR_TEST.get() { return true; }
     // One byte loaded and tested once on the decided path, not a `OnceLock`'s state and value:
@@ -72,14 +72,14 @@ pub(crate) fn profile_retain_bytecode() -> bool {
 }
 
 /// `QUENCH_CLIF_CENSUS`: prints each lane lowering's CLIF per bytecode op (the CLIF-per-op budget).
-pub(crate) fn clif_census() -> bool {
+pub fn clif_census() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| named("QUENCH_CLIF_CENSUS"))
 }
 
 /// `QUENCH_CLIF_CENSUS=sample`: the census also prints the CLIF of the first few lowerings of
 /// each op (`ClifCensus::sample`).
-pub(crate) fn clif_census_sample() -> bool {
+pub fn clif_census_sample() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("QUENCH_CLIF_CENSUS").is_ok_and(|value| value == "sample"))
 }

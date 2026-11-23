@@ -14,7 +14,7 @@ impl Vm {
     /// the transition it builds by its stack address, a temporary the construct's common path
     /// then does not hold.
     #[inline(never)]
-    pub(in crate::vm) fn transition_data_property_shape(
+    pub fn transition_data_property_shape(
         &mut self,
         shape: u32,
         key: PropertyKey,

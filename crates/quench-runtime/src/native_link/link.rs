@@ -28,6 +28,8 @@ pub struct NativeSupport {
     host: PathBuf,
     host_crate: String,
     runtime: PathBuf,
+    /// The engine layer's library (`quench_runtime_engine`), which names the build (`check_build`).
+    engine: Option<PathBuf>,
     native_paths: BTreeSet<PathBuf>,
     optimization: String,
     rust_lto: bool,
@@ -43,6 +45,7 @@ impl NativeSupport {
     pub fn from_cargo_report(report: &str, host_crate: &str, support: NativeImageSupport) -> Result<Self, String> {
         let mut host = None;
         let mut runtime = None;
+        let mut engine = None;
         let mut native_paths = BTreeSet::new();
         let mut optimization = None;
         let mut completed = false;
@@ -65,6 +68,12 @@ impl NativeSupport {
                     // A dynamic-source image links the standard build's artifacts (default features:
                     // `bundled-sources`, `jit`); a static image's support excludes both, and its link's
                     // symbol audit checks that the compiler is dropped.
+                    if name == "quench_runtime_engine" {
+                        let files = artifact["filenames"].as_array().ok_or("Cargo artifact has no files")?;
+                        if let Some(file) = files.iter().filter_map(Value::as_str).find(|file| Path::new(file).extension().is_some_and(|extension| extension == "rlib")) {
+                            engine = Some(exact_dependency(Path::new(file), name, files)?);
+                        }
+                    }
                     if name == host_crate || name == "quench_runtime" {
                         if !features.iter().any(|feature| feature == "native-execution")
                             || (!support.allows_dynamic_source() && features.iter().any(|feature| {
@@ -136,24 +145,30 @@ impl NativeSupport {
             rust_lto,
             host_semantic_exports,
             runtime: runtime.ok_or("Cargo report has no runtime support library")?,
+            engine,
             native_paths,
             optimization: optimization.ok_or("Cargo report has no support optimization level")?, executable_link_args: &[],
         })
     }
 
-    /// Fails unless the runtime library is the build this compiler is (`AHEAD_BUILD_ID_MARK`):
-    /// an image this compiler lowers runs only on the runtime it was lowered for, so a library
-    /// rebuilt from a changed tree would link an executable that refuses its own images.
+    /// Fails unless the engine library is the build this compiler is (`AHEAD_BUILD_ID_MARK`, which
+    /// names the engine and the core under it): an image this compiler lowers runs only on the
+    /// build it was lowered for, so a library rebuilt from a changed tree would link an executable
+    /// that refuses its own images.
     pub fn check_build(&self) -> Result<(), String> {
-        let bytes = std::fs::read(&self.runtime).map_err(|error| format!("{}: {error}", self.runtime.display()))?;
+        unsafe extern "Rust" {
+            safe fn quench_engine_build_id() -> u64;
+        }
+        let library = self.engine.as_ref().ok_or("Cargo report has no engine support library")?;
+        let bytes = std::fs::read(library).map_err(|error| format!("{}: {error}", library.display()))?;
         let prefix = crate::vm::AHEAD_BUILD_ID_PREFIX;
         let id = bytes.windows(32).find(|window| window.starts_with(prefix) && window[16..].iter().all(u8::is_ascii_hexdigit))
             .map(|window| String::from_utf8_lossy(&window[16..]).into_owned())
-            .ok_or_else(|| format!("{} names no quench build", self.runtime.display()))?;
-        let own = format!("{:016x}", crate::vm::AHEAD_BUILD_ID);
+            .ok_or_else(|| format!("{} names no quench build", library.display()))?;
+        let own = format!("{:016x}", quench_engine_build_id());
         if id != own {
-            return Err(format!("the runtime library {} is build {id}, but this compiler is build {own}: the tree changed \
-                after this compiler was built; rebuild it (cargo build -p quench) and compile again", self.runtime.display()));
+            return Err(format!("the engine library {} is build {id}, but this compiler is build {own}: the tree changed \
+                after this compiler was built; rebuild it (cargo build -p quench) and compile again", library.display()));
         }
         Ok(())
     }

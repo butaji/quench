@@ -7,7 +7,7 @@ use super::wasm_jump::WasmJump;
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
-pub(crate) enum Operation<W, P> {
+pub enum Operation<W, P> {
     /// Copy register `source` into `destination` with its facts.
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
@@ -306,100 +306,100 @@ pub(crate) enum Operation<W, P> {
 /// Each `Operation` variant as a number, for the dispatchers' compile-time choice of arm (`step_of` and the other
 /// `*_of` steps): a caller that knows its variant passes it, and every other arm is dropped before code generation
 /// (an `if const` test); `ANY` runs every arm, as the interpreter does.
-pub(crate) mod kind {
-    pub(crate) const ANY: u16 = 0;
-    pub(crate) const MOVE: u16 = 1;
-    pub(crate) const LOAD_CONST: u16 = 2;
-    pub(crate) const LOAD_LOCAL_PLAIN: u16 = 3;
-    pub(crate) const STORE_LOCAL_PLAIN: u16 = 4;
-    pub(crate) const LOAD_LOCAL_CHECKED: u16 = 5;
-    pub(crate) const STORE_LOCAL_CHECKED: u16 = 6;
-    pub(crate) const INITIALIZE_LOCAL: u16 = 7;
-    pub(crate) const JUMP: u16 = 8;
-    pub(crate) const JUMP_IF: u16 = 9;
-    pub(crate) const LOAD_THIS: u16 = 10;
-    pub(crate) const LOAD_CALLEE: u16 = 11;
-    pub(crate) const NUMBER: u16 = 12;
-    pub(crate) const REQUIRE_OBJECT_COERCIBLE: u16 = 13;
-    pub(crate) const REQUIRE_ITERATOR_RESULT: u16 = 14;
-    pub(crate) const LOGICAL_NOT: u16 = 15;
-    pub(crate) const TYPEOF_INDEX: u16 = 16;
-    pub(crate) const TYPEOF_TEST: u16 = 17;
-    pub(crate) const TYPEOF_STRING: u16 = 18;
-    pub(crate) const INDEX_WRITE: u16 = 19;
-    pub(crate) const ADD_SITE: u16 = 20;
-    pub(crate) const NAMING_SITE: u16 = 21;
-    pub(crate) const INSTANCE_OF: u16 = 22;
-    pub(crate) const DIRECT_ARRAY: u16 = 23;
-    pub(crate) const ARRAY_LENGTH: u16 = 24;
-    pub(crate) const TYPED_LENGTH: u16 = 25;
-    pub(crate) const ARRAY_APPEND: u16 = 26;
-    pub(crate) const ALLOCATE: u16 = 27;
-    pub(crate) const SUPER_CONST_ARRAY_OBJECT2: u16 = 28;
-    pub(crate) const DEFINE_ELEMENT: u16 = 29;
-    pub(crate) const SAFEPOINT: u16 = 30;
-    pub(crate) const GUARD_IDENTITY: u16 = 31;
-    pub(crate) const GUARD_LIVE: u16 = 32;
-    pub(crate) const GUARD_REALM: u16 = 33;
-    pub(crate) const GUARD_DECLARED: u16 = 34;
-    pub(crate) const GUARD_PROTOTYPE: u16 = 35;
-    pub(crate) const GUARD_SHAPE: u16 = 36;
-    pub(crate) const GUARD_STORES: u16 = 37;
-    pub(crate) const BACK_EDGE: u16 = 38;
-    pub(crate) const INDEX_SET_HELPER: u16 = 39;
-    pub(crate) const LOAD_NAME: u16 = 40;
-    pub(crate) const VOID: u16 = 41;
-    pub(crate) const UNARY: u16 = 42;
-    pub(crate) const PROPERTY_KEY: u16 = 43;
-    pub(crate) const EQUALITY: u16 = 44;
-    pub(crate) const BINARY: u16 = 45;
-    pub(crate) const LOAD_ENV_LOCAL: u16 = 46;
-    pub(crate) const STORE_ENV_LOCAL: u16 = 47;
-    pub(crate) const ARGUMENTS_LENGTH: u16 = 48;
-    pub(crate) const ARGUMENT_GET: u16 = 49;
-    pub(crate) const CLONE_ENV: u16 = 50;
-    pub(crate) const GLOBAL_TYPEOF: u16 = 51;
-    pub(crate) const SET_FUNCTION_NAME: u16 = 52;
-    pub(crate) const GLOBAL_WRITE: u16 = 53;
-    pub(crate) const GLOBAL_LEXICAL_LOAD: u16 = 54;
-    pub(crate) const GLOBAL_LEXICAL_STORE: u16 = 55;
-    pub(crate) const PROTOCOL: u16 = 56;
-    pub(crate) const FOR_IN_NEXT: u16 = 57;
-    pub(crate) const ENUMERATED_GET: u16 = 58;
-    pub(crate) const FIELD_STORE_MISS: u16 = 59;
-    pub(crate) const ITERATOR_CLEANUP_PUSH: u16 = 60;
-    pub(crate) const ITERATOR_CLEANUP_POP: u16 = 61;
-    pub(crate) const STRING_CASE_INDEX: u16 = 62;
-    pub(crate) const SUSPEND: u16 = 63;
-    pub(crate) const NOP: u16 = 64;
-    pub(crate) const GET_FIELD: u16 = 65;
-    pub(crate) const SET_FIELD: u16 = 66;
-    pub(crate) const STORE_FIELD: u16 = 67;
-    pub(crate) const FIELD_GET_HOST: u16 = 68;
-    pub(crate) const FIELD_ADD: u16 = 69;
-    pub(crate) const DELETE: u16 = 70;
-    pub(crate) const INDEX_GET_HOST: u16 = 71;
-    pub(crate) const CALL: u16 = 72;
-    pub(crate) const SPREAD_CALL: u16 = 73;
-    pub(crate) const SUPER_CALL: u16 = 74;
-    pub(crate) const RETURN: u16 = 75;
-    pub(crate) const THROW: u16 = 76;
-    pub(crate) const ELEMENT_READ: u16 = 77;
-    pub(crate) const ELEMENT_READ_OPERAND: u16 = 78;
-    pub(crate) const INC_DEC_LOCAL: u16 = 79;
-    pub(crate) const ELEMENT_WRITE: u16 = 80;
-    pub(crate) const LOAD_CAPTURE: u16 = 81;
-    pub(crate) const STORE_CAPTURE: u16 = 82;
-    pub(crate) const COMPARE_JUMP: u16 = 83;
-    pub(crate) const WASM_FLOAT: u16 = 84;
-    pub(crate) const WASM_INT: u16 = 85;
-    pub(crate) const WASM_JUMP: u16 = 86;
-    pub(crate) const BRANCH_TABLE: u16 = 87;
-    pub(crate) const WASM_STATE: u16 = 88;
-    pub(crate) const WASM_ACCESS: u16 = 89;
-    pub(crate) const WASM_VECTOR: u16 = 90;
-    pub(crate) const PROLOGUE: u16 = 91;
-    pub(crate) const BODY_ENTRY: u16 = 92;
+pub mod kind {
+    pub const ANY: u16 = 0;
+    pub const MOVE: u16 = 1;
+    pub const LOAD_CONST: u16 = 2;
+    pub const LOAD_LOCAL_PLAIN: u16 = 3;
+    pub const STORE_LOCAL_PLAIN: u16 = 4;
+    pub const LOAD_LOCAL_CHECKED: u16 = 5;
+    pub const STORE_LOCAL_CHECKED: u16 = 6;
+    pub const INITIALIZE_LOCAL: u16 = 7;
+    pub const JUMP: u16 = 8;
+    pub const JUMP_IF: u16 = 9;
+    pub const LOAD_THIS: u16 = 10;
+    pub const LOAD_CALLEE: u16 = 11;
+    pub const NUMBER: u16 = 12;
+    pub const REQUIRE_OBJECT_COERCIBLE: u16 = 13;
+    pub const REQUIRE_ITERATOR_RESULT: u16 = 14;
+    pub const LOGICAL_NOT: u16 = 15;
+    pub const TYPEOF_INDEX: u16 = 16;
+    pub const TYPEOF_TEST: u16 = 17;
+    pub const TYPEOF_STRING: u16 = 18;
+    pub const INDEX_WRITE: u16 = 19;
+    pub const ADD_SITE: u16 = 20;
+    pub const NAMING_SITE: u16 = 21;
+    pub const INSTANCE_OF: u16 = 22;
+    pub const DIRECT_ARRAY: u16 = 23;
+    pub const ARRAY_LENGTH: u16 = 24;
+    pub const TYPED_LENGTH: u16 = 25;
+    pub const ARRAY_APPEND: u16 = 26;
+    pub const ALLOCATE: u16 = 27;
+    pub const SUPER_CONST_ARRAY_OBJECT2: u16 = 28;
+    pub const DEFINE_ELEMENT: u16 = 29;
+    pub const SAFEPOINT: u16 = 30;
+    pub const GUARD_IDENTITY: u16 = 31;
+    pub const GUARD_LIVE: u16 = 32;
+    pub const GUARD_REALM: u16 = 33;
+    pub const GUARD_DECLARED: u16 = 34;
+    pub const GUARD_PROTOTYPE: u16 = 35;
+    pub const GUARD_SHAPE: u16 = 36;
+    pub const GUARD_STORES: u16 = 37;
+    pub const BACK_EDGE: u16 = 38;
+    pub const INDEX_SET_HELPER: u16 = 39;
+    pub const LOAD_NAME: u16 = 40;
+    pub const VOID: u16 = 41;
+    pub const UNARY: u16 = 42;
+    pub const PROPERTY_KEY: u16 = 43;
+    pub const EQUALITY: u16 = 44;
+    pub const BINARY: u16 = 45;
+    pub const LOAD_ENV_LOCAL: u16 = 46;
+    pub const STORE_ENV_LOCAL: u16 = 47;
+    pub const ARGUMENTS_LENGTH: u16 = 48;
+    pub const ARGUMENT_GET: u16 = 49;
+    pub const CLONE_ENV: u16 = 50;
+    pub const GLOBAL_TYPEOF: u16 = 51;
+    pub const SET_FUNCTION_NAME: u16 = 52;
+    pub const GLOBAL_WRITE: u16 = 53;
+    pub const GLOBAL_LEXICAL_LOAD: u16 = 54;
+    pub const GLOBAL_LEXICAL_STORE: u16 = 55;
+    pub const PROTOCOL: u16 = 56;
+    pub const FOR_IN_NEXT: u16 = 57;
+    pub const ENUMERATED_GET: u16 = 58;
+    pub const FIELD_STORE_MISS: u16 = 59;
+    pub const ITERATOR_CLEANUP_PUSH: u16 = 60;
+    pub const ITERATOR_CLEANUP_POP: u16 = 61;
+    pub const STRING_CASE_INDEX: u16 = 62;
+    pub const SUSPEND: u16 = 63;
+    pub const NOP: u16 = 64;
+    pub const GET_FIELD: u16 = 65;
+    pub const SET_FIELD: u16 = 66;
+    pub const STORE_FIELD: u16 = 67;
+    pub const FIELD_GET_HOST: u16 = 68;
+    pub const FIELD_ADD: u16 = 69;
+    pub const DELETE: u16 = 70;
+    pub const INDEX_GET_HOST: u16 = 71;
+    pub const CALL: u16 = 72;
+    pub const SPREAD_CALL: u16 = 73;
+    pub const SUPER_CALL: u16 = 74;
+    pub const RETURN: u16 = 75;
+    pub const THROW: u16 = 76;
+    pub const ELEMENT_READ: u16 = 77;
+    pub const ELEMENT_READ_OPERAND: u16 = 78;
+    pub const INC_DEC_LOCAL: u16 = 79;
+    pub const ELEMENT_WRITE: u16 = 80;
+    pub const LOAD_CAPTURE: u16 = 81;
+    pub const STORE_CAPTURE: u16 = 82;
+    pub const COMPARE_JUMP: u16 = 83;
+    pub const WASM_FLOAT: u16 = 84;
+    pub const WASM_INT: u16 = 85;
+    pub const WASM_JUMP: u16 = 86;
+    pub const BRANCH_TABLE: u16 = 87;
+    pub const WASM_STATE: u16 = 88;
+    pub const WASM_ACCESS: u16 = 89;
+    pub const WASM_VECTOR: u16 = 90;
+    pub const PROLOGUE: u16 = 91;
+    pub const BODY_ENTRY: u16 = 92;
 
     /// Whether a dispatcher instantiated for `kind` runs an arm of `variants`.
     pub(crate) const fn admits(kind: u16, variants: &[u16]) -> bool {
@@ -431,7 +431,7 @@ impl<W, P> Operation<W, P> {
     /// method site is not available to this tier: the caller then takes its own exact path. The
     /// heap operations are the frame's (`Frame::field_read`); a tier decodes those itself.
     #[inline(always)]
-    pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         match instruction.op().staged()? {
             Decoder::Flow => Self::decode_flow(instruction, context),
             Decoder::Local => Self::decode_local(instruction),
@@ -459,7 +459,7 @@ impl<W, P> Operation<W, P> {
     /// general step decides. Only the operations whose arms are shared with `Vm::step` and whose miss the
     /// site's feedback can gate qualify (`write_binary_result`; element sites record `OperandKinds::DENSE`
     /// and `TYPED`; field sites have no direct arm yet).
-    pub(crate) fn direct_helper(&self) -> bool {
+    pub fn direct_helper(&self) -> bool {
         matches!(self, Self::Binary { .. } | Self::ElementRead { .. } | Self::ElementWrite { .. }
             | Self::GetField { .. } | Self::SetField { .. } | Self::LogicalNot { .. } | Self::TypeofIndex { .. })
     }
@@ -467,13 +467,13 @@ impl<W, P> Operation<W, P> {
     /// The Wasm i32 jumps of `decode` (`Decoder::WasmJump`), from any record's wide fields
     /// (`Fields::wide`).
     #[inline(always)]
-    pub(crate) fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
         WasmJump::decode(instruction).map(Self::WasmJump).or_else(|| BranchTable::decode(instruction).map(Self::BranchTable))
     }
 
     /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.
     #[inline(always)]
-    pub(crate) fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
         wasm_int::decode(instruction).map(Self::WasmInt)
     }
 
@@ -482,7 +482,7 @@ impl<W, P> Operation<W, P> {
     /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
     /// operation with no completion.
     #[inline(always)]
-    pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
+    pub fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
         let (plain, flags) = Self::completion_split(instruction)?;
         Some((Self::decode(plain, context)?, flags))
     }
@@ -490,7 +490,7 @@ impl<W, P> Operation<W, P> {
     /// `decode_completed` of the literal operations (`decode_literal_with`) under the tier's `proof`, with the
     /// superinstruction parts `parts` of `decode_literal_with`: the operation and the flags its record completes
     /// the frame by.
-    pub(crate) fn decode_literal_completed_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P)
+    pub fn decode_literal_completed_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P)
         -> Option<(Self, crate::bytecode::Register)> {
         let (plain, flags) = Self::completion_split(instruction)?;
         Some((Self::decode_literal_with(plain, parts, proof)?, flags))
@@ -518,14 +518,14 @@ impl<W, P> Operation<W, P> {
     /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
     /// same decode, with the constant left for the tier to look up.
     #[inline(always)]
-    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
+    pub fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
         (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
     }
 
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
     /// record's wide fields (`Fields::wide`).
     #[inline(always)]
-    pub(crate) fn decode_names(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_names(instruction: WideInstruction) -> Option<Self> {
         names::decode(instruction)
     }
 
@@ -534,14 +534,15 @@ impl<W, P> Operation<W, P> {
     /// (`Allocation::decode`, which an array literal's element definitions do not change: the
     /// array is a hole array and each definition is `DefineElement`), and an element definition.
     #[inline(always)]
-    pub(crate) fn decode_literal(instruction: WideInstruction, proof: P) -> Option<Self> {
+    pub fn decode_literal(instruction: WideInstruction, proof: P) -> Option<Self> {
         Self::decode_literal_with(instruction, None, proof)
     }
 
     /// `decode_literal`, where `parts` are the four records of the superinstruction a
     /// `SuperConstArrayObject2` record names (the program's table entry); `None` for any other record,
     /// and for a pair whose `parts` are none.
-    pub(crate) fn decode_literal_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P) -> Option<Self> {
+    #[inline]
+    pub fn decode_literal_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P) -> Option<Self> {
         match instruction.op() {
             Op::DefineArrayElement => Some(Self::DefineElement {
                 array: instruction.register_b(), index: instruction.imm(), value: instruction.register_a() }),
@@ -559,7 +560,7 @@ impl<W, P> Operation<W, P> {
     /// The register moves and control transfers of `decode`, from any record a tier holds
     /// (`Fields`): the one flow decoder, the bytecode's and the lane's alike.
     #[inline(always)]
-    pub(crate) fn decode_flow<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_flow<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
             Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction.wide()),
             Op::Move => Self::Move {
@@ -582,7 +583,7 @@ impl<W, P> Operation<W, P> {
     /// except `super(...)`, whose arguments the VM gathers (`spread`). Inlined: a call row decodes
     /// its record on every run, which its constant opcode folds only once the decode is in place.
     #[inline(always)]
-    pub(crate) fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         if instruction.op() == Op::Construct && instruction.is_super_construct() {
             return spread::decode(instruction);
         }
@@ -591,7 +592,7 @@ impl<W, P> Operation<W, P> {
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
     #[inline(always)]
-    pub(crate) fn decode_property(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
             Op::Delete => Some(Self::Delete { destination: instruction.result_register(), base: instruction.register_b(),
@@ -618,7 +619,7 @@ impl<W, P> Operation<W, P> {
 
     /// The value-level operations of `decode`.
     #[inline(always)]
-    pub(crate) fn decode_value(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_value(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
@@ -685,7 +686,7 @@ impl<W, P> Operation<W, P> {
 
     /// The local-slot operations of `decode`.
     #[inline(always)]
-    pub(crate) fn decode_local(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_local(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadLocalPlain => Self::LoadLocalPlain {
                 destination: instruction.result_register(),
@@ -713,7 +714,7 @@ impl<W, P> Operation<W, P> {
 impl<W, P> Operation<W, P> {
     /// The operation as a root read where it is a `LoadCapture` (`root`), else unchanged: a row whose
     /// record a walk settled on a root binding decodes its read so (`FLAG_ROOT`).
-    pub(crate) fn rooted(self) -> Self {
+    pub fn rooted(self) -> Self {
         match self {
             Self::LoadCapture { destination, depth, slot, .. } => Self::LoadCapture { destination, depth, slot, root: true },
             other => other,
@@ -726,14 +727,14 @@ impl<W, P> Operation<W, P> {
 impl Operation<u64, ()> {
     /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
     /// tier asks an instruction's meaning by, where the row's operands need no table.
-    pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
+    pub fn of(instruction: WideInstruction) -> Option<Self> {
         Self::decode(instruction, DecodeContext::EMPTY)
     }
 
     /// The lane's own rows (`Decoder::Lane`): a string-case index over the constants the record names, and an
     /// `await` the lane's frame suspends.
     #[inline(always)]
-    pub(crate) fn decode_lane(instruction: WideInstruction) -> Option<Self> {
+    pub fn decode_lane(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
                 source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
@@ -750,7 +751,7 @@ impl Operation<u64, ()> {
     }
 
     /// Whether `instruction` does nothing: a marker that defines and writes nothing.
-    pub(crate) fn is_nop(instruction: WideInstruction) -> bool {
+    pub fn is_nop(instruction: WideInstruction) -> bool {
         instruction.op() == Op::Nop
     }
 
@@ -768,7 +769,7 @@ impl Operation<u64, ()> {
 
     /// Whether `instruction` is a call through its callee register (`Call`, including the eval
     /// forms that decode to no operation), which an inlined unit plans and admits as a call.
-    pub(crate) fn is_plain_call(instruction: WideInstruction) -> bool {
+    pub fn is_plain_call(instruction: WideInstruction) -> bool {
         instruction.op() == Op::Call
     }
 
@@ -784,7 +785,7 @@ impl Operation<u64, ()> {
     }
 
     /// Whether `instruction` throws: its decoded operation is `Throw`, which leaves at the miss edge.
-    pub(crate) fn is_throw(instruction: WideInstruction) -> bool {
+    pub fn is_throw(instruction: WideInstruction) -> bool {
         matches!(Self::of(instruction), Some(Self::Throw { .. }))
     }
 
@@ -801,20 +802,20 @@ impl Operation<u64, ()> {
     }
 
     /// Whether `instruction` is a named field read (`GetField`), whatever its result flags.
-    pub(crate) fn is_field_read(instruction: WideInstruction) -> bool {
+    pub fn is_field_read(instruction: WideInstruction) -> bool {
         instruction.op() == Op::GetField
     }
 
     /// Whether `instruction` is a named field store (`SetField`, `SetThisField`, or a store of a
     /// field of `this`), whatever its operand.
-    pub(crate) fn is_field_store(instruction: WideInstruction) -> bool {
+    pub fn is_field_store(instruction: WideInstruction) -> bool {
         instruction.op().is_field_store()
     }
 
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`), as the
     /// program's field sites name them: a named read's lookup (its site, or the sites of a
     /// nested lookup), and a field store's cache site.
-    pub(crate) fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
+    pub fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
         if Self::is_field_read(instruction) {
             return match instruction.field_lookup() {
                 Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],

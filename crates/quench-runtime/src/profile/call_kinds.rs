@@ -2,11 +2,11 @@
 
 /// How the general loop reached a call (the report's `source_names`).
 #[derive(Clone, Copy)]
-pub(crate) enum CallSource { Dynamic, Known, Method, ThisMethod, Construct }
+pub enum CallSource { Dynamic, Known, Method, ThisMethod, Construct }
 
 /// A call in tail position, by the kind of call.
 #[derive(Clone, Copy)]
-pub(crate) enum TerminalCall { Function, Method, ThisMethod }
+pub enum TerminalCall { Function, Method, ThisMethod }
 
 #[cfg(feature = "profile-aggregate")]
 impl CallSource {

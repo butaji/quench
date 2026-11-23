@@ -732,7 +732,8 @@ pub fn release_after_entry_compile() {
     release_read_only_code_and_data();
     release_main_text_at_phase_boundary();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst);
+    let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst)
+        || quench_runtime::memory_mix_has("code");
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     CODE_STAYS_RESIDENT.store(!memory_first, std::sync::atomic::Ordering::Relaxed);
 }

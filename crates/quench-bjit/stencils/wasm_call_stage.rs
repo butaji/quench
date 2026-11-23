@@ -64,6 +64,8 @@ macro_rules! call_stage {
             type Word = u64;
         }
 
+        crate::projection!($stage => StencilStage);
+
         impl MachineStage for $stage {
             type Exit = Leave;
 

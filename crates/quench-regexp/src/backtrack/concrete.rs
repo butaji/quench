@@ -12,6 +12,8 @@ pub(in crate::backtrack) struct Concrete<'a, T: Text + ?Sized> {
     pub(in crate::backtrack) stack: &'a mut Vec<Frame>,
 }
 
+quench_stack::projection!([T: Text + ?Sized] Concrete<'_, T> => Concrete);
+
 impl<T: Text + ?Sized> MatchStage for Concrete<'_, T> {
     type Pos = usize;
     type Unit = u32;

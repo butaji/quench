@@ -1,4 +1,4 @@
-# (stage trait, tier) pairs a tier does not implement yet (`stage_coverage_tests`): each is semantics
+# (stage trait, tier) pairs a tier does not implement yet (`tests/staged_guards/stage_coverage.rs`): each is semantics
 # that tier cannot derive from the staged definition. Shrink-only.
 # b-jit has no Wasm stage: a function holding a Wasm opcode is no b-jit body (`Traits::WASM_OPCODE`, `base_region::steps::covers`).
 MachineStage StencilStage

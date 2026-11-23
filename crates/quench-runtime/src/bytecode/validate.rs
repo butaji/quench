@@ -517,7 +517,7 @@ fn object_site_instruction_valid(
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
     /// `validate`, unless the program is proven valid (`ValidationProof`).
-    pub(crate) fn validate_unless_proven(&self) -> Result<(), String> {
+    pub fn validate_unless_proven(&self) -> Result<(), String> {
         if self.validated.holds() {
             return Ok(());
         }

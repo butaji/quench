@@ -7,7 +7,7 @@ pub(super) type EnumerableKeys<T> = smallvec::SmallVec<[T; INLINE_ENUMERABLE_KEY
 const INLINE_ENUMERABLE_KEYS: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum EnumerableOwnPropertyKind {
+pub enum EnumerableOwnPropertyKind {
     Key,
     Value,
     KeyValue,
@@ -15,7 +15,7 @@ pub(super) enum EnumerableOwnPropertyKind {
 
 impl EnumerableOwnPropertyKind {
     /// What `Object.keys`, `Object.values` or `Object.entries` lists.
-    pub(super) fn of(native: Native) -> Option<Self> {
+    pub fn of(native: Native) -> Option<Self> {
         match native {
             Native::ObjectKeys => Some(Self::Key),
             Native::ObjectValues => Some(Self::Value),
@@ -30,7 +30,7 @@ impl Vm {
     /// memo first (`plain_key_list`), `Object.values` and `Object.entries` the shape's data items
     /// (`shape_enumerable_data_items`). No guest code runs and nothing raises. `None` leaves
     /// Proxies, accessors and every other object to the general path.
-    pub(super) fn plain_enumerable_own_properties(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
+    pub fn plain_enumerable_own_properties(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
         if kind == EnumerableOwnPropertyKind::Key {
             return self.plain_key_list(object);
         }
@@ -92,6 +92,12 @@ impl Vm {
     /// every object `shape_enumerable_slots` declines (Proxy, array, typed array, String
     /// wrapper, module namespace, side descriptors, dictionary shapes), which keep the general path.
     pub(crate) fn own_enumerable_keys_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Atom]>> {
+        // A memo entry was made from an object its shape answers for; a Proxy, array or other
+        // exotic object can carry the same shape (a Proxy's record keeps the empty root shape),
+        // so the test comes before the lookup, not only before the fill.
+        if !self.shape_lists_enumerable_keys(object) {
+            return None;
+        }
         let data = self.object_data(object)?;
         let shape = data.shape();
         if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
@@ -116,6 +122,9 @@ impl Vm {
     /// until the next collection, and a caller that holds one across a collection roots it as
     /// it would any other value. `None` wherever `own_enumerable_keys_cached` is `None`.
     pub(crate) fn own_enumerable_key_values_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Value]>> {
+        if !self.shape_lists_enumerable_keys(object) {
+            return None;
+        }
         let data = self.object_data(object)?;
         let shape = data.shape();
         if data.has_side_descriptors() || self.shape_is_dictionary(shape) {

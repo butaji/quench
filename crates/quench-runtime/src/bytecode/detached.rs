@@ -8,7 +8,7 @@
 use super::*;
 
 /// A program copy whose parts no other value counts: `Send`, though `ResidualProgram` is not.
-pub(crate) struct DetachedProgram(ResidualProgram);
+pub struct DetachedProgram(ResidualProgram);
 
 // SAFETY: `ResidualProgram::detached` builds it of owned parts only: its `Rc` fields are
 // `None`, its constants, atoms and functions are deep copies whose counted parts (string
@@ -48,7 +48,7 @@ impl Function {
 impl ResidualProgram {
     /// A copy of the program for a lowering that reads the functions `functions` (and any
     /// header): see `DetachedProgram`.
-    pub(crate) fn detached(&self, functions: &[u32]) -> DetachedProgram {
+    pub fn detached(&self, functions: &[u32]) -> DetachedProgram {
         let names: Vec<std::rc::Rc<str>> = self.atoms.iter().map(std::rc::Rc::from).collect();
         let slots: Vec<FunctionSlot> = (0..self.functions.len()).map(|index| {
             let slot = &self.functions[index];

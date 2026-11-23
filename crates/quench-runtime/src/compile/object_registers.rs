@@ -171,7 +171,7 @@ fn replacement(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
     use crate::bytecode::Op;
 
     fn check(source: &str, promoted: bool) {

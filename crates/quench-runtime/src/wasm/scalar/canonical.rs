@@ -13,7 +13,7 @@ use std::cell::RefCell;
 /// range are no type: they say what a table element holds instead of a function of a module.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(transparent)]
-pub(crate) struct CanonicalSignature(u32);
+pub struct CanonicalSignature(u32);
 
 impl CanonicalSignature {
     /// What an element that is the null reference holds.
@@ -26,7 +26,7 @@ impl CanonicalSignature {
 
     /// The id as the word a staged rule compares.
     #[inline(always)]
-    pub(crate) const fn word(self) -> u64 {
+    pub const fn word(self) -> u64 {
         self.0 as u64
     }
 }

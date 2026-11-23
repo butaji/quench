@@ -1,7 +1,7 @@
 /// The guarded JavaScript denotation available to the shared compiled region
 /// analyzer. This describes an instruction operation, never a source pattern.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsDenotation {
+pub enum JsDenotation {
     Unsupported,
     Noop,
     Jump,

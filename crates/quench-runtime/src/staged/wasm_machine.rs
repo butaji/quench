@@ -39,9 +39,9 @@ pub(crate) struct ConcretePair<'a> {
 
 /// A stage over an instance: the native slots of its globals by environment slot and its
 /// linear memory.
-pub(crate) struct ConcreteInstance<'a> {
-    pub(crate) globals: &'a mut [u64],
-    pub(crate) memory: &'a mut [u8],
+pub struct ConcreteInstance<'a> {
+    pub globals: &'a mut [u64],
+    pub memory: &'a mut [u8],
 }
 
 /// A stage over a table of function references and the row of each (`TableTarget`); `related` says
@@ -52,7 +52,7 @@ pub(crate) struct ConcreteTable<'a> {
     pub(crate) related: &'a mut dyn FnMut(Value) -> bool,
 }
 
-scalar_stage!(
+scalar_stage!(Concrete =>
     ConcreteInstance<'_>,
     ConcreteTable<'_>,
     ConcreteBytes<'_>,
@@ -228,7 +228,7 @@ readable_memory!(ConcreteBytes<'_>, ConcreteMemory<'_>, ConcreteInstance<'_>);
 writable_memory!(ConcreteMemory<'_>, ConcreteInstance<'_>);
 
 #[cfg(not(stencil_build))]
-scalar_stage!(ConcretePair<'_>);
+scalar_stage!(Concrete => ConcretePair<'_>);
 
 #[cfg(not(stencil_build))]
 impl WasmMemoryPair for ConcretePair<'_> {

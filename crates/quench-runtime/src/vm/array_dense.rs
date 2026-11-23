@@ -21,7 +21,7 @@ impl Vm {
     /// ArrayCreate, bounds that are undefined or immediate numbers (their ToNumber runs no
     /// guest code), and a range of present own data elements. The result is one new array
     /// of those values; `None` leaves every other call to `array_slice_native`.
-    pub(super) fn plain_array_slice(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_array_slice(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let length = self.own_array_length(receiver)?;
         let (start, end) = (slice_bound(args.first().copied(), 0, length)?, slice_bound(args.get(1).copied(), length, length)?);
         if !self.array_species_is_array_create(receiver) {
@@ -66,7 +66,7 @@ impl Vm {
     /// `@@isConcatSpreadable` reaches whose elements are present own data elements, spread.
     /// The result is made at once from the values, as `slice`'s is; `None` leaves the
     /// algorithm to run step by step.
-    pub(super) fn array_concat_dense(&mut self, source: Value, args: &[Value]) -> Option<Value> {
+    pub fn array_concat_dense(&mut self, source: Value, args: &[Value]) -> Option<Value> {
         if !self.array_species_is_array_create(source) {
             return None;
         }
@@ -223,7 +223,7 @@ impl Vm {
     }
 
     /// Whether `value` is this realm's `Array`, the constructor ArrayCreate stands for.
-    pub(super) fn realm_array_constructor(&self, value: Value) -> bool {
+    pub fn realm_array_constructor(&self, value: Value) -> bool {
         matches!(
             self.heap.function(value),
             Some(record @ FunctionRecord { kind: FunctionKind::Native(Native::Array), .. }) if self.record_realm(record) == self.realm.globals

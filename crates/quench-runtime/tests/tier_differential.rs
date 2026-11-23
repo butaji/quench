@@ -230,3 +230,6 @@ fn found_programs_end_as_the_interpreter_does() {
         assert_eq!(run(source, ExecutionMode::Interpreted).0, run(source, ExecutionMode::Compiled).0, "{source}");
     }
 }
+
+// Links the runtime layer crates (quench-layers).
+extern crate quench_layers;

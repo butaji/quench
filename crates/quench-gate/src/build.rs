@@ -48,7 +48,8 @@ pub fn run(config: &Config) -> Verdict {
         plain.args(["--bin", name]);
     });
     build(plain)?;
-    build(aot_build(config, &[NODE], &[NODE]))?;
-    build(aot_build(config, &[TEST262_PACKAGE, WASM_PACKAGE], &[TEST262_SUITE, WASM_SUITE]))?;
+    // One AOT build for all three packages: built apart, each resolved its own feature set for
+    // quench-runtime, so the runtime compiled twice more (about 25 min each at --jobs 1).
+    build(aot_build(config, &[NODE, TEST262_PACKAGE, WASM_PACKAGE], &[NODE, TEST262_SUITE, WASM_SUITE]))?;
     Ok(format!("{} binaries, and the AOT builds", BINARIES.len()))
 }

@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 mod append_buffer;
 mod short_ascii;
-pub(crate) mod native_string;
+pub mod native_string;
 mod concat_all;
 mod parts;
 mod payload;
@@ -157,7 +157,7 @@ pub(crate) fn take_materialized_text() -> MaterializedText {
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
 /// unit is ASCII, UTF-16 otherwise. `host` is the explicit lossy Rust-text view used at
 /// host/API boundaries; an ASCII string is its own host text.
-pub(crate) struct JsString {
+pub struct JsString {
     repr: Repr,
 }
 
@@ -178,7 +178,7 @@ const _: () = assert!(size_of::<JsString>() == size_of::<FlatUnits>());
 /// longer ASCII text is `Ascii`, or an `AsciiSlice` of another string's `Ascii` storage.
 #[derive(Clone)]
 #[repr(u8)]
-pub(crate) enum FlatUnits {
+pub enum FlatUnits {
     /// ASCII text held in the string's own allocation: most property names and tokens fit,
     /// and need no second allocation.
     Short(ShortAscii) = native_string::TAG_SHORT,
@@ -319,7 +319,7 @@ impl FlatUnits {
         }
     }
 
-    #[inline(always)] pub(crate) fn view(&self) -> Units<'_> {
+    #[inline(always)] pub fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
             Self::Ascii(_) | Self::AsciiSlice(_) => {
@@ -451,7 +451,7 @@ impl FlatUnits {
 
 /// A borrowed run of a string's code units.
 #[derive(Clone, Copy)]
-pub(crate) enum Units<'a> {
+pub enum Units<'a> {
     /// ASCII units: bytes that are UTF-8 as they stand.
     Ascii(&'a [u8]),
     /// Latin-1 units: one byte per unit, which is the unit's value, not UTF-8.
@@ -460,7 +460,7 @@ pub(crate) enum Units<'a> {
 }
 
 impl<'a> Units<'a> {
-    pub(crate) fn len(self) -> usize {
+    pub fn len(self) -> usize {
         match self {
             Self::Ascii(bytes) | Self::Latin1(bytes) => bytes.len(),
             Self::Wide(units) => units.len(),
@@ -486,7 +486,7 @@ impl<'a> Units<'a> {
         }
     }
 
-    pub(crate) fn iter(self) -> UnitsIter<'a> {
+    pub fn iter(self) -> UnitsIter<'a> {
         match self {
             Self::Ascii(bytes) => UnitsIter::Ascii(bytes.iter()),
             Self::Latin1(bytes) => UnitsIter::Latin1(bytes.iter()),
@@ -503,7 +503,7 @@ impl<'a> Units<'a> {
         }
     }
 
-    pub(crate) fn get_range(self, range: Range<usize>) -> Option<Self> {
+    pub fn get_range(self, range: Range<usize>) -> Option<Self> {
         match self {
             Self::Ascii(bytes) => bytes.get(range).map(Self::Ascii),
             Self::Latin1(bytes) => bytes.get(range).map(Self::Latin1),
@@ -624,7 +624,7 @@ impl std::fmt::Debug for Units<'_> {
 }
 
 #[derive(Clone)]
-pub(crate) enum UnitsIter<'a> {
+pub enum UnitsIter<'a> {
     Ascii(std::slice::Iter<'a, u8>),
     Latin1(std::slice::Iter<'a, u8>),
     Wide(std::slice::Iter<'a, u16>),
@@ -927,7 +927,7 @@ const FLAT_PREFIX_MAX_UNITS: usize = 2048;
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
 /// V8's public String::kMaxLength on the supported 64-bit host is this limit;
 /// Node exposes it as buffer.constants.MAX_STRING_LENGTH.
-pub(crate) const MAX_STRING_UNITS: usize = 536_870_888;
+pub const MAX_STRING_UNITS: usize = 536_870_888;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StringBuildError {
@@ -1004,12 +1004,12 @@ impl JsString {
         }
     }
 
-    pub(crate) fn from_units(units: &[u16]) -> Self {
+    pub fn from_units(units: &[u16]) -> Self {
         Self::from_flat(flat_units(units))
     }
 
     /// The string of `units`, sharing their storage when it is already canonical.
-    pub(crate) fn from_unit_run(units: Units<'_>) -> Self {
+    pub fn from_unit_run(units: Units<'_>) -> Self {
         match units {
             // SAFETY: `Units::Ascii` only views an ASCII `FlatUnits`, and every run of ASCII
             // bytes is UTF-8.
@@ -1045,14 +1045,14 @@ impl JsString {
     }
 
     /// Number::toString(10) of `value`, written on the stack: text this short is held inline.
-    pub(crate) fn from_number(value: f64) -> Self {
+    pub fn from_number(value: f64) -> Self {
         let mut text = crate::number_to_string::Short::new();
         crate::number_to_string::write(value, &mut text);
         // SAFETY: `write` appends ASCII only.
         Self::from_flat(FlatUnits::ascii(unsafe { std::str::from_utf8_unchecked(&text) }))
     }
 
-    pub(crate) fn from_str(text: &str) -> Self {
+    pub fn from_str(text: &str) -> Self {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
         }
@@ -1102,7 +1102,7 @@ impl JsString {
     }
 
     #[inline]
-    pub(crate) fn units(&self) -> Units<'_> {
+    pub fn units(&self) -> Units<'_> {
         self.flat().view()
     }
 
@@ -1193,7 +1193,7 @@ impl JsString {
 
     /// Whether the string holds the flat form a string record reads in place (`native_string`): its
     /// units held by the record, short or ASCII or wide, rather than a rope, a slice or parts.
-    pub(crate) fn holds_record_form(&self) -> bool {
+    pub fn holds_record_form(&self) -> bool {
         matches!(&self.repr, Repr::Flat(FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::Wide(_)))
     }
 
@@ -1205,7 +1205,7 @@ impl JsString {
     /// The flat units when the string already has them: never flattens a rope, so a
     /// reader needs no call on its way.
     #[inline]
-    pub(crate) fn existing_flat(&self) -> Option<&FlatUnits> {
+    pub fn existing_flat(&self) -> Option<&FlatUnits> {
         match &self.repr {
             Repr::Flat(units) => Some(units),
             Repr::Shared(inner) => inner.flat.get(),
@@ -1306,7 +1306,7 @@ impl JsString {
     /// the copy lives only as long as the returned string. An operation that reads a rope
     /// many times through helpers that take a string uses it in place of the rope, so the
     /// rope does not keep a flat copy of its text for its own life.
-    pub(crate) fn unkept_flat(&self) -> JsString {
+    pub fn unkept_flat(&self) -> JsString {
         match &self.repr {
             Repr::Flat(_) => self.clone(),
             Repr::Shared(_) => Self::from_flat(self.flat_unkept().into_owned()),
@@ -1381,7 +1381,7 @@ impl JsString {
     }
 
     /// The string as host text: its own units when ASCII, lossy UTF-8 made once otherwise.
-    pub(crate) fn host_string(&self) -> &str {
+    pub fn host_string(&self) -> &str {
         if let Some(host) = self.unflattened_host() {
             return host;
         }
@@ -1414,7 +1414,7 @@ impl JsString {
     }
 
     #[inline]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match &self.repr {
             Repr::Flat(units) => units.len(),
             Repr::Shared(inner) => inner.length as usize,

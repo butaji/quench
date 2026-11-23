@@ -9,7 +9,7 @@
 // Written by `frozen::frozen_fields` for a lowering that folds whole-program field values; a
 // build whose lowering folds them another way keeps the map's shape but reads none of it.
 #[allow(dead_code)]
-pub(crate) struct DenseMap<V> {
+pub struct DenseMap<V> {
     slots: Vec<Option<V>>,
     len: usize,
 }
@@ -25,7 +25,7 @@ impl<V> Default for DenseMap<V> {
 
 #[allow(dead_code)]
 impl<V> DenseMap<V> {
-    pub(crate) fn get(&self, id: &u32) -> Option<&V> {
+    pub fn get(&self, id: &u32) -> Option<&V> {
         self.slots.get(*id as usize)?.as_ref()
     }
 }
@@ -43,7 +43,7 @@ impl<V> DenseMap<V> {
         &mut self.slots[index]
     }
 
-    pub(crate) fn insert(&mut self, id: u32, value: V) {
+    pub fn insert(&mut self, id: u32, value: V) {
         let absent = self.slot(id).replace(value).is_none();
         self.len += usize::from(absent);
     }

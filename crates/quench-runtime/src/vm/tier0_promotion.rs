@@ -11,7 +11,7 @@ impl Vm {
     #[inline(always)]
     pub(super) fn promote_tier0_if_due(&self, code: &ResidualProgram, id: u32) {
         // Under `tier0-always` an unlowered function never lowers: the differential's run.
-        if code.tier0_due(id as usize, super::compiled::tier_policy::TIER0_RUNS) && !crate::trace::Dev::Tier0Always.on() {
+        if code.tier0_due(id as usize, crate::vm::tier_policy::TIER0_RUNS) && !crate::trace::Dev::Tier0Always.on() {
             self.promote_tier0_unless_running(code, id);
         }
     }
@@ -33,7 +33,7 @@ impl Vm {
     /// Beside a window activation (`Vm::runs_windows_in_lane`) a call that waits boxes the window's
     /// record as a frame, which costs more than its view: the callee lowers where nothing keeps
     /// it unlowered and derives at once, its deferred runs skipped.
-    pub(super) fn call_may_derive_in_lane(&self, program: ProgramId, function: u32) -> bool {
+    pub fn call_may_derive_in_lane(&self, program: ProgramId, function: u32) -> bool {
         let now = self.runs_windows_in_lane();
         let blocked = self.programs.residual(program).is_some_and(|code| {
             if now {
@@ -41,7 +41,7 @@ impl Vm {
             } else {
                 self.promote_tier0_if_due(code, function);
             }
-            code.runs_tier0(function as usize) && code.tier0_blocked(function as usize, super::compiled::tier_policy::TIER0_BLOCKED_RUNS)
+            code.runs_tier0(function as usize) && code.tier0_blocked(function as usize, crate::vm::tier_policy::TIER0_BLOCKED_RUNS)
         });
         self.programs.call_may_derive_in_lane(program, function, blocked, now)
     }

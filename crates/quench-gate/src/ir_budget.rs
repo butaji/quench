@@ -3,7 +3,7 @@
 //! profiling marks (`process.__irMark`, `QUENCH_DEV=ir-mark`, `--dump-before=quench_ir_mark`), so
 //! its instructions per loop iteration are exact: (Ir(2n) - Ir(n)) / n, with start-up, warm-up and
 //! per-call costs cancelled. `crates/quench-tier-corpus/ir_budget.txt` holds, per op, the C
-//! twin's count (`ops.c`), the budget (3x C plus one dispatch allowance) and the ceiling: the
+//! twin's count (`ops.c`), the budget (C parity: max(C + 1, 1.25x C)) and the ceiling: the
 //! measured count that may not grow. A drop lowers the ceiling; a count at or under its budget
 //! makes the budget the ceiling. Ops over budget are the debt the report ranks.
 //!
@@ -12,14 +12,18 @@
 //! split in `ir_budget_handlers.txt`; an op that grows is reported with the handlers that grew
 //! against that record, and the report ranks handlers by their instructions summed over all ops.
 //!
-//! The default run (`QUENCH_IR_BUDGET_MODE=tiers`) measures every op under `--no-jit`, `--b-jit`
-//! and `--u-jit`, and fails the step on either fault:
-//! - tier order: each tier costs no more than the tier below it, no-jit >= b-jit >= u-jit, beyond
-//!   the same-count tolerance. A higher tier that costs more is an inversion.
-//! - the design target: u-jit within its budget, 3x C + 6, on every op.
-//! The interpreter's budget is checked too. Each inversion is held by `tier_inversions.txt`, each
-//! u-jit count past its budget by `ujit_over_budget.txt`, and each interpreter count past its
-//! budget by `interpreter_over_budget.txt`. These are shrink-only debt lists: an unlisted fault
+//! The default run (`QUENCH_IR_BUDGET_MODE=tiers`) measures every op in the three modes Quench
+//! ships (user, 2026-11-22): `--no-jit` (interpreter only), `--b-jit` (b-jit only) and the default
+//! (no flag: interpreter, b-jit and u-jit as tiers), and fails the step on either fault:
+//! - mode order: no-jit >= b-jit >= default, beyond the same-count tolerance. A mode that costs
+//!   more than the one below it is an inversion.
+//! - the design target: the default mode within its budget, C parity: max(C + 1, 1.25x C), and
+//!   no costlier than Node JIT, on every op. The default mode is the headline: a forced `--u-jit`
+//!   run is not what users run, so it never decides the gate (TOD-2068 flaw 9).
+//! The interpreter's budget is checked too. Each b-jit inversion is held by `tier_inversions.txt`,
+//! each default inversion by `tier_inversions_default.txt`, each default count past its budget by
+//! `default_over_budget.txt`, past Node JIT by `default_over_node_jit.txt`, and each interpreter
+//! count past its budget by `interpreter_over_budget.txt`. These are shrink-only debt lists: an unlisted fault
 //! fails the step, and a listed entry that no longer faults fails it too ("remove it").
 //! `QUENCH_DEBT_WRITE=1` on a full run only shrinks a list: entries that no longer fault are
 //! removed, and an empty (header-only) list is seeded with the faults measured now. A new fault
@@ -27,14 +31,14 @@
 //!
 //! The C floor (`ir_floor`, `crates/quench-tier-corpus/ir_floor.txt`): C-shaped code runs as C.
 //! The interpreter may add to the C twin only a dispatch and decode allowance per record it
-//! dispatches, and the records per op only shrink; a full run also ratchets the b-jit and u-jit
-//! ceilings toward their budgets, 3x C + 6 (`QUENCH_IR_BUDGET_TIERS=off` skips the ceilings).
+//! dispatches, and the records per op only shrink; a full run also ratchets the b-jit and default
+//! ceilings toward their budgets, C parity: max(C + 1, 1.25x C) (`QUENCH_IR_BUDGET_TIERS=off` skips the ceilings).
 //! Every row above its floor names the thread that owns its largest handler.
 //!
 //! Alone: `quench-gate --only ir-budget`. `QUENCH_IR_BUDGET_OPS=a,b` measures only those ops.
 //! `QUENCH_IR_BUDGET_MODE=no-jit` runs the interpreter alone (its ceilings, floor and debt, with
-//! no tier verdict); `b-jit` or `u-jit` measures one JIT tier against the same budgets without
-//! touching the ceilings, which hold for the interpreter.
+//! no tier verdict); `b-jit`, `default` or `u-jit` (a diagnostic only) measures one mode against the
+//! same budgets without touching the ceilings, which hold for the interpreter.
 
 use std::{collections::{BTreeMap, BTreeSet}, env, fs, path::Path};
 
@@ -42,11 +46,21 @@ use crate::{build::NODE, config::Config, ir_floor, op_budget, process, step::Ver
 
 const BUDGETS: &str = "crates/quench-tier-corpus/ir_budget.txt";
 const HANDLERS: &str = "crates/quench-tier-corpus/ir_budget_handlers.txt";
-/// The shrink-only debt lists: each op whose tier order breaks (`op b-jit` or `op u-jit`), each
-/// u-jit count past its budget, each interpreter count past its budget.
+/// The shrink-only debt lists: each op whose b-jit count is past no-jit's (`op b-jit`), each op
+/// whose default count is past b-jit's (`op default`), each default count past its budget, each
+/// interpreter count past its budget.
 const TIER_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions.txt";
-const UJIT_OVER: &str = "crates/quench-tier-corpus/ujit_over_budget.txt";
+const DEFAULT_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions_default.txt";
+const DEFAULT_OVER: &str = "crates/quench-tier-corpus/default_over_budget.txt";
 const INTERPRETER_OVER: &str = "crates/quench-tier-corpus/interpreter_over_budget.txt";
+/// Node's optimizing JIT (TurboFan, node 22, after warm-up) per op, in the same Ir per iteration:
+/// the default mode must cost no more (user goal 2026-11-21: beat Node and Bun JIT, as a projection of
+/// the interpreter). `op count` per line.
+const NODE_JIT: &str = "crates/quench-tier-corpus/node_jit.txt";
+/// The shrink-only debt list of ops whose default-mode count is past Node JIT's.
+const DEFAULT_OVER_NODE: &str = "crates/quench-tier-corpus/default_over_node_jit.txt";
+/// The shipped mode: no tier flag, every tier on.
+const DEFAULT: &str = "default";
 /// `1` rewrites the debt lists from the measured values instead of failing on them (a full run).
 const DEBT_WRITE: &str = "QUENCH_DEBT_WRITE";
 /// A handler share under this many instructions per iteration is left out of the split.
@@ -231,7 +245,7 @@ fn measure(config: &Config, mode: &str, ops: &[String]) -> Result<Vec<Measured>,
         .arg(format!("--callgrind-out-file={}", scratch.join("cg.out").display()))
         // JIT tiers patch the code they emitted (call links, stubs): valgrind must see each write.
         .args((mode != INTERPRETER).then_some("--smc-check=all"))
-        .arg(host).arg(mode).args(COLLECT.then_some("--expose-gc")).arg(RUNNER).arg(ITERATIONS.to_string()).args(ops)
+        .arg(host).args((mode != DEFAULT).then_some(mode)).args(COLLECT.then_some("--expose-gc")).arg(RUNNER).arg(ITERATIONS.to_string()).args(ops)
         .env("QUENCH_DEV", if mode == INTERPRETER { "ir-mark" } else { "ir-mark,sync-compile" })
         .env("IRBUDGET_WARMUP", if mode == INTERPRETER { "3" } else { "12" })
         .env("QUENCH_COMPILE_CACHE", "").env("QUENCH_STARTUP_SNAPSHOT", "off").env("XDG_CACHE_HOME", &scratch);
@@ -415,7 +429,7 @@ fn hold_debt(config: &Config, path: &str, faults: &BTreeSet<String>, measured: &
     Ok(debt.failures)
 }
 
-/// Each op's counts under the three tiers, `[no-jit, b-jit, u-jit]`, from the three runs. An op
+/// Each op's counts under the three tiers, `[no-jit, b-jit, default]`, from the three runs. An op
 /// a run did not measure is NaN in that tier.
 fn tier_counts(runs: [&[Measured]; 3]) -> BTreeMap<String, [f64; 3]> {
     let mut counts: BTreeMap<String, [f64; 3]> = BTreeMap::new();
@@ -428,21 +442,22 @@ fn tier_counts(runs: [&[Measured]; 3]) -> BTreeMap<String, [f64; 3]> {
 }
 
 /// The faults one op's counts show: a tier that costs more than the tier below it, beyond the
-/// same-count tolerance, and u-jit past its budget.
+/// same-count tolerance, and the default mode past its budget or Node JIT.
 #[derive(Debug, Default, PartialEq)]
 struct TierFault {
     b_jit_over_no_jit: bool,
-    u_jit_over_b_jit: bool,
-    u_jit_over_budget: bool,
+    default_over_b_jit: bool,
+    default_over_budget: bool,
+    default_over_node_jit: bool,
 }
 
 impl TierFault {
     fn inverted(&self) -> bool {
-        self.b_jit_over_no_jit || self.u_jit_over_b_jit
+        self.b_jit_over_no_jit || self.default_over_b_jit
     }
 
     fn labels(&self) -> Vec<&'static str> {
-        [(self.b_jit_over_no_jit, "b-jit>no-jit"), (self.u_jit_over_b_jit, "u-jit>b-jit"), (self.u_jit_over_budget, "u-jit>budget")]
+        [(self.b_jit_over_no_jit, "b-jit>no-jit"), (self.default_over_b_jit, "default>b-jit"), (self.default_over_budget, "default>budget"), (self.default_over_node_jit, "default>node-jit")]
             .into_iter()
             .filter(|(on, _)| *on)
             .map(|(_, label)| label)
@@ -450,48 +465,70 @@ impl TierFault {
     }
 }
 
-/// One op's fault, from its counts `[no-jit, b-jit, u-jit]` and its budget (3x C + 6) if it has one.
+/// One op's fault, from its counts `[no-jit, b-jit, default]` and its budget (C parity: max(C + 1, 1.25x C)) if it has one.
+#[cfg(test)]
 fn tier_fault([interpreter, baseline, optimized]: [f64; 3], budget: Option<f64>) -> TierFault {
+    tier_fault_against([interpreter, baseline, optimized], budget, None)
+}
+
+/// `tier_fault`, with Node JIT's count for the op (`node_jit.txt`) where it has one.
+fn tier_fault_against([interpreter, baseline, optimized]: [f64; 3], budget: Option<f64>, node_jit: Option<f64>) -> TierFault {
     TierFault {
         b_jit_over_no_jit: baseline > interpreter + tolerance(interpreter),
-        u_jit_over_b_jit: optimized > baseline + tolerance(baseline),
-        // The design target: u-jit within the op's budget.
-        u_jit_over_budget: budget.is_some_and(|budget| optimized > budget + SAME_COUNT),
+        default_over_b_jit: optimized > baseline + tolerance(baseline),
+        // The design target: the default mode within the op's budget.
+        default_over_budget: budget.is_some_and(|budget| optimized > budget + SAME_COUNT),
+        // The competitive bar: the default mode no costlier than Node's optimizing JIT on the op.
+        default_over_node_jit: node_jit.is_some_and(|node| optimized > node + tolerance(node)),
     }
 }
 
-/// The tier verdict over the three runs (`[no-jit, b-jit, u-jit]`): the faults its debt lists do
-/// not hold, and the report, each op's counts with the faults it breaks, worst u-jit-to-C first.
+/// The tier verdict over the three runs (`[no-jit, b-jit, default]`): the faults its debt lists do
+/// not hold, and the report, each op's counts with the faults it breaks, worst default-to-C first.
 fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>, runs: [&[Measured]; 3]) -> Result<(Vec<String>, String), String> {
     let counts = tier_counts(runs);
-    let (mut broken, mut inversions, mut over_budget) = (0, BTreeSet::new(), BTreeSet::new());
+    let node_jit = node_jit_counts(config);
+    let mut over_node = BTreeSet::new();
+    let (mut broken, mut inversions, mut default_inversions, mut over_budget) = (0, BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let mut lines: Vec<(f64, String)> = Vec::new();
     for (name, &[interpreter, baseline, optimized]) in &counts {
         let c = rows.get(name).map_or(f64::NAN, |row| row.c);
-        let fault = tier_fault([interpreter, baseline, optimized], rows.get(name).map(|row| row.budget));
+        let fault = tier_fault_against([interpreter, baseline, optimized], rows.get(name).map(|row| row.budget), node_jit.get(name).copied());
+        if fault.default_over_node_jit { over_node.insert(name.clone()); }
         if fault.b_jit_over_no_jit { inversions.insert(format!("{name} b-jit")); }
-        if fault.u_jit_over_b_jit { inversions.insert(format!("{name} u-jit")); }
-        if fault.u_jit_over_budget { over_budget.insert(name.clone()); }
+        if fault.default_over_b_jit { default_inversions.insert(format!("{name} default")); }
+        if fault.default_over_budget { over_budget.insert(name.clone()); }
         if fault.inverted() { broken += 1; }
         let labels = fault.labels().join(" ");
         lines.push((optimized / c.max(1.0), format!("{name:<16}{interpreter:>10.1}{baseline:>10.1}{optimized:>10.1}{c:>7.1}{:>7.1}x  {labels}", optimized / c.max(1.0))));
     }
     lines.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let head = format!("{:<16}{:>10}{:>10}{:>10}{:>7}{:>8}  {}", "op", "no-jit", "b-jit", "u-jit", "C", "u/C", "breaks");
+    let head = format!("{:<16}{:>10}{:>10}{:>10}{:>7}{:>8}  {}", "op", "no-jit", "b-jit", "default", "C", "d/C", "breaks");
     let table = std::iter::once(head).chain(lines.into_iter().map(|(_, line)| line)).collect::<Vec<_>>().join("\n");
     let measured: BTreeSet<String> = counts.keys().cloned().collect();
     let write = debt_write(ops);
     let mut failures = hold_debt(config, TIER_INVERSIONS, &inversions, &measured, write)?;
-    failures.extend(hold_debt(config, UJIT_OVER, &over_budget, &measured, write)?);
-    let report = format!("tiers: {broken} of {} ops out of order, {} with u-jit past its budget (3x C + 6)\n{table}", counts.len(), over_budget.len());
+    failures.extend(hold_debt(config, DEFAULT_INVERSIONS, &default_inversions, &measured, write)?);
+    failures.extend(hold_debt(config, DEFAULT_OVER, &over_budget, &measured, write)?);
+    failures.extend(hold_debt(config, DEFAULT_OVER_NODE, &over_node, &measured, write)?);
+    let report = format!("tiers: {broken} of {} ops out of order, {} with default past its budget (C parity: max(C + 1, 1.25x C)), {} with default past Node JIT\n{table}", counts.len(), over_budget.len(), over_node.len());
     Ok((failures, report))
+}
+
+/// Node JIT's count per op (`NODE_JIT`); empty where the file is missing.
+fn node_jit_counts(config: &Config) -> BTreeMap<String, f64> {
+    let text = fs::read_to_string(config.root.join(NODE_JIT)).unwrap_or_default();
+    text.lines().filter(|line| !line.starts_with('#')).filter_map(|line| {
+        let mut fields = line.split_whitespace();
+        Some((fields.next()?.to_owned(), fields.next()?.parse().ok()?))
+    }).collect()
 }
 
 /// Whether a run of every op ratchets the JIT ceilings too (on unless `QUENCH_IR_BUDGET_TIERS=off`).
 const TIERS_VARIABLE: &str = "QUENCH_IR_BUDGET_TIERS";
 
 /// The C floor (`ir_floor`): the interpreter's waste above C + dispatch and its records ratchet.
-/// With the JIT runs (`jit`: b-jit, u-jit) on a run of every op, their ceilings ratchet too.
+/// With the JIT runs (`jit`: b-jit, default) on a run of every op, their ceilings ratchet too.
 /// Returns the report, the rows that grew, and the floor file's text before and its rows after,
 /// which the caller writes only on a passing run.
 fn c_floor(config: &Config, ops: &[String], measured: &[Measured], jit: Option<[&[Measured]; 2]>, rows: &BTreeMap<String, Row>) -> (String, Vec<String>, String, BTreeMap<String, ir_floor::Floor>) {
@@ -501,7 +538,7 @@ fn c_floor(config: &Config, ops: &[String], measured: &[Measured], jit: Option<[
     let interpreted: Vec<ir_floor::Op> = measured.iter().map(|(name, count, split, records)| ir_floor::Op { name, count: *count, split, records: *records }).collect();
     let (mut report, mut grown) = ir_floor::interpreter(&interpreted, &c, &mut floors, ops.is_empty());
     if let Some(jit) = jit.filter(|_| ops.is_empty() && env::var(TIERS_VARIABLE).as_deref() != Ok("off")) {
-        for (index, (mode, tier)) in ["--b-jit", "--u-jit"].into_iter().zip(jit).enumerate() {
+        for (index, (mode, tier)) in ["--b-jit", DEFAULT].into_iter().zip(jit).enumerate() {
             let shares: Vec<(String, f64, &[(String, f64)])> = tier.iter().map(|(name, count, split, _)| (name.clone(), *count, split.as_slice())).collect();
             let (table, tier_grown) = ir_floor::jit(index, mode, &shares, &c, &budgets, &mut floors, true);
             report = format!("{report}\n\n{table}");
@@ -516,7 +553,7 @@ fn measured_report(measured: &[Measured], rows: &BTreeMap<String, Row>) -> Strin
     format!("{}\n\n{}\n\n{}", table(measured, rows), ranking(measured), waste(measured))
 }
 
-/// The per-op budgets (`op_budget`) over the tiers measured (`[no-jit, b-jit, u-jit]`, a tier not
+/// The per-op budgets (`op_budget`) over the tiers measured (`[no-jit, b-jit, default]`, a tier not
 /// run is empty): each tier's overruns held by its debt list, and the report.
 fn op_budgets(config: &Config, ops: &[String], runs: [&[Measured]; 3]) -> Result<(Vec<String>, String), String> {
     let path = config.root.join(op_budget::BUDGETS);
@@ -535,9 +572,9 @@ fn op_budgets(config: &Config, ops: &[String], runs: [&[Measured]; 3]) -> Result
 }
 
 /// The step. The default (`tiers`) measures every op under all three tiers and fails on a tier
-/// inversion or a u-jit count past its budget that its debt list does not hold, as well as on the
-/// interpreter's ceilings, floor and budget debt. `no-jit` runs the interpreter alone; `b-jit` and
-/// `u-jit` report one JIT tier against the budgets.
+/// inversion or a default-mode count past its budget or Node JIT that its debt list does not hold, as well as on the
+/// interpreter's ceilings, floor and budget debt. `no-jit` runs the interpreter alone; `b-jit`, `default`
+/// and `u-jit` (diagnostic) report one mode against the budgets.
 pub fn run(config: &Config) -> Verdict {
     let path = config.root.join(BUDGETS);
     let before = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -549,16 +586,17 @@ pub fn run(config: &Config) -> Verdict {
     let mode = env::var(MODE_VARIABLE).unwrap_or_else(|_| TIERS.to_owned());
     match mode.as_str() {
         TIERS | "no-jit" => {}
-        "b-jit" | "u-jit" => {
-            let measured = measure(config, &format!("--{mode}"), &ops)?;
+        "b-jit" | "u-jit" | DEFAULT => {
+            let flag = if mode == DEFAULT { DEFAULT.to_owned() } else { format!("--{mode}") };
+            let measured = measure(config, &flag, &ops)?;
             let over = measured.iter().filter(|(name, count, _, _)| rows.get(name).is_some_and(|row| *count > row.budget + SAME_COUNT)).count();
             return Ok(format!("{mode}: {over} of {} ops over budget (ceilings hold for --no-jit only)\n{}", measured.len(), measured_report(&measured, &rows)));
         }
-        other => return Err(format!("{MODE_VARIABLE}={other}: expected tiers (the default), no-jit, b-jit or u-jit")),
+        other => return Err(format!("{MODE_VARIABLE}={other}: expected tiers (the default), no-jit, b-jit, default or u-jit")),
     }
     let tiered = mode == TIERS;
     let measured = measure(config, INTERPRETER, &ops)?;
-    let (baseline, optimized) = if tiered { (measure(config, "--b-jit", &ops)?, measure(config, "--u-jit", &ops)?) } else { (Vec::new(), Vec::new()) };
+    let (baseline, optimized) = if tiered { (measure(config, "--b-jit", &ops)?, measure(config, DEFAULT, &ops)?) } else { (Vec::new(), Vec::new()) };
     let (tier_failures, tier_report) = if tiered { tiers(config, &ops, &rows, [measured.as_slice(), baseline.as_slice(), optimized.as_slice()])? } else { (Vec::new(), String::new()) };
     let over_budget: BTreeSet<String> = measured.iter().filter(|(name, count, _, _)| rows.get(name).is_some_and(|row| *count > row.budget + SAME_COUNT)).map(|(name, ..)| name.clone()).collect();
     let over = over_budget.len();
@@ -619,11 +657,11 @@ mod tests {
     #[test]
     fn a_higher_tier_costing_more_is_an_inversion() {
         let fault = tier_fault([10.0, 12.0, 5.0], None);
-        assert!(fault.b_jit_over_no_jit && !fault.u_jit_over_b_jit);
+        assert!(fault.b_jit_over_no_jit && !fault.default_over_b_jit);
         assert_eq!(fault.labels(), vec!["b-jit>no-jit"]);
         let fault = tier_fault([10.0, 8.0, 9.0], None);
-        assert!(fault.u_jit_over_b_jit && !fault.b_jit_over_no_jit);
-        assert_eq!(fault.labels(), vec!["u-jit>b-jit"]);
+        assert!(fault.default_over_b_jit && !fault.b_jit_over_no_jit);
+        assert_eq!(fault.labels(), vec!["default>b-jit"]);
     }
 
     #[test]
@@ -633,12 +671,14 @@ mod tests {
     }
 
     #[test]
-    fn u_jit_past_three_c_plus_six_is_over_budget() {
-        // C = 5, so the budget is 3 * 5 + 6 = 21.
-        assert!(tier_fault([30.0, 20.0, 22.0], Some(21.0)).u_jit_over_budget);
-        assert!(!tier_fault([30.0, 20.0, 21.4], Some(21.0)).u_jit_over_budget);
+    fn default_past_its_budget_is_over_budget() {
+        // The budget is the row's (here 21).
+        assert!(tier_fault([30.0, 20.0, 22.0], Some(21.0)).default_over_budget);
+        assert!(!tier_fault([30.0, 20.0, 21.4], Some(21.0)).default_over_budget);
         // An op with no budget row has nothing to be over.
-        assert!(!tier_fault([30.0, 20.0, 99.0], None).u_jit_over_budget);
+        assert!(!tier_fault([30.0, 20.0, 99.0], None).default_over_budget);
+        assert!(tier_fault_against([30.0, 20.0, 12.0], None, Some(11.0)).default_over_node_jit);
+        assert!(!tier_fault_against([30.0, 20.0, 11.0], None, Some(11.0)).default_over_node_jit);
     }
 
     #[test]

@@ -29,7 +29,7 @@ impl Vm {
     /// `Object::mark_sparse_elements`), as `emit_array_length_read` reads it; any other
     /// target out of line.
     #[inline(always)]
-    pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
+    pub fn own_array_length(&self, target: Value) -> Option<usize> {
         // An array with extras (named properties) has its elements' length too, unless it
         // ever held sparse elements, whose length the side table keeps.
         if let Some(object) = self.heap.record_array(target)
@@ -88,14 +88,14 @@ impl Vm {
     }
 
     /// `shift` of an array as `shift_dense` makes it, which observes nothing.
-    pub(super) fn plain_array_shift(&mut self, this: Value) -> Option<Value> {
+    pub fn plain_array_shift(&mut self, this: Value) -> Option<Value> {
         let length = self.own_array_length(this)?;
         self.shift_dense(this, length)
     }
 
     /// The length of a string primitive, in UTF-16 code units: its own `length`, which no
     /// prototype can shadow.
-    pub(super) fn string_length(&self, value: Value) -> Option<usize> {
+    pub fn string_length(&self, value: Value) -> Option<usize> {
         self.heap.string(value).map(|string| string.len())
     }
 
@@ -326,7 +326,7 @@ impl Vm {
 
     /// The property-key atom of array index `index`: the canonical index atom when one exists,
     /// otherwise interned from a stack-formatted decimal (no heap `String`).
-    pub(super) fn index_key_atom(&mut self, index: usize) -> Atom {
+    pub fn index_key_atom(&mut self, index: usize) -> Atom {
         if let Ok(small) = u32::try_from(index)
             && small < u32::MAX
             && let Some(atom) = self.array_index_atoms.get(small)

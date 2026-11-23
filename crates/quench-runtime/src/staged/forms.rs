@@ -16,19 +16,19 @@ use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, WideInstruction, 
 use crate::bytecode::Register;
 
 /// A function of the running program, by its index (`CallKnown`).
-pub(crate) type FunctionId = u16;
+pub type FunctionId = u16;
 
 /// The registers a method call passes: `count` entries of the program's method arguments from
 /// `start`, in the order the arguments are passed, not necessarily consecutive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct RegisterList {
-    pub(crate) start: u32,
-    pub(crate) count: u16,
+pub struct RegisterList {
+    pub start: u32,
+    pub count: u16,
 }
 
 impl RegisterList {
     /// The registers the list names in `records`; none where the records do not hold them.
-    pub(crate) fn registers(self, records: &[Register]) -> &[Register] {
+    pub fn registers(self, records: &[Register]) -> &[Register] {
         let start = self.start as usize;
         records.get(start..start + usize::from(self.count)).unwrap_or(&[])
     }
@@ -36,7 +36,7 @@ impl RegisterList {
 
 /// Where a call's arguments are.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Arguments {
+pub enum Arguments {
     /// `count` consecutive registers from `first`.
     Window { first: Register, count: u16 },
     /// The registers of a call record's list.
@@ -46,7 +46,7 @@ pub(crate) enum Arguments {
 impl Arguments {
     /// How many arguments the call passes.
     #[inline]
-    pub(crate) const fn count(self) -> u16 {
+    pub const fn count(self) -> u16 {
         match self {
             Self::Window { count, .. } | Self::List(RegisterList { count, .. }) => count,
         }
@@ -72,7 +72,7 @@ impl Arguments {
 
 /// Where a call's callee comes from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Callee {
+pub enum Callee {
     /// The value of a register, whose identity the call binds to or checks.
     Register(Register),
     /// A function of the program the record names: its identity is a static operand.
@@ -83,7 +83,7 @@ pub(crate) enum Callee {
 
 /// Where a call's receiver comes from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Receiver {
+pub enum Receiver {
     Register(Register),
     /// The activation's `this`, or the field of it a path reads (an atom and its cache site).
     This { path: Option<(u32, u16)> },
@@ -96,16 +96,16 @@ pub(crate) enum Receiver {
 /// The static operands of a call instruction: its callee, receiver and arguments, and where its
 /// result goes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Invocation {
-    pub(crate) callee: Callee,
-    pub(crate) receiver: Receiver,
-    pub(crate) arguments: Arguments,
-    pub(crate) result: Register,
+pub struct Invocation {
+    pub callee: Callee,
+    pub receiver: Receiver,
+    pub arguments: Arguments,
+    pub result: Register,
     /// Whether the call's completion is its activation's: the call returns its callee's value.
-    pub(crate) returns: bool,
+    pub returns: bool,
     /// Whether the window's last argument is the caller's `arguments`, which the activation keeps
     /// as values (`CallForwardingArguments`).
-    pub(crate) forwards: bool,
+    pub forwards: bool,
 }
 
 /// What a tier fixes around its calls: the registers its code holds, whether it completes its
@@ -113,11 +113,11 @@ pub(crate) struct Invocation {
 /// values a forwarding call keeps, and whether its VM call reads the forms beyond a register
 /// window (a known function, a method site).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct CallFacts {
-    pub(crate) registers: u16,
-    pub(crate) activates: bool,
-    pub(crate) forwarding: bool,
-    pub(crate) forms: bool,
+pub struct CallFacts {
+    pub registers: u16,
+    pub activates: bool,
+    pub forwarding: bool,
+    pub forms: bool,
 }
 
 impl CallFacts {
@@ -132,7 +132,7 @@ impl Invocation {
     /// The operands of `instruction`, read with the tables of `context`; `None` for any form no
     /// row runs: an eval, which the host decides, a super construction, and an array of arguments.
     #[inline(always)]
-    pub(crate) fn of(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn of(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         let (callee, receiver, arguments) = Self::operands(instruction, context)?;
         matches!(instruction.result_flags(), 0 | RETURN_REGISTER).then(|| Self { callee, receiver, arguments,
             result: instruction.result_register(), returns: instruction.returns_from_frame(),
@@ -196,12 +196,12 @@ impl Invocation {
     /// Whether the call allocates its callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
     #[inline(always)]
-    pub(crate) fn constructs(&self) -> bool {
+    pub fn constructs(&self) -> bool {
         self.receiver == Receiver::Allocated
     }
 
     /// The first register past the call's window (`Arguments::window_end`).
-    pub(crate) fn window_end(&self) -> u32 {
+    pub fn window_end(&self) -> u32 {
         self.arguments.window_end()
     }
 
@@ -225,6 +225,53 @@ impl Invocation {
     pub(crate) fn admits(&self, facts: CallFacts) -> bool {
         facts.activates && (facts.forwarding || !self.forwards) && (facts.forms || self.in_registers())
             && self.window_end() <= u32::from(facts.registers) && self.named().all(|register| facts.holds(register))
+    }
+}
+
+/// The form a call-family record makes, for every record of the family: also the ones with no
+/// staged operation (a direct or parameter eval, whose callee the host decides; a construction
+/// over an array of arguments). Where a record decodes, its operation has the same form
+/// (`Invocation`, `Operation::SpreadCall`, `Operation::SuperCall`); a tier that asks what kind of
+/// call a record is asks this, not the opcode.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CallForm {
+    /// A call through a callee register and a receiver register, over a window of arguments.
+    Plain,
+    /// A call of a function the record names.
+    Known,
+    /// A method call through a method site.
+    Method,
+    /// A call that passes the activation's `arguments` as its last argument.
+    Forwarding,
+    /// A construction, allocating its receiver.
+    Construct,
+    /// A call whose one argument register holds the array to apply.
+    Array,
+    /// A call whose one argument register holds the iterable to spread.
+    Spread,
+    /// A call whose one argument register holds a rest view.
+    Rest,
+    /// `super(...)`.
+    Super,
+}
+
+#[cfg(not(stencil_build))]
+impl CallForm {
+    /// The form of the call-family record `instruction`, whatever its result flags; `None` for a
+    /// record of no call family.
+    pub fn of(instruction: WideInstruction) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::Call => Self::Plain,
+            Op::CallForwardingArguments => Self::Forwarding,
+            Op::CallKnown => Self::Known,
+            Op::CallMethod | Op::CallThisMethod => Self::Method,
+            Op::Construct if instruction.is_super_construct() => Self::Super,
+            Op::Construct => Self::Construct,
+            Op::CallArray => Self::Array,
+            Op::CallSpread => Self::Spread,
+            Op::CallRest => Self::Rest,
+            _ => return None,
+        })
     }
 }
 

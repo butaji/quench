@@ -35,7 +35,7 @@ use scope::Scope;
 
 /// The facts of one program.
 #[derive(Default)]
-pub(crate) struct AotFacts {
+pub struct AotFacts {
     /// `(function, pc)` of a plain call → the function it always calls.
     pub(crate) call_targets: BTreeMap<(u32, u32), u32>,
     /// `(function, pc)` of a construction (`new`) → the function it always constructs.
@@ -52,30 +52,30 @@ impl AotFacts {
     }
 
     /// The facts of function `function`, for its lowering.
-    pub(crate) fn function_facts(&self, function: u32) -> FunctionFacts<'_> {
+    pub fn function_facts(&self, function: u32) -> FunctionFacts<'_> {
         FunctionFacts { facts: self, function }
     }
 }
 
 /// The facts of one function.
-pub(crate) struct FunctionFacts<'a> {
+pub struct FunctionFacts<'a> {
     facts: &'a AotFacts,
     function: u32,
 }
 
 impl<'a> FunctionFacts<'a> {
     /// The function the plain call at `pc` always calls.
-    pub(crate) fn call_target(&self, pc: u32) -> Option<u32> {
+    pub fn call_target(&self, pc: u32) -> Option<u32> {
         self.facts.call_targets.get(&(self.function, pc)).copied()
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
-    pub(crate) fn construct_target(&self, pc: u32) -> Option<u32> {
+    pub fn construct_target(&self, pc: u32) -> Option<u32> {
         self.facts.construct_targets.get(&(self.function, pc)).copied()
     }
 
     /// Per register, the Number representation it always holds.
-    pub(crate) fn numbers(&self) -> Option<&'a [Option<Representation>]> {
+    pub fn numbers(&self) -> Option<&'a [Option<Representation>]> {
         self.facts.numbers.get(&self.function).map(|numbers| &**numbers)
     }
 
@@ -86,7 +86,7 @@ impl<'a> FunctionFacts<'a> {
 }
 
 /// The facts of `program`, or none where the program can add code at run time.
-pub(crate) fn analyze(program: &ResidualProgram) -> AotFacts {
+pub fn analyze(program: &ResidualProgram) -> AotFacts {
     if !gate::closed_world(program) {
         return AotFacts::default();
     }

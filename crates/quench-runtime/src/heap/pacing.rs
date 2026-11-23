@@ -548,8 +548,8 @@ impl MemoryPolicy {
     /// not: releasing them after every collection refaulted the run's hot code after each
     /// young one (EarleyBoyer, dynamic x86_64 production build, 2026-10-20: ~63K minor faults
     /// and ~0.11 s of system time per run against ~15K and ~0.035 s without; v2-web).
-    pub const fn returns_pages_at_collections(self) -> bool {
-        matches!(self, Self::MemoryFirst)
+    pub fn returns_pages_at_collections(self) -> bool {
+        matches!(self, Self::MemoryFirst) || memory_mix_has("pages")
     }
 
     /// The policy's own pacing table.
@@ -561,8 +561,47 @@ impl MemoryPolicy {
     }
 
     pub(super) fn pacing(self) -> GenerationalPacing {
-        self.table()
+        let table = self.table();
+        if self == Self::MemoryFirst {
+            return table;
+        }
+        let first = MEMORY_FIRST_PACING;
+        let mut mixed = table;
+        if memory_mix_has("young") {
+            mixed.young = first.young;
+            mixed.minimum_young = first.minimum_young;
+            mixed.maximum_young = first.maximum_young;
+            mixed.surviving_young_factor = first.surviving_young_factor;
+        }
+        if memory_mix_has("young-max") {
+            mixed.maximum_young = first.maximum_young;
+        }
+        if memory_mix_has("full") {
+            mixed.old_growth = first.old_growth;
+            mixed.old_sizing = first.old_sizing;
+            mixed.minimum_old_growth = first.minimum_old_growth;
+            mixed.allocation_cap = first.allocation_cap;
+            mixed.minimum_allocation_cap = first.minimum_allocation_cap;
+            mixed.maximum_cap_backoff = first.maximum_cap_backoff;
+            mixed.survival_limit = first.survival_limit;
+        }
+        if memory_mix_has("aging") {
+            mixed.promotion_age = first.promotion_age;
+            mixed.promoted_garbage_aging = first.promoted_garbage_aging;
+            mixed.aging_interval = first.aging_interval;
+            mixed.ages_from_start = first.ages_from_start;
+        }
+        if memory_mix_has("external") {
+            mixed.minimum_external_budget = first.minimum_external_budget;
+        }
+        mixed
     }
+}
+
+/// Whether `QUENCH_DEV=memory-mix=a+b` names the memory-first component `part` to take on top
+/// of throughput (TOD-2055: which memory-first settings cost no performance).
+pub fn memory_mix_has(part: &str) -> bool {
+    crate::trace::Dev::MemoryMix.value().is_some_and(|parts| parts.split('+').any(|named| named == part))
 }
 
 /// Throughput pacing, the default (TOD-167): the JetStream lane's table (v2-cloud-jet), which

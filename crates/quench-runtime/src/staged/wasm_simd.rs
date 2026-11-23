@@ -2,7 +2,8 @@
 //! and operand registers. The operator semantics are `wasm_simd_rules`, re-exported here for the
 //! tiers' lowering.
 
-pub(crate) use super::wasm_simd_rules::{Lanes, Native, NativeOp, WasmSimd, simd, simd_scalar};
+#[allow(unused_imports)]
+pub use super::wasm_simd_rules::{Lanes, Native, NativeOp, WasmSimd, simd, simd_scalar};
 
 // The vector steps' classes and operands read bytecode and the Wasm kernels: runtime only.
 #[cfg(not(stencil_build))]
@@ -14,7 +15,7 @@ use crate::wasm::simd::SimdKernel;
 
 #[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Simd {
+pub enum Simd {
     /// `a = operator(b, c)`; the selector (the operator and its lane immediate) is `imm`.
     Operator { selector: u32 },
     /// `a = shuffle(b, c)` by the sixteen lane indices of the constant.
@@ -54,7 +55,7 @@ impl Simd {
     }
 
     /// The register naming the memory the step reads, where it reads one.
-    pub(crate) fn memory(self, instruction: WideInstruction) -> Option<u16> {
+    pub fn memory(self, instruction: WideInstruction) -> Option<u16> {
         match self {
             Self::Address => Some(instruction.c()),
             Self::Load | Self::Store => Some(instruction.b()),
@@ -87,9 +88,10 @@ impl Simd {
 
 // The interpreter's vector records as a staged operation (`Decoder::WasmVector`): runtime only.
 #[cfg(not(stencil_build))]
-pub(crate) use operation::{VectorOperation, step};
+#[allow(unused_imports)]
+pub use operation::{VectorOperation, step};
 #[cfg(not(stencil_build))]
-mod operation {
+pub mod operation {
 use crate::staged::register_frame::WasmRep;
 use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
 use crate::staged::{Concrete, Constant, DecodeContext, Fields, Frame, Operation, Step};
@@ -102,7 +104,7 @@ use crate::{WasmType, WasmValue};
 /// A Wasm vector operation on the lane's registers: a SIMD operator on its operands, or a byte
 /// shuffle of two vectors by a constant's lane indices.
 #[derive(Clone, Copy)]
-pub(crate) enum VectorOperation {
+pub enum VectorOperation {
     /// `destination = operator(left, right)`, the operator and its lane immediate `selector`
     /// (`WasmSimd`); `right` is read only where the operator takes two operands.
     Operator { destination: Register, left: Register, right: Register, selector: u32 },
@@ -137,7 +139,7 @@ impl VectorOperation {
 
 impl<W, P> Operation<W, P> {
     /// The Wasm vector operation `instruction` denotes (`Decoder::WasmVector`).
-    pub(crate) fn decode_wasm_vector<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
+    pub fn decode_wasm_vector<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         VectorOperation::decode(instruction, context).map(Self::WasmVector)
     }
 }
@@ -146,7 +148,7 @@ impl<W, P> Operation<W, P> {
 /// result (an extract, a bitmask) and an operand of another representation are left to the
 /// general step, which computes or raises them.
 #[inline(always)]
-pub(crate) fn step<F: Frame<Concrete>>(
+pub fn step<F: Frame<Concrete>>(
     stage: &mut Concrete,
     frame: &mut F,
     operation: VectorOperation,

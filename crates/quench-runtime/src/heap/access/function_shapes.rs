@@ -7,7 +7,7 @@ use crate::heap::Heap;
 impl Heap {
     /// The shapes live function records hold now, by shape id: a field read planned for one
     /// of them proves a readable record, not a direct object (`NativeFieldLoad::function_shape`).
-    pub(crate) fn function_shapes(&self) -> BitSet {
+    pub fn function_shapes(&self) -> BitSet {
         let mut shapes = BitSet::new(0);
         self.function_records.for_each_live(|_, function| { shapes.insert_growing(function.object.shape() as usize); });
         shapes

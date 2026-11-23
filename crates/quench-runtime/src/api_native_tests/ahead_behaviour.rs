@@ -21,7 +21,7 @@ struct Shown {
     lines: Vec<String>,
 }
 
-fn ended(result: Result<(), crate::JsError>) -> String {
+pub fn ended(result: Result<(), crate::JsError>) -> String {
     let Err(error) = result else { return RETURNED.into() };
     match error.thrown_value().and_then(|value| value.as_number()) {
         Some(number) => format!("threw {number}"),

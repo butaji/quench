@@ -5,12 +5,12 @@
 #![allow(dead_code)]
 
 /// The conservative `others` marker native code stores for uncounted writes.
-pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
+pub const OTHERS_UNKNOWN: u32 = u32::MAX;
 /// The length word's flag that marks a narrow run of values.
 pub(crate) const NARROW_LEN: u32 = 1 << 31;
 /// The length word's flag that marks a run of doubles.
-pub(crate) const DOUBLE_LEN: u32 = 1 << 30;
+pub const DOUBLE_LEN: u32 = 1 << 30;
 /// Both length flags: an encoded run.
-pub(crate) const ENCODED_LEN: u32 = NARROW_LEN | DOUBLE_LEN;
+pub const ENCODED_LEN: u32 = NARROW_LEN | DOUBLE_LEN;
 /// A slice header's top bit: the mark its owner may set on a non-empty slice.
 pub(crate) const MARK_BIT: usize = 1 << (usize::BITS - 1);

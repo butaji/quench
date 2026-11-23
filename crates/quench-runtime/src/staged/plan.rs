@@ -21,7 +21,7 @@ pub(crate) struct NativeId {
 /// `this` and arguments folded in (`Bound`), and any callee the frame has no plan for takes the
 /// VM's call (`CallEntry::Helper`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CalleeKind {
+pub enum CalleeKind {
     /// A script function called with a receiver.
     Script,
     /// A forwarding class constructor: the construction runs its initializer with the receiver
@@ -43,7 +43,7 @@ impl CalleeKind {
 
 /// How a direct call knows its callee is the one its plan was made for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Identity {
+pub enum Identity {
     /// The identity varies per execution: the call checks it once (`guard_callee`).
     Guarded(u64),
     /// The identity is a constant of the call: a function the record names (Static), or a callee
@@ -65,9 +65,9 @@ impl Identity {
 /// `count` words of the frame's plan constants from `start` (`CallFrame::call_constants`): a handle,
 /// so a plan stays plain data the frame owns the words of.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct WordList {
-    pub(crate) start: u32,
-    pub(crate) count: u16,
+pub struct WordList {
+    pub start: u32,
+    pub count: u16,
 }
 
 impl WordList {
@@ -82,31 +82,31 @@ impl WordList {
 /// What a bound function binds, unwrapped to its target: the `this` the target is called with, and
 /// the arguments that precede the call's own. Both are constants of the plan.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Bound {
-    pub(crate) this: u64,
-    pub(crate) arguments: WordList,
+pub struct Bound {
+    pub this: u64,
+    pub arguments: WordList,
 }
 
 /// What a frame knows of a site's callee at the time it is compiled: for a bound function, its
 /// target's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct DirectPlan {
-    pub(crate) kind: CalleeKind,
+pub struct DirectPlan {
+    pub kind: CalleeKind,
     /// The identity of the callee the site names, which the site was bound to.
-    pub(crate) identity: Identity,
+    pub identity: Identity,
     /// The global object a sloppy callee binds for `undefined` and `null`; `None` for a strict one.
-    pub(crate) sloppy: Option<u64>,
+    pub sloppy: Option<u64>,
     /// The registers of the callee's window.
-    pub(crate) registers: u16,
+    pub registers: u16,
     /// The status word of a callee that returned.
-    pub(crate) returned: u32,
+    pub returned: u32,
     /// The `this` and arguments of the bound function the site names, where it names one.
-    pub(crate) bound: Option<Bound>,
+    pub bound: Option<Bound>,
 }
 
 /// How a call reaches its callee.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CallEntry {
+pub enum CallEntry {
     Direct(DirectPlan),
     /// The callee's body in the caller, where the frame can inline it (`CallFrame::inline`); the
     /// direct entry where it cannot.
@@ -118,11 +118,11 @@ pub(crate) enum CallEntry {
 /// A callee a frame resolved at plan time, with the binding time of the value the site names.
 #[cfg(not(stencil_build))]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Resolved {
-    pub(crate) plan: DirectPlan,
-    pub(crate) binding: BindingTime,
+pub struct Resolved {
+    pub plan: DirectPlan,
+    pub binding: BindingTime,
     /// The instructions of the callee's body where a script body is known to the frame.
-    pub(crate) body: Option<usize>,
+    pub body: Option<usize>,
 }
 
 #[cfg(not(stencil_build))]
@@ -137,7 +137,7 @@ impl Resolved {
 /// The entry of a call to `callee`, by binding time. A folded identity checks nothing; any other is
 /// guarded once. A bound function whose identity is not folded is the VM's call. A folded script
 /// function whose body fits `inline_budget` instructions inlines, with its direct entry behind it.
-pub(crate) fn plan_entry(callee: Option<Resolved>, inline_budget: usize) -> CallEntry {
+pub fn plan_entry(callee: Option<Resolved>, inline_budget: usize) -> CallEntry {
     let Some(callee) = callee else { return CallEntry::Helper };
     if callee.plan.bound.is_some() && !callee.folds() { return CallEntry::Helper; }
     let word = callee.plan.identity.word();

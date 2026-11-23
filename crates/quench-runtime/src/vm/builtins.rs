@@ -86,7 +86,7 @@ impl NativeTable {
 
 /// How much of a realm a VM installs when it initializes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RealmScope {
+pub enum RealmScope {
     /// Every builtin: the VM will run JavaScript.
     Complete,
     /// The prototypes, native functions and error intrinsics Wasm instances,
@@ -507,7 +507,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn install_builtin_to_string_tag(
+    pub fn install_builtin_to_string_tag(
         &mut self,
         object: Value,
         tag: &str,
@@ -533,11 +533,11 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn empty_object(proto: Value) -> Object {
+    pub fn empty_object(proto: Value) -> Object {
         Object::new(proto)
     }
     /// The shared function of a `NATIVES` entry, built in the table's realm on first read.
-    pub(super) fn native_value(&mut self, kind: Native) -> Value {
+    pub fn native_value(&mut self, kind: Native) -> Value {
         if let Some(function) = self.natives.get(kind) {
             return function;
         }
@@ -607,17 +607,17 @@ impl Vm {
         self.set_builtin_value_named(global, INTRINSIC_KEY, thrower)?;
         Ok(thrower)
     }
-    pub(super) fn object(&mut self) -> Value {
+    pub fn object(&mut self) -> Value {
         let prototype = self.realm_object_prototype(self.realm.globals);
         self.heap.alloc_empty_object(prototype)
     }
-    pub(super) fn lookup_atom(&self, name: &str) -> Option<Atom> {
+    pub fn lookup_atom(&self, name: &str) -> Option<Atom> {
         self.find_atom(Self::atom_hash_str(name), |atom| {
             self.atom_units_equal_str(atom, name)
         })
     }
     /// The `prototype` atom, interned once per program reset instead of hashed per use.
-    pub(super) fn prototype_atom(&mut self) -> Atom {
+    pub fn prototype_atom(&mut self) -> Atom {
         if self.prototype_atom == NO_CACHED_ATOM {
             self.prototype_atom = self.intern_atom("prototype");
         }
@@ -633,7 +633,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
+    pub fn intern_atom(&mut self, name: &str) -> Atom {
         #[cfg(feature = "profile-memory")]
         self.name_atom_memo.profile_query(name, |atom| self.atom_units_equal_str(atom, name));
         if let Some(atom) = self.name_atom_memo.candidate(name)
@@ -683,7 +683,7 @@ impl Vm {
             }
         });
     }
-    pub(super) fn atom_name(&self, atom: Atom) -> &str {
+    pub fn atom_name(&self, atom: Atom) -> &str {
         let index = atom as usize;
         if index < self.atom_text.len() {
             &self.atom_text[index]
@@ -713,7 +713,7 @@ impl Vm {
         )?;
         Ok(())
     }
-    pub(super) fn set_named(
+    pub fn set_named(
         &mut self,
         _p: &ResidualProgram,
         object: Value,
@@ -747,7 +747,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn set_builtin_named(
+    pub fn set_builtin_named(
         &mut self,
         _program: &ResidualProgram,
         object: Value,
@@ -811,7 +811,7 @@ impl Vm {
         self.set_builtin_value_named(object, name, function)
     }
 
-    pub(super) fn set_builtin_function_name(
+    pub fn set_builtin_function_name(
         &mut self,
         function: Value,
         name: &str,
@@ -826,7 +826,7 @@ impl Vm {
         self.override_builtin_function_name(function, name)
     }
 
-    pub(super) fn override_builtin_function_name(
+    pub fn override_builtin_function_name(
         &mut self,
         function: Value,
         name: &str,
@@ -873,7 +873,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn set_builtin_value_named(
+    pub fn set_builtin_value_named(
         &mut self,
         object: Value,
         name: &str,
@@ -917,6 +917,6 @@ mod math_function_tests {
 
 /// The global object's value properties that are neither writable nor configurable (ECMA-262 19.1): no global
 /// lexical declaration may shadow them (`HasRestrictedGlobalProperty`), so a read the global scope resolves is its constant.
-pub(crate) fn immutable_globals() -> [(&'static str, Value); 3] {
+pub fn immutable_globals() -> [(&'static str, Value); 3] {
     [("undefined", Value::UNDEFINED), ("NaN", Value::number(f64::NAN)), ("Infinity", Value::number(f64::INFINITY))]
 }

@@ -12,17 +12,17 @@ pub(crate) const IN_PRESENCES: usize = 64;
 
 /// What `key in object` answered for receivers of one exact shape and prototype link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct InPresence {
+pub struct InPresence {
     pub(crate) atom: Atom,
-    pub(crate) shape: u32,
-    pub(crate) link: u32,
-    pub(crate) present: bool,
+    pub shape: u32,
+    pub link: u32,
+    pub present: bool,
     /// The exact shape of the receiver's prototype (its own where it has none): the holder whose values a code holding
     /// the answer subscribes to (`heap::subscribe_prototype_values`).
-    pub(crate) holder: u32,
+    pub holder: u32,
     /// The prototypes from `link` to the chain's end, all the answer read: a code holding it holds their layouts
     /// (`Heap::subscribe_prototype_chain`).
-    pub(crate) depth: u8,
+    pub depth: u8,
     /// The cell of the receiver's whole chain (`Vm::chain_cell`): the walk marked every link of it a prototype, so a
     /// change to one, or its death, ends the answer, and a change to a prototype off the chain leaves it.
     cell: crate::heap::ChainCell,
@@ -70,7 +70,7 @@ impl Vm {
     /// What `key in object` answered for the key `atom` where exactly one receiver layout answered it and its answer
     /// still holds (no prototype has changed its layout since): the fact a code may hold under the dependency on the
     /// prototypes' values and layouts.
-    pub(in crate::vm) fn presence_fact(&self, atom: Atom) -> Option<InPresence> {
+    pub fn presence_fact(&self, atom: Atom) -> Option<InPresence> {
         let mut answers = self.in_presences.iter().flatten().filter(|entry| entry.atom == atom);
         let only = answers.next().copied().filter(|entry| entry.cell.holds())?;
         answers.next().is_none().then_some(only)

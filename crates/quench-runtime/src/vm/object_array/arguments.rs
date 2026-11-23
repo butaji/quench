@@ -5,7 +5,7 @@ impl Vm {
     /// The own data `length` of an arguments object that keeps the layout it was made with
     /// (a realm's `ArgumentsObjectTemplate` shape, which fixes the property, its attributes
     /// and its slot); `None` for any other value or layout.
-    pub(in crate::vm) fn arguments_object_length(&self, target: Value) -> Option<Value> {
+    pub fn arguments_object_length(&self, target: Value) -> Option<Value> {
         let object = self.heap.object(target)?;
         if !self.heap.array(target)?.is_arguments_object() {
             return None;

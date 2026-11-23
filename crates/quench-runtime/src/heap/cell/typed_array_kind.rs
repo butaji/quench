@@ -2,7 +2,7 @@
 
 use super::Native;
 
-pub(crate) use crate::staged::typed_array_catalog::TypedArrayKind;
+pub use crate::staged::typed_array_catalog::TypedArrayKind;
 
 /// The typed-array kinds, one row each: `(Kind, NativeVariant, "Name", width)`, in
 /// [`TypedArrayKind`] order. `$m` is a callback called as `$m! { rows }`; the snapshot kind
@@ -29,7 +29,7 @@ pub(crate) use for_each_typed_array;
 
 /// What one typed-array kind is: its constructor intrinsic, that constructor's name and the
 /// element width in bytes.
-pub(crate) struct TypedArrayRow {
+pub struct TypedArrayRow {
     pub(crate) kind: TypedArrayKind,
     pub(crate) native: Native,
     pub(crate) name: &'static str,
@@ -37,7 +37,7 @@ pub(crate) struct TypedArrayRow {
 }
 
 /// The typed-array kinds, one row each, in [`TypedArrayKind`] order.
-pub(crate) const TYPED_ARRAYS: [TypedArrayRow; TypedArrayKind::COUNT] = [
+pub const TYPED_ARRAYS: [TypedArrayRow; TypedArrayKind::COUNT] = [
     TypedArrayRow { kind: TypedArrayKind::Uint8, native: Native::Uint8Array, name: "Uint8Array", width: TypedArrayKind::Uint8.width() },
     TypedArrayRow { kind: TypedArrayKind::Uint8Clamped, native: Native::Uint8ClampedArray, name: "Uint8ClampedArray", width: TypedArrayKind::Uint8Clamped.width() },
     TypedArrayRow { kind: TypedArrayKind::Uint16, native: Native::Uint16Array, name: "Uint16Array", width: TypedArrayKind::Uint16.width() },

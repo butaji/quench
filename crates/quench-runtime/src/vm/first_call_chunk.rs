@@ -64,7 +64,7 @@ impl Vm {
 
     /// The chunk of stub `function` of program `p` (`stub.0`): the function's source alone,
     /// compiled as a Script at its place in `p`'s text.
-    pub(super) fn compile_first_chunk(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32)) -> Result<FunctionKind, JsError> {
+    pub fn compile_first_chunk(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32)) -> Result<FunctionKind, JsError> {
         let live = |id: ProgramId, held: &Weak<ResidualProgram>| self.programs.get(id).is_some_and(|now| held.upgrade().is_some_and(|held| Rc::ptr_eq(&now, &held)));
         if let Some((stub, chunk, kind @ FunctionKind::User(id, _))) = self.first_chunks.get(&(program, function))
             && live(program, stub)

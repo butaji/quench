@@ -50,11 +50,11 @@
 
 use crate::layout::call_record::{helper_outcome, CallRecord, DirectHole, HelperHole, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
-use crate::heap_rows::{payload, set_context_word, word_at};
-use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_ACTIVATION_COUNT, JS_STEP_BODY_TABLE, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::heap_rows::{context_word, payload, set_context_word, word_at};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_ACTIVATION_COUNT, JS_STEP_BODY_TABLE, JS_STEP_NATIVE_TABLE, JS_STEP_POP_OBSERVED_HEADER, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
 use crate::stage::StencilStage;
-use crate::staged::frame::{PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
+use crate::staged::frame::{CONTEXT_PACKED, NATIVE_FLAG, PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
 use crate::staged::region::Region;
 use crate::staged::{call::admit_native, protocol, value, word_offset, CallFrame, CallOperation, Passed, Stage, Step};
 use crate::words::{Out, S, dead, hole64};
@@ -321,18 +321,35 @@ struct Admitted {
     /// The plain depth and innermost window before the push.
     depth: u64,
     registers: u64,
-    /// The body table entry for the frame's body, at the total frame count (records + plain depth).
+    /// The body table entry for the frame's body, at the total frame count (records + plain depth), and
+    /// the native table entry for its descriptor at the same index (`JsStepHead::native_table`).
     table: usize,
+    native: usize,
+    /// The dispatch payload, whose VM and spilled-header helper a pop reads.
+    payload: usize,
     frames: u64,
     /// The addresses of the lane's state words, read once at admission: every move writes through them.
     tops: protocol::LaneTops<u64>,
 }
 
 /// Pops the frame the call pushed: the plain depth, innermost window and body top it found, and the values' top.
+/// Where Rust observed the frame, the activation pops where Rust keeps it (`LaneStack::pop_observed_header`), as the
+/// u-jit's `pop_native` pops it: a nested entry to emitted code under the callee (`Vm::stack_words_in_lane`) made its
+/// native header a record (`LaneStack::spill_plain`), leaving no plain header, or a helper linked it
+/// (`native_frames::link_header`), which cleared its NATIVE flag and gave it a side record that pops with it.
 #[inline(always)]
 fn pop(a: &Admitted) {
     let mut stage = StencilStage::from_hole(0);
-    protocol::set_plain(&mut stage, a.tops, a.depth, a.registers);
+    if word_at(a.tops.plain_at as usize, PLAIN_DEPTH_AT) == 0 || context_word(a.top, CONTEXT_PACKED) & NATIVE_FLAG == 0 {
+        core::hint::cold_path();
+        // SAFETY: the payload's helper is `pop_observed_header_in_lane`, which takes the VM and residual words.
+        unsafe {
+            let helper: unsafe extern "C" fn(u64, u64) -> u64 = transmute(word_at(a.payload, JS_STEP_POP_OBSERVED_HEADER) as usize);
+            helper(word_at(a.payload, JS_STEP_VM), word_at(a.payload, JS_STEP_RESIDUAL));
+        }
+    } else {
+        protocol::set_plain(&mut stage, a.tops, a.depth, a.registers);
+    }
     protocol::set_body_top(&mut stage, a.tops, a.frames);
     protocol::set_values(&mut stage, a.tops, a.top as u64);
 }
@@ -359,8 +376,10 @@ unsafe fn admit(stage: &mut StencilStage, record: usize, payload: usize) -> Opti
         }
         let registers = word_at(tops.plain_at as usize, PLAIN_REGISTERS_AT);
         let records = word_at(word_at(payload, JS_STEP_ACTIVATION_COUNT) as usize, 0);
-        let table = word_at(payload, JS_STEP_BODY_TABLE) as usize + ((records + depth) as usize) * REGISTER_BYTES;
-        Some(Admitted { cell, top: top as usize, room: room as usize, fill: fill as usize, depth, registers, table, tops, frames: records + depth })
+        let index = ((records + depth) as usize) * REGISTER_BYTES;
+        let table = word_at(payload, JS_STEP_BODY_TABLE) as usize + index;
+        let native = word_at(payload, JS_STEP_NATIVE_TABLE) as usize + index;
+        Some(Admitted { cell, top: top as usize, room: room as usize, fill: fill as usize, depth, registers, table, native, payload, tops, frames: records + depth })
     }
 }
 
@@ -392,6 +411,9 @@ unsafe fn push<const ARGC: usize, const PLACED: bool>(s: &S, file: u64, record: 
         // The running body, at the frame's depth in the body table; the depth and window it bumps.
         let body = word_at(a.cell, CELL_BODY_AT);
         stage.store_u64(Region::Frame.mutable(), a.table as u64, 0, body);
+        // Its descriptor at the same index, which links the native header where Rust observes it
+        // (`native_frames::link_header`), as the u-jit's `push_native` writes it.
+        stage.store_u64(Region::Frame.mutable(), a.native as u64, 0, field(offset_of!(CallRecord, descriptor)));
         protocol::set_plain(&mut stage, a.tops, a.depth + 1, a.top as u64);
         protocol::set_body_top(&mut stage, a.tops, a.frames + 1);
         protocol::set_values(&mut stage, a.tops, (a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT)) as u64);

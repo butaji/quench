@@ -11,7 +11,7 @@ use super::super::generator::MaterializedStop;
 impl Vm {
     /// Whether `next` of `generator` runs in its caller's lane: an async generator that is
     /// neither running nor done and has no request queued, suspended at its start or a `yield`.
-    pub(in crate::vm) fn requests_in_place(&mut self, generator: Value) -> bool {
+    pub fn requests_in_place(&mut self, generator: Value) -> bool {
         let async_generator = matches!(
             self.heap.iterator(generator),
             Some(IteratorRecord { kind: IteratorKind::AsyncGenerator, ext, .. }) if ext.generator.is_some()
@@ -30,7 +30,7 @@ impl Vm {
     /// caller's lane (`requests_in_place`): suspended at a `yield` of its own, no `yield*`
     /// delegating. A generator that has not started completes without running, on the native's
     /// path.
-    pub(in crate::vm) fn throws_in_place(&mut self, generator: Value) -> Option<(u32, usize)> {
+    pub fn throws_in_place(&mut self, generator: Value) -> Option<(u32, usize)> {
         if !self.requests_in_place(generator) || self.yield_star_iterator(generator).is_some() {
             return None;
         }
@@ -41,7 +41,7 @@ impl Vm {
     /// The request `promise` of `generator`, whose activation stopped at an `await` of `source`,
     /// or, where `yielded`, a `yield` of it: the generator awaits it in its record, as the
     /// request's job does (`settle_job_end`).
-    pub(in crate::vm) fn await_request(&mut self, p: &ResidualProgram, generator: Value, promise: Value, yielded: bool, source: Value) -> Result<(), JsError> {
+    pub fn await_request(&mut self, p: &ResidualProgram, generator: Value, promise: Value, yielded: bool, source: Value) -> Result<(), JsError> {
         let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncGeneratorAwait(generator), rejected: false };
         let kind = if yielded { AwaitKind::AsyncGeneratorYield { generator } } else { AwaitKind::generator_await(generator) };
         self.await_again(p, resume, kind, source)
@@ -49,7 +49,7 @@ impl Vm {
 
     /// The request `promise` of `generator`, whose activation returned `value`: the generator
     /// completes and the request settles, then its queued requests run.
-    pub(in crate::vm) fn complete_request(&mut self, p: &ResidualProgram, generator: Value, promise: Value, value: Value) -> Result<(), JsError> {
+    pub fn complete_request(&mut self, p: &ResidualProgram, generator: Value, promise: Value, value: Value) -> Result<(), JsError> {
         let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncGeneratorAwait(generator), rejected: false };
         self.complete_resumed(p, resume, value)?;
         self.resume_async_generator_queue(p, generator)
@@ -58,7 +58,7 @@ impl Vm {
     /// Parks the frame of `generator`'s in-place activation at `depth`, stopped at `pc` with what
     /// it receives next going to `destination`: at a `yield` of `value` when `yielded`, else at
     /// an `await` of it.
-    pub(in crate::vm) fn suspend_request_window(&mut self, generator: Value, (pc, destination, depth): (usize, crate::bytecode::Register, usize), yielded: bool, value: Value) {
+    pub fn suspend_request_window(&mut self, generator: Value, (pc, destination, depth): (usize, crate::bytecode::Register, usize), yielded: bool, value: Value) {
         self.pop_host_frame();
         let job = JobRoot { object: generator, kind: SuspendKind::AsyncGenerator };
         if yielded {
@@ -69,7 +69,7 @@ impl Vm {
     }
 
     /// Ends `generator`'s in-place activation at its return: its frame goes back to the pool.
-    pub(in crate::vm) fn finish_request_window(&mut self, generator: Value) {
+    pub fn finish_request_window(&mut self, generator: Value) {
         self.pop_host_frame();
         self.finish_job_window(JobRoot { object: generator, kind: SuspendKind::AsyncGenerator });
     }

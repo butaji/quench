@@ -5,7 +5,7 @@
 /// An alias region of memory: an access to one never aliases an access to another, so two
 /// regions own disjoint words. A word has one region wherever it is read or written.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Region {
+pub enum Region {
     /// The activation's register and local slots, and the call records on the lane stack.
     Frame,
     /// Property values of objects: a run in the arena, or the values an extras block holds.
@@ -47,7 +47,7 @@ pub(crate) enum Region {
 
 /// Whether any operation can change the memory an access reads while compiled code runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Mutability {
+pub enum Mutability {
     Mutable,
     /// Nothing changes it while code runs, so a load of it may move and merge freely.
     Readonly,
@@ -56,14 +56,14 @@ pub(crate) enum Mutability {
 /// What a specializer proves of a memory access: the region it belongs to and whether the
 /// memory is read-only.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Access {
-    pub(crate) region: Region,
-    pub(crate) mutability: Mutability,
+pub struct Access {
+    pub region: Region,
+    pub mutability: Mutability,
 }
 
 impl Region {
     /// Every region, in declaration order: an index into it is the region's number.
-    pub(crate) const ALL: &'static [Region] = &[
+    pub const ALL: &'static [Region] = &[
         Self::Frame, Self::ObjectSlots, Self::ShapeWord, Self::Elements, Self::HeapMeta, Self::MissCounters,
         Self::Records, Self::Payload, Self::Cells, Self::EntryCell, Self::LoopEntry, Self::Dispatch,
         Self::Constants, Self::Invalidation, Self::RecordBases,
@@ -72,12 +72,12 @@ impl Region {
     // Inlined into every `Concrete` read: an access tag the interpreter ignores must cost nothing,
     // and a plain call would cross codegen units.
     #[inline(always)]
-    pub(crate) const fn mutable(self) -> Access {
+    pub const fn mutable(self) -> Access {
         Access { region: self, mutability: Mutability::Mutable }
     }
 
     #[inline(always)]
-    pub(crate) const fn readonly(self) -> Access {
+    pub const fn readonly(self) -> Access {
         Access { region: self, mutability: Mutability::Readonly }
     }
 }

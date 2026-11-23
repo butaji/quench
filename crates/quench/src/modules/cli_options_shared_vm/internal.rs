@@ -1,7 +1,7 @@
 //! Node's `internal/options` facade. Captured state preserves the identities and
 //! refresh boundary of the upstream JS module over the same native projections.
-use crate::host::{shared_vm::operation,};
 use super::{embedder_options, flags, info, values};
+use crate::host::shared_vm::operation;
 use quench_runtime::{HostFunctionId, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;

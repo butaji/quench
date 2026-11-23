@@ -2,7 +2,6 @@
 
 use super::*;
 
-use super::*;
 
 /// Every heap slot stores an `Option<Cell>`: a tag word and a payload of at most three
 /// words. No variant may grow past that; an array record is smaller.

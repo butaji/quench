@@ -6,17 +6,17 @@ use crate::Value;
 /// The context words below each window's register 0 (`register_file::FRAME_CONTEXT`): `top`
 /// always has them free beneath it, so a window starts at `top` and the next at its end plus
 /// these, and a return stores the window's address back as the top.
-pub(super) const CONTEXT: usize = super::register_file::FRAME_CONTEXT;
+pub const CONTEXT: usize = super::register_file::FRAME_CONTEXT;
 
 /// The low bit of an activation's `WINDOW` word when its window is not the lane stack's: a
 /// suspended frame's register file (a generator's, `FrameRecord`), which a return leaves
 /// alone. A `Value` is word aligned, so the bit is free in an address.
-pub(super) const HEAP_WINDOW: usize = 1;
+pub const HEAP_WINDOW: usize = 1;
 const _: () = assert!(std::mem::align_of::<Value>() > HEAP_WINDOW);
 
 /// The values of a lane stack's windows, `base..top`, in an allocation of room up to `end`.
 /// They hold no drop glue, so truncation and growth only move words.
-pub(super) struct LaneValues {
+pub struct LaneValues {
     base: *mut Value,
     top: *mut Value,
     end: *mut Value,
@@ -45,17 +45,17 @@ impl LaneValues {
     #[inline(always)]
     pub(super) fn len(&self) -> usize { self.top.addr().wrapping_sub(self.base.addr()) / std::mem::size_of::<Value>() }
     #[inline(always)]
-    pub(super) fn capacity(&self) -> usize { self.end.addr().wrapping_sub(self.base.addr()) / std::mem::size_of::<Value>() }
+    pub fn capacity(&self) -> usize { self.end.addr().wrapping_sub(self.base.addr()) / std::mem::size_of::<Value>() }
     #[inline(always)]
-    pub(super) fn top(&self) -> *mut Value { self.top }
+    pub fn top(&self) -> *mut Value { self.top }
     /// The address of the top word, which emitted code bumps through a pointer as the lane does.
     #[inline(always)]
-    pub(super) fn top_word(&mut self) -> *mut *mut Value { &raw mut self.top }
+    pub fn top_word(&mut self) -> *mut *mut Value { &raw mut self.top }
     /// The values that fit above the top.
     #[inline(always)]
-    pub(super) fn room(&self) -> usize { self.end.addr().wrapping_sub(self.top.addr()) / std::mem::size_of::<Value>() }
+    pub fn room(&self) -> usize { self.end.addr().wrapping_sub(self.top.addr()) / std::mem::size_of::<Value>() }
     #[inline(always)]
-    pub(super) fn clear(&mut self) { self.top = self.base.wrapping_add(CONTEXT); }
+    pub fn clear(&mut self) { self.top = self.base.wrapping_add(CONTEXT); }
 
     /// The end `room` measures to: the next window's context words (`CONTEXT`) past the
     /// last window's registers stay within the allocation of `capacity` values at `base`.
@@ -65,7 +65,7 @@ impl LaneValues {
 
     /// The addresses of the allocation, `base..end`: where the windows the stack allocated lie.
     #[inline(always)]
-    pub(super) fn span(&self) -> std::ops::Range<usize> { self.base.addr()..self.end.addr() }
+    pub fn span(&self) -> std::ops::Range<usize> { self.base.addr()..self.end.addr() }
 
     /// Ends the values at a returned activation's `WINDOW` word, unless it marks a window of
     /// another register file (`HEAP_WINDOW`), which frees nothing here.
@@ -73,7 +73,7 @@ impl LaneValues {
     /// # Safety
     /// As `set_top`, for a stack window's word.
     #[inline(always)]
-    pub(super) unsafe fn release_window(&mut self, window: usize) {
+    pub unsafe fn release_window(&mut self, window: usize) {
         if window & HEAP_WINDOW == 0 { self.top = window as *mut Value; }
     }
 
@@ -82,15 +82,15 @@ impl LaneValues {
     /// # Safety
     /// `top` lies in `base..=end`, and the values below it are initialized.
     #[inline(always)]
-    pub(super) unsafe fn set_top(&mut self, top: *mut Value) { self.top = top; }
+    pub unsafe fn set_top(&mut self, top: *mut Value) { self.top = top; }
 
     /// # Safety
     /// As `Vec::set_len`.
     #[inline(always)]
-    pub(super) unsafe fn set_len(&mut self, len: usize) { self.top = self.base.wrapping_add(len); }
+    pub unsafe fn set_len(&mut self, len: usize) { self.top = self.base.wrapping_add(len); }
 
     /// Makes room for `additional` more values; whether the values moved.
-    pub(super) fn reserve(&mut self, additional: usize) -> bool {
+    pub fn reserve(&mut self, additional: usize) -> bool {
         if self.room() >= additional { return false; }
         let len = self.len();
         let mut grown = Vec::<Value>::with_capacity(len + additional);

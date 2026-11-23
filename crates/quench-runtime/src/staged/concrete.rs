@@ -6,7 +6,7 @@ use super::region::Access;
 /// The interpreter's stage: machine words, read from live memory. It knows every condition,
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
-pub(crate) struct Concrete {
+pub struct Concrete {
     tables: [u64; 1],
     /// The heap whose store barrier `store_gate` reads; null where no store runs.
     heap: *const crate::heap::Heap,
@@ -14,7 +14,7 @@ pub(crate) struct Concrete {
 
 impl Concrete {
     #[inline(always)]
-    pub(crate) fn new(property_values: *const crate::Value) -> Self {
+    pub fn new(property_values: *const crate::Value) -> Self {
         Self { tables: [property_values as u64], heap: std::ptr::null() }
     }
 
@@ -34,11 +34,13 @@ impl Concrete {
 
     /// The stage of stores into `heap`'s objects.
     #[inline(always)]
-    pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
+    pub fn storing(heap: *const crate::heap::Heap) -> Self {
         // SAFETY: the caller's heap is live.
         Self { tables: [unsafe { (*heap).arena_values_base() } as u64], heap }
     }
 }
+
+crate::projection!(Concrete => Concrete);
 
 impl Stage for Concrete {
     type Word = u64;
@@ -131,7 +133,9 @@ impl Stage for Concrete {
     #[inline(always)]
     fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
     #[inline(always)]
-    fn box_number(&mut self, number: u64) -> u64 { crate::Value::number(f64::from_bits(number)).to_bits() }
+    // `Value::number` without its call (`Value::number_inline`): an element or slot read boxes its Number in
+    // place, as the row's other arms make their words.
+    fn box_number(&mut self, number: u64) -> u64 { crate::Value::number_inline(f64::from_bits(number)).to_bits() }
     #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
@@ -183,6 +187,11 @@ impl Stage for Concrete {
     fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
         // SAFETY: a stage that stores holds its live heap.
         !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
+    }
+    #[inline(always)]
+    fn held_store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
+        // SAFETY: a stage that stores holds its live heap.
+        !self.heap.is_null() && unsafe { (*self.heap).held_store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
     }
     #[inline(always)]
     fn immediate_store_open(&mut self) -> bool {

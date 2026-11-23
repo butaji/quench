@@ -1,3 +1,4 @@
+use crate::vm::EngineVm;
 use crate::vm::Vm;
 use crate::{Diagnostic, Engine, Host, JsError, ResidualProgram, RootId, Value};
 

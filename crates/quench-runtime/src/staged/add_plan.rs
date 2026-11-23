@@ -14,11 +14,11 @@ use crate::value_vec::range_has_room;
 /// the add moves to `layouts[1]` (`Object::layout_with_shape`): one id compare proves the shape,
 /// the link and the integrity bits, and one id store moves the record.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Transition {
+pub struct Transition {
     pub(crate) before: u32,
     pub(crate) after: u32,
-    pub(crate) slot: u16,
-    pub(crate) layouts: [u32; 2],
+    pub slot: u16,
+    pub layouts: [u32; 2],
 }
 
 /// An add site as compiled code holds it: the transition the site recorded and, for an add the
@@ -28,16 +28,16 @@ pub(crate) struct Transition {
 /// of that chain changes its layout (`Heap::subscribe_prototype_chain`). A define consults no chain,
 /// so it holds no link.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct AddSite {
-    pub(crate) transition: Transition,
-    pub(crate) link: Option<u32>,
-    pub(crate) depth: u8,
+pub struct AddSite {
+    pub transition: Transition,
+    pub link: Option<u32>,
+    pub depth: u8,
 }
 
 impl Transition {
     /// The staged rows' edge: the layouts, and the slot.
     #[inline(always)]
-    pub(crate) fn edge(self) -> Edge<u64> {
+    pub fn edge(self) -> Edge<u64> {
         let [before, after] = self.layouts.map(u64::from);
         Edge { before, after, slot: u64::from(self.slot) }
     }
@@ -47,7 +47,7 @@ impl Transition {
     /// room for one more where its capacity class says (`range_has_room`). `None` where neither
     /// form fits, so the VM's add, which allocates, is the only one.
     #[inline(always)]
-    pub(crate) fn form(self) -> Option<Form> {
+    pub fn form(self) -> Option<Form> {
         let slot = usize::from(self.slot);
         match (slot < OBJECT.inline_property_count, range_has_room(slot)) {
             (true, true) => Some(Form::Either),
@@ -65,7 +65,7 @@ impl Transition {
 /// `record_id` names a live object record of `heap`, whose exact shape's storage length is the
 /// transition's slot where the shape matches (the row proves the shape before any write).
 #[inline(always)]
-pub(crate) unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
+pub unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
     let Some(form) = transition.form() else {
         return false;
     };
@@ -88,7 +88,7 @@ pub(crate) unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, tran
 /// # Safety
 /// `record_id` names a live function record of `heap`, whose exact shape the row proves before any write.
 #[inline(always)]
-pub(crate) unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32, transition: Transition, empty: u64, name: crate::Value) -> bool {
+pub unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32, transition: Transition, empty: u64, name: crate::Value) -> bool {
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_function_object(record_id) } as u64;
     let mut stage = Concrete::storing(heap);

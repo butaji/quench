@@ -31,14 +31,14 @@ pub struct RootId {
 /// Heap cells are pruned during collection; the VM prunes external weak caches
 /// immediately after collection and before it can allocate into freed slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct WeakHandle {
+pub struct WeakHandle {
     pub(super) value: Value,
 }
 
 /// Persistent roots as a sparse set: `slots` give handles a stable index and generation,
 /// while the live values sit packed in `live`, so a collection reads only live roots however
 /// many slots a burst of roots once left behind.
-pub(crate) struct RootTable {
+pub struct RootTable {
     id: RootTableId,
     slots: Vec<Slot>,
     free: Vec<u32>,

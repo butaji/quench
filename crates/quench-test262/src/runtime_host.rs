@@ -1,6 +1,8 @@
 //! Test262 capability adapter for the canonical shared runtime.
 
 use std::path::Path;
+#[allow(unused_imports)]
+use quench_layers::engine::NativeJsProgramOps1 as _;
 
 use quench_runtime::{
     CapabilityId, Engine, ExecutionMode, ExecutionRequest, NativeImageSupport, Host, HostFunction, HostFunctionId,
@@ -83,8 +85,8 @@ fn compile_native_unit(
     output: Option<&Path>,
 ) -> Result<quench_runtime::NativeJsProgram, String> {
     let name = format!("test262_unit_{}", compilation.units.len());
-    let module = quench_runtime::lower_native_js_module(&program, &name).map_err(|error| format!("quench AOT lowering: {error}"))?;
-    let object = quench_runtime::emit_native_module(&name, module.functions, module.data)
+    let module = quench_layers::engine::lower_native_js_module(&program, &name).map_err(|error| format!("quench AOT lowering: {error}"))?;
+    let object = quench_layers::engine::emit_native_module(&name, module.functions, module.data)
         .map_err(|error| format!("quench AOT object: {error}"))?;
     let object_bytes = object.len();
     let path = output.map(|directory| directory.join(format!("{name}.o")));
@@ -383,7 +385,7 @@ impl Test262RuntimeHost {
                 Some(Self::prepare_for_runtime(&mut runtime, harness, source, name, kind)?)
             } else { None };
             let program = if execution_mode == ExecutionMode::NativeOnly {
-                { prepared.as_ref().expect("native preparation").entry.clone() }
+                prepared.as_ref().expect("native preparation").entry.clone()
             } else { match kind {
                 SourceKind::Script => Engine::specialize(source, name),
                 SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
@@ -684,6 +686,7 @@ fn clear_timeout(
 #[cfg(test)]
 mod tests {
     use super::Test262RuntimeHost;
+    use quench_layers::engine::NativeJsProgramOps1 as _;
 
     #[test]
     fn linked_graph_shares_dynamic_source_semantics_and_resets_after_rejection() {
@@ -1008,8 +1011,8 @@ mod tests {
             }
             if (calculate() !== 39) throw Error('wrong region continuation');
         "#, "region-continuations.js").unwrap();
-        let module = quench_runtime::lower_native_js_module(&program, "regions").unwrap();
-        quench_runtime::emit_native_module("regions", module.functions, module.data).unwrap();
+        let module = quench_layers::engine::lower_native_js_module(&program, "regions").unwrap();
+        quench_layers::engine::emit_native_module("regions", module.functions, module.data).unwrap();
         let native = quench_runtime::NativeJsProgram::compile_eager(program).unwrap();
         let mut runtime = super::Runtime::new(Test262RuntimeHost::new(super::ExecutionMode::NativeOnly));
         runtime.set_execution_mode(super::ExecutionMode::NativeOnly);

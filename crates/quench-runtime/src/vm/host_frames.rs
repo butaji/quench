@@ -48,7 +48,7 @@ impl Vm {
 
     /// Running natives, innermost of the first `natives`, that recorded `depth` frames beside
     /// activations now `added` frames above it: their caller is the innermost of those.
-    pub(super) fn shift_beside_natives(&mut self, natives: usize, depth: usize, added: usize) {
+    pub fn shift_beside_natives(&mut self, natives: usize, depth: usize, added: usize) {
         for native in self.realm.promise.active_native[..natives].iter_mut().rev() {
             if native.frame_depth != depth {
                 break;

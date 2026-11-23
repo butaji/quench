@@ -211,7 +211,7 @@ fn a_callee_folded_under_a_dependency_is_not_read_per_call() {
     assert_eq!((probe.entered[..2].to_vec(), probe.helper), (vec![10, 20], None));
 }
 
-fn listed(receiver: Receiver) -> Invocation {
+pub fn listed(receiver: Receiver) -> Invocation {
     Invocation { callee: Callee::Method { atom: 8, site: 2 }, receiver,
         arguments: Arguments::List(RegisterList { start: 1, count: 2 }), ..site(receiver) }
 }

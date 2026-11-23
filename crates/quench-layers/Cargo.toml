@@ -1,0 +1,44 @@
+[package]
+name = "quench-layers"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+description = "Links the Quench runtime's layer crates with its VM core"
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "quench-runtime"
+path = "src/bin/quench-runtime.rs"
+
+[features]
+# The core's features, enabled on the core and the engine together (the engine's code is compiled for them).
+default = ["jit", "native-execution"]
+jit = ["quench-runtime/jit", "quench-runtime-engine/jit"]
+native-execution = ["quench-runtime/native-execution", "quench-runtime-engine/native-execution"]
+profile-field-primitives = ["quench-runtime/profile-field-primitives", "quench-runtime-engine/profile-field-primitives"]
+profile-lane-exits = ["quench-runtime/profile-lane-exits", "quench-runtime-engine/profile-lane-exits"]
+profile-native-ops = ["quench-runtime/profile-native-ops", "quench-runtime-engine/profile-native-ops"]
+profile-aggregate = ["quench-runtime/profile-aggregate", "quench-runtime-engine/profile-aggregate"]
+profile-trace = ["quench-runtime/profile-trace", "quench-runtime-engine/profile-trace"]
+profile-memory = ["quench-runtime/profile-memory", "quench-runtime-engine/profile-memory"]
+profile-gc-time = ["quench-runtime/profile-gc-time", "quench-runtime-engine/profile-gc-time"]
+aot = ["quench-runtime/aot", "quench-runtime-engine/aot"]
+profile-allocator = ["quench-runtime/profile-allocator", "quench-runtime-engine/profile-allocator"]
+reference = ["quench-runtime/reference", "quench-runtime-engine/reference"]
+bench-primitives = ["quench-runtime/bench-primitives", "quench-runtime-engine/bench-primitives"]
+bench-alloc-routes = ["quench-runtime/bench-alloc-routes", "quench-runtime-engine/bench-alloc-routes"]
+verify-replay = ["quench-runtime/verify-replay", "quench-runtime-engine/verify-replay"]
+tier-stress = ["quench-runtime/tier-stress", "quench-runtime-engine/tier-stress"]
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime", default-features = false }
+quench-runtime-intl = { path = "../quench-runtime-intl" }
+quench-runtime-engine = { path = "../quench-runtime-engine", default-features = false }
+# The BaseJIT stencil tables the engine reads (`quench_bjit::rustc`), built apart from the runtime crates.
+quench-stencils = { path = "../quench-stencils" }
+
+[lints]
+workspace = true

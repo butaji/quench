@@ -39,29 +39,29 @@ pub(super) enum DynamicSlot {
 /// The by-name read a lane record handed to the general path to settle
 /// (`Vm::settle_name_probe`): where it is, in the running activation's frame.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct NameProbe {
-    pub(super) program: ProgramId,
-    pub(super) function: u32,
-    pub(super) pc: u32,
+pub struct NameProbe {
+    pub program: ProgramId,
+    pub function: u32,
+    pub pc: u32,
 }
 
 /// What lane records that read a name from the global object past a scope that could have
 /// declared it rely on.
 #[derive(Default)]
-pub(super) struct DynamicScopeNames {
+pub struct DynamicScopeNames {
     /// The names a scope declared dynamically at any time (`Vm::note_dynamic_scope_name`).
     declared: BitSet,
     /// The names whose by-name reads landed on the global object past such a scope
     /// (`Vm::name_lands_on_global_object`).
     landed: BitSet,
     /// The read the lane left for the general path to settle.
-    pub(super) probe: Option<NameProbe>,
+    pub probe: Option<NameProbe>,
 }
 
 impl DynamicScopeNames {
     /// Whether a scope declared `atom` dynamically at any time.
     #[inline(always)]
-    pub(super) fn declared(&self, atom: Atom) -> bool {
+    pub fn declared(&self, atom: Atom) -> bool {
         self.declared.contains(atom as usize)
     }
 }
@@ -114,7 +114,7 @@ impl Vm {
             .and_then(|views| views.get(probe.function as usize))
             .and_then(super::program_store::derived_lane_view)
         {
-            dispatch_fast::settle_name_record(view, pc as usize, op, lands);
+            crate::vm::engine_calls::settle_name_record(view, pc as usize, op, lands);
         }
     }
 
@@ -124,7 +124,7 @@ impl Vm {
     /// searches before the global object binds the name. `None`, before any effect, where one
     /// does (a named binding of the activation or its closures, its own local, an outer static
     /// owner, an active global lexical binding) or the global read is not decided in place.
-    pub(super) fn read_past_scopes(&mut self, p: &ResidualProgram, caller: &dyn CallerView, atom: Atom, site: u16) -> Option<Value> {
+    pub fn read_past_scopes(&mut self, p: &ResidualProgram, caller: &dyn CallerView, atom: Atom, site: u16) -> Option<Value> {
         // Once a `with` was entered, a scope the window does not hold may bind the name: the chain
         // eval code's environment captured (`captured_with_objects_for_function`).
         if self.with_scope_entered || self.binds_before_global_object(p, &NameLookup::new(caller, atom), caller.function(), atom) {

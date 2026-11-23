@@ -5,8 +5,8 @@
 use super::{V128_BYTES, WasmValue};
 use crate::bytecode::Register;
 use crate::staged::wasm_emit;
-pub(crate) use crate::staged::wasm_simd_lanes::SimdOperator;
-pub(crate) use crate::staged::wasm_simd_rules::SimdKernel;
+pub use crate::staged::wasm_simd_lanes::SimdOperator;
+pub use crate::staged::wasm_simd_rules::SimdKernel;
 
 pub(crate) use crate::staged::wasm_simd_rules::{bits_of, value_of};
 

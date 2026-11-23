@@ -15,7 +15,7 @@ use crate::heap::Native;
 
 /// The object whose own property a row's function is.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Holder {
+pub enum Holder {
     /// `Array.prototype`.
     ArrayPrototype,
     /// The `Array` constructor.
@@ -97,11 +97,11 @@ pub(super) enum Length {
 
 /// A builtin function as its holder installs it.
 #[derive(Clone, Copy)]
-pub(super) struct NativeRow {
-    pub(super) holder: Holder,
+pub struct NativeRow {
+    pub holder: Holder,
     /// The property name, and the function's `name`.
     pub(super) name: &'static str,
-    pub(super) native: Native,
+    pub native: Native,
     /// The function's `length`.
     pub(super) length: Length,
     /// `MATH`, `PURE_STRING`, `LANE_METHOD`.
@@ -233,14 +233,14 @@ pub(super) fn shared_array_native(native: Native) -> Option<Native> {
 }
 
 /// The rows a compiled lane runs inline by name (`LANE_METHOD`).
-pub(super) fn lane_method(name: &str) -> Option<NativeRow> {
+pub fn lane_method(name: &str) -> Option<NativeRow> {
     NATIVE_ROWS.iter().copied().find(|row| row.flags & LANE_METHOD != 0 && row.name == name)
 }
 
 /// The first row named `name` of a collection prototype that installs a native a compiled loop calls in
-/// place (`dispatch_fast::in_place_in_loop`).
-pub(super) fn in_place_method(name: &str) -> Option<NativeRow> {
-    NATIVE_ROWS.iter().copied().find(|row| row.name == name && super::dispatch_fast::in_place_in_loop(row.native)
+/// place (`crate::vm::engine_calls::in_place_in_loop`).
+pub fn in_place_method(name: &str) -> Option<NativeRow> {
+    NATIVE_ROWS.iter().copied().find(|row| row.name == name && crate::vm::engine_calls::in_place_in_loop(row.native)
         && matches!(row.holder, Holder::MapPrototype | Holder::SetPrototype | Holder::WeakMapPrototype | Holder::WeakSetPrototype))
 }
 
@@ -341,12 +341,12 @@ impl Native {
     /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
     /// them; `match` and `search`, which make a RegExp of a string, are not.
     #[inline]
-    pub(crate) const fn is_pure_string_method(self) -> bool {
+    pub const fn is_pure_string_method(self) -> bool {
         NATIVE_FLAGS[self as usize] & PURE_STRING != 0
     }
 
     /// The functions of the `Math` object: the natives of `Math`'s rows (`MATH_FUNCTIONS`).
-    pub(crate) const fn is_math_function(self) -> bool {
+    pub const fn is_math_function(self) -> bool {
         NATIVE_FLAGS[self as usize] & MATH != 0
     }
 }

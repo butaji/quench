@@ -196,7 +196,7 @@ pub(crate) fn concrete_for_in_next(arrays: *const crate::heap::ArrayObject, obje
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::{ArrayElements, ArrayObject, Cell, Heap, Object};
+    use crate::heap::{ArrayElements, ArrayObject, Heap, Object};
     use crate::Value;
 
     /// A heap with a plain object of two properties (shapes 1 and 2) and the snapshot array of its two

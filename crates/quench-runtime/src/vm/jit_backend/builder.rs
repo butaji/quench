@@ -13,19 +13,19 @@ thread_local! {
 }
 
 /// This thread's builder context, empty: the one the last finished lowering gave back, or a new one.
-pub(in crate::vm) fn take_context() -> FunctionBuilderContext {
+pub fn take_context() -> FunctionBuilderContext {
     HELD.with(|held| held.take()).unwrap_or_default()
 }
 
 /// Gives `context` back for the next lowering of this thread, once its builder's `finalize` emptied it;
 /// a lowering that gave up drops its context instead.
-pub(in crate::vm) fn keep_context(context: FunctionBuilderContext) {
+pub fn keep_context(context: FunctionBuilderContext) {
     HELD.with(|held| held.set(Some(context)));
 }
 
 /// Enters `builder`'s function at a new first block holding its signature's parameters, which it
 /// returns.
-pub(in crate::vm) fn enter(builder: &mut FunctionBuilder<'_>) -> (ir::Block, Vec<ir::Value>) {
+pub fn enter(builder: &mut FunctionBuilder<'_>) -> (ir::Block, Vec<ir::Value>) {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);

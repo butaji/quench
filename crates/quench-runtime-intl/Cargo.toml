@@ -1,0 +1,24 @@
+[package]
+name = "quench-runtime-intl"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+description = "Intl and Temporal for the Quench runtime: a layer crate above the VM core"
+
+[lib]
+doctest = false
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime", default-features = false }
+quench-macros = { path = "../quench-macros" }
+quench-intl = { path = "../quench-intl" }
+quench-temporal = { path = "../quench-temporal" }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10"
+rustc-hash = "2.1"
+unicode-segmentation = "1.13"
+libm = "=0.2.16"
+
+[lints]
+workspace = true

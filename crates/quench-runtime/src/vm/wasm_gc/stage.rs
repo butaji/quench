@@ -10,13 +10,15 @@ use crate::wasm::gc::GcField;
 use crate::wasm::reference::{ReferenceTarget, TargetHeap};
 
 /// The VM's heap, as a stage the GC rules run on.
-pub(in crate::vm) struct HeapStage<'a> {
-    pub(in crate::vm) vm: &'a mut Vm,
+pub struct HeapStage<'a> {
+    pub vm: &'a mut Vm,
 }
 
 impl Machine for HeapStage<'_> {
     type Word = u64;
 }
+
+crate::projection!(HeapStage<'_> => Concrete);
 
 impl MachineStage for HeapStage<'_> {
     type Exit = JsError;
@@ -159,7 +161,7 @@ impl WasmGc for HeapStage<'_> {
 impl HeapStage<'_> {
     /// Stores the element's Wasm bits `bits` in `extent` elements of the array `reference` from
     /// `index`: the fill a tier makes with a value it already holds as bits, no box between.
-    pub(in crate::vm) fn fill_field_bits(&mut self, reference: u64, index: u64, extent: u64, bits: u64) {
+    pub fn fill_field_bits(&mut self, reference: u64, index: u64, extent: u64, bits: u64) {
         let element = self.array_element(reference).expect("the rules fill an array they checked");
         let field = GcField::new(0, element).expect("index 0 fits");
         let Some(record) = self.vm.heap.wasm_gc_mut(Value::from_bits(reference)) else {
@@ -219,7 +221,7 @@ impl HeapStage<'_> {
 impl Vm {
     /// `ref.test` (`cast` false) or `ref.cast` of `reference`, its Wasm bits, to `target`, under
     /// `program`'s declarations: the admit flag, or the reference the cast leaves.
-    pub(in crate::vm) fn wasm_ref_test_or_cast(
+    pub fn wasm_ref_test_or_cast(
         &mut self,
         program: ProgramId,
         target: ReferenceTarget,

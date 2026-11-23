@@ -20,8 +20,10 @@ use crate::units::MILLISECONDS_PER_SECOND;
 const MILLISECONDS_PER_MINUTE: f64 = 60_000.0;
 const MILLISECONDS_PER_HOUR: f64 = 3_600_000.0;
 const HOURS_PER_DAY: f64 = 24.0;
+/// Nanoseconds per millisecond, the factor from a time value to a `Temporal.Instant` epoch.
+const INSTANT_NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 const MILLISECONDS_PER_DAY: f64 = MILLISECONDS_PER_HOUR * HOURS_PER_DAY;
-pub(super) use crate::staged::date_fields::DATE_TIME_CLIP_LIMIT_MS;
+pub use crate::staged::date_fields::DATE_TIME_CLIP_LIMIT_MS;
 use crate::staged::date_fields::{self, DateParts, date_parts_utc, days_from_civil};
 const LEGACY_DATE_YEAR_MIN: f64 = 0.0;
 const LEGACY_DATE_YEAR_MAX: f64 = 99.0;
@@ -201,7 +203,7 @@ impl Vm {
                 | Native::DateToLocaleDateString
                 | Native::DateToLocaleTimeString
         ) {
-            return self.date_to_locale_string(p, native, this, args);
+            return layer_hooks::date_to_locale_string(self, p, native, this, args);
         }
         if native == Native::DateToJSON {
             return self.date_to_json(p, this);
@@ -289,10 +291,10 @@ impl Vm {
                     return Err(self.range_error(p, "Invalid time value".into()));
                 }
                 let nanoseconds = (milliseconds.trunc() as i128)
-                    .checked_mul(super::temporal_instant::INSTANT_NANOSECONDS_PER_MILLISECOND)
+                    .checked_mul(INSTANT_NANOSECONDS_PER_MILLISECOND)
                     .ok_or_else(|| self.range_error(p, "Invalid time value".into()))?;
-                let constructor = self.temporal_instant_constructor(p)?;
-                self.make_temporal_instant(p, nanoseconds, constructor)
+                let constructor = layer_hooks::temporal_instant_constructor(self, p)?;
+                layer_hooks::make_temporal_instant(self, p, nanoseconds, constructor)
             }
             _ => Err(JsError("invalid Date native".into())),
         }
@@ -421,7 +423,7 @@ impl Vm {
 
     /// A Date getter's call on a Date (`date_reads`), which raises nothing; `None` for any
     /// other receiver, whose TypeError the general call raises.
-    pub(super) fn plain_date_get(&self, native: Native, receiver: Value) -> Option<Value> {
+    pub fn plain_date_get(&self, native: Native, receiver: Value) -> Option<Value> {
         let Some(Cell::Date { milliseconds, .. }) = self.heap.get(receiver) else {
             return None;
         };
@@ -496,7 +498,7 @@ fn date_utc_constructor_value(
 /// Whether `native` is a Date getter (`date_getter`): it reads its receiver's time value and
 /// the host's time zone rules, and runs no guest code.
 #[inline]
-pub(super) const fn date_reads(native: Native) -> bool {
+pub const fn date_reads(native: Native) -> bool {
     matches!(
         native,
         Native::DateGetTime
@@ -589,7 +591,7 @@ fn date_utc(milliseconds: f64) -> Option<DateTime<Utc>> {
         .flatten()
 }
 
-pub(super) fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
+pub fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
     if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
         return None;
     }

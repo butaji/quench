@@ -19,7 +19,7 @@ use crate::Value;
 
 /// A step of the delegation the frame makes (`CallFrame::delegation`), on the words the row read.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum DelegationStep<W> {
+pub enum DelegationStep<W> {
     /// GetIterator of `source`, sync or `asynchronous` (`Vm::get_iterator`, `Vm::get_async_iterator`).
     Iterator { source: W, asynchronous: bool },
     /// The `next` method of `iterator`, read from an async-from-sync iterator's source, which a
@@ -144,7 +144,7 @@ fn fresh_step<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegatio
 /// cleared only after both, so a frame declines a read before any effect: the compiler resets
 /// `state` before each `yield*` begins, so a read that throws leaves nothing a later step sees.
 #[inline(always)]
-fn finish<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation, result: S::Word, asynchronous: bool)
+pub fn finish<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation, result: S::Word, asynchronous: bool)
     -> Option<Outcome<S::Word, F::Control>> {
     let (done, _) = frame.delegation(stage, DelegationStep::Done { result })?;
     let (truthy, _) = frame.delegation(stage, DelegationStep::Truthy { value: done })?;

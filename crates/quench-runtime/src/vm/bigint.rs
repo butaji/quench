@@ -126,7 +126,7 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let bigint = self.bigint_value_of(p, this)?;
-        self.intl_format_primitive(p, bigint, args)
+        layer_hooks::intl_format_primitive(self, p, bigint, args)
     }
 
     fn bigint_to_string(

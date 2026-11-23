@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration, LocalResult, NaiveDateTime, Offset, TimeZone, U
 // Preserve the established Temporal offset probes around a skipped wall time.
 const TRANSITION_OFFSET_PROBE_DAYS: i64 = 1;
 
-pub(super) fn resolve_local_datetime<T: TimeZone>(
+pub fn resolve_local_datetime<T: TimeZone>(
     local: NaiveDateTime,
     zone: &T,
     disambiguation: &str,

@@ -14,7 +14,7 @@ pub(crate) const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 /// What a site proved about where an object of an exact shape keeps its values. It is a
 /// static input: a specializer reads no word to learn it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum Form {
+pub enum Form {
     /// Packed narrow values in the payload word (`PlainPropertyStorage::PackedInline`).
     Packed,
     /// A flat run in the property arena (`PlainPropertyStorage::Arena`).
@@ -27,7 +27,7 @@ impl Form {
     /// The form a site's observed storage and its shape's length leave possible: only a shape
     /// that fits the payload word can be packed.
     #[inline(always)]
-    pub(crate) fn of(storage: Option<PlainPropertyStorage>, storage_len: usize) -> Self {
+    pub fn of(storage: Option<PlainPropertyStorage>, storage_len: usize) -> Self {
         match storage {
             Some(PlainPropertyStorage::PackedInline) => Self::Packed,
             Some(PlainPropertyStorage::Arena) => Self::Arena,
@@ -45,13 +45,13 @@ pub(crate) enum PackedAccess {
 
 /// Packed narrow values: the record that holds them.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Packed<W> {
+pub enum Packed<W> {
     Record(W),
 }
 
 /// Where an object of a proved exact shape keeps its named values.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Slots<W, C> {
+pub enum Slots<W, C> {
     Packed(Packed<W>),
     /// The address of value zero of a flat run of wide values: the arena's, or the inline
     /// values extras displaced.
@@ -67,9 +67,9 @@ pub(crate) enum Slots<W, C> {
 
 /// The layout of one object record and how many values its shape holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Layout<W, C> {
-    pub(crate) slots: Slots<W, C>,
-    pub(crate) storage_len: usize,
+pub struct Layout<W, C> {
+    pub slots: Slots<W, C>,
+    pub storage_len: usize,
 }
 
 /// The address of the table entry of the record's layout (`heap::layouts`), which holds its
@@ -92,7 +92,7 @@ pub(crate) fn header_u32<S: Stage>(stage: &mut S, at: super::region::Access, rec
 
 /// The record's inline-storage flag (`Object::meta`), true where its values are inline.
 #[inline(always)]
-pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Cond {
+pub fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Cond {
     let meta = header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.meta_offset);
     let inline = stage.and_imm(meta, u64::from(OBJECT.inline_storage_mask));
     stage.ne_imm(inline, 0u32)
@@ -100,21 +100,21 @@ pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Con
 
 /// Whether an object's payload word points at its extras (`Object::payload`).
 #[inline(always)]
-pub(crate) fn has_extras<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
+pub fn has_extras<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
     let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
     stage.eq_imm(tag, OBJECT.extras_tag)
 }
 
 /// Whether an object's payload word holds plain storage, no extras: `has_extras` negated.
 #[inline(always)]
-pub(crate) fn plain_payload<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
+pub fn plain_payload<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
     let tag = stage.and_imm(payload, OBJECT.extras_tag_mask);
     stage.ne_imm(tag, OBJECT.extras_tag)
 }
 
 /// The extras an object's payload word points at, once `has_extras` holds.
 #[inline(always)]
-pub(crate) fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
+pub fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
     stage.and_imm(payload, !OBJECT.extras_tag_mask)
 }
 
@@ -150,7 +150,7 @@ pub(crate) fn storage_form<S: Stage>(stage: &mut S, word: S::Word, bit: u32) -> 
 
 /// The record's encoded prototype link (`Object::proto_link`).
 #[inline(always)]
-pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+pub fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
     let meta = header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.meta_offset);
     stage.and_imm(meta, u64::from(OBJECT.proto_mask))
 }
@@ -179,7 +179,7 @@ pub(crate) fn proto_record_id<S: Stage>(stage: &mut S, link: S::Word) -> S::Word
 
 /// The id of the object record `link` names, or `miss` where it names none.
 #[inline(always)]
-pub(crate) fn proto_object_record_id<S: Stage>(stage: &mut S, link: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn proto_object_record_id<S: Stage>(stage: &mut S, link: S::Word, miss: S::Miss) -> Option<S::Word> {
     let inside = proto_names_record(stage, link);
     stage.guard(inside, miss)?;
     Some(proto_record_id(stage, link))
@@ -196,7 +196,7 @@ const WALK_UNDECIDED: u64 = 2;
 /// At most `links` links past the first are followed, each a nested conditional, so a stage that
 /// knows its conditions runs the one arm taken and a specializer emits one block per link.
 #[inline(always)]
-pub(crate) fn walk_prototypes<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, target: S::Word,
+pub fn walk_prototypes<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, target: S::Word,
     links: u32) -> (S::Cond, S::Cond) {
     let answer = walk_from(stage, records, object, target, links);
     let undecided = stage.eq_imm(answer, WALK_UNDECIDED);
@@ -298,7 +298,7 @@ fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, ta
 
 /// The address of object record `id` in the record table at `records`.
 #[inline(always)]
-pub(crate) fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
+pub fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
     let offset = stage.mul_imm(id, OBJECT.record_size as u64);
     stage.add(records, offset)
 }
@@ -331,7 +331,7 @@ pub(crate) fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
 /// `values`, and how many values remain from it (none where the slot lies outside the run). An
 /// address formed outside the run grants no permission to dereference it.
 #[inline(always)]
-pub(crate) fn bind_arena_slot<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, slot: S::Word) -> (S::Word, S::Word) {
+pub fn bind_arena_slot<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, slot: S::Word) -> (S::Word, S::Word) {
     let fits = stage.ult(slot, length);
     let difference = stage.sub(length, slot);
     let none = stage.constant(0);
@@ -343,7 +343,7 @@ pub(crate) fn bind_arena_slot<S: Stage>(stage: &mut S, values: S::Word, length: 
 /// The address of value `position` of the run of `length` values at `values`; `None` (leaving at
 /// `miss`) at or past its end.
 #[inline(always)]
-pub(crate) fn arena_slot_address<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, position: S::Word,
+pub fn arena_slot_address<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, position: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let within = stage.ult(position, length);
     stage.guard(within, miss)?;
@@ -428,7 +428,7 @@ fn layout_of<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, inline:
 /// its extras (`Object::extras_storage_start`), as a global object by name does, `inline` being
 /// its `inline_storage`: a record without extras, or with its values inline, leaves at `miss`.
 #[inline(always)]
-pub(crate) fn arena_extras_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, storage_len: usize,
+pub fn arena_extras_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, storage_len: usize,
     miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
@@ -658,7 +658,7 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
 /// `decode_narrow` with the reference codes' upper words at `upper_words`, a copy of
 /// `NarrowLayout::upper_words` (an ahead-of-time image links its own).
 #[inline(always)]
-pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_words: S::Word) -> S::Word {
+pub fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_words: S::Word) -> S::Word {
     let flag = stage.and_imm(narrow, u64::from(NarrowLayout::INTEGER_FLAG));
     let integer = stage.ne_imm(flag, 0u32);
     stage.choose(integer, #[inline(always)] |stage| {
@@ -683,7 +683,7 @@ pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, up
 /// `object` is a live record whose exact shape covers `slot`, and `property_values` is the
 /// base of the arena that holds its run.
 #[inline(always)]
-pub(crate) unsafe fn concrete_own_read(object: &crate::heap::Object, property_values: *const crate::Value, slot: usize) -> crate::Value {
+pub unsafe fn concrete_own_read(object: &crate::heap::Object, property_values: *const crate::Value, slot: usize) -> crate::Value {
     let mut stage = Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
     let word = header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);

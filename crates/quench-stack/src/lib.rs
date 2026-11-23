@@ -1,4 +1,5 @@
 //! One recursion policy for runtime and compiler transitions.
+pub mod projection;
 use std::{cell::Cell, marker::PhantomData, rc::Rc};
 
 /// Native stack distance allowed for recursive runtime transitions.

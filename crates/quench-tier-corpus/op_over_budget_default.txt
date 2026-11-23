@@ -1,0 +1,12 @@
+# Ops over their per-op budget (op_budgets.txt) in the default mode (no flag, every tier on), net of `empty` (quench-gate step `ir-budget`).
+# A shrink-only debt list: an unlisted overrun fails the step, and an entry that no longer overruns
+# must be removed (`QUENCH_DEBT_WRITE=1` on a full run removes it). Never add an entry by hand.
+arr_load_dbl
+arr_store_dbl
+call_closure
+call_method
+eq_undef_null
+field_store
+truthy_obj
+truthy_str
+typeof_op

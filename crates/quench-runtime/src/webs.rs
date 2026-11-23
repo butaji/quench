@@ -12,13 +12,13 @@ use crate::bitset::BitRows;
 
 /// Union-find over definition nodes, numbered from 0.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct DefSets {
+pub struct DefSets {
     parent: Vec<u32>,
 }
 
 impl DefSets {
     /// `count` nodes, each its own set.
-    pub(crate) fn new(count: usize) -> Self {
+    pub fn new(count: usize) -> Self {
         Self { parent: (0..count as u32).collect() }
     }
 
@@ -30,12 +30,12 @@ impl DefSets {
     }
 
     /// The nodes there are.
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.parent.len()
     }
 
     /// The root of `node`'s set, without shortening its path.
-    pub(crate) fn find(&self, mut node: usize) -> usize {
+    pub fn find(&self, mut node: usize) -> usize {
         while self.parent[node] as usize != node {
             node = self.parent[node] as usize;
         }
@@ -43,7 +43,7 @@ impl DefSets {
     }
 
     /// The root of `node`'s set, halving its path on the way.
-    pub(crate) fn root(&mut self, mut node: usize) -> usize {
+    pub fn root(&mut self, mut node: usize) -> usize {
         while self.parent[node] as usize != node {
             let grand = self.parent[self.parent[node] as usize];
             self.parent[node] = grand;
@@ -54,7 +54,7 @@ impl DefSets {
 
     /// Joins the sets of `keep` and `other`; `keep`'s root stays the root. The roots joined
     /// (kept, absorbed), or `None` where they were one set already.
-    pub(crate) fn union(&mut self, keep: usize, other: usize) -> Option<(usize, usize)> {
+    pub fn union(&mut self, keep: usize, other: usize) -> Option<(usize, usize)> {
         let (keep, other) = (self.root(keep), self.root(other));
         (keep != other).then(|| {
             self.parent[other] = keep as u32;
@@ -63,7 +63,7 @@ impl DefSets {
     }
 
     /// Joins every node of `nodes` into the first one's set; the first, if any.
-    pub(crate) fn join_all(&mut self, nodes: impl IntoIterator<Item = usize>) -> Option<usize> {
+    pub fn join_all(&mut self, nodes: impl IntoIterator<Item = usize>) -> Option<usize> {
         let mut nodes = nodes.into_iter();
         let first = nodes.next()?;
         for other in nodes {
@@ -75,41 +75,41 @@ impl DefSets {
 
 /// Where control goes after a row: a row of the region, or a PC outside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Next {
+pub enum Next {
     Row(usize),
     Leave(u32),
 }
 
 /// The definitions reaching each row, and each PC outside the region control leaves to.
-pub(crate) struct Reaching {
+pub struct Reaching {
     pub(crate) rows: BitRows,
     /// The PCs outside the region control leaves to, ascending.
-    pub(crate) leaf_pcs: Vec<u32>,
+    pub leaf_pcs: Vec<u32>,
     /// Per leaf PC (by its index in `leaf_pcs`), the definitions reaching it.
-    pub(crate) leaves: BitRows,
+    pub leaves: BitRows,
     /// Per row, whether control from the first row reaches it.
-    pub(crate) reached: Vec<bool>,
+    pub reached: Vec<bool>,
 }
 
 impl Reaching {
     /// The definitions reaching row `row`.
-    pub(crate) fn row(&self, row: usize) -> &[u64] {
+    pub fn row(&self, row: usize) -> &[u64] {
         self.rows.row(row)
     }
 }
 
 /// Whether `bit` is set in `words`.
-pub(crate) fn has(words: &[u64], bit: usize) -> bool {
+pub fn has(words: &[u64], bit: usize) -> bool {
     crate::bitset::words_contain(words, bit)
 }
 
 /// Sets `bit` in `words`.
-pub(crate) fn set(words: &mut [u64], bit: usize) {
+pub fn set(words: &mut [u64], bit: usize) {
     words[bit / crate::bitset::WORD_BITS] |= 1 << (bit % crate::bitset::WORD_BITS);
 }
 
 /// The set bits of `words`, ascending.
-pub(crate) fn members(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
+pub fn members(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
     words.iter().enumerate().flat_map(|(index, word)| crate::bitset::word_members(index, *word))
 }
 
@@ -118,7 +118,7 @@ pub(crate) fn members(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
 /// definitions), and `successors` names where control goes after a row. Where `reseed` holds, a
 /// row control never reaches is taken as entered with `seed` (its definitions must exist though
 /// they never run), and so are the rows it reaches; `reached` stays false for them.
-pub(crate) fn solve(
+pub fn solve(
     count: usize,
     bits: usize,
     seed: &[u64],

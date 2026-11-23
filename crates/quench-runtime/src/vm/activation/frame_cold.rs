@@ -83,24 +83,24 @@ impl FrameRecord {
     }
 
     /// The dynamic bindings it holds itself, taken: an environment takes them over.
-    pub(in crate::vm) fn take_dynamic_bindings(&mut self) -> Vec<(Atom, Value)> {
+    pub fn take_dynamic_bindings(&mut self) -> Vec<(Atom, Value)> {
         self.cold.as_mut().map(|cold| std::mem::take(&mut cold.dynamic_bindings)).unwrap_or_default()
     }
 
     /// The scope stack the frame detached when it suspended: the `with` objects of its
     /// scope chain, those its closure captured and those it entered, outermost first. While a
     /// lane activation runs the frame, the chain is the lane stack's (`LaneStack::with_objects`).
-    pub(in crate::vm) fn with_objects(&self) -> &[Value] {
+    pub fn with_objects(&self) -> &[Value] {
         &self.cold().with_objects
     }
 
     /// `with_objects`, to change.
-    pub(in crate::vm) fn with_objects_mut(&mut self) -> &mut Vec<Value> {
+    pub fn with_objects_mut(&mut self) -> &mut Vec<Value> {
         &mut self.cold_mut().with_objects
     }
 
     /// `with_objects`, to drain, where the frame holds a box for them.
-    pub(in crate::vm) fn held_with_objects_mut(&mut self) -> Option<&mut Vec<Value>> {
+    pub fn held_with_objects_mut(&mut self) -> Option<&mut Vec<Value>> {
         self.cold.as_mut().map(|cold| &mut cold.with_objects)
     }
 
@@ -111,7 +111,7 @@ impl FrameRecord {
     }
 
     /// Makes `site` the binding site, returning the one it replaces.
-    pub(in crate::vm) fn replace_binding_site_pc(&mut self, site: Option<u32>) -> Option<u32> {
+    pub fn replace_binding_site_pc(&mut self, site: Option<u32>) -> Option<u32> {
         if site.is_none() && self.cold.is_none() {
             return None;
         }
@@ -120,7 +120,7 @@ impl FrameRecord {
 
     /// A direct eval over the record ended: its binding site and the `with` scopes it entered
     /// with go, and the box with them where it holds nothing else.
-    pub(in crate::vm) fn end_eval_scope(&mut self) {
+    pub fn end_eval_scope(&mut self) {
         if let Some(cold) = self.cold.as_mut() {
             cold.binding_site_pc = None;
             cold.with_objects.clear();

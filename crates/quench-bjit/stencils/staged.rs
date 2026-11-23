@@ -11,6 +11,7 @@ pub(crate) use crate::typed_ir::Type;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/global.rs"] mod global;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/math.rs"] pub(crate) mod math;
+#[path = "../../quench-runtime/src/staged/int_math.rs"] pub(crate) mod int_math;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/builtins.rs"] pub(crate) mod builtins;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/strings.rs"] pub(crate) mod strings;

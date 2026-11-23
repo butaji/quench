@@ -20,7 +20,7 @@ use crate::typed_ir::Type;
 
 /// Whose object a read starts from: what a frame keys its proofs of an object by.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Owner {
+pub enum Owner {
     /// The activation's bound `this`.
     This,
     Register(Register),
@@ -40,19 +40,19 @@ impl Owner {
 /// One shape family of a polymorphic read: the sorted exact shapes that take `ops`, which
 /// read from the record the shapes already matched.
 #[derive(Clone, Copy)]
-pub(crate) struct Arm<'a> {
-    pub(crate) shapes: &'a [u32],
-    pub(crate) ops: &'a [IcOp<'a>],
+pub struct Arm<'a> {
+    pub shapes: &'a [u32],
+    pub ops: &'a [IcOp<'a>],
     /// The exact shape of the prototypes whose values `ops` fold as constants, which a code
     /// dependency holds (`PropertyFrame::hold_prototype`).
-    pub(crate) holds: Option<u32>,
+    pub holds: Option<u32>,
 }
 
 /// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the
 /// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
 /// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum EntryKind {
+pub enum EntryKind {
     /// The site's inline megamorphic entries, own or of the immediate prototype.
     Polymorphic,
     /// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`).
@@ -65,7 +65,7 @@ pub(crate) enum EntryKind {
 
 /// What holds an inherited read's receiver to the prototype its constants fold against.
 #[derive(Clone, Copy)]
-pub(crate) enum PrototypeProof {
+pub enum PrototypeProof {
     /// The holder is subscribed (`PropertyFrame::hold_prototype`): a change of its values retires the
     /// constant, and the read checks the link only through `IcOp::PrototypeConstants`.
     Watched { holder: u32 },
@@ -76,7 +76,7 @@ pub(crate) enum PrototypeProof {
 
 /// How a `GetField` site reads, as the proof its tier holds of the site.
 #[derive(Clone, Copy)]
-pub(crate) enum FieldPlan<'a> {
+pub enum FieldPlan<'a> {
     /// The ops of `staged::ic` over the receiver's record: own slot, prototype slot, or a
     /// prototype constant.
     Ops(&'a [IcOp<'a>]),
@@ -130,10 +130,10 @@ pub(crate) enum FieldPlan<'a> {
 /// double (`Representation::Float64`): the store writes the value's binary64 word (`PropertyFrame::stored_number`),
 /// never its tagged one, so a Number keeps no integer canonical form on its way in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct StoreArm {
+pub struct StoreArm {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
-    pub(crate) holds: Option<Type>,
+    pub holds: Option<Type>,
     pub(crate) raw_double: bool,
     /// Whether the site left the record's storage form open (`Form::Either`): a raw store
     /// then tests the inline flag at run time, which a proven arena run skips.
@@ -145,7 +145,7 @@ impl StoreArm {
     /// value of type `fact`. A slot that holds the value's type stores it as is. Otherwise
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
-    pub(crate) fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
+    pub fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
         if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false, unformed: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
         holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false, unformed: false })
@@ -155,7 +155,7 @@ impl StoreArm {
     /// value whose type the slot's holds, a Number, stores in place, as its binary64 word, and
     /// only into a shape whose values its `form` leaves an arena run (a packed slot holds narrow
     /// values, whatever its owner's type); an open form is tested when the store runs.
-    pub(crate) fn of_rep(at: (u32, u16), slot_ty: Type, fact: Type, (raw_double, form): (bool, super::Form)) -> Option<Self> {
+    pub fn of_rep(at: (u32, u16), slot_ty: Type, fact: Type, (raw_double, form): (bool, super::Form)) -> Option<Self> {
         let arm = Self::of(at, slot_ty, fact)?;
         if !raw_double { return Some(arm); }
         (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form != super::Form::Packed)
@@ -166,7 +166,7 @@ impl StoreArm {
 /// How the VM completes a named store that an in-place arm does not: where no arm holds the
 /// receiver's shape, or its value, its barrier or its storage.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum StoreJoin {
+pub enum StoreJoin {
     /// The VM's own-field store hit, which a failure leaves at the miss edge.
     Host,
     /// The same hit through the site's bound slot first, which the frame addressed before the
@@ -179,7 +179,7 @@ pub(crate) enum StoreJoin {
 
 /// How a named store site writes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum StorePlan<'a> {
+pub enum StorePlan<'a> {
     /// The first of `arms` whose exact shape the receiver has stores in place where the
     /// value, the barrier and the storage admit it; every other store runs through `join`.
     Own { arms: &'a [StoreArm], join: StoreJoin },
@@ -210,7 +210,7 @@ pub(crate) enum StorePlan<'a> {
 impl<'a> StorePlan<'a> {
     /// The plan that stores in place by `arms` and otherwise by `join`; by `join` alone with
     /// no arm.
-    pub(crate) fn of(arms: &'a [StoreArm], join: StoreJoin) -> Self {
+    pub fn of(arms: &'a [StoreArm], join: StoreJoin) -> Self {
         match (arms.is_empty(), join) {
             (false, join) => Self::Own { arms, join },
             (true, StoreJoin::Host) => Self::Host,
@@ -222,7 +222,7 @@ impl<'a> StorePlan<'a> {
 
 /// The plans a frame's tier proved, by site. A frame with none answers `None`, and the
 /// operation is left to the host path.
-pub(crate) trait PlanSource {
+pub trait PlanSource {
     /// The read plan of `lookup`.
     fn field_plan(&self, lookup: FieldLookup) -> Option<FieldPlan<'_>>;
     /// The store plan of cache site `site`.
@@ -242,7 +242,7 @@ impl<P: PlanSource> PlanSource for &P {
 
 /// The plans of a frame that proved none.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct NoPlans;
+pub struct NoPlans;
 
 impl PlanSource for NoPlans {
     fn field_plan(&self, _lookup: FieldLookup) -> Option<FieldPlan<'_>> { None }
@@ -251,7 +251,7 @@ impl PlanSource for NoPlans {
 
 /// A frame's property callouts. Every default declines, leaving the operation to the host
 /// path; a miss edge of the stage is each callout's failure.
-pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
+pub trait PropertyFrame<S: Stage>: Frame<S> {
     /// The handle to the plans, copied out so a row holds a plan while it calls the frame.
     type Plans: PlanSource + Copy;
 
@@ -477,7 +477,7 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
 
 /// The record of the direct object `object`; anything else leaves at `miss`.
 #[inline(always)]
-pub(crate) fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
+pub fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
     miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
     let records = frame.object_records(stage)?;
     let direct = value::is_direct_object(stage, object);

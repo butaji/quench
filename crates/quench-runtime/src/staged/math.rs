@@ -97,7 +97,7 @@ mod machine {
 
 /// A Math function of one Number that is a machine primitive or a short composition of them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum FloatUnary {
+pub enum FloatUnary {
     Floor,
     Ceil,
     Trunc,
@@ -140,7 +140,7 @@ pub(crate) fn float_primitive(operation: FloatUnary, value: f64) -> f64 {
 /// `Math.sign` of the binary64 word `number`: NaN and either zero as they are, else -1 below zero
 /// and 1 above. The one body every stage runs; `float_unary` and the u-jit's Emit both instantiate it.
 #[inline(always)]
-pub(crate) fn sign<S: NumericStage>(stage: &mut S, number: S::Word) -> S::Word {
+pub fn sign<S: NumericStage>(stage: &mut S, number: S::Word) -> S::Word {
     let ordered = stage.relation(NumberRelation::Equal, Domain::Float64, number, number);
     let unordered = stage.not(ordered);
     let zero = stage.f64_constant(0.0);
@@ -180,7 +180,7 @@ pub(crate) const ROUND_HALF: f64 = 0.5;
 /// it reaches `ROUND_HALF`, so halves go toward `+Infinity`. A negative that rounds to zero is `-0`,
 /// and a zero, NaN or infinity is its own value (`-0` stays `-0`).
 #[inline(always)]
-pub(crate) fn round<S: NumericStage>(stage: &mut S, value: S::Word) -> S::Word {
+pub fn round<S: NumericStage>(stage: &mut S, value: S::Word) -> S::Word {
     let floor = stage.float_primitive(FloatUnary::Floor, value);
     let excess = stage.float_arithmetic(NumberArithmetic::Subtract, value, floor);
     let half = stage.f64_constant(ROUND_HALF);
@@ -215,11 +215,8 @@ pub(crate) fn float_extreme(maximum: bool, left: f64, right: f64) -> f64 {
     if maximum { left.max(right) } else { left.min(right) }
 }
 
-/// `Math.imul`: the wrapping product of two int32 values.
-#[inline(always)]
-pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
-    left.wrapping_mul(right)
-}
+/// `Math.imul`: the one wrapping int32 product every family shares (`int_math`).
+pub(crate) use super::int_math::int_multiply;
 
 /// `Math.hypot` of Numbers: infinite if any is (even beside a NaN), NaN if any is, else the
 /// root of the sum of squares, scaled by the largest magnitude so the squares do not overflow.
@@ -248,25 +245,25 @@ pub(crate) fn leading_zeros(uint32: u32) -> u32 {
 
 /// `Math.clz32` of the int32 word `value`, on `stage`: its unsigned low 32 bits' leading zeros.
 #[inline(always)]
-pub(crate) fn count_leading_zeros<S: NumericStage>(stage: &mut S, value: S::Word) -> S::Word {
+pub fn count_leading_zeros<S: NumericStage>(stage: &mut S, value: S::Word) -> S::Word {
     stage.int_leading_zeros(value)
 }
 
 /// `operation` of the binary64 word `value`, on `stage`.
 #[inline(always)]
-pub(crate) fn unary<S: NumericStage>(stage: &mut S, operation: FloatUnary, value: S::Word) -> S::Word {
+pub fn unary<S: NumericStage>(stage: &mut S, operation: FloatUnary, value: S::Word) -> S::Word {
     stage.float_unary(operation, value)
 }
 
 /// The wrapping product of two int32 words, on `stage`.
 #[inline(always)]
-pub(crate) fn multiply<S: NumericStage>(stage: &mut S, left: S::Word, right: S::Word) -> S::Word {
+pub fn multiply<S: NumericStage>(stage: &mut S, left: S::Word, right: S::Word) -> S::Word {
     stage.int_multiply(left, right)
 }
 
 /// `Math.max` (`maximum`) or `Math.min` of two binary64 words, on `stage`.
 #[inline(always)]
-pub(crate) fn extreme<S: NumericStage>(stage: &mut S, maximum: bool, left: S::Word, right: S::Word) -> S::Word {
+pub fn extreme<S: NumericStage>(stage: &mut S, maximum: bool, left: S::Word, right: S::Word) -> S::Word {
     stage.float_extreme(maximum, left, right)
 }
 

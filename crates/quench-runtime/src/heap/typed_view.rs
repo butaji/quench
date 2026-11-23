@@ -14,7 +14,7 @@ use super::cell::{TYPED_ARRAYS, TypedArrayKind};
 use crate::staged::record_heads::NativeViewHead;
 
 /// The kind byte of a view that is no typed array (a DataView): no native element has it.
-pub(crate) const NO_KIND: u8 = u8::MAX;
+pub const NO_KIND: u8 = u8::MAX;
 const _: () = assert!(TypedArrayKind::COUNT < NO_KIND as usize);
 
 /// What native code reads of a view record, first in `BufferViewObject` (`#[repr(C)]`), so a
@@ -23,7 +23,7 @@ const _: () = assert!(TypedArrayKind::COUNT < NO_KIND as usize);
 /// atomically or holds no native element.
 #[repr(C)]
 #[derive(Debug)]
-pub(crate) struct NativeView {
+pub struct NativeView {
     /// What native code reads in place (`staged::record_heads::NativeViewHead`).
     head: NativeViewHead,
 }
@@ -153,20 +153,20 @@ impl TypedViewTable {
 /// record's kind, that its `stamp` is the current `buffer_relocations` and that it is not
 /// `detached`, and reads `data` and `length`; a store also requires the bytes `unshared`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTypedArrayLayout {
-    pub(crate) entry_size: usize,
-    pub(crate) page_shift: u32,
-    pub(crate) page_mask: usize,
-    pub(crate) kind_offset: usize,
-    pub(crate) detached_offset: usize,
-    pub(crate) unshared_offset: usize,
-    pub(crate) data_offset: usize,
-    pub(crate) length_offset: usize,
-    pub(crate) stamp_offset: usize,
+pub struct NativeTypedArrayLayout {
+    pub entry_size: usize,
+    pub page_shift: u32,
+    pub page_mask: usize,
+    pub kind_offset: usize,
+    pub detached_offset: usize,
+    pub unshared_offset: usize,
+    pub data_offset: usize,
+    pub length_offset: usize,
+    pub stamp_offset: usize,
 }
 
 /// Layout facts for code generators which read a typed array's elements in place.
-pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
+pub const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
     entry_size: std::mem::size_of::<usize>(),
     page_shift: PAGE_SHIFT,
     page_mask: PAGE_ENTRIES - 1,

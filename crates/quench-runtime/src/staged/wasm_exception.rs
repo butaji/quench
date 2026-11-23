@@ -12,7 +12,7 @@ use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unar
 
 /// The exception operations a Wasm function's instruction can be.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Exception {
+pub enum Exception {
     /// `exception.new`: a tag and its payload, from a window of registers, the tag first.
     New,
     /// A catch's test of an exception against a tag.
@@ -25,7 +25,7 @@ pub(crate) enum Exception {
 
 impl Exception {
     /// The exception operation `op` is, if it is one.
-    pub(crate) const fn of(op: Op) -> Option<Self> {
+    pub const fn of(op: Op) -> Option<Self> {
         Some(match op {
             Op::WasmExceptionNew => Self::New,
             Op::WasmExceptionMatch => Self::Match,
@@ -39,7 +39,7 @@ impl Exception {
 /// The type a payload read carries in its instruction's `c` field: a payload's Wasm type. A numeric
 /// type is decided by its code alone; a reference's word is its Value's bits.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum PayloadType {
+pub enum PayloadType {
     I32,
     I64,
     F32,
@@ -57,7 +57,7 @@ impl PayloadType {
     }
 
     /// The type a field's code names.
-    pub(crate) fn of_code(code: u16) -> Option<Self> {
+    pub fn of_code(code: u16) -> Option<Self> {
         Self::ALL.get(usize::from(code)).copied()
     }
 
@@ -74,7 +74,7 @@ impl PayloadType {
     }
 
     /// The numeric Wasm type of a numeric payload; `None` for a reference.
-    pub(crate) fn numeric(self) -> Option<crate::WasmType> {
+    pub fn numeric(self) -> Option<crate::WasmType> {
         Some(match self {
             Self::I32 => crate::WasmType::I32,
             Self::I64 => crate::WasmType::I64,
@@ -143,7 +143,7 @@ pub(crate) fn matches<S: WasmException>(stage: &mut S, exception: S::Word, expec
 
 /// `payload`: the word of `exception` at `index`. An index past the exception's payload is a
 /// validation failure of the module.
-pub(crate) fn payload<S: WasmException>(stage: &mut S, exception: S::Word, index: u32) -> Result<S::Word, S::Exit> {
+pub fn payload<S: WasmException>(stage: &mut S, exception: S::Word, index: u32) -> Result<S::Word, S::Exit> {
     let present = stage.payload_present(exception, index);
     let absent = negated(stage, present);
     stage.reject_when(absent, "Wasm exception payload index out of bounds")?;

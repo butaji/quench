@@ -14,7 +14,7 @@ impl Vm {
     /// plain element store (`fill_plain_array_elements`), so holes, as in `new Array(n)`, are
     /// defined in place too. The range's bounds are relative indices that are absent,
     /// undefined or int32, clamped as `fill` clamps them; the receiver is returned.
-    pub(in crate::vm) fn plain_array_fill(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_array_fill(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let length = self.dense_array_length(receiver)?;
         let object = self.heap.array(receiver)?;
         if object.proto() != self.array_proto || object.is_frozen() {
@@ -30,7 +30,7 @@ impl Vm {
     /// `Array.from(items)` with no mapping function, where `this` is this realm's `Array` and
     /// `items` is a dense array whose iteration is the builtin one (`array_iteration_intact`).
     /// Its iterator yields the elements in order, so the result is one copy of them.
-    pub(in crate::vm) fn plain_array_from(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_array_from(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let [items] = args else {
             return None;
         };
@@ -42,7 +42,7 @@ impl Vm {
     }
 
     /// `Array.of(...items)` where `this` is this realm's `Array`: a new array of `items`.
-    pub(in crate::vm) fn plain_array_of(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_array_of(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         if !self.realm_array_constructor(receiver) {
             return None;
         }
@@ -53,7 +53,7 @@ impl Vm {
     /// booleans, `undefined`, `null` or holes no prototype holds, with an absent or flat ASCII
     /// separator. The result is one string when the prefix covers every element; otherwise `None`,
     /// and the general native continues from the first index the prefix did not cover.
-    pub(in crate::vm) fn plain_array_join(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub fn plain_array_join(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let separator = match args.first().copied() {
             Some(value) if !value.is_undefined() => owned_flat_ascii(&self.heap, value)?,
             _ => JsString::short_ascii(DEFAULT_JOIN_SEPARATOR),

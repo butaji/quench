@@ -39,7 +39,7 @@ impl MemoryLoad {
 /// splat or zero the staged lane (`load_lane`). The one body of `MemoryLoad::read`, which the lane
 /// handlers also call.
 #[inline(always)]
-pub(crate) fn read_memory(bytes: &[u8], operator: MemoryLoad, address: u64) -> Result<WasmValue, WasmTrap> {
+pub fn read_memory(bytes: &[u8], operator: MemoryLoad, address: u64) -> Result<WasmValue, WasmTrap> {
     if matches!(operator, MemoryLoad::V128Load) {
         return load_vector(&mut ConcreteBytes { memory: bytes }, address, 0, false).map(WasmValue::V128);
     }
@@ -54,7 +54,7 @@ pub(crate) fn read_memory(bytes: &[u8], operator: MemoryLoad, address: u64) -> R
 /// byte changes. A scalar store is the staged access (`Access::write`); a v128 store is
 /// `store_vector`. The one body of `MemoryStore::write`, which the lane handlers also call.
 #[inline(always)]
-pub(crate) fn write_memory(bytes: &mut [u8], operator: MemoryStore, address: u64, value: WasmValue) -> Result<(), WasmTrap> {
+pub fn write_memory(bytes: &mut [u8], operator: MemoryStore, address: u64, value: WasmValue) -> Result<(), WasmTrap> {
     if operator.value_type() == WasmType::V128 {
         let WasmValue::V128(word) = value else { unreachable!("decoded store type") };
         return store_vector(&mut ConcreteMemory { memory: bytes }, address, 0, word, false);

@@ -343,7 +343,7 @@ impl Vm {
     /// data to the intrinsic `%Array%` (`array_species_is_intrinsic`) and so makes a fresh
     /// array, and the dense splice (`array_splice_dense`). `None` leaves the call, with
     /// nothing observable done, to the general path.
-    pub(super) fn plain_array_splice(
+    pub fn plain_array_splice(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
@@ -367,7 +367,7 @@ impl Vm {
     /// `object`'s own data property `atom` (`Some(None)` when it has no own `atom`), read
     /// from its shape without a call; `None` for an accessor, or for an object keeping
     /// descriptors outside its shape, which its shape alone does not answer.
-    pub(in crate::vm) fn own_plain_data(&self, object: Value, atom: Atom) -> Option<Option<Value>> {
+    pub fn own_plain_data(&self, object: Value, atom: Atom) -> Option<Option<Value>> {
         let data = self.object_data(object)?;
         if data.has_side_descriptors() {
             return None;
@@ -383,7 +383,7 @@ impl Vm {
 
     /// `unshift` of a dense array as `splice_dense_elements` makes it, which observes
     /// nothing; `None` leaves the general path's steps.
-    pub(super) fn plain_array_unshift(&mut self, this: Value, items: &[Value]) -> Option<Value> {
+    pub fn plain_array_unshift(&mut self, this: Value, items: &[Value]) -> Option<Value> {
         let length = self.dense_array_length(this)?;
         self.splice_dense_elements(this, length, 0, 0, items)?;
         Some(Value::number((length + items.len()) as f64))
@@ -606,7 +606,7 @@ impl Vm {
     /// removing from its element vector: it is extensible, unfrozen, holds no indexed
     /// descriptors or sparse elements, is no arguments object and has a writable `length`.
     /// `None` leaves every other receiver to the generic algorithms.
-    pub(super) fn dense_array_length(&self, this: Value) -> Option<usize> {
+    pub fn dense_array_length(&self, this: Value) -> Option<usize> {
         let object = self.heap.array(this)?;
         if object.holds_ordinary_elements() {
             return Some(object.elements().len());
@@ -719,7 +719,7 @@ impl Vm {
     /// every other dense receiver `array_push_appended`. The one core of `Array.prototype.push`,
     /// called by the general native and the steady call path alike.
     #[inline(always)]
-    pub(super) fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
+    pub fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
         if let [value] = *args && let Some(length) = self.array_push_one(this, value) { return Some(length); }
         self.array_push_appended(this, args)
     }
@@ -764,7 +764,7 @@ impl Vm {
     /// literal is unreachable from guest code until it is complete, so no prototype observes
     /// the index, and CreateDataProperty stores the value as its own element. `false` leaves
     /// any other definition to `define_array_literal_element`.
-    pub(super) fn define_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
+    pub fn define_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
         let Some(length) = self.dense_array_length(array) else {
             return false;
         };
@@ -824,7 +824,7 @@ impl Vm {
     /// (`None`), as does any other receiver. The one core of `Array.prototype.pop`, called by
     /// the general native and the steady call path alike.
     #[inline(always)]
-    pub(super) fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
+    pub fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
         let object = self.heap.record_array(this)?;
         let records = self.heap.array_record_base()?;
         // A shorter array falsifies the proofs a prototype's elements and the running lane's
@@ -1118,7 +1118,7 @@ impl Vm {
 
     /// IsArray of any value but a Proxy, which reads no state beyond the value's kind; `None`
     /// for a Proxy, whose target (or revocation) `is_array` follows.
-    pub(super) fn steady_is_array(&self, value: Value) -> Option<bool> {
+    pub fn steady_is_array(&self, value: Value) -> Option<bool> {
         if let Some(object) = self.heap.array(value) {
             return Some(!object.is_arguments_object());
         }

@@ -4,11 +4,11 @@ use wasmparser::{FieldType, StorageType};
 
 mod field;
 mod layout;
-pub(crate) use field::{GcField, GcFieldValue, NO_STATIC_OFFSET, static_offset};
+pub use field::{GcField, GcFieldValue, NO_STATIC_OFFSET, static_offset};
 pub(crate) use layout::ObjectLayout;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GcFieldAccess {
+pub enum GcFieldAccess {
     Read,
     ReadSigned,
     ReadUnsigned,
@@ -80,13 +80,13 @@ impl ArraySegmentKind {
 
 /// The complete constructor operand/root window; the type index remains immediate.
 #[repr(u16)]
-pub(crate) enum ArraySegmentInput {
+pub enum ArraySegmentInput {
     Offset,
     Count,
     Segment,
 }
 impl ArraySegmentInput {
-    pub(crate) const COUNT: u16 = Self::Segment as u16 + 1;
+    pub const COUNT: u16 = Self::Segment as u16 + 1;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

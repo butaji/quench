@@ -40,15 +40,15 @@ macro_rules! selectors {
         selectors!($enum; $($name, $wasm;)+);
         impl $enum {
             #[inline(always)]
-            pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
+            pub const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
         }
     };
     ($enum:ident; $($name:ident, $wasm:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum $enum { $($name,)+ }
+        pub enum $enum { $($name,)+ }
         impl $enum {
-            pub(crate) const ALL: &'static [Self] = &[$(Self::$name,)+];
+            pub const ALL: &'static [Self] = &[$(Self::$name,)+];
             #[cfg(not(stencil_build))]
             pub(crate) fn from_wasm(operator: &wasmparser::Operator<'_>) -> Option<Self> {
                 match operator { $(wasmparser::Operator::$wasm => Some(Self::$name),)+ _ => None }

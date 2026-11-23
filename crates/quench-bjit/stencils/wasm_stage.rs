@@ -74,7 +74,7 @@ pub(crate) struct StencilMemory {
     pub(crate) length: u64,
 }
 
-scalar_stage!(StencilMemory);
+scalar_stage!(StencilStage => StencilMemory);
 
 impl StencilMemory {
     /// The frame's memory over the base and length pins (`s.p[1]`, `s.p[2]`), as the load, store and
@@ -228,7 +228,7 @@ pub(crate) struct GrowStage {
     grow: Grow,
 }
 
-scalar_stage!(GrowStage);
+scalar_stage!(StencilStage => GrowStage);
 
 impl GrowStage {
     /// The stage of the callout hole B's offset names in the context.
@@ -258,7 +258,7 @@ pub(crate) struct GlobalStage {
     pub(crate) area: usize,
 }
 
-scalar_stage!(GlobalStage);
+scalar_stage!(StencilStage => GlobalStage);
 
 impl GlobalStage {
     /// The native slot of the global bound at environment slot `slot`.
@@ -294,6 +294,8 @@ pub(crate) struct ConstantFree;
 impl crate::staged::machine::Machine for ConstantFree {
     type Word = u64;
 }
+
+crate::projection!(ConstantFree => StencilStage);
 
 impl MachineStage for ConstantFree {
     type Exit = WasmTrap;

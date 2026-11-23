@@ -24,5 +24,7 @@ workspace = true
 
 [dev-dependencies]
 libc = "0.2"
+# The stencil tables the library tests read (`rustc::stencil`).
+quench-stencils = { path = "../quench-stencils" }
 # The build's layout tests (`build/layout.rs`) run in the lib's test binary.
 iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "block_encoder", "instr_info"] }

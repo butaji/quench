@@ -135,7 +135,7 @@ impl Vm {
     /// One `next` step of a String, Map or Set iterator that has an item, where the step
     /// runs no guest code: the item's value, the iterator left past it. `None` for an
     /// iterator that is done or has nothing left, whose step the native makes.
-    pub(in crate::vm) fn step_collection_value(&mut self, iterator: Value) -> Option<Value> {
+    pub fn step_collection_value(&mut self, iterator: Value) -> Option<Value> {
         let (kind, source, position) = self.live_iterator_position(iterator)?;
         let (item, after) = self.collection_iterator_item(kind, source, position)?;
         self.heap.store_iterator_position(iterator, after);

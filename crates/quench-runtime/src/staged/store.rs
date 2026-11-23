@@ -4,7 +4,7 @@
 
 use super::narrow::{narrow_form, packed_form, storable_form, UPPER_WORD};
 use super::object::{inline_storage, HALF_BYTES};
-use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
+use super::slot_store::{admitted_payload, gate_open, store_flat};
 use super::Stage;
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -53,7 +53,9 @@ fn own_store_formed<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, 
 #[inline(always)]
 pub(crate) fn own_store_proved<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, slot: u16,
     value: (S::Word, Type), miss: S::Miss) -> Option<()> {
-    let payload = gated_payload(stage, record, record_id, value, miss)?;
+    // The arm proved the slot's type holds `value` (`fact`): the store observes nothing.
+    super::slot_store::held_gate_open(stage, record_id, value, miss)?;
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     own_store_with(stage, (record, payload, slot), value, miss)
 }
 
@@ -94,7 +96,7 @@ pub(crate) fn own_store_raw<S: Stage>(stage: &mut S, record: S::Word, slot: u16,
 /// `value` into the full-word slot at `address` of record `record_id`, which a frame bound
 /// before the run (the site's cache slot): behind the barrier's gate, as the own store is.
 #[inline(always)]
-pub(crate) fn bound_full_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
+pub fn bound_full_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
     (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     gate_open(stage, record_id, (value, fact), miss)?;
     stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
@@ -104,7 +106,7 @@ pub(crate) fn bound_full_store<S: Stage>(stage: &mut S, record_id: S::Word, addr
 /// `value`'s narrow form into the packed slot at `address` of record `record_id`; a value with
 /// no narrow form leaves at `miss`.
 #[inline(always)]
-pub(crate) fn bound_packed_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
+pub fn bound_packed_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
     (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     let narrow = narrow_form(stage, value, fact);
     let narrow = storable_form(stage, narrow, miss)?;

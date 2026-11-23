@@ -3,7 +3,7 @@ use super::property_key::PropertyKey;
 use super::*;
 
 #[derive(Clone, Copy)]
-pub(super) enum PropertyDefinitionKind {
+pub enum PropertyDefinitionKind {
     Object,
     Reflect,
 }
@@ -80,7 +80,7 @@ impl Vm {
         outcome
     }
 
-    pub(super) fn define_property_or_throw(
+    pub fn define_property_or_throw(
         &mut self,
         p: &ResidualProgram,
         target: Value,

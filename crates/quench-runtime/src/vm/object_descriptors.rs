@@ -24,7 +24,7 @@ pub(super) enum TypedArrayIndexKey {
 
 #[path = "object_descriptors/record.rs"]
 mod record;
-pub(super) use record::PropertyDescriptorRecord;
+pub use record::PropertyDescriptorRecord;
 
 impl Vm {
     /// ToPropertyDescriptor's fields' keys, in the order it reads them.
@@ -554,7 +554,7 @@ impl Vm {
     /// (a deferred one evaluates its module; a binding may be uninitialized). ToPropertyKey
     /// of a string is the string, so the answer is the general path's
     /// (`own_property_enumerable`); `None` leaves the call to it.
-    pub(super) fn plain_own_property_query(
+    pub fn plain_own_property_query(
         &mut self,
         p: &ResidualProgram,
         native: Native,

@@ -815,7 +815,7 @@ impl Vm {
             .ok_or_else(|| JsError::wasm_link("invalid Wasm global binding"))
     }
 
-    pub(super) fn wasm_memory_bytes(
+    pub fn wasm_memory_bytes(
         &self,
         memory: Value,
     ) -> Result<crate::wasm::memory::MemoryRead<'_>, JsError> {
@@ -856,14 +856,14 @@ impl Vm {
         Ok(rule(&mut crate::staged::wasm_machine::ConcreteBytes { memory: &guard }))
     }
 
-    #[inline] pub(super) fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
+    #[inline] pub fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
         let Some(Cell::WasmMemory { header, .. }) = self.heap.get(memory) else {
             return Err(JsError::validation("invalid Wasm memory binding".into()));
         };
         crate::WasmType::from_wasm(header.ty.index_type()).ok_or_else(|| JsError::validation("invalid Wasm memory index type".into()))
     }
 
-    pub(super) fn wasm_memory_index(&self, memory: Value, value: Value) -> Result<u64, JsError> {
+    pub fn wasm_memory_index(&self, memory: Value, value: Value) -> Result<u64, JsError> {
         self.wasm_index_operand(value, self.wasm_memory_index_type(memory)?)
     }
 
@@ -978,7 +978,7 @@ impl Vm {
 
     /// Copy memory or immutable data bytes; None is the dropped segment state.
     /// Check both ranges before mutation, including zero-length boundary cases.
-    pub(super) fn wasm_copy_bytes(
+    pub fn wasm_copy_bytes(
         &mut self,
         destination: Value,
         source: Option<Value>,
@@ -1036,7 +1036,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn wasm_memory_grow(
+    pub fn wasm_memory_grow(
         &mut self,
         memory: Value,
         delta: u64,
@@ -1243,7 +1243,7 @@ impl Vm {
         }
     }
 
-    #[inline] pub(super) fn wasm_i64_operand(&self, value: Value) -> Result<i64, JsError> {
+    #[inline] pub fn wasm_i64_operand(&self, value: Value) -> Result<i64, JsError> {
         if let Some(bits) = value.bits64() { return Ok(bits as i64); }
         let crate::WasmValue::I64(value) = self.decode_wasm_value_slow(value, crate::WasmType::I64, None)? else { unreachable!("decoded i64 operand") };
         Ok(value)
@@ -1275,7 +1275,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn encode_wasm_value(&mut self, value: crate::WasmValue) -> Value {
+    pub fn encode_wasm_value(&mut self, value: crate::WasmValue) -> Value {
         if let crate::WasmValue::FuncRef(value)
         | crate::WasmValue::ExternRef(value)
         | crate::WasmValue::GcRef(value) = value
@@ -1292,20 +1292,20 @@ impl Vm {
     /// A 64-bit Wasm payload as a slot value: in place unless it falls in
     /// the tag space (`Value::from_bits64`).
     #[inline(always)]
-    pub(crate) fn encode_bits64(&mut self, bits: u64) -> Value {
+    pub fn encode_bits64(&mut self, bits: u64) -> Value {
         Value::from_bits64(bits).unwrap_or_else(|| self.heap.alloc(Cell::WasmBits64(bits)))
     }
 
     /// The 64-bit Wasm payload of a slot value typed i64 or f64.
     #[inline(always)]
-    pub(crate) fn decode_bits64(&self, value: Value) -> Option<u64> {
+    pub fn decode_bits64(&self, value: Value) -> Option<u64> {
         value.bits64().or_else(|| match self.heap.get(value) {
             Some(Cell::WasmBits64(bits)) => Some(*bits),
             _ => None,
         })
     }
 
-    pub(crate) fn decode_wasm_value(
+    pub fn decode_wasm_value(
         &self,
         value: Value,
         ty: crate::WasmType,
@@ -1379,7 +1379,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn decode_wasm_value_in(
+    pub fn decode_wasm_value_in(
         &self,
         value: Value,
         ty: crate::WasmType,
@@ -2710,7 +2710,7 @@ mod tests {
             vm.programs.compile_wasm_modules_at_first_entry();
             vm.set_execution_mode(crate::ExecutionMode::Compiled);
             let instance = vm.instantiate_wasm_module(&module).unwrap();
-            let promotion_entries = crate::vm::compiled::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries;
+            let promotion_entries = crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries;
             for _ in 0..promotion_entries {
                 assert_unreachable_trap(&mut vm, &instance);
             }
@@ -5732,7 +5732,7 @@ mod tests {
 
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
         assert!(vm.programs.wasm_tier(program, 0).is_none(), "an entry never compiles mid-loop");
-        assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == crate::vm::compiled::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries - 1),
+        assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries - 1),
             "the loop's work stops one short of the threshold");
 
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
@@ -5879,7 +5879,7 @@ mod tests {
         // The work at which this test's module compiles whole (never by time).
         const WORK: u32 = 64;
         // One entry loops through that work, plus one entry's worth.
-        let iterations = i32::try_from((WORK + 1) * crate::vm::compiled::tier_policy::TierRows::PROCESS.table().wasm.backedges_per_entry).unwrap();
+        let iterations = i32::try_from((WORK + 1) * crate::vm::tier_policy::TierRows::PROCESS.table().wasm.backedges_per_entry).unwrap();
         let root = vec![
             Operator::LocalGet { local_index: 0 },
             Operator::LocalSet { local_index: 1 },
@@ -6066,13 +6066,13 @@ mod tests {
             assert_eq!(compiled.native_entries(0), None);
             assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == 1));
 
-            for _ in 0..(crate::vm::compiled::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries as usize - 2) {
+            for _ in 0..(crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries as usize - 2) {
                 assert_eq!(
                     vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
                     Some(crate::WasmTrap::Unreachable)
                 );
             }
-            assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == crate::vm::compiled::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries - 1));
+            assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries - 1));
             assert!(vm.programs.wasm_tier(program, 0).is_none());
             assert_eq!(
                 vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
@@ -6159,7 +6159,7 @@ mod tests {
         // A small function's `unreachable` lowers to a native trap: the eager artifact holds
         // it, so no tier promotion follows.
         assert_eq!(compiled.native_entries(0), Some(1));
-        for _ in 0..usize::from(crate::vm::compiled::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries) {
+        for _ in 0..usize::from(crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries) {
             assert_eq!(
                 vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
@@ -6167,7 +6167,7 @@ mod tests {
         }
         assert_eq!(
             compiled.native_entries(0),
-            Some(1 + u64::from(crate::vm::compiled::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries))
+            Some(1 + u64::from(crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries))
         );
         assert!(vm.programs.wasm_tier(program, 0).is_none());
 

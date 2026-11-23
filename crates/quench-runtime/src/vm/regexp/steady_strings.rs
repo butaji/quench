@@ -8,7 +8,7 @@ impl Vm {
     /// `String.prototype.match(regexp)` of a string under `steady_string_replace`'s proofs
     /// for `@@match`: a non-global match is the builtin exec of the string
     /// (`steady_regexp_call`), a global one `regexp_symbol_match_global_fast`.
-    pub(in crate::vm) fn steady_string_match(
+    pub fn steady_string_match(
         &mut self,
         p: &ResidualProgram,
         this: Value,
@@ -135,7 +135,7 @@ impl Vm {
     /// whose exec, flags and lastIndex are builtin (`regexp_builtin_receiver_matcher`).
     /// Those make the native's steps the builtin `@@replace`'s fast path, which this runs;
     /// `None` leaves any other call to the general path.
-    pub(in crate::vm) fn steady_string_replace(
+    pub fn steady_string_replace(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -150,7 +150,7 @@ impl Vm {
     /// (`String.prototype.replace(...).length`): the replacement's length, its string never
     /// built. The same proofs and effects; a template with `$` substitutes, which takes the
     /// string's build, so it is `None` as any other call the lane leaves to the native.
-    pub(in crate::vm) fn steady_string_replace_length(
+    pub fn steady_string_replace_length(
         &mut self,
         p: &ResidualProgram,
         native: Native,

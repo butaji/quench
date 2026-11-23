@@ -9,7 +9,7 @@ pub(crate) const ITERATOR_CLOSE_BINDING: &str = "\0quench:iterator-close";
 pub(crate) const SUPER_BASE_BINDING: &str = "\0quench:super-base";
 pub(crate) const WITH_EXIT_BINDING: &str = "\0quench:with-exit";
 /// Every internal global the realm installs on its global object.
-pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 3] = [
+pub const INTERNAL_GLOBAL_BINDINGS: [&str; 3] = [
     ITERATOR_CLOSE_BINDING,
     WITH_ENTER_BINDING,
     WITH_EXIT_BINDING,
@@ -41,13 +41,13 @@ const INTRINSIC_NATIVES: [(&str, crate::heap::Native); 14] = {
 /// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
 /// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
 /// identifier can spell it, so the read observes no scope.
-pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
+pub fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
     INTRINSIC_NATIVES.iter().find(|(intrinsic, _)| *intrinsic == name).map(|&(_, native)| native)
 }
 
 /// Whether a by-name read of `name` is an intrinsic's (`intrinsic_name_native` or the RegExp
 /// intrinsic), which reads no binding.
-pub(crate) fn is_intrinsic_name(name: &str) -> bool {
+pub fn is_intrinsic_name(name: &str) -> bool {
     name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
 }
 pub(crate) const INTRINSIC_TYPE_ERROR_BINDING: &str = "\0quench:intrinsic-type-error";

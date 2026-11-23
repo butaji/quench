@@ -30,7 +30,7 @@ impl Vm {
     /// answers where the value is plain data; `None` leaves the call to the native, having
     /// observed nothing.
     #[inline]
-    pub(in crate::vm) fn json_stringify_steady(&mut self, args: &[Value]) -> Option<Value> {
+    pub fn json_stringify_steady(&mut self, args: &[Value]) -> Option<Value> {
         let unset = |index: usize| args.get(index).is_none_or(|value| value.is_undefined());
         if !(unset(JSON_REPLACER_ARGUMENT) && unset(JSON_SPACE_ARGUMENT)) {
             return None;

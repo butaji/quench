@@ -6,7 +6,7 @@
 use std::cell::UnsafeCell;
 use std::ops::Deref;
 
-pub(crate) struct AppendVec<T>(UnsafeCell<Storage<T>>);
+pub struct AppendVec<T>(UnsafeCell<Storage<T>>);
 
 /// Headroom of at least this many bytes is reserved as fresh zero pages of its own mapping,
 /// which stay out of the resident set until an append writes them: a heap block of that

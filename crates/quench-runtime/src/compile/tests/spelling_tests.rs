@@ -37,7 +37,7 @@ const SPELLINGS: &[&[&str]] = &[
 ];
 
 /// The instructions of every function of `source`, in order.
-fn instructions(source: &str) -> Vec<Vec<(Op, u16, u16, u16, u32)>> {
+pub fn instructions(source: &str) -> Vec<Vec<(Op, u16, u16, u16, u32)>> {
     let program = Engine::specialize(source, "spelling.js").unwrap();
     (0..program.function_count())
         .map(|id| {

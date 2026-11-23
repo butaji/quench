@@ -16,7 +16,7 @@ pub(crate) enum DistinctHeapPair {
 impl Value {
     /// Whether the value names an object or array record, which holds only an ordinary
     /// object or an array: never a string, a BigInt or a function.
-    #[inline(always)] pub(crate) fn is_record(self) -> bool {
+    #[inline(always)] pub fn is_record(self) -> bool {
         // The whole reference code: a symbol's code shares the object bit.
         self.is_heap()
             && matches!(

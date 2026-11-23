@@ -14,6 +14,8 @@ impl Machine for ExceptionStage<'_> {
     type Word = u64;
 }
 
+crate::projection!(ExceptionStage<'_> => Concrete);
+
 impl MachineStage for ExceptionStage<'_> {
     type Exit = JsError;
 
@@ -81,7 +83,7 @@ impl WasmException for ExceptionStage<'_> {
 }
 
 impl Vm {
-    pub(super) fn wasm_exception_new(
+    pub fn wasm_exception_new(
         &mut self,
         tag: Value,
         payload: Vec<Value>,
@@ -111,7 +113,7 @@ impl Vm {
     }
 
     /// A catch's test of `exception` against `expected` (`rules::matches`).
-    pub(super) fn wasm_exception_matches(
+    pub fn wasm_exception_matches(
         &mut self,
         exception: Value,
         expected: Value,
@@ -121,7 +123,7 @@ impl Vm {
     }
 
     /// The payload word of `exception` at `index` (`rules::payload`).
-    pub(super) fn wasm_exception_payload(
+    pub fn wasm_exception_payload(
         &mut self,
         exception: Value,
         index: u32,
@@ -131,7 +133,7 @@ impl Vm {
     }
 
     /// The error `throw_ref` of `exception` raises (`rules::throw_ref`).
-    pub(super) fn wasm_throw_ref(&mut self, exception: Value) -> JsError {
+    pub fn wasm_throw_ref(&mut self, exception: Value) -> JsError {
         rules::throw_ref(&mut ExceptionStage { vm: &mut *self }, exception.to_bits())
     }
 }
@@ -176,7 +178,7 @@ fn tag_parameter_type(name: &str) -> Option<wasmparser::ValType> {
 
 /// `WebAssembly.JSTag`'s type: a tag whose one `externref` parameter carries a JavaScript
 /// exception through Wasm. Every realm makes the same one.
-pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
+pub fn js_tag_type() -> (crate::WasmTypes, u32) {
     let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(
         [wasmparser::ValType::EXTERNREF],
         [],
@@ -185,7 +187,7 @@ pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
 }
 
 /// `WebAssembly.JSTag`'s cell (`js_tag_type`), with its object part.
-pub(crate) fn js_tag_cell(object: Box<crate::heap::Object>) -> Cell {
+pub fn js_tag_cell(object: Box<crate::heap::Object>) -> Cell {
     let (declarations, ty) = js_tag_type();
     Cell::WasmTag { object, declarations, ty }
 }

@@ -126,6 +126,12 @@ setting! {
     "QUENCH_DEV", Dev {
         /// The memory-first heap policy in place of the default.
         MemoryFirst = "memory-first",
+        /// `memory-mix=young+full+aging+external+pages+alloc+trim`: memory-first's named
+        /// components on top of the throughput policy (`heap::pacing::memory_mix_has`).
+        MemoryMix = "memory-mix",
+        /// Freed JIT code is filled with traps and never reused (`CodeMemory::drop`), so a run
+        /// that reaches freed code stops where it reached it.
+        PoisonFreedCode = "poison-freed-code",
         /// Array backings never take the double element kind (`heap::array_elements::DOUBLE_LEN`),
         /// which they otherwise take on their first Number that is no int32.
         NoDoubleElements = "no-double-elements",
@@ -144,6 +150,11 @@ setting! {
         /// With `aot-bodies=a-b`, an ahead image installs a body (lane or base) only for the
         /// functions numbered `a` through `b`; the others run in the interpreter.
         AotBodies = "aot-bodies",
+        /// With `unit-bisect=a-b`, only the units numbered `a` through `b`, in the order the one
+        /// specializer clears them (`compiled::admission::specialize`), compile; the others are
+        /// declined and run where a declined unit runs. Bare `unit-bisect` numbers each cleared
+        /// unit on stderr. A miscompile's bisection under `sync-compile`.
+        UnitBisect = "unit-bisect",
         /// An image lane body's leaves continue in its base body at the same PC (`AheadLeaves`);
         /// off because the join's store layout gives the base body the previous activation's
         /// values (`fbits9`), so leaves return their exit word and the lane runs the record.

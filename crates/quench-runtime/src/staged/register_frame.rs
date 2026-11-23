@@ -10,22 +10,22 @@ use crate::typed_ir::Type;
 /// A constant an instruction materializes: its value and the semantic type a stage that
 /// keeps type facts records for it.
 #[derive(Clone, Copy)]
-pub(crate) struct Constant {
-    pub(crate) value: crate::Value,
-    pub(crate) ty: Type,
+pub struct Constant {
+    pub value: crate::Value,
+    pub ty: Type,
 }
 
 impl Constant {
     /// A constant whose type the stage does not keep.
     #[inline(always)]
-    pub(crate) const fn untyped(value: crate::Value) -> Self {
+    pub const fn untyped(value: crate::Value) -> Self {
         Self { value, ty: Type::ANY }
     }
 }
 
 /// The representation a Wasm scalar takes in a register frame (`Frame::wasm_read`, `Frame::wasm_write`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum WasmRep {
+pub enum WasmRep {
     /// An i32 or f32: its 32 bits, zero-extended; a register holds them as an encoded integer.
     Int32,
     /// An i64 or a boxed f64: its 64 bits in place, where the value is untagged.
@@ -38,7 +38,7 @@ pub(crate) enum WasmRep {
 
 /// A register frame: each register's word and the static fact the stage keeps about it. A
 /// stage with no register facts uses `()`.
-pub(crate) trait Frame<S: Stage> {
+pub trait Frame<S: Stage> {
     /// The static fact a stage keeps about a register.
     type Fact: Copy;
 
@@ -428,7 +428,7 @@ pub(crate) fn wasm_result<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, r
 /// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
 /// the frame cannot tell its truthiness.
 #[inline(always)]
-pub(crate) fn jump_if<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool) -> Step<S::Word, F::Control> {
+pub fn jump_if<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool) -> Step<S::Word, F::Control> {
     let Some(condition) = frame.truthiness(stage, register) else { return Step::Unresolved };
     let condition = if taken { condition } else { stage.not(condition) };
     Step::Control(frame.branch(stage, condition))
@@ -436,7 +436,7 @@ pub(crate) fn jump_if<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, regis
 
 /// `destination` defined with the logical negation of `source`'s truthiness.
 #[inline(always)]
-pub(crate) fn logical_not<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, source: Register) -> Step<S::Word, F::Control> {
+pub fn logical_not<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, source: Register) -> Step<S::Word, F::Control> {
     let Some(truthy) = frame.truthiness(stage, source) else { return Step::Unresolved };
     let falsy = stage.not(truthy);
     let (value, fact) = frame.boolean(stage, falsy);
@@ -456,7 +456,7 @@ pub(crate) fn bound_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, mi
 /// `destination` defined with the activation's `this`, where it holds one (not the deleted
 /// marker); `miss` where it does not.
 #[inline(always)]
-pub(crate) fn load_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
+pub fn load_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
     if let Some((this, fact)) = frame.this_value(stage) {
         frame.write(stage, destination, this, fact);
         return Step::Value(this);
@@ -472,7 +472,7 @@ pub(crate) fn load_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, des
 
 /// `destination` defined from local slot `slot`; `None` where the frame cannot read it.
 #[inline(always)]
-pub(crate) fn read_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
+pub fn read_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
     let (value, fact) = frame.load_local(stage, slot, miss)?;
     frame.write(stage, destination, value, fact);
     Some(value)
@@ -482,7 +482,7 @@ pub(crate) fn read_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, de
 /// (`Frame::arguments_binding`): the marker a forwarding read passes on, or the object a keeping activation
 /// makes. `None` where the frame does not, and the slot's own read decides.
 #[inline(always)]
-pub(crate) fn read_arguments_binding<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16) -> Option<S::Word> {
+pub fn read_arguments_binding<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16) -> Option<S::Word> {
     let (value, fact) = frame.arguments_binding(stage, slot)?;
     frame.write(stage, destination, value, fact);
     Some(value)
@@ -490,7 +490,7 @@ pub(crate) fn read_arguments_binding<S: Stage, F: Frame<S>>(stage: &mut S, frame
 
 /// `source`'s tagged word written to local slot `slot`; `None` where the frame cannot write it.
 #[inline(always)]
-pub(crate) fn write_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, source: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
+pub fn write_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, source: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
     let value = frame.tagged(stage, source);
     frame.store_local(stage, slot, value, miss).then_some(value)
 }
@@ -499,7 +499,7 @@ pub(crate) fn write_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, s
 /// marker, which a binding in its temporal dead zone holds); `None` where the frame cannot read the
 /// slot, and `miss` where the binding is uninitialized: the host's read raises the `ReferenceError`.
 #[inline(always)]
-pub(crate) fn read_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub fn read_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let (value, fact) = frame.load_local(stage, slot, Some(miss))?;
     let initialized = stage.ne_imm(value, crate::Value::DELETED.to_bits());
     stage.guard(initialized, miss)?;
@@ -511,7 +511,7 @@ pub(crate) fn read_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame
 /// that is no initialization (`let x; x = 1`) of a binding still in its temporal dead zone is the
 /// host's `ReferenceError`, which `miss` leaves to.
 #[inline(always)]
-pub(crate) fn write_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, source: Register, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub fn write_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, source: Register, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let (current, _) = frame.load_local(stage, slot, Some(miss))?;
     let initialized = stage.ne_imm(current, crate::Value::DELETED.to_bits());
     stage.guard(initialized, miss)?;
@@ -519,7 +519,7 @@ pub(crate) fn write_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, fram
 }
 
 /// A staged instruction's outcome: the word it produced, or where control goes.
-pub(crate) enum Step<W, C> {
+pub enum Step<W, C> {
     /// The operation produced `W`; control falls through.
     Value(W),
     /// The operation transferred control to `C`.

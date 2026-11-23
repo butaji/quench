@@ -5,7 +5,8 @@
 //! shape (`fingerprints`), when an engine concept gains a second definition or an analysis a
 //! second run (`concepts`), when a body spells an unnamed number
 //! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
-//! code tests a function's address for identity (`fn_identity`), or when statements are packed
+//! code tests a function's address for identity (`fn_identity`), when a fast path carries its
+//! slow path inline (`fast_paths`), or when statements are packed
 //! onto long lines (`line_packing`, reported by `--packing`, never gating).
 //!
 //! usage: quench-lint [--update | --lower] [--packing] [ROOT...]   |   quench-lint --census [--update-census]
@@ -18,6 +19,7 @@ mod census_metrics;
 mod data_layout;
 mod decision_trees;
 mod duplicates;
+mod fast_paths;
 mod fn_identity;
 mod fingerprints;
 mod guest_names;

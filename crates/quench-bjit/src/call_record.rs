@@ -8,6 +8,8 @@
 
 #[path = "../../quench-runtime/src/staged/lane_protocol.rs"]
 mod lane_protocol;
+// The runtime mounts this file by path inside private modules, where only some names are read.
+#[allow(unused_imports)]
 pub use lane_protocol::{
     helper_outcome, return_status, return_status_pc, LaneCall, LaneStatus, Outcome, CALLEE_EXIT, GENERAL_DISPATCH_BLOCKS,
     GENERAL_RETURN_STATUS_BASE, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED,

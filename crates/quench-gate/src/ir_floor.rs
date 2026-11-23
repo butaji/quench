@@ -2,13 +2,13 @@
 //! op only its C twin's instructions plus a fixed dispatch and decode allowance per record it
 //! dispatches (`DISPATCH_ALLOWANCE`); every instruction above that floor is waste, and the report
 //! names the layer that owns it. The JIT tiers' target is the op's budget in `ir_budget.txt`
-//! (3x C + 6, the same budget the interpreter rows are held to); their ceilings ratchet toward it.
+//! (C parity: max(C + 1, 1.25x C), the same budget the interpreter rows are held to); their ceilings ratchet toward it.
 //!
 //! Enforced by design, in `crates/quench-tier-corpus/ir_floor.txt`, one row per op:
 //! - `records`: the records the interpreter dispatches per iteration (callgrind's entries into lane
 //!   handlers). It only shrinks: an op that dispatches more records than recorded fails, so the
 //!   allowance can never grow by splitting work into more records.
-//! - `b-jit` and `u-jit`: each tier's ceiling, ratcheted like the interpreter's (shrink-only, a
+//! - `b-jit` and `default` (the shipped mode): each mode's ceiling, ratcheted like the interpreter's (shrink-only, a
 //!   count at or under the budget makes the budget the ceiling); a count past it fails.
 
 use std::{collections::BTreeMap, fs};
@@ -45,8 +45,8 @@ pub fn parse(text: &str) -> BTreeMap<String, Floor> {
 }
 
 const HEADER: &str = "# C floor (quench-gate step `ir-budget`, `crates/quench-gate/src/ir_floor.rs`): C-shaped code runs as C.
-# op records b-jit u-jit, per loop iteration. The interpreter's floor is C + records x 6 (dispatch and
-# decode); records only shrink. b-jit and u-jit ceilings ratchet down toward the op's budget (3x C + 6,
+# op records b-jit default, per loop iteration. The interpreter's floor is C + records x 6 (dispatch and
+# decode); records only shrink. b-jit and default-mode ceilings ratchet down toward the op's budget (C parity: max(C + 1, 1.25x C),
 # ir_budget.txt). Not edited by hand.
 ";
 
@@ -159,8 +159,8 @@ pub fn interpreter(ops: &[Op], c: &BTreeMap<String, f64>, floors: &mut BTreeMap<
     (table, grown)
 }
 
-/// The JIT tiers' check (`index` 0 b-jit, 1 u-jit) against each op's `budgets` entry (the budget
-/// `ir_budget.txt` holds, 3x C + 6): a count past its ceiling fails; a drop lowers the ceiling (a
+/// The JIT tiers' check (`index` 0 b-jit, 1 default) against each op's `budgets` entry (the budget
+/// `ir_budget.txt` holds, C parity: max(C + 1, 1.25x C)): a count past its ceiling fails; a drop lowers the ceiling (a
 /// run of every op) toward the budget; a missing one is filled.
 pub fn jit(index: usize, mode: &str, measured: &[(String, f64, &[(String, f64)])], c: &BTreeMap<String, f64>, budgets: &BTreeMap<String, f64>, floors: &mut BTreeMap<String, Floor>, every_op: bool) -> (String, Vec<String>) {
     let mut grown = Vec::new();
@@ -181,7 +181,7 @@ pub fn jit(index: usize, mode: &str, measured: &[(String, f64, &[(String, f64)])
     rows.sort_by(|a, b| b.0.total_cmp(&a.0));
     let over = rows.iter().filter(|(ratio, _)| *ratio > 1.0).count();
     let head = format!("{:<16}{:>10}{:>7}{:>8}{:>8}  {:<36} {}", "op", "Ir/iter", "C", "budget", "x", "owner", "largest handler");
-    let summary = format!("{mode}: {over} of {} ops above their budget (3x C + 6)", rows.len());
+    let summary = format!("{mode}: {over} of {} ops above their budget (C parity: max(C + 1, 1.25x C))", rows.len());
     let table = std::iter::once(summary).chain(std::iter::once(head)).chain(rows.into_iter().map(|(_, row)| row)).collect::<Vec<_>>().join("\n");
     (table, grown)
 }

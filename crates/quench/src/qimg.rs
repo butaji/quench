@@ -5,6 +5,7 @@
 //! its image simply gets no image (`AheadImages::is_of`) and runs as usual.
 
 use quench_runtime::{AheadImages, Runtime};
+use quench_layers::engine::AheadImagesOps1;
 use std::{cell::RefCell, process::ExitCode};
 
 use crate::host::NodeHost;

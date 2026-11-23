@@ -6,7 +6,7 @@ use crate::vm::activation::{Continuation, FrameRecord, JobRoot, SuspendKind};
 /// async generator, whose frame stays parked in its record (`GeneratorRecord::await_with`)
 /// for an await inside its body and for a `yield`'s, so the reaction holds the generator.
 #[derive(Clone, Debug)]
-pub(crate) enum AwaitKind {
+pub enum AwaitKind {
     AsyncFunction(Continuation),
     /// The await of an async generator's activation inside its body, which resumes the frame.
     AsyncGeneratorAwait { generator: Value },
@@ -20,7 +20,7 @@ pub(crate) enum AwaitKind {
 /// around its boxed frame, held in place: an await allocates nothing, and the spent state
 /// waits for a sweep, or for the activation's next await (`AwaitState::arm`).
 #[derive(Clone, Debug)]
-pub(crate) enum AwaitState {
+pub enum AwaitState {
     Pending {
         kind: AwaitKind,
         /// The realm global that awaited, which the continuation resumes in.
@@ -95,7 +95,7 @@ impl AwaitState {
 
     /// The frame of a running activation, read in place: what `take_running` would give a
     /// materialization (`Vm::lane_stack_sites`).
-    pub(crate) fn running_frame(&self) -> Option<&FrameRecord> {
+    pub fn running_frame(&self) -> Option<&FrameRecord> {
         match self {
             Self::Running { continuation, .. } => Some(&continuation.frame),
             _ => None,
@@ -164,7 +164,7 @@ impl AwaitState {
 
 /// Which activation an await reaction resumes, as `AwaitKind` says without its frame.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum AwaitRole {
+pub enum AwaitRole {
     AsyncFunction,
     AsyncGeneratorAwait(Value),
     /// The await of an async generator's `yield`.
@@ -194,7 +194,7 @@ impl AwaitRole {
 
 impl AwaitKind {
     /// An async function activation awaiting.
-    pub(crate) fn function(continuation: Continuation) -> Self {
+    pub fn function(continuation: Continuation) -> Self {
         Self::AsyncFunction(continuation)
     }
 
@@ -207,7 +207,7 @@ impl AwaitKind {
 impl crate::heap::Heap {
     /// An await state, in its record or in a slot: what a lane job resumes (`Vm::job_frame`)
     /// and whether a reaction is an await's.
-    pub(crate) fn await_state(&self, value: Value) -> Option<&AwaitState> {
+    pub fn await_state(&self, value: Value) -> Option<&AwaitState> {
         if let Some(record_id) = value.direct_await_index() {
             // SAFETY: a direct-await Value names an initialized await record.
             return Some(unsafe { self.await_records.get_live(record_id) });

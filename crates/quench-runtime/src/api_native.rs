@@ -1,3 +1,4 @@
+use crate::vm::EngineVm;
 use {super::Runtime, crate::{Host, JsError, RootId, RootedError, Value, vm::Vm}};
 #[path = "api_collection.rs"] mod collection; pub use collection::CollectionContext; #[path = "api_native_values.rs"] mod values; pub use values::Detach;
 
@@ -6,9 +7,9 @@ use {super::Runtime, crate::{Host, JsError, RootId, RootedError, Value, vm::Vm}}
 /// in the chosen realm. A reset or another runtime invalidates this handle.
 #[derive(Clone)]
 pub struct PreparedScript {
-    pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
+    pub program: std::rc::Rc<crate::ResidualProgram>,
     #[cfg(feature = "native-execution")]
-    pub(crate) native: Option<std::rc::Rc<crate::vm::native_program::NativeJsCode>>,
+    pub native: Option<std::rc::Rc<crate::vm::engine_types::NativeJsCode>>,
 }
 
 /// A logical host Script with one source identity and separate execution caches
@@ -1207,17 +1208,6 @@ impl<'a> NativeContext<'a> {
         self.completion(result)
     }
 
-    /// Compile and evaluate host-owned Script source through the specializer.
-    /// Dynamic eval remains on `evaluate_script_rooted`.
-    pub fn evaluate_specialized_script_rooted(
-        &mut self,
-        source: &str,
-        name: &str,
-    ) -> Result<RootId, RootedError> {
-        let result = self.vm.evaluate_embedding_specialized_script(source, name);
-        self.completion(result)
-    }
-
     /// Compile a host-owned TypeScript Script with an explicit source origin.
     /// This is distinct from eval, whose grammar remains JavaScript.
     pub fn evaluate_typescript_script_with_origin_rooted(
@@ -1299,19 +1289,6 @@ impl<'a> NativeContext<'a> {
         name: &str,
     ) -> Result<RootId, RootedError> {
         self.evaluate_library_body(prefix, crate::bytecode::SourceText::Static(body), suffix, name)
-    }
-
-    /// `evaluate_specialized_static_body_rooted` for a library module text the host derived
-    /// from its embedded text (a projection), which the program retains instead.
-    pub fn evaluate_specialized_library_body_rooted(
-        &mut self,
-        prefix: &str,
-        body: String,
-        suffix: &str,
-        name: &str,
-    ) -> Result<RootId, RootedError> {
-        let body = crate::bytecode::SourceText::Owned(std::rc::Rc::new(body));
-        self.evaluate_library_body(prefix, body, suffix, name)
     }
 
     fn evaluate_library_body(

@@ -5,13 +5,13 @@ use super::*;
 /// `step` out of line, for a generated row whose opcode has no family step (`RowStep::Full`): one instance per
 /// stage and frame type rather than the whole interpreter inlined into every such row's instance (`row_step!`).
 #[inline(never)]
-pub(crate) fn step_out_of_line<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_out_of_line<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step(stage, frame, operation)
 }
 
 /// Run `operation` on `frame`; its word or where control goes.
 #[inline(always)]
-pub(crate) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Jump => if const { super::op_kind::admits(KIND, &[super::op_kind::JUMP]) } { Step::Control(frame.jump(stage)) } else { unreachable!() },
         Operation::JumpIf { register, taken } => if const { super::op_kind::admits(KIND, &[super::op_kind::JUMP_IF]) } { jump_if(stage, frame, register, taken) } else { unreachable!() },
@@ -49,7 +49,7 @@ pub(crate) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stag
 
 /// `step_of` for any operation.
 #[inline(always)]
-pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -350,7 +350,7 @@ fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
 /// per opcode compiles only that part, chosen by an `if const` on the opcode, rather than every
 /// family of `step` in every instantiation.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RowStep {
+pub enum RowStep {
     /// Jumps, register moves and constants (`Decoder::Flow`).
     Flow,
     /// Plain local reads and writes (`Decoder::Local`).
@@ -390,7 +390,7 @@ pub(crate) enum RowStep {
 
 #[cfg(not(stencil_build))]
 /// The part of `step` opcode `op`'s row reaches.
-pub(crate) const fn row_step(op: Op) -> RowStep {
+pub const fn row_step(op: Op) -> RowStep {
     match op.staged() {
         Some(Decoder::Flow) => RowStep::Flow,
         Some(Decoder::Local) => RowStep::Local,
@@ -399,7 +399,9 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
         Some(Decoder::Element) => RowStep::Keyed,
         Some(Decoder::WasmFloat) => RowStep::WasmFloat,
-        Some(Decoder::Generic) => if matches!(op, Op::Unary | Op::Binary | Op::NumericAdd | Op::NumericMultiply) { RowStep::Arith } else { RowStep::Generic },
+        // `IntCaseIndex` decodes to a Number operation (`NumberOperation::IntCase`), which the generic step does not run.
+        Some(Decoder::Generic) => if matches!(op, Op::IntCaseIndex) { RowStep::Number }
+            else if matches!(op, Op::Unary | Op::Binary | Op::NumericAdd | Op::NumericMultiply) { RowStep::Arith } else { RowStep::Generic },
         Some(Decoder::WasmJump) => RowStep::WasmJump,
         Some(Decoder::WasmState) => RowStep::WasmState,
         Some(Decoder::WasmMemory) => RowStep::WasmMemory,
@@ -425,7 +427,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
 /// `step` of a Wasm integer row (`RowStep::WasmInt`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
-pub(crate) fn step_wasm_int<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
+pub fn step_wasm_int<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmInt(operation) => super::wasm_int::step(stage, frame, operation),
         _ => Step::Unresolved,
@@ -447,7 +449,7 @@ pub(crate) fn step_flow_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>
 
 /// `step_flow_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_flow<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_flow<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_flow_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -469,7 +471,7 @@ pub(crate) fn step_local_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>
 
 /// `step_local_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_local<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_local<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_local_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -484,7 +486,7 @@ pub(crate) fn step_number_of<const KIND: u16, S: NumericStage, F: NumericFrame<S
 
 /// `step_number_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_number_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -502,7 +504,7 @@ pub(crate) fn step_value_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>
 
 /// `step_value_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_value_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -514,7 +516,7 @@ pub(crate) fn step_names_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>
 
 /// `step_names_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_names<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_names<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_names_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -526,7 +528,7 @@ pub(crate) fn step_property_of<const KIND: u16, S: NumericStage, F: NumericFrame
 
 /// `step_property_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_property<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_property<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_property_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -538,7 +540,7 @@ pub(crate) fn step_keyed_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>
 
 /// `step_keyed_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_keyed_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -546,7 +548,7 @@ pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
 /// `step` of a Wasm float row (`RowStep::WasmFloat`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
-pub(crate) fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
+pub fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmFloat(operation) => super::wasm_float::step(stage, frame, operation),
         _ => Step::Unresolved,
@@ -556,7 +558,7 @@ pub(crate) fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &
 #[cfg(not(stencil_build))]
 /// `step` of an instance-state row (`RowStep::WasmState`) on the interpreter's stage and frame.
 #[inline(always)]
-pub(crate) fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
+pub fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmState(operation) => super::wasm_state::step(stage, frame, operation),
         _ => Step::Unresolved,
@@ -566,7 +568,7 @@ pub(crate) fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &
 #[cfg(not(stencil_build))]
 /// `step` of a direct memory row (`RowStep::WasmMemory`) on the interpreter's stage and frame.
 #[inline(always)]
-pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
+pub fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmAccess(operation) => super::wasm_access::step(stage, frame, operation),
         _ => Step::Unresolved,
@@ -577,7 +579,7 @@ pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: 
 /// `step` of a Wasm vector row (`RowStep::WasmVector`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
-pub(crate) fn step_wasm_vector<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
+pub fn step_wasm_vector<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmVector(operation) => super::wasm_simd::step(stage, frame, operation),
         _ => Step::Unresolved,
@@ -602,7 +604,7 @@ pub(crate) fn step_arith_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>
 
 /// `step_arith_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_arith<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_arith<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_arith_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -614,7 +616,7 @@ pub(crate) fn step_generic_of<const KIND: u16, S: NumericStage, F: NumericFrame<
 
 /// `step_generic_of` for any operation.
 #[inline(always)]
-pub(crate) fn step_generic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_generic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_generic_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
@@ -632,6 +634,6 @@ pub(crate) fn step_wasm_jump_of<const KIND: u16, S: NumericStage, F: NumericFram
 /// `step_wasm_jump_of` for any operation.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn step_wasm_jump<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_wasm_jump<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_wasm_jump_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }

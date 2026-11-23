@@ -2,7 +2,7 @@
 //! production admission/alias analysis is deliberately not implemented here.
 use super::*;
 use super::super::operations::{ADDITION, immediate_number_pair, number_operator, number_value_operator};
-use crate::heap::{ArrayObject, ArrayStorageProofs, Cell, Heap, LaneProofScope, Object};
+use crate::heap::{ArrayObject, ArrayStorageProofs, Heap, LaneProofScope, Object};
 
 #[derive(Clone, Copy)]
 #[repr(u16)]
@@ -14,7 +14,7 @@ enum Step { First, Second }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Stop { Update(Step), Read(Step), Operator(Step), Complete }
 
-fn initial(first: Value, second: Value, accumulator: Value) -> [Value; REGISTER_COUNT] {
+pub fn initial(first: Value, second: Value, accumulator: Value) -> [Value; REGISTER_COUNT] {
     let mut state = [Value::UNDEFINED; REGISTER_COUNT];
     state[Slot::FirstBase as usize] = first;
     state[Slot::SecondBase as usize] = second;

@@ -11,7 +11,7 @@ use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unar
 use crate::wasm::numeric::{canonical_nan_bits, sign_mask};
 use crate::WasmTrap;
 
-pub(crate) struct ConcreteWasm;
+pub struct ConcreteWasm;
 
 /// `value`'s low `bits` bits, sign-extended: shifted to the top and back down arithmetically.
 macro_rules! sign_extend {
@@ -170,6 +170,8 @@ impl Machine for ConcreteWasm {
     type Word = u64;
 }
 
+crate::projection!(ConcreteWasm => Concrete);
+
 impl MachineStage for ConcreteWasm {
     type Exit = WasmTrap;
 
@@ -277,6 +279,8 @@ impl MachineStage for ConcreteWasm {
 }
 
 /// Methods that are `ConcreteWasm`'s: one definition, delegated.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! delegated {
     ($($name:ident($($argument:ident: $ty:ty),*) -> $result:ty;)+) => {$(
         #[inline(always)]
@@ -285,13 +289,16 @@ macro_rules! delegated {
         }
     )+};
 }
+#[allow(unused_imports)]
 pub(crate) use delegated;
 
 /// The operators of a `MachineStage` over `ConcreteWasm`: every method but `trap_when`, whose trap
 /// the stage's own `Exit` makes. `scalar_stage` and the VM's heap stage both expand it.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! scalar_operators {
     () => {
-        $crate::staged::wasm_concrete::delegated! {
+        $crate::delegated! {
                 constant(width: $crate::staged::wasm::Width, value: i64) -> u64;
                 operate(operator: $crate::wasm::integer::I64BinaryOperator, width: $crate::staged::wasm::Width, left: u64, right: u64) -> u64;
                 operate_unary(operator: $crate::wasm::integer::I64UnaryOperator, width: $crate::staged::wasm::Width, value: u64) -> u64;
@@ -310,17 +317,19 @@ pub(crate) use scalar_operators;
 /// The scalar primitives of a stage over machine state: `scalar_operators`, with `trap_when` as
 /// `ConcreteWasm` makes it.
 macro_rules! scalar_stage {
-    ($($stage:ty),+) => {$(
+    ($projection:ident => $($stage:ty),+) => {$(
         impl $crate::staged::machine::Machine for $stage {
             type Word = u64;
         }
 
+        $crate::projection!($stage => $projection);
+
         impl $crate::staged::machine::MachineStage for $stage {
             type Exit = $crate::WasmTrap;
 
-            $crate::staged::wasm_concrete::scalar_operators! {}
+            $crate::scalar_operators! {}
 
-            $crate::staged::wasm_concrete::delegated! {
+            $crate::delegated! {
                 trap_when(flag: u64, trap: $crate::WasmTrap) -> Result<(), $crate::WasmTrap>;
             }
         }

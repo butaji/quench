@@ -1,0 +1,87 @@
+//! Placing a linked body's rows in one code buffer: the entry thunk, the rows copied and patched
+//! (`quench_bjit::copy_patch`), the exit stubs and routines behind them, and the symbolic fields
+//! a loader fills.
+#[allow(unused_imports)]
+use crate::ext_traits::*;
+use super::*;
+use crate::aot_image::Symbol;
+use quench_bjit::EXIT_STUB_LEN;
+
+/// An AArch64 branch instruction: four bytes, its 26-bit immediate the last field ld64 relocates.
+const BRANCH_INSTRUCTION_BYTES: usize = 4;
+const BRANCH_IMMEDIATE_BITS: u32 = 26;
+const BRANCH_IMMEDIATE_MASK: u32 = (1 << BRANCH_IMMEDIATE_BITS) - 1;
+
+/// A run-time address a linked body names by symbol: the code offset of its absolute word, which the
+/// loader fills (`Symbol`), where the code holds zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SymbolSite {
+    pub(crate) offset: usize,
+    pub(crate) symbol: Symbol,
+    /// The hole's class (`quench_bjit::ABS64`, or `BRANCH26` for an Apple AArch64 helper call,
+    /// which the loader patches as a branch rather than a word).
+    pub(crate) class: u8,
+}
+
+/// The symbolic fields of `rows` (`symbols` by row, the symbol of each row's named hole), at their code
+/// offsets from the code's start, `head` bytes past the entry thunk; a field must be an absolute word.
+fn symbol_sites(rows: &[Placed], symbols: &[Symbolic], head: usize) -> Result<Vec<SymbolSite>, String> {
+    let named = |row: usize, hole: u32| symbols.get(row).into_iter().flatten().flatten().find(|(index, _)| u32::from(*index) == hole).map(|(_, symbol)| *symbol);
+    quench_bjit::symbolic_fields(rows, |row, hole| named(row, hole).is_some()).into_iter().map(|field| -> Result<SymbolSite, String> {
+        // A value hole is an absolute word; Apple AArch64 names a helper call as a branch hole
+        // (`Reloc::Arm64Call`), which the loader patches in place.
+        if !matches!(field.class, quench_bjit::ABS64 | quench_bjit::BRANCH26) {
+            return Err("a symbolic hole is neither an absolute word nor a branch".to_string());
+        }
+        let symbol = named(field.row, field.hole).ok_or("a symbolic field has no symbol")?;
+        Ok(SymbolSite { offset: head + field.offset, symbol, class: field.class })
+    }).collect()
+}
+
+/// Copies the rows behind the thunk, then the exit routines and each stub, and patches each
+/// row's exits to their targets, `exits` by row and exit kind (a leave row's start, or a stub);
+/// the code is position independent, so the buffer can move to executable memory. The rows are
+/// in layout order: the hot rows first, so nothing cold sits between them. Also the code offset of
+/// each row and, for a loop region, of the resume thunk (`entry_resume`), which follows the stubs;
+/// each resume stub's `jumps` is patched to its row.
+pub(crate) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize, symbols: &[Symbolic]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
+    let head = thunk_len(ending)?;
+    let resume: &[u8] = if ending == Ending::Region { &routine("entry_resume")?.code } else { &[] };
+    let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
+    let stubs = exits.iter().flatten().filter(|target| matches!(target, Target::Stub { .. })).count();
+    // The rows' length and starts, known before any copy: the stubs and routines lie after the copied code, and the
+    // exits' addresses (which the copy patches in) come from the starts.
+    let (len, starts) = quench_bjit::placement(rows);
+    let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + stubs * EXIT_STUB_LEN + resume.len();
+    let mut code = vec![0u8; head + bound + tail];
+    let base = code.as_mut_ptr();
+    let (routine_at, at) = append_routines(&mut code, head + len, routines);
+    let (addresses, mut at) = exit_addresses(&mut code, (base as usize + head, &starts), at, (exits, &routine_at))?;
+    // SAFETY: `base + head` has room for every stencil's full length, which bounds the rows; the stubs and
+    // routines written above lie after the copied code (`head + len`), so the copy does not overlap them.
+    let (copied, copied_starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, kind| addresses[row].get(kind as usize).copied().unwrap_or(base as usize)) };
+    debug_assert_eq!((copied, &copied_starts), (len, &starts));
+    for jump in jumps {
+        patch_jump(&mut code, head + starts[jump.row], starts[jump.target] as i64 - starts[jump.row] as i64)?;
+    }
+    let sites = symbol_sites(rows, symbols, head)?;
+    // A symbolic branch arrives carrying the stencil's placeholder displacement in its immediate,
+    // which ld64 reads as an addend (`ARM64_RELOC_ADDEND` is what it would need); the loader
+    // patches the branch, so its field starts at zero.
+    for site in &sites {
+        if site.class == quench_bjit::BRANCH26 {
+            let field = code.get_mut(site.offset..site.offset + BRANCH_INSTRUCTION_BYTES).ok_or("a symbolic branch is outside its code")?;
+            let word = u32::from_le_bytes(field.try_into().expect("four-byte instruction"));
+            field.copy_from_slice(&(word & !BRANCH_IMMEDIATE_MASK).to_le_bytes());
+        }
+    }
+    let proven_at = head + starts.get(proven_row).copied().unwrap_or(0);
+    let thunk_bytes = thunk(ending, head, proven_at)?;
+    debug_assert_eq!(thunk_bytes.len(), head);
+    code[..head].copy_from_slice(&thunk_bytes);
+    code[at..at + resume.len()].copy_from_slice(resume);
+    let resume_at = at;
+    at += resume.len();
+    code.truncate(at);
+    Ok((code, starts.iter().map(|start| head + start).collect(), resume_at, sites))
+}

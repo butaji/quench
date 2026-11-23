@@ -11,7 +11,7 @@ use super::value::tagged_truthiness;
 
 /// How a plan stores one field.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum FieldClass {
+pub enum FieldClass {
     Passed,
     Constant,
     Defaulted,
@@ -21,7 +21,7 @@ pub(crate) enum FieldClass {
 /// The value of one field. `class`, `fallback` and `operator` are per-site operands; `argument` fetches the
 /// parameter's value only on the arms that read it.
 #[inline(always)]
-pub(crate) fn field_value<S: Stage>(stage: &mut S, class: FieldClass, fallback: u64, operator: u64, argument: impl FnOnce(&mut S) -> S::Word,
+pub fn field_value<S: Stage>(stage: &mut S, class: FieldClass, fallback: u64, operator: u64, argument: impl FnOnce(&mut S) -> S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let fallback_word = |stage: &mut S| {
         let zero = stage.constant(0);

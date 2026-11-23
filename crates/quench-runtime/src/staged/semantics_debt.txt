@@ -1,16 +1,20 @@
-# Semantic debt: each line allows one hit of a fingerprint (`staged/semantics_duplication_tests.rs`),
+# Semantic debt: each line allows one hit of a fingerprint (`tests/staged_guards/semantics_duplication.rs`),
 # `fingerprint path:text`, where text is the trimmed source line. A hit outside its home that no line
 # allows fails, and so does a line no hit uses. Lines may only go away. Goal: an empty file.
 canonical_nan quench-bjit/stencils/words.rs:} else if f.is_nan() {
-clz32 quench-bjit/stencils/numeric.rs:fn clz32_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+clz32 quench-bjit/stencils/numeric.rs:fn clz32_row(mut frame: Places) -> Out {
 imul quench-bjit/stencils/builtin_rows.rs:unsafe fn imul(s: &S, record: usize) -> Option<u64> {
-imul quench-runtime/src/vm/compiled/lane_region/known_branches.rs:Opcode::Iadd => a.wrapping_add(b), Opcode::Isub => a.wrapping_sub(b), Opcode::Imul => a.wrapping_mul(b),
-imul quench-runtime/src/vm/compiled/object_slots/emit.rs:fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+imul quench-runtime-engine/src/compiled/lane_region/known_branches.rs:Opcode::Iadd => a.wrapping_add(b), Opcode::Isub => a.wrapping_sub(b), Opcode::Imul => a.wrapping_mul(b),
+imul quench-runtime-engine/src/compiled/object_slots/emit.rs:fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => entry.wrapping_add(x.wrapping_mul(count as i32)),
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, true) => entry.wrapping_sub(x.wrapping_mul(count as i32)),
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:Part::Linear { start, step } => last!($a, |k: usize| start.wrapping_add(step.wrapping_mul(k as i32))),
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:Self::Linear { start, step } => start.wrapping_add(step.wrapping_mul(k as i32)),
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:WordOp::Arith(NumberArithmetic::Multiply) => map(out, a, b, i32::wrapping_mul),
 int32_tag quench-bjit/stencils/facade.rs:if self.0 & words::TAG_MASK == words::INT_TAG { Some(self.0 as u32 as i32) } else { None }
 int32_tag quench-bjit/stencils/facade.rs:} else if self.0 & words::TAG_MASK == words::INT_TAG {
-int32_tag quench-bjit/stencils/stage.rs:if f64::from(integer) == double && (integer != 0 || number >> 63 == 0) {
 int32_tag quench-bjit/stencils/words.rs:x >> TAG_SHIFT == INT_TAG >> TAG_SHIFT
 int32_tag quench-bjit/stencils/words.rs:((x ^ INT_TAG) | (y ^ INT_TAG)) >> HIGH_SHIFT == 0
-int32_tag quench-runtime/src/vm/dispatch_fast.rs:if unsafe { halves.add(1).read() } != crate::value::INT_TAG_HIGH {
+int32_tag quench-runtime-engine/src/dispatch_fast.rs:if unsafe { halves.add(1).read() } != quench_runtime::value::INT_TAG_HIGH {
 to_uint32 quench-bjit/stencils/units.rs:pub(crate) fn to_int32(value: f64) -> i32 {
-to_uint32 quench-runtime/src/vm/compiled/object_slots/emit.rs:fn to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> {
+to_uint32 quench-runtime-engine/src/compiled/object_slots/emit.rs:fn to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> {

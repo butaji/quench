@@ -37,12 +37,12 @@ pub(super) struct PropertyBuffer {
 
 /// Native code reads the allocator's authoritative header, never a copied view.
 #[derive(Clone, Copy)]
-pub(crate) struct NativePropertyBufferLayout {
-    pub(crate) base: usize,
-    pub(crate) length: usize,
+pub struct NativePropertyBufferLayout {
+    pub base: usize,
+    pub length: usize,
 }
 
-pub(crate) const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = NativePropertyBufferLayout {
+pub const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = NativePropertyBufferLayout {
     base: std::mem::offset_of!(PropertyBuffer, head) + std::mem::offset_of!(PropertyBufferHead<NonNull<Value>>, base),
     length: std::mem::offset_of!(PropertyBuffer, head) + std::mem::offset_of!(PropertyBufferHead<NonNull<Value>>, length),
 };

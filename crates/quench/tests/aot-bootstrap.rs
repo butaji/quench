@@ -1,6 +1,7 @@
 
 use quench::aot::SourceManifest;
-use quench_runtime::{HostScriptOptions, NativeJsCompiler, NativeSourceKey, emit_native_module, lower_native_js_module};
+use quench_runtime::{HostScriptOptions, NativeJsCompiler, NativeSourceKey};
+use quench_layers::engine::{emit_native_module, lower_native_js_module};
 use std::path::Path;
 
 #[test]

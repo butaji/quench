@@ -106,7 +106,8 @@ const POWERS_OF_TEN: [u128; 21] = {
 /// written unsigned. A rounded magnitude that fits 64 bits with `digits` at most 20 is written into a
 /// stack buffer (`write_fixed_u64`); any other text is built by `fixed_text_wide`.
 pub(super) fn with_fixed_text<T>(number: f64, digits: usize, use_text: impl FnOnce(&[u8]) -> T) -> T {
-    if let Some(rounded) = fixed_rounded(number, digits).and_then(|value| u64::try_from(value).ok()) {
+    // A zero rounds to 0 at any `digits`, but its text is `digits + 1` places: only `digits` at most 20 fits the buffer.
+    if let Some(rounded) = fixed_rounded(number, digits).filter(|_| digits <= 20).and_then(|value| u64::try_from(value).ok()) {
         let mut buffer = [0u8; FIXED_INLINE_LEN];
         let length = write_fixed_u64(number < 0.0, rounded, digits, &mut buffer);
         return use_text(&buffer[..length]);
@@ -469,7 +470,7 @@ impl Vm {
 
 /// What the global `isNaN` or `isFinite` returns for the Number its argument converted to;
 /// `None` for any other native.
-pub(super) fn global_number_predicate(native: Native, number: f64) -> Option<bool> {
+pub fn global_number_predicate(native: Native, number: f64) -> Option<bool> {
     Some(match native {
         Native::GlobalIsNaN => number.is_nan(),
         Native::GlobalIsFinite => number.is_finite(),
@@ -479,7 +480,7 @@ pub(super) fn global_number_predicate(native: Native, number: f64) -> Option<boo
 
 /// What `Number.isNaN`, `isFinite`, `isInteger` or `isSafeInteger` returns for `value`: none
 /// coerces its argument, so a non-Number answers `false`. `None` for any other native.
-pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
+pub fn number_predicate(native: Native, value: Value) -> Option<bool> {
     let number = value.as_number();
     let integral = || crate::staged::builtins::concrete_is_integral(value);
     Some(match native {
@@ -536,12 +537,12 @@ fn normalize_exponent_sign(text: &str) -> String {
 }
 
 /// Arguments a Math call of Numbers keeps inline (`math_numbers`); longer calls allocate.
-pub(super) const MATH_INLINE_ARGUMENTS: usize = 4;
+pub const MATH_INLINE_ARGUMENTS: usize = 4;
 
 /// The Math function `native` computes on Numbers, the one table every tier reads: each tier derives
 /// its dispatch from `MathCall`, and each body is written once, in `staged::math` or in the libm it
 /// names. `None` for any other native.
-pub(super) const fn math_call(native: Native) -> Option<MathCall> {
+pub const fn math_call(native: Native) -> Option<MathCall> {
     use crate::staged::math::{atan, atanh, cbrt, f16_round};
     use MathCall::{Binary, Extreme, Imul, LeadingZeros, Libm, Unary};
     Some(match native {
@@ -588,7 +589,7 @@ pub(super) const fn math_call(native: Native) -> Option<MathCall> {
 /// is no Number (the native converts it, and may run guest code) or the count is one the function
 /// does not take.
 #[inline(always)]
-pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> {
+pub fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> {
     concrete_math_call(math_call(native)?, args)
 }
 
@@ -596,7 +597,7 @@ pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> 
 /// `Math.imul`, a missing one NaN or `undefined`, as its conversion makes it), or of any count
 /// for `Math.max` and `Math.min`; `None` for a function of one Number. Each runs no guest code.
 #[inline(always)]
-pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
+pub fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
     match math_call(native)? {
         MathCall::Extreme(maximum) => Some(values.iter().fold(MathCall::extreme_start(maximum), |result, &number| {
             float_extreme(maximum, result, number)
@@ -611,7 +612,7 @@ pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
 
 /// Whether a call of `native` with Number arguments is a Math function's value that
 /// `math_inline_call` computes (`math_call`).
-pub(super) fn math_numbers_inline(native: Native) -> bool {
+pub fn math_numbers_inline(native: Native) -> bool {
     math_call(native).is_some()
 }
 

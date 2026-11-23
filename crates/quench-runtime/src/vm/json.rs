@@ -1104,7 +1104,7 @@ impl JsonBuilder for JsonLiteralCheck {
 
 /// The bytes of the JSON array or object text `text` starts with, when the array or object
 /// literal of that text evaluates to the value JSON.parse gives it: no key is `PROTO_KEY`.
-pub(crate) fn json_literal_length(text: &str) -> Option<usize> {
+pub fn json_literal_length(text: &str) -> Option<usize> {
     if !text.starts_with(['[', '{']) {
         return None;
     }

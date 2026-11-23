@@ -75,7 +75,7 @@ pub(crate) fn local_load_or_argument_get(instruction: WideInstruction) -> bool {
 
 /// The register an iterator result check reads (`RequireIteratorResult`, its second operand).
 #[inline(always)]
-pub(crate) fn require_iterator_result_operand(instruction: WideInstruction) -> Option<Register> {
+pub fn require_iterator_result_operand(instruction: WideInstruction) -> Option<Register> {
     match decoded(instruction)? {
         Operation::Protocol { step: Protocol::Value(ValueStep::RequireIteratorResult), operands, .. } => operands[1],
         _ => None,

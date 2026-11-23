@@ -33,7 +33,7 @@ pub enum WasmTrap {
 /// The traps compiled code raises, in status order: a trap's status is its position plus one
 /// (zero is a return), the same for the u-jit's code and the b-jit's stencils.
 /// Every trap is listed: a compiled GC, table or exception rule raises its own trap like any other.
-pub(crate) const COMPILED_TRAPS: [WasmTrap; 24] = [
+pub const COMPILED_TRAPS: [WasmTrap; 24] = [
     WasmTrap::Unreachable,
     WasmTrap::OutOfBoundsMemory,
     WasmTrap::IntegerDivideByZero,
@@ -63,7 +63,7 @@ pub(crate) const COMPILED_TRAPS: [WasmTrap; 24] = [
 impl WasmTrap {
     /// The status compiled code leaves with on this trap; `None` for a trap compiled code never
     /// raises.
-    pub(crate) const fn compiled_status(self) -> Option<u32> {
+    pub const fn compiled_status(self) -> Option<u32> {
         let mut index = 0;
         while index < COMPILED_TRAPS.len() {
             if COMPILED_TRAPS[index] as u8 == self as u8 {

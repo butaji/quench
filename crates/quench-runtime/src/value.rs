@@ -1,7 +1,7 @@
 use std::fmt;
 
 // The encoding core (tags, handle bits, narrow layout) is one file shared with the stencils.
-pub(crate) use crate::staged::value_encoding::*;
+pub use crate::staged::value_encoding::*;
 
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "value/encoding_bench.rs"]
@@ -12,7 +12,7 @@ mod number_conversion;
 pub use number_conversion::{number_to_i32, number_to_u32, number_to_uint8_clamp};
 pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
 use number_conversion::truncate_to_i32;
-pub(crate) use crate::vm::operations::WORD32_SHIFT_MASK;
+pub use crate::vm::operations::WORD32_SHIFT_MASK;
 
 /// The table `NARROW_UPPER_WORDS` sits in at a fixed address, which compiled code indexes by code.
 static NARROW_UPPER_WORD_TABLE: [u64; NARROW_LOOKUP_CODES] = NARROW_UPPER_WORDS;
@@ -26,7 +26,7 @@ impl NarrowLayout {
     }
 
     /// The address of the upper words by code, which lives as long as the process.
-    #[inline(always)] pub(crate) fn upper_words() -> *const u64 {
+    #[inline(always)] pub fn upper_words() -> *const u64 {
         NARROW_UPPER_WORD_TABLE.as_ptr()
     }
 }
@@ -139,19 +139,19 @@ pub struct Value(u64);
 /// with one bitwise or instead of first materializing the tag constant.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub(crate) struct IntegerEncoding(u64);
+pub struct IntegerEncoding(u64);
 
 impl IntegerEncoding {
-    pub(crate) const TAG: Self = Self(TAG_INT);
+    pub const TAG: Self = Self(TAG_INT);
 
-    #[inline(always)] pub(crate) fn encode(self, value: i32) -> Value {
+    #[inline(always)] pub fn encode(self, value: i32) -> Value {
         Value(self.0 | u64::from(value as u32))
     }
 }
 
 /// Two operands classified by one pass over their tags: both int32, both Numbers (an int32 widened), or not both Numbers.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum NumericPair { Ints(i32, i32), Numbers(f64, f64), Other }
+pub enum NumericPair { Ints(i32, i32), Numbers(f64, f64), Other }
 
 impl NumericPair {
     /// Both operands as doubles: an int32 widened (exact), a double as it is. `None` for
@@ -176,13 +176,13 @@ impl Value {
     pub const fn boolean(value: bool) -> Self {
         if value { Self::TRUE } else { Self::FALSE }
     }
-    pub(crate) const DELETED: Self = Self(TAG_DELETED);
+    pub const DELETED: Self = Self(TAG_DELETED);
     /// The canonical NaN `number` stores every NaN as.
     pub(crate) const NAN: Self = Self(CANONICAL_NAN);
     /// An activation's `arguments` binding whose object does not exist yet
     /// (`CallPlan::forwards_arguments`). Not a heap reference, and distinct from every value a
     /// guest operation produces.
-    pub(crate) const UNMATERIALIZED_ARGUMENTS: Self = Self(TAG_DELETED | 1);
+    pub const UNMATERIALIZED_ARGUMENTS: Self = Self(TAG_DELETED | 1);
 
     /// An environment slot that shares its owner environment's slot of the same index
     /// (`EnvironmentSlot::shared`): a `TAG_DELETED` payload of `SHARED_ENVIRONMENT_SLOT_BIT`
@@ -221,14 +221,14 @@ impl Value {
     /// enters `function` of the running program over that environment, and any other consumer
     /// first makes the real closure (`Vm::known_closure_function`). `None` when the
     /// value is not an environment or the id does not fit.
-    #[inline(always)] pub(crate) fn known_closure(function: u32, environment: Self) -> Option<Self> {
+    #[inline(always)] pub fn known_closure(function: u32, environment: Self) -> Option<Self> {
         let fits = function != 0 && u64::from(function) <= KNOWN_CLOSURE_FUNCTION_MASK;
         (fits && environment.0 & (TAG_MASK | HEAP_REFERENCE_BITS | KNOWN_CLOSURE_FUNCTION_BITS) == TAG_HEAP | DIRECT_ENVIRONMENT_HANDLE_BITS)
             .then(|| Self(environment.0 | (u64::from(function) << KNOWN_CLOSURE_FUNCTION_SHIFT)))
     }
 
     /// The function id and environment of a `known_closure`.
-    #[inline(always)] pub(crate) fn as_known_closure(self) -> Option<(u32, Self)> {
+    #[inline(always)] pub fn as_known_closure(self) -> Option<(u32, Self)> {
         let function = (self.0 >> KNOWN_CLOSURE_FUNCTION_SHIFT) & KNOWN_CLOSURE_FUNCTION_MASK;
         (self.0 & (TAG_MASK | HEAP_REFERENCE_BITS) == TAG_HEAP | DIRECT_ENVIRONMENT_HANDLE_BITS && function != 0)
             .then(|| (function as u32, Self(self.0 & !KNOWN_CLOSURE_FUNCTION_BITS)))
@@ -259,7 +259,10 @@ impl Value {
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
     /// canonically. A value is integral exactly when its truncation converts back to the
     /// same bits, which also excludes -0 (+0's bits differ) and NaN.
-    #[inline] pub fn number(value: f64) -> Self {
+    #[inline] pub fn number(value: f64) -> Self { Self::number_inline(value) }
+
+    /// `number`, inlined where it is the hot path's own boxing (a typed or double element read).
+    #[inline(always)] pub(crate) fn number_inline(value: f64) -> Self {
         let integer = truncate_to_i32(value);
         let back = f64::from(integer);
         // Ordered and unequal (`fcmp one`, one `ucomisd` and `jne`): a non-integral double,
@@ -281,7 +284,7 @@ impl Value {
     /// `number` without branches, for loops over many values: the same encoding, chosen by
     /// selects so that a column of mixed integral and fractional doubles costs the same per value.
     #[inline(always)]
-    pub(crate) fn number_unpredictable(value: f64) -> Self {
+    pub fn number_unpredictable(value: f64) -> Self {
         let integer = truncate_to_i32(value);
         // `&` and `|`, not `&&` and `||`: no branch between the tests.
         let integral = (f64::from(integer) == value) & ((integer != 0) | (value.to_bits() == 0));
@@ -296,13 +299,13 @@ impl Value {
         Self(value.to_bits())
     }
 
-    #[inline(always)] pub(crate) fn integer(value: i32) -> Self {
+    #[inline(always)] pub fn integer(value: i32) -> Self {
         IntegerEncoding::TAG.encode(value)
     }
 
     /// A count or index as a Number, as `number` stores it: an integer within `i32`, without
     /// the float round trip `number` makes to find that out.
-    #[inline(always)] pub(crate) fn length(value: usize) -> Self {
+    #[inline(always)] pub fn length(value: usize) -> Self {
         match i32::try_from(value) {
             Ok(value) => Self::integer(value),
             Err(_) => Self::long_length(value),
@@ -321,27 +324,27 @@ impl Value {
     /// space already reads as an untagged value, so only tag-space payloads
     /// need a heap box (`Cell::WasmBits64`); a static Wasm type tells the
     /// two encodings of a slot apart from its 32-bit integer encoding.
-    #[inline(always)] pub(crate) fn from_bits64(bits: u64) -> Option<Self> {
+    #[inline(always)] pub fn from_bits64(bits: u64) -> Option<Self> {
         let value = Self(bits);
         (!value.is_tagged()).then_some(value)
     }
 
     /// The value's encoding, which a snapshot writes as is: it restores every heap index the
     /// value names at the same index (`crate::snapshot`).
-    #[inline(always)] pub(crate) fn to_bits(self) -> u64 { self.0 }
+    #[inline(always)] pub fn to_bits(self) -> u64 { self.0 }
 
     /// A value `to_bits` gave, read back from a snapshot of the same heap layout.
-    #[inline(always)] pub(crate) fn from_bits(bits: u64) -> Self { Self(bits) }
+    #[inline(always)] pub fn from_bits(bits: u64) -> Self { Self(bits) }
 
     /// The 64-bit Wasm payload a value holds in place.
-    #[inline(always)] pub(crate) fn bits64(self) -> Option<u64> {
+    #[inline(always)] pub fn bits64(self) -> Option<u64> {
         (!self.is_tagged()).then_some(self.0)
     }
 
     /// Whether the value is a Number stored as a double: no tag claims its bits.
-    #[inline(always)] pub(crate) fn is_double(self) -> bool { !self.is_tagged() }
+    #[inline(always)] pub fn is_double(self) -> bool { !self.is_tagged() }
 
-    #[inline(always)] pub(crate) fn as_int(self) -> Option<i32> {
+    #[inline(always)] pub fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
     }
 
@@ -349,14 +352,14 @@ impl Value {
     /// whose result depends on a NaN operand only through being a NaN (float
     /// arithmetic and comparison). A boxed payload's bits are a quiet NaN, so
     /// such an operator sees a NaN exactly where the payload is one.
-    #[inline(always)] pub(crate) const fn float_bits64(self) -> u64 {
+    #[inline(always)] pub const fn float_bits64(self) -> u64 {
         self.0
     }
 
     /// A float arithmetic result held in place. A NaN whose bits fall in the
     /// tag space becomes the canonical NaN: arithmetic may produce any
     /// arithmetic NaN, and the canonical one is.
-    #[inline(always)] pub(crate) fn from_float_bits64(bits: u64) -> Self {
+    #[inline(always)] pub fn from_float_bits64(bits: u64) -> Self {
         let value = Self(bits);
         if value.is_tagged() {
             // Only a NaN whose payload collides with a tag: a predicted
@@ -370,7 +373,7 @@ impl Value {
     }
 
     /// The 32-bit payload of a slot whose Wasm type is statically i32 or f32.
-    #[inline(always)] pub(crate) const fn wasm_bits32(self) -> u32 {
+    #[inline(always)] pub const fn wasm_bits32(self) -> u32 {
         self.0 as u32
     }
 
@@ -383,7 +386,7 @@ impl Value {
         self.0.wrapping_sub(TAG_INT) as usize
     }
 
-    #[inline(always)] pub(crate) fn int_pair(left: Self, right: Self) -> Option<(i32, i32)> {
+    #[inline(always)] pub fn int_pair(left: Self, right: Self) -> Option<(i32, i32)> {
         let tags = (left.0 ^ TAG_INT) | (right.0 ^ TAG_INT);
         (tags & TAG_MASK == 0).then_some((left.0 as u32 as i32, right.0 as u32 as i32))
     }
@@ -393,7 +396,7 @@ impl Value {
         Self(TAG_HEAP | u64::from(index))
     }
 
-    #[inline(always)] pub(crate) fn direct_object(index: u32) -> Self {
+    #[inline(always)] pub fn direct_object(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT | u64::from(index))
     }
 
@@ -461,7 +464,7 @@ impl Value {
     /// Number, whether it is an int32 (whose payload is its low 32 bits), and its bits as a
     /// double (the Number itself when it is a double).
     #[inline(always)]
-    pub(crate) fn number_parts(self) -> (bool, bool, f64) {
+    pub fn number_parts(self) -> (bool, bool, f64) {
         let int = self.has_int_tag_field();
         (int || !self.is_tagged(), int, f64::from_bits(self.0))
     }
@@ -476,7 +479,7 @@ impl Value {
     /// it fails, each operand classified once by `number_parts`. An int32 operand's double
     /// is its integer value, the same `as_number` makes of it, so `Numbers` carries the
     /// bits `number_pair` returns.
-    #[inline(always)] pub(crate) fn numeric_pair(left: Self, right: Self) -> NumericPair {
+    #[inline(always)] pub fn numeric_pair(left: Self, right: Self) -> NumericPair {
         if let Some((a, b)) = Self::int_pair(left, right) {
             return NumericPair::Ints(a, b);
         }
@@ -495,7 +498,7 @@ impl Value {
         ((self.0 & TAG_MASK) == TAG_BOOL).then_some(self.0 & 1 != 0)
     }
 
-    #[inline(always)] pub(crate) fn heap_index(self) -> Option<u32> {
+    #[inline(always)] pub fn heap_index(self) -> Option<u32> {
         ((self.0 & TAG_MASK) == TAG_HEAP).then_some((self.0 & PAYLOAD_MASK) as u32)
     }
 
@@ -566,7 +569,7 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_WASM_GC_HANDLE_BITS).then_some(self.0 as u32)
     }
 
-    #[inline(always)] pub(crate) fn direct_object_index(self) -> Option<u32> {
+    #[inline(always)] pub fn direct_object_index(self) -> Option<u32> {
         // `heap_reference` as one family test: hot reads ask for this family alone.
         crate::staged::value::is_direct_object(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
     }
@@ -583,7 +586,7 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_COLLECTION_HANDLE_BITS).then_some(self.0 as u32)
     }
 
-    #[inline(always)] pub(crate) fn direct_string_index(self) -> Option<u32> {
+    #[inline(always)] pub fn direct_string_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_STRING_HANDLE_BITS).then_some(self.0 as u32)
     }
 
@@ -638,7 +641,7 @@ impl Value {
     /// ToBoolean where the value alone decides it: Numbers, the primitive tags, and object
     /// and array records, which hold only ordinary objects and arrays and so never "", 0n or
     /// the IsHTMLDDA function. `None` leaves another heap value to its cell.
-    #[inline(always)] pub(crate) fn truthiness(self) -> Option<bool> {
+    #[inline(always)] pub fn truthiness(self) -> Option<bool> {
         // The common jump operands first, each one compare and no decode: the two booleans, then
         // an int32 (its low word is nonzero). Everything else takes the general test.
         if self.0 == Self::TRUE.0 { return Some(true); }
@@ -671,7 +674,7 @@ impl Value {
         unsafe { out.set_len(start + kept) };
     }
 
-    #[inline] pub(crate) fn is_deleted(self) -> bool {
+    #[inline] pub fn is_deleted(self) -> bool {
         self.0 == TAG_DELETED
     }
 

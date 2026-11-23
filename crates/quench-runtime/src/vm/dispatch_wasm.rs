@@ -26,7 +26,7 @@ use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unar
 use super::wasm_table::copy_length_type;
 
 mod gc;
-pub(super) use gc::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance, wasm_gc_value_ops};
+pub use gc::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance};
 
 impl Vm {
     /// One Wasm instruction, dispatched on its catalog step (`Step::of`).

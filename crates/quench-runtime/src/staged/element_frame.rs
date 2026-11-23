@@ -14,7 +14,7 @@ use crate::bytecode::{Operand, Register};
 /// the fast-then-host join), so they are not overrides. `index_get_host` is declared on `PropertyFrame`,
 /// which this trait extends, and refuses there (`None`); `stored` is the same fast-then-slow join as
 /// `element_probed`. Neither is redeclared here, since a second declaration would make the call ambiguous.
-pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
+pub trait ElementFrame<S: Stage>: PropertyFrame<S> {
     /// The dense view of the array in base register `base` that the frame's array storage proofs
     /// hold, its readable elements, or its writable ones where `writable` (a store replacing in
     /// place). A frame that proves no storage answers `None`, and the access takes its own proof.
@@ -64,6 +64,13 @@ pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
     /// does; a frame that keeps views proves the wide one alone (`prove_view`).
     #[inline(always)]
     fn reads_any_backing(&self) -> bool { false }
+
+    /// Whether a typed element a kept view reads is its `Value` word (`typed_read_value`) rather
+    /// than its Number's `f64` word (`typed_read`): a frame whose registers hold values (the
+    /// interpreter's lane) takes the value, so an int32 element stays an int32; a tier that keeps
+    /// the Number unboxed takes the `f64`.
+    #[inline(always)]
+    fn typed_values(&self) -> bool { false }
 
     /// The view of the array `base` an earlier access proved, or its loop's entering edge did for
     /// a typed array, which no storage change has retired; a view proved writable answers a read too.

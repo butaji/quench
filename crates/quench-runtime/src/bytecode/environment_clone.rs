@@ -104,7 +104,7 @@ impl EnvironmentClones {
     }
 
     /// The slots `plan`, one of these plans, resets.
-    pub(crate) fn resets<'a>(&'a self, plan: &'a EnvironmentClone) -> Resets<'a> {
+    pub fn resets<'a>(&'a self, plan: &'a EnvironmentClone) -> Resets<'a> {
         Resets { owned: self.owned(), fresh: &plan.fresh, kept: &plan.kept }
     }
 }
@@ -131,7 +131,7 @@ impl std::ops::DerefMut for EnvironmentClones {
 
 /// The slots one clone resets: of `owned`, those neither `fresh` nor `kept`; all sorted.
 #[derive(Clone, Copy)]
-pub(crate) struct Resets<'a> {
+pub struct Resets<'a> {
     owned: &'a [u16],
     fresh: &'a [u16],
     kept: &'a [u16],

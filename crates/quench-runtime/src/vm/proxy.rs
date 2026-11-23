@@ -3,7 +3,7 @@ use super::*;
 /// The internal methods a Proxy handler's trap replaces, each named by its trap (ECMA-262
 /// 10.5): the one list the trap atoms (`Vm::trap_atom`) derive from.
 #[derive(Clone, Copy)]
-pub(super) enum ProxyTrap {
+pub enum ProxyTrap {
     Get,
     Set,
     GetPrototypeOf,
@@ -53,7 +53,7 @@ impl Vm {
     /// `receiver` seen through the proxies whose handlers have neither a `getOwnPropertyDescriptor`
     /// nor a `defineProperty` trap: the receiver's descriptor read and its data definition
     /// (OrdinarySetWithOwnDescriptor, steps 2.c to 2.e) forward to the target unchanged.
-    pub(super) fn descriptor_forwarding_target(&self, mut receiver: Value) -> Value {
+    pub fn descriptor_forwarding_target(&self, mut receiver: Value) -> Value {
         while let Some((target, handler)) = self.proxy_parts(receiver)
             && self.handler_lacks_trap(handler, ProxyTrap::GetOwnPropertyDescriptor)
             && self.handler_lacks_trap(handler, ProxyTrap::DefineProperty)
@@ -66,7 +66,7 @@ impl Vm {
     /// Whether `handler` has no `trap`, read without running guest code: a handler of plain
     /// data properties that names none. `false` leaves a lookup that may run guest code, or
     /// finds a trap, to the general path.
-    pub(super) fn handler_lacks_trap(&self, handler: Value, trap: ProxyTrap) -> bool {
+    pub fn handler_lacks_trap(&self, handler: Value, trap: ProxyTrap) -> bool {
         !handler.is_null()
             && self.plain_property_lookup(handler, super::property_key::PropertyKey::string(self.trap_atom(trap))) == Some(None)
     }

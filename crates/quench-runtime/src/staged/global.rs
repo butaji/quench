@@ -9,7 +9,7 @@ use crate::Value;
 /// a global lexical binding whose word lives at an address a dependency holds, or nothing,
 /// so the lane's own lookup answers.
 #[derive(Clone, Copy)]
-pub(crate) enum GlobalBinding {
+pub enum GlobalBinding {
     Dynamic,
     /// The lane's own read, of a value a dependency keeps of type `ty` (a slot the code stores).
     Typed { ty: Type },
@@ -24,7 +24,7 @@ pub(crate) enum GlobalBinding {
 /// The word of the global lexical binding at `address` (`GlobalBinding::Lexical`), read live; `None`, leaving at `miss`, where it holds
 /// the deleted marker, a binding in its temporal dead zone, whose read the host raises.
 #[inline(always)]
-pub(crate) fn lexical_read<S: Stage>(stage: &mut S, address: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn lexical_read<S: Stage>(stage: &mut S, address: S::Word, miss: S::Miss) -> Option<S::Word> {
     let word = stage.load_u64(Region::Cells.mutable(), address, 0);
     let initialized = stage.ne_imm(word, Value::DELETED.to_bits());
     stage.guard(initialized, miss)?;
@@ -32,7 +32,7 @@ pub(crate) fn lexical_read<S: Stage>(stage: &mut S, address: S::Word, miss: S::M
 }
 
 /// A frame's reading of a global-name read; a frame with no such callout declines it.
-pub(crate) trait GlobalFrame<S: Stage>: Frame<S> {
+pub trait GlobalFrame<S: Stage>: Frame<S> {
     /// What is known of the global the read under `proof` names: the tier's facts about it (an
     /// immutable value, a cell a code dependency holds, a frozen program's value); `Dynamic`
     /// where nothing is, which the interpreter's frames always answer.

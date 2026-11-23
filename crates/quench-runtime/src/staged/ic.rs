@@ -7,13 +7,13 @@ use super::Stage;
 use super::region::Region;
 use super::object::{Form, PackedAccess, formed_own_layout, object_record_at, recorded_shape, proto_link, proto_object_record_id, read_slot};
 
-pub(crate) use super::ic_read::*;
+pub use super::ic_read::*;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::typed_ir::Representation;
 
 /// One step of a proved property read, over the record the read has reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum IcOp<'a> {
+pub enum IcOp<'a> {
     /// The record's exact shape (`Object::exact_shape`) is this one, else the read misses.
     GuardShape(u32),
     /// The record's layout id is this one (`Object::hint_shape`, a lane record's own-field
@@ -70,22 +70,22 @@ pub(crate) enum IcOp<'a> {
 /// shape word and inline flag, which the read's first guards and load reuse instead of
 /// loading again. A prototype the read reaches starts with none.
 #[derive(Clone, Copy)]
-pub(crate) struct Reached<W, C> {
-    pub(crate) record: W,
-    pub(crate) shape: Option<W>,
-    pub(crate) inline: Option<C>,
+pub struct Reached<W, C> {
+    pub record: W,
+    pub shape: Option<W>,
+    pub inline: Option<C>,
     /// The record's layout id, where the caller loaded it.
-    pub(crate) word: Option<W>,
+    pub word: Option<W>,
     /// The storage-form bits a `GuardLayout` proved: a static input of the slot's layout.
-    pub(crate) formed: Option<u32>,
+    pub formed: Option<u32>,
     /// The record's auxiliary word (exact shape and storage-form bits), where the caller loaded it.
-    pub(crate) auxiliary: Option<W>,
+    pub auxiliary: Option<W>,
 }
 
 impl<W, C> Reached<W, C> {
     /// A record the read reached with no facts of it held.
     #[inline(always)]
-    pub(crate) fn bare(record: W) -> Self {
+    pub fn bare(record: W) -> Self {
         Self { record, shape: None, inline: None, word: None, formed: None, auxiliary: None }
     }
 }
@@ -182,7 +182,7 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
 /// `object` is a live record, and `property_values` is the base of the arena that holds its
 /// run; a hint's slot is one its shape covers.
 #[inline(always)]
-pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
+pub unsafe fn concrete_own_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
     shape: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
@@ -204,23 +204,28 @@ pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, sl
         let run = super::object::arena_run(stage, payload);
         let layout = super::object::Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
         Some(read_slot(stage, layout, slot, Representation::Tagged))
-    }, #[inline(always)] |stage| {
-        let recorded = recorded_shape(stage, word);
-        let same = stage.eq_imm(recorded, expected);
-        stage.guard(same, miss)?;
-        let layout = formed_own_layout(stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, miss)?;
-        Some(read_slot(stage, layout, slot, Representation::Tagged))
-    })
+    }, |stage| own_field_miss(stage, record, word, expected, slot, miss))
+}
+
+/// The own field of a record whose shape is `expected` but whose storage form is not the exact-shape word's, read through its formed layout.
+#[cfg_attr(not(stencil_build), cold, inline(never))]
+#[cfg_attr(stencil_build, inline(always))]
+fn own_field_miss<S: Stage>(stage: &mut S, record: S::Word, word: S::Word, expected: S::Imm, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let recorded = recorded_shape(stage, word);
+    let same = stage.eq_imm(recorded, expected);
+    stage.guard(same, miss)?;
+    let layout = formed_own_layout(stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, miss)?;
+    Some(read_slot(stage, layout, slot, Representation::Tagged))
 }
 
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.
-pub(crate) const HINTED_FORM: u32 = u32::MAX;
+pub const HINTED_FORM: u32 = u32::MAX;
 
 /// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of the process is a
 /// tagged `Value` (`switches::float_slots` off, a per-process decision), so the read decodes
 /// nothing. The handler is chosen with the flag when its hint is installed, so the switch is
 /// read once per installation, not per read. Below every storage-form bit.
-pub(crate) const TAGGED_SLOTS: u32 = 1 << 26;
+pub const TAGGED_SLOTS: u32 = 1 << 26;
 const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0);
 
 /// `concrete_own_field_hit` through a lane record's own-field hint, whose `hint` is a layout
@@ -235,7 +240,7 @@ const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | 
 /// As for `concrete_own_field_hit`; for a fixed `FORM`, a hint some object's layout equals
 /// names `FORM`.
 #[inline(always)]
-pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::heap::Object,
+pub unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::heap::Object,
     property_values: *const crate::Value, hint: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
@@ -271,7 +276,7 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
 /// `records` the object record reservation and `property_values` the base of the arena that
 /// holds the record's run; none outlives the call.
 #[inline(always)]
-pub(crate) unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+pub unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     super::entry::site_own_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
@@ -293,7 +298,7 @@ pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (e
 /// # Safety
 /// As `concrete_site_own_read`, for both offsets.
 #[inline(always)]
-pub(crate) unsafe fn concrete_site_own_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
+pub unsafe fn concrete_site_own_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     super::entry::site_own_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::value_vec::decode_staged_word)
 }
@@ -306,7 +311,7 @@ pub(crate) unsafe fn concrete_site_own_chain(property_values: *const crate::Valu
 /// As `concrete_site_read`, with `heap` the heap whose tables `entries` and `records` are.
 #[inline(always)]
 #[cfg(not(stencil_build))]
-pub(crate) unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
+pub unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
     let mut stage = super::Concrete::storing(heap);
     super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true, None), ()).is_some()
 }

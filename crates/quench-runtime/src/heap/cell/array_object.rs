@@ -36,7 +36,7 @@ impl ArrayObject {
         Self { object }
     }
 
-    pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
+    pub fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
         let elements = elements.into();
         // Without extras before or after, the array form is a function of the object's layout
         // alone (its payload ends as the empty position): the last ones are kept.
@@ -103,7 +103,7 @@ impl ArrayObject {
     }
 
     #[inline(always)]
-    pub(crate) fn elements(&self) -> &super::ArrayElements {
+    pub fn elements(&self) -> &super::ArrayElements {
         match self.object.extras() {
             Some(extras) => &extras.elements,
             // SAFETY: without extras, the payload word is the backing this array owns.
@@ -114,7 +114,7 @@ impl ArrayObject {
     /// The elements for any change, including their backing's: the running lane's array
     /// storage proofs retire first (`retire_array_storage_proofs`).
     #[inline(always)]
-    pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
+    pub fn elements_mut(&mut self) -> &mut super::ArrayElements {
         self.announce_shrinking();
         self.elements_raw_mut()
     }
