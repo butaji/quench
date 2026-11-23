@@ -9,7 +9,9 @@
 use super::math::FloatUnary;
 use super::numeric::{Domain, NumericStage};
 use super::value::{int_word, is_double, is_int};
-use super::{Concrete, Stage};
+use super::region::Region;
+use super::{Concrete, Stage, word_bytes, word_offset};
+use crate::bytecode::Register;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 use crate::Value;
 
@@ -28,6 +30,43 @@ pub(crate) fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected:
 #[inline(always)]
 pub fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
     admit_identity(&mut Concrete::new(std::ptr::null()), callee, expected, ()).is_some()
+}
+
+/// The registers of a call site's in-place native call: its callee, receiver, first argument (the
+/// window the arguments lie in) and result.
+#[derive(Clone, Copy, Debug)]
+pub struct InPlaceCall {
+    pub callee: Register,
+    pub receiver: Register,
+    pub arguments: Register,
+    pub result: Register,
+}
+
+/// A tier's in-place body of the native a site's row runs: the value word for `receiver` and the
+/// arguments at the address `arguments`, or `None` (leaving at `miss`, before any write) where the
+/// native's own steps decide. The interpreter's body is `Vm::in_place_native_value`; the b-jit's
+/// builtin rows prepare their operands and run the shared native steps (`step_string_native_of`,
+/// `step_number_native_of`, `builtins::step_array_native_of`).
+pub trait InPlaceBody<S: Stage> {
+    fn in_place_value(&mut self, stage: &mut S, receiver: S::Word, arguments: S::Word, miss: S::Miss) -> Option<S::Word>;
+}
+
+/// The in-place call of a native at a site whose registers lie in the file at `registers`: the
+/// callee admitted against the identity the tier proved for it (`admit_identity`), the body over
+/// the receiver and the argument window where it lies, and its value stored to the result register.
+/// The one step of an in-place native call: the interpreter's in-place handlers
+/// (`lane_call_in_place`) and the b-jit's builtin rows run it. `None` (leaving at `miss`, before any
+/// write) where the callee is another or the body declines.
+#[inline(always)]
+pub fn step_in_place_call_of<S: Stage, B: InPlaceBody<S>>(stage: &mut S, body: &mut B, registers: S::Word, identity: S::Word,
+    call: InPlaceCall, miss: S::Miss) -> Option<S::Word> {
+    let callee = stage.load_u64(Region::Frame.mutable(), registers, word_offset(call.callee));
+    admit_identity(stage, callee, identity, miss)?;
+    let receiver = stage.load_u64(Region::Frame.mutable(), registers, word_offset(call.receiver));
+    let arguments = stage.add_imm(registers, word_bytes(call.arguments));
+    let value = body.in_place_value(stage, receiver, arguments, miss)?;
+    stage.store_u64(Region::Frame.mutable(), registers, word_offset(call.result), value);
+    Some(value)
 }
 
 /// A Math function of Number arguments: the one table of them (`vm::number::math_call`), from which

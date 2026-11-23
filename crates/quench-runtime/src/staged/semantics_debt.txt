@@ -3,7 +3,6 @@
 # allows fails, and so does a line no hit uses. Lines may only go away. Goal: an empty file.
 canonical_nan quench-bjit/stencils/words.rs:} else if f.is_nan() {
 clz32 quench-bjit/stencils/numeric.rs:fn clz32_row(mut frame: Places) -> Out {
-imul quench-bjit/stencils/builtin_rows.rs:unsafe fn imul(s: &S, record: usize) -> Option<u64> {
 imul quench-runtime-engine/src/compiled/lane_region/known_branches.rs:Opcode::Iadd => a.wrapping_add(b), Opcode::Isub => a.wrapping_sub(b), Opcode::Imul => a.wrapping_mul(b),
 imul quench-runtime-engine/src/compiled/object_slots/emit.rs:fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
 imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => entry.wrapping_add(x.wrapping_mul(count as i32)),

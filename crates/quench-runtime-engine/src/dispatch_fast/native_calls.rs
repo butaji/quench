@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::call_complete::{concrete_returns_callee_completion, concrete_write_call_result};
 use quench_runtime::staged::strings::{ConcreteString, concrete_char_at, concrete_char_code_at};
+use quench_runtime::staged::Concrete;
 use quench_runtime::vm::object_get::ordinary_chain::ChainRead;
 
 /// `charCodeAt` of a flat string at an integer index (`staged::builtins::char_code_at`): the
@@ -716,31 +717,63 @@ script_handler! {
     fn lane_call_in_place<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { in_place_row_native(ROW) };
-        let value = if !native_admitted(vm, r.get(i.b), const { in_place_slot(ROW) }, native) {
-            None
-        } else {
-            // SAFETY: the call's window is registers of the running function, which no
-            // in-place body moves; the context's program outlives the lane run.
-            let (args, code) = unsafe { (call_window_in_lane(r, i), &*(*cx).code) };
-            let receiver = r.get(i.c);
-            let float64 = if const { matches!(in_place_row_native(ROW), Native::DataViewGetFloat64 | Native::DataViewSetFloat64) } {
-                let value = vm.data_view_access_of(native, receiver, args);
-                if value.is_some() && vm.execution_mode == quench_runtime::vm::ExecutionMode::Compiled {
-                    vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
-                }
-                value
-            } else {
-                None
-            };
-            float64.or_else(|| vm.in_place_native_value_inline(code, native, r.get(i.b), receiver, args))
+        let call = quench_runtime::staged::call_native::InPlaceCall {
+            callee: i.b,
+            receiver: i.c,
+            arguments: ImmediateLayout::call_window_base(i.imm()),
+            result: i.a,
         };
-        let Some(value) = value else {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let count = usize::from(ImmediateLayout::argument_count(i.imm()));
+        let registers = r.0.expose_provenance() as u64;
+        let slot = const { in_place_slot(ROW) };
+        let mut stage = Concrete::new(std::ptr::null());
+        // The shared in-place call step (`call_native::step_in_place_call_of`, the b-jit's builtin rows'):
+        // the callee admitted against the identity the lane proved, the body, the result stored.
+        let identity = vm.lane_stack.native_identities.0[slot];
+        let mut body = InPlaceLane { vm: &mut *vm, code, native, callee: r.get(i.b), count };
+        let mut done = quench_runtime::staged::call_native::step_in_place_call_of(&mut stage, &mut body, registers, identity, call, ());
+        // A callee the slot does not hold yet: proved once (`prove_native_identity`), then the step again.
+        if done.is_none() && r.get(i.b).to_bits() != identity && prove_native_identity(vm, r.get(i.b), slot, native) {
+            let mut body = InPlaceLane { vm: &mut *vm, code, native, callee: r.get(i.b), count };
+            done = quench_runtime::staged::call_native::step_in_place_call_of(&mut stage, &mut body, registers, r.get(i.b).to_bits(), call, ());
+        }
+        if done.is_none() {
             sibling!(native_call_miss, r, ip, Carried::script(cx))
-        };
+        }
         // An in-place body may allocate; a due collection runs at the lane's next safepoint.
         note_allocation(vm);
-        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// The interpreter's in-place body of `native` (`call_native::InPlaceBody`): `Vm::in_place_native_value`
+/// of `callee` over the call's window of `count` values where it lies, a `DataView` float64 access first.
+struct InPlaceLane<'a> {
+    vm: &'a mut Vm,
+    code: &'a ResidualProgram,
+    native: Native,
+    callee: Value,
+    count: usize,
+}
+
+impl quench_runtime::staged::call_native::InPlaceBody<Concrete> for InPlaceLane<'_> {
+    #[inline(always)]
+    fn in_place_value(&mut self, _stage: &mut Concrete, receiver: u64, arguments: u64, _miss: ()) -> Option<u64> {
+        // SAFETY: the call's window is registers of the running function, which no in-place body moves.
+        let args = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<Value>(arguments as usize), self.count) };
+        let (vm, native, receiver) = (&mut *self.vm, self.native, Value::from_bits(receiver));
+        let float64 = if matches!(native, Native::DataViewGetFloat64 | Native::DataViewSetFloat64) {
+            let value = vm.data_view_access_of(native, receiver, args);
+            if value.is_some() && vm.execution_mode == quench_runtime::vm::ExecutionMode::Compiled {
+                vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
+            }
+            value
+        } else {
+            None
+        };
+        float64.or_else(|| vm.in_place_native_value_inline(self.code, native, self.callee, receiver, args)).map(Value::to_bits)
     }
 }
 
