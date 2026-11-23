@@ -801,13 +801,13 @@ pub(crate) const fn wasm_record_check(op: Op) -> WasmRecordCheck {
 /// Whether `op` builds a defaulted Wasm array (`array.new_default`), whose element type must be
 /// defaultable.
 pub(crate) const fn wasm_array_new_defaulted(op: Op) -> bool {
-    matches!(op, Op::WasmArrayNewDefault)
+    matches!(wasm_gc::GcStep::of(op), Some(wasm_gc::GcStep::ArrayNew { construction: wasm_gc::ArrayConstruction::Default }))
 }
 
 /// Whether `op` builds a fixed-length Wasm array (`array.new_fixed`), whose elements are a
 /// register window of the function.
 pub(crate) const fn wasm_array_new_fixed(op: Op) -> bool {
-    matches!(op, Op::WasmArrayNewFixed)
+    matches!(wasm_gc::GcStep::of(op), Some(wasm_gc::GcStep::ArrayNew { construction: wasm_gc::ArrayConstruction::Fixed }))
 }
 
 /// Whether `instruction` makes a constant array (`Allocation::ConstArray`), which a superinstruction
@@ -1065,13 +1065,11 @@ pub const fn does_nothing(op: Op) -> bool { matches!(op, Op::Nop) }
 pub const fn stores_var_binding(op: Op) -> bool { matches!(op, Op::StoreVarBinding) }
 /// Reads `this` (`LoadThis`).
 pub const fn loads_this(op: Op) -> bool { matches!(op, Op::LoadThis) }
-/// Reads an `arguments` element (`ArgumentGet`).
-pub(crate) const fn reads_argument(op: Op) -> bool { matches!(op, Op::ArgumentGet) }
 /// Makes a call through its callee register with its arguments positional (`Call`) or forwarded
 /// from the caller's `arguments` (`CallForwardingArguments`).
 pub(crate) const fn calls_positional(op: Op) -> bool { op.traits().has(Traits::CALLS_POSITIONAL) }
 /// Makes a call through a method site (`CallMethod`), whose callee is a property of its receiver.
-pub(crate) const fn calls_method_site(op: Op) -> bool { matches!(op, Op::CallMethod) }
+pub const fn calls_method_site(op: Op) -> bool { matches!(op, Op::CallMethod) }
 /// Makes a call in any form that is not a construction (`Call`, `CallArray`, `CallSpread`,
 /// `CallForwardingArguments`, `CallMethod`).
 pub(crate) const fn makes_call(op: Op) -> bool {
@@ -1257,6 +1255,8 @@ mod wasm_gc_tests;
 mod wasm_simd_tests;
 #[cfg(test)]
 mod instanceof_tests;
+#[doc(hidden)]
+pub mod alias_pins;
 
 /// Whether the staged layer gives `op` its meaning: a staged decoder of the catalog, a Wasm step
 /// (`wasm_step::Step`), or nothing to derive (`NO_STEP`: `Nop`, and the never-dispatched `Wide`).
