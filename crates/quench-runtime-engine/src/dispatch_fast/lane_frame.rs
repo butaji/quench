@@ -479,19 +479,18 @@ pub(crate) struct LaneFrame<const ACC: u8> {
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
-/// frame names no `H`: `field_entry_read` makes the one `kind` names. Runs no guest code.
+/// frame names no `H`: `field_entry` makes the one `kind` names. Runs no guest code.
 #[derive(Clone, Copy)]
 struct EntryReads {
     context: *mut (),
     site: Ip,
-    read: fn(*mut (), Ip, Value, quench_runtime::staged::property::EntryKind) -> Option<Value>,
 }
 
 impl EntryReads {
     /// The entry lookups of the running lane's `cx` at the row's site `ip`.
     #[inline(always)]
     fn of(cx: *mut LaneContext, ip: Ip) -> Self {
-        Self { context: cx.cast(), site: ip, read: super::field_entry_read }
+        Self { context: cx.cast(), site: ip }
     }
 }
 
@@ -1834,14 +1833,20 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
     #[inline(always)]
     fn field_entry(&mut self, _stage: &mut Concrete, _owner: quench_runtime::staged::property::Owner, object: u64,
         kind: quench_runtime::staged::property::EntryKind, _miss: ()) -> Option<u64> {
+        use quench_runtime::staged::property::EntryKind;
         let entries = self.entries?;
-        // The polymorphic hit is the field row's common read: it runs in the row body, where the
-        // other kinds take the erased call.
-        if matches!(kind, quench_runtime::staged::property::EntryKind::Polymorphic) {
-            return super::polymorphic_entry_read(entries.context, entries.site, Value::from_bits(object)).map(Value::to_bits);
-        }
-        // SAFETY: the reader was made for the lane context this frame runs in.
-        (entries.read)(entries.context, entries.site, Value::from_bits(object), kind).map(Value::to_bits)
+        // The row names the lookup its own `kind` reads, so each runs as a direct call the
+        // compiler can inline into the row: an erased call per field read costs more than the hit.
+        // SAFETY: the context is the lane context this frame runs in, and `site` its live record.
+        let cx = entries.context.cast::<LaneContext>();
+        let object = Value::from_bits(object);
+        let value = match kind {
+            EntryKind::Polymorphic => super::polymorphic_entry(cx, entries.site, object),
+            EntryKind::Hashed => super::hashed_entry(cx, entries.site, object),
+            EntryKind::Holder => super::holder_entry(cx, entries.site, object),
+            EntryKind::Inherited => super::inherited_entry(cx, entries.site, object),
+        };
+        value.map(Value::to_bits)
     }
 
     /// The VM's own-field store of `value` to `atom` through `site` (`LaneHelper::FieldSet`): the

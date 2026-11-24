@@ -4832,7 +4832,8 @@ pub(crate) fn sink_operands(cx: *mut LaneContext, i: &LaneInstruction) -> Option
 }
 
 /// The site facts of the generated entry reads (`FieldPlan::Hinted`, `FieldPlan::Entry`): each
-/// one hit shape of the VM's entry lookups, whose host call the row makes (`field_entry_read`).
+/// one hit shape of the VM's entry lookups, which the row calls by the kind it names
+/// (`LaneFrame::field_entry`).
 /// Of `this` and of a register alike (`runtime_base`).
 /// The polymorphic read: the record's own hint, then the site's inline entries (`row_polymorphic_miss` past them).
 pub(crate) const POLYMORPHIC_SITE: u8 = own_site(false, OWN_FORMS.len() + 38);
@@ -5121,27 +5122,6 @@ fn inherited_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Value>
     let (value, entry) = unsafe { vm(cx) }.inherited_field_entry_hit(code, object, i.c)?;
     set_inherited_hint(ip, entry);
     Some(value)
-}
-
-/// The VM's entry lookup `kind` answers for `object` at the row's record `ip` (`LaneFrame::field_entry`).
-pub(crate) fn field_entry_read(context: *mut (), ip: Ip, object: Value,
-    kind: quench_runtime::staged::property::EntryKind) -> Option<Value> {
-    use quench_runtime::staged::property::EntryKind;
-    let cx = context.cast::<LaneContext>();
-    match kind {
-        EntryKind::Polymorphic => polymorphic_entry(cx, ip, object),
-        EntryKind::Hashed => hashed_entry(cx, ip, object),
-        EntryKind::Holder => holder_entry(cx, ip, object),
-        EntryKind::Inherited => inherited_entry(cx, ip, object),
-    }
-}
-
-/// `polymorphic_entry` on the row's erased context, inline: the hit's shape compare and slot load
-/// live in the row body, where the other entry kinds take the out-of-line lookup
-/// (`field_entry_read`).
-#[inline(always)]
-pub(crate) fn polymorphic_entry_read(context: *mut (), ip: Ip, object: Value) -> Option<Value> {
-    polymorphic_entry(context.cast::<LaneContext>(), ip, object)
 }
 
 script_handler! {
